@@ -505,8 +505,8 @@ describe("dispatch", () => {
         values (${id}, ${bc.from === "pack" ? "box" : "loose"}, ${bc.sku}, ${bc.from}, ${bc.lot}, ${bc.fg}, 1, ${bc.from === "pack" ? bc.cpb : 1}, ${bc.godown}, 'available')`);
     const r = await scanBox(fc, t.order!, id);
     assert.equal(r.ok, true, JSON.stringify(r));
-    assert.ok(r.ok && r.data, "an allocating scan sends the phone the order again");
-    const after = r.ok ? r.data! : before;
+    assert.ok(r.ok && r.stale && !r.data, "an allocating box scan answers at once and has the phone fetch the order in the background");
+    const after = await bootstrap(fc);
     assert.ok(after.orders[t.order!].lines.some((ln) => ln.alloc.some((a) => a[0] === bc.lot)), "the scanned box's lot is given to the order");
     await unloadBox(fc, t.order!, id);
   });

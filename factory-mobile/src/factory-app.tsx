@@ -62,7 +62,7 @@ import { APP_BUILD, call, dropSession, NotReceived, sendPhoto, uploadPhoto, type
 import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
-import { buzz, CameraScanner, GunInput, shrinkPhoto } from "./camera";
+import { buzz, CameraScanner, GunInput, ScanField, shrinkPhoto } from "./camera";
 
 /**
  * What a photo that did not upload is CALLED on the screen. "No network" only
@@ -138,6 +138,7 @@ export class FactoryApp extends Component<Props, State> {
   /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
   private scanQ: string[] = [];
   private scanRunning = false;
+  private staleTimer: ReturnType<typeof setTimeout> | undefined;
   private ot: ReturnType<typeof setInterval> | undefined;
   private subs: { remove: () => void }[] = [];
 
@@ -764,14 +765,12 @@ export class FactoryApp extends Component<Props, State> {
     return out;
   }
 
-  /** A code typed off the label: read like a scan, judged like one. */
-  submitTyped() {
+  /** A code typed off the label, or sent by a gun into the Type box: read like a scan, judged like one. */
+  submitTyped(raw: string) {
     const sc = this.state.scan;
-    const raw = (sc?.typed ?? "").trim();
+    raw = raw.trim();
     if (!sc || !raw) return;
-    const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
-    /* The text stays: a code the server refuses comes back to the box to fix, not to an empty one. */
-    this.intake(code);
+    this.intake(sc.purpose === "lr" ? raw : typedCode(raw, this.state.db));
   }
 
   /**
@@ -790,6 +789,12 @@ export class FactoryApp extends Component<Props, State> {
     }
     this.scanQ.push(code);
     void this.pumpScans();
+  }
+
+  /** A scan changed the factory's data on the server: fetched a moment after loading pauses, never while a scan waits for it. */
+  refreshSoon() {
+    clearTimeout(this.staleTimer);
+    this.staleTimer = setTimeout(() => void this.poll(), 3000);
   }
 
   /** The loading scan screen is waiting on the loader: a refusal, a lorry to pick, an override, or how many to load from a lot. */
@@ -959,14 +964,15 @@ export class FactoryApp extends Component<Props, State> {
   /* ================================================================ loading boxes */
 
   /** The order's boxes from the ERP, and the lots' loaded counts set from them — the server's count, never the phone's. */
-  applyBoard(board: LoadBoard | null, data?: FactoryData | null) {
+  applyBoard(board: LoadBoard | null, data?: FactoryData | null, allocatedNow = false) {
     if (data) this.setState({ db: data });
     this.setState({ board });
     const f = this.state.flow;
     if (!board || !f || f.task.proc !== "dispatch" || f.task.order !== board.order) return;
     const db = data ?? this.db();
     const allocated = new Set((db.orders[board.order]?.lines ?? []).flatMap((ln) => ln.alloc.map((a) => a[0])));
-    const counted = Object.keys(board.perLot).filter((lot) => allocated.has(lot));
+    /* A scan that allocated its lot has not reached the phone's copy of the order yet: every lot with a box on the order is the order's. */
+    const counted = Object.keys(board.perLot).filter((lot) => allocatedNow || allocated.has(lot));
     if (!counted.length) return;
     this.setD((z) => {
       z.loads = { ...(z.loads ?? {}) };
@@ -999,9 +1005,10 @@ export class FactoryApp extends Component<Props, State> {
       const order = this.state.flow?.task.order;
       if (!order) return fail("No order open", "Open the order you are loading first.", "Go back to your work and open the order.");
       const r = await call("scanBox", order, code);
-      if (r.board) this.applyBoard(r.board, r.ok ? r.data : null);
+      if (r.board) this.applyBoard(r.board, r.ok ? r.data : null, r.ok && !!r.stale);
       if (!r.ok && r.repeat) return this.fed("warn", code, "Already loaded — not counted again", r.text);
       if (!r.ok) return fail(r.title, r.text, r.fix);
+      if (r.stale) this.refreshSoon();
       this.fed("ok", code, "Box loaded", r.message);
     } catch (e) {
       if (!(e instanceof NotReceived)) throw e;
@@ -1549,6 +1556,7 @@ export class FactoryApp extends Component<Props, State> {
       if (r.task) this.adoptLorryJob(r.task, r.ok ? r.data : null);
       this.setLorry({ busy: false });
       /* What went on is a band and a buzz; only a refusal stops the loader. */
+      if (r.ok && r.stale) this.refreshSoon();
       if (r.ok) this.fed(r.tone, r.code, r.title, r.message);
       else if (r.repeat) this.fed("warn", r.code, "Already on — not counted again", r.text);
       else this.setLorry({ res: { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
@@ -3765,7 +3773,6 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose, m = sc.meta, db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const what = { badge: "your company badge", home: "a task sheet, order, lot or box label", rm: "the " + rmName + " drum", sfg: "the base-liquid tank", pm: "the empty-can stack", fg: "the filled-can pallet", load: "the box label going on the lorry", drum: "the GRN label on the empty drum", lr: "the LR receipt" }[P];
-    const typed = sc.typed ?? "", ready = !!typed.trim();
     const noCam = st.cam === "none" || st.cam === "denied";
     const lr = P === "lr";
     return (
@@ -3773,10 +3780,19 @@ export class FactoryApp extends Component<Props, State> {
         {noCam && <Div style={{ padding: "10px 12px", borderRadius: "12px", background: "rgba(255,231,168,0.12)", color: "#FFE7A8", fontSize: "14px", lineHeight: "20px" }}>{st.cam === "denied" ? T.camOffType : T.noCamType}</Div>}
         <Div style={{ fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{lr ? T.typeLr : T.typeTitle}</Div>
         {!!what && <Div style={{ fontSize: "15px", color: "#C2C8D2" }}>{T.lookingFor + ": " + what}</Div>}
-        {/* A scanning gun types here and presses Enter after every code: the box must keep the focus, and take it back once a card is closed. */}
-        <Input key={sc.res || st.lorry.res ? "card" : "type"} keepFocus value={typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={lr ? T.typeLr : T.typeCode} style={{ width: "100%", height: "64px", minHeight: "64px", boxSizing: "border-box", marginTop: "6px", borderRadius: "16px", border: "2px solid #C6FF34", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 16px", ...mono, fontSize: "24px", fontWeight: 600, letterSpacing: "1px", outline: "none" }} />
-        <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</Div>
-        <Btn onClick={() => this.submitTyped()} style={{ width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }}>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</Btn>
+        {/* A scanning gun types here: the box keeps its own text, sends each code the moment the gun stops, and takes the focus back once a card is closed. */}
+        <ScanField
+          keyName={sc.res || st.lorry.res ? "card" : "type"}
+          label={lr ? T.typeLr : T.typeCode}
+          onCode={(c) => this.submitTyped(c)}
+          style={{ width: "100%", height: 64, minHeight: 64, marginTop: 6, borderRadius: 16, borderWidth: 2, borderColor: "#C6FF34", backgroundColor: "rgba(255,255,255,0.06)", color: "#FFFFFF", paddingHorizontal: 16, paddingVertical: 0, fontFamily: String(mono.fontFamily), fontSize: 24, fontWeight: "600", letterSpacing: 1 }}
+          button={(ready, send) => (
+            <>
+              <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</Div>
+              <Btn onClick={send} style={{ width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }}>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</Btn>
+            </>
+          )}
+        />
         <Btn onClick={() => this.scanInstead(true)} style={{ width: "100%", height: "54px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic(st.cam === "denied" ? "camOn" : "scanFrame", 22, "#FFFFFF")}{st.cam === "denied" ? T.camOn : T.scanInstead}</Btn>
         {labels.length > 0 && (
           <>
@@ -3801,7 +3817,7 @@ export class FactoryApp extends Component<Props, State> {
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? taskName(this.db(), f.task)) : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order, lot or box label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box as it goes on. A scanning gun works too.", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order, lot or box label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box as it goes on", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1 && !(P === "load" && f && isLorryTask(f.task));
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (DEV || st.cam === "none") ? this.scanLabels() : [];

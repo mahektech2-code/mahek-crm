@@ -6,8 +6,8 @@
  * `onState` says whether there is a camera at all, so the screen can offer
  * the way round it — pick from photos — instead of a black rectangle.
  * ------------------------------------------------------------------------- */
-import { useEffect, useRef } from "react";
-import { PermissionsAndroid, Platform, StyleSheet, TextInput, Vibration, type Permission } from "react-native";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { PermissionsAndroid, Platform, StyleSheet, TextInput, Vibration, type Permission, type TextStyle } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 
@@ -112,15 +112,69 @@ export function GunInput({ onCode }: { onCode: (code: string) => void }) {
         }
         text.current = v;
         clearTimeout(idle.current);
-        idle.current = setTimeout(flush, 150);
+        idle.current = setTimeout(flush, 120);
       }}
       onSubmitEditing={flush}
       /* A tap elsewhere takes the focus; the gun needs it back. */
       onBlur={() => setTimeout(() => field.current?.focus(), 200)}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={{ position: "absolute", width: 1, height: 1, opacity: 0, left: -10, top: -10 }}
+      /* On the screen, not off it: Android will not give the focus to a field drawn outside the window. */
+      style={{ position: "absolute", width: 2, height: 2, opacity: 0, left: 0, top: 0 }}
     />
+  );
+}
+
+/**
+ * The Type box. Its text lives HERE and not in the app's state: a gun types a
+ * label a letter at a time, and every letter used to redraw the whole Factory
+ * screen — the slow "writing" a loader watched before anything was checked.
+ * A gun's burst (letters well under 80 ms apart) is sent the moment it stops,
+ * Enter or not; somebody typing by hand still presses Enter or the button.
+ * The box empties as it sends, ready for the next label.
+ */
+export function ScanField({ onCode, style, label, keyName, button }: { onCode: (code: string) => void; style: TextStyle; label: string; keyName: string; button: (ready: boolean, send: () => void) => ReactNode }) {
+  const [text, setText] = useState("");
+  const last = useRef(0);
+  const burst = useRef(true);
+  const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(idle.current), []);
+
+  const send = (raw: string) => {
+    clearTimeout(idle.current);
+    const code = raw.trim();
+    burst.current = true;
+    last.current = 0;
+    setText("");
+    if (code) onCode(code);
+  };
+  return (
+    <>
+      <TextInput
+        key={keyName}
+        autoFocus
+        value={text}
+        autoCorrect={false}
+        autoCapitalize="characters"
+        autoComplete="off"
+        submitBehavior="submit"
+        accessibilityLabel={label}
+        onChangeText={(v) => {
+          if (/[\r\n\t]/.test(v)) return send(v.split(/[\r\n\t]/)[0].toUpperCase());
+          const now = Date.now();
+          /* One slow letter and it is a person, not a gun: they press Enter. */
+          if (!v || (last.current && now - last.current > 80)) burst.current = !v;
+          last.current = v ? now : 0;
+          const up = v.toUpperCase().slice(0, 60);
+          setText(up);
+          clearTimeout(idle.current);
+          if (burst.current && up.trim().length >= 3) idle.current = setTimeout(() => send(up), 120);
+        }}
+        onSubmitEditing={() => send(text)}
+        style={style}
+      />
+      {button(!!text.trim(), () => send(text))}
+    </>
   );
 }
 

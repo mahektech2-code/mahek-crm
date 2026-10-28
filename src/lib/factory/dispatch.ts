@@ -91,9 +91,9 @@ export async function scanBox(fc: FactoryCtx, order: string, raw: string): Promi
     return { ok: false, code, title, text: v.message, fix, board, repeat };
   }
   await factoryAudit(fc, "factory.dispatch.box", null, `${code} loaded for ${orderKey(no)} · ${v.allocation}`, { order: no });
-  /* A scan that allocated or swapped a lot changed the order the phone holds. */
-  const data = v.allocation === "matched" ? null : await bootstrap(fc);
-  return { ok: true, code, message: v.message, board, data };
+  /* A scan that allocated or swapped a lot changed the order the phone holds. A box's answer does not wait for that: the phone fetches it in the background. A lot label's does, because the next question about the lot is asked from it. */
+  if (looksLikeUnitId(code)) return { ok: true, code, message: v.message, board, data: null, stale: v.allocation !== "matched" };
+  return { ok: true, code, message: v.message, board, data: v.allocation === "matched" ? null : await bootstrap(fc) };
 }
 
 /** A box taken back off the lorry before the order is sent. */

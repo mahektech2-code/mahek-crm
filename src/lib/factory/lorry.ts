@@ -107,7 +107,7 @@ export async function lorriesFor(godownId: string): Promise<Record<string, Lorry
 }
 
 async function linesOf(fc: FactoryCtx, key: string): Promise<LoadingLine[]> {
-  return (await loadingLines(db, fc.godown.id)).filter((l) => lorryKeyOf(l.transporter) === key);
+  return loadingLines(db, fc.godown.id, (t) => lorryKeyOf(t) === key);
 }
 
 async function boardOf(fc: FactoryCtx, key: string, lines?: LoadingLine[]): Promise<LorryBoard> {
@@ -227,7 +227,8 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
     const orderNo = await orderForBox(lines, code);
     const res = await scanOntoOrder(ctx, orderNo, code);
     if (!res.ok || !res.data.verdict.ok) {
-      const board = await boardOf(fc, key);
+      /* Nothing was written: the lines read a moment ago are still the lorry's. */
+      const board = await boardOf(fc, key, lines);
       if (!res.ok) return fail("Not counted", res.error, "Scan it again. If it keeps failing, tell the dispatch head.", board, board.lorry?.task ?? null);
       const v = res.data.verdict;
       const [title, fix] = VERDICT[v.ok ? "blocked" : v.result] ?? VERDICT.blocked;
@@ -242,7 +243,8 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
     const task = job.id;
     const board = await boardOf(fc, key);
     await factoryAudit(fc, "factory.dispatch.box", task, `${code} loaded on ${lorryName(board.lorry?.name)} · ${v.allocation}`, { lorry: key, order: orderNo });
-    return { ok: true, code, tone: v.allocation === "swap" ? "warn" : "ok", title: v.allocation === "swap" ? "Lot swapped" : "On the lorry", message: lorryWords(v.message), board, task, data: v.allocation === "matched" && !job.made ? null : await bootstrap(fc) };
+    /* The box's answer does not wait for the whole factory's data to be rebuilt: the phone fetches that in the background. */
+    return { ok: true, code, tone: v.allocation === "swap" ? "warn" : "ok", title: v.allocation === "swap" ? "Lot swapped" : "On the lorry", message: lorryWords(v.message), board, task, data: null, stale: v.allocation !== "matched" || job.made };
   }
 
   /* A lot label: the orders on this lorry that are short of what the lot is, soonest due first. */
@@ -264,7 +266,7 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
     if (!short.length || v.allocation !== "allocate") break;
   }
   if (!said.length) {
-    const board = await boardOf(fc, key);
+    const board = await boardOf(fc, key, lines);
     const [title, fix] = VERDICT[failKind] ?? VERDICT.blocked;
     return fail(title, lorryWords(firstFail ?? "This label does not go on this lorry."), fix, board, board.lorry?.task ?? null);
   }
