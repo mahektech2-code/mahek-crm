@@ -35,6 +35,8 @@ import {
 import { erpAudit, erpId } from "./server";
 import { today } from "./screens/common";
 import { confirmImpact } from "@/lib/impact/registry";
+import { transporterMergeKey, transporterRenameKey } from "./transporter-keys";
+import { knownTransporterName, rewriteName } from "./transporter-rename";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -603,7 +605,7 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Pro
   const lrNo = (input.lrNo ?? "").trim().toUpperCase() || null;
   /* The bills under an attached LR carry its number, and the customer was told it. */
   if (!lrNo && lr.status === "assigned") return fieldErr("lrNo", "This LR is attached to bills, so it needs its number");
-  const transporter = (input.transporter ?? "").trim() || null;
+  const transporter = await knownTransporterName(db, input.transporter, ctx.user.id);
   const [dup] = lrNo
     ? ((await db.execute(sql`select id from erp_lrs where status <> 'void' and id <> ${lrId} and upper(lr_no) = ${lrNo} and lower(coalesce(transporter, '')) = ${(transporter ?? "").toLowerCase()}`)) as unknown as { id: string }[])
     : [];
@@ -878,9 +880,11 @@ export async function saveTransporter(
     godowns?: GodownInput[];
     trackingUrl?: string | null;
     active?: boolean;
+    /** A rename rewrites the name on every bill, LR and order carrying it, so it is confirmed (`erp-transporter-rename`). */
+    confirmation?: ImpactConfirmation | null;
   },
 ): Promise<Result<unknown>> {
-  const name = input.name.trim();
+  const name = input.name.trim().replace(/\s+/g, " ");
   if (!name) return fieldErr("name", "Name is required");
   const url = input.trackingUrl?.trim() || null;
   if (url && !/^https?:\/\//.test(url)) return fieldErr("trackingUrl", "The tracking page starts with https://");
@@ -888,7 +892,7 @@ export async function saveTransporter(
   if (g && g.check === "invalid") return fieldErr("gstin", "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
   const gstin = g?.gstin ?? null;
   const [clash] = (await db.execute(sql`select id from erp_transporters where lower(name) = ${name.toLowerCase()} and id <> ${input.id ?? ""}`)) as unknown as { id: string }[];
-  if (clash) return fieldErr("name", `${name} is already in the list`);
+  if (clash) return fieldErr("name", `${name} is already in the list — use Merge into… on this transporter to fold the two together`);
   let godowns: Godown[] | null = null;
   if (input.godowns) {
     const c = cleanGodowns(input.godowns, await placeOptions());
@@ -911,11 +915,22 @@ export async function saveTransporter(
     const [before] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, input.id));
     if (!before) return err("That transporter is gone.", "not_found");
     const beforeGodowns = (await transporters()).find((t) => t.id === id)?.godowns ?? [];
+    const renamed = before.name !== name;
+    if (renamed) {
+      const refusal = await confirmImpact("erp-transporter-rename", transporterRenameKey(id, name), input.confirmation);
+      if (refusal) return refusal;
+    }
+    let rewritten: Record<string, number> = {};
     await db.transaction(async (tx) => {
       await tx.update(erpTransporters).set(values).where(eq(erpTransporters.id, id));
       if (godowns) await writeGodowns(tx, id, godowns);
+      if (renamed) rewritten = await rewriteName(tx, before.name, name);
     });
-    await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", id, { ...before, godowns: beforeGodowns }, { ...values, godowns });
+    await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", id, { ...before, godowns: beforeGodowns }, { ...values, godowns, ...(renamed ? { renamedFrom: before.name, rewritten } : {}) });
+    if (renamed) {
+      const n = Object.values(rewritten).reduce((a, b) => a + b, 0);
+      return okVoid(`${before.name} renamed to ${name}${n ? ` on ${n} record${n === 1 ? "" : "s"}` : ""}`);
+    }
   } else {
     await db.transaction(async (tx) => {
       await tx.insert(erpTransporters).values({ id, ...values });
@@ -924,6 +939,47 @@ export async function saveTransporter(
     await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", id, null, { ...values, godowns });
   }
   return okVoid(`${name} saved`);
+}
+
+/**
+ * Two rows for one company — "V.R.L." beside "VRL Logistics" — folded into
+ * the one being kept: every bill, LR and order carrying the dropped spelling
+ * is rewritten to the kept one, the dropped row's godowns and people move
+ * across, and the dropped row goes. Confirmed against what it touches
+ * (`erp-transporter-merge`), because it cannot be undone by renaming back —
+ * after it, nothing remembers which records carried which spelling.
+ */
+export async function mergeTransporter(ctx: ErpContext, fromId: string, intoId: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
+  if (!fromId || !intoId || fromId === intoId) return err("Pick a different transporter to merge into.", "validation");
+  const [from] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, fromId));
+  const [into] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, intoId));
+  if (!from || !into) return err("That transporter is gone.", "not_found");
+  const refusal = await confirmImpact("erp-transporter-merge", transporterMergeKey(fromId, intoId), confirmation);
+  if (refusal) return refusal;
+  let rewritten: Record<string, number> = {};
+  await db.transaction(async (tx) => {
+    rewritten = await rewriteName(tx, from.name, into.name);
+    const [{ n }] = (await tx.execute(sql`select coalesce(max(sort_order), -1)::int as n from erp_transporter_godowns where transporter_id = ${intoId}`)) as unknown as { n: number }[];
+    await tx.execute(sql`update erp_transporter_godowns set transporter_id = ${intoId}, sort_order = sort_order + ${Number(n) + 1} where transporter_id = ${fromId}`);
+    /* What the kept row did not say, the dropped one may have. */
+    await tx
+      .update(erpTransporters)
+      .set({
+        gstin: into.gstin ?? from.gstin,
+        consignmentLabel: into.consignmentLabel ?? from.consignmentLabel,
+        trackingUrl: into.trackingUrl ?? from.trackingUrl,
+        active: into.active || from.active,
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      .where(eq(erpTransporters.id, intoId));
+    await tx.delete(erpTransporters).where(eq(erpTransporters.id, fromId));
+  });
+  const kept = (await transporters()).find((t) => t.id === intoId);
+  if (kept) await db.update(erpTransporters).set(mirrorsFrom(kept.godowns)).where(eq(erpTransporters.id, intoId));
+  await erpAudit(ctx, "erp.logistics.transporterMerge", "erp_transporter", intoId, { merged: from }, { into: into.name, rewritten });
+  const total = Object.values(rewritten).reduce((a, b) => a + b, 0);
+  return okVoid(`${from.name} merged into ${into.name}${total ? ` — ${total} record${total === 1 ? "" : "s"} now say ${into.name}` : ""}`);
 }
 
 /**

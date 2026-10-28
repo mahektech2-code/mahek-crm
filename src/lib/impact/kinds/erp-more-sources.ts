@@ -54,6 +54,9 @@ export const ERP_MORE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "erp-trip-bill": () => import("./erp-transport").then((m) => m.tripBillImpact),
   "erp-transport-payment": () => import("./erp-transport").then((m) => m.transportPaymentImpact),
   "erp-delivery-reopen": () => import("./erp-transport").then((m) => m.deliveryReopenImpact),
+  /* ERP → Logistics → Transporters: a name changed everywhere it is carried, or two rows folded into one. */
+  "erp-transporter-rename": () => import("./erp-transport").then((m) => m.transporterRenameImpact),
+  "erp-transporter-merge": () => import("./erp-transport").then((m) => m.transporterMergeImpact),
 
   /* ERP → Quotation manager: a row deleted, a purchase undone (its ERP PO line with it). */
   "erp-quote-row": () => import("./erp-quotes").then((m) => m.quoteRowImpact),

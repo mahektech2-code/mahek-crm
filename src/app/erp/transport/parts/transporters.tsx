@@ -5,7 +5,10 @@ import { DialogBody, DialogFooter, DialogHeader, ErpDialog, TabBar, DialogTitle 
 import { Button, Card, Checkbox, controlClass, cx, Field, Input, SectionLabel } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { gridHeadClass, IconButton, labelClass, LinkButton, linkClass, SubTitle } from "../../_ui/look";
-import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
+import { erpLogisticsMergeTransporter, erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
+import { transporterMergeKey, transporterRenameKey } from "@/lib/erp/transporter-keys";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import { ErpImpactDialog } from "../../_ui/impact-confirm";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
 import {
@@ -46,6 +49,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
   const byId = useMemo(() => lookup(tree), [tree]);
   const [edit, setEdit] = useState<Transporter | "new" | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [merging, setMerging] = useState<Transporter | null>(null);
   const seen = rows.find((t) => t.id === open) ?? null;
   const loadOf = (t: Transporter) => load[t.name.toLowerCase()] ?? { active: 0, road: 0 };
 
@@ -122,7 +126,12 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
           setOpen(null);
           setEdit(t);
         }}
+        onMerge={(t) => {
+          setOpen(null);
+          setMerging(t);
+        }}
       />
+      {merging ? <MergeTransporter key={merging.id} from={merging} rows={rows} onClose={() => setMerging(null)} /> : null}
       {edit ? (
         <EditTransporter
           key={edit === "new" ? "new" : edit.id}
@@ -172,6 +181,7 @@ function TransporterDetails({
   canWrite,
   onClose,
   onEdit,
+  onMerge,
 }: {
   t: Transporter | null;
   byId: PlaceLookup;
@@ -179,6 +189,7 @@ function TransporterDetails({
   canWrite: boolean;
   onClose: () => void;
   onEdit: (t: Transporter) => void;
+  onMerge: (t: Transporter) => void;
 }) {
   const [tab, setTab] = useState<"details" | "godowns">("details");
   if (!t) return null;
@@ -263,11 +274,63 @@ function TransporterDetails({
           </DialogBody>
           {canWrite ? (
             <DialogFooter>
+              <Button onClick={() => onMerge(t)} title="Fold this transporter into another one that is the same company">
+                Merge into…
+              </Button>
               <Button variant="primary" onClick={() => onEdit(t)}>
                 Edit
               </Button>
             </DialogFooter>
           ) : null}
+    </ErpDialog>
+  );
+}
+
+/**
+ * Two rows for one company — "V.R.L." beside "VRL Logistics". Pick the one to
+ * keep; the impact pop-up then says how many bills, LRs and orders will be
+ * rewritten to its name before anything is written.
+ */
+function MergeTransporter({ from, rows, onClose }: { from: Transporter; rows: Transporter[]; onClose: () => void }) {
+  const others = rows.filter((r) => r.id !== from.id);
+  const [into, setInto] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const target = others.find((r) => r.id === into) ?? null;
+  if (confirming && target)
+    return (
+      <ErpImpactDialog
+        kind="erp-transporter-merge"
+        id={transporterMergeKey(from.id, target.id)}
+        confirmLabel="Merge"
+        onClose={onClose}
+        onDone={onClose}
+        act={(confirmation) => erpLogisticsMergeTransporter(from.id, target.id, confirmation)}
+      />
+    );
+  return (
+    <ErpDialog onClose={onClose} size="sm" label={`Merge ${from.name}`}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>Merge {from.name} into…</DialogTitle>
+      </DialogHeader>
+      <DialogBody>
+        <Field label="The transporter to keep" hint={`Every bill, LR, order and trip that says ${from.name} will say the kept name instead, its godowns and people move across, and ${from.name} leaves the list.`}>
+          <select value={into} onChange={(e) => setInto(e.target.value)} className={controlClass({ className: "h-8.5" })} autoFocus>
+            <option value="">Pick one…</option>
+            {others.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+                {r.active ? "" : " (not in use)"}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" disabled={!target} onClick={() => setConfirming(true)}>
+          Next: check what changes
+        </Button>
+      </DialogFooter>
     </ErpDialog>
   );
 }
@@ -349,9 +412,17 @@ function EditTransporter({
   /** Which draft a server error like `g3.place.city` is about. */
   const problemAt = problem ? Number(/^g(\d+)\./.exec(problem.field)?.[1] ?? 0) - 1 : -1;
 
+  /* A rename rewrites the name on every bill, LR and order carrying it, so it
+     goes through the impact pop-up first — the same check the server makes. */
+  const [renaming, setRenaming] = useState(false);
+  const newName = v.name.trim().replace(/\s+/g, " ");
+  const isRename = !!t && newName !== t.name;
+  const input = (confirmation?: ImpactConfirmation) => ({ id: t?.id ?? null, ...v, gstin: gst?.gstin ?? null, godowns: godowns.map(asInput), confirmation: confirmation ?? null });
+
   const save = () =>
+    isRename ? setRenaming(true) :
     run(
-      () => erpLogisticsTransporter({ id: t?.id ?? null, ...v, gstin: gst?.gstin ?? null, godowns: godowns.map(asInput) }),
+      () => erpLogisticsTransporter(input()),
       (r) => {
         if (r.ok) return onClose();
         const fe = r.fieldErrors?.[0];
@@ -382,7 +453,12 @@ function EditTransporter({
           {tab === "company" ? (
           <section>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Name (as it is written on bills and LRs)" error={errAt("name")} className="col-span-2">
+              <Field
+                label="Name (as it is written on bills and LRs)"
+                error={errAt("name")}
+                hint={isRename ? `Saving renames ${t?.name} on every bill, LR, order and trip that carries it — you will see how many first.` : undefined}
+                className="col-span-2"
+              >
                 <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
               </Field>
               <Field
@@ -502,6 +578,16 @@ function EditTransporter({
           </Button>
         </DialogFooter>
       </ErpDialog>
+      {renaming && t ? (
+        <ErpImpactDialog
+          kind="erp-transporter-rename"
+          id={transporterRenameKey(t.id, newName)}
+          confirmLabel="Rename and save"
+          onClose={() => setRenaming(false)}
+          onDone={onClose}
+          act={(confirmation) => erpLogisticsTransporter(input(confirmation))}
+        />
+      ) : null}
       {editing ? (
         <GodownDialog
           key={editing}

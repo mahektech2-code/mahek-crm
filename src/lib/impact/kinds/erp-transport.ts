@@ -1,7 +1,9 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpLrs, erpTransportPayments, erpTransports, erpTrips, orders } from "@/db/schema";
+import { erpLrs, erpTransportPayments, erpTransporters, erpTransports, erpTrips, orders } from "@/db/schema";
+import { readTransporterMergeKey, readTransporterRenameKey } from "@/lib/erp/transporter-keys";
+import { lrClashes, nameUses } from "@/lib/erp/transporter-rename";
 import { bookOrderRef, erpOrdersLive } from "@/lib/erp/book";
 import { CLOSED, lrUploadName, shortDay } from "@/lib/erp/engines/logistics";
 import { inrRate, nf } from "@/lib/erp/ui";
@@ -290,6 +292,64 @@ export const deliveryReopenImpact: ImpactSource = {
       confirmWord: String(t.orderNo),
       items: present(items),
       blockers: [],
+    };
+  },
+};
+
+/* ============================================= a transporter renamed or merged */
+
+const usesAsItems = (uses: { use: { label: string; one: string }; count: number }[], to: string): ImpactItem[] =>
+  present(uses.map(({ use, count }) => ({ app: "ERP", label: count === 1 ? use.one : use.label, effect: "changed" as const, count, note: `Will read "${to}".` })));
+
+export const transporterRenameImpact: ImpactSource = {
+  authorize: onTheDesk,
+
+  async report(key) {
+    const { id, name } = readTransporterRenameKey(key);
+    const [t] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, id));
+    if (!t || !name) return null;
+    const blockers: string[] = [];
+    const [other] = (await db.execute(sql`select name from erp_transporters where lower(name) = ${name.toLowerCase()} and id <> ${id} limit 1`)) as unknown as { name: string }[];
+    if (other) blockers.push(`${other.name} is already in the list. Close this and use Merge into… on ${t.name} to fold the two together.`);
+    const clash = await lrClashes(t.name, name);
+    if (clash.length) blockers.push(`${name} already has LRs numbered ${clash.slice(0, 5).join(", ")}, the same as ${t.name}'s — an LR number has to be unique for a transporter. Fix those LRs first.`);
+    const uses = await nameUses(t.name);
+    const items = usesAsItems(uses, name);
+    return {
+      title: `${t.name} → ${name}`,
+      verb: "Rename",
+      confirmWord: "RENAME",
+      items: items.length ? items : [{ app: "ERP", label: "Nothing else carries this name yet — only the transporter list changes", effect: "kept", count: 0 }],
+      blockers,
+    };
+  },
+};
+
+export const transporterMergeImpact: ImpactSource = {
+  authorize: onTheDesk,
+
+  async report(key) {
+    const { fromId, intoId } = readTransporterMergeKey(key);
+    if (!fromId || fromId === intoId) return null;
+    const [from] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, fromId));
+    const [into] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, intoId));
+    if (!from || !into) return null;
+    const clash = await lrClashes(from.name, into.name);
+    const blockers = clash.length
+      ? [`Both have LRs numbered ${clash.slice(0, 5).join(", ")} — an LR number has to be unique for a transporter. Void or fix the duplicate first.`]
+      : [];
+    const [{ n: godowns }] = (await db.execute(sql`select count(*)::int as n from erp_transporter_godowns where transporter_id = ${fromId}`)) as unknown as { n: number }[];
+    const items: ImpactItem[] = [
+      { app: "ERP", label: `${from.name} leaves the transporter list`, effect: "deleted", count: 1 },
+      ...usesAsItems(await nameUses(from.name), into.name),
+      { app: "ERP", label: Number(godowns) === 1 ? "godown, with its people" : "godowns, with their people", effect: "changed", count: Number(godowns), note: `Move to ${into.name}.` },
+    ];
+    return {
+      title: `${from.name} into ${into.name}`,
+      verb: "Merge",
+      confirmWord: "MERGE",
+      items: present(items),
+      blockers,
     };
   },
 };
