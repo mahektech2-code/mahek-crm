@@ -949,6 +949,7 @@ export const VERBS: Record<string, string> = {
   messageSkipped: "decided not to send a customer message about {}",
   packages: "corrected the boxes on {}",
   transporter: "edited a transporter on {}",
+  transporterMerge: "merged a transporter into {}",
   create: "added",
   created: "added",
   add: "added",

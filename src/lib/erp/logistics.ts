@@ -977,7 +977,7 @@ export async function mergeTransporter(ctx: ErpContext, fromId: string, intoId: 
   });
   const kept = (await transporters()).find((t) => t.id === intoId);
   if (kept) await db.update(erpTransporters).set(mirrorsFrom(kept.godowns)).where(eq(erpTransporters.id, intoId));
-  await erpAudit(ctx, "erp.logistics.transporter_merge", "erp_transporter", intoId, { merged: from }, { into: into.name, rewritten });
+  await erpAudit(ctx, "erp.logistics.transporterMerge", "erp_transporter", intoId, { merged: from }, { into: into.name, rewritten });
   const total = Object.values(rewritten).reduce((a, b) => a + b, 0);
   return okVoid(`${from.name} merged into ${into.name}${total ? ` — ${total} record${total === 1 ? "" : "s"} now say ${into.name}` : ""}`);
 }
