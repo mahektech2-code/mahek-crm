@@ -25,6 +25,18 @@ export type ColSpec = {
   w?: number;
 };
 
+/**
+ * A figure summed (or averaged) over a list's group. `missing` is the words
+ * for rows carrying no value — "without a weight" — and opts the aggregate
+ * into counting them: a total over a group where some rows could not be
+ * weighed is a part total, and the heading says so rather than printing it
+ * as though it were the whole.
+ */
+export type ListAgg = { k: string; l: string; t?: "avg"; missing?: string };
+
+/** A spec's aggregates as a list, whichever way it declared them. */
+export const aggsOf = (agg: ListAgg | ListAgg[] | undefined): ListAgg[] => (agg == null ? [] : Array.isArray(agg) ? agg : [agg]);
+
 /** A cell value. Money is PAISE; dates are ISO `YYYY-MM-DD`. */
 export type CellValue = string | number | null;
 
@@ -405,8 +417,8 @@ export type ListSpec = {
   /** Columns withheld by a power, named so the screen can say which. */
   hidden: { l: string; power: string }[];
   groups?: string[];
-  /** Aggregate on each group. */
-  agg?: { k: string; l: string; t?: "avg" };
+  /** Aggregate on each group — one, or several drawn side by side ("12 stickers · 480 kg"). */
+  agg?: ListAgg | ListAgg[];
   groupSel?: boolean;
   /**
    * Columns that belong to the GROUP rather than the line — an SFG batch's
