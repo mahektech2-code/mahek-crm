@@ -2003,6 +2003,20 @@
       "when": 1793486400000,
       "tag": "0288_price_incl_to_the_paisa",
       "breakpoints": true
+    },
+    {
+      "idx": 286,
+      "version": "7",
+      "when": 1793520000000,
+      "tag": "0289_erp_ledger_tick_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1793520060000,
+      "tag": "0290_orders_terms_index",
+      "breakpoints": true
     }
   ]
 }

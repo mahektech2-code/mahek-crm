@@ -151,12 +151,21 @@ async function lastPlaced(customerId: string): Promise<string | null> {
 }
 
 /** Shared by the single-customer and whole-book paths so they cannot drift. */
-async function writeCycle(
-  customerId: string,
+type CycleValues = {
+  days: number;
+  isDefault: boolean;
+  confidence: number | null;
+  lastOrder: string | null;
+  avg: number;
+  typical: number;
+};
+
+/** What one customer's cycle columns should read — worked out, not written. */
+function cycleValues(
   rows: Array<{ orderedAt: Date; totalAmount: number }>,
   config: Config,
   placedOn: string | null,
-): Promise<number> {
+): CycleValues {
   // In Asia/Kolkata, never UTC. These dates become the INTERVALS the cycle is
   // the median of, so an order placed at 2am read as the previous day shortens
   // one gap and lengthens its neighbour — and the cycle decides when the whole
@@ -191,12 +200,23 @@ async function writeCycle(
   // The latest order PLACED, which may be newer than the latest approved.
   const lastOrder = placedOn ?? dates.at(-1) ?? null;
 
+  return { days: cycle.days, isDefault: cycle.isDefault, confidence: cycle.confidence, lastOrder, avg, typical };
+}
+
+async function writeCycle(
+  customerId: string,
+  rows: Array<{ orderedAt: Date; totalAmount: number }>,
+  config: Config,
+  placedOn: string | null,
+): Promise<number> {
+  const v = cycleValues(rows, config, placedOn);
+
   /*
    * A WRITE THAT CHANGES NOTHING IS STILL A WRITE, and this one ran over the
    * whole book every thirty minutes.
    *
-   * `recomputeAllBuyingCycles` calls this once per customer on every sheet
-   * projection, and a median over a year of orders does not move between two
+   * `recomputeAllBuyingCycles` writes the same values over the whole book on
+   * every sheet projection (in batches, with this same gate), and a median over a year of orders does not move between two
    * passes an hour apart — so on a book of 5,925 customers roughly 5,925 rows
    * were rewritten per cycle with identical contents. Postgres has no in-place
    * update: every one of those wrote a new tuple, a WAL record and a dirty
@@ -227,24 +247,24 @@ async function writeCycle(
   const result = await db
     .update(customers)
     .set({
-      cycleDays: cycle.days,
-      cycleIsDefault: cycle.isDefault,
-      cycleConfidence: cycle.confidence,
-      lastOrderDate: lastOrder,
-      avgOrderValue: avg,
-      typicalOrderPaise: typical,
+      cycleDays: v.days,
+      cycleIsDefault: v.isDefault,
+      cycleConfidence: v.confidence,
+      lastOrderDate: v.lastOrder,
+      avgOrderValue: v.avg,
+      typicalOrderPaise: v.typical,
       updatedAt: new Date(),
     })
     .where(
       and(
         eq(customers.id, customerId),
         sql`(
-          "customers"."cycle_days" is distinct from ${cycle.days}::int
-          or "customers"."cycle_is_default" is distinct from ${cycle.isDefault}::boolean
-          or "customers"."cycle_confidence" is distinct from ${cycle.confidence}::int
-          or "customers"."last_order_date" is distinct from ${lastOrder}::date
-          or "customers"."avg_order_value" is distinct from ${avg}::bigint
-          or "customers"."typical_order_paise" is distinct from ${typical}::bigint
+          "customers"."cycle_days" is distinct from ${v.days}::int
+          or "customers"."cycle_is_default" is distinct from ${v.isDefault}::boolean
+          or "customers"."cycle_confidence" is distinct from ${v.confidence}::int
+          or "customers"."last_order_date" is distinct from ${v.lastOrder}::date
+          or "customers"."avg_order_value" is distinct from ${v.avg}::bigint
+          or "customers"."typical_order_paise" is distinct from ${v.typical}::bigint
         )`,
       ),
     );
@@ -295,9 +315,44 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
   // Every one of these is a real tuple, and on a projection that runs every
   // thirty minutes the difference between the two numbers is the whole point:
   // the book is visited in full and is expected to be written almost never.
+  /*
+   * A THOUSAND CUSTOMERS A STATEMENT, NOT ONE.
+   *
+   * This was `writeCycle` once per customer: six thousand round trips every
+   * thirty minutes, on the one-CPU droplet that is serving the ERP and the CRM
+   * at the same moment, to write — in steady state — nothing. The values are
+   * the same `cycleValues` the per-customer path writes, and the gate is the
+   * same comparison of what would be written against what is stored, so a row
+   * that has not moved is still not rewritten.
+   */
   let written = 0;
-  for (const { id } of ids) {
-    written += await writeCycle(id, byCustomer.get(id) ?? [], config, placedBy.get(id) ?? null);
+  for (let i = 0; i < ids.length; i += 1000) {
+    const batch = ids.slice(i, i + 1000).map(({ id }) => {
+      const v = cycleValues(byCustomer.get(id) ?? [], config, placedBy.get(id) ?? null);
+      return { id, cycle_days: v.days, cycle_is_default: v.isDefault, cycle_confidence: v.confidence, last_order_date: v.lastOrder, avg_order_value: v.avg, typical_order_paise: v.typical };
+    });
+    const moved = (await db.execute(sql`
+      update customers c
+         set cycle_days = v.cycle_days,
+             cycle_is_default = v.cycle_is_default,
+             cycle_confidence = v.cycle_confidence,
+             last_order_date = v.last_order_date,
+             avg_order_value = v.avg_order_value,
+             typical_order_paise = v.typical_order_paise,
+             updated_at = now()
+        from jsonb_to_recordset(${JSON.stringify(batch)}::jsonb)
+             as v(id text, cycle_days int, cycle_is_default boolean, cycle_confidence int,
+                  last_order_date date, avg_order_value bigint, typical_order_paise bigint)
+       where c.id = v.id
+         and (c.cycle_days is distinct from v.cycle_days
+              or c.cycle_is_default is distinct from v.cycle_is_default
+              or c.cycle_confidence is distinct from v.cycle_confidence
+              or c.last_order_date is distinct from v.last_order_date
+              or c.avg_order_value is distinct from v.avg_order_value
+              or c.typical_order_paise is distinct from v.typical_order_paise)
+      returning c.id
+    `)) as unknown as unknown[];
+    written += moved.length;
   }
   return written;
 }
