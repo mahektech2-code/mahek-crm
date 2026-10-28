@@ -14,7 +14,7 @@ import { gateTo } from "@/lib/engines/lead-gates";
 import { PROSPECT_REVIEW_AUDIT, PROSPECT_REVIEW_NEXT, prospectReviewStateOf } from "@/lib/prospect-review";
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { leadGateInput, leadRow } from "@/lib/services/lead-service";
-import { requireProspectVerifier } from "@/lib/services/prospect-verifier";
+import { answersMissing, requireProspectVerifier } from "@/lib/services/prospect-verifier";
 import { openQualificationAfterVerification } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf, settleProspectRequest } from "@/lib/services/lead-prospect-request-service";
 import { returnProspectRequest } from "@/lib/actions/lead-calling-desk";
@@ -114,8 +114,9 @@ export async function confirmProspectReview(input: z.input<typeof confirmSchema>
     const gate = await leadGateInput(customerId);
     if (!gate) return err("That lead is not on MahekOne.", "not_found");
     const verdict = gateTo({ ...gate, prospectReasonRecorded: true }, "prospect");
-    if (!verdict.open) {
-      return err(`Not ready to confirm: ${verdict.missing.map((c) => c.says).join("; ")}.`, "rule_violation");
+    const missing = answersMissing(verdict.missing);
+    if (missing.length) {
+      return err(`Not ready to confirm: ${missing.map((c) => c.says).join("; ")}.`, "rule_violation");
     }
 
     const now = new Date();

@@ -6,6 +6,8 @@ import { db } from "@/db";
 import { appAccess, auditLog, customers, mbosLeadValidations, notifications, products, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
+import { recordLeadValidationCall } from "@/lib/actions/leads";
+import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { confirmProspectReview, resubmitProspectForReview, returnProspectForCorrection } from "@/lib/actions/prospect-review";
 import { loadQualificationReview } from "@/lib/services/lead-qualification-review-service";
 import { PROSPECT_REVIEW_AUDIT, PROSPECT_REVIEW_NEXT } from "@/lib/prospect-review";
@@ -223,5 +225,45 @@ describe("Qualification onward is untouched", () => {
     const after = await row(lead.id);
     assert.equal(after.leadStage, "qualification");
     assert.equal(after.leadQualificationReview, null);
+  });
+});
+
+describe("the Verify call cannot get past what the review enforces", () => {
+  test("a lead.verify holder who is not the designated verifier cannot verify by a call", async () => {
+    const lead = await prospect();
+    setTestUser(otherMgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    assert.equal(r.ok, false);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.leadVerifiedAt, null);
+  });
+
+  test("the Sales Manager Verify dialog is refused for the same person", async () => {
+    const lead = await prospect();
+    setTestUser(otherMgr);
+    const r = await verifyProspect({
+      customerId: lead.id, outcome: "verified", answers: {}, corrections: [], expectCorrections: false,
+    } as never);
+    assert.equal(r.ok, false);
+    assert.equal((await row(lead.id)).leadVerifiedAt, null);
+  });
+
+  test("a call cannot verify while required Prospect answers are missing", async () => {
+    const lead = await prospect({ gstin: null, leadCompetitor: null });
+    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /Not ready to verify/);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.leadVerifiedAt, null);
+  });
+
+  test("the designated verifier can still verify by a call", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "qualification");
   });
 });

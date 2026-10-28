@@ -2,6 +2,8 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
+import { gateTo } from "@/lib/engines/lead-gates";
+import { leadGateInput } from "./lead-service";
 import { approverFor, canVerifyLeadById, deskApprover, holdsLeadSeat, orgModeOn, requireLeadVerifier } from "./lead-verifier";
 
 /* ---------------------------------------------------------------------------
@@ -36,7 +38,7 @@ const NO_DESIGNATED =
 
 async function resolvedWithoutOrgChart(user: { id: string }, customerId: string): Promise<boolean> {
   const [lead] = await db
-    .select({ ownerId: customers.ownerId, salesManagerId: customers.salesManagerId })
+    .select({ ownerId: customers.ownerId, salesManagerId: customers.salesManagerId, leadManagerId: customers.leadManagerId })
     .from(customers)
     .where(eq(customers.id, customerId))
     .limit(1);
@@ -44,6 +46,8 @@ async function resolvedWithoutOrgChart(user: { id: string }, customerId: string)
   const configured = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
   if (configured?.id === user.id) return true;
   if (await holdsLeadSeat(user, lead.salesManagerId)) return true;
+  /* The lead manager seat is the hand-off's last named person (see `qualification-approver`). */
+  if (lead.leadManagerId === user.id && lead.ownerId !== user.id) return true;
   return (await deskApprover())?.id === user.id;
 }
 
@@ -60,4 +64,35 @@ export async function canDecideProspect(user: { id: string; role: string }, cust
   if (!(await canVerifyLeadById(user, customerId, { designated: true }))) return false;
   if (await orgModeOn()) return true;
   return resolvedWithoutOrgChart(user, customerId);
+}
+
+/**
+ * Null where this Prospect's Suspect and Prospect answers are all in, otherwise
+ * the sentence to refuse with. The SAME verdict the review's Confirm asks
+ * (`gateTo(…, "prospect")`), so verifying by a call cannot get past a lead the
+ * review would hold. Only a lead standing at Prospect is judged: a desk's request
+ * is gated by the move that promotes it, and a lead already past Prospect is
+ * being re-verified, not opened.
+ */
+/**
+ * What is missing from the ANSWERS. "What happens next, and when?" is left out:
+ * it is the workflow's own marker — the verification is the very step it names —
+ * and a lead waiting on this decision is, by definition, waiting on it.
+ */
+export function answersMissing<T extends { id: string }>(missing: readonly T[]): T[] {
+  return missing.filter((c) => c.id !== "next_action");
+}
+
+export async function prospectVerificationRefusal(customerId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ stage: customers.leadStage })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  if (row?.stage !== "prospect") return null;
+  const gate = await leadGateInput(customerId);
+  if (!gate) return null;
+  const verdict = gateTo({ ...gate, prospectReasonRecorded: true }, "prospect");
+  const missing = answersMissing(verdict.missing);
+  return missing.length ? `Not ready to verify: ${missing.map((c) => c.says).join("; ")}.` : null;
 }

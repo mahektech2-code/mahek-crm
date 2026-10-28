@@ -65,6 +65,7 @@ async function makeUser(name: string, level: Level, apps: [string, Level][], mod
 }
 
 const prospectFields = () => ({
+  gstin: "27ABCDE1234F1Z5",
   customerType: "retailer" as const,
   leadMonthlyVolumeLitres: 300,
   leadEstimatedPotentialPaise: 9_000_000,

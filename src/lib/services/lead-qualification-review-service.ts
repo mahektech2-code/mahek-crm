@@ -19,7 +19,7 @@ import { gateTo } from "@/lib/engines/lead-gates";
 import { requestOf } from "./lead-prospect-request-service";
 import { leadGateInput, leadRow } from "./lead-service";
 import { canVerifyLeadById, creatorFactsFor, qualificationCollectorRefusal } from "./lead-verifier";
-import { canDecideProspect } from "./prospect-verifier";
+import { answersMissing, canDecideProspect } from "./prospect-verifier";
 import { assertDesignatedQualificationApprover, designatedQualificationApprover } from "./qualification-approver";
 
 /* ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ export async function loadQualificationReview(
   const blockers = !gate
     ? []
     : kind === "prospect"
-      ? gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing.map((c) => c.says)
+      ? answersMissing(gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing).map((c) => c.says)
       : confirmBlockers(gate);
 
   /* History: approver edits, verdicts and resubmissions, newest first. */
