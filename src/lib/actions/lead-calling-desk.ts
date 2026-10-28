@@ -1175,7 +1175,7 @@ export async function requestProspect(
         title: `${lead.name} is ready to verify`,
         body: `${ctx.user.name} ${resubmitted ? "resubmitted" : "asked for"} ${lead.name} to be put forward as a Prospect after qualifying it by phone. It is not a Prospect until you verify it.`,
         kind: "info",
-        href: `/crm/leads/${p.customerId}/verify`,
+        href: `/crm/leads/${p.customerId}/review`,
       }).then(() => {
         managerNotified = true;
       });
@@ -1347,7 +1347,7 @@ export async function convertLeadToProspect(
         title: `${lead.name} is ready to verify`,
         body: `${ctx.user.name} created a Prospect from ${lead.name}. Qualification opens when you verify it.`,
         kind: "info",
-        href: `/crm/leads/${p.customerId}/verify`,
+        href: `/crm/leads/${p.customerId}/review`,
       }).catch(() => {});
     }
 
