@@ -141,3 +141,64 @@ export async function shrinkPhoto(file: File, max = 1600): Promise<Blob> {
     return file;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * A SCANNING GUN IS A KEYBOARD. Paired over Bluetooth it types the label's
+ * code and presses Enter, so the scan screen keeps an invisible box focused
+ * to catch it — `inputMode="none"` keeps the on-screen keyboard shut, because
+ * nobody is typing. A gun set to send no Enter, or a Tab, is caught by the
+ * pause after the last character: a gun types a whole code in milliseconds.
+ * ------------------------------------------------------------------------- */
+
+export function GunInput({ onCode }: { onCode: (code: string) => void }) {
+  const field = useRef<HTMLInputElement>(null);
+  const idle = useRef(0);
+  const send = useRef(onCode);
+  useEffect(() => {
+    send.current = onCode;
+  }, [onCode]);
+  useEffect(() => () => window.clearTimeout(idle.current), []);
+
+  const flush = () => {
+    window.clearTimeout(idle.current);
+    const el = field.current;
+    const code = (el?.value ?? "").trim();
+    if (el) el.value = "";
+    if (code.length >= 3) send.current(code);
+  };
+  return (
+    <input
+      ref={field}
+      autoFocus
+      inputMode="none"
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      tabIndex={-1}
+      aria-hidden
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          flush();
+        }
+      }}
+      onInput={() => {
+        window.clearTimeout(idle.current);
+        idle.current = window.setTimeout(flush, 150);
+      }}
+      /* A tap elsewhere takes the focus; the gun needs it back. */
+      onBlur={() => window.setTimeout(() => field.current?.focus(), 200)}
+      style={{ position: "absolute", width: "1px", height: "1px", opacity: 0, left: "-10px", top: "-10px", border: "none", padding: 0 }}
+    />
+  );
+}
+
+const BUZZ = { ok: [70], warn: [70, 90, 70], bad: [450, 120, 450] };
+
+/** A buzz says how the scan went without the loader looking at the phone. */
+export function buzz(kind: keyof typeof BUZZ) {
+  try {
+    navigator.vibrate?.(BUZZ[kind]);
+  } catch {}
+}

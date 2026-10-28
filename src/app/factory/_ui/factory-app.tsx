@@ -57,8 +57,8 @@ import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
-import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey, type LorryUi, LORRY0 } from "./model";
+import { buzz, CameraScanner, GunInput, shrinkPhoto } from "./camera";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, type Feed, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey, type LorryUi, LORRY0 } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -88,6 +88,7 @@ const MISMATCH_REASONS = ["Not entered yet", "Used in production", "Moved to ano
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
 const LI: Record<Lang, number> = { en: 0, hi: 1, mr: 2 };
 const LANG_SPEECH: Record<Lang, string> = { en: "en-IN", hi: "hi-IN", mr: "mr-IN" };
+const boxesOn = (n: number) => n + (n === 1 ? " box" : " boxes") + " on this order";
 const HELP: [string, string, string, string, string[]][] = [
   ["scan", "How to scan a label", "0:40", "qr", ["Hold the phone 20 cm from the label.", "Keep the QR inside the green box.", 'If it is torn, tap "Choose by photo".']],
   ["mixing", "Saving a mixing batch", "1:20", "flask", ["Scan each drum before you pour.", "Enter how many litres you poured.", "Read the tank gauge and enter litres made."]],
@@ -103,6 +104,9 @@ const NEW_LORRY = "new-lorry:";
 export class FactoryApp extends Component<Props, State> {
   private ivs: number[] = [];
   private tt = 0;
+  /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
+  private scanQ: string[] = [];
+  private scanRunning = false;
   private ot = 0;
   private photoInput: HTMLInputElement | null = null;
 
@@ -599,6 +603,7 @@ export class FactoryApp extends Component<Props, State> {
   /* ================================================================ scanning */
 
   openScan(purpose: ScanPurpose, meta?: ScanMeta) {
+    this.scanQ = [];
     this.setState({ scan: { purpose, meta: meta || {}, res: null, torch: false }, cam: "wait" });
   }
 
@@ -659,15 +664,93 @@ export class FactoryApp extends Component<Props, State> {
     if (!sc || !raw) return;
     const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
     /* The text stays: a code the server refuses comes back to the box to fix, not to an empty one. */
-    void this.doScan(code);
+    this.intake(code);
+  }
+
+  /**
+   * Every scan arrives here — the camera, a scanning gun, a tapped test label.
+   * LOADING TAKES THEM IN A LINE and checks them one at a time, in the order
+   * they were made; anything else is read as it always was.
+   */
+  intake(code: string) {
+    const sc = this.state.scan;
+    if (!sc) return;
+    if (sc.purpose !== "load") return void this.doScan(code);
+    /* A refused box is never scanned past: nothing counts until the loader has seen why. */
+    if (this.halted()) {
+      buzz("bad");
+      return this.toast("Not counted. Tap the card first, then scan it again.", "warn");
+    }
+    this.scanQ.push(code);
+    void this.pumpScans();
+  }
+
+  /** The loading scan screen is waiting on the loader: a refusal, a lorry to pick, an override, or how many to load from a lot. */
+  halted(): boolean {
+    const st = this.state;
+    return !!st.scan?.res || !!st.lorry.res || !!st.lorry.ask || !!st.lorry.pick || !!st.sheet;
+  }
+
+  async pumpScans() {
+    if (this.scanRunning) return;
+    this.scanRunning = true;
+    try {
+      while (this.scanQ.length && this.state.scan?.purpose === "load" && !this.halted()) {
+        await this.doScan(this.scanQ.shift()!);
+        await new Promise<void>((done) => this.setState({}, done));
+        if (!this.halted()) continue;
+        /* What came in behind it is not counted: the loader is told how many, to scan them again. */
+        const dropped = this.scanQ.length;
+        this.scanQ = [];
+        this.alarm(dropped);
+      }
+    } finally {
+      this.scanRunning = false;
+    }
+  }
+
+  /** A box that went on: a band over the camera and a short buzz. Nothing to tap — the next scan is taken at once. */
+  fed(tone: "ok" | "warn", code: string, title: string, text: string, count?: string) {
+    const sc = this.state.scan;
+    if (!sc) return;
+    buzz(tone);
+    this.setState({ scan: { ...sc, res: null, typed: sc.typed != null ? "" : sc.typed, feed: { tone, code, title, text, count, at: Date.now() } } });
+  }
+
+  /** A refused loading scan: a long buzz and the reason said out loud, for a loader who is not looking at the phone. */
+  alarm(dropped: number) {
+    const st = this.state, sc = st.scan;
+    if (sc && dropped) this.setState({ scan: { ...sc, dropped } });
+    const said = st.lorry.res?.tone === "bad" ? st.lorry.res.title : sc?.res && !sc.res.ok ? sc.res.title : null;
+    if (!said) {
+      if (dropped) this.toast(dropped + (dropped === 1 ? " scan was" : " scans were") + " not counted. Scan " + (dropped === 1 ? "it" : "them") + " again after this.", "warn");
+      return;
+    }
+    buzz("bad");
+    try {
+      const u = new window.SpeechSynthesisUtterance(said);
+      u.lang = LANG_SPEECH[st.lang];
+      u.rate = 0.95;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch {
+      /* No voice in this browser: the buzz and the red card still say it. */
+    }
+  }
+
+  /** The loader has read the refusal: the camera and the gun count again. */
+  clearRefusal() {
+    const sc = this.state.scan;
+    this.setLorry({ res: null });
+    if (sc) this.setState({ scan: { ...sc, res: null, dropped: 0 } });
   }
 
   async doScan(code: string, manual?: boolean) {
     const st = this.state, sc = st.scan;
     if (!sc || sc.res) return;
     if (st.lorry.res || st.lorry.pick || st.lorry.ask) return;
-    if (sc.purpose === "load" && st.flow && isLorryTask(st.flow.task)) return void this.lorryScanCode(code);
-    if (sc.purpose === "home" && st.me?.dispatch && boxCode(code)) return void this.lorryFindCode(boxCode(code)!);
+    if (sc.purpose === "load" && st.flow && isLorryTask(st.flow.task)) return this.lorryScanCode(code);
+    if (sc.purpose === "home" && st.me?.dispatch && boxCode(code)) return this.lorryFindCode(boxCode(code)!);
     if (sc.purpose === "drum") {
       try {
         const r = await call("drumLookup", code);
@@ -697,7 +780,7 @@ export class FactoryApp extends Component<Props, State> {
     }
     if (sc.purpose === "load" && st.flow?.task.order) {
       const order = st.flow.task.order, box = boxCode(code);
-      if (box || !lotGiven(this.db(), order, code)) return void this.scanOntoOrder(order, box ?? code, !!box, manual);
+      if (box || !lotGiven(this.db(), order, code)) return this.scanOntoOrder(order, box ?? code, !!box, manual);
     }
     const r = resolveScan(code, { db: this.db(), purpose: sc.purpose, meta: sc.meta, area: st.me?.head ? "head" : st.me?.area, areas: st.me && !st.me.head ? myDepts(st.me) : undefined, task: st.flow?.task, d: st.flow?.d });
     this.setState({ scan: { ...sc, res: { ...r, manual: !!manual } } });
@@ -715,6 +798,7 @@ export class FactoryApp extends Component<Props, State> {
     const fail = (title: string, text: string, fix: string) => this.setState({ scan: { ...sc, res: { ok: false, code, title, text, fix } } });
     try {
       const r = await call("scanBox", order, code);
+      if (!r.ok && r.repeat) return this.fed("warn", code, "Already loaded — not counted again", r.text, r.board ? boxesOn(r.board.boxes.length) : undefined);
       if (!r.ok) return fail(r.title, r.text, r.fix);
       const db = r.data ?? this.db();
       if (r.data) this.setState({ db: r.data });
@@ -725,8 +809,7 @@ export class FactoryApp extends Component<Props, State> {
           z.loads = { ...(z.loads ?? {}) };
           for (const lot of Object.keys(r.board.perLot)) if (given.has(lot)) z.loads[lot] = r.board.perLot[lot];
         });
-        this.setState({ scan: { ...sc, res: null } });
-        return this.toast(r.message);
+        return this.fed("ok", code, "Box loaded", r.message, boxesOn(r.board.boxes.length));
       }
       const st = this.state;
       const res = resolveScan(code, { db, purpose: "load", meta: sc.meta, area: st.me?.head ? "head" : st.me?.area, areas: st.me && !st.me.head ? myDepts(st.me) : undefined, task: st.flow?.task, d: st.flow?.d });
@@ -857,7 +940,12 @@ export class FactoryApp extends Component<Props, State> {
       const r = await call("lorryScan", key, code, f.task.id.startsWith(NEW_LORRY) ? null : f.task.id);
       this.applyLorry(key, r.board, r.ok ? r.data : null);
       if (r.task) this.adoptLorryJob(r.task, r.ok ? r.data : null);
-      this.setLorry({ busy: false, res: r.ok ? { tone: r.tone, code: r.code, title: r.title, text: r.message } : { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
+      this.setLorry({ busy: false });
+      /* What went on is a band and a buzz; only a refusal stops the loader. */
+      const l = r.board?.lorry, count = l ? nf(l.loaded) + " of " + nf(l.target) + " loaded" : undefined;
+      if (r.ok) this.fed(r.tone, r.code, r.title, r.message, count);
+      else if (r.repeat) this.fed("warn", r.code, "Already on — not counted again", r.text, count);
+      else this.setLorry({ res: { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
     } catch (e) {
       this.setLorry({ busy: false });
       if (!(e instanceof NotReceived)) throw e;
@@ -1072,8 +1160,28 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   /** The answer to a scan on the lorry, shown big over the camera. */
+  /** The last box that went on, as a band over the camera: green on, amber already on. It stays until the next scan replaces it. */
+  renderFeed(fd: Feed): ReactNode {
+    const ok = fd.tone === "ok";
+    return (
+      <div key={fd.at} role="status" style={{ flex: "none", margin: "0 12px 4px 12px", borderRadius: "18px", overflow: "hidden", background: ok ? "#1D7A45" : "#B77B08", color: "#FFFFFF", padding: "12px 16px", position: "relative", zIndex: 2, animation: "fx-up 160ms cubic-bezier(0.2,0,0.2,1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: "22px", lineHeight: "28px", fontWeight: 800 }}>{(ok ? "✓ " : "↺ ") + fd.title}</span>
+          {!!fd.count && <span style={{ flex: "none", fontSize: "15px", fontWeight: 800, background: "rgba(255,255,255,0.18)", borderRadius: "12px", padding: "4px 10px" }}>{fd.count}</span>}
+        </div>
+        <div style={{ ...mono, fontSize: "14px", fontWeight: 600, marginTop: "2px", opacity: 0.9 }}>{fd.code}</div>
+        <div style={{ fontSize: "15px", lineHeight: "21px", marginTop: "4px" }}>{fd.text}</div>
+      </div>
+    );
+  }
+
+  /** Scans that came in behind a refusal: said, so nobody believes they were counted. */
+  droppedNote(n: number): ReactNode {
+    return <div style={{ marginTop: "10px", padding: "12px 14px", borderRadius: "12px", background: "#FCECEC", color: "#B3261E", fontSize: "15px", lineHeight: "22px", fontWeight: 700 }}>{n + (n === 1 ? " scan after this one was" : " scans after this one were") + " not counted. Scan " + (n === 1 ? "it" : "them") + " again."}</div>;
+  }
+
   renderLorryRes(): ReactNode {
-    const T = this.T(), r = this.state.lorry.res!;
+    const r = this.state.lorry.res!;
     const col = r.tone === "ok" ? "#1D7A45" : r.tone === "warn" ? "#B77B08" : "#B3261E";
     const ov = r.override ?? [];
     return (
@@ -1084,9 +1192,10 @@ export class FactoryApp extends Component<Props, State> {
             <div style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{r.code}</div>
             <div style={{ fontSize: "17px", lineHeight: "24px", marginTop: "6px" }}>{r.text}</div>
             {!!r.fix && <div style={{ marginTop: "12px", padding: "12px 14px", borderRadius: "12px", background: "#F7F8FA", fontSize: "15px", lineHeight: "22px" }}><span style={{ fontWeight: 700 }}>What to do: </span>{r.fix}</div>}
+            {!!this.state.scan?.dropped && this.droppedNote(this.state.scan.dropped)}
             <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
               {ov.length > 0 && <button onClick={() => this.setLorry({ ask: { code: r.code, items: ov, sku: ov.length === 1 ? ov[0].sku : null, reason: "", busy: false, err: "" } })} style={{ ...btn("s", 58), flex: 1 }}>Ask for an override</button>}
-              <button onClick={() => this.setLorry({ res: null })} style={{ ...btn("p", 58), flex: 1 }}>{r.tone === "bad" ? T.scanAgain : "Scan next"}</button>
+              <button onClick={() => this.clearRefusal()} style={{ ...btn("p", 58), flex: 1 }}>{r.tone === "bad" ? "OK, scan next" : "Scan next"}</button>
             </div>
           </div>
         </div>
@@ -3081,7 +3190,7 @@ export class FactoryApp extends Component<Props, State> {
             <div style={{ fontSize: "12px", fontWeight: 600, color: "#9BA3B2", marginTop: "6px" }}>{T.testLabels}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
               {labels.map((b) => (
-                <button key={b.code} onClick={() => void this.doScan(b.code)} style={{ padding: "8px 12px", borderRadius: "12px", border: "1px solid " + (b.good ? "rgba(198,255,52,0.45)" : "rgba(255,255,255,0.2)"), background: "rgba(255,255,255,0.06)", color: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
+                <button key={b.code} onClick={() => this.intake(b.code)} style={{ padding: "8px 12px", borderRadius: "12px", border: "1px solid " + (b.good ? "rgba(198,255,52,0.45)" : "rgba(255,255,255,0.2)"), background: "rgba(255,255,255,0.06)", color: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
                   <span style={{ display: "block", ...mono, fontSize: "13px", fontWeight: 600 }}>{b.code}</span>
                   <span style={{ display: "block", fontSize: "11px", opacity: 0.75, marginTop: "1px" }}>{b.what}</span>
                 </button>
@@ -3099,19 +3208,21 @@ export class FactoryApp extends Component<Props, State> {
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? taskName(this.db(), f.task)) : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each pallet before loading", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box as it goes on. A scanning gun works too.", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1 && !(P === "load" && f && isLorryTask(f.task));
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (this.props.dev || st.cam === "none") ? this.scanLabels() : [];
     const corner = (pos: CSSProperties, b: string, rad: string): ReactNode => <span style={{ position: "absolute", width: "44px", height: "44px", ...pos, [b.split("|")[0]]: "5px solid #C6FF34", [b.split("|")[1]]: "5px solid #C6FF34", borderRadius: rad } as CSSProperties} />;
     return (
       <div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
-        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || !!st.lorry.res || !!st.lorry.pick || !!st.lorry.ask} onCode={(c) => void this.doScan(c)} onState={(s) => this.camState(s)} />}
+        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || !!st.lorry.res || !!st.lorry.pick || !!st.lorry.ask} onCode={(c) => this.intake(c)} onState={(s) => this.camState(s)} />}
+        {!typing && !st.lorry.ask && <GunInput onCode={(c) => this.intake(c)} />}
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <button onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</button>
           <span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</span>
           {typing ? <span style={{ width: "48px", height: "48px", flex: "none" }} /> : <button onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</button>}
         </div>
+        {P === "load" && !!sc.feed && this.renderFeed(sc.feed)}
         {typing ? this.renderTyping(labels) : (
           <>
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>
@@ -3131,7 +3242,7 @@ export class FactoryApp extends Component<Props, State> {
                 <div style={{ fontSize: "12px", fontWeight: 600, color: "#9BA3B2" }}>{T.testLabels}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px", maxHeight: "150px", overflowY: "auto" }}>
                   {labels.map((b) => (
-                    <button key={b.code} onClick={() => void this.doScan(b.code)} style={{ padding: "8px 12px", borderRadius: "12px", border: "1px solid " + (b.good ? "rgba(198,255,52,0.45)" : "rgba(255,255,255,0.2)"), background: "rgba(255,255,255,0.06)", color: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
+                    <button key={b.code} onClick={() => this.intake(b.code)} style={{ padding: "8px 12px", borderRadius: "12px", border: "1px solid " + (b.good ? "rgba(198,255,52,0.45)" : "rgba(255,255,255,0.2)"), background: "rgba(255,255,255,0.06)", color: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
                       <span style={{ display: "block", ...mono, fontSize: "13px", fontWeight: 600 }}>{b.code}</span>
                       <span style={{ display: "block", fontSize: "11px", opacity: 0.75, marginTop: "1px" }}>{b.what}</span>
                     </button>
@@ -3158,9 +3269,10 @@ export class FactoryApp extends Component<Props, State> {
                   </div>
                   <div style={{ fontSize: "16px", lineHeight: "23px", color: "#1A1E28", marginTop: "12px" }}>{r.text}</div>
                   <div style={{ marginTop: "12px", padding: "12px 14px", borderRadius: "12px", background: "#F7F8FA", fontSize: "15px", lineHeight: "22px", color: "#1A1E28" }}><span style={{ fontWeight: 700 }}>What to do: </span>{r.fix}</div>
+                  {!!sc.dropped && this.droppedNote(sc.dropped)}
                   <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                     <button onClick={() => this.speak(r.title + ". " + r.fix)} aria-label={T.listen} style={{ ...btn("s", 58), width: "64px", flex: "none" }}>{ic("speaker", 20)}</button>
-                    <button onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("p", 58), flex: 2 }}>{typing ? T.retry : T.scanAgain}</button>
+                    <button onClick={() => this.clearRefusal()} style={{ ...btn("p", 58), flex: 2 }}>{P === "load" ? "OK, scan next" : typing ? T.retry : T.scanAgain}</button>
                   </div>
                 </div>
               )}

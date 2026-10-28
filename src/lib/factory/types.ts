@@ -350,7 +350,7 @@ export type LorryBoard = { lorry: Lorry | null; boxes: LorryBox[]; overrides: Lo
 
 export type LorryScan =
   | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null }
-  | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null };
+  | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null; repeat?: boolean };
 
 /** A box scanned on Home: which lorries still need its item. */
 export type LorryFind =
@@ -359,7 +359,7 @@ export type LorryFind =
 
 export type BoxScan =
   | { ok: true; code: string; message: string; board: LoadBoard; data: FactoryData | null }
-  | { ok: false; code: string; title: string; text: string; fix: string; board: LoadBoard | null };
+  | { ok: false; code: string; title: string; text: string; fix: string; board: LoadBoard | null; repeat?: boolean };
 
 /** What a box label is, for the home scan. */
 export type BoxInfo = { ok: true; line: string } | { ok: false; title: string; text: string; fix: string };
