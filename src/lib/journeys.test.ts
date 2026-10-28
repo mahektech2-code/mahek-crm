@@ -52,7 +52,6 @@ import {
   mbosDeletions,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
-import { impactReport } from "@/lib/impact/registry";
 import { customerStatusLabel } from "@/lib/format";
 import {
   seedConfig,
