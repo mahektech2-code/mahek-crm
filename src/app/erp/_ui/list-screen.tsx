@@ -6,7 +6,7 @@ import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
-import { cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
+import { aggsOf, cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
@@ -971,9 +971,14 @@ export function ListScreen({
                       if (gk) {
                         const g = lp.groupOf[r.id] ?? "";
                         if (g !== lastG) {
-                          const grp = lp.groups[g] ?? { n: 0, agg: null, ids: [], head: {} };
+                          const grp = lp.groups[g] ?? { n: 0, agg: [], ids: [], head: {} };
                           let aggText = `${nf(grp.n)} ${grp.n === 1 ? "row" : "rows"}`;
-                          if (spec.agg && grp.agg != null) aggText += ` · ${colOf(spec.agg.k).t === "m" ? inr(grp.agg) : nf(grp.agg)} ${spec.agg.l}`;
+                          aggsOf(spec.agg).forEach((a, i) => {
+                            const got = grp.agg[i];
+                            if (got == null) return;
+                            aggText += ` · ${colOf(a.k).t === "m" ? inr(got.v) : nf(got.v)} ${a.l}`;
+                            if (got.missing) aggText += ` (${nf(got.missing)} ${got.missing === 1 ? "row" : "rows"} ${a.missing})`;
+                          });
                           const allSel = grp.ids.every((id) => sel[id]);
                           out.push(
                             <Tr key={`g:${g}`} className="bg-canvas">

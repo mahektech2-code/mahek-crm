@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 import { validPeriod } from "./period";
-import { cellText, type ColSpec, type ListRow, type ListSpec, type Tone } from "./ui";
+import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type Tone } from "./ui";
 
 export type ListSort = { k: string; d: 1 | -1 };
 
@@ -103,8 +103,12 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
 export type ListGroup = {
   /** Rows in the whole group, not just the part on this page. */
   n: number;
-  /** The spec's aggregate over the whole group, already summed or averaged. */
-  agg: number | null;
+  /**
+   * The spec's aggregates over the whole group, already summed or averaged,
+   * in the spec's order; null where the list does not carry that column.
+   * `missing` counts the rows with no value, for an aggregate that asks.
+   */
+  agg: ({ v: number; missing: number } | null)[];
   /** Every id in the group, for "Select all" on a group. */
   ids: string[];
   /** The group's first row's values, for the facts drawn in its header. */
@@ -311,11 +315,12 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
       groupOf[row.id] = g;
       if (groups[g]) continue;
       const rs = r.by.get(g) ?? [];
-      let agg: number | null = null;
-      if (spec.agg && spec.cols.some((c) => c.k === spec.agg!.k)) {
-        const s = rs.reduce((t, x) => t + (Number(x.v[spec.agg!.k]) || 0), 0);
-        agg = spec.agg.t === "avg" ? s / (rs.length || 1) : s;
-      }
+      const agg = aggsOf(spec.agg).map((a) => {
+        if (!spec.cols.some((c) => c.k === a.k)) return null;
+        const s = rs.reduce((t, x) => t + (Number(x.v[a.k]) || 0), 0);
+        const missing = a.missing ? rs.filter((x) => x.v[a.k] == null || x.v[a.k] === "").length : 0;
+        return { v: a.t === "avg" ? s / (rs.length || 1) : s, missing };
+      });
       groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []) };
     }
   }

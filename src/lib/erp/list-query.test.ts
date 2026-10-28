@@ -66,10 +66,17 @@ test("the chip counts are taken before the chip, and after the godown", () => {
 
 test("a page carries its groups whole: the count, the aggregate and every id, even past the page", () => {
   const p = pageOf(spec, ROWS, Q({ size: 25, page: 1 }), FLAGS);
-  assert.deepEqual(p.groups["1"], { n: 2, agg: 17, ids: ["a", "c"], head: ROWS[0].v });
+  assert.deepEqual(p.groups["1"], { n: 2, agg: [{ v: 17, missing: 0 }], ids: ["a", "c"], head: ROWS[0].v });
   const first = pageOf(spec, ROWS, { ...Q(), size: 1 } as ListQuery, FLAGS);
   assert.deepEqual(first.rows.map((r) => r.id), ["a"]);
   assert.equal(first.groups["1"].n, 2);
+});
+
+test("a group can carry several aggregates, and one that asks counts the rows it could not sum", () => {
+  const two: ListSpec = { ...spec, agg: [{ k: "qty", l: "litres" }, { k: "kg", l: "kg", missing: "without a weight" }], cols: [...spec.cols, { k: "kg", l: "Weight", t: "n" }] };
+  const rows = ROWS.map((r, i) => ({ ...r, v: { ...r.v, kg: i === 0 ? 12.5 : null } }));
+  const p = pageOf(two, rows, Q({ size: 25, page: 1 }), FLAGS);
+  assert.deepEqual(p.groups["1"].agg, [{ v: 17, missing: 0 }, { v: 12.5, missing: 1 }]);
 });
 
 test("a page past the end is the last page", () => {

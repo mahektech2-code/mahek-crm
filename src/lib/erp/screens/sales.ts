@@ -1010,7 +1010,9 @@ const ORDER_COL: Record<string, Col> = {
   labels: { k: "labels", l: "Stickers", t: "n" },
   type: { k: "type", l: "Type", t: "s" },
   remark: { k: "remark", l: "Remark", t: "t" },
-  weight: { k: "weight", l: "Weight", t: "n" },
+  /* What the LINE weighs (`lineWeightKg`), never one box's — the figure a
+     lorry is booked by, so it sits beside the boxes it is counted from. */
+  weight: { k: "weight", l: "Weight", t: "n", u: " kg" },
   godown: { k: "godown", l: "Godown", t: "t" },
   f: { k: "f", l: "Flags", t: "f" },
 };
@@ -1152,9 +1154,9 @@ function orderList(scope: Scope): ScreenModule {
       const checking = scope === "invoiceCheck";
       const DOMAINS = ["orderStatus", "production", "billingStatus", "dispatchStatus"] as const;
       const all: Col[] = labels
-        ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "bill", "invoiceDate", "type", "labels", "transporter", "area", "godown", "f"], { billing: { t: "t" }, delivery: { t: "b" } })
+        ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "weight", "bill", "invoiceDate", "type", "labels", "transporter", "area", "godown", "f"], { billing: { t: "t" }, delivery: { t: "b" } })
         : checking
-          ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "rate", "discount", "bill", "invoiceDate", "billingStatus", "godown", "f"])
+          ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "weight", "rate", "discount", "bill", "invoiceDate", "billingStatus", "godown", "f"])
           : orderCols([
               "orderNo",
               "date",
@@ -1165,6 +1167,7 @@ function orderList(scope: Scope): ScreenModule {
               "sku",
               "qty",
               "boxes",
+              "weight",
               "rate",
               "discount",
               "alloc",
@@ -1221,7 +1224,13 @@ function orderList(scope: Scope): ScreenModule {
           groups: labels ? ["transporter"] : ["orderNo"],
           groupHead: labels ? undefined : ["date", "billing", "delivery", "transporter", "city", "godown"],
           groupSel: !labels,
-          agg: { k: "labels", l: "stickers" },
+          /* An order's weight, or a transporter's on the Stickers tab — what
+             the lorry is booked by. A line whose SKU has no weight in the
+             catalogue is counted and said, or the total reads as the whole. */
+          agg: [
+            { k: "labels", l: "stickers" },
+            { k: "weight", l: "kg", missing: "without a weight" },
+          ],
           godownKey: "godown",
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
