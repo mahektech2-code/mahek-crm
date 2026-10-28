@@ -15,14 +15,40 @@ import { erpId } from "./server";
  * BLANKS only: a value somebody has set in the ERP is a decision, and a re-run
  * must never put the sheet's older answer back over it. Idempotent.
  *
+ * It never sets `pending_activation`: whether a party may be supplied is
+ * Accounts' decision now (customers are opened only in Accounts), and the
+ * sheet's "Pending" is an older answer to it. Email and company name land on
+ * the customer itself, blanks only, and an email shared by three or more
+ * parties is a placeholder and is skipped.
+ *
  * It also seeds the open reference lists with the values the sheet actually
  * uses, because an empty "Transporter" list on day one is a form nobody can
  * fill in.
  * ------------------------------------------------------------------------- */
 
-export async function seedErpCustomerProfiles(): Promise<{ matched: number; created: number; filled: number; refAdded: number }> {
+/** "Abc @gmail .com" → "abc@gmail.com"; null where what is left is not an address. */
+export function sheetEmail(raw: string | null): string | null {
+  const v = (raw ?? "").replace(/\s+/g, "").toLowerCase();
+  return /^[^@]+@[^@]+\.[a-z]{2,}$/.test(v) ? v : null;
+}
+
+/**
+ * An address on three or more parties is a placeholder or an office inbox, not
+ * the party's own — found by counting, never by a literal, because the next
+ * sheet will use a different placeholder (`flagSharedMobiles`' rule).
+ */
+export function sharedEmails(emails: (string | null)[]): Set<string> {
+  const n = new Map<string, number>();
+  for (const e of emails) if (e) n.set(e, (n.get(e) ?? 0) + 1);
+  return new Set([...n].filter(([, c]) => c >= 3).map(([e]) => e));
+}
+
+export async function seedErpCustomerProfiles(): Promise<{ matched: number; created: number; filled: number; customersFilled: number; refAdded: number }> {
   const parties = await db.select().from(sheetPartyRows).where(eq(sheetPartyRows.status, "present"));
-  const all = await db.select({ id: customers.id, name: customers.name, sheetName: customers.sheetName }).from(customers);
+  const all = await db.select({ id: customers.id, name: customers.name, sheetName: customers.sheetName, email: customers.email, companyName: customers.companyName }).from(customers);
+  const byId = new Map(all.map((c) => [c.id, c]));
+  const shared = sharedEmails(parties.map((p) => sheetEmail(p.email)));
+  let customersFilled = 0;
   // A renamed party is still found under the name the sheet uses.
   const byKey = new Map(all.flatMap((c) => sheetKeys(c).map((k) => [k, c.id] as const)));
   const existing = new Map(
@@ -48,8 +74,17 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
       grade: p.grade,
       standingInstructions: p.standingInstructions,
       allocateEmail: p.allocateEmail,
-      pendingActivation: (p.partyStatus ?? "").trim().toLowerCase() === "pending",
     };
+    /* The party's own email and legal name, onto the customer record — blanks only, like the profile. */
+    const c = byId.get(customerId);
+    const email = sheetEmail(p.email);
+    const onCustomer: { email?: string; companyName?: string } = {};
+    if (c && !c.email && email && !shared.has(email)) onCustomer.email = email;
+    if (c && !c.companyName && p.companyName?.trim()) onCustomer.companyName = p.companyName.trim();
+    if (Object.keys(onCustomer).length) {
+      await db.update(customers).set(onCustomer).where(eq(customers.id, customerId));
+      customersFilled++;
+    }
     const have = existing.get(customerId);
     if (!have) {
       await db.insert(erpCustomerProfiles).values({ customerId, ...fromSheet, counterTypes: counters }).onConflictDoNothing();
@@ -58,7 +93,6 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
     }
     const patch: Record<string, unknown> = {};
     (Object.keys(fromSheet) as (keyof typeof fromSheet)[]).forEach((k) => {
-      if (k === "pendingActivation") return;
       if ((have[k] == null || have[k] === "") && fromSheet[k] != null && fromSheet[k] !== "") patch[k] = fromSheet[k];
     });
     if (have.counterTypes.length === 0 && counters.length) patch.counterTypes = counters;
@@ -88,5 +122,5 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
       refAdded += res.length;
     }
   }
-  return { matched, created, filled, refAdded };
+  return { matched, created, filled, customersFilled, refAdded };
 }
