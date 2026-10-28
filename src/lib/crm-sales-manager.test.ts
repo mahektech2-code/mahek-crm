@@ -115,6 +115,7 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
 }
 
 const prospectFields = () => ({
+  gstin: "27ABCDE1234F1Z5",
   customerType: "retailer" as const,
   leadMonthlyVolumeLitres: 300,
   leadEstimatedPotentialPaise: 9_000_000,

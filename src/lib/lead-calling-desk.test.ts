@@ -767,7 +767,17 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
 describe("Test S — the salesman's own path is untouched", () => {
   test("verifying a lead with no request changes no stage and no request state", async () => {
     const suspect = await makeLead({ ownerId: desk.id, leadManagerId: manager.id });
-    const prospect = await makeLead({ ownerId: desk.id, leadStage: "prospect", leadManagerId: manager.id });
+    const prospect = await makeLead({
+      ownerId: desk.id,
+      leadStage: "prospect",
+      leadManagerId: manager.id,
+      /* A Prospect is verified on its answers, so this one has them. */
+      customerType: "retailer",
+      gstin: "27ABCDE1234F1Z5",
+      leadMonthlyVolumeLitres: 300,
+      leadCompetitor: "Local thinner",
+      leadRequiredProductId: productId,
+    });
     for (const lead of [suspect, prospect]) {
       const v = await managerVerifies(lead.id, "verified");
       assert.equal(v.ok, true, v.ok ? "" : v.error);

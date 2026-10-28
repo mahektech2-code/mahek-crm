@@ -76,6 +76,13 @@ function refresh(customerId: string) {
 export async function settleProspectRequest(
   customerId: string,
   outcome: "verified" | "follow_up" | "not_qualified",
+  /**
+   * What the verdict rests on. A verification CALL leaves a validation row that
+   * is read back below; the unified REVIEW is the primary verification now and
+   * leaves none, so it says so — a call is optional and must never be what a
+   * request is waiting for.
+   */
+  opts: { evidence?: "call" | "review" } = {},
 ): Promise<Result<{ promoted: boolean }>> {
   try {
     const ctx = await requireLeadVerifier(customerId, { designated: true });
@@ -96,16 +103,18 @@ export async function settleProspectRequest(
     if (req.state !== "awaiting" && req.state !== "followup") return ok({ promoted: false });
     if (outcome === "not_qualified") return ok({ promoted: false });
 
-    const [latest] = await db
-      .select({ verdict: mbosLeadValidations.verdict })
-      .from(mbosLeadValidations)
-      .where(eq(mbosLeadValidations.customerId, customerId))
-      .orderBy(desc(mbosLeadValidations.calledAt))
-      .limit(1);
-    /* `verificationVerdictFor`: a successful verification is stored as "confirmed". */
-    const expected = outcome === "verified" ? "confirmed" : "pending";
-    if (!latest || latest.verdict !== expected) {
-      return err("The latest verification on this lead does not say that.", "rule_violation");
+    if (opts.evidence !== "review") {
+      const [latest] = await db
+        .select({ verdict: mbosLeadValidations.verdict })
+        .from(mbosLeadValidations)
+        .where(eq(mbosLeadValidations.customerId, customerId))
+        .orderBy(desc(mbosLeadValidations.calledAt))
+        .limit(1);
+      /* `verificationVerdictFor`: a successful verification is stored as "confirmed". */
+      const expected = outcome === "verified" ? "confirmed" : "pending";
+      if (!latest || latest.verdict !== expected) {
+        return err("The latest verification on this lead does not say that.", "rule_violation");
+      }
     }
 
     if (outcome === "follow_up") {

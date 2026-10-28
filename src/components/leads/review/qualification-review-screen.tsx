@@ -18,6 +18,7 @@ import {
 import { QUALIFICATION_ANSWER_KEYS } from "@/lib/engines/lead-gates";
 import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
 import { saveQualificationReviewEdits } from "@/lib/actions/lead-qualification-review-edit";
+import { confirmProspectReview, resubmitProspectForReview, returnProspectForCorrection } from "@/lib/actions/prospect-review";
 import type { QualificationReviewModel } from "@/lib/services/lead-qualification-review-service";
 
 /* ---------------------------------------------------------------------------
@@ -41,6 +42,8 @@ const STATE_COPY: Record<
   pending: { tone: "info", title: "Waiting for the approver's decision" },
   sent_back: { tone: "danger", title: "Rejected — the Salesman owes a correction" },
   verified: { tone: "info", title: "Confirmed by the approver" },
+  prospect_pending: { tone: "info", title: "Waiting for the verifier's decision" },
+  prospect_returned: { tone: "danger", title: "Returned for correction" },
 };
 
 type Draft = Record<string, string>;
@@ -125,13 +128,37 @@ export function QualificationReviewScreen({
     setBusy(verdict);
     setError(null);
     try {
-      const r = await reviewLeadQualification({ customerId: model.customerId, verdict, note });
+      /* Two decisions, one screen: before Qualification opens this is the Prospect
+         review (confirm opens Qualification; return needs a reason), after it the
+         Qualification review. */
+      const r =
+        model.kind === "prospect"
+          ? verdict === "verified"
+            ? await confirmProspectReview({ customerId: model.customerId })
+            : await returnProspectForCorrection({ customerId: model.customerId, note })
+          : await reviewLeadQualification({ customerId: model.customerId, verdict, note });
       if (!r.ok) {
         setError(r.error);
         return;
       }
       toast.push(r.message ?? "Recorded.");
       setNote("");
+      router.refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function resubmit() {
+    setBusy("resubmit");
+    setError(null);
+    try {
+      const r = await resubmitProspectForReview(model.customerId);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      toast.push(r.message ?? "Sent back for review.");
       router.refresh();
     } finally {
       setBusy(null);
@@ -158,7 +185,7 @@ export function QualificationReviewScreen({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 id="qr-title" className="text-[16px] leading-[22px] font-semibold text-ink">
-                Qualification review
+                {model.kind === "prospect" ? "Prospect review — before Qualification" : "Qualification review"}
               </h1>
               <p className="text-[12px] text-muted">
                 {model.name} · {stageLabel(model.stage as LeadStage)}
@@ -190,9 +217,17 @@ export function QualificationReviewScreen({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-5">
           <Banner
             tone={copy.tone}
-            title={copy.title}
+            title={model.state === "prospect_pending" && model.viewer.canDecide ? "Your decision — confirm to open Qualification, or return it" : copy.title}
             body={
-              model.state === "verified" || model.state === "sent_back"
+              model.state === "prospect_pending"
+                ? model.viewer.canDecide
+                  ? "Read every Suspect and Prospect answer below. Confirming opens Qualification; returning sends it back to its owner with your reason."
+                  : "Submitted for Qualification. Its designated verifier reads these answers, then confirms it or returns it."
+                : model.state === "prospect_returned"
+                  ? model.viewer.canResubmit
+                    ? "Correct what was asked, then send it back for review. Every answer is kept."
+                    : "Returned for correction. Its owner corrects it and sends it back for review."
+                  : model.state === "verified" || model.state === "sent_back"
                 ? decisionLine(model)
                 : model.state === "in_progress"
                   ? `Not yet ready to confirm — ${model.blockers.length} thing${model.blockers.length === 1 ? " is" : "s are"} still missing.`
@@ -351,29 +386,35 @@ export function QualificationReviewScreen({
                   }
                   onClick={() => decide("verified")}
                 >
-                  {busy === "verified" ? "Confirming…" : "Confirm qualification"}
+                  {busy === "verified" ? "Confirming…" : model.kind === "prospect" ? "Confirm — open Qualification" : "Confirm qualification"}
                 </Button>
                 <span className="mx-1 h-5 w-px bg-line" aria-hidden />
-                <Select
-                  aria-label="Kind of rejection"
-                  value={rejectKind}
-                  disabled={busy !== null}
-                  onChange={(e) => setRejectKind(e.target.value as "incomplete" | "clarification")}
-                >
-                  <option value="incomplete">Not finished</option>
-                  <option value="clarification">Needs a clarification</option>
-                </Select>
+                {model.kind === "prospect" ? null : (
+                  <Select
+                    aria-label="Kind of rejection"
+                    value={rejectKind}
+                    disabled={busy !== null}
+                    onChange={(e) => setRejectKind(e.target.value as "incomplete" | "clarification")}
+                  >
+                    <option value="incomplete">Not finished</option>
+                    <option value="clarification">Needs a clarification</option>
+                  </Select>
+                )}
                 <Button
                   tone="danger"
                   disabled={busy !== null || !note.trim()}
-                  title={note.trim() ? undefined : "Say why — the Salesman works from this sentence."}
-                  onClick={() => decide(rejectKind)}
+                  title={note.trim() ? undefined : "Say why — the owner works from this sentence."}
+                  onClick={() => decide(model.kind === "prospect" ? "incomplete" : rejectKind)}
                 >
-                  {busy === "incomplete" || busy === "clarification" ? "Rejecting…" : "Reject and send back"}
+                  {busy === "incomplete" || busy === "clarification"
+                    ? model.kind === "prospect" ? "Returning…" : "Rejecting…"
+                    : model.kind === "prospect" ? "Return for correction" : "Reject and send back"}
                 </Button>
               </div>
               <p className="mt-2 text-[12px] text-muted">
-                Rejecting keeps every answer, holds the lead at Qualification, and tells the owner why.
+                {model.kind === "prospect"
+                  ? "Returning keeps every answer and tells the owner why; they correct it and send it back. A verification call is optional — record one after this decision from the lead's record."
+                  : "Rejecting keeps every answer, holds the lead at Qualification, and tells the owner why."}
               </p>
             </section>
           ) : model.viewer.why && model.state !== "not_open" ? (
@@ -434,6 +475,11 @@ export function QualificationReviewScreen({
             >
               Close
             </Link>
+            {model.viewer.canResubmit ? (
+              <Button tone="primary" disabled={busy !== null} onClick={resubmit}>
+                {busy === "resubmit" ? "Sending…" : "Resubmit for review"}
+              </Button>
+            ) : null}
             {canEdit ? (
               <>
                 {dirty ? (

@@ -1454,6 +1454,19 @@ export async function recordLeadValidationCall(
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
+    /* A CALL THAT VERIFIES IS HELD TO THE REVIEW'S RULES. Verifying opens
+       Qualification, so it asks what the review's Confirm asks: only the lead's
+       designated verifier (never a bare `lead.verify` holder), and only with every
+       required Suspect and Prospect answer on the record. Both live in
+       `prospect-verifier`; nothing is re-decided here. Follow-up and not-qualified
+       are not approvals and are left as they were. */
+    if (c.outcome === "verified") {
+      const { requireProspectVerifier, prospectVerificationRefusal } = await import("../services/prospect-verifier");
+      await requireProspectVerifier(customerId);
+      const missing = await prospectVerificationRefusal(customerId);
+      if (missing) return err(missing, "rule_violation");
+    }
+
     /* Only the DECLARED questions are stored — seventeen now, across four
        sections, since `0157` added §5.2's C and D. The number is not written
        down here on purpose: it was "the twelve" in this comment and in the one

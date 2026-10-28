@@ -67,6 +67,7 @@ async function makeProspect(over: Partial<typeof customers.$inferInsert>) {
       city: "Nashik",
       kind: "lead",
       customerType: "retailer",
+      gstin: "27ABCDE1234F1Z5",
       leadStage: "prospect",
       leadSalesType: "direct",
       leadSource: "manual",

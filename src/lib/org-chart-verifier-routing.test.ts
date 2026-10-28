@@ -586,6 +586,7 @@ describe("8 and 9. only the designated verifier verifies; review stays separate"
       salesManagerId: mira.id,
       leadStage: "prospect",
       customerType: "retailer" as never,
+      gstin: "27ABCDE1234F1Z5",
     });
     await raisedBy(lead.id, salesman, "handset", "associate");
     return lead;
