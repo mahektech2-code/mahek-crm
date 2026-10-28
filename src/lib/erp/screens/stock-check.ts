@@ -271,7 +271,9 @@ const countTasks: ScreenModule = {
       { k: "what", l: "Count", t: "select", req: true, opts: ["One item at a godown", "Every item at a godown (full count)", "Today's cycle counts"], def: "One item at a godown" },
       { k: "item", l: "Item", t: "select", opts: mats.map((m) => m.name), reqWhen: { k: "what", eq: "One item at a godown" }, when: { k: "what", eq: "One item at a godown" } },
       { k: "godown", l: "Godown", t: "select", opts: gds.map((g) => g.name), reqWhen: { k: "what", in: ["One item at a godown", "Every item at a godown (full count)"] }, when: { k: "what", in: ["One item at a godown", "Every item at a godown (full count)"] } },
-      { k: "reason", l: "Why", t: "area", mic: true, hint: "A spill, a move, a doubt — read by whoever counts it." },
+      /* One item's count is an event — its reason IS what the counter is sent to look into, and the
+         save refuses it blank — while a full count is its own reason and stays optional. */
+      { k: "reason", l: "Why", t: "area", mic: true, reqWhen: { k: "what", eq: "One item at a godown" }, hint: "A spill, a move, a doubt — read by whoever counts it." },
     ];
     return {
       spec: {

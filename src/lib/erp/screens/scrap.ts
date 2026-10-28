@@ -1273,8 +1273,9 @@ const cashReceipts: ScreenModule = {
         { k: "mode", l: "Mode", t: "select", req: true, opts: RECEIPT_MODES },
         { k: "into", l: "Received into", t: "select", req: true, opts: live.map((a) => a.name), hint: "The Petty Cash account it landed in — cash goes to Cash in Hand." },
         { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-        { k: "buyer", l: "Scrap buyer", t: "select", opts: buyers.map((b) => b.name), hint: "Leave empty if the bank line does not say who — name the payer instead." },
-        { k: "payer", l: "Payer as on the bank line", t: "text" },
+        /* One of the two is needed — the save refuses money from nobody — so each is required while the other is empty. */
+        { k: "buyer", l: "Scrap buyer", t: "select", opts: buyers.map((b) => b.name), reqWhen: { k: "payer", eq: "" }, hint: "Leave empty if the bank line does not say who — name the payer instead." },
+        { k: "payer", l: "Payer as on the bank line", t: "text", reqWhen: { k: "buyer", eq: "" } },
         { k: "reference", l: "UTR / cheque no. / slip", t: "text" },
         { k: "note", l: "Note", t: "area" },
       ],
