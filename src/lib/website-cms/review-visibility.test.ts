@@ -37,6 +37,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import type { Result } from "@/lib/result";
 import { MODULE_SLUGS, PUBLISH_MODULE_KEY, REVIEW_MODULE_KEY } from "@/lib/website-cms/kinds";
 import * as cms from "@/lib/website-cms/commands";
+import { impactReport } from "@/lib/impact/registry";
 import { slugVisible } from "@/lib/website-cms/review-scope";
 import {
   assignScreen,
@@ -151,6 +152,13 @@ function must<T>(r: Result<T>): T {
   return r.data;
 }
 
+/** What the impact modal hands back once somebody has read it and typed the word. */
+async function confirmed(kind: string, target: string) {
+  const r = await impactReport(kind, target);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { typed: r.data.confirmWord, fingerprint: r.data.fingerprint };
+}
+
 const as = (p: Person) => setTestUser(p);
 
 async function enforce(on: boolean) {
@@ -255,7 +263,12 @@ describe("every list shows an enforced editor only their own items", () => {
     const { alpha } = await scene();
     as(rita);
     const mine = (await assignScreen()).assignments.find((a) => a.employeeId === eva.id && a.contentId === alpha)!;
-    must(await cms.revokeAssignment(mine.id));
+    const bare = await cms.revokeAssignment(mine.id);
+    assert.equal(!bare.ok && bare.code, "validation", "taking work away nobody confirmed is refused");
+    const report = await impactReport("site-assignment", mine.id);
+    assert.ok(report.ok);
+    assert.equal(report.data.confirmWord, eva.name, "their own name is typed");
+    must(await cms.revokeAssignment(mine.id, await confirmed("site-assignment", mine.id)));
     assert.deepEqual(await visibleItems("product", await scopeFor(eva.id)), []);
   });
 
@@ -431,7 +444,7 @@ describe("where an item stands in review", () => {
     must(await editAs(eli, alpha, { name: "x" }));
     as(eli);
     const made = must(await cms.submitForVerification([alpha]));
-    must(await cms.withdrawRequest(made.id));
+    must(await cms.withdrawRequest(made.id, await confirmed("site-request-withdraw", made.id)));
     assert.equal((await reviewByItem(eli.id, [alpha]))[alpha], undefined);
   });
 
@@ -555,7 +568,7 @@ describe("the review queue", () => {
     const { ids } = await threeRequests();
     as(eva);
     must(await cms.publishApproved(ids[0]));
-    must(await cms.withdrawRequest(ids[2]));
+    must(await cms.withdrawRequest(ids[2], await confirmed("site-request-withdraw", ids[2])));
     const q = await reviewQueue("published");
     assert.deepEqual(q.counts, { pending: 0, approved: 0, published: 1, rejected: 1, closed: 1 });
     assert.deepEqual(q.rows.map((r) => r.id), [ids[0]]);

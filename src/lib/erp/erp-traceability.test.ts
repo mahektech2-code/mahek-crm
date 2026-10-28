@@ -27,6 +27,8 @@ import { decideOverride, requestOverride, scanOntoOrder, unscanUnit } from "@/li
 import { traceCode, traceDashboard } from "@/lib/erp/traceability";
 import { boxLabels, unlabelledStock } from "@/lib/erp/label-data";
 import { erpGiveIds } from "@/lib/actions/erp-trace";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 /* The dashboard counts the real today, so the documents are dated it too. */
@@ -346,5 +348,24 @@ describe("ids for stock packed or filled before box ids", () => {
     assert.ok((await give(3)).ok);
     assert.equal((await boxLabels({ lot: "FG4BH" })).length, 3);
     assert.deepEqual((await unlabelledStock({ lot: "FG4BH" })).map((x) => x.room), [1]);
+  });
+});
+
+const unitsStatus = async (unit: string) => ((await db.execute(sql`select status from erp_units where id = ${unit}`)) as unknown as { status: string }[])[0]?.status;
+
+describe("a box released from hold", () => {
+  test("is confirmed through the impact modal, which says it can be scanned again", async () => {
+    const [box] = (await db.execute(sql`select id from erp_units where status = 'available' order by created_at, id limit 1`)) as unknown as { id: string }[];
+    const ctx = await as(admin);
+    assert.ok((await mod("units").actions!.hold(ctx, box.id, { note: "Dented on the shelf" })).ok);
+    assert.match(msg(await mod("units").actions!.release(ctx, box.id, {})), /Check what this affects/, "the bare act is refused");
+    setTestUser(admin);
+    const report = await impactReport("erp-unit-release", box.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, box.id);
+    assert.ok(report.data.items.some((i) => /on hold can be scanned for dispatch again/.test(i.label)), JSON.stringify(report.data.items));
+    const done = await mod("units").actions!.release(ctx, box.id, { [IMPACT_FIELD]: JSON.stringify({ typed: box.id, fingerprint: report.data.fingerprint }) });
+    assert.ok(done.ok, msg(done));
+    assert.equal((await unitsStatus(box.id)), "available");
   });
 });

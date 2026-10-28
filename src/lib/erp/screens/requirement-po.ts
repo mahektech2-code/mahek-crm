@@ -23,6 +23,8 @@ import {
 } from "../engines/purchase-flow";
 import { godownIdByName, godownOptions, inTx, refuse, today, type Tx } from "./common";
 import { heldByStock, refreshPurchaseOrder, requirementViews, type ReqView } from "./purchase-flow";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * A REQUIREMENT GETS ITS PO ONE OF TWO WAYS, chosen by the item's purchase
@@ -279,14 +281,20 @@ export async function linkRequirementPo(ctx: ErpContext, id: string, raw: string
   return res;
 }
 
-/** Takes a Quotation manager PO off the requirement, while nothing has been received against it. */
-export async function unlinkRequirementPo(ctx: ErpContext, id: string): Promise<Result<unknown>> {
+/**
+ * Takes a Quotation manager PO off the requirement, while nothing has been
+ * received against it — confirmed against what goes with it: the PO line, the
+ * PO itself where it was the only line (`erp-requirement-unlink`).
+ */
+export async function unlinkRequirementPo(ctx: ErpContext, id: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
   const [v] = await requirementViews({ ids: [id] });
   if (!v) return err("That requirement no longer exists.", "not_found");
   if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
   if (!v.po) return err("It is not on a PO.", "conflict");
   if (v.po.source !== "quotation_manager") return err(`${v.po.name} was created here — cancel it on Purchase orders.`, "rule_violation");
   if (v.po.received > 0) return err(`Goods were received against ${v.po.name} — it cannot be unlinked.`, "conflict");
+  const refusal = await confirmImpact("erp-requirement-unlink", id, confirmation);
+  if (refusal) return refusal;
   const name = v.po.name;
   const res = await inTx(async (tx) => {
     await tx.execute(sql`select id from erp_purchase_orders where id = ${v.po!.id} for update`);

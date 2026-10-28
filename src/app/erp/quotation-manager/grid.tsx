@@ -18,6 +18,7 @@ import {
 } from "@/lib/erp/engines/quotes";
 import {
   applySheetOps,
+  impactAsks,
   invertSheetOps,
   visibleColumns,
   visibleRows,
@@ -33,6 +34,8 @@ import { cleanWhole, stamp } from "@/lib/format";
 import { BodyPortal } from "@/components/ui/body-portal";
 import { RowMenu } from "@/components/ui/overlays";
 import { useErpUi } from "../_ui/erp-ui";
+import { ErpImpactDialog } from "../_ui/impact-confirm";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog } from "../_ui/dialog";
 import { eyebrowClass, insetClass, LinkButton, popoverClass } from "../_ui/look";
 
@@ -150,6 +153,8 @@ export function QuoteGrid({
   const [note, setNote] = useState<NoteAt | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  /* A save that reaches past the sheet, held until the impact modal is answered: `op` is the change it confirms. */
+  const [asking, setAsking] = useState<{ kind: string; id: string; ops: SheetOp[]; op: number; recordUndo: boolean; label: string } | null>(null);
   /* An edit is closed once: Enter, Tab and Escape all move focus off the input, and its blur must not save it a second time. */
   const closedToken = useRef(0);
   const nextToken = useRef(0);
@@ -173,6 +178,19 @@ export function QuoteGrid({
   function commit(ops: SheetOp[], opts: { recordUndo?: boolean } = {}) {
     if (!ops.length || readOnly) {
       if (readOnly) ui.toast("You are previewing the ERP as somebody else, so nothing can be saved.", "error");
+      return;
+    }
+    /* Undoing a purchase, or deleting a row that holds one, reaches the ERP's
+       purchase orders — whichever way it was asked for (the menu, a colour,
+       Ctrl+Z) it waits for the impact modal, and is saved only once answered. */
+    const asks = impactAsks(stateRef.current, ops);
+    if (asks.length > 1) {
+      ui.toast("Undo those purchases one at a time — each takes its purchase order line with it.", "error");
+      return;
+    }
+    if (asks.length === 1) {
+      const a = asks[0];
+      setAsking({ ...a, ops, recordUndo: opts.recordUndo !== false, label: a.kind === "erp-quote-row" ? "Delete the row" : "Undo purchase" });
       return;
     }
     const before = stateRef.current;
@@ -214,6 +232,25 @@ export function QuoteGrid({
         setSaving((n) => n - 1);
       }
     });
+  }
+
+  /**
+   * The held save, with the modal's confirmation on the change it confirms.
+   * Not shown before the server answers, unlike every other save: the modal
+   * waits for the answer, and a `conflict` there shows the new picture.
+   */
+  async function commitConfirmed(held: { ops: SheetOp[]; op: number; recordUndo: boolean }, confirmation: ImpactConfirmation) {
+    await queue.current;
+    const ops = held.ops.map((o, i) => (i === held.op && (o.op === "cell" || o.op === "deleteRow") ? { ...o, impact: confirmation } : o));
+    const inverse = invertSheetOps(stateRef.current, ops);
+    const res = await erpQuoteApply(ops);
+    if (res.ok) {
+      setBoth(applySheetOps(stateRef.current, ops));
+      if (held.recordUndo) setUndo((u) => [...u.slice(-49), inverse]);
+      setFailed(false);
+      setNote(null);
+    }
+    return res;
   }
 
   function doUndo() {
@@ -882,7 +919,12 @@ export function QuoteGrid({
                               items={[
                                 { label: "Add a row, same date", onSelect: () => addRow(row) },
                                 { label: "Duplicate this row", onSelect: () => addRow(row, row) },
-                                { label: "Delete this row", destructive: true, onSelect: () => commit([{ op: "deleteRow", rowId: row.id }]) },
+                                {
+                                  label: "Delete this row",
+                                  destructive: true,
+                                  /* Always through the modal: a deleted row is gone once the page closes. */
+                                  onSelect: () => setAsking({ kind: "erp-quote-row", id: row.id, ops: [{ op: "deleteRow", rowId: row.id }], op: 0, recordUndo: true, label: "Delete the row" }),
+                                },
                               ]}
                             />
                           </span>
@@ -1010,6 +1052,20 @@ export function QuoteGrid({
           ) : null}
         </div>
       </Card>
+
+      {asking ? (
+        <ErpImpactDialog
+          kind={asking.kind}
+          id={asking.id}
+          confirmLabel={asking.label}
+          doneMessage={asking.kind === "erp-quote-row" ? "Row deleted · Ctrl+Z brings it back" : "Purchase undone"}
+          onClose={() => {
+            setAsking(null);
+            gridRef.current?.focus();
+          }}
+          act={(confirmation) => commitConfirmed(asking, confirmation)}
+        />
+      ) : null}
 
       {editing?.picker && pickerAt ? (
         <OptionPicker

@@ -42,6 +42,8 @@ import { addDaysISO, fdShort, monthOf } from "../time";
 import { hrmsLink } from "../registry";
 import { personFrom, personOption, scopeFor } from "./attendance";
 import { powerHolderUserIds, tell } from "../services/notify";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * The Sales desk (spec §14): customers, the back-office calling list, sales
@@ -126,7 +128,7 @@ function statusOf(c: Pick<Cust, "status" | "deactivationRequested">): CustStatus
 }
 
 /** "Me" as the back office: the linked account, or my name where the seat holds a name with no login. */
-function backOfficeIsMe(ctx: HrmsContext, c: Pick<Cust, "backOfficeAmId" | "backOfficeName">): boolean {
+export function backOfficeIsMe(ctx: HrmsContext, c: Pick<Cust, "backOfficeAmId" | "backOfficeName">): boolean {
   if (c.backOfficeAmId && c.backOfficeAmId === ctx.user.id) return true;
   return !!ctx.employee && !!c.backOfficeName && norm(c.backOfficeName) === norm(ctx.employee.name);
 }
@@ -212,7 +214,7 @@ const CUSTOMER_COLS: ColSpec[] = [
   { k: "f", l: "Flags", t: "f" },
 ];
 
-const WITHDRAW_WHY = "Only the person who asked, this customer’s back office, or someone who decides deactivations can withdraw the request";
+export const WITHDRAW_WHY = "Only the person who asked, this customer’s back office, or someone who decides deactivations can withdraw the request";
 const DECIDE_WHY = "Accepting or rejecting a deactivation needs the “Decide customer deactivations” power";
 const REACTIVATE_WHY = "Making a customer active again needs the “Decide customer deactivations” power";
 const STOPPED_BUYING = "This customer is inactive because they stopped buying. Their next order makes them active again";
@@ -236,7 +238,8 @@ function customerActions(ctx: HrmsContext, c: Cust, st: CustStatus, calledToday:
     });
   if (st === "Pending deactivation") {
     const mayWithdraw = decide || c.deactivationRequestedById === ctx.user.id || backOfficeIsMe(ctx, c);
-    a.push({ id: "withdrawRequest", l: "Withdraw request", why: mayWithdraw ? undefined : WITHDRAW_WHY });
+    /* The request leaves the managers' decision list with its reason: the impact modal says so. */
+    a.push({ id: "withdrawRequest", l: "Withdraw request", why: mayWithdraw ? undefined : WITHDRAW_WHY, impact: { kind: "hrms-deactivation-request", id: c.id } });
     const why = decide ? undefined : DECIDE_WHY;
     a.push({
       id: "acceptDeactivation",
@@ -468,12 +471,14 @@ const customersScreen: HrmsScreenModule = {
       );
       return okVoid("Deactivation requested · someone who decides deactivations will decide");
     },
-    async withdrawRequest(ctx, id) {
+    async withdrawRequest(ctx, id, values) {
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
       if (!c.deactivationRequested) return err(`${c.name} has no deactivation request to withdraw.`);
       if (!(has(ctx, "custStatus") || c.deactivationRequestedById === ctx.user.id || backOfficeIsMe(ctx, c)))
         return err(WITHDRAW_WHY, "not_permitted");
+      const refusal = await confirmImpact("hrms-deactivation-request", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db
         .update(customers)
         .set({
@@ -597,7 +602,7 @@ const CALLING_COLS: ColSpec[] = [
 ];
 
 const CALLER_WHY = "Only the person this call is assigned to, or an HRMS administrator, can log it";
-const DELETE_CALL_WHY = "Deleting a calling row needs the “Decide customer deactivations” power";
+export const DELETE_CALL_WHY = "Deleting a calling row needs the “Decide customer deactivations” power";
 /** The four statuses in the words the form shows; `callingStatusFrom` reads them back. */
 const STATUS_OPTS = CALLING_STATUSES.map((st) => callingLabel(st));
 
@@ -656,7 +661,7 @@ const callingScreen: HrmsScreenModule = {
             },
           },
           { id: "customer", l: "View customer", href: hrmsLink("customers", { open: r.customerId }) },
-          { id: "delete", l: "Delete", why: has(ctx, "custStatus") ? undefined : DELETE_CALL_WHY, confirm: "Delete this calling row? It cannot be undone." },
+          { id: "delete", l: "Delete", why: has(ctx, "custStatus") ? undefined : DELETE_CALL_WHY, impact: { kind: "hrms-calling-row", id: r.id } },
         ];
         return {
           id: r.id,
@@ -737,10 +742,12 @@ const callingScreen: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.calling.log", "hrms_calling", id, { status: r.status, secondStatus: r.secondStatus }, { status, secondStatus: second || null, followUp });
       return okVoid(`Call logged · ${callingLabel(status)}${followUp ? ` · follow-up ${fdShort(followUp)}` : ""}`);
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "custStatus")) return err(DELETE_CALL_WHY, "not_permitted");
       const [r] = await db.select().from(hrmsCalling).where(eq(hrmsCalling.id, id));
       if (!r) return err("That calling row no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-calling-row", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsCalling).where(eq(hrmsCalling.id, id));
       await hrmsAudit(ctx, "hrms.calling.delete", "hrms_calling", id, r, null);
       return okVoid("Calling row deleted");
@@ -770,7 +777,7 @@ function activityPeople(ctx: HrmsContext, people: Person[]): Person[] {
 }
 
 const ACTIVITY_EDIT_WHY = "Only the person who logged it, or someone with the Sales desk for everyone, can edit it";
-const ACTIVITY_DELETE_WHY = "Deleting an activity needs the HR or HRMS administration power";
+export const ACTIVITY_DELETE_WHY = "Deleting an activity needs the HR or HRMS administration power";
 
 const mayEditActivity = (ctx: HrmsContext, employeeId: string) => employeeId === ctx.employee?.id || has(ctx, "salesAll");
 
@@ -859,7 +866,7 @@ const activityScreen: HrmsScreenModule = {
           { id: "edit", l: "Edit", loadsForm: true, why: mayEditActivity(ctx, r.employeeId) ? undefined : ACTIVITY_EDIT_WHY },
         ];
         if (r.customerId) actions.push({ id: "customer", l: "View customer", href: hrmsLink("customers", { open: r.customerId }) });
-        actions.push({ id: "delete", l: "Delete", why: mayDelete ? undefined : ACTIVITY_DELETE_WHY, confirm: "Delete this activity? It cannot be undone." });
+        actions.push({ id: "delete", l: "Delete", why: mayDelete ? undefined : ACTIVITY_DELETE_WHY, impact: { kind: "hrms-activity", id: r.id } });
         return {
           id: r.id,
           v: {
@@ -983,10 +990,12 @@ const activityScreen: HrmsScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!(has(ctx, "admin") || has(ctx, "hr"))) return err(ACTIVITY_DELETE_WHY, "not_permitted");
       const [r] = await db.select().from(hrmsActivities).where(eq(hrmsActivities.id, id));
       if (!r) return err("That activity no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-activity", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsActivities).where(eq(hrmsActivities.id, id));
       await hrmsAudit(ctx, "hrms.activity.delete", "hrms_activities", id, r, null);
       return okVoid("Activity deleted");
@@ -1004,9 +1013,9 @@ function journeyPeople(ctx: HrmsContext, people: Person[]): Person[] {
 }
 
 const JOURNEY_EDIT_WHY = "Only the person who planned it, the employee it is for, or someone with the Sales desk for everyone, can edit it";
-const JOURNEY_DELETE_WHY = "Only the person who planned it, the employee it is for, or someone with the Sales desk for everyone, can delete it";
+export const JOURNEY_DELETE_WHY = "Only the person who planned it, the employee it is for, or someone with the Sales desk for everyone, can delete it";
 
-const mayChangeJourney = (ctx: HrmsContext, r: { createdById: string | null; employeeId: string }) =>
+export const mayChangeJourney = (ctx: HrmsContext, r: { createdById: string | null; employeeId: string }) =>
   r.createdById === ctx.user.id || r.employeeId === ctx.employee?.id || has(ctx, "salesAll");
 
 async function journeyForm(ctx: HrmsContext, init?: Record<string, string>, recordId?: string): Promise<FormSpec | undefined> {
@@ -1107,7 +1116,7 @@ const journeyScreen: HrmsScreenModule = {
           contacts: r.fileAttachmentId ? [{ l: "Open file", href: `/api/attachments/${r.fileAttachmentId}` }] : [],
           actions: [
             { id: "edit", l: "Edit", primary: true, loadsForm: true, why: may ? undefined : JOURNEY_EDIT_WHY },
-            { id: "delete", l: "Delete", why: may ? undefined : JOURNEY_DELETE_WHY, confirm: "Delete this journey plan?" },
+            { id: "delete", l: "Delete", why: may ? undefined : JOURNEY_DELETE_WHY, impact: { kind: "hrms-journey", id: r.id } },
           ],
           by: stampLine(null, r.createdAt),
         };
@@ -1190,10 +1199,12 @@ const journeyScreen: HrmsScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const [r] = await db.select().from(hrmsJourneys).where(eq(hrmsJourneys.id, id));
       if (!r) return err("That plan no longer exists.", "not_found");
       if (!mayChangeJourney(ctx, r)) return err(JOURNEY_DELETE_WHY, "not_permitted");
+      const refusal = await confirmImpact("hrms-journey", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsJourneys).where(eq(hrmsJourneys.id, id));
       await hrmsAudit(ctx, "hrms.journey.delete", "hrms_journeys", id, r, null);
       return okVoid("Journey plan deleted");

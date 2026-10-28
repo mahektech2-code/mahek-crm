@@ -34,6 +34,7 @@ import {
 import { updateCustomer } from "@/lib/actions/crm";
 import { reconcileContacts } from "@/lib/services/customer-contact-service";
 import { customerIdForNumber } from "@/lib/services/whatsapp-service";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -200,11 +201,27 @@ describe("M + D — designations and their mirrors", () => {
   test("the last number cannot go; a removed primary hands over", async () => {
     const c = await makeCustomer();
     const list = await reconcileContacts(c.id);
+    /* The modal explains the refusal rather than failing at the button. */
+    const lone = await impactReport("crm-customer-contact", list[0].id);
+    assert.ok(lone.ok, lone.ok ? "" : lone.error);
+    assert.match(lone.data.blockers[0] ?? "", /at least one number/);
     assert.equal((await removeCustomerContact(list[0].id)).ok, false);
 
     await addCustomerContact(c.id, { name: "Second", phone: "9811100006" });
-    const r = await removeCustomerContact(list[0].id);
-    assert.ok(r.ok);
+    /* Removing says first what moves — the primary number on the record — and asks for the contact's name. */
+    const report = await impactReport("crm-customer-contact", list[0].id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.blockers.length, 0);
+    const moved = report.data.items.find((i) => i.app === "CRM" && i.effect === "changed");
+    assert.ok(moved, report.data.items.map((i) => `${i.app}:${i.label}`).join(", "));
+    assert.match(moved.note ?? "", /9811100006|98111 00006/);
+    const bare = await removeCustomerContact(list[0].id);
+    assert.equal(bare.ok, false, "no confirmation, no removal");
+    const stale = await removeCustomerContact(list[0].id, { typed: report.data.confirmWord, fingerprint: "1:stale" });
+    assert.equal(stale.ok ? "ok" : stale.code, "conflict");
+
+    const r = await removeCustomerContact(list[0].id, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(r.ok, r.ok ? "" : r.error);
     assert.equal(r.data.length, 1);
     assert.ok(r.data[0].isPrimary);
     const after = await record(c.id);

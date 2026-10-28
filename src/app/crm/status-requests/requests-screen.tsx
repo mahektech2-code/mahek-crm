@@ -17,6 +17,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { longDate, money } from "@/lib/format";
 import { addDays } from "@/lib/business-date";
@@ -54,7 +55,7 @@ type Pending = { row: Row; approve: boolean } | null;
 
 export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [pending, setPending] = React.useState<Pending>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -209,7 +210,30 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
         starts fresh rather than inheriting the last one's state — the same
         reason every modal here is keyed instead of reset in an effect.
       */}
-      {pending ? (
+      {/* Approving a deactivation is the one decision here that moves other
+          screens — the Call Log, Monthly targets, the ERP's order form, the
+          phones — so it opens the impact modal and asks for the name. */}
+      {pending && pending.approve && pending.row.kind === "deactivate" ? (
+        <ImpactDialog
+          key={`${pending.row.customerId}-deactivate`}
+          kind="crm-customer-deactivate"
+          id={pending.row.customerId}
+          onClose={() => setPending(null)}
+          onConfirm={async (confirmation) => {
+            setBusy(true);
+            try {
+              const r = await decideDeactivation(pending.row.customerId, true, undefined, confirmation);
+              if (r.ok) {
+                push(r.message ?? "Customer deactivated");
+                router.refresh();
+              }
+              return r;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      ) : pending ? (
         <ConfirmDialog
           key={`${pending.row.customerId}-${pending.approve}`}
           open

@@ -16,10 +16,16 @@ import {
   type EnquiryForLead,
 } from "@/lib/services/enquiry-service";
 import { requireUser } from "@/lib/auth";
-import { canOpenModule } from "@/lib/access";
+import { canOpenModule, listUserApps } from "@/lib/access";
 import { canFor } from "@/lib/access-control";
 import { DESK_MODULE, deskHolders, type DeskPerson } from "@/lib/services/lead-desk-assignment-service";
 import { err, fromThrown, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import { impactPair } from "@/lib/impact/kinds/crm-keys";
+import { db } from "@/db";
+import { enquiryOrders } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import {
   ENQUIRY_PRIORITIES,
   ENQUIRY_REMINDER_TYPES,
@@ -28,6 +34,15 @@ import {
   type EnquiryReminderType,
   type EnquiryStage,
 } from "@/lib/enquiry-labels";
+
+/** Is this order linked to this enquiry — the row the unlink would delete. */
+async function isOrderLinked(enquiryId: string, orderId: string): Promise<boolean> {
+  const [link] = await db
+    .select({ id: enquiryOrders.id })
+    .from(enquiryOrders)
+    .where(and(eq(enquiryOrders.enquiryId, enquiryId), eq(enquiryOrders.orderId, orderId)));
+  return Boolean(link);
+}
 
 /**
  * Thin over the service, which owns the access check. Every action here is
@@ -136,8 +151,24 @@ export async function linkOrderAction(enquiryId: string, orderId: string): Promi
   }
 }
 
-export async function unlinkOrderAction(enquiryId: string, orderId: string): Promise<Result> {
+export async function unlinkOrderAction(
+  enquiryId: string,
+  orderId: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
   try {
+    /* The Website Enquiries grant first — the service's own question — then
+       the picture: the order itself stays, only the link goes. An order that
+       is not linked has nothing to unlink, and the service says so. */
+    const user = await requireUser();
+    if (!(await listUserApps(user.id)).includes("enquiries")) {
+      return err("Only somebody with Website Enquiries access can do that.", "not_permitted");
+    }
+    const linked = await isOrderLinked(enquiryId, orderId);
+    if (linked) {
+      const refusal = await confirmImpact("crm-enquiry-order", impactPair(enquiryId, orderId), confirmation);
+      if (refusal) return refusal;
+    }
     const r = await unlinkOrder(enquiryId, orderId);
     refresh(enquiryId);
     return r;

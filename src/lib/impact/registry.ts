@@ -1,5 +1,9 @@
 import "server-only";
 import { err, ok, type Err, type Result } from "@/lib/result";
+import { ADMIN_SITE_SOURCES } from "./kinds/admin-site-sources";
+import { CRM_ACCOUNTS_SOURCES } from "./kinds/crm-accounts-sources";
+import { ERP_MORE_SOURCES } from "./kinds/erp-more-sources";
+import { HRMS_SOURCES } from "./kinds/hrms-sources";
 import { LEADS_AND_ERP_SOURCES } from "./kinds/leads-and-erp";
 import { PRICING_AND_PEOPLE_SOURCES } from "./kinds/pricing-and-people";
 import {
@@ -36,6 +40,10 @@ const SOURCES: Record<string, () => Promise<ImpactSource>> = {
   holiday: () => import("./kinds/holiday").then((m) => m.holidayImpact),
   ...PRICING_AND_PEOPLE_SOURCES,
   ...LEADS_AND_ERP_SOURCES,
+  ...HRMS_SOURCES,
+  ...ERP_MORE_SOURCES,
+  ...CRM_ACCOUNTS_SOURCES,
+  ...ADMIN_SITE_SOURCES,
 };
 
 /** Every kind a modal may ask about — for the test that each has a source file. */

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Dot, Input } from "@/components/ui/primitives";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { stamp } from "@/lib/format";
 import { clearSecretAction, setSecretAction } from "@/lib/actions/secrets";
@@ -32,8 +32,6 @@ export type SecretMeta = {
   env: string;
   what: string;
   where: string;
-  /** What is lost by removing it — said plainly, in the confirm dialog. */
-  removalConsequence: string;
 };
 
 export function SecretCredentialRow({
@@ -46,7 +44,7 @@ export function SecretCredentialRow({
   canWrite: boolean;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [value, setValue] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [confirming, setConfirming] = React.useState(false);
@@ -68,16 +66,6 @@ export function SecretCredentialRow({
         setEditing(false);
         router.refresh();
       }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function clear() {
-    setBusy(true);
-    try {
-      const result = await run(clearSecretAction(row.name));
-      if (result.ok) router.refresh();
     } finally {
       setBusy(false);
     }
@@ -201,20 +189,26 @@ export function SecretCredentialRow({
         )}
       </p>
 
-      <ConfirmDialog
-        open={confirming}
-        title={`Remove the ${meta?.label ?? row.name} key?`}
-        body={
-          <>
-            It cannot be recovered from here — a saved key is never read back, so putting it again
-            means pasting it again. {meta?.removalConsequence}
-          </>
-        }
-        confirmLabel="Remove"
-        destructive
-        onConfirm={clear}
-        onClose={() => setConfirming(false)}
-      />
+      {/* What stops working without it, or which deployment key takes over —
+          said by the server, for this key, rather than by a sentence each
+          screen carried for itself. */}
+      {confirming ? (
+        <ImpactDialog
+          key={row.name}
+          kind="admin-secret"
+          id={row.name}
+          confirmLabel="Remove"
+          onClose={() => setConfirming(false)}
+          onConfirm={async (confirmation) => {
+            const result = await clearSecretAction(row.name, confirmation);
+            if (result.ok) {
+              push(result.message ?? "Removed.");
+              router.refresh();
+            }
+            return result;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

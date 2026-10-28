@@ -42,6 +42,7 @@ const files = [
      place to start reading than one sentence naming the table. */
   "src/lib/mbos-columns.test.ts",
   "src/lib/journeys.test.ts",
+  "src/lib/crm-accounts-impact.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // A lead is raised inside the salesman's own area, and lands there.
@@ -89,6 +90,9 @@ const files = [
   // The HRMS restructure: tabs open with their screen, a head reaches their
   // team and office only, and the audit's fixes hold.
   "src/lib/hrms/integration/restructure.test.ts",
+  // Every HRMS delete says what it takes with it, is refused bare, and does
+  // what its report said once confirmed.
+  "src/lib/hrms/integration/impact.test.ts",
   // Hire: identity is the phone, gating is enforced, an override is a named
   // act, an interviewer's scope is narrow, and the record is append-only.
   "src/lib/hire/integration/core.test.ts",
@@ -270,6 +274,8 @@ const files = [
   "src/lib/field-verifier-routing.test.ts",
   // Editing a SKU end to end: a rename keeps the old name as an alias and survives a re-import; the ERP packing row.
   "src/lib/catalogue-edit.test.ts",
+  // Turning a sign-in off and clearing a saved key, through the impact modal: refused until confirmed, and the report names what moves.
+  "src/lib/impact/admin-removals.test.ts",
   // Saving where a salesman works can hand him the shops in those places — only the count shown, only with customer.reassign.
   "src/lib/area-handover.test.ts",
   "src/lib/org-chart-verifier-routing.test.ts",

@@ -5,6 +5,7 @@ import { err, fromThrown, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
 import * as T from "@/lib/erp/trips";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * The Logistics desk's writes. Every one re-checks the Logistics screen
@@ -86,8 +87,8 @@ export async function erpLogisticsEditLr(lrId: string, input: L.LrInput) {
   return run((ctx) => L.editLr(ctx, lrId, input));
 }
 
-export async function erpLogisticsVoidLr(lrId: string, reason: string) {
-  return run((ctx) => L.voidLr(ctx, lrId, reason));
+export async function erpLogisticsVoidLr(lrId: string, reason: string, confirmation?: ImpactConfirmation) {
+  return run((ctx) => L.voidLr(ctx, lrId, reason, confirmation));
 }
 
 export async function erpLogisticsAttach(lrId: string, transportIds: string[], opts: { expectedOn?: string | null; notify?: boolean; nextCallOn?: string | null }) {
@@ -114,8 +115,8 @@ export async function erpLogisticsDelivered(transportIds: string[], input: { dat
   return run((ctx) => L.markDelivered(ctx, ids(transportIds), input));
 }
 
-export async function erpLogisticsReopen(transportId: string, reason: string) {
-  return run((ctx) => L.reopen(ctx, transportId, reason ?? ""));
+export async function erpLogisticsReopen(transportId: string, reason: string, confirmation?: ImpactConfirmation) {
+  return run((ctx) => L.reopen(ctx, transportId, reason ?? "", confirmation));
 }
 
 export async function erpLogisticsTransporter(input: Parameters<typeof L.saveTransporter>[1]) {
@@ -144,8 +145,8 @@ export async function erpTripAddBills(tripId: string, transportIds: string[]) {
   return run((ctx) => T.addToTrip(ctx, String(tripId ?? ""), ids(transportIds)));
 }
 
-export async function erpTripRemoveBill(transportId: string) {
-  return run((ctx) => T.removeFromTrip(ctx, String(transportId ?? "")));
+export async function erpTripRemoveBill(transportId: string, confirmation?: ImpactConfirmation) {
+  return run((ctx) => T.removeFromTrip(ctx, String(transportId ?? ""), confirmation));
 }
 
 /** Logistics records the confirmed payment; it does not make it. */
@@ -153,6 +154,6 @@ export async function erpTransportPaymentRecord(input: T.PaymentInput) {
   return run((ctx) => T.recordTransportPayment(ctx, { ...input, transportIds: ids(input?.transportIds) }));
 }
 
-export async function erpTransportPaymentReverse(paymentId: string, reason: string) {
-  return run((ctx) => T.reverseTransportPayment(ctx, String(paymentId ?? ""), reason ?? ""));
+export async function erpTransportPaymentReverse(paymentId: string, reason: string, confirmation?: ImpactConfirmation) {
+  return run((ctx) => T.reverseTransportPayment(ctx, String(paymentId ?? ""), reason ?? "", confirmation));
 }

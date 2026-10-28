@@ -16,6 +16,7 @@ import type {
 } from "@/lib/services/sales-service";
 import { accountTypeLabel } from "@/lib/account-types";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import {
   activityShopChoices,
   decideActivityShop,
@@ -633,6 +634,9 @@ function ShopDecision({ rowId, onDone }: { rowId: string; onDone: () => void }) 
   const [q, setQ] = React.useState("");
   const [found, setFound] = React.useState<ShopChoice[] | null>(null);
   const [busy, setBusy] = React.useState(false);
+  /* Taking a decision back moves visits off a customer's timeline and phones:
+     the impact modal says whose, first. Keyed per opening. */
+  const [undoing, setUndoing] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     let live = true;
@@ -666,17 +670,8 @@ function ShopDecision({ rowId, onDone }: { rowId: string; onDone: () => void }) 
     }
   }
 
-  async function undo() {
-    setBusy(true);
-    try {
-      const r = await undoActivityShopDecision({ rowId });
-      if (!r.ok) return setError(r.error);
-      toast.push(r.message ?? "Taken back.");
-      router.refresh();
-      onDone();
-    } finally {
-      setBusy(false);
-    }
+  function undo() {
+    setUndoing(Date.now());
   }
 
   if (error) return <p className="mt-3 text-[13px] text-danger">{error}</p>;
@@ -720,10 +715,32 @@ function ShopDecision({ rowId, onDone }: { rowId: string; onDone: () => void }) 
             ? `Decided: ${choices.decision.customer.name}${choices.decision.customer.city ? ` (${choices.decision.customer.city})` : ""}`
             : "Decided: not on MahekOne"}
           {choices.decision.by ? ` — by ${choices.decision.by}` : ""}.{" "}
-          <button onClick={() => void undo()} disabled={busy} className="cursor-pointer text-brand underline-offset-2 hover:underline">
+          <button onClick={() => undo()} disabled={busy} className="cursor-pointer text-brand underline-offset-2 hover:underline">
             Take it back
           </button>
         </p>
+      ) : null}
+      {undoing !== null ? (
+        <ImpactDialog
+          key={undoing}
+          kind="sales-activity-shop-undo"
+          id={rowId}
+          onClose={() => setUndoing(null)}
+          onConfirm={async (confirmation) => {
+            setBusy(true);
+            try {
+              const r = await undoActivityShopDecision({ rowId }, confirmation);
+              if (r.ok) {
+                toast.push(r.message ?? "Taken back.");
+                router.refresh();
+                onDone();
+              }
+              return r;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
       ) : null}
       {list("Exactly this name", choices.exact)}
       {list("Close names — check the town", choices.near)}

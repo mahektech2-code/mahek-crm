@@ -20,6 +20,7 @@ import { db } from "@/db";
 import { appAccess, attachments, mbosDeletions, mbosDocuments, users } from "@/db/schema";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { setTestUser } from "@/lib/auth";
+import { impactReport } from "@/lib/impact/registry";
 import {
   publishDocument,
   setDocumentPeople,
@@ -246,7 +247,19 @@ test("publishing again after a withdrawal is not undone by the withdrawal's own 
     attachmentId: await storedPdf(),
   });
   assert.ok(pub.ok);
-  assert.ok((await setDocumentPublished({ documentId: pub.data.id, published: false })).ok);
+  /* Withdrawing says first whose phones it leaves, and asks for the title. */
+  const report = await impactReport("sales-document-withdraw", pub.data.id);
+  assert.ok(report.ok, report.ok ? "" : report.error);
+  assert.equal(report.data.confirmWord, "Policy");
+  assert.ok(report.data.items.some((i) => i.effect === "kept" && /record/.test(i.label)));
+  const bare = await setDocumentPublished({ documentId: pub.data.id, published: false });
+  assert.equal(bare.ok, false, "no confirmation, no withdrawal");
+  assert.deepEqual((await deltaFor(rahul)).gone, [], "a refused withdrawal tombstoned nothing");
+  const withdrawn = await setDocumentPublished(
+    { documentId: pub.data.id, published: false },
+    { typed: "policy", fingerprint: report.data.fingerprint },
+  );
+  assert.ok(withdrawn.ok, withdrawn.ok ? "" : withdrawn.error);
   assert.deepEqual((await deltaFor(rahul)).gone, [pub.data.id]);
 
   assert.ok((await setDocumentPublished({ documentId: pub.data.id, published: true })).ok);

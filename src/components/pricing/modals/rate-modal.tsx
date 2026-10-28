@@ -21,6 +21,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Button, Checkbox, Field, Input, MoneyInput } from "@/components/ui/primitives";
 import type { PricingOptions, RateRow } from "@/lib/price-list-views";
@@ -65,8 +66,10 @@ function RateBody({
   readOnly?: boolean;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [busy, setBusy] = React.useState(false);
+  /** Taking the price off asks first, over this modal: which list, which product, and whether it may go at all. */
+  const [removing, setRemoving] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   const [productId, setProductId] = React.useState(rate?.productId ?? presetProductId ?? "");
@@ -134,147 +137,153 @@ function RateBody({
     }
   }
 
-  async function remove() {
-    if (!rate) return;
-    setBusy(true);
-    try {
-      const r = await run(removeRate(rate.id));
-      if (r.ok) {
-        onClose();
-        router.refresh();
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={560}
-      title={rate ? `Price for ${rate.productName}` : "Add a price"}
-      footer={
-        readOnly ? (
-          <Button variant="secondary" onClick={onClose}>
-            Close
-          </Button>
-        ) : (
-          <>
-            {rate ? (
-              <Button variant="danger" disabled={busy} onClick={remove} title={busy ? "Saving…" : "Take this price off the list"}>
-                Remove
-              </Button>
-            ) : null}
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        width={560}
+        title={rate ? `Price for ${rate.productName}` : "Add a price"}
+        footer={
+          readOnly ? (
             <Button variant="secondary" onClick={onClose}>
-              Cancel
+              Close
             </Button>
-            <Button variant="primary" disabled={busy} onClick={save} title={busy ? "Saving…" : undefined}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-          </>
-        )
-      }
-    >
-      <div className="space-y-3.5">
-        {rate || readOnly ? (
-          <div>
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Product</span>
-            <div className="text-sm text-ink">{chosen?.name ?? rate?.productName ?? "—"}</div>
-            {(chosen?.formulationName ?? rate?.formulationName) ? (
-              <div className="text-[13px] text-muted">{chosen?.formulationName ?? rate?.formulationName}</div>
-            ) : null}
-          </div>
-        ) : (
-          <Field label="Product" error={errors.productId ?? null} hint="Search the catalogue — the formulation is under the name.">
+          ) : (
             <>
-              <Input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Nano Thinner 20 Litre"
-              />
-              <div className="mt-1.5 max-h-[180px] overflow-y-auto rounded-[4px] border border-line">
-                {hits.length ? (
-                  hits.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setProductId(p.id)}
-                      className={cx(
-                        "block w-full cursor-pointer border-b border-divider px-3 py-1.5 text-left last:border-0 hover:bg-canvas",
-                        p.id === productId ? "bg-brand-soft" : null,
-                      )}
-                    >
-                      <span className="block text-sm text-ink">{p.name}</span>
-                      {p.formulationName ? (
-                        <span className="block text-[12px] text-muted">{p.formulationName}</span>
-                      ) : null}
-                    </button>
-                  ))
-                ) : (
-                  <p className="px-3 py-2 text-[13px] text-muted">Nothing in the catalogue matches that.</p>
-                )}
-              </div>
+              {rate ? (
+                <Button variant="danger" disabled={busy} onClick={() => setRemoving(true)} title={busy ? "Saving…" : "Take this price off the list"}>
+                  Remove
+                </Button>
+              ) : null}
+              <Button variant="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button variant="primary" disabled={busy} onClick={save} title={busy ? "Saving…" : undefined}>
+                {busy ? "Saving…" : "Save"}
+              </Button>
             </>
-          </Field>
-        )}
+          )
+        }
+      >
+        <div className="space-y-3.5">
+          {rate || readOnly ? (
+            <div>
+              <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Product</span>
+              <div className="text-sm text-ink">{chosen?.name ?? rate?.productName ?? "—"}</div>
+              {(chosen?.formulationName ?? rate?.formulationName) ? (
+                <div className="text-[13px] text-muted">{chosen?.formulationName ?? rate?.formulationName}</div>
+              ) : null}
+            </div>
+          ) : (
+            <Field label="Product" error={errors.productId ?? null} hint="Search the catalogue — the formulation is under the name.">
+              <>
+                <Input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Nano Thinner 20 Litre"
+                />
+                <div className="mt-1.5 max-h-[180px] overflow-y-auto rounded-[4px] border border-line">
+                  {hits.length ? (
+                    hits.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setProductId(p.id)}
+                        className={cx(
+                          "block w-full cursor-pointer border-b border-divider px-3 py-1.5 text-left last:border-0 hover:bg-canvas",
+                          p.id === productId ? "bg-brand-soft" : null,
+                        )}
+                      >
+                        <span className="block text-sm text-ink">{p.name}</span>
+                        {p.formulationName ? (
+                          <span className="block text-[12px] text-muted">{p.formulationName}</span>
+                        ) : null}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-3 py-2 text-[13px] text-muted">Nothing in the catalogue matches that.</p>
+                  )}
+                </div>
+              </>
+            </Field>
+          )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field
-            label="GST inclusive"
-            error={side === "incl" ? (errors.rate ?? null) : null}
-            hint={side === "ex" && inclPaise != null ? `Works out to ${money(inclPaise)}` : undefined}
-          >
-            <MoneyInput
-              value={side === "incl" ? incl : inclPaise != null ? rupeesFromPaise(inclPaise) : ""}
-              readOnly={readOnly}
-              onFocus={() => setSide("incl")}
-              onChange={(e) => {
-                setSide("incl");
-                setIncl(e.target.value);
-              }}
-              placeholder="2,286"
-            />
-          </Field>
-          <Field
-            label="Ex GST"
-            error={side === "ex" ? (errors.rate ?? null) : null}
-            hint={side === "incl" && exPaise != null ? `Works out to ${money(exPaise)}` : undefined}
-          >
-            <MoneyInput
-              value={side === "ex" ? ex : exPaise != null ? rupeesFromPaise(exPaise) : ""}
-              readOnly={readOnly}
-              onFocus={() => setSide("ex")}
-              onChange={(e) => {
-                setSide("ex");
-                setEx(e.target.value);
-              }}
-              placeholder="1,937"
-            />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label="GST inclusive"
+              error={side === "incl" ? (errors.rate ?? null) : null}
+              hint={side === "ex" && inclPaise != null ? `Works out to ${money(inclPaise)}` : undefined}
+            >
+              <MoneyInput
+                value={side === "incl" ? incl : inclPaise != null ? rupeesFromPaise(inclPaise) : ""}
+                readOnly={readOnly}
+                onFocus={() => setSide("incl")}
+                onChange={(e) => {
+                  setSide("incl");
+                  setIncl(e.target.value);
+                }}
+                placeholder="2,286"
+              />
+            </Field>
+            <Field
+              label="Ex GST"
+              error={side === "ex" ? (errors.rate ?? null) : null}
+              hint={side === "incl" && exPaise != null ? `Works out to ${money(exPaise)}` : undefined}
+            >
+              <MoneyInput
+                value={side === "ex" ? ex : exPaise != null ? rupeesFromPaise(exPaise) : ""}
+                readOnly={readOnly}
+                onFocus={() => setSide("ex")}
+                onChange={(e) => {
+                  setSide("ex");
+                  setEx(e.target.value);
+                }}
+                placeholder="1,937"
+              />
+            </Field>
+          </div>
+
+          {perLitre != null ? (
+            <p className="text-[13px] text-muted">{money(perLitre)} a litre, for reading two pack sizes against each other.</p>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="From (cans)" error={errors.minCans ?? null} hint="Blank is a flat price.">
+              <Input value={minCans} inputMode="numeric" readOnly={readOnly} onChange={(e) => setMinCans(e.target.value)} />
+            </Field>
+            <Field label="Up to (cans)" error={errors.maxCans ?? null} hint="Blank is no ceiling.">
+              <Input value={maxCans} inputMode="numeric" readOnly={readOnly} onChange={(e) => setMaxCans(e.target.value)} />
+            </Field>
+          </div>
+
+          <Checkbox
+            checked={offered}
+            disabled={readOnly}
+            onChange={(e) => setOffered(e.target.checked)}
+            label="Offered on this list — untick it to print a dash against this pack"
+          />
         </div>
-
-        {perLitre != null ? (
-          <p className="text-[13px] text-muted">{money(perLitre)} a litre, for reading two pack sizes against each other.</p>
-        ) : null}
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="From (cans)" error={errors.minCans ?? null} hint="Blank is a flat price.">
-            <Input value={minCans} inputMode="numeric" readOnly={readOnly} onChange={(e) => setMinCans(e.target.value)} />
-          </Field>
-          <Field label="Up to (cans)" error={errors.maxCans ?? null} hint="Blank is no ceiling.">
-            <Input value={maxCans} inputMode="numeric" readOnly={readOnly} onChange={(e) => setMaxCans(e.target.value)} />
-          </Field>
-        </div>
-
-        <Checkbox
-          checked={offered}
-          disabled={readOnly}
-          onChange={(e) => setOffered(e.target.checked)}
-          label="Offered on this list — untick it to print a dash against this pack"
+      </Modal>
+      {removing && rate ? (
+        <ImpactDialog
+          key={rate.id}
+          kind="price-rate"
+          id={rate.id}
+          confirmLabel="Remove"
+          onClose={() => setRemoving(false)}
+          onConfirm={async (confirmation) => {
+            const r = await removeRate(rate.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Rate removed.");
+              onClose();
+              router.refresh();
+            }
+            return r;
+          }}
         />
-      </div>
-    </Modal>
+      ) : null}
+    </>
   );
 }

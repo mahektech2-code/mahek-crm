@@ -14,6 +14,8 @@ import { scopeFor, tooWide, windowWhere, type LoadScope, type ScreenWindow } fro
 import { erpLink } from "../registry";
 import { translate } from "@/lib/audit-labels";
 import { today } from "./common";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import {
   FROM_CUSTOMER_CASH,
   FROM_WITHDRAWAL,
@@ -355,6 +357,8 @@ async function txnListRows(ctx: ErpContext, rows: TxnRow[]): Promise<ListRow[]> 
         l: "Cancel",
         why: t.matchedPaise > 0 ? "Matched to a bank line — undo the match first" : t.usedPaise > 0 ? "Cash from it has been paid onward" : !approver && (t.createdById !== ctx.actor.id || t.review === "approved") ? "Only the accountant, or whoever entered it before approval" : "",
         prompt: { title: `Cancel ${t.label}?`, sub: "It stays on record, marked cancelled, and stops counting in every balance.", submit: "Cancel it", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
+        /* The reason, then every balance it stops counting in. */
+        impact: { kind: "erp-money-txn", id: t.id },
       });
     const figures: MoneyPanel["figures"] = [{ l: MONEY_KIND_LABEL[t.kind], v: inr(t.amountPaise), tone: t.kind === "receipt" ? "success" : undefined }];
     if (t.fromKind === "bank" || t.toKind === "bank") figures.push({ l: "Bank matched", v: inr(t.matchedPaise), tone: t.matchedPaise >= t.amountPaise ? "success" : "danger" });
@@ -429,6 +433,8 @@ const TXN_ACTIONS = {
     return reviewTxns(actorOf(ctx), [id], "sent_back", text(v.note));
   },
   async cancel(ctx: ErpContext, id: string, v: Values) {
+    const refusal = await confirmImpact("erp-money-txn", id, readConfirmation(v));
+    if (refusal) return refusal;
     return cancelTxn(actorOf(ctx), id, v.reason ?? "");
   },
 };
@@ -767,10 +773,11 @@ const advances: ScreenModule = {
                   l: "Cancel advance",
                   why: a.bills.some((b) => b.status === "active") ? "Bills are against it" : !approver && a.issueTxn?.createdById !== ctx.actor.id ? "Only the accountant, or whoever gave it" : "",
                   prompt: { title: `Cancel ${a.label}?`, sub: "For an advance recorded in error. The money goes back to its account; the advance stays on record, cancelled.", submit: "Cancel advance", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
+                  impact: { kind: "erp-money-advance", id: a.id },
                 } as ActionSpec,
               ]
             : []),
-          ...(a.status === "settled" ? [{ id: "reopen", l: "Reopen", why: approverWhy(ctx), prompt: { title: `Reopen ${a.label}?`, sub: "Its settlement is cancelled and the advance is open again.", submit: "Reopen", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } } as ActionSpec] : []),
+          ...(a.status === "settled" ? [{ id: "reopen", l: "Reopen", why: approverWhy(ctx), prompt: { title: `Reopen ${a.label}?`, sub: "Its settlement is cancelled and the advance is open again.", submit: "Reopen", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-money-advance-reopen", id: a.id } } as ActionSpec] : []),
         ];
         const sections: MoneyPanel["sections"] = [
           {
@@ -842,9 +849,14 @@ const advances: ScreenModule = {
       return settleAdvance(actorOf(ctx), id, text(v.account), text(v.mode));
     },
     async reopen(ctx, id, v) {
+      if (!ctx.powers.has("approveMoney")) return err("Only the accountant reopens an advance.", "not_permitted");
+      const refusal = await confirmImpact("erp-money-advance-reopen", id, readConfirmation(v));
+      if (refusal) return refusal;
       return reopenAdvance(actorOf(ctx), id, v.reason ?? "");
     },
     async cancelAdvance(ctx, id, v) {
+      const refusal = await confirmImpact("erp-money-advance", id, readConfirmation(v));
+      if (refusal) return refusal;
       return cancelAdvance(actorOf(ctx), id, v.reason ?? "");
     },
   },
@@ -1048,7 +1060,7 @@ const bankLines: ScreenModule = {
         const strong = c.filter((x) => x.score !== "near");
         const actions: ActionSpec[] =
           state === "Matched"
-            ? [{ id: "unmatch", l: "Undo match", why: approverWhy(ctx), confirm: "Undo this match? The line and its transactions are open again." }]
+            ? [{ id: "unmatch", l: "Undo match", why: approverWhy(ctx), impact: { kind: "erp-bank-match", id: l.id } }]
             : state === "Set aside"
               ? [{ id: "restore", l: "Bring back", why: approverWhy(ctx) }]
               : [
@@ -1135,7 +1147,10 @@ const bankLines: ScreenModule = {
       if (!ids.length || ids.length !== picked.length) return fieldErr("txns", "Pick from the list again — it has changed.");
       return matchBankLine(actorOf(ctx), id, ids);
     },
-    async unmatch(ctx, id) {
+    async unmatch(ctx, id, v) {
+      if (!ctx.powers.has("approveMoney")) return err("Only the accountant matches bank lines.", "not_permitted");
+      const refusal = await confirmImpact("erp-bank-match", id, readConfirmation(v));
+      if (refusal) return refusal;
       return unmatchBankLine(actorOf(ctx), id);
     },
     async ignore(ctx, id, v) {

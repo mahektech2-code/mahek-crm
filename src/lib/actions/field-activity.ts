@@ -1,6 +1,8 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -208,12 +210,25 @@ export async function decideActivityShop(input: {
 }
 
 /** Take a decision back: the name goes back to the importer's own rule. */
-export async function undoActivityShopDecision(input: { rowId: string }): Promise<Result<{ rows: number }>> {
+export async function undoActivityShopDecision(
+  input: { rowId: string },
+  confirmation?: ImpactConfirmation,
+): Promise<Result<{ rows: number }>> {
   try {
     const user = await requireDecider();
     const shownName = await nameOfRow(input.rowId);
     if (!shownName) return err("This row names no shop.", "not_found");
     const nameKey = foldShopName(shownName);
+    /* Taking a decision back moves visits off a customer's timeline and off
+       the phones; the person saw whose. Nothing decided, nothing to confirm. */
+    const [decided] = await db
+      .select({ nameKey: fieldActivityCustomerDecisions.nameKey })
+      .from(fieldActivityCustomerDecisions)
+      .where(eq(fieldActivityCustomerDecisions.nameKey, nameKey));
+    if (decided) {
+      const refusal = await confirmImpact("sales-activity-shop-undo", input.rowId, confirmation);
+      if (refusal) return refusal;
+    }
 
     const removed = await db
       .delete(fieldActivityCustomerDecisions)

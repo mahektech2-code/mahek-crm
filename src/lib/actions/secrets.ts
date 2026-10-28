@@ -11,6 +11,8 @@ import { err as fail, okVoid, type Result } from "@/lib/result";
 import { isPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
 import { ConsoleNotConfirmedError, isConsoleConfirmed } from "@/lib/console-confirm";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Setting and clearing the credentials MahekOne calls outside services with.
@@ -102,10 +104,14 @@ export async function setSecretAction(name: string, raw: string): Promise<Result
   return okVoid(`${LABELS[name]} saved. ${USED_FROM[name]}`);
 }
 
-export async function clearSecretAction(name: string): Promise<Result> {
+export async function clearSecretAction(name: string, confirmation?: ImpactConfirmation): Promise<Result> {
   const { user, error } = await requirePlatformAdmin();
   if (error) return error;
   if (!isSecretName(name)) return fail("That is not a credential MahekOne holds.");
+  /* Which feature stops, or which deployment key takes over — the person
+     read it, and it is still true. */
+  const refusal = await confirmImpact("admin-secret", name, confirmation);
+  if (refusal) return refusal;
 
   await db.transaction(async (tx) => {
     await tx.delete(appSecrets).where(eq(appSecrets.name, name));

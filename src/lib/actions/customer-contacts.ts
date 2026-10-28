@@ -21,6 +21,8 @@ import {
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /*
  * THE CONTACTS PANEL'S DOORS. Each one asks the question `updateCustomer`
@@ -138,12 +140,19 @@ export async function updateCustomerContact(
   }
 }
 
-export async function removeCustomerContact(contactId: string): Promise<Result<CustomerContact[]>> {
+export async function removeCustomerContact(
+  contactId: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result<CustomerContact[]>> {
   try {
     const customerId = await customerOfContact(contactId);
     if (!customerId) return err("That contact no longer exists.", "not_found");
     const scope = await inScopeToEdit(customerId);
     if ("ok" in scope) return scope;
+    /* Which number WhatsApp and the reminders go to moves with this, on the
+       record and on the phones holding the shop — and the person saw that. */
+    const refusal = await confirmImpact("crm-customer-contact", contactId, confirmation);
+    if (refusal) return refusal;
     const result = await removeContactService(contactId, scope.actorId);
     if (result.ok) refresh();
     return result;

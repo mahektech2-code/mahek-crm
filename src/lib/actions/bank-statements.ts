@@ -6,6 +6,10 @@ import { resolveScope } from "@/lib/access-control";
 import { err, fromThrown, type Result } from "@/lib/result";
 import type { Candidate } from "@/lib/engines/bank-statements";
 import * as S from "@/lib/services/bank-statement-service";
+import { confirmImpact } from "@/lib/impact/registry";
+import { impactPair } from "@/lib/impact/kinds/crm-keys";
+import { accountsDeskRefusal, BANK_HOME, BANK_RECONCILE } from "@/lib/impact/kinds/accounts";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Bank statement management's writes. Each asks for the SCREEN first — a
@@ -49,8 +53,28 @@ export async function bankImportUpload(uploadId: string) {
   return run(HOME, () => S.importUpload(String(uploadId)));
 }
 
-export async function bankDiscardUpload(uploadId: string) {
-  return run(HOME, () => S.discardUpload(String(uploadId)));
+/* The three below are confirmed against what the person was shown: the PDF
+   and its unread lines going, the records a match leaves standing, the bills a
+   returned cheque makes owed again. Here, in the action, so the service's own
+   callers and tests keep working — and after the desk's own question, asked
+   in the service's words, so a refusal reads as it always did. */
+async function confirmedAt(
+  modules: readonly string[],
+  capability: "payment.confirm" | "payment.record",
+  kind: string,
+  id: string,
+  confirmation: ImpactConfirmation | undefined,
+): Promise<Result<never> | null> {
+  const closed = await accountsDeskRefusal("bank", modules, capability);
+  if (closed) return err(closed, "not_permitted");
+  return confirmImpact(kind, id, confirmation);
+}
+
+export async function bankDiscardUpload(uploadId: string, confirmation?: ImpactConfirmation) {
+  return run(HOME, async () => {
+    const refusal = await confirmedAt(BANK_HOME, "payment.record", "accounts-bank-upload-discard", String(uploadId), confirmation);
+    return refusal ?? S.discardUpload(String(uploadId));
+  });
 }
 
 export async function bankLineDetail(lineId: string): Promise<S.LineDetail | null> {
@@ -92,8 +116,11 @@ export async function bankRestore(lineId: string) {
   return run(REC, () => S.restoreLine(String(lineId)));
 }
 
-export async function bankUndo(lineId: string) {
-  return run(REC, () => S.undoMatch(String(lineId)));
+export async function bankUndo(lineId: string, confirmation?: ImpactConfirmation) {
+  return run(REC, async () => {
+    const refusal = await confirmedAt(BANK_RECONCILE, "payment.confirm", "accounts-bank-unmatch", String(lineId), confirmation);
+    return refusal ?? S.undoMatch(String(lineId));
+  });
 }
 
 export async function bankEditLine(lineId: string, x: { date: string; description: string; reference: string | null; debitPaise: number; creditPaise: number; balancePaise: number | null }) {
@@ -109,8 +136,11 @@ export async function bankEditLine(lineId: string, x: { date: string; descriptio
   );
 }
 
-export async function bankReverseForReturn(lineId: string, receiptId: string) {
-  return run(REC, () => S.reverseForReturn(String(lineId), String(receiptId)));
+export async function bankReverseForReturn(lineId: string, receiptId: string, confirmation?: ImpactConfirmation) {
+  return run(REC, async () => {
+    const refusal = await confirmedAt(BANK_RECONCILE, "payment.confirm", "accounts-bank-return", impactPair(String(lineId), String(receiptId)), confirmation);
+    return refusal ?? S.reverseForReturn(String(lineId), String(receiptId));
+  });
 }
 
 export async function bankConfirmAmount(lineId: string, receiptId: string) {

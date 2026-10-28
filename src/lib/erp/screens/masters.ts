@@ -54,6 +54,8 @@ import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } fro
 import { OWNERSHIP_LABEL, ownershipByLabel, type DrumOwnership } from "../engines/drums";
 import { MAX_CAN_PHOTOS } from "../engines/can-groups";
 import { photoUrl, photosOf, setPhotos } from "../can-photos";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Masters (spec §4): raw materials, suppliers, products, customers, godowns,
@@ -209,7 +211,7 @@ const rawMaterials: ScreenModule = {
           { id: "edit", l: "Edit", primary: true, loadsForm: true },
           ...(r.materialType === "Can" ? [{ id: "photos", l: "Photos", loadsForm: true }] : []),
           r.active
-            ? { id: "retire", l: "Retire", confirm: `Retire ${r.name}? It stays on every record that already names it, and is no longer offered on new ones.` }
+            ? { id: "retire", l: "Retire", impact: { kind: "erp-raw-material-retire", id: r.id } }
             : { id: "restore", l: "Restore" },
         ];
         return {
@@ -253,7 +255,9 @@ const rawMaterials: ScreenModule = {
     },
   },
   actions: {
-    async retire(ctx, id) {
+    async retire(ctx, id, v) {
+      const refusal = await confirmImpact("erp-raw-material-retire", id, readConfirmation(v));
+      if (refusal) return refusal;
       await db.update(erpRawMaterials).set({ active: false, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRawMaterials.id, id));
       await erpAudit(ctx, "erp.rawMaterial.retire", "erp_raw_material", id);
       return okVoid("Retired · no longer offered on new records");
@@ -488,7 +492,7 @@ const suppliers: ScreenModule = {
         actions: [
           { id: "edit", l: "Edit", primary: true, loadsForm: true },
           r.active
-            ? { id: "retire", l: "Retire", confirm: `Retire ${r.name}? Existing purchases keep the name; new inward lines stop offering it.` }
+            ? { id: "retire", l: "Retire", impact: { kind: "erp-supplier-retire", id: r.id } }
             : { id: "restore", l: "Restore" },
         ],
         by: stampLine(null, r.createdAt),
@@ -507,7 +511,9 @@ const suppliers: ScreenModule = {
     },
   },
   actions: {
-    async retire(ctx, id) {
+    async retire(ctx, id, v) {
+      const refusal = await confirmImpact("erp-supplier-retire", id, readConfirmation(v));
+      if (refusal) return refusal;
       await db.update(erpSuppliers).set({ active: false, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpSuppliers.id, id));
       await erpAudit(ctx, "erp.supplier.retire", "erp_supplier", id);
       return okVoid("Retired");
@@ -954,7 +960,7 @@ const customersScreen: ScreenModule = {
         if (st !== "Active")
           actions.push({ id: "activate", l: "Activate", primary: true, why, confirm: "Activate this party? Its orders can then move." });
         if (st !== "Deactive")
-          actions.push({ id: "deactivate", l: "Deactivate", why, confirm: `Deactivate ${r.name}? New orders will not be accepted.` });
+          actions.push({ id: "deactivate", l: "Deactivate", why, impact: { kind: "erp-party-deactivate", id: r.id } });
         if (st === "Active")
           actions.push({ id: "pend", l: "Mark pending", why, confirm: "Mark this party pending? Its orders wait until it is activated again." });
         /* No "Edit details": a customer's details are edited in Accounts only (lib/customer-edit-gate.ts). */
@@ -1016,10 +1022,12 @@ const customersScreen: ScreenModule = {
       await erpAudit(ctx, "erp.customer.activate", "customer", id);
       return okVoid(`${c.name} is Active · its orders can move`);
     },
-    async deactivate(ctx, id) {
+    async deactivate(ctx, id, v) {
       if (!ctx.powers.has("customerStatus")) return err("Only an admin or the office changes a customer's status.", "not_permitted");
       const [c] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, id));
       if (!c) return err("That customer no longer exists.", "not_found");
+      const refusal = await confirmImpact("erp-party-deactivate", id, readConfirmation(v));
+      if (refusal) return refusal;
       await db
         .update(customers)
         .set({

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import type { Result } from "@/lib/result";
 import type { ConnectionCheck, LiveRefresh } from "@/lib/website-cms/live-site";
 import * as cms from "@/lib/website-cms/commands";
@@ -26,11 +27,11 @@ export async function createContentAction(kind: string, data: unknown): Promise<
 export async function saveContentAction(id: string, data: unknown, expectedVersion?: number): Promise<Result<ItemView>> {
   return done(await cms.saveContent(id, data, expectedVersion));
 }
-export async function discardChangesAction(id: string): Promise<Result<ItemView>> {
-  return done(await cms.discardContentChanges(id));
+export async function discardChangesAction(id: string, confirmation?: ImpactConfirmation): Promise<Result<ItemView>> {
+  return done(await cms.discardContentChanges(id, confirmation));
 }
-export async function deleteDraftAction(id: string): Promise<Result> {
-  return done(await cms.deleteContentDraft(id));
+export async function deleteDraftAction(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
+  return done(await cms.deleteContentDraft(id, confirmation));
 }
 export async function moveContentAction(id: string, direction: string): Promise<Result> {
   return done(await cms.moveContent(id, direction));
@@ -39,11 +40,11 @@ export async function moveContentAction(id: string, direction: string): Promise<
 export async function publishItemsAction(ids: string[]): Promise<Result<PublishOutcome>> {
   return done(await cms.transitionContent(ids, "publish"));
 }
-export async function unpublishItemAction(id: string): Promise<Result<PublishOutcome>> {
-  return done(await cms.transitionContent([id], "unpublish"));
+export async function unpublishItemAction(id: string, confirmation?: ImpactConfirmation): Promise<Result<PublishOutcome>> {
+  return done(await cms.transitionContent([id], "unpublish", confirmation));
 }
-export async function archiveItemAction(id: string): Promise<Result<PublishOutcome>> {
-  return done(await cms.transitionContent([id], "archive"));
+export async function archiveItemAction(id: string, confirmation?: ImpactConfirmation): Promise<Result<PublishOutcome>> {
+  return done(await cms.transitionContent([id], "archive", confirmation));
 }
 export async function restoreItemAction(id: string): Promise<Result<PublishOutcome>> {
   return done(await cms.transitionContent([id], "restore"));
@@ -71,8 +72,8 @@ export async function previewKindAction(kind: string, path?: string): Promise<Re
 export async function updateMediaAltAction(id: string, alt: string): Promise<Result> {
   return done(await cms.setMediaAlt(id, alt));
 }
-export async function deleteMediaAction(id: string): Promise<Result> {
-  return done(await cms.removeMedia(id));
+export async function deleteMediaAction(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
+  return done(await cms.removeMedia(id, confirmation));
 }
 export async function getContentAction(id: string): Promise<Result<ItemView>> {
   return cms.readContent(id);
@@ -83,8 +84,8 @@ export async function getContentAction(id: string): Promise<Result<ItemView>> {
 export async function assignWorkAction(employeeId: string, kind: string, contentId?: string | null, scopeNote?: string): Promise<Result<AssignmentView>> {
   return done(await cms.assignWork(employeeId, kind, contentId ?? undefined, scopeNote));
 }
-export async function revokeAssignmentAction(assignmentId: string): Promise<Result> {
-  return done(await cms.revokeAssignment(assignmentId));
+export async function revokeAssignmentAction(assignmentId: string, confirmation?: ImpactConfirmation): Promise<Result> {
+  return done(await cms.revokeAssignment(assignmentId, confirmation));
 }
 export async function setEnforceAssignmentsAction(on: boolean): Promise<Result<{ enforced: boolean }>> {
   return done(await cms.setEnforceAssignments(on));
@@ -98,11 +99,11 @@ export async function approveRequestAction(requestId: string): Promise<Result<{ 
 export async function rejectRequestAction(requestId: string, reason: string): Promise<Result> {
   return done(await cms.rejectRequest(requestId, reason));
 }
-export async function revokeApprovalAction(requestId: string): Promise<Result> {
-  return done(await cms.revokeApproval(requestId));
+export async function revokeApprovalAction(requestId: string, confirmation?: ImpactConfirmation): Promise<Result> {
+  return done(await cms.revokeApproval(requestId, confirmation));
 }
-export async function withdrawRequestAction(requestId: string): Promise<Result> {
-  return done(await cms.withdrawRequest(requestId));
+export async function withdrawRequestAction(requestId: string, confirmation?: ImpactConfirmation): Promise<Result> {
+  return done(await cms.withdrawRequest(requestId, confirmation));
 }
 export async function publishApprovedAction(requestId: string): Promise<Result<PublishOutcome>> {
   return done(await cms.publishApproved(requestId));

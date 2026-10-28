@@ -426,7 +426,7 @@ export async function setRate(input: z.input<typeof rateInput>): Promise<Result<
   }
 }
 
-export async function removeRate(rateId: string): Promise<Result> {
+export async function removeRate(rateId: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListRates).where(eq(priceListRates.id, rateId));
@@ -438,6 +438,9 @@ export async function removeRate(rateId: string): Promise<Result> {
         "rule_violation",
       );
     }
+    /* A draft's rate, and the person saw which. */
+    const refusal = await confirmImpact("price-rate", rateId, confirmation);
+    if (refusal) return refusal;
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {
         action: "pricelist.rate.remove",
@@ -718,11 +721,15 @@ export async function setDiscountTerm(input: {
   }
 }
 
-export async function removeDiscountTerm(id: string): Promise<Result> {
+export async function removeDiscountTerm(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListDiscountTerms).where(eq(priceListDiscountTerms.id, id));
     if (!row) return err("That term does not exist.", "not_found");
+    /* On a published list it leaves the printed sheet and every ERP sales
+       order that names the list — the parties were listed by name. */
+    const refusal = await confirmImpact("price-discount-term", id, confirmation);
+    if (refusal) return refusal;
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {
         action: "pricelist.discount.remove",
@@ -1484,7 +1491,7 @@ export async function reparseDocument(documentId: string): Promise<Result<{ stat
   }
 }
 
-export async function deleteDocument(documentId: string): Promise<Result> {
+export async function deleteDocument(documentId: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
@@ -1492,6 +1499,9 @@ export async function deleteDocument(documentId: string): Promise<Result> {
     if (doc.parseStatus === "published") {
       return err("This one became a price list, and the list points back at it. Withdraw the list instead.", "rule_violation");
     }
+    /* Every price read off it, and whatever a person had already matched. */
+    const refusal = await confirmImpact("price-document", documentId, confirmation);
+    if (refusal) return refusal;
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {
         action: "pricelist.document.delete",
@@ -1789,7 +1799,7 @@ export async function decidePriceRequest(
   }
 }
 
-export async function withdrawPriceRequest(id: string): Promise<Result> {
+export async function withdrawPriceRequest(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requireCapability("pricelist.read");
     const [row] = await db.select().from(priceRequests).where(eq(priceRequests.id, id));
@@ -1798,6 +1808,8 @@ export async function withdrawPriceRequest(id: string): Promise<Result> {
       return err("Only the person who asked can withdraw it.", "not_permitted");
     }
     if (row.status !== "pending") return err(`That request was already ${row.status}.`, "rule_violation");
+    const refusal = await confirmImpact("price-request-withdraw", id, confirmation);
+    if (refusal) return refusal;
 
     await db.transaction(async (tx) => {
       await tx

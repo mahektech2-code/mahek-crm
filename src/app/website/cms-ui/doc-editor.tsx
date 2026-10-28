@@ -3,9 +3,11 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/primitives";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { discardChangesAction, previewItemAction, publishItemsAction, saveContentAction, unpublishItemAction } from "@/lib/actions/website-cms";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import type { Result } from "@/lib/result";
 import { validateKindData, type KindKey } from "@/lib/website-cms/kinds";
 import type { ItemReview } from "@/lib/website-cms/review-queries";
 import type { ItemView } from "@/lib/website-cms/service";
@@ -37,7 +39,6 @@ export function DocEditor({
   canPublish,
   canSubmit = false,
   review,
-  what,
   stacked = false,
 }: {
   kind: KindKey;
@@ -48,8 +49,6 @@ export function DocEditor({
   canSubmit?: boolean;
   /** Where this record stands in review: held by a request, or returned to this person. */
   review?: ItemReview;
-  /** "the site settings", "this page" — used in the confirmations. */
-  what: string;
   /** Footer buttons stay at the bottom of a drawer; on a page they follow the form. */
   stacked?: boolean;
 }) {
@@ -117,24 +116,33 @@ export function DocEditor({
       reportPublish(toast, await publishItemsAction([target.id]));
       router.refresh();
     });
-  const onConfirm = async () => {
+  /* Runs from the impact modal, which shows a refusal itself and reloads on `conflict`. */
+  const onConfirm = async (confirmation: ImpactConfirmation): Promise<Result<unknown>> => {
     const which = confirm;
-    setConfirm(null);
-    if (!which) return;
-    await guarded(which, async () => {
-      if (which === "unpublish") reportPublish(toast, await unpublishItemAction(current.id));
-      else {
-        const r = await discardChangesAction(current.id);
+    if (!which) return { ok: false, error: "Nothing was chosen." };
+    setBusy(which);
+    try {
+      if (which === "unpublish") {
+        const r = await unpublishItemAction(current.id, confirmation);
         if (r.ok) {
-          setCurrent(r.data);
-          setData(clone(r.data.data));
-          setSaved(JSON.stringify(r.data.data));
-          setErrors({});
-          toast.push(r.message ?? "Discarded.");
-        } else toast.push(r.error, "error");
+          reportPublish(toast, r);
+          router.refresh();
+        }
+        return r;
       }
-      router.refresh();
-    });
+      const r = await discardChangesAction(current.id, confirmation);
+      if (r.ok) {
+        setCurrent(r.data);
+        setData(clone(r.data.data));
+        setSaved(JSON.stringify(r.data.data));
+        setErrors({});
+        toast.push(r.message ?? "Discarded.");
+        router.refresh();
+      }
+      return r;
+    } finally {
+      setBusy(null);
+    }
   };
 
   const onSubmit = () =>
@@ -200,19 +208,19 @@ export function DocEditor({
         }}
       />
 
-      <ConfirmDialog
-        open={confirm !== null}
-        title={confirm === "unpublish" ? "Go back to the built-in version" : "Discard unpublished changes"}
-        body={
-          confirm === "unpublish"
-            ? `${what[0].toUpperCase()}${what.slice(1)} will stop coming from MahekOne: mahekindia.com goes back to the content built into the website. Your edits here are kept and you can publish them again.`
-            : `Your unpublished edits to ${what} will be thrown away and it goes back to exactly what is live now.`
-        }
-        destructive
-        confirmLabel={confirm === "unpublish" ? "Go back to built-in" : "Discard changes"}
-        onClose={() => setConfirm(null)}
-        onConfirm={onConfirm}
-      />
+      {/* Going back to the built-in version takes the page off what MahekOne
+          serves; discarding throws edits away. The modal says which, and what
+          it reaches, before anything moves. */}
+      {confirm ? (
+        <ImpactDialog
+          key={`${confirm}:${current.id}`}
+          kind={confirm === "unpublish" ? "site-content-unpublish" : "site-content-discard"}
+          id={current.id}
+          confirmLabel={confirm === "unpublish" ? "Go back to built-in" : "Discard changes"}
+          onClose={() => setConfirm(null)}
+          onConfirm={onConfirm}
+        />
+      ) : null}
     </div>
   );
 }

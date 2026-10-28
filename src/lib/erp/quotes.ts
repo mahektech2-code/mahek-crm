@@ -2,9 +2,11 @@ import "server-only";
 import { and, asc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpQuoteCells, erpQuoteColumns, erpQuoteRows, erpRawMaterials, erpSuppliers, users } from "@/db/schema";
-import { err, ok, type Result } from "@/lib/result";
+import { err, ok, type Err, type Result } from "@/lib/result";
 import type { ErpContext } from "./access";
 import { erpAudit, nextNumber } from "./server";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { poLabel } from "./engines/purchase-flow";
 import { refusalResult } from "./screens/common";
 import { joinablePoNumber, orderFromQuote, purchaseChoices, syncQuotePoDrums, withdrawQuotePo, type PurchaseChoices, type QuoteOrder } from "./screens/requirement-po";
@@ -186,9 +188,12 @@ export type QuoteOp =
       poNo?: string | null;
       /** Purchase it: how much, where and by when — writes the ERP purchase order in the same save. */
       order?: QuoteOrder;
+      /** The impact modal's confirmation, where this takes a bought rate off (`erp-quote-purchase`). */
+      impact?: ImpactConfirmation;
     }
   | { op: "row"; rowId: string; create?: boolean; date?: string; party?: string; status?: QuoteStatus | null }
-  | { op: "deleteRow"; rowId: string }
+  /** `impact`: the modal's confirmation — required where the row holds a bought rate (`erp-quote-row`). */
+  | { op: "deleteRow"; rowId: string; impact?: ImpactConfirmation }
   | { op: "restoreRow"; rowId: string }
   | { op: "column"; columnId: string; create?: boolean; pack?: string; name?: string; brand?: string; kind?: QuoteColumnKind; rawMaterialId?: string | null }
   | { op: "order"; columnIds: string[] }
@@ -218,9 +223,55 @@ export function quoteManagerOf(ctx: ErpContext): boolean {
 /** A PO number the server made while saving, so the grid can show it; `ordered` where its purchase order was written too. */
 export type MintedPo = { rowId: string; columnId: string; poNo: string; ordered?: boolean };
 
+const BOUGHT = ["po", "pickup"];
+
+/**
+ * THE TWO CHANGES THAT REACH PAST THE SHEET, checked against what the person
+ * was shown before anything in the save is written: a bought rate taken off
+ * (it withdraws the ERP PO line, maybe the PO, and moves its requirement), and
+ * a row deleted while it holds one (its PO stays, and the sheet stops saying
+ * where it was bought). A server action is a URL, so the grid asking first is
+ * not the check. Every other change is the spreadsheet's own, undone with
+ * Ctrl+Z, and asks nothing — undoing a paste deletes the rows it made.
+ */
+async function impactRefusal(ops: QuoteOp[]): Promise<Err | null> {
+  const leaving = ops.filter(
+    (o): o is Extract<QuoteOp, { op: "cell" }> => o?.op === "cell" && o.status !== undefined && !BOUGHT.includes(o.status ?? ""),
+  );
+  if (leaving.length) {
+    const pairs = sql.join(leaving.map((o) => sql`(${String(o.rowId)}, ${String(o.columnId)})`), sql`, `);
+    const bought = (await db.execute(sql`
+      select row_id as "rowId", column_id as "columnId" from erp_quote_cells where (row_id, column_id) in (${pairs}) and status = 'po'
+    `)) as unknown as { rowId: string; columnId: string }[];
+    for (const b of bought) {
+      const o = leaving.find((x) => x.rowId === b.rowId && x.columnId === b.columnId);
+      const refusal = await confirmImpact("erp-quote-purchase", `${b.rowId}:${b.columnId}`, o?.impact);
+      if (refusal) return refusal;
+    }
+  }
+  const deleting = ops.filter((o): o is Extract<QuoteOp, { op: "deleteRow" }> => o?.op === "deleteRow");
+  if (deleting.length) {
+    const ids = sql.join(deleting.map((o) => sql`${String(o.rowId)}`), sql`, `);
+    const holding = new Set(
+      ((await db.execute(sql`
+        select distinct row_id as "rowId" from erp_quote_cells where row_id in (${ids}) and status in ('po', 'pickup')
+      `)) as unknown as { rowId: string }[]).map((r) => r.rowId),
+    );
+    for (const o of deleting) {
+      /* A confirmation that came with it is checked even where none was needed: it names a picture. */
+      if (!holding.has(o.rowId) && !o.impact) continue;
+      const refusal = await confirmImpact("erp-quote-row", o.rowId, o.impact);
+      if (refusal) return refusal;
+    }
+  }
+  return null;
+}
+
 export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Result<{ applied: number; minted: MintedPo[] }>> {
   if (!Array.isArray(ops) || !ops.length) return ok({ applied: 0, minted: [] });
   if (ops.length > MAX_OPS) return err(`At most ${MAX_OPS} changes go in one save. Paste in smaller blocks.`, "validation");
+  const unconfirmed = await impactRefusal(ops);
+  if (unconfirmed) return unconfirmed;
   const who = ctx.actor.id;
   const manager = quoteManagerOf(ctx);
   const minted: MintedPo[] = [];

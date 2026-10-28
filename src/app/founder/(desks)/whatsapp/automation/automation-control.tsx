@@ -25,6 +25,7 @@ import {
   RowMenu,
 } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { stamp } from "@/lib/format";
 import {
   checkTimes,
@@ -101,7 +102,7 @@ export function AutomationControl(props: {
   myPhone: string;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [editing, setEditing] = React.useState<RuleView | "new-payment" | "new-order" | null>(null);
   /* The panel holds a rule by id, so a refresh after a save shows the rule as
      it now is rather than the copy that was clicked. */
@@ -269,22 +270,26 @@ export function AutomationControl(props: {
         }}
         onClose={() => setGoLive(null)}
       />
-      <ConfirmDialog
-        open={Boolean(removing)}
-        title="Delete this rule?"
-        body={<span className="block text-sm text-body">{removing ? `${removing.templateName}: ${describeRule(removing)}` : ""} Messages it already sent stay in the log.</span>}
-        confirmLabel="Delete"
-        destructive
-        onConfirm={async () => {
-          if (!removing) return;
-          const res = await run(deleteRuleAction(removing.id));
-          if (res.ok) {
-            if (openId === removing.id) setOpenId(null);
-            router.refresh();
-          }
-        }}
-        onClose={() => setRemoving(null)}
-      />
+      {/* The shops it would message on its next run, by name — the same pass
+          the audience button runs — and the template's name to confirm. */}
+      {removing ? (
+        <ImpactDialog
+          key={removing.id}
+          kind="founder-wa-rule"
+          id={removing.id}
+          confirmLabel="Delete"
+          onClose={() => setRemoving(null)}
+          onConfirm={async (confirmation) => {
+            const res = await deleteRuleAction(removing.id, confirmation);
+            if (res.ok) {
+              push(res.message ?? "Rule deleted");
+              if (openId === removing.id) setOpenId(null);
+              router.refresh();
+            }
+            return res;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

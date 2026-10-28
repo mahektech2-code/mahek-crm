@@ -57,7 +57,6 @@ type Holiday = Awaited<ReturnType<typeof holidays>>[number];
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH = /^\d{4}-\d{2}$/;
-const DELETE_WORDS = "Delete this leave request? It cannot be undone.";
 const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.";
 const hasP = (ctx: HrmsContext) => (p: string) => has(ctx, p as HrmsPower);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -203,7 +202,8 @@ function leaveActions(ctx: HrmsContext, r: Req, name: string, bal: Balances): Ac
     a.push({ id: "remark", l: "Approver’s remark", prompt: { title: "Approver’s remark", submit: "Save remark", init: { remark: r.officerRemark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] } });
     a.push({ id: "edit", l: "Edit", loadsForm: true, why: r.status === "Approved" ? "Reject an approved request before changing its dates or type" : undefined });
   }
-  if (approver || (own && r.status === LEAVE_WAITING)) a.push({ id: "delete", l: approver ? "Delete" : "Delete request", confirm: DELETE_WORDS });
+  /* Approved leave reaches payroll and the field verdict: the impact modal says so. */
+  if (approver || (own && r.status === LEAVE_WAITING)) a.push({ id: "delete", l: approver ? "Delete" : "Delete request", impact: { kind: "hrms-leave-request", id: r.id } });
   return a;
 }
 
@@ -600,11 +600,13 @@ const LEAVE_ACTIONS: HrmsScreenModule["actions"] = {
     await hrmsAudit(ctx, "hrms.leave.remark", "hrms_leave_requests", id, { remark: r.remark }, { remark: text(v.remark) });
     return okVoid("Remark saved");
   },
-  async delete(ctx, id) {
+  async delete(ctx, id, values) {
     const [r] = await db.select().from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
     if (!r) return err("That request no longer exists.", "not_found");
     const own = r.employeeId === ctx.employee?.id && r.status === LEAVE_WAITING;
     if (!(has(ctx, "approveLeave") || own)) return err("You can delete only your own request, and only while it is waiting for a decision", "not_permitted");
+    const refusal = await confirmImpact("hrms-leave-request", id, readConfirmation(values));
+    if (refusal) return refusal;
     await db.delete(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
     await hrmsAudit(ctx, "hrms.leave.delete", "hrms_leave_requests", id, r, null);
     return okVoid("Request deleted");
@@ -868,7 +870,7 @@ const leaveSetup: HrmsScreenModule = {
             l: "Edit",
             prompt: { title: "Edit credit", sub: `${p?.name ?? ""} · ${monLabel(c.month)}`, submit: "Save", init: { days: String(days) }, fields: [{ k: "days", l: "Days", t: "num", req: true, min: 0, max: 31 }] },
           });
-        a.push({ id: "deleteCredit", l: "Delete", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a credit", confirm: `Delete ${p?.name ?? ""}’s ${monLabel(c.month)} credit?` });
+        a.push({ id: "deleteCredit", l: "Delete", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a credit", impact: { kind: "hrms-leave-credit", id: c.id } });
         return {
           id: c.id,
           v: { month: c.month, monthLbl: monLabel(c.month), emp: p?.name ?? "", office: p?.office ?? "", days, auto: c.source === "job" ? "Monthly job" : "Added by hand" },
@@ -897,10 +899,12 @@ const leaveSetup: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.leaveCredit.edit", "hrms_leave_credits", id, { days: c.days }, { days });
       return okVoid("Credit saved");
     },
-    async deleteCredit(ctx, id) {
+    async deleteCredit(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a credit", "not_permitted");
       const [c] = await db.select().from(hrmsLeaveCredits).where(eq(hrmsLeaveCredits.id, id));
       if (!c) return err("That credit no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-leave-credit", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsLeaveCredits).where(eq(hrmsLeaveCredits.id, id));
       await hrmsAudit(ctx, "hrms.leaveCredit.delete", "hrms_leave_credits", id, c, null);
       return okVoid("Credit deleted");
@@ -1225,7 +1229,7 @@ function otSpan(a: OtDay | undefined, slot: string): { start: string; end: strin
   return { start, end, minutes: minutesBetween(start, end) };
 }
 
-const canOtAnyone = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
+export const canOtAnyone = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
 
 /** Why a slot gives no overtime, said for the case at hand. */
 function otRefusal(s: { minutes: number | null } | null, slot: string, minMin: number): string {
@@ -1350,7 +1354,7 @@ const overtime: HrmsScreenModule = {
                 ],
               },
             },
-            { id: "delete", l: "Delete", why: mayChange ? undefined : "Only the employee, HR or an HRMS administrator can delete this overtime", confirm: "Delete this overtime record?" },
+            { id: "delete", l: "Delete", why: mayChange ? undefined : "Only the employee, HR or an HRMS administrator can delete this overtime", impact: { kind: "hrms-overtime", id: r.id } },
           ],
           by: stampLine(null, r.createdAt),
         };
@@ -1372,11 +1376,13 @@ const overtime: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.overtime.edit", "hrms_overtime", id, { slot: r.slot, minutes: r.minutes, remark: r.remark }, after);
       return okVoid(`${hm(s.minutes)} overtime saved`);
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!ctx.flags.ot) return err("Overtime is switched off in HRMS settings.", "not_permitted");
       const [r] = await db.select().from(hrmsOvertime).where(eq(hrmsOvertime.id, id));
       if (!r) return err("That overtime no longer exists.", "not_found");
       if (!(r.employeeId === ctx.employee?.id || canOtAnyone(ctx))) return err("Only the employee, HR or an HRMS administrator can delete this overtime", "not_permitted");
+      const refusal = await confirmImpact("hrms-overtime", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsOvertime).where(eq(hrmsOvertime.id, id));
       await hrmsAudit(ctx, "hrms.overtime.delete", "hrms_overtime", id, r, null);
       return okVoid("Overtime deleted");
@@ -1424,7 +1430,7 @@ const overtime: HrmsScreenModule = {
 
 const monthlyKey = (employeeId: string, month: string) => `${employeeId}|${month}`;
 
-function readMonthlyKey(id: string): { employeeId: string; month: string } | null {
+export function readMonthlyKey(id: string): { employeeId: string; month: string } | null {
   const i = id.lastIndexOf("|");
   if (i < 0) return null;
   const month = id.slice(i + 1);
@@ -1494,7 +1500,7 @@ const monthly: HrmsScreenModule = {
           prompt: { title: "Remark", sub: `${p?.name ?? ""} · ${monLabel(month)}`, submit: "Save remark", init: { remark: rm?.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] },
         },
       ];
-      if (rm) a.push({ id: "deleteRemark", l: "Delete remark", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a report remark", confirm: "Delete this report’s remark?" });
+      if (rm) a.push({ id: "deleteRemark", l: "Delete remark", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a report remark", impact: { kind: "hrms-monthly-remark", id: monthlyKey(employeeId, month) } });
       const lateTotal = hm(f.lateDurationMin) || "0h 00m";
       rows.push({
         id: monthlyKey(employeeId, month),
@@ -1587,10 +1593,15 @@ const monthly: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.monthly.remark", "hrms_monthly_remarks", id, before ? { remark: before.remark } : null, { remark });
       return okVoid("Remark saved");
     },
-    async deleteRemark(ctx, id) {
+    async deleteRemark(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a report remark", "not_permitted");
       const k = readMonthlyKey(id);
       if (!k) return err("That report no longer exists.", "not_found");
+      const where = and(eq(hrmsMonthlyRemarks.employeeId, k.employeeId), eq(hrmsMonthlyRemarks.month, k.month));
+      const [had] = await db.select({ month: hrmsMonthlyRemarks.month }).from(hrmsMonthlyRemarks).where(where);
+      if (!had) return err("That report has no remark.", "not_found");
+      const refusal = await confirmImpact("hrms-monthly-remark", id, readConfirmation(values));
+      if (refusal) return refusal;
       const gone = await db
         .delete(hrmsMonthlyRemarks)
         .where(and(eq(hrmsMonthlyRemarks.employeeId, k.employeeId), eq(hrmsMonthlyRemarks.month, k.month)))

@@ -82,7 +82,6 @@ export default async function IntegrationsPage() {
                     env: "ENQUIRY_INGEST_SECRET",
                     what: "Checked on every enquiry the website forwards to /api/public/enquiries. Anything arriving without it is refused.",
                     where: "Make one up — a long random string — and give the same value to whoever runs the website.",
-                    removalConsequence: "The website's enquiries stop arriving in Website Enquiries until a new one is set on both sides.",
                   }}
                 />
               ))}
@@ -109,7 +108,6 @@ export default async function IntegrationsPage() {
                     env: "WEBSITE_CMS_READ_SECRET",
                     what: "Checked on every read of published content and uploaded images by the public site. Anything arriving without it is refused.",
                     where: "Make one up — a long random string — and give the same value to whoever runs the website as CMS_READ_SECRET.",
-                    removalConsequence: "The public site can no longer read content or uploaded images from here and falls back to the content built into it.",
                   }}
                 />
               ))}
@@ -125,7 +123,6 @@ export default async function IntegrationsPage() {
                     env: "WEBSITE_CMS_PUBLISH_SECRET",
                     what: "Sent with every request that tells the public site to refresh after a publish, and used to sign preview links.",
                     where: "Make up a second long random string and give the same value to whoever runs the website as CMS_PUBLISH_SECRET.",
-                    removalConsequence: "Publishing still saves here, but the live site is not told to refresh and previews stop working.",
                   }}
                 />
               ))}
@@ -152,7 +149,6 @@ export default async function IntegrationsPage() {
                     env: "MINIMOTH_API_KEY",
                     what: "Sends every OTP to the personal mobile in HRMS (through the account's HRMS link), on WhatsApp first and by SMS when WhatsApp does not deliver. No DLT registration of ours is involved.",
                     where: "app.minimoth.dev → your project → API keys. Use the live key (mm_live_…) here; a test key sends nothing and is ignored in production.",
-                    removalConsequence: "Sign-in codes stop being offered on the web and on the handset. Everybody signs in with their password.",
                   }}
                 />
               ))}

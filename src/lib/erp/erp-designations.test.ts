@@ -26,6 +26,7 @@ import { draftFor } from "@/lib/erp/designations";
 import { designationStandings, listErpDesignations } from "@/lib/services/erp-designation-service";
 import { listAccess } from "@/lib/services/access-service";
 import { impactReport } from "@/lib/impact/registry";
+import { accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const ALL = moduleKeysForApp("erp");
@@ -170,8 +171,18 @@ describe("designations", () => {
   test("taking the ERP away takes the designation with it", async () => {
     setTestUser(platform);
     const x = await makeUser("Ravi Leaving", "associate", ["erp", "crm"]);
-    await setAccess({ userId: x.id, ...grantFor(TESTER), erpDesignationId: testerId });
-    await setAccess({ userId: x.id, grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }] });
+    /* Kept on the CRM while the designation is given, so nothing is taken away yet. */
+    const given = await setAccess({ userId: x.id, ...grantFor(TESTER), grants: [...grantFor(TESTER).grants, { app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }], erpDesignationId: testerId });
+    assert.ok(given.ok, given.ok ? "" : given.error);
+    const crmOnly = { userId: x.id, grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" as const }] };
+    /* Taking the ERP away is confirmed through the impact modal, which names the designation going with it. */
+    const bare = await setAccess(crmOnly);
+    assert.equal(!bare.ok && bare.code, "validation", "a revocation nobody confirmed is refused");
+    const report = await impactReport("admin-access-revoke", accessRevokeKey(x.id, ["erp"]));
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.deepEqual(report.data.items.find((i) => i.label === "designation")?.examples, ["Quality tester"]);
+    const taken = await setAccess({ ...crmOnly, confirmation: { typed: report.data.confirmWord, fingerprint: report.data.fingerprint } });
+    assert.ok(taken.ok, taken.ok ? "" : taken.error);
     assert.equal((await db.select().from(erpUserDesignations).where(eq(erpUserDesignations.userId, x.id))).length, 0);
   });
 

@@ -29,6 +29,8 @@ import { err as fail, ok, type Result } from "@/lib/result";
 import type { PackingImportReport } from "@/lib/erp/packing-import";
 import { BOX_TYPES } from "@/lib/erp/refs";
 import { forget } from "@/lib/reference-cache";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Writes to the catalogue.
@@ -362,6 +364,7 @@ export async function updateSkuPacking(
 export async function setSkuActive(
   productId: string,
   active: boolean,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result<{ name: string }>> {
   try {
     const user = await actor();
@@ -372,6 +375,12 @@ export async function setSkuActive(
         "This SKU shares its name with more than one legacy ID. Choose the canonical one first, or an order taken against it points at a product we cannot identify.",
         "rule_violation",
       );
+    }
+    /* Retiring takes it off every order form and every handset; putting it
+       back takes nothing away, and asks nothing. */
+    if (!active && before.active) {
+      const refusal = await confirmImpact("admin-sku-retire", productId, confirmation);
+      if (refusal) return refusal;
     }
 
     await db
@@ -857,11 +866,14 @@ export async function addAlias(
   }
 }
 
-export async function removeAlias(aliasId: string): Promise<Result<undefined>> {
+export async function removeAlias(aliasId: string, confirmation?: ImpactConfirmation): Promise<Result<undefined>> {
   try {
     const user = await actor();
     const [before] = await db.select().from(productAliases).where(eq(productAliases.id, aliasId));
     if (!before) return fail("No such alias.", "not_found");
+    /* The order lines written with this spelling stop counting as the SKU. */
+    const refusal = await confirmImpact("admin-catalogue-alias", aliasId, confirmation);
+    if (refusal) return refusal;
     await db.delete(productAliases).where(eq(productAliases.id, aliasId));
     await audit(user.id, "catalogue.aliasRemoved", before.productId, before, null);
     refresh();

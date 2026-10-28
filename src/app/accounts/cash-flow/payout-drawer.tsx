@@ -4,6 +4,7 @@ import * as React from "react";
 import { Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { Button, Field, Input, MoneyInput, Select, Textarea, cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import {
   addPayoutInvoiceAction,
   cancelPayoutAction,
@@ -88,7 +89,7 @@ function PayoutBody({
   onMoved: (id: string, payOn: string) => void;
   onChanged: () => void;
 }) {
-  const { run } = useToast();
+  const { run, push } = useToast();
   const tone = toneOf(p, today);
   const live = p.status === "open" || p.status === "on_hold";
   const [busy, setBusy] = React.useState(false);
@@ -96,6 +97,11 @@ function PayoutBody({
   const [notes, setNotes] = React.useState(p.notes ?? "");
   const [adding, setAdding] = React.useState<InvoiceDraft | null>(null);
   const [moveTo, setMoveTo] = React.useState(p.payOn);
+  /* Cancelling or reopening (after the reason) and taking an invoice off go
+     through the impact modal: the calendar, the payment record, the file. */
+  const [confirming, setConfirming] = React.useState<
+    { kind: "cancel" | "reopen"; reason: string; key: number } | { kind: "invoice"; invoiceId: string; key: number } | null
+  >(null);
 
   async function act<T extends { ok: boolean }>(work: Promise<T>): Promise<T> {
     setBusy(true);
@@ -276,7 +282,7 @@ function PayoutBody({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void act(removePayoutInvoiceAction(inv.id))}
+                    onClick={() => setConfirming({ kind: "invoice", invoiceId: inv.id, key: Date.now() })}
                     className="cursor-pointer text-[12px] text-muted hover:text-danger"
                   >
                     Remove
@@ -387,15 +393,39 @@ function PayoutBody({
           confirm={dialog === "hold" ? "Hold" : dialog === "cancel" ? "Cancel payable" : "Reopen"}
           destructive={dialog === "cancel"}
           onClose={() => setDialog(null)}
-          onSubmit={(reason) =>
-            act(
-              dialog === "hold"
-                ? holdPayoutAction(p.id, reason)
-                : dialog === "cancel"
-                  ? cancelPayoutAction(p.id, reason)
-                  : reopenPayoutAction(p.id, reason),
-            )
+          onSubmit={async (reason) => {
+            if (dialog === "hold") return act(holdPayoutAction(p.id, reason));
+            /* The reason is kept, and the impact modal asks next. */
+            setConfirming({ kind: dialog, reason, key: Date.now() });
+            return { ok: true };
+          }}
+        />
+      ) : null}
+      {confirming ? (
+        <ImpactDialog
+          key={confirming.key}
+          kind={
+            confirming.kind === "invoice"
+              ? "accounts-payout-invoice"
+              : confirming.kind === "cancel"
+                ? "accounts-payout-cancel"
+                : "accounts-payout-reopen"
           }
+          id={confirming.kind === "invoice" ? confirming.invoiceId : p.id}
+          onClose={() => setConfirming(null)}
+          onConfirm={async (confirmation) => {
+            const r =
+              confirming.kind === "invoice"
+                ? await removePayoutInvoiceAction(confirming.invoiceId, confirmation)
+                : confirming.kind === "cancel"
+                  ? await cancelPayoutAction(p.id, confirming.reason, confirmation)
+                  : await reopenPayoutAction(p.id, confirming.reason, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Done.");
+              onChanged();
+            }
+            return r;
+          }}
         />
       ) : null}
     </>

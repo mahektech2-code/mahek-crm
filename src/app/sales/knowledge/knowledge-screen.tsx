@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { shortDate } from "@/lib/format";
 import {
   publishCourse,
@@ -59,6 +60,9 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [pickerKey, setPickerKey] = React.useState(0);
+  /* Withdrawing goes through the impact modal: every handset it leaves, and
+     the progress people keep. Publishing again asks nothing. */
+  const [withdrawing, setWithdrawing] = React.useState<CourseRow | null>(null);
 
   async function choose(chosen: File | undefined) {
     if (!chosen) return;
@@ -112,6 +116,10 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
   }
 
   async function toggle(row: CourseRow) {
+    if (row.active) {
+      setWithdrawing(row);
+      return;
+    }
     setBusy(true);
     setError(null);
     let result;
@@ -143,6 +151,23 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
       />
 
       {error ? <Banner tone="danger" title="That did not work" body={error} /> : null}
+
+      {withdrawing ? (
+        <ImpactDialog
+          key={withdrawing.id}
+          kind="sales-course-withdraw"
+          id={withdrawing.id}
+          onClose={() => setWithdrawing(null)}
+          onConfirm={async (confirmation) => {
+            const result = await setCoursePublished({ courseId: withdrawing.id, published: false }, confirmation);
+            if (result.ok) {
+              toast.push(result.message ?? "Withdrawn.");
+              router.refresh();
+            }
+            return result;
+          }}
+        />
+      ) : null}
 
       <div className="mb-4 rounded-[6px] border border-line bg-surface px-4 py-3">
         <div className="flex flex-wrap items-end gap-3">

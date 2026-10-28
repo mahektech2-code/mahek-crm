@@ -13,6 +13,8 @@ import { resultError, useAct } from "../use-act";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
 import { gridHeadClass, eyebrowClass, insetClass, labelClass, linkClass } from "../look";
 import { Stepper } from "./parts";
+import { ErpImpactDialog } from "../impact-confirm";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * The purchase flow, drawn in the record of a requirement and of a PO:
@@ -509,7 +511,9 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
 function PurchaseFlow({ data }: PanelProps) {
   const f = data as Flow;
   const [creating, setCreating] = useState(false);
-  const { run, pending } = useAct();
+  /* Unlinking takes the line off the PO, and the PO with it where it was the only one: the modal says so first. */
+  const [unlinking, setUnlinking] = useState(false);
+  const { pending } = useAct();
   return (
     <section className={cx("grid gap-3", insetClass)}>
       <div className="flex items-baseline justify-between gap-3">
@@ -568,9 +572,18 @@ function PurchaseFlow({ data }: PanelProps) {
           </dl>
           {f.po.canUnlink ? (
             <div className="flex justify-end border-t border-divider px-3 py-2">
-              <Button size="sm" disabled={pending} onClick={() => run(() => erpRunAction("requisitions", "unlinkPo", f.id))}>
+              <Button size="sm" disabled={pending} onClick={() => setUnlinking(true)}>
                 Unlink PO
               </Button>
+              {unlinking ? (
+                <ErpImpactDialog
+                  kind="erp-requirement-unlink"
+                  id={f.id}
+                  confirmLabel="Unlink PO"
+                  onClose={() => setUnlinking(false)}
+                  act={(confirmation) => erpRunAction("requisitions", "unlinkPo", f.id, { [IMPACT_FIELD]: JSON.stringify(confirmation) })}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>

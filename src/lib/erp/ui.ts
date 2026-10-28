@@ -193,6 +193,21 @@ export type PromptSpec = {
   init?: Record<string, string>;
 };
 
+/** An impact id naming one part of a record, chosen in a prompt (`ActionSpec.impact.withValue`). */
+export function impactPart(id: string, part: string | undefined): string {
+  return JSON.stringify([id, part ?? ""]);
+}
+
+/** The record id and the chosen part back out of `impactPart`, or null where it is not one. */
+export function readImpactPart(id: string): [string, string] | null {
+  try {
+    const v = JSON.parse(id) as unknown;
+    return Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && typeof v[1] === "string" ? [v[0], v[1]] : null;
+  } catch {
+    return null;
+  }
+}
+
 /** What a list's own New form is asked for by, when it stayed on the server (`ListSpec.newFormLazy`). Never a module's action id: those are words. */
 export const NEW_FORM_ACTION = "__new";
 
@@ -214,7 +229,17 @@ export type ActionSpec = {
    * typed. The act receives the confirmation under `IMPACT_FIELD` and checks it
    * with `confirmImpact` before it writes.
    */
-  impact?: { kind: string; id: string };
+  impact?: {
+    kind: string;
+    id: string;
+    /**
+     * Where the prompt picks WHICH part of the record the act reverses (one QC
+     * decision of a return, one match of a receipt), the prompt field naming
+     * it: the report is asked for `impactPart(id, values[withValue])`, so it
+     * describes the part chosen rather than the record in general.
+     */
+    withValue?: string;
+  };
   /** Values to collect before acting. */
   prompt?: PromptSpec;
   /** Opens a form instead of acting directly (e.g. "Add more"). */
@@ -304,7 +329,21 @@ export type ToolResult = {
   navigate?: string;
 };
 
-export type BulkSpec = { id: string; l: string; confirm?: string; /** Values to collect once for the whole selection. */ prompt?: PromptSpec };
+export type BulkSpec = {
+  id: string;
+  l: string;
+  confirm?: string;
+  /** Values to collect once for the whole selection. */
+  prompt?: PromptSpec;
+  /**
+   * The impact modal for the whole selection, in place of `confirm`: the
+   * selection is one record whose id is `impactBatchKey(ids)`
+   * (`lib/impact/batch-key.ts`), and the bulk act checks the confirmation
+   * against the same key, received under `IMPACT_FIELD`. A `prompt` is asked
+   * first and its values travel with the confirmation.
+   */
+  impact?: { kind: string };
+};
 
 /* -------------------------------------------------------------------- rows */
 

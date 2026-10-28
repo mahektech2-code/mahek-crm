@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, EmptyState, Input, PageHeader } from "@/components/ui/primitives";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { deleteMediaAction, updateMediaAltAction } from "@/lib/actions/website-cms";
 import { WEBSITE_IMAGE_MAX_BYTES } from "@/lib/website-cms/media-types";
@@ -55,12 +55,6 @@ export function MediaScreen({ canPublish }: { canPublish: boolean }) {
     }
     setBusy(false);
     if (added) toast.push(`${added} image${added === 1 ? "" : "s"} added to the library. ${added === 1 ? "It appears" : "They appear"} on the live site only once content that uses ${added === 1 ? "it is" : "them are"} published.`);
-    router.refresh();
-  }
-
-  async function remove() {
-    if (!removing) return;
-    reportResult(toast, await deleteMediaAction(removing.id));
     router.refresh();
   }
 
@@ -146,15 +140,25 @@ export function MediaScreen({ canPublish }: { canPublish: boolean }) {
         )}
       </Card>
 
-      <ConfirmDialog
-        open={removing !== null}
-        title="Delete this image"
-        body={`“${removing?.filename ?? ""}” is not used anywhere and will be removed from the library. The file itself is kept, so this can be undone by an administrator.`}
-        destructive
-        confirmLabel="Delete"
-        onClose={() => setRemoving(null)}
-        onConfirm={remove}
-      />
+      {/* Whether anything still uses it — then it cannot go, and the modal says
+          what — and the past review requests that showed it. */}
+      {removing ? (
+        <ImpactDialog
+          key={removing.id}
+          kind="site-media"
+          id={removing.id}
+          confirmLabel="Delete"
+          onClose={() => setRemoving(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteMediaAction(removing.id, confirmation);
+            if (r.ok) {
+              reportResult(toast, r);
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

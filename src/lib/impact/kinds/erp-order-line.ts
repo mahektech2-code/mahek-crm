@@ -23,7 +23,7 @@ import { erpMayDelete, many, present } from "./erp-common";
  * ------------------------------------------------------------------------- */
 
 /** Every order screen the line's Delete is offered on. */
-const ORDER_SCREENS = ["orders", "verifyOrders", "pendingOrders", "readyOrders", "toBill", "invoiceCheck", "labels"];
+export const ORDER_SCREENS = ["orders", "verifyOrders", "pendingOrders", "readyOrders", "toBill", "invoiceCheck", "labels"];
 
 export const orderLineImpact: ImpactSource = {
   authorize: async () => {

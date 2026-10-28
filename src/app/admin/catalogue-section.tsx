@@ -19,6 +19,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { describeQuantity } from "@/lib/catalogue";
 import {
@@ -463,287 +464,309 @@ function SkuDetailBody({
   const [goodId, setGoodId] = React.useState("");
   const [alias, setAlias] = React.useState("");
   const { busy, run } = useAction(refresh);
+  /** Retiring asks first, over this modal: the order forms, phones and price lists it leaves. */
+  const [retiring, setRetiring] = React.useState(false);
+  const toast = useToast();
 
   const perBox = Number(cansPerBox) || 1;
   const sample = { millilitresPerCan: sku.millilitresPerCan, cansPerBox: perBox };
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={860}
-      title={
-        <span className="block">
-          <span className="block truncate">{sku.name}</span>
-          <span className="mt-0.5 block text-[13px] font-normal text-muted">
-            {[sku.formulation, sku.brand, sku.finishedGood].filter(Boolean).join(" › ")}
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        width={860}
+        title={
+          <span className="block">
+            <span className="block truncate">{sku.name}</span>
+            <span className="mt-0.5 block text-[13px] font-normal text-muted">
+              {[sku.formulation, sku.brand, sku.finishedGood].filter(Boolean).join(" › ")}
+            </span>
           </span>
-        </span>
-      }
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Close
-          </Button>
-          <Button
-            variant="primary"
-            disabled={!canWrite || busy}
-            title={canWrite ? undefined : "Configuration is changed by a manager."}
-            onClick={() =>
-              run(async () => {
-                /* The name first: a rename that is refused (another SKU has it)
-                   stops the rest rather than half-saving the row. */
-                if (name.trim() !== sku.name) {
-                  const r = await renameSku(sku.id, name);
-                  if (!r.ok) return r;
-                }
-                const ml = Math.round(Number(litresPerCan) * 1000);
-                const a = await updateSku(sku.id, {
-                  sellingPricePaise: price === "" ? null : Math.round(Number(price) * 100),
-                  packingCostPaise: packingCost === "" ? null : Math.round(Number(packingCost) * 100),
-                  weightGrams: weight === "" ? null : Math.round(Number(weight) * 1000),
-                  cansPerBox: Number(cansPerBox) || 1,
-                  weightBasis: (Number(cansPerBox) || 1) > 1 ? "box" : "can",
-                  ...(packing.trim() ? { packing: packing.trim() } : {}),
-                  ...(ml > 0 ? { millilitresPerCan: ml } : {}),
-                  ...(goodId ? { finishedGoodId: goodId } : {}),
-                });
-                if (!a.ok) return a;
-                const packingChanged =
-                  canUseId !== startCanUse ||
-                  String(sku.emptyBoxesRequired ?? 0) !== emptyBoxes ||
-                  (sku.boxType ?? "") !== boxType ||
-                  startBoxRate !== boxRate;
-                if (packingChanged) {
-                  const b = await updateSkuPacking(sku.id, {
-                    canUseMaterialId: canUseId || null,
-                    emptyBoxesRequired: Number(emptyBoxes) || 0,
-                    boxType: boxType || null,
-                    boxRatePaise: boxRate === "" ? null : Math.round(Number(boxRate) * 100),
+        }
+        footer={
+          <>
+            <Button variant="secondary" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!canWrite || busy}
+              title={canWrite ? undefined : "Configuration is changed by a manager."}
+              onClick={() =>
+                run(async () => {
+                  /* The name first: a rename that is refused (another SKU has it)
+                     stops the rest rather than half-saving the row. */
+                  if (name.trim() !== sku.name) {
+                    const r = await renameSku(sku.id, name);
+                    if (!r.ok) return r;
+                  }
+                  const ml = Math.round(Number(litresPerCan) * 1000);
+                  const a = await updateSku(sku.id, {
+                    sellingPricePaise: price === "" ? null : Math.round(Number(price) * 100),
+                    packingCostPaise: packingCost === "" ? null : Math.round(Number(packingCost) * 100),
+                    weightGrams: weight === "" ? null : Math.round(Number(weight) * 1000),
+                    cansPerBox: Number(cansPerBox) || 1,
+                    weightBasis: (Number(cansPerBox) || 1) > 1 ? "box" : "can",
+                    ...(packing.trim() ? { packing: packing.trim() } : {}),
+                    ...(ml > 0 ? { millilitresPerCan: ml } : {}),
+                    ...(goodId ? { finishedGoodId: goodId } : {}),
                   });
-                  if (!b.ok) return b;
-                }
-                return { ok: true, message: "Saved." };
-              })
-            }
-          >
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div>
-        <div className="grid grid-cols-3 gap-x-6 gap-y-3">
-          <Fact label="Raw name in the source" value={sku.rawName ?? "—"} />
-          <Fact
-            label="Legacy Product ID"
-            value={sku.externalCode ?? ((sku.externalIds ?? []).join(", ") || "—")}
-            hint="Reference only. Not sequential, not a count, and not our primary key."
-          />
-        </div>
-
-        <div className="mt-4 grid grid-cols-3 gap-3">
-          <Field
-            label="Name"
-            className="col-span-2"
-            hint="Renaming keeps the old name as an alias, so old orders, bills and price lists still find this SKU."
-          >
-            <Input value={name} disabled={!canWrite} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label="Packing" hint="As printed: Loose, 6 Can/Box…">
-            <Input value={packing} disabled={!canWrite} onChange={(e) => setPacking(e.target.value)} />
-          </Field>
-          <Field label="Litres per can" hint="The pack size; litres and boxes are worked out from it.">
-            <Input
-              type="number"
-              step="0.001"
-              min={0}
-              value={litresPerCan}
-              disabled={!canWrite}
-              onChange={(e) => setLitresPerCan(e.target.value)}
+                  if (!a.ok) return a;
+                  const packingChanged =
+                    canUseId !== startCanUse ||
+                    String(sku.emptyBoxesRequired ?? 0) !== emptyBoxes ||
+                    (sku.boxType ?? "") !== boxType ||
+                    startBoxRate !== boxRate;
+                  if (packingChanged) {
+                    const b = await updateSkuPacking(sku.id, {
+                      canUseMaterialId: canUseId || null,
+                      emptyBoxesRequired: Number(emptyBoxes) || 0,
+                      boxType: boxType || null,
+                      boxRatePaise: boxRate === "" ? null : Math.round(Number(boxRate) * 100),
+                    });
+                    if (!b.ok) return b;
+                  }
+                  return { ok: true, message: "Saved." };
+                })
+              }
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div>
+          <div className="grid grid-cols-3 gap-x-6 gap-y-3">
+            <Fact label="Raw name in the source" value={sku.rawName ?? "—"} />
+            <Fact
+              label="Legacy Product ID"
+              value={sku.externalCode ?? ((sku.externalIds ?? []).join(", ") || "—")}
+              hint="Reference only. Not sequential, not a count, and not our primary key."
             />
-          </Field>
-          <Field label="Can use" hint="The can or drum it is filled into — the ERP's packing.">
-            <Select value={canUseId} disabled={!canWrite} onChange={(e) => setCanUseId(e.target.value)}>
-              <option value="">Not set</option>
-              {packItems.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Box type" hint="Blank for a loose can.">
-            <Select value={boxType} disabled={!canWrite} onChange={(e) => setBoxType(e.target.value)}>
-              <option value="">No box</option>
-              {boxTypes.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Empty boxes required" hint="Counted out of stock when a batch is packed.">
-            <Input
-              type="number"
-              min={0}
-              value={emptyBoxes}
-              disabled={!canWrite}
-              onChange={(e) => setEmptyBoxes(e.target.value)}
-            />
-          </Field>
-          <Field label="Box rate (₹)" hint="Used in the ERP's packing costing.">
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={boxRate}
-              disabled={!canWrite}
-              onChange={(e) => setBoxRate(e.target.value)}
-            />
-          </Field>
-        </div>
-
-        <div className="mt-4 grid grid-cols-4 gap-3">
-          <Field
-            label="Cans per box"
-            hint={sku.millilitresPerCan ? describeQuantity(12, sample) : "for 12 cans"}
-          >
-            <Input
-              type="number"
-              min={1}
-              value={cansPerBox}
-              disabled={!canWrite}
-              onChange={(e) => setCansPerBox(e.target.value)}
-            />
-          </Field>
-          <Field label="Packing cost (₹)" hint="The empty box or drum. Not a selling price.">
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={packingCost}
-              disabled={!canWrite}
-              placeholder={perBox > 1 ? "" : "loose — no box"}
-              onChange={(e) => setPackingCost(e.target.value)}
-            />
-          </Field>
-          <Field
-            label={`Weight (kg per ${sku.weightBasis})`}
-            hint="Transport, never pricing."
-          >
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={weight}
-              disabled={!canWrite}
-              onChange={(e) => setWeight(e.target.value)}
-            />
-          </Field>
-          <Field
-            label="Selling price (₹ per can)"
-            hint="Blank until a price source is confirmed. A blank price is not a free product."
-          >
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={price}
-              disabled={!canWrite}
-              onChange={(e) => setPrice(e.target.value)}
-            />
-          </Field>
-        </div>
-
-        <div className="mt-3 flex items-end gap-3">
-          <Field label="Move to another finished good" className="w-96">
-            <Select value={goodId} disabled={!canWrite} onChange={(e) => setGoodId(e.target.value)}>
-              <option value="">Leave under {sku.finishedGood ?? "—"}</option>
-              {goods.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name} — {g.brand}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <span className="pb-2 text-[13px] text-muted">
-            Its brand and formulation follow the finished good.
-          </span>
-        </div>
-
-        {/* Save lives in the modal footer, where a form's commit belongs.
-            Retiring does not: it is a different decision from editing the
-            row, and putting the two side by side invites the wrong one. */}
-        <div className="mt-4 flex items-center gap-3 border-t border-divider pt-3">
-          <Button
-            variant="secondary"
-            disabled={!canWrite || busy}
-            title={
-              sku.timesOrdered
-                ? `${sku.timesOrdered} order lines name this SKU. Retiring keeps them readable.`
-                : undefined
-            }
-            onClick={() => run(() => setSkuActive(sku.id, !sku.active))}
-          >
-            {sku.active ? "Retire from the order form" : "Put back on the order form"}
-          </Button>
-          <span className="flex-1" />
-          <span className="text-right text-[13px] text-muted">
-            {sku.timesOrdered
-              ? `${sku.timesOrdered} order ${sku.timesOrdered === 1 ? "line" : "lines"} name it`
-              : "Never ordered"}
-            {sku.millilitresPerCan
-              ? ` · one box is ${litres((sku.millilitresPerCan ?? 0) * perBox)}`
-              : ""}
-          </span>
-        </div>
-
-        <div className="mt-4 border-t border-divider pt-3">
-          <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Names that also resolve here
           </div>
-          <p className="mt-1 text-[13px] text-muted">
-            An alias is read when an old order or a legacy file names this product differently. It is
-            never offered on an order form.
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {sku.aliases.length === 0 ? (
-              <span className="text-[13px] text-muted">None.</span>
-            ) : (
-              sku.aliases.map((a) => (
-                <span
-                  key={a}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-canvas px-2.5 py-1 text-[13px] text-body"
-                >
-                  {a}
-                </span>
-              ))
-            )}
-          </div>
-          <div className="mt-2 flex items-end gap-2">
-            <Field label="Add an alias" className="w-96">
+
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <Field
+              label="Name"
+              className="col-span-2"
+              hint="Renaming keeps the old name as an alias, so old orders, bills and price lists still find this SKU."
+            >
+              <Input value={name} disabled={!canWrite} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <Field label="Packing" hint="As printed: Loose, 6 Can/Box…">
+              <Input value={packing} disabled={!canWrite} onChange={(e) => setPacking(e.target.value)} />
+            </Field>
+            <Field label="Litres per can" hint="The pack size; litres and boxes are worked out from it.">
               <Input
-                value={alias}
+                type="number"
+                step="0.001"
+                min={0}
+                value={litresPerCan}
                 disabled={!canWrite}
-                placeholder="A spelling a customer or a legacy file still uses"
-                onChange={(e) => setAlias(e.target.value)}
+                onChange={(e) => setLitresPerCan(e.target.value)}
               />
             </Field>
+            <Field label="Can use" hint="The can or drum it is filled into — the ERP's packing.">
+              <Select value={canUseId} disabled={!canWrite} onChange={(e) => setCanUseId(e.target.value)}>
+                <option value="">Not set</option>
+                {packItems.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Box type" hint="Blank for a loose can.">
+              <Select value={boxType} disabled={!canWrite} onChange={(e) => setBoxType(e.target.value)}>
+                <option value="">No box</option>
+                {boxTypes.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Empty boxes required" hint="Counted out of stock when a batch is packed.">
+              <Input
+                type="number"
+                min={0}
+                value={emptyBoxes}
+                disabled={!canWrite}
+                onChange={(e) => setEmptyBoxes(e.target.value)}
+              />
+            </Field>
+            <Field label="Box rate (₹)" hint="Used in the ERP's packing costing.">
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={boxRate}
+                disabled={!canWrite}
+                onChange={(e) => setBoxRate(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="mt-4 grid grid-cols-4 gap-3">
+            <Field
+              label="Cans per box"
+              hint={sku.millilitresPerCan ? describeQuantity(12, sample) : "for 12 cans"}
+            >
+              <Input
+                type="number"
+                min={1}
+                value={cansPerBox}
+                disabled={!canWrite}
+                onChange={(e) => setCansPerBox(e.target.value)}
+              />
+            </Field>
+            <Field label="Packing cost (₹)" hint="The empty box or drum. Not a selling price.">
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={packingCost}
+                disabled={!canWrite}
+                placeholder={perBox > 1 ? "" : "loose — no box"}
+                onChange={(e) => setPackingCost(e.target.value)}
+              />
+            </Field>
+            <Field
+              label={`Weight (kg per ${sku.weightBasis})`}
+              hint="Transport, never pricing."
+            >
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={weight}
+                disabled={!canWrite}
+                onChange={(e) => setWeight(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Selling price (₹ per can)"
+              hint="Blank until a price source is confirmed. A blank price is not a free product."
+            >
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={price}
+                disabled={!canWrite}
+                onChange={(e) => setPrice(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="mt-3 flex items-end gap-3">
+            <Field label="Move to another finished good" className="w-96">
+              <Select value={goodId} disabled={!canWrite} onChange={(e) => setGoodId(e.target.value)}>
+                <option value="">Leave under {sku.finishedGood ?? "—"}</option>
+                {goods.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name} — {g.brand}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <span className="pb-2 text-[13px] text-muted">
+              Its brand and formulation follow the finished good.
+            </span>
+          </div>
+
+          {/* Save lives in the modal footer, where a form's commit belongs.
+              Retiring does not: it is a different decision from editing the
+              row, and putting the two side by side invites the wrong one. */}
+          <div className="mt-4 flex items-center gap-3 border-t border-divider pt-3">
             <Button
               variant="secondary"
-              disabled={!canWrite || busy || alias.trim().length < 2}
-              onClick={async () => {
-                const r = await run(() => addAlias(sku.id, alias));
-                if (r.ok) setAlias("");
-              }}
+              disabled={!canWrite || busy}
+              title={
+                sku.timesOrdered
+                  ? `${sku.timesOrdered} order lines name this SKU. Retiring keeps them readable.`
+                  : undefined
+              }
+              onClick={() => (sku.active ? setRetiring(true) : run(() => setSkuActive(sku.id, true)))}
             >
-              Add
+              {sku.active ? "Retire from the order form" : "Put back on the order form"}
             </Button>
+            <span className="flex-1" />
+            <span className="text-right text-[13px] text-muted">
+              {sku.timesOrdered
+                ? `${sku.timesOrdered} order ${sku.timesOrdered === 1 ? "line" : "lines"} name it`
+                : "Never ordered"}
+              {sku.millilitresPerCan
+                ? ` · one box is ${litres((sku.millilitresPerCan ?? 0) * perBox)}`
+                : ""}
+            </span>
+          </div>
+
+          <div className="mt-4 border-t border-divider pt-3">
+            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+              Names that also resolve here
+            </div>
+            <p className="mt-1 text-[13px] text-muted">
+              An alias is read when an old order or a legacy file names this product differently. It is
+              never offered on an order form.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {sku.aliases.length === 0 ? (
+                <span className="text-[13px] text-muted">None.</span>
+              ) : (
+                sku.aliases.map((a) => (
+                  <span
+                    key={a}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-line bg-canvas px-2.5 py-1 text-[13px] text-body"
+                  >
+                    {a}
+                  </span>
+                ))
+              )}
+            </div>
+            <div className="mt-2 flex items-end gap-2">
+              <Field label="Add an alias" className="w-96">
+                <Input
+                  value={alias}
+                  disabled={!canWrite}
+                  placeholder="A spelling a customer or a legacy file still uses"
+                  onChange={(e) => setAlias(e.target.value)}
+                />
+              </Field>
+              <Button
+                variant="secondary"
+                disabled={!canWrite || busy || alias.trim().length < 2}
+                onClick={async () => {
+                  const r = await run(() => addAlias(sku.id, alias));
+                  if (r.ok) setAlias("");
+                }}
+              >
+                Add
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
-    </Modal>
+      </Modal>
+      {retiring ? (
+        <ImpactDialog
+          key={sku.id}
+          kind="admin-sku-retire"
+          id={sku.id}
+          confirmLabel="Retire"
+          onClose={() => setRetiring(false)}
+          onConfirm={async (confirmation) => {
+            const r = await setSkuActive(sku.id, false, confirmation);
+            if (r.ok) {
+              if (r.message) toast.push(r.message);
+              refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1623,7 +1646,9 @@ function AliasRow({
   canWrite: boolean;
   refresh: () => void;
 }) {
-  const { busy, run } = useAction(refresh);
+  const toast = useToast();
+  /** Which order lines stop counting as this SKU — the alias typed to confirm. */
+  const [removing, setRemoving] = React.useState(false);
   return (
     <Tr>
       <Td className={pinnedCell("left", index)}>{alias.name}</Td>
@@ -1632,16 +1657,33 @@ function AliasRow({
       <Td className={pinnedCell("right", index)} align="right">
         <Button
           variant="ghost"
-          disabled={!canWrite || busy}
+          disabled={!canWrite}
           title={
             canWrite
               ? "A legacy row carrying this name will stop resolving."
               : "Configuration is changed by a manager."
           }
-          onClick={() => run(() => removeAlias(alias.id))}
+          onClick={() => setRemoving(true)}
         >
           Remove
         </Button>
+        {removing ? (
+          <ImpactDialog
+            key={alias.id}
+            kind="admin-catalogue-alias"
+            id={alias.id}
+            confirmLabel="Remove"
+            onClose={() => setRemoving(false)}
+            onConfirm={async (confirmation) => {
+              const r = await removeAlias(alias.id, confirmation);
+              if (r.ok) {
+                if (r.message) toast.push(r.message);
+                refresh();
+              }
+              return r;
+            }}
+          />
+        ) : null}
       </Td>
     </Tr>
   );

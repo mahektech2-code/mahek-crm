@@ -18,6 +18,8 @@ import { checkConsistency } from "../ai/consistency";
 import { parseCv, PROFILE_FIELDS } from "../ai/parse-cv";
 import { draftMessage as draftWithAi, type Purpose } from "../ai/draft-message";
 import { fdt } from "@/app/hire/_ui/kit";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Every write the candidate record makes. Each checks for itself — a server
@@ -70,8 +72,18 @@ export async function screenInAction(applicationId: string): Promise<Result> {
   });
 }
 
-/** Hold, resume or withdraw: a decision with its reasoning, never a silent status flip. */
-export async function changeStatus(applicationId: string, to: "hold" | "resume" | "withdraw", reasoning: string): Promise<Result> {
+/**
+ * Hold, resume or withdraw: a decision with its reasoning, never a silent
+ * status flip. A withdrawal is the one of the three that cannot be undone, and
+ * it leaves booked interviews and a standing offer where they are — so it also
+ * carries the impact modal's confirmation, checked before anything is written.
+ */
+export async function changeStatus(
+  applicationId: string,
+  to: "hold" | "resume" | "withdraw",
+  reasoning: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
   return guard(async () => {
     const ctx = await requireHireCap();
     if (!canWorkPipeline(ctx)) return err("This needs a Recruiter, Hiring Manager, HR Head or Admin.", "not_permitted");
@@ -81,6 +93,10 @@ export async function changeStatus(applicationId: string, to: "hold" | "resume" 
     if (to === "hold" && from !== "in_progress") return err("Only an application in progress can be put on hold.", "rule_violation");
     if (to === "resume" && from !== "on_hold") return err("Only an application on hold can be resumed.", "rule_violation");
     if (to === "withdraw" && from !== "in_progress" && from !== "on_hold") return err("This application is already closed.", "rule_violation");
+    if (to === "withdraw") {
+      const refusal = await confirmImpact("hire-withdraw", applicationId, confirmation);
+      if (refusal) return refusal;
+    }
     const status = to === "hold" ? "on_hold" : to === "resume" ? "in_progress" : "withdrawn";
     const now = new Date();
     await db.transaction(async (tx) => {

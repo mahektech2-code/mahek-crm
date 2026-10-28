@@ -28,6 +28,9 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext, requireErpWrite, ErpNotPermitted } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { partyStatus, loadCustomers } from "@/lib/erp/screens/masters";
+import { impactReport } from "@/lib/impact/registry";
+import { accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -182,7 +185,14 @@ describe("customers", () => {
   test("deactivating is the customer's own status, so the CRM sees it too", async () => {
     const a = await as(admin);
     const [row] = await loadCustomers(eq(customers.name, "Shree Paints"));
-    await mod("customers").actions!.deactivate(a, row.id, {});
+    const bare = await mod("customers").actions!.deactivate(a, row.id, {});
+    assert.ok(!bare.ok && /Check what this affects/.test(bare.error), "deactivating is confirmed through the impact modal");
+    const report = await impactReport("erp-party-deactivate", row.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, "Shree Paints");
+    assert.ok(report.data.items.some((i) => i.app === "CRM" && /leaves the Call Log/.test(i.label)), JSON.stringify(report.data.items));
+    const done = await mod("customers").actions!.deactivate(a, row.id, { [IMPACT_FIELD]: JSON.stringify({ typed: "shree paints", fingerprint: report.data.fingerprint }) });
+    assert.ok(done.ok, done.ok ? "" : done.error);
     const [c] = await db.select().from(customers).where(eq(customers.id, row.id));
     assert.equal(c.status, "deactivated");
     const [again] = await loadCustomers(eq(customers.id, row.id));
@@ -232,7 +242,15 @@ describe("powers and godowns", () => {
     await db.insert(appAccess).values({ id: id("aca"), userId: other.id, app: "crm", role: "associate" });
     await setAccess({ userId: other.id, grants: [whole, { app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }], erpPowers: ["viewCost"] });
     assert.equal((await db.select().from(erpUserPowers).where(eq(erpUserPowers.userId, other.id))).length, 1);
-    await setAccess({ userId: other.id, grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }] });
+    const report = await impactReport("admin-access-revoke", accessRevokeKey(other.id, ["erp"]));
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.items.find((i) => i.label === "ERP power")?.count, 1, "the modal names the power going with it");
+    const taken = await setAccess({
+      userId: other.id,
+      grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }],
+      confirmation: { typed: report.data.confirmWord, fingerprint: report.data.fingerprint },
+    });
+    assert.ok(taken.ok, taken.ok ? "" : taken.error);
     assert.equal((await db.select().from(erpUserPowers).where(eq(erpUserPowers.userId, other.id))).length, 0);
   });
 

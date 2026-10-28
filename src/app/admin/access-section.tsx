@@ -17,6 +17,10 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import { ACCESS_REVOKE_KIND, accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import type { Result } from "@/lib/result";
 import { useToast } from "@/components/ui/toast";
 import { getModule, grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp, toggleModule, withoutOrphanLevels, writeLevelsForApp } from "@/lib/modules";
 import {
@@ -435,59 +439,57 @@ export function AccessSection({
         Disabling is not revoking: the apps are kept, so a month's leave is one
         click each way and comes back to the book they left. Which is exactly
         why it is worth saying on the dialog — "disabled" and "has no apps" look
-        identical from the outside and mean completely different things.
+        identical from the outside and mean completely different things. Turning
+        it OFF goes through the impact modal, which names the sessions it ends,
+        the phone it shuts out and the book left with nobody working it; turning
+        it back on takes nothing away, so it asks plainly.
       */}
+      {switching?.active ? (
+        <ImpactDialog
+          key={switching.userId}
+          kind="admin-user-disable"
+          id={switching.userId}
+          confirmLabel="Disable"
+          onClose={() => setSwitching(null)}
+          onConfirm={async (confirmation) => {
+            const r = await setUserActive(switching.userId, false, confirmation);
+            if (r.ok) say(r);
+            return r;
+          }}
+        />
+      ) : null}
       <Modal
-        open={!!switching}
+        open={!!switching && !switching.active}
         onClose={() => setSwitching(null)}
-        title={switching?.active ? "Disable this sign-in" : "Enable this sign-in"}
+        title="Enable this sign-in"
         footer={
           <>
             <Button variant="secondary" onClick={() => setSwitching(null)}>
               Cancel
             </Button>
             <Button
-              variant={switching?.active ? "danger" : "primary"}
+              variant="primary"
               onClick={() => {
                 if (!switching) return;
-                const { userId, active } = switching;
+                const { userId } = switching;
                 setSwitching(null);
-                void setUserActive(userId, !active).then(say);
+                void setUserActive(userId, true).then(say);
               }}
             >
-              {switching?.active ? "Disable" : "Enable"}
+              Enable
             </Button>
           </>
         }
       >
-        {switching ? (
+        {switching && !switching.active ? (
           <div className="text-sm leading-[21px] text-body">
-            {switching.active ? (
-              <>
-                {switching.name} will not be able to sign in with their email or their work
-                number, and any session they have open stops working. Nothing is deleted —
-                their calls, orders and customers stay exactly where they are.
-                <p className="mt-2">
-                  {switching.grants.length
-                    ? `${
-                        switching.grants.length === 1
-                          ? "The one app they hold is kept"
-                          : `All ${switching.grants.length} apps they hold are kept`
-                      }, so enabling them again restores what they had. To take an app away instead, use Manage access.`
-                    : "They hold no app, so there is nothing to keep."}
-                </p>
-              </>
-            ) : (
-              <>
-                {switching.name} will be able to sign in again, with the password they
-                already have.
-                <p className="mt-2">
-                  {switching.grants.length
-                    ? `They open what they opened before — ${switching.grants.map((g) => g.appName).join(", ")}.`
-                    : "They hold no app, so they land on a launcher that says so. Give them one with Manage access."}
-                </p>
-              </>
-            )}
+            {switching.name} will be able to sign in again, with the password they
+            already have.
+            <p className="mt-2">
+              {switching.grants.length
+                ? `They open what they opened before — ${switching.grants.map((g) => g.appName).join(", ")}.`
+                : "They hold no app, so they land on a launcher that says so. Give them one with Manage access."}
+            </p>
           </div>
         ) : null}
       </Modal>
@@ -893,11 +895,17 @@ function AccessDialog({
   /** The level an app will be saved under. Unsaid is associate, as on the server. */
   const levelOf = (app: string): RoleId => roleDraft[app] ?? "associate";
 
-  const submit = () => {
-    if (!chosen) return;
+  /* Taking an app away is confirmed through the impact modal — the powers,
+     the factory place and the phone that go with it — before anything is
+     written. A save that only grants, narrows or changes a level goes straight
+     through, as it always did. */
+  const [confirmingRevoke, setConfirmingRevoke] = React.useState(false);
+
+  const submit = (confirmation?: ImpactConfirmation): Promise<Result<unknown>> => {
+    if (!chosen) return Promise.resolve({ ok: false, error: "Nobody was chosen." });
     setSaving(true);
     setFieldError({});
-    void setAccess({
+    return setAccess({
       userId: chosen.userId,
       employeeId: chosen.employeeId,
       grants: Object.entries(draft).map(([app, modules]) => ({
@@ -914,6 +922,7 @@ function AccessDialog({
          action, and the select that used to sit here could make a platform
          administrator out of somebody given nothing but associate grants. */
       account: chosen.userId ? undefined : { email: email.trim() || null, phone: phone.trim() || null },
+      confirmation,
     }).then((r) => {
       setSaving(false);
       if (!r.ok && r.fieldErrors?.length) {
@@ -921,9 +930,12 @@ function AccessDialog({
         // review page hands back rather than showing a message about a box
         // that is not on it.
         setFieldError(Object.fromEntries(r.fieldErrors.map((f) => [f.field, f.message])));
+        setConfirmingRevoke(false);
         setStep("access");
-        return;
+        return r;
       }
+      /* The impact modal shows its own refusal, and reloads on `conflict`. */
+      if (!r.ok && confirmation) return r;
       /* SAVED, AND THE DIALOG STAYS OPEN TO ASK ONE MORE THING. The access is
          written and the toast says so — nothing here is pending — but a person
          who cannot sign in has not been set up, and the moment the office is
@@ -934,9 +946,10 @@ function AccessDialog({
         setSaved({ created: r.data.created, userId: r.data.userId });
         setStep("done");
         onSaved(r);
-        return;
+        return r;
       }
       onDone(r);
+      return r;
     });
   };
 
@@ -959,112 +972,124 @@ function AccessDialog({
   const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged || placeChanged };
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={1000}
-      title={
-        step === "who"
-          ? "Enable access — who"
-          : step === "access"
-            ? `What ${chosen?.name} can open`
-            : step === "review"
-              ? `Review — ${chosen?.name}`
-              : `${chosen?.name} can now sign in`
-      }
-      footer={
-        step === "done" ? (
-          /* One way out, and it is not "Cancel" — there is nothing left to
-             cancel. The access is written whatever happens on this page. */
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
-        ) : (
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (step === "review") return setStep("access");
-                if (step === "access" && !person) return setStep("who");
-                onClose();
-              }}
-            >
-              {step === "review" || (step === "access" && !person) ? "Back" : "Cancel"}
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        width={1000}
+        title={
+          step === "who"
+            ? "Enable access — who"
+            : step === "access"
+              ? `What ${chosen?.name} can open`
+              : step === "review"
+                ? `Review — ${chosen?.name}`
+                : `${chosen?.name} can now sign in`
+        }
+        footer={
+          step === "done" ? (
+            /* One way out, and it is not "Cancel" — there is nothing left to
+               cancel. The access is written whatever happens on this page. */
+            <Button variant="primary" onClick={onClose}>
+              Done
             </Button>
-            {step === "access" ? (
-              <Button variant="primary" onClick={() => setStep("review")}>
-                Review
-              </Button>
-            ) : step === "review" ? (
+          ) : (
+            <>
               <Button
-                variant={changes.revoked.length ? "danger" : "primary"}
-                disabled={saving || !changes.any}
-                title={changes.any ? undefined : "Nothing has changed"}
-                onClick={submit}
+                variant="secondary"
+                onClick={() => {
+                  if (step === "review") return setStep("access");
+                  if (step === "access" && !person) return setStep("who");
+                  onClose();
+                }}
               >
-                {saving ? "Saving…" : "Grant access"}
+                {step === "review" || (step === "access" && !person) ? "Back" : "Cancel"}
               </Button>
-            ) : null}
-          </>
-        )
-      }
-    >
-      {step === "who" ? (
-        <WhoStep onPick={pick} />
-      ) : step === "access" ? (
-        <AccessStep
-          needsAccount={needsAccount}
-          name={chosen?.name ?? ""}
-          email={email}
-          phone={phone}
-          onEmail={setEmail}
-          onPhone={setPhone}
-          draft={draft}
-          held={before}
-          onDraft={setDraft}
-          roleDraft={roleDraft}
-          onRoleDraft={setRoleDraft}
-          fieldError={fieldError}
-          powers={powers}
-          onPowers={setPowers}
-          hrmsPowers={hrmsPowers}
-          onHrmsPowers={setHrmsPowers}
-          hireRole={hireRole}
-          onHireRole={setHireRole}
-          factoryPlace={factoryPlace}
-          onFactoryPlace={setFactoryPlace}
-          designations={designations}
-          designationId={designationId}
-          onDesignation={setDesignationId}
+              {step === "access" ? (
+                <Button variant="primary" onClick={() => setStep("review")}>
+                  Review
+                </Button>
+              ) : step === "review" ? (
+                <Button
+                  variant={changes.revoked.length ? "danger" : "primary"}
+                  disabled={saving || !changes.any}
+                  title={changes.any ? undefined : "Nothing has changed"}
+                  onClick={() => (chosen?.userId && changes.revoked.length ? setConfirmingRevoke(true) : void submit())}
+                >
+                  {saving ? "Saving…" : "Grant access"}
+                </Button>
+              ) : null}
+            </>
+          )
+        }
+      >
+        {step === "who" ? (
+          <WhoStep onPick={pick} />
+        ) : step === "access" ? (
+          <AccessStep
+            needsAccount={needsAccount}
+            name={chosen?.name ?? ""}
+            email={email}
+            phone={phone}
+            onEmail={setEmail}
+            onPhone={setPhone}
+            draft={draft}
+            held={before}
+            onDraft={setDraft}
+            roleDraft={roleDraft}
+            onRoleDraft={setRoleDraft}
+            fieldError={fieldError}
+            powers={powers}
+            onPowers={setPowers}
+            hrmsPowers={hrmsPowers}
+            onHrmsPowers={setHrmsPowers}
+            hireRole={hireRole}
+            onHireRole={setHireRole}
+            factoryPlace={factoryPlace}
+            onFactoryPlace={setFactoryPlace}
+            designations={designations}
+            designationId={designationId}
+            onDesignation={setDesignationId}
+          />
+        ) : step === "review" ? (
+          <ReviewStep
+            name={chosen?.name ?? ""}
+            creating={needsAccount}
+            email={email}
+            phone={phone}
+            changes={changes}
+            draft={draft}
+            levels={levelsAfter}
+            powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
+            hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
+            hireRoleChange={hireRoleChanged && draft.hire ? { before: hireRoleBefore, after: hireRoleAfter, level: levelOf("hire") } : null}
+            placeChange={placeChanged && draft.factory ? { before: placeBefore, after: placeAfter, level: levelOf("factory") } : null}
+            designationChange={
+              designationChanged || (designationNow && standingAfter && !standingAfter.matches)
+                ? { before: designationName(designationBefore), after: designationName(designationAfter), standing: standingAfter }
+                : null
+            }
+          />
+        ) : (
+          <CredentialStep
+            userId={saved?.userId ?? ""}
+            name={chosen?.name ?? ""}
+            created={saved?.created ?? false}
+            phone={phone.trim() || chosen?.phone || null}
+          />
+        )}
+      </Modal>
+      {confirmingRevoke && chosen?.userId ? (
+        <ImpactDialog
+          key={accessRevokeKey(chosen.userId, changes.revoked)}
+          kind={ACCESS_REVOKE_KIND}
+          id={accessRevokeKey(chosen.userId, changes.revoked)}
+          confirmLabel="Take them away"
+          onClose={() => setConfirmingRevoke(false)}
+          onConfirm={(confirmation) => submit(confirmation)}
         />
-      ) : step === "review" ? (
-        <ReviewStep
-          name={chosen?.name ?? ""}
-          creating={needsAccount}
-          email={email}
-          phone={phone}
-          changes={changes}
-          draft={draft}
-          levels={levelsAfter}
-          powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
-          hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
-          hireRoleChange={hireRoleChanged && draft.hire ? { before: hireRoleBefore, after: hireRoleAfter, level: levelOf("hire") } : null}
-          placeChange={placeChanged && draft.factory ? { before: placeBefore, after: placeAfter, level: levelOf("factory") } : null}
-          designationChange={
-            designationChanged || (designationNow && standingAfter && !standingAfter.matches)
-              ? { before: designationName(designationBefore), after: designationName(designationAfter), standing: standingAfter }
-              : null
-          }
-        />
-      ) : (
-        <CredentialStep
-          userId={saved?.userId ?? ""}
-          name={chosen?.name ?? ""}
-          created={saved?.created ?? false}
-          phone={phone.trim() || chosen?.phone || null}
-        />
-      )}
-    </Modal>
+      ) : null}
+    </>
   );
 }
 

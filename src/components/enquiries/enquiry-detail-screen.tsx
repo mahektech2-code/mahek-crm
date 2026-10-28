@@ -52,6 +52,8 @@ import {
 import type { CustomerMatch } from "@/lib/services/enquiry-service";
 import type { Result } from "@/lib/result";
 import { CreateLeadCard } from "@/components/enquiries/create-lead-card";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import { impactPair } from "@/lib/impact/kinds/crm-keys";
 
 type Tab = "overview" | "timeline" | "followup" | "orders";
 
@@ -375,8 +377,12 @@ function OrdersTab({
   candidates: OrderCandidate[];
   onAfter: (p: Promise<Result>) => Promise<void>;
 }) {
+  const router = useRouter();
+  const { push } = useToast();
   const [picked, setPicked] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  /* Unlinking says first that only the link goes — the order stays. */
+  const [unlinking, setUnlinking] = React.useState<string | null>(null);
 
   async function link() {
     if (!picked) return;
@@ -395,6 +401,22 @@ function OrdersTab({
 
   return (
     <div className="flex flex-col gap-4">
+      {unlinking ? (
+        <ImpactDialog
+          key={unlinking}
+          kind="crm-enquiry-order"
+          id={impactPair(enquiry.id, unlinking)}
+          onClose={() => setUnlinking(null)}
+          onConfirm={async (confirmation) => {
+            const r = await unlinkOrderAction(enquiry.id, unlinking, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Order unlinked.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       {enquiry.linkedOrders.length > 0 ? (
         <div className="flex flex-col gap-2">
           {enquiry.linkedOrders.map((o) => (
@@ -407,7 +429,7 @@ function OrdersTab({
                 <Badge tone="neutral">{orderStatusLabel(o.status)}</Badge>
                 <button
                   className="cursor-pointer text-xs text-danger hover:underline"
-                  onClick={() => onAfter(unlinkOrderAction(enquiry.id, o.orderId))}
+                  onClick={() => setUnlinking(o.orderId)}
                 >
                   Unlink
                 </button>

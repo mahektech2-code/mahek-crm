@@ -30,6 +30,8 @@ import { addDaysISO, datesBetween, datesOfMonth, daysBetweenISO, fdShort, hm, mo
 import { hrmsLink } from "../registry";
 import { personFrom, personOption, scopeFor } from "./attendance";
 import { BUDDY_DONE, CHECKLIST_NA } from "../values";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Performance (spec §12): the salesman's daily KPI entry, the daily score it
@@ -283,8 +285,8 @@ function kpiPickable(ctx: HrmsContext, people: Person[]): Person[] {
   return kpiWide(ctx) ? all : all.filter((p) => p.id === ctx.employee?.id);
 }
 
-const canTouchKpi = (ctx: HrmsContext, k: Kpi) => kpiWide(ctx) || k.employeeId === ctx.employee?.id;
-const KPI_WHY = "Only the salesman, the sales desk or HR can change this sales entry";
+export const canTouchKpi = (ctx: HrmsContext, k: Kpi) => kpiWide(ctx) || k.employeeId === ctx.employee?.id;
+export const KPI_WHY = "Only the salesman, the sales desk or HR can change this sales entry";
 
 async function kpiForm(ctx: HrmsContext, people: Person[], rec?: Kpi): Promise<FormSpec | undefined> {
   const pick = kpiPickable(ctx, people);
@@ -366,7 +368,7 @@ function kpiRow(ctx: HrmsContext, k: Kpi, p: Person | undefined, att: DayRow | u
   const actions: ActionSpec[] = [
     { id: "edit", l: "Edit", loadsForm: true, why },
     { id: "score", l: "Open score", href: hrmsLink("salesPerf", { who: k.employeeId, from: k.date }) },
-    { id: "delete", l: "Delete", why, confirm: `Delete ${name}’s sales entry for ${fdShort(k.date)}? The day’s score is deleted with it.` },
+    { id: "delete", l: "Delete", why, impact: { kind: "hrms-sales-entry", id: k.id } },
   ];
   return {
     id: k.id,
@@ -509,10 +511,12 @@ const kpi: HrmsScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const [k] = await db.select().from(hrmsKpi).where(eq(hrmsKpi.id, id));
       if (!k) return err("That sales entry no longer exists.", "not_found");
       if (!canTouchKpi(ctx, k)) return err(KPI_WHY, "not_permitted");
+      const refusal = await confirmImpact("hrms-sales-entry", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsKpi).where(eq(hrmsKpi.id, id));
       await hrmsAudit(ctx, "hrms.kpi.delete", "hrms_kpi", id, k, null);
       return okVoid("Sales entry deleted");

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Textarea } from "@/components/ui/primitives";
 import { Button } from "@/components/console/parts";
@@ -128,6 +129,9 @@ export function CancelForm({
   const [remarks, setRemarks] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /* The reason first, then the impact modal: the approval it refuses, the
+     chases it closes, the phones that show the trial. Keyed per opening. */
+  const [confirming, setConfirming] = React.useState<number | null>(null);
 
   const said = remarks.trim();
   const needsWords = reasonCode === REASON_CODE_NEEDING_REMARKS;
@@ -147,20 +151,33 @@ export function CancelForm({
       setError("“Other” needs a sentence. It is the one answer nobody can act on without one.");
       return;
     }
-    setBusy(true);
     setError(null);
-    try {
-      const result = await cancelSample(sampleId, { reasonCode, remarks: said || null });
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      onClose();
-      toast.push(result.message ?? "Cancelled.");
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
+    setConfirming(Date.now());
+  }
+
+  if (confirming !== null) {
+    return (
+      <ImpactDialog
+        key={confirming}
+        kind="lead-sample-cancel"
+        id={sampleId}
+        onClose={() => setConfirming(null)}
+        onConfirm={async (confirmation) => {
+          setBusy(true);
+          try {
+            const result = await cancelSample(sampleId, { reasonCode, remarks: said || null }, confirmation);
+            if (result.ok) {
+              onClose();
+              toast.push(result.message ?? "Cancelled.");
+              router.refresh();
+            }
+            return result;
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+    );
   }
 
   return (
@@ -239,7 +256,7 @@ export function CancelForm({
           }
           onClick={() => void save()}
         >
-          {busy ? "Cancelling…" : "Cancel the sample"}
+          {busy ? "Cancelling…" : "Next: what this affects"}
         </Button>
       </div>
     </Modal>

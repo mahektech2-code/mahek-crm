@@ -9,6 +9,8 @@ import { addDays, phaseOf, type Phase } from "./engines/logistics";
 import { allocateByLitres, needsReconciling, tripCostStatus, type PaymentFacts, type TransportCostStatus } from "./engines/transport-cost";
 import { erpAudit, erpId, nextNumber } from "./server";
 import { today } from "./screens/common";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * VEHICLE TRIPS AND THE TRANSPORT PAYMENT (Order-to-Delivery PRD steps 10–11).
@@ -362,10 +364,12 @@ export async function addToTrip(ctx: ErpContext, tripId: string, transportIds: s
 }
 
 /** Take a bill off its trip — refused while it carries a live share of the trip's payment. */
-export async function removeFromTrip(ctx: ErpContext, transportId: string): Promise<Result<unknown>> {
+export async function removeFromTrip(ctx: ErpContext, transportId: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
   const [t] = await db.select({ id: erpTransports.id, tripId: erpTransports.tripId, orderNo: erpTransports.orderNo }).from(erpTransports).where(inArray(erpTransports.id, [transportId]));
   if (!t?.tripId) return err("That bill is on no trip.", "rule_violation");
   if ((await allocatedAmong(db, [t.id])).size) return err(`Order ${t.orderNo} carries a share of this trip's transport payment; reverse the payment first.`, "rule_violation");
+  const refusal = await confirmImpact("erp-trip-bill", t.id, confirmation);
+  if (refusal) return refusal;
   await db.transaction(async (tx) => {
     await tx.update(erpTransports).set({ tripId: null }).where(inArray(erpTransports.id, [t.id]));
     await tripEvent(tx, [t.id], "Taken off its trip", ctx.user.id);
@@ -446,13 +450,19 @@ export async function recordTransportPayment(ctx: ErpContext, input: PaymentInpu
   return ok({ id: paymentId }, `Payment recorded · ${words}`);
 }
 
-/** Reverse a recorded payment: the row and its shares stay, marked reversed, and the bills are free to be shared again. */
-export async function reverseTransportPayment(ctx: ErpContext, paymentId: string, reason: string): Promise<Result<unknown>> {
+/**
+ * Reverse a recorded payment: the row and its shares stay, marked reversed,
+ * and the bills are free to be shared again — confirmed against the bills it
+ * was shared over (`erp-transport-payment`).
+ */
+export async function reverseTransportPayment(ctx: ErpContext, paymentId: string, reason: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
   const why = (reason ?? "").trim();
   if (why.length < 3) return fieldErr("reason", "Say why the payment is reversed");
   const [p] = await db.select().from(erpTransportPayments).where(inArray(erpTransportPayments.id, [paymentId]));
   if (!p) return err("That payment no longer exists.", "not_found");
   if (p.status === "reversed") return err("That payment is already reversed.", "rule_violation");
+  const refusal = await confirmImpact("erp-transport-payment", p.id, confirmation);
+  if (refusal) return refusal;
   await db.transaction(async (tx) => {
     await tx.update(erpTransportPayments).set({ status: "reversed", reversedById: ctx.user.id, reversedAt: new Date(), reverseReason: why }).where(inArray(erpTransportPayments.id, [p.id]));
     const shares = await tx.update(erpTransportAllocations).set({ reversed: true }).where(inArray(erpTransportAllocations.paymentId, [p.id])).returning({ transportId: erpTransportAllocations.transportId });

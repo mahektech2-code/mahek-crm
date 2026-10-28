@@ -47,6 +47,16 @@ import { lineOption, lotOption, returnableLines, returnableLots, returnsSummary 
 import { screenModule } from "@/lib/erp/screens";
 import { fgLots, rmLots } from "@/lib/erp/stock";
 import { traceCode } from "@/lib/erp/traceability";
+import { impactPart } from "@/lib/erp/ui";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
+
+/** The report the impact modal shows, and the payload it sends back with the act — typed exactly as asked. */
+async function confirmed(kind: string, recordId: string): Promise<{ report: ImpactReport; values: Record<string, string> }> {
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { report: r.data, values: { [IMPACT_FIELD]: JSON.stringify({ typed: r.data.confirmWord, fingerprint: r.data.fingerprint }) } };
+}
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const BHW = "erpg_bhiwandi";
@@ -166,7 +176,12 @@ describe("vendor side", () => {
     const conf = await mod("vendorReturns").actions!.confirmOutward(h, ret.id, {});
     assert.ok(conf.ok, msg(conf));
     assert.equal(await stockOf("SA-TOL-1"), 80);
-    const rev = await mod("vendorReturns").actions!.reverseOutward(h, ret.id, { reason: "Lorry turned back at the gate" });
+    assert.match(msg(await mod("vendorReturns").actions!.reverseOutward(h, ret.id, { reason: "Lorry turned back at the gate" })), /Check what this affects/, "a reversal is confirmed through the impact modal");
+    const back = await confirmed("erp-return-outward-reverse", ret.id);
+    const lotBack = back.report.items.find((i) => i.effect === "changed" && /come back into lot SA-TOL-1/.test(i.label));
+    assert.equal(lotBack?.count, 20, "the report names the stock coming back");
+    assert.ok(back.report.items.some((i) => i.app === "Accounts" && i.effect === "kept" && /debit note DN-\d+ stays issued/.test(i.label)), "and that the debit note does not go with it");
+    const rev = await mod("vendorReturns").actions!.reverseOutward(h, ret.id, { reason: "Lorry turned back at the gate", ...back.values });
     assert.ok(rev.ok, msg(rev));
     assert.equal(await stockOf("SA-TOL-1"), 100);
     assert.ok((await mod("vendorReturns").actions!.prepareOutward(h, ret.id, { godown: "Bhiwandi", date: "2026-10-03" })).ok);
@@ -187,7 +202,9 @@ describe("vendor side", () => {
     const own = await mod("vendorReturns").actions!.ownerApprove(await as(admin), ret.id, {});
     assert.ok(own.ok, msg(own));
     assert.equal((await db.select().from(erpDebitNotes).where(eq(erpDebitNotes.purchaseReturnId, ret.id))).length, 1);
-    const cancel = await mod("vendorReturns").actions!.cancel(await as(head), ret.id, { reason: "Supplier replaced it instead" });
+    const withDn = await confirmed("erp-vendor-return", ret.id);
+    assert.ok(withDn.report.items.some((i) => i.app === "Accounts" && /debit note DN-\d+ cancelled/.test(i.label)), JSON.stringify(withDn.report.items));
+    const cancel = await mod("vendorReturns").actions!.cancel(await as(head), ret.id, { reason: "Supplier replaced it instead", ...withDn.values });
     assert.ok(cancel.ok, msg(cancel));
     const [dn] = await db.select().from(erpDebitNotes).where(eq(erpDebitNotes.purchaseReturnId, ret.id));
     assert.equal(dn.status, "cancelled", "cancelled with its return, and kept");
@@ -257,7 +274,11 @@ describe("customer side", () => {
     const row = rows.find((r) => r.id === ret.id)!;
     const action = row.actions!.find((a) => a.id === "reverseDecision")!;
     const choice = action.prompt!.fields[0].opts!.find((o) => /Reusable/.test(o))!;
-    const rev = await mod("customerReturns").actions!.reverseDecision(await as(head), ret.id, { decision: choice, reason: "QC re-tested, it is not fit" });
+    assert.equal(action.impact?.withValue, "decision", "the report is about the decision the prompt picks");
+    const undo = await confirmed("erp-qc-decision", impactPart(ret.id, choice));
+    assert.ok(undo.report.items.some((i) => i.effect === "deleted" && /cans leave FG lot FG9BH/.test(i.label) && i.count === 2), JSON.stringify(undo.report.items));
+    assert.match(msg(await mod("customerReturns").actions!.reverseDecision(await as(head), ret.id, { decision: choice, reason: "QC re-tested, it is not fit" })), /Check what this affects/);
+    const rev = await mod("customerReturns").actions!.reverseDecision(await as(head), ret.id, { decision: choice, reason: "QC re-tested, it is not fit", ...undo.values });
     assert.ok(rev.ok, msg(rev));
     assert.equal(await fgStock(), before - 2);
   });

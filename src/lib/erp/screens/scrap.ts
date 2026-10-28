@@ -10,9 +10,11 @@ import type { ErpContext } from "../access";
 import { refValues } from "../refs";
 import { erpAudit, erpId, int, num, paise, stampLine, text, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { fd, inr, nf } from "../ui";
+import { fd, impactPart, inr, nf } from "../ui";
 import { godownField, godownIdByName, godownOptions, today } from "./common";
 import { moneyAccounts } from "../money";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import {
   AGE_BUCKETS,
   DRUM_CATEGORY,
@@ -254,6 +256,8 @@ function drumRow(ctx: ErpContext, d: DrumRow, limits: { alertKg: number; alertPe
         l: "Cancel entry",
         why: why(ctx, "scrapApprove"),
         prompt: { title: `Cancel ${drumLabel(d.drumNo)}?`, sub: "For an entry made in error — the wrong lot scanned, or one drum scanned twice. Kept, marked cancelled, and its drum number freed.", submit: "Cancel entry", fields: [reasonField()] },
+        /* The reason first, then which stock list the drum leaves and what waits on it. */
+        impact: { kind: "erp-drum-entry", id: d.id },
       },
     );
   }
@@ -291,6 +295,8 @@ const drumActions: ScreenModule["actions"] = {
   },
   async cancel(ctx, id, v) {
     if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+    const refusal = await confirmImpact("erp-drum-entry", id, readConfirmation(v));
+    if (refusal) return refusal;
     return cancelDrumEntry(actorOf(ctx), id, v.reason ?? "");
   },
   async classify(ctx, id, v) {
@@ -764,7 +770,7 @@ const drumReturns: ScreenModule = {
           title: `${drumReturnLabel(Number(r.no))} · ${r.quantity} drums to ${r.supplier}`,
           fields: [{ l: "Remarks", v: r.remark ?? "—" }, ...(r.cancelReason ? [{ l: "Cancelled because", v: r.cancelReason }] : [])],
           actions: [
-            { id: "cancel", l: "Cancel outward", why: r.status !== "confirmed" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: `Cancel ${drumReturnLabel(Number(r.no))}?`, sub: "Its drums go back to waiting for return.", submit: "Cancel outward", fields: [reasonField()] } },
+            { id: "cancel", l: "Cancel outward", why: r.status !== "confirmed" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: `Cancel ${drumReturnLabel(Number(r.no))}?`, sub: "Its drums go back to waiting for return.", submit: "Cancel outward", fields: [reasonField()] }, impact: { kind: "erp-drum-return", id: r.id } },
           ],
           by: stampLine(r.by, r.at),
           panel: {
@@ -783,6 +789,8 @@ const drumReturns: ScreenModule = {
   actions: {
     async cancel(ctx, id, v) {
       if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+      const refusal = await confirmImpact("erp-drum-return", id, readConfirmation(v));
+      if (refusal) return refusal;
       return cancelDrumReturn(actorOf(ctx), id, v.reason ?? "");
     },
   },
@@ -932,6 +940,7 @@ async function saleRowsFor(ctx: ErpContext, rows: SaleRow[]): Promise<ListRow[]>
             l: "Cancel sale",
             why: s.status !== "confirmed" ? "Already cancelled" : hasMatches ? "Money is matched to it — the accountant undoes the match first" : why(ctx, "scrapApprove"),
             prompt: { title: `Cancel ${scrapSaleLabel(s.saleNo)}?`, sub: s.category === DRUM_CATEGORY ? "Its drums go back to Mahek stock." : "Its quantity goes back to scrap stock.", submit: "Cancel sale", fields: [reasonField()] },
+            impact: { kind: "erp-scrap-sale", id: s.id },
           },
         ],
         by: stampLine(s.by, s.createdAt),
@@ -953,6 +962,8 @@ const saleActions: ScreenModule["actions"] = {
   },
   async cancel(ctx, id, v) {
     if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+    const refusal = await confirmImpact("erp-scrap-sale", id, readConfirmation(v));
+    if (refusal) return refusal;
     return cancelScrapSale(actorOf(ctx), id, v.reason ?? "");
   },
 };
@@ -1113,7 +1124,7 @@ const scrapEntries: ScreenModule = {
         flags: [],
         title: `${nf(r.e.quantity)} ${r.e.unit} of ${r.e.category}`,
         fields: [{ l: "Note", v: r.e.note ?? "—" }, ...(r.e.cancelReason ? [{ l: "Cancelled because", v: r.e.cancelReason }] : [])],
-        actions: [{ id: "cancel", l: "Cancel entry", why: r.e.status !== "active" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: "Cancel this scrap entry?", submit: "Cancel entry", fields: [reasonField()] } }],
+        actions: [{ id: "cancel", l: "Cancel entry", why: r.e.status !== "active" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: "Cancel this scrap entry?", submit: "Cancel entry", fields: [reasonField()] }, impact: { kind: "erp-scrap-entry", id: r.e.id } }],
         by: stampLine(r.by, r.e.createdAt),
       })),
     };
@@ -1121,6 +1132,8 @@ const scrapEntries: ScreenModule = {
   actions: {
     async cancel(ctx, id, v) {
       if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+      const refusal = await confirmImpact("erp-scrap-entry", id, readConfirmation(v));
+      if (refusal) return refusal;
       return cancelScrapEntry(actorOf(ctx), id, v.reason ?? "");
     },
   },
@@ -1183,7 +1196,7 @@ const scrapBuyers: ScreenModule = {
           title: b.name,
           fields: [{ l: "GSTIN", v: b.gstin ?? "—" }, { l: "Address", v: b.address ?? "—" }],
           contacts: b.phone ? [{ l: "Call", href: `tel:${b.phone}` }] : [],
-          actions: [b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale") } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") }],
+          actions: [b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale"), impact: { kind: "erp-scrap-buyer", id: b.id } } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") }],
           by: stampLine(null, b.createdAt),
           panel: {
             kind: "scrap",
@@ -1223,8 +1236,10 @@ const scrapBuyers: ScreenModule = {
     },
   },
   actions: {
-    async retire(ctx, id) {
+    async retire(ctx, id, v) {
       if (!can(ctx, "scrapSale")) return refused("scrapSale");
+      const refusal = await confirmImpact("erp-scrap-buyer", id, readConfirmation(v));
+      if (refusal) return refusal;
       await db.update(erpScrapBuyers).set({ active: false }).where(eq(erpScrapBuyers.id, id));
       await erpAudit(ctx, "erp.scrapBuyer.retire", "erp_scrap_buyer", id);
       return okVoid("Retired");
@@ -1341,8 +1356,10 @@ const cashReceipts: ScreenModule = {
                 submit: "Undo",
                 fields: [{ k: "alloc", l: "Match", t: "select", req: true, opts: liveMatches.map((a) => `${scrapSaleLabel(a.saleNo)} · ${inr(a.amountPaise)}`) }, reasonField()],
               },
+              /* The report is about the match picked: which sale is owed again. */
+              impact: { kind: "erp-scrap-match", id: r.id, withValue: "alloc" },
             },
-            { id: "void", l: "Void receipt", why: !live ? "Already void" : liveMatches.length ? "Undo its matches first" : why(ctx, "scrapAccounts"), prompt: { title: `Void ${receiptLabel(r.receiptNo)}?`, sub: "For a receipt recorded in error. Kept, marked void.", submit: "Void", fields: [reasonField()] } },
+            { id: "void", l: "Void receipt", why: !live ? "Already void" : liveMatches.length ? "Undo its matches first" : why(ctx, "scrapAccounts"), prompt: { title: `Void ${receiptLabel(r.receiptNo)}?`, sub: "For a receipt recorded in error. Kept, marked void.", submit: "Void", fields: [reasonField()] }, impact: { kind: "erp-scrap-receipt", id: r.id } },
           ],
           by: stampLine(r.by, r.createdAt),
           panel: {
@@ -1406,10 +1423,14 @@ const cashReceipts: ScreenModule = {
       const live = (await allocationRows({ receiptId: id })).filter((a) => !a.voidedAt);
       const a = live.find((x) => `${scrapSaleLabel(x.saleNo)} · ${inr(x.amountPaise)}` === v.alloc);
       if (!a) return fieldErr("alloc", "Choose the match to undo.");
+      const refusal = await confirmImpact("erp-scrap-match", impactPart(id, v.alloc), readConfirmation(v));
+      if (refusal) return refusal;
       return voidAllocation(actorOf(ctx), a.id, v.reason ?? "");
     },
     async void(ctx, id, v) {
       if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      const refusal = await confirmImpact("erp-scrap-receipt", id, readConfirmation(v));
+      if (refusal) return refusal;
       return voidReceipt(actorOf(ctx), id, v.reason ?? "");
     },
   },

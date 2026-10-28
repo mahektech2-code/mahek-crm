@@ -14,6 +14,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import assert from "node:assert/strict";
+import { impactReport } from "@/lib/impact/registry";
 import { randomUUID } from "node:crypto";
 import { NO_ORDER_REASONS } from "@/lib/call-outcomes";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -1333,7 +1334,24 @@ describe("Journey 5 - a customer goes quiet and gets a decision", () => {
       true,
     );
     setTestUser(manager);
-    assert.equal((await decideDeactivation(customer.id, true)).ok, true);
+    /* Approving says first what moves — off the Call Log, the ERP's order form —
+       and what stays owed; the bare act is refused. */
+    const deactivation = await impactReport("crm-customer-deactivate", customer.id);
+    assert.ok(deactivation.ok, deactivation.ok ? "" : deactivation.error);
+    assert.ok(
+      deactivation.data.items.some((i) => i.app === "CRM" && i.effect === "changed" && /Call Log/.test(i.label)),
+      deactivation.data.items.map((i) => `${i.app}:${i.label}`).join(", "),
+    );
+    assert.equal((await decideDeactivation(customer.id, true)).ok, false, "no confirmation, no deactivation");
+    assert.equal(
+      (await decideDeactivation(customer.id, true, undefined, { typed: "not it", fingerprint: deactivation.data.fingerprint })).ok,
+      false,
+      "a misspelt name confirms nothing",
+    );
+    assert.equal(
+      (await decideDeactivation(customer.id, true, undefined, { typed: deactivation.data.confirmWord, fingerprint: deactivation.data.fingerprint })).ok,
+      true,
+    );
 
     let [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
     assert.equal(row.status, "deactivated");
@@ -5828,7 +5846,13 @@ describe("The product master — importing it, and what an import must not touch
       .where(and(eq(productsTable.status, "ok"), eq(productsTable.active, true)))
       .limit(1);
 
-    const retired = await setSkuActive(live.id, false);
+    /* Retiring asks first: the order forms, the handsets and the price lists it leaves. */
+    const unconfirmed = await setSkuActive(live.id, false);
+    assert.equal(!unconfirmed.ok && unconfirmed.code, "validation", "a retirement nobody confirmed is refused");
+    const report = await impactReport("admin-sku-retire", live.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.items.some((i) => i.app === "CRM" && i.effect === "changed"), "it names the order form it leaves");
+    const retired = await setSkuActive(live.id, false, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
     assert.equal(retired.ok, true, retired.ok ? "" : retired.error);
 
     await importCatalogue();
@@ -7369,8 +7393,10 @@ describe("a status somebody decided survives the sheet", () => {
     await stagePartyRowWithStatus("CLOSED PAINTS", "Active");
 
     setTestUser(manager);
+    const closing = await impactReport("crm-customer-deactivate", customer.id);
+    assert.ok(closing.ok, closing.ok ? "" : closing.error);
     assert.equal(
-      (await decideDeactivation(customer.id, true, "Shut up shop")).ok,
+      (await decideDeactivation(customer.id, true, "Shut up shop", { typed: closing.data.confirmWord, fingerprint: closing.data.fingerprint })).ok,
       true,
     );
 
@@ -8132,10 +8158,21 @@ describe("reversing a payment that had counted", () => {
     const [settled] = await db.select().from(bills).where(eq(bills.id, bill.id));
     assert.equal(settled.paidAmount, 10_000_00, "the bill was not settled to begin with");
 
-    const reversed = await reverseReceiptAction(
-      receipt.ok ? receipt.data.receiptId : "",
-      "Cheque bounced",
-    );
+    const receiptId = receipt.ok ? receipt.data.receiptId : "";
+    /* The modal names the bill that is owed again and what the outstanding becomes. */
+    const report = await impactReport("accounts-receipt-reverse", receiptId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const owedAgain = report.data.items.find((i) => i.app === "Accounts" && /settled/.test(i.label));
+    assert.equal(owedAgain?.count, 1, report.data.items.map((i) => `${i.app}:${i.label}`).join(", "));
+    assert.equal(report.data.confirmWord, "REVERSE");
+    const bare = await reverseReceiptAction(receiptId, "Cheque bounced");
+    assert.equal(bare.ok, false, "no confirmation, no reversal");
+    const stale = await reverseReceiptAction(receiptId, "Cheque bounced", { typed: "reverse", fingerprint: "1:stale" });
+    assert.equal(stale.ok ? "ok" : stale.code, "conflict");
+    const reversed = await reverseReceiptAction(receiptId, "Cheque bounced", {
+      typed: "reverse",
+      fingerprint: report.data.fingerprint,
+    });
     assert.equal(reversed.ok, true, reversed.ok ? "" : reversed.error);
     setTestUser(priya);
 
@@ -10590,7 +10627,15 @@ describe("third-party customers and their distributors", () => {
       "a swap collapsed two arrangements into one",
     );
 
-    assert.equal((await removeDistributor(firstLink.linkId!)).ok, true);
+    /* The modal says the other distributor stays, and asks for the name. */
+    const removal = await impactReport("crm-distributor-link", firstLink.linkId!);
+    assert.ok(removal.ok, removal.ok ? "" : removal.error);
+    assert.ok(removal.data.items.some((i) => i.effect === "kept" && /other distributor/.test(i.label)));
+    assert.equal((await removeDistributor(firstLink.linkId!)).ok, false, "no confirmation, no removal");
+    assert.equal(
+      (await removeDistributor(firstLink.linkId!, { typed: removal.data.confirmWord, fingerprint: removal.data.fingerprint })).ok,
+      true,
+    );
     assert.equal((await distributorsFor(shop.id)).length, 1);
   });
 
@@ -10718,6 +10763,10 @@ describe("third-party customers and their distributors", () => {
     );
 
     const [link] = await distributorsFor(shop.id);
+    /* The modal explains the refusal before anybody presses the button. */
+    const explained = await impactReport("crm-distributor-link", link.linkId!);
+    assert.ok(explained.ok, explained.ok ? "" : explained.error);
+    assert.match(explained.data.blockers[0] ?? "", /somebody billing it/);
     const refused = await removeDistributor(link.linkId!);
     assert.equal(refused.ok, false, "a third-party customer was left with nobody billing it");
     assert.equal((await distributorsFor(shop.id)).length, 1);
@@ -10725,7 +10774,13 @@ describe("third-party customers and their distributors", () => {
     // The way out is the other direction: it stops being a third-party
     // customer, and then the arrangement can go.
     assert.equal((await revertThirdParty([shop.id])).ok, true);
-    assert.equal((await removeDistributor(link.linkId!)).ok, true);
+    const now = await impactReport("crm-distributor-link", link.linkId!);
+    assert.ok(now.ok, now.ok ? "" : now.error);
+    assert.equal(now.data.blockers.length, 0);
+    assert.equal(
+      (await removeDistributor(link.linkId!, { typed: now.data.confirmWord, fingerprint: now.data.fingerprint })).ok,
+      true,
+    );
   });
 
   test("reverting keeps who used to bill the shop", async () => {

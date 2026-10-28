@@ -4,7 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Callout, Card, CardHeader, Field, Textarea, Td, Th, Tr } from "@/components/ui/primitives";
-import { ConfirmDialog, Modal } from "@/components/ui/overlays";
+import { Modal } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import {
   approveRequestAction,
@@ -262,15 +263,24 @@ export function ReviewActions({ request }: { request: RequestView }) {
     return (
       <>
         <Button variant="secondary" disabled={busy} onClick={() => setRevoking(true)}>Revoke approval</Button>
-        <ConfirmDialog
-          open={revoking}
-          title="Revoke this approval"
-          body="Nothing has been published. The employee will have to submit the changes again."
-          destructive
-          confirmLabel="Revoke approval"
-          onClose={() => setRevoking(false)}
-          onConfirm={() => run(async () => reportResult(toast, await revokeApprovalAction(request.id)))}
-        />
+        {/* The items it frees, the seven days it ends and who is told. */}
+        {revoking ? (
+          <ImpactDialog
+            key={request.id}
+            kind="site-approval-revoke"
+            id={request.id}
+            confirmLabel="Revoke approval"
+            onClose={() => setRevoking(false)}
+            onConfirm={async (confirmation) => {
+              const r = await revokeApprovalAction(request.id, confirmation);
+              if (r.ok) {
+                reportResult(toast, r);
+                router.refresh();
+              }
+              return r;
+            }}
+          />
+        ) : null}
       </>
     );
   }
@@ -322,14 +332,9 @@ export function EmployeeActions({ request, now }: { request: RequestView; /** Th
           <Button variant="primary" disabled={busy} onClick={() => setResubmitting(true)}>Submit again</Button>
         </>
       ) : null}
-      <ConfirmDialog
-        open={withdrawing}
-        title="Withdraw this request"
-        body="The reviewer will no longer see it, and you can edit these items again. Nothing is published."
-        confirmLabel="Withdraw"
-        onClose={() => setWithdrawing(false)}
-        onConfirm={() => run(async () => reportResult(toast, await withdrawRequestAction(request.id)))}
-      />
+      {withdrawing ? (
+        <WithdrawDialog requestId={request.id} onClose={() => setWithdrawing(false)} />
+      ) : null}
       <SubmitDialog
         open={resubmitting}
         ids={request.items.map((i) => i.contentId)}
@@ -426,9 +431,7 @@ export function ReviewBadge({ review }: { review: ItemReview }) {
  * withdraw the request (only the person who submitted it can).
  */
 export function ReviewLockNotice({ review }: { review: ItemReview }) {
-  const router = useRouter();
-  const toast = useToast();
-  const [busy, setBusy] = React.useState(false);
+  const [withdrawing, setWithdrawing] = React.useState(false);
   return (
     <Callout tone="brand" className="mb-3 items-start">
       <div className="min-w-0 flex-1 text-sm text-body">
@@ -447,24 +450,40 @@ export function ReviewLockNotice({ review }: { review: ItemReview }) {
           >
             Open request
           </Link>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                if (reportResult(toast, await withdrawRequestAction(review.requestId))) router.refresh();
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
+          <Button size="sm" variant="secondary" onClick={() => setWithdrawing(true)}>
             Withdraw
           </Button>
         </div>
       ) : null}
+      {withdrawing ? <WithdrawDialog requestId={review.requestId} onClose={() => setWithdrawing(false)} /> : null}
     </Callout>
+  );
+}
+
+/**
+ * Taking a request back, wherever it is offered: the items it frees and, for an
+ * approved one, the approval it gives up. One dialog for the request page and
+ * the editor's notice, so the two cannot say different things about one act.
+ */
+function WithdrawDialog({ requestId, onClose }: { requestId: string; onClose: () => void }) {
+  const router = useRouter();
+  const toast = useToast();
+  return (
+    <ImpactDialog
+      key={requestId}
+      kind="site-request-withdraw"
+      id={requestId}
+      confirmLabel="Withdraw"
+      onClose={onClose}
+      onConfirm={async (confirmation) => {
+        const r = await withdrawRequestAction(requestId, confirmation);
+        if (r.ok) {
+          reportResult(toast, r);
+          router.refresh();
+        }
+        return r;
+      }}
+    />
   );
 }
 

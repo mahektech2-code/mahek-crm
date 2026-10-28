@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { recordExpensePayout, voidExpensePayout } from "@/lib/actions/sales";
 import { Modal } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { Button, ReasonModal } from "@/components/console/parts";
 import { PAYOUT_MODES, inrExact as inr } from "../labels";
 
@@ -226,18 +227,18 @@ export function VoidPayment({
   const [reason, setReason] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /* The reason first, then the impact modal: what he is owed again, and the
+     payment that stays struck through. Keyed per opening. */
+  const [confirming, setConfirming] = React.useState<number | null>(null);
 
   const confirm = async () => {
-    setBusy(true);
-    setError(null);
-    const r = await voidExpensePayout({ payoutId, reason });
-    setBusy(false);
-    if (!r.ok) {
-      setError(r.error ?? "That did not save.");
+    if (!reason.trim()) {
+      setError("Say why this payment is being voided.");
       return;
     }
+    setError(null);
     setOpen(false);
-    router.refresh();
+    setConfirming(Date.now());
   };
 
   return (
@@ -261,12 +262,31 @@ export function VoidPayment({
         fieldLabel="Why is it being voided?"
         reason={reason}
         onReasonChange={setReason}
-        confirmLabel="Void payment"
+        confirmLabel="Next: what this affects"
         busy={busy}
         error={error}
         onClose={() => setOpen(false)}
         onConfirm={confirm}
       />
+      {confirming !== null ? (
+        <ImpactDialog
+          key={confirming}
+          kind="sales-expense-payout-void"
+          id={payoutId}
+          confirmLabel="Void payment"
+          onClose={() => setConfirming(null)}
+          onConfirm={async (confirmation) => {
+            setBusy(true);
+            try {
+              const r = await voidExpensePayout({ payoutId, reason }, confirmation);
+              if (r.ok) router.refresh();
+              return r;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      ) : null}
     </>
   );
 }

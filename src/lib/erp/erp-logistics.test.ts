@@ -72,6 +72,13 @@ const mod = (k: string) => {
 };
 const msg = (r: { ok: boolean; fieldErrors?: { message: string }[]; error?: string }) => (r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?"));
 
+/** What the impact modal would show, and the confirmation it would send back with the name typed. */
+async function confirmed(kind: string, recordId: string) {
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { report: r.data, confirmation: { typed: r.data.confirmWord, fingerprint: r.data.fingerprint } };
+}
+
 let admin: typeof users.$inferSelect;
 let clerk: typeof users.$inferSelect;
 
@@ -160,7 +167,13 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(lrs.length, 2);
     const lr = lrs.find((l) => l.lrNo === "LR-7781")!;
     assert.equal(L.suggestBills(lr, await L.consignments())[0].id, t.id);
-    assert.ok((await L.voidLr(ctx, lrs.find((l) => l.lrNo === "LR-9")!.id, "duplicate photo")).ok);
+    /* Voiding asks first: the bare act is refused, and the modal names the LR leaving the desk. */
+    const nine = lrs.find((l) => l.lrNo === "LR-9")!;
+    assert.equal(msg(await L.voidLr(ctx, nine.id, "duplicate photo")), "Check what this affects and confirm it first.");
+    const voiding = await confirmed("erp-lr-void", nine.id);
+    assert.equal(voiding.report.confirmWord, "LR-9");
+    assert.ok(voiding.report.items.some((i) => i.effect === "changed" && /leaves the LR desk/.test(i.label)), JSON.stringify(voiding.report.items));
+    assert.ok((await L.voidLr(ctx, nine.id, "duplicate photo", voiding.confirmation)).ok);
     assert.ok((await db.select().from(erpTransporters)).some((x) => x.name === "VRL"), "a transporter named on an upload joins the directory");
 
     /* No field is required: two LRs with no number from one transporter both land, an empty row is skipped,
@@ -171,7 +184,7 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(numberless.length, 2);
     assert.equal(msg(await L.attachLr(ctx, numberless[0].id, [t.id], {})), "Type the LR number off the photo first (Edit) — the customer is told it.");
     assert.ok((await L.editLr(ctx, numberless[0].id, { lrNo: "G-1", transporter: "Gati" })).ok);
-    for (const l of numberless) assert.ok((await L.voidLr(ctx, l.id, "test rows")).ok);
+    for (const l of numberless) assert.ok((await L.voidLr(ctx, l.id, "test rows", (await confirmed("erp-lr-void", l.id)).confirmation)).ok);
 
     /* Logistics attaches it: the bill goes on the road and the party is told. */
     const att = await L.attachLr(ctx, lr.id, [t.id], { expectedOn: "2026-08-06" });
@@ -228,8 +241,16 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.ok(!JSON.stringify(pub).includes("lorry broke down"));
     assert.equal(await L.publicTracking("nope"), null);
 
-    /* Reopened by mistake: back on the road with a call due today, nobody messaged. */
-    assert.ok((await L.reopen(ctx, t.id, "party says short")).ok);
+    /* Reopened by mistake: back on the road with a call due today, nobody messaged. While the LR still
+       carries it, voiding that LR is refused — and the modal says so before anybody types its number. */
+    const carrying = await confirmed("erp-lr-void", lr.id);
+    assert.match(carrying.report.blockers[0] ?? "", /attached to 1 bill/);
+    assert.equal(msg(await L.reopen(ctx, t.id, "party says short")), "Check what this affects and confirm it first.");
+    const reopening = await confirmed("erp-delivery-reopen", t.id);
+    assert.equal(reopening.report.confirmWord, String(t.orderNo));
+    assert.ok(reopening.report.items.some((i) => i.label === "delivery record cleared" && /received by Ramesh/.test(i.note ?? "")), JSON.stringify(reopening.report.items));
+    assert.ok(reopening.report.items.some((i) => i.effect === "kept" && /still waiting to be sent/.test(i.label)), "the delivered message nobody sent still says delivered");
+    assert.ok((await L.reopen(ctx, t.id, "party says short", reopening.confirmation)).ok);
     [c] = await L.consignments({ ids: [t.id] });
     assert.equal(c.phase, "onRoad");
     assert.ok((await L.detachLr(ctx, t.id, "wrong bill")).ok);
@@ -582,6 +603,7 @@ describe("vehicle trips and the transport payment shared by litres (Order-to-Del
 
     const move = await T.removeFromTrip(ctx, x);
     assert.equal(move.ok, false, "a bill carrying a share stays on its trip");
+    assert.match((await confirmed("erp-trip-bill", x)).report.blockers[0] ?? "", /carries a share of this trip's transport payment/, "and the modal says why before anything is typed");
 
     let [view] = await T.trips({ ids: [tripId] });
     assert.equal(view.costStatus, "Allocated");
@@ -594,10 +616,24 @@ describe("vehicle trips and the transport payment shared by litres (Order-to-Del
 
     const paymentId = paid.ok ? paid.data.id : "";
     assert.equal((await T.reverseTransportPayment(ctx, paymentId, "")).ok, false, "a reversal says why");
-    assert.ok((await T.reverseTransportPayment(ctx, paymentId, "wrong amount")).ok);
+    assert.equal(msg(await T.reverseTransportPayment(ctx, paymentId, "wrong amount")), "Check what this affects and confirm it first.");
+    const reversing = await confirmed("erp-transport-payment", paymentId);
+    const freed = reversing.report.items.find((i) => /lose their share/.test(i.label));
+    assert.equal(freed?.count, 3, "the modal names the three bills the payment was shared over");
+    assert.ok(freed?.examples?.some((e) => /9202/.test(e)), JSON.stringify(freed));
+    assert.equal(reversing.report.confirmWord, "REVERSE");
+    assert.ok((await T.reverseTransportPayment(ctx, paymentId, "wrong amount", reversing.confirmation)).ok);
+    assert.match((await confirmed("erp-transport-payment", paymentId)).report.blockers[0] ?? "", /already reversed/);
     [view] = await T.trips({ ids: [tripId] });
     assert.equal(view.costStatus, "Not Recorded");
-    const redo = await T.recordTransportPayment(ctx, { tripId, amountPaise: 101000, transportIds: [x, y, z] });
+    /* Freed, a bill can leave the trip — the modal names the two that stay. */
+    assert.equal(msg(await T.removeFromTrip(ctx, z)), "Check what this affects and confirm it first.");
+    const leaving = await confirmed("erp-trip-bill", z);
+    assert.equal(leaving.report.confirmWord, "9203");
+    assert.equal(leaving.report.items.find((i) => /^other bills on trip/.test(i.label))?.count, 2, JSON.stringify(leaving.report.items));
+    assert.ok((await T.removeFromTrip(ctx, z, leaving.confirmation)).ok);
+    assert.equal((await db.select().from(erpTransports).where(eq(erpTransports.id, z)))[0].tripId, null);
+    const redo = await T.recordTransportPayment(ctx, { tripId, amountPaise: 101000, transportIds: [x, y] });
     assert.ok(redo.ok, msg(redo));
     const audit = (await db.execute(sql`select action from audit_log where action like 'erp.transportPayment.%' order by at`)) as unknown as { action: string }[];
     assert.deepEqual(audit.map((a) => a.action), ["erp.transportPayment.record", "erp.transportPayment.reverse", "erp.transportPayment.record"]);
