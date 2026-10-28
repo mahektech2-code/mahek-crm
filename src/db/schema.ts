@@ -6883,6 +6883,17 @@ export const mbosSamples = pgTable(
     dispatchedById: text("dispatched_by_id").references(() => users.id),
     /** What was promised. `deliveredAt` above is what happened. */
     expectedDeliveryDate: date("expected_delivery_date"),
+    /*
+     * STEP 1 OF SAMPLE / TRIAL asks two things about the SENDING, and neither is
+     * an event. `planned_send_date` is the day somebody INTENDS it to go; it is
+     * not `dispatched_at` (it went) and not `expected_delivery_date` (the courier
+     * promised it would arrive), and writing it moves the sample nowhere.
+     * `sending_mode` is `courier` or `hand_delivery`. Both null on every sample
+     * raised before the question existed, and nothing backfills them: a date and
+     * a mode invented for an old sample would be an answer nobody gave.
+     */
+    plannedSendDate: date("planned_send_date"),
+    sendingMode: text("sending_mode"),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     reviewedById: text("reviewed_by_id").references(() => users.id),
     /**

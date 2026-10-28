@@ -15,6 +15,7 @@ import {
 } from "@/lib/actions/leads";
 import {
   confirmSampleReceived,
+  declineSampleRequest,
   recordSampleFeedback,
   requestSample,
 } from "@/lib/actions/lead-samples";
@@ -277,28 +278,28 @@ export async function markLeadLost(input: z.input<typeof lostSchema>): Promise<R
   }
 }
 
-/* ══════════════════════════════════════════════════════ the sample's three moves */
+/* ══════════════════════════════════════════════════════ the sample's two steps */
 
 /**
- * A SAMPLE'S STATE AND THE LEAD'S RUNG ARE TWO THINGS THAT MOVE SEPARATELY, and
- * the prototype moved them together.
+ * SAMPLE / TRIAL IS ONE RUNG WITH TWO STEPS, and only the first moves the lead.
  *
  * `requestSample`, `confirmSampleReceived` and `recordSampleFeedback` write the
- * sample; none of them touches `lead_stage`. The rung follows by an ordinary
- * move that the gate engine decides — which is why the record page has a "Move
- * the rung on" control for a lead whose parcel has overtaken it. These three
- * press the action and then that move in one go, so the screen does what the
- * prototype's did: asking for a sample puts the lead at Sample / Trial, and so
- * on down the rungs.
+ * SAMPLE; none of them touches `lead_stage`. Asking for a sample is what puts
+ * the lead on the Sample / Trial rung, so Step 1 presses the action and then
+ * that move. Step 2 (received, then reviewed) happens INSIDE the rung and moves
+ * nothing: the next rung is Negotiation, it is reached by its own explicit
+ * "Move to Negotiation", and the gate engine decides it from the approved
+ * verdict. There used to be a Sample Received and a Sample Review rung here and
+ * each of those two actions pressed a move onto them; neither exists on the
+ * ladder any more.
  *
  * THE MOVE IS BEST-EFFORT AND THE GATE DECIDES IT. If the engine refuses, the
  * sample step still stands — it is a real event that happened — and the message
- * names why the rung stayed, which the control on the record then offers by
- * hand. Nothing is forced, and no override is passed.
+ * names why the rung stayed. Nothing is forced, and no override is passed.
  */
 async function thenMoveTo(
   customerId: string,
-  to: "sample_trial" | "sample_received" | "sample_review",
+  to: "sample_trial",
   done: string,
 ): Promise<Result<null>> {
   const moved = await advanceLeadStage({ customerId, to });
@@ -309,16 +310,26 @@ async function thenMoveTo(
 const requestSchema = z.object({
   customerId: z.string().min(1),
   productId: z.string().min(1),
-  quantityCans: z.number().int().positive().max(10000),
-  application: z.string().trim().min(1).max(500),
-  reasonCode: z.string().trim().min(1).max(60),
+  sendingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  sendingMode: z.enum(["courier", "hand_delivery"]),
 });
+
+/** Step 1, "Sample requested?" No: recorded on the lead's history, and nothing else moves. */
+export async function declineSampleForLead(input: { customerId: string }): Promise<Result<null>> {
+  try {
+    const declined = await declineSampleRequest(input.customerId);
+    refresh();
+    return declined;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
 
 /** §15 — ask for the sample, then put the lead at Sample / Trial if its gate allows it. */
 export async function requestSampleForLead(input: z.input<typeof requestSchema>): Promise<Result<null>> {
   try {
     const parsed = requestSchema.safeParse(input);
-    if (!parsed.success) return err("A sample needs a product, a quantity and what it is going to be used on.", "validation");
+    if (!parsed.success) return err("A sample needs a product, the day it is to be sent and whether it goes by courier or by hand.", "validation");
     const { customerId, ...rest } = parsed.data;
     const asked = await requestSample(customerId, rest);
     if (!asked.ok) return asked;
@@ -328,18 +339,19 @@ export async function requestSampleForLead(input: z.input<typeof requestSchema>)
   }
 }
 
-/** §15 — the shop has it. Confirm, then put the lead at Sample Received if its gate allows it. */
+/** Step 2 — the shop has it. Confirms receipt; the lead stays on Sample / Trial. */
 export async function receiveSampleForLead(input: { customerId: string; sampleId: string }): Promise<Result<null>> {
   try {
     const got = await confirmSampleReceived(input.sampleId, {});
     if (!got.ok) return got;
-    return thenMoveTo(input.customerId, "sample_received", "Receipt recorded.");
+    refresh();
+    return ok(null, "Receipt recorded. The review questions are open.");
   } catch (e) {
     return fromThrown(e);
   }
 }
 
-/** §16 — the trial's seven answers and verdict, then Sample Review if the gate allows it. */
+/** Step 2 — the trial review (Quality, Vs. the Brand, Anything Else) and the verdict. The lead stays on Sample / Trial. */
 export async function reviewSampleForLead(input: {
   customerId: string;
   sampleId: string;
@@ -349,7 +361,13 @@ export async function reviewSampleForLead(input: {
   try {
     const reviewed = await recordSampleFeedback(input.sampleId, { fields: input.fields, trialOutcome: input.trialOutcome });
     if (!reviewed.ok) return reviewed;
-    return thenMoveTo(input.customerId, "sample_review", "Trial review saved.");
+    refresh();
+    return ok(
+      null,
+      input.trialOutcome === "approved"
+        ? "Trial review saved. Negotiation can open."
+        : "Trial review saved. Negotiation stays shut until a sample is approved.",
+    );
   } catch (e) {
     return fromThrown(e);
   }

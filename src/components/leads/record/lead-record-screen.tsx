@@ -22,8 +22,7 @@ import {
   sampleStateLabel,
   stageLabel,
   type LeadStage,
-  type SampleState,
-} from "@/lib/lead-labels";
+  type SampleState, historicalStageLabel } from "@/lib/lead-labels";
 import { checklistFor, type GateVerdict } from "@/lib/engines/lead-gates";
 import type {
   HandoverCandidate,
@@ -775,7 +774,7 @@ export function LeadRecordScreen({
           tone="warn"
           fact
           title={[
-            park.fromStage ? `On hold from ${stageLabel(park.fromStage)}` : "On hold",
+            park.fromStage ? `On hold from ${historicalStageLabel(park.fromStage)}` : "On hold",
             park.resumeDate ? `back on ${shortDate(park.resumeDate)}` : "no day named",
           ].join(" · ")}
           body={[
@@ -1264,7 +1263,7 @@ function GateRail({
           <p className="text-[13px] text-pretty text-body">
             Nothing until it comes off hold. It goes back to{" "}
             {park.fromStage ? (
-              <strong className="font-medium text-ink">{stageLabel(park.fromStage)}</strong>
+              <strong className="font-medium text-ink">{historicalStageLabel(park.fromStage)}</strong>
             ) : (
               "the stage it was at"
             )}
@@ -2001,6 +2000,16 @@ function SamplesPanel({
                 {s.reasonCode ? ` · ${labelOf(SAMPLE_REASONS, s.reasonCode)}` : ""}
               </div>
 
+              {/* Step 1's two answers, where they were asked. Neither is an event:
+                  the dates below are what says it was sent. */}
+              {s.plannedSendDate || s.sendingMode ? (
+                <div className="mt-0.5 text-[12px] text-muted">
+                  {s.plannedSendDate ? `Planned to go ${s.plannedSendDate}` : ""}
+                  {s.plannedSendDate && s.sendingMode ? " · " : ""}
+                  {s.sendingMode === "hand_delivery" ? "Hand Delivery" : s.sendingMode === "courier" ? "Courier" : ""}
+                </div>
+              ) : null}
+
               {/* Three dates, three parties, and each said as whose word it is. */}
               <dl className="mt-1 mb-0 grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-3">
                 <DateFact
@@ -2046,8 +2055,8 @@ function SamplesPanel({
               ) : (
                 <p className="mt-1.5 text-[12px] text-warn-ink">
                   {s.feedbackAt
-                    ? `Somebody opened the feedback ${stamp(s.feedbackAt)} and left all ${FEEDBACK_FIELDS.length} answers empty.`
-                    : `Nothing recorded about what they thought. The whole point of a trial is the comparison, and ${FEEDBACK_FIELDS.length} answers on the desk is where it goes.`}
+                    ? `Somebody opened the feedback ${stamp(s.feedbackAt)} and left every answer empty.`
+                    : "Nothing recorded about what they thought. Step 2 of Sample / Trial asks Quality, Vs. the Brand and Anything Else, and the verdict."}
                 </p>
               )}
             </div>
@@ -2639,8 +2648,8 @@ function HistoryPanel({
             <li key={t.id} className="border-b border-divider py-2 last:border-b-0">
               <span className="flex flex-wrap items-center gap-2">
                 <span className="text-[13px] text-ink">
-                  {t.fromStage ? `${stageLabel(t.fromStage)} → ` : ""}
-                  {stageLabel(t.toStage)}
+                  {t.fromStage ? `${historicalStageLabel(t.fromStage)} → ` : ""}
+                  {historicalStageLabel(t.toStage)}
                 </span>
                 {t.kind === "overridden" ? <Pill tone="warn">Overridden</Pill> : null}
                 {t.kind === "reverted" ? <Pill tone="neutral">Reverted</Pill> : null}

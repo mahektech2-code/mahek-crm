@@ -26,6 +26,7 @@ import {
   COMMUNICATION_ACTIONS,
   VERIFICATION_FAILED_CODE,
   findingLabel as verificationFindingLabel,
+  feedbackLabel,
   stageLabel,
   verificationAnswers,
   type LeadStage,
@@ -188,8 +189,6 @@ const DIRECT_BARS: Stage[] = [
   "prospect",
   "qualification",
   "sample_trial",
-  "sample_received",
-  "sample_review",
   "negotiation",
   "first_order",
   "second_order",
@@ -668,9 +667,11 @@ function verificationOf(record: LeadRecord, calls: ManagerCall[], extraAnswers: 
 function sampleOf(row: LeadSampleRow | undefined, chase: number[], reviewChaseCount: number): Sample | undefined {
   if (!row) return undefined;
   const outcome = row.trialOutcome as Sample["trialOutcome"];
+  /* Every stored answer is drawn, whichever era wrote it: Performance, Application,
+     Drying and Price are not asked any more but a past review still carries them. */
   const feedbackText = row.feedback
     ? Object.entries(row.feedback)
-        .map(([k, v]) => `${k === "competitorComparison" ? "Against what they use now" : k === "priceFeedback" ? "Price" : k === "otherComments" ? "Other" : k.charAt(0).toUpperCase() + k.slice(1)}: ${v}`)
+        .map(([k, v]) => `${feedbackLabel(k)}: ${v}`)
         .join(". ")
     : undefined;
   return {
@@ -681,6 +682,9 @@ function sampleOf(row: LeadSampleRow | undefined, chase: number[], reviewChaseCo
     courier: clean(row.courierName),
     docket: clean(row.trackingNumber),
     promisedDeliveryAt: row.expectedDeliveryDate ?? undefined,
+    plannedSendDate: row.plannedSendDate ?? undefined,
+    sendingMode: row.sendingMode === "courier" || row.sendingMode === "hand_delivery" ? row.sendingMode : undefined,
+    product: clean(row.productName),
     requestedAt: row.requestedDate ?? undefined,
     dispatchedAt: row.dispatchedAt ? stampDate(row.dispatchedAt) : undefined,
     receivedAt: row.receivedAt ? stampDate(row.receivedAt) : undefined,
@@ -812,6 +816,33 @@ function gateUi({ record, caps, deskRequest, mustDecide, freshDays, steps }: Gat
         return { kind: "markDispatched", label: "Mark the sample dispatched", disabled: !canWork };
       case "dispatched":
         return { kind: "markReceived", label: "Confirm the shop has it", disabled: !canWork };
+      /* STEP 2 of the one Sample / Trial rung: the shop has it, so what is owed is
+         the review. It used to be a rung of its own; it is a step of this one. */
+      case "received":
+      case "trial_done":
+        return { kind: "sampleReview", label: "Record trial review", disabled: !canWork };
+      case "reviewed":
+        /* Only an approved verdict can go on. More Testing and Rejected leave the
+           lead where it is and offer another sample: there is no limit on how many
+           a lead may be sent, and each keeps its own approval, dispatch and review. */
+        if (record.sample?.trialOutcome !== "approved") {
+          return {
+            kind: "requestSample",
+            label: "Ask for another sample",
+            disabled: !canWork,
+            note:
+              record.sample?.trialOutcome === "rejected"
+                ? "The customer did not take to the last one. Negotiation stays shut until a sample is approved."
+                : "They want to test further. Negotiation stays shut until a sample is approved.",
+          };
+        }
+        return {
+          kind: "moveToNegotiation",
+          label: "Move to Negotiation",
+          to: next.to as Stage,
+          disabled: !canWork || !next.open,
+          note: next.open ? undefined : missingOf(next),
+        };
       default:
         return {
           kind: "moveOn",
@@ -886,29 +917,12 @@ function gateUi({ record, caps, deskRequest, mustDecide, freshDays, steps }: Gat
         : { kind: "qualify", label: "Open qualification checklist", note: missingOf(g) };
     }
 
+    /* ONE RUNG, TWO STEPS. A lead stored at either retired sample rung is inside
+       this one, so all three stored values are answered by the sample's own state. */
     case "sample_trial":
-      return liveSample ? sampleStep(liveSample) : { kind: "requestSample", label: engine.label, disabled: !canWork };
-
     case "sample_received":
-      /* Reviewed already: what is left is the plain move, not a second review. */
-      return record.sample?.feedbackRecorded
-        ? {
-            kind: "moveOn",
-            label: `Move to ${stageLabel(next.to)}`,
-            to: next.to as Stage,
-            disabled: !canWork || !next.open,
-            note: next.open ? undefined : missingOf(next),
-          }
-        : { kind: "sampleReview", label: engine.label, disabled: !canWork };
-
     case "sample_review":
-      return {
-        kind: "moveToNegotiation",
-        label: engine.label,
-        to: next.to as Stage,
-        disabled: !canWork || !next.open,
-        note: next.open ? undefined : missingOf(next),
-      };
+      return liveSample ? sampleStep(liveSample) : { kind: "requestSample", label: engine.label, disabled: !canWork };
 
     case "negotiation": {
       if (record.countingOrderCount > 0) {

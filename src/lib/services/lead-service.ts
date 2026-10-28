@@ -36,6 +36,7 @@ import {
 } from "../engines/lead-gates";
 import {
   directionOf,
+  foldStage,
   isOnTheBookAt,
   isParked,
   ladderFor,
@@ -727,7 +728,7 @@ async function resumeDirection(
   const ladder = ladderFor(salesType);
   if (!ladder.includes(to)) return "off_ladder";
   const parked = customerId ? await parkedFromRung(customerId) : null;
-  if (!parked || !ladder.includes(parked)) return "up";
+  if (!parked || !ladder.includes(foldStage(parked))) return "up";
   return to === parked ? "same" : directionOf(parked, to, salesType);
 }
 

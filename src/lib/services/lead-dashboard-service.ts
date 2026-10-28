@@ -77,6 +77,8 @@ export type AttentionRow = {
    * made.
    */
   parkedBack: boolean;
+  /** Step 2 of Sample / Trial is owed: the shop has the sample and nobody has recorded a verdict. */
+  awaitingReview: boolean;
 };
 
 export type AttentionList = {
@@ -100,6 +102,7 @@ function attentionRow(r: NextActionRow, overdue: boolean): AttentionRow {
     overdueDays: r.overdueDays,
     overdue,
     parkedBack: r.stage === "on_hold",
+    awaitingReview: Boolean(r.awaitingReview),
   };
 }
 

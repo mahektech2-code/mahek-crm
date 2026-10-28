@@ -40,9 +40,13 @@ const REVIEW_RUNGS: ReadonlySet<LeadStage> = new Set<LeadStage>([
   "distributor_approval",
 ]);
 
-function kindOf(stage: LeadStage): Kind {
-  if (CALL_RUNGS.has(stage)) return "calls";
-  if (REVIEW_RUNGS.has(stage)) return "reviews";
+function kindOf(row: Pick<AttentionRow, "stage" | "awaitingReview">): Kind {
+  if (CALL_RUNGS.has(row.stage)) return "calls";
+  /* A lead whose sample is with the shop and unreviewed is waiting on a JUDGEMENT,
+     whichever rung it stands on: Sample Received & Review is Step 2 of Sample /
+     Trial, not a rung, so the stage can no longer say so. The two retired rung
+     names stay in REVIEW_RUNGS for a lead an older build left on either. */
+  if (row.awaitingReview || REVIEW_RUNGS.has(row.stage)) return "reviews";
   return "followUps";
 }
 
@@ -94,10 +98,10 @@ export function AttentionCard({
 
   const counts = React.useMemo(() => {
     const c: Record<Kind | "all", number> = { all: rows.length, calls: 0, followUps: 0, reviews: 0 };
-    for (const r of rows) c[kindOf(r.stage)] += 1;
+    for (const r of rows) c[kindOf(r)] += 1;
     return c;
   }, [rows]);
-  const shown = chip === "all" ? rows : rows.filter((r) => kindOf(r.stage) === chip);
+  const shown = chip === "all" ? rows : rows.filter((r) => kindOf(r) === chip);
   const total = overdueTotal + dueTodayTotal;
 
   return (

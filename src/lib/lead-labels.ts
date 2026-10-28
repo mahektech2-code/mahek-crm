@@ -204,15 +204,18 @@ const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
   },
   sample_trial: {
     short: "Sample / trial",
-    long: "A sample is asked for. It stays here for approval, dispatch and delivery.",
+    long: "Step 1: ask for the sample, then approval and dispatch. Step 2: confirm it arrived and write down what they thought. The lead stays on this one rung through both.",
   },
+  /* The two below are NOT rungs any more: Sample Received & Review is Step 2 of
+     Sample / Trial. They stay in the enum so a lead and a transition row an older
+     build wrote still read, and they read as the one rung they are inside. */
   sample_received: {
-    short: "Sample received",
-    long: "They got the sample. Now they must try it.",
+    short: "Sample / trial",
+    long: "Step 2 of Sample / trial. Recorded by an older version as its own rung.",
   },
   sample_review: {
-    short: "Sample review",
-    long: "Ask what they thought of it. Write down the answer.",
+    short: "Sample / trial",
+    long: "Step 2 of Sample / trial. Recorded by an older version as its own rung.",
   },
   first_order: {
     short: "1st order",
@@ -267,6 +270,21 @@ const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
  * after somebody has picked, never instead of offering the pick.
  */
 export const ALL_LEAD_STAGES = Object.keys(STAGE_TEXT) as LeadStage[];
+
+/**
+ * A stage as a HISTORY row reads it.
+ *
+ * The active pipeline draws one Sample / Trial stage, so `stageLabel` says
+ * "Sample / trial" for the two retired steps. A transition row written by an
+ * older build carries the stage that was true on the day, and a reader of the
+ * history should be able to tell "arrived at Sample Received" from "arrived at
+ * Sample / trial". Stored values are never rewritten; only the words differ.
+ */
+export function historicalStageLabel(stage: LeadStage): string {
+  if (stage === "sample_received") return "Sample / trial (Sample Received)";
+  if (stage === "sample_review") return "Sample / trial (Sample Review)";
+  return stageLabel(stage);
+}
 
 export function stageLabel(stage: LeadStage): string {
   return STAGE_TEXT[stage]?.short ?? stage;
@@ -1011,16 +1029,93 @@ export function verificationResultLabel(result: VerificationResult): string {
 
 /* ------------------------------------------------- §16 the sample review */
 
-/** §16 — the seven things a trial is asked about, six named and one open. */
+/**
+ * §16 — EVERY answer a trial has ever been asked for, six named and one open.
+ *
+ * This is the HISTORICAL vocabulary and it is read, never written to by a new
+ * form: the trial feedback library, a sample's record and the lead's Samples tab
+ * all draw whatever a past review stored, so Performance, Application, Drying
+ * and Price stay readable on every trial that answered them. The questions a
+ * reviewer is ASKED today are `ACTIVE_FEEDBACK_FIELDS` below.
+ */
 export const FEEDBACK_FIELDS: readonly { id: string; label: string }[] = [
   { id: "quality", label: "Quality" },
   { id: "performance", label: "Performance" },
   { id: "application", label: "Application" },
   { id: "drying", label: "Drying" },
-  { id: "competitorComparison", label: "Compared with what they use now" },
+  { id: "competitorComparison", label: "Against what they use now" },
   { id: "priceFeedback", label: "Price" },
   { id: "otherComments", label: "Anything else" },
 ] as const;
+
+/**
+ * THE THREE QUESTIONS A TRIAL REVIEW ASKS NOW, plus the verdict.
+ *
+ * Quality, the comparison with the brand they use, and anything else. The ids
+ * are the SAME columns on `sample_feedback` they have always been, so nothing
+ * migrates and a review recorded before the cut still reads. Performance,
+ * Application, Drying and Price are not asked any more; their stored answers
+ * are kept and drawn from `FEEDBACK_FIELDS`.
+ */
+export const ACTIVE_FEEDBACK_FIELDS: readonly { id: ActiveFeedbackId; label: string }[] = [
+  { id: "quality", label: "Quality" },
+  { id: "competitorComparison", label: "Vs. the Brand" },
+  { id: "otherComments", label: "Anything Else" },
+] as const;
+
+export type ActiveFeedbackId = "quality" | "competitorComparison" | "otherComments";
+
+/** The label a stored answer is drawn under, whichever era wrote it. */
+export function feedbackLabel(id: string): string {
+  return (
+    ACTIVE_FEEDBACK_FIELDS.find((f) => f.id === id)?.label ??
+    FEEDBACK_FIELDS.find((f) => f.id === id)?.label ??
+    id
+  );
+}
+
+/**
+ * Whether a written answer says something. "ok", ".", "-" and "n/a" are
+ * somebody pressing the button, not a customer's opinion — three characters
+ * with at least one letter or digit is the floor, and it is a floor on effort
+ * rather than a judgement about the content.
+ */
+export function isMeaningfulAnswer(value: string | null | undefined): boolean {
+  const v = (value ?? "").trim();
+  return v.length >= 3 && /[\p{L}\p{N}]/u.test(v);
+}
+
+/**
+ * THE RULE FOR SAVING A TRIAL REVIEW, in one place.
+ *
+ * The web action, all three web forms and the handset read this, so none of
+ * them can disagree about what a complete review is. Null means fine; a string
+ * is the sentence to show. A verdict is mandatory (the caller's type forces
+ * it), at least one of the three written answers must say something, and a
+ * Rejected trial has to explain itself in one of those same three — the next
+ * sample goes out exactly the same otherwise.
+ */
+export function trialReviewProblem(
+  fields: Partial<Record<string, string>>,
+  outcome: "approved" | "rejected" | "more_testing" | null | undefined,
+): string | null {
+  if (!outcome) return "Pick the verdict — approved, more testing required or rejected.";
+  const said = ACTIVE_FEEDBACK_FIELDS.some((f) => isMeaningfulAnswer(fields[f.id]));
+  if (!said) {
+    return "Write down at least one thing they said — Quality, Vs. the Brand or Anything Else.";
+  }
+  return null;
+}
+
+/* ------------------------------------------------- how a sample is sent */
+
+/** Step 1's fourth question. Two answers and only two. */
+export const SAMPLE_SENDING_MODES: readonly CodedOption[] = [
+  { code: "courier", label: "Courier" },
+  { code: "hand_delivery", label: "Hand Delivery" },
+] as const;
+
+export type SampleSendingMode = "courier" | "hand_delivery";
 
 /* --------------------------------------------------------- sample states */
 

@@ -84,6 +84,10 @@ export type Sample = {
   courier?: string;
   docket?: string;
   promisedDeliveryAt?: string;
+  /** Step 1: the day it is planned to go, and `courier` / `hand_delivery`. */
+  plannedSendDate?: string;
+  sendingMode?: "courier" | "hand_delivery";
+  product?: string;
   requestedAt?: string;
   dispatchedAt?: string;
   receivedAt?: string;

@@ -153,8 +153,12 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
     dated: number;
     medianDays: string | number | null;
   }>(sql`
+    /* THE TWO RETIRED SAMPLE RUNGS COUNT AS SAMPLE / TRIAL. A lead stored at
+       sample_received or sample_review is standing inside the one Sample / Trial
+       rung now; left unfolded it would match no rung of the ladder and drop out of
+       the funnel it is still in. Nothing is rewritten: only the reading is. */
     select c.lead_sales_type::text as "salesType",
-           c.lead_stage::text as stage,
+           case when c.lead_stage::text in ('sample_received', 'sample_review') then 'sample_trial' else c.lead_stage::text end as stage,
            count(*)::int as n,
            coalesce(sum(c.lead_estimated_potential_paise), 0) as potential,
            count(c.lead_stage_since)::int as dated,

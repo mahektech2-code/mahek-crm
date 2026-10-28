@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { shortDate, stamp } from "@/lib/format";
-import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
+import { salesTypeLabel, stageLabel, historicalStageLabel } from "@/lib/lead-labels";
 import { advanceLeadStage, saveLeadQualification } from "@/lib/actions/leads";
 import type {
   ChecklistItem,
@@ -786,7 +786,7 @@ function OverriddenView({
                   </span>
                 </Cell>
                 <Cell>
-                  {r.fromStage ? stageLabel(r.fromStage) : "—"} → {stageLabel(r.toStage)}
+                  {r.fromStage ? historicalStageLabel(r.fromStage) : "—"} → {historicalStageLabel(r.toStage)}
                   <span className="block text-[12px] text-muted">
                     {salesTypeLabel(r.salesType)}
                   </span>

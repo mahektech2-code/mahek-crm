@@ -27,6 +27,7 @@ import { reopenSalesManagerLead } from "@/lib/actions/lead-reopen";
 import {
   convertProspect,
   markLeadLost,
+  declineSampleForLead,
   receiveSampleForLead,
   requestSampleForLead,
   reviewSampleForLead,
@@ -96,10 +97,12 @@ type Ctx = {
   doValidateGst: (valid: boolean, note: string) => Promise<boolean>;
 
   /* --- samples --- */
-  doRequestSample: (input: { productId: string; quantityCans: number; application: string; reasonCode: string }) => Promise<boolean>;
+  doRequestSample: (input: { productId: string; sendingDate: string; sendingMode: "courier" | "hand_delivery" }) => Promise<boolean>;
+  /** Step 1, "Sample requested?" answered No. */
+  doDeclineSample: () => Promise<boolean>;
   doDecideSample: (approve: boolean, note: string) => Promise<boolean>;
   doDispatchSample: (input: { courierName: string; trackingNumber: string; expectedDeliveryDate: string }) => Promise<boolean>;
-  doMarkSampleReceived: () => Promise<boolean>;
+  doMarkSampleReceived: (options?: { keepOpen?: boolean }) => Promise<boolean>;
   doSampleReview: (fields: Record<string, string>, outcome: "approved" | "more_testing" | "rejected") => Promise<boolean>;
 
   /* --- ladder moves --- */
@@ -240,6 +243,7 @@ export function LeadPipelineProvider({
       }),
 
     doRequestSample: (input) => run(() => requestSampleForLead({ customerId: id, ...input })),
+    doDeclineSample: () => run(() => declineSampleForLead({ customerId: id })),
     doDecideSample: (approve, note) => {
       const sampleId = lead.sample?.id;
       if (!sampleId) return Promise.resolve(false);
@@ -252,10 +256,10 @@ export function LeadPipelineProvider({
       if (!sampleId) return Promise.resolve(false);
       return run(() => dispatchSample(sampleId, input), { success: "Dispatch recorded." });
     },
-    doMarkSampleReceived: () => {
+    doMarkSampleReceived: (options) => {
       const sampleId = lead.sample?.id;
       if (!sampleId) return Promise.resolve(false);
-      return run(() => receiveSampleForLead({ customerId: id, sampleId }));
+      return run(() => receiveSampleForLead({ customerId: id, sampleId }), { close: options?.keepOpen ? false : undefined });
     },
     doSampleReview: (fields, outcome) => {
       const sampleId = lead.sample?.id;

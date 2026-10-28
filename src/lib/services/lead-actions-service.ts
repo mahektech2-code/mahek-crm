@@ -44,6 +44,8 @@ import { leadsVisible, managerScope } from "./sales-service";
  * refuse.
  */
 export type NextActionRow = {
+  /** A sample is with the shop and has no verdict yet: Step 2 of Sample / Trial is owed. */
+  awaitingReview?: boolean;
   customerId: string;
   name: string;
   companyName: string | null;
@@ -195,7 +197,17 @@ async function nextActions(
              c.lead_hold_resume_date::text as "holdResumeDate",
              c.lead_hold_reason as "holdReason",
              c.lead_hold_reason_code as "holdReasonCode",
-             p.from_stage as "parkedFrom"
+             p.from_stage as "parkedFrom",
+             -- STEP 2 of Sample / Trial: the shop has the sample and nobody has
+             -- written down a verdict. Sample Received and Sample Review used to be
+             -- rungs, and the dashboard grouped a lead as "Reviews" by standing on
+             -- one; that fact now lives on the sample, so it is asked of the sample.
+             exists (
+               select 1 from mbos_samples sm
+                where sm.customer_id = c.id
+                  and sm.state in ('received', 'trial_done')
+                  and not exists (select 1 from sample_feedback sf where sf.sample_id = sm.id)
+             ) as "awaitingReview"
         from customers c
         left join users o on o.id = c.lead_next_action_owner_id
         left join users u on u.id = c.owner_id

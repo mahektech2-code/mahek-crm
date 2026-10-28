@@ -2017,6 +2017,13 @@
       "when": 1793520060000,
       "tag": "0290_orders_terms_index",
       "breakpoints": true
+    },
+    {
+      "idx": 288,
+      "version": "7",
+      "when": 1793606460000,
+      "tag": "0291_sample_sending_plan",
+      "breakpoints": true
     }
   ]
 }

@@ -72,6 +72,7 @@ import { bulkReassignLeads, reassignLead } from "@/lib/actions/sales";
 import {
   convertProspect,
   markLeadLost,
+  declineSampleForLead,
   receiveSampleForLead,
   requestSampleForLead,
   reviewSampleForLead,
@@ -635,7 +636,7 @@ describe("M — every mutation persists, and the screen is told what the databas
   test("the whole sample journey, each step a real row and each gate the engine's", async () => {
     const lead = await qualifiedLead();
 
-    const asked = await requestSampleForLead({ customerId: lead.id, productId, quantityCans: 2, application: "Wood polish", reasonCode: "trial" });
+    const asked = await requestSampleForLead({ customerId: lead.id, productId, sendingDate: "2099-12-31", sendingMode: "courier" });
     assert.equal(asked.ok, true, asked.ok ? "" : asked.error);
     let rec = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(rec.stage, "sample_trial", "asking for a sample puts the lead at Sample / Trial — by the gate, not by fiat");
@@ -663,7 +664,8 @@ describe("M — every mutation persists, and the screen is told what the databas
     rec = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(rec.sample?.state, "received");
     assert.ok(rec.sample?.receivedAt);
-    assert.equal(rec.stage, "sample_received");
+    /* Step 2 happens INSIDE the one Sample / Trial rung: receipt moves the sample, never the lead. */
+    assert.equal(rec.stage, "sample_trial");
     assert.equal(rec.gate.kind, "sampleReview");
 
     const blank = await reviewSampleForLead({ customerId: lead.id, sampleId: rec.sample!.id, fields: {}, trialOutcome: "approved" });
@@ -676,7 +678,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     });
     assert.equal(reviewed.ok, true, reviewed.ok ? "" : reviewed.error);
     rec = (await pipelineLead(lead.id, DAY))!.lead;
-    assert.equal(rec.stage, "sample_review");
+    assert.equal(rec.stage, "sample_trial", "a review is Step 2 of the one rung, not a rung of its own");
     assert.equal(rec.gate.kind, "moveToNegotiation", "an approved trial is what opens the commercial conversation");
     assert.equal(rec.gate.kind === "moveToNegotiation" && rec.gate.disabled, false);
     assert.equal(rec.sample?.feedbackRecorded, true);
@@ -684,9 +686,83 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.match(rec.sample?.feedback ?? "", /Matched their benchmark/);
   });
 
+  test("Sample requested? No starts no sample and is written on the lead's history", async () => {
+    const lead = await qualifiedLead();
+    const no = await declineSampleForLead({ customerId: lead.id });
+    assert.equal(no.ok, true, no.ok ? "" : no.error);
+    assert.equal((await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id))).length, 0, "no sample row");
+    const rec = (await pipelineLead(lead.id, DAY))!.lead;
+    assert.equal(rec.sample, undefined, "Step 2 has nothing to be about, so it stays locked");
+  });
+
+  test("Step 1 stores the planned day and mode without approving, dispatching or receiving anything", async () => {
+    const lead = await qualifiedLead();
+    const asked = await requestSample(lead.id, { productId, sendingDate: "2099-12-31", sendingMode: "hand_delivery" });
+    assert.equal(asked.ok, true, asked.ok ? "" : asked.error);
+    const s = (await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id)))[0];
+    assert.equal(s.plannedSendDate, "2099-12-31");
+    assert.equal(s.sendingMode, "hand_delivery");
+    assert.equal(s.state, "requested");
+    assert.equal(s.dispatchedAt, null);
+    assert.equal(s.receivedAt, null);
+    assert.equal(s.quantityCans, null, "removed questions are never invented");
+    assert.equal(s.application, null);
+    assert.equal(s.reasonCode, null);
+  });
+
+  test("Step 1 refuses a missing date, a missing mode, a third mode and a past date", async () => {
+    const lead = await qualifiedLead();
+    const bad = [
+      { productId, sendingMode: "courier" },
+      { productId, sendingDate: "2099-12-31" },
+      { productId, sendingDate: "2099-12-31", sendingMode: "post" },
+      { productId, sendingDate: "2001-01-01", sendingMode: "courier" },
+    ] as never[];
+    for (const input of bad) {
+      const r = await requestSample(lead.id, input);
+      assert.equal(r.ok, false, JSON.stringify(input));
+    }
+    assert.equal((await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id))).length, 0);
+  });
+
+  test("a hand delivery needs no courier or docket; a courier still does", async () => {
+    const lead = await qualifiedLead();
+    await requestSample(lead.id, { productId, sendingDate: "2099-12-31", sendingMode: "hand_delivery" });
+    const s = (await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id)))[0];
+    await decideSample(s.id, { approve: true });
+    const ok = await dispatchSample(s.id, { courierName: "", trackingNumber: "", expectedDeliveryDate: NEXT_WEEK });
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
+
+    const other = await qualifiedLead();
+    await requestSample(other.id, { productId, sendingDate: "2099-12-31", sendingMode: "courier" });
+    const c = (await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, other.id)))[0];
+    await decideSample(c.id, { approve: true });
+    const refused = await dispatchSample(c.id, { courierName: "", trackingNumber: "", expectedDeliveryDate: NEXT_WEEK });
+    assert.equal(refused.ok, false, "a courier dispatch with no docket is still refused");
+  });
+
+  test("the review is locked until the sample is received, and only Approved opens Negotiation", async () => {
+    const lead = await qualifiedLead();
+    await requestSampleForLead({ customerId: lead.id, productId, sendingDate: "2099-12-31", sendingMode: "courier" });
+    const s = (await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id)))[0];
+    const early = await reviewSampleForLead({ customerId: lead.id, sampleId: s.id, fields: { quality: "Looks fine" }, trialOutcome: "approved" });
+    assert.equal(early.ok, false, "Sample Received = No keeps the review shut");
+    await decideSample(s.id, { approve: true });
+    await dispatchSample(s.id, { courierName: "Blue Dart", trackingNumber: "BD9", expectedDeliveryDate: NEXT_WEEK });
+    await receiveSampleForLead({ customerId: lead.id, sampleId: s.id });
+    const gone = await reviewSampleForLead({ customerId: lead.id, sampleId: s.id, fields: { drying: "Fast" }, trialOutcome: "approved" });
+    assert.equal(gone.ok, false, "a question that is no longer asked is not an answer");
+    const more = await reviewSampleForLead({ customerId: lead.id, sampleId: s.id, fields: { quality: "Try on teak" }, trialOutcome: "more_testing" });
+    assert.equal(more.ok, true, more.ok ? "" : more.error);
+    const rec = (await pipelineLead(lead.id, DAY))!.lead;
+    assert.equal(rec.stage, "sample_trial");
+    assert.notEqual(rec.gate.kind, "moveToNegotiation", "More Testing Required does not advance the lead");
+    assert.equal(rec.gate.kind, "requestSample", "another sample may be asked for; there is no lifetime limit");
+  });
+
   test("a rejected trial has to say why, and an unapproved sample cannot be dispatched", async () => {
     const lead = await qualifiedLead();
-    await requestSample(lead.id, { productId, quantityCans: 1, application: "Wood polish", reasonCode: "trial" });
+    await requestSample(lead.id, { productId, sendingDate: "2099-12-31", sendingMode: "courier" });
     const waiting = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(waiting.stage, "qualification", "the raw request writes the sample and leaves the rung");
     assert.equal(waiting.gate.kind, "approveSample", "a request in flight is never offered a second request");
@@ -1106,7 +1182,7 @@ describe("A — authorisation is the existing model, asked in the existing order
 
     const qualified = await qualifiedLead();
     setTestUser(manager);
-    await requestSample(qualified.id, { productId, quantityCans: 1, application: "Wood polish", reasonCode: "trial" });
+    await requestSample(qualified.id, { productId, sendingDate: "2099-12-31", sendingMode: "courier" });
     const s = (await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, qualified.id)))[0];
     setTestUser(salesA);
     const d = await decideSample(s.id, { approve: true });

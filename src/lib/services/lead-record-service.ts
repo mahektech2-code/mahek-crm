@@ -253,6 +253,8 @@ export type LeadSampleRow = {
   courierName: string | null;
   trackingNumber: string | null;
   expectedDeliveryDate: string | null;
+  plannedSendDate: string | null;
+  sendingMode: string | null;
   deliveredAt: Date | null;
   receivedAt: Date | null;
   trialStartedAt: Date | null;
@@ -282,6 +284,8 @@ export async function leadSamplesFor(
            s.dispatched_at as "dispatchedAt",
            s.courier_name as "courierName", s.tracking_number as "trackingNumber",
            s.expected_delivery_date::text as "expectedDeliveryDate",
+           s.planned_send_date::text as "plannedSendDate",
+           s.sending_mode as "sendingMode",
            s.delivered_at as "deliveredAt",
            s.received_at as "receivedAt",
            s.trial_started_at as "trialStartedAt",

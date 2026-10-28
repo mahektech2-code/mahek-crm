@@ -61,6 +61,9 @@ export type SampleDeskRow = {
   courierName: string | null;
   trackingNumber: string | null;
   expectedDeliveryDate: string | null;
+  /** Step 1's answers: the day it is planned to go, and `courier` or `hand_delivery`. Null on samples raised before they were asked. */
+  plannedSendDate: string | null;
+  sendingMode: string | null;
   receivedAt: string | null;
   /** How many times the review has been asked for. See §16. */
   reviewChaseCount: number;
@@ -94,6 +97,8 @@ const deskColumns = {
   courierName: mbosSamples.courierName,
   trackingNumber: mbosSamples.trackingNumber,
   expectedDeliveryDate: mbosSamples.expectedDeliveryDate,
+  plannedSendDate: mbosSamples.plannedSendDate,
+  sendingMode: mbosSamples.sendingMode,
   receivedAt: sql<string | null>`${mbosSamples.receivedAt}`,
   /*
    * The same mark as a DAY, in the business's zone, because a caller that
@@ -144,6 +149,8 @@ const asRow = (r: Record<string, unknown>, waitingDays: number): SampleDeskRow =
   courierName: (r.courierName as string | null) ?? null,
   trackingNumber: (r.trackingNumber as string | null) ?? null,
   expectedDeliveryDate: (r.expectedDeliveryDate as string | null) ?? null,
+  plannedSendDate: (r.plannedSendDate as string | null) ?? null,
+  sendingMode: (r.sendingMode as string | null) ?? null,
   receivedAt: (r.receivedAt as string | null) ?? null,
   reviewChaseCount: Number(r.reviewChaseCount ?? 0),
   lastReviewChaseAt: (r.lastReviewChaseAt as string | null) ?? null,

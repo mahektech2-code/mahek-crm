@@ -1137,7 +1137,7 @@ describe("round three: the record reads the way V6 draws it", () => {
     const rec = await deskLeadRecord(lead.id, DAY);
     assert.equal(rec?.salesType, null, "drawing the Direct ladder does not decide it");
     assert.ok(rec?.ladder.includes("prospect"), "not the six-rung legacy ladder");
-    assert.equal(rec?.ladder.length, 12);
+    assert.equal(rec?.ladder.length, 10);
     assert.equal(rec?.ladderIndex, 0);
     assert.match(rec?.reference ?? "", /^TC-\d{4,}$/);
     assert.ok(!(rec?.reference ?? "").includes(lead.id.slice(-8)), "never a slice of the id");

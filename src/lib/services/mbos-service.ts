@@ -1826,6 +1826,10 @@ async function openSamples(userId: string, customerIds: string[], since?: string
            -- these two lines and the two handset migrations are one change.
            s.review_chase_count as "reviewChaseCount",
            s.last_review_chase_at as "lastReviewChaseAt",
+           -- STEP 1 of Sample / Trial: when it is planned to go, and how. They land
+           -- with the handset column and the pull upsert, or not at all.
+           s.planned_send_date::text as "plannedSendDate",
+           s.sending_mode as "sendingMode",
            s.updated_at as "updatedAt"
       from mbos_samples s
       left join products pr on pr.id = s.product_id

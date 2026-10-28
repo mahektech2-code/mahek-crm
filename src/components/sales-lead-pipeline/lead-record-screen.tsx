@@ -347,7 +347,7 @@ function RelNode({ role, name, sub, highlight }: { role: string; name: string; s
  * the engine again, because a button is not a permission.
  */
 export function GateActionCard({ lead }: { lead: Lead }) {
-  const { openModal, busy, doMoveTo, doMarkSampleReceived, doSubmitManagement, doConfirmAgreement } = useLeadPipeline();
+  const { openModal, busy, doMoveTo, doSubmitManagement, doConfirmAgreement } = useLeadPipeline();
   const gate = lead.gate;
   const note = (text?: string) => (text ? <div className="mt-2 text-[12.5px] text-muted">{text}</div> : null);
 
@@ -376,7 +376,7 @@ export function GateActionCard({ lead }: { lead: Lead }) {
         <>
           <div className="flex gap-2">
             <Button variant="primary" disabled={gate.disabled} onClick={() => openModal("requestSample", lead.id)}>
-              Proceed to Sample / Trial
+              {lead.sample ? gate.label : "Proceed to Sample / Trial"}
             </Button>
             <Button variant="ghost" onClick={() => openModal("qualify", lead.id)}>Review checklist</Button>
           </div>
@@ -392,11 +392,11 @@ export function GateActionCard({ lead }: { lead: Lead }) {
       )}
       {gate.kind === "markReceived" && (
         <>
-          <Button variant="primary" disabled={gate.disabled || busy} onClick={() => void doMarkSampleReceived()}>{gate.label}</Button>
+          <Button variant="primary" disabled={gate.disabled || busy} onClick={() => openModal("sampleReview", lead.id)}>Sample received &amp; review</Button>
           {note(gate.note)}
         </>
       )}
-      {gate.kind === "sampleReview" && <Button variant="primary" disabled={gate.disabled} onClick={() => openModal("sampleReview", lead.id)}>Record trial review</Button>}
+      {gate.kind === "sampleReview" && <Button variant="primary" disabled={gate.disabled} onClick={() => openModal("sampleReview", lead.id)}>Sample received &amp; review</Button>}
       {(gate.kind === "moveToNegotiation" || gate.kind === "moveOn" || gate.kind === "recordInitialStock") && (
         <>
           <Button variant="primary" disabled={gate.disabled || busy} onClick={() => void doMoveTo(gate.to, `Moved to ${STAGE_LABEL[gate.to]}.`)}>{gate.label}</Button>
@@ -664,13 +664,16 @@ export function SampleTab({ lead }: { lead: Lead }) {
       </Card>
     );
   }
-  const steps: { key: string; label: string }[] = [
-    { key: "requested", label: "Requested" },
-    { key: "approved", label: "Approved" },
-    { key: "dispatched", label: "Dispatched" },
-    { key: "received", label: "Received" },
-    { key: "trial_done", label: "Trial done" },
-    { key: "reviewed", label: "Reviewed" },
+  /* SAMPLE / TRIAL IS ONE RUNG WITH TWO STEPS. The sample still moves through six
+     states (each keeps its own date and owner); they are drawn in the two steps
+     they belong to, not as rungs of the lead's ladder. */
+  const steps: { key: string; label: string; step: 1 | 2 }[] = [
+    { key: "requested", label: "Requested", step: 1 },
+    { key: "approved", label: "Approved", step: 1 },
+    { key: "dispatched", label: "Dispatched", step: 1 },
+    { key: "received", label: "Received", step: 2 },
+    { key: "trial_done", label: "Trial done", step: 2 },
+    { key: "reviewed", label: "Reviewed", step: 2 },
   ];
   const cur = steps.findIndex((st) => st.key === s.state);
   const stopped = s.state === "rejected" || s.state === "cancelled";
@@ -680,6 +683,11 @@ export function SampleTab({ lead }: { lead: Lead }) {
         {stopped ? (
           <Badge tone="danger">{s.state === "rejected" ? "Refused" : "Cancelled"}</Badge>
         ) : (
+          <>
+          <div className="mb-2 flex gap-6 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+            <span>Step 1 · Sample Request</span>
+            <span>Step 2 · Sample Received &amp; Review</span>
+          </div>
           <div className="flex items-center gap-1 overflow-x-auto">
             {steps.map((st, i) => (
               <React.Fragment key={st.key}>
@@ -695,12 +703,15 @@ export function SampleTab({ lead }: { lead: Lead }) {
               </React.Fragment>
             ))}
           </div>
+          </>
         )}
       </Card>
       <Card className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-3">
-        <MetaItem label="Product" value={lead.product} />
-        <MetaItem label="Quantity" value={s.quantity} />
-        <MetaItem label="Application" value={lead.application} />
+        <MetaItem label="Product" value={s.product ?? lead.product} />
+        <MetaItem label="Planned to go" value={s.plannedSendDate} />
+        <MetaItem label="Sending mode" value={s.sendingMode === "hand_delivery" ? "Hand Delivery" : s.sendingMode === "courier" ? "Courier" : undefined} />
+        {/* Asked of samples raised before Step 1 was cut to four questions. */}
+        {s.quantity ? <MetaItem label="Quantity" value={s.quantity} /> : null}
         <MetaItem label="Courier / docket" value={[s.courier, s.docket].filter(Boolean).join(" · ") || undefined} />
         <MetaItem label="Promised for" value={s.promisedDeliveryAt} />
         <MetaItem label="Dispatched" value={s.dispatchedAt} />

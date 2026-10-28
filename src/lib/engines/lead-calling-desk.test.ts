@@ -313,11 +313,16 @@ describe("Test D — no question is asked twice", () => {
 describe("where a lead stands outside the suspect rung", () => {
   test("a lead past the desk is not the desk's work, and each rung is its own phase", () => {
     for (const rung of [
-      "prospect", "qualification", "sample_trial", "sample_received", "sample_review", "negotiation",
+      "prospect", "qualification", "sample_trial", "negotiation",
       "first_order", "delivery", "payment", "second_order", "customer",
     ] as const) {
       assert.equal(phaseOf(rung, prospectReady, 2), rung);
       assert.equal(nextCallNumber(phaseOf(rung, {}, 0)), null, rung);
+    }
+    /* Sample / Trial is ONE phase. A lead an older build left on either retired
+       step is read as standing in it, never as a phase of its own. */
+    for (const old of ["sample_received", "sample_review"] as const) {
+      assert.equal(phaseOf(old, prospectReady, 2), "sample_trial", old);
     }
     assert.equal(phaseOf("lost", {}, 3), "lost");
     assert.equal(phaseOf("on_hold", {}, 1), "parked");
@@ -465,7 +470,8 @@ describe("round three: where a lead stands, said the way V6 says it", () => {
     assert.equal(ladderKeyOfLost("suspect", call1Answers, 2), "suspect");
     assert.equal(ladderKeyOfLost("new", {}, 3), "suspect");
     assert.equal(ladderKeyOfLost("qualification", {}, 3), "qualification");
-    assert.equal(ladderKeyOfLost("sample_review", {}, 3), "sample_review");
+    assert.equal(ladderKeyOfLost("sample_review", {}, 3), "sample_trial", "a lead lost on a retired step was lost inside Sample / Trial");
+    assert.equal(ladderKeyOfLost("sample_trial", {}, 3), "sample_trial");
     /* No move on record, or a move from nowhere: it was a Suspect. */
     assert.equal(ladderKeyOfLost(null, {}, 0), "suspect");
     assert.equal(ladderKeyOfLost("lost", {}, 0), "suspect");

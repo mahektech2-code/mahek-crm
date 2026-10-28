@@ -667,6 +667,9 @@ export type SampleDeskRow = {
   courierName: string | null;
   trackingNumber: string | null;
   expectedDeliveryDate: string | null;
+  /** Step 1 of Sample / Trial: the day it is planned to go, and `courier` / `hand_delivery`. */
+  plannedSendDate: string | null;
+  sendingMode: string | null;
   receivedAt: Date | null;
   /** Days past what the courier promised. Null before dispatch, or once it landed. */
   lateByDays: number | null;
@@ -727,6 +730,8 @@ export async function sampleDesk(
            s.dispatched_at as "dispatchedAt",
            s.courier_name as "courierName", s.tracking_number as "trackingNumber",
            s.expected_delivery_date::text as "expectedDeliveryDate",
+           s.planned_send_date::text as "plannedSendDate",
+           s.sending_mode as "sendingMode",
            s.received_at as "receivedAt",
            case when s.received_at is null
                  and s.expected_delivery_date is not null

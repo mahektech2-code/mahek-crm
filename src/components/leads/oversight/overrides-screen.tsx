@@ -9,8 +9,7 @@ import {
   labelOf,
   salesTypeLabel,
   stageLabel,
-  type CodedOption,
-} from "@/lib/lead-labels";
+  type CodedOption, historicalStageLabel } from "@/lib/lead-labels";
 import type { ConditionCount, OverrideRow } from "@/lib/services/lead-oversight-service";
 import {
   Banner,
@@ -207,9 +206,9 @@ export function OverridesScreen({
               </Cell>
               <Cell>
                 <span className="text-muted">
-                  {r.fromStage ? stageLabel(r.fromStage) : "raised"}
+                  {r.fromStage ? historicalStageLabel(r.fromStage) : "raised"}
                 </span>{" "}
-                → <span className="font-medium text-ink">{stageLabel(r.toStage)}</span>
+                → <span className="font-medium text-ink">{historicalStageLabel(r.toStage)}</span>
               </Cell>
               <Cell>
                 <div className="flex flex-wrap gap-1">

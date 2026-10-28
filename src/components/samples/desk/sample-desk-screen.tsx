@@ -10,7 +10,8 @@ import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import {
-  FEEDBACK_FIELDS,
+  ACTIVE_FEEDBACK_FIELDS,
+  trialReviewProblem,
   SAMPLE_REASONS,
   labelOf,
   stageLabel,
@@ -107,9 +108,12 @@ export function SampleDeskScreen({
    * rejected it writes off a live opportunity. Either way the §16 chase stops
    * counting, which is the part that costs something.
    */
-  const [outcome, setOutcome] = React.useState<"approved" | "rejected" | "more_testing">(
-    "approved",
+  /* No default: a verdict is mandatory, and one nobody chose is not one. */
+  const [outcome, setOutcome] = React.useState<"approved" | "rejected" | "more_testing" | null>(
+    null,
   );
+  /* STEP 2 of Sample / Trial opens with "Has the sample been received?". */
+  const [receivedAnswer, setReceivedAnswer] = React.useState<"yes" | "no" | null>(null);
   const [cancelling, setCancelling] = React.useState<SampleDeskRow | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -121,7 +125,8 @@ export function SampleDeskScreen({
     setDocket(next.kind === "dispatch" ? (next.row.trackingNumber ?? "") : "");
     setExpected(next.kind === "dispatch" ? (next.row.expectedDeliveryDate ?? "") : "");
     setFields({});
-    setOutcome("approved");
+    setOutcome(null);
+    setReceivedAnswer(null);
     setError(null);
   }
 
@@ -147,7 +152,7 @@ export function SampleDeskScreen({
               ? await confirmSampleReceived(acting.row.id, {})
               : await recordSampleFeedback(acting.row.id, {
                   fields,
-                  trialOutcome: outcome,
+                  trialOutcome: outcome!,
                 });
     } finally {
       setBusy(false);
@@ -338,7 +343,12 @@ export function SampleDeskScreen({
         {acting?.kind === "dispatch" ? (
           <>
             <Subject row={acting.row} />
-            <div className="grid grid-cols-2 gap-4">
+            {acting.row.sendingMode === "hand_delivery" ? (
+              <p className="mb-3 text-[13px] text-body">
+                Hand delivery: there is no courier or docket to record, only the day it is due.
+              </p>
+            ) : null}
+            <div className={`grid grid-cols-2 gap-4 ${acting.row.sendingMode === "hand_delivery" ? "hidden" : ""}`}>
               <label className="block">
                 <span className="mb-1 block text-[13px] font-medium text-ink">Courier</span>
                 <input
@@ -370,9 +380,9 @@ export function SampleDeskScreen({
             {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
             <Footer
               busy={busy}
-              disabled={!expected || !courier.trim()}
+              disabled={!expected || (acting.row.sendingMode !== "hand_delivery" && !courier.trim())}
               title={
-                !courier.trim()
+                acting.row.sendingMode !== "hand_delivery" && !courier.trim()
                   ? "Name the courier — a docket with nobody to ring about it is a dead end."
                   : !expected
                     ? "Give the promised date. It is what the late flag is measured against."
@@ -391,16 +401,42 @@ export function SampleDeskScreen({
       <Modal
         open={acting?.kind === "received"}
         onClose={() => setActing(null)}
-        title="Confirm it was received"
+        title="Sample received & review"
         width={440}
       >
         {acting?.kind === "received" ? (
           <>
             <Subject row={acting.row} />
+            <span className="mb-1 block text-[13px] font-medium text-ink">
+              Step 2 of 2 · Has the sample been received? · required
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                tone={receivedAnswer === "yes" ? "primary" : "default"}
+                onClick={() => setReceivedAnswer("yes")}
+              >
+                Yes
+              </Button>
+              <Button
+                size="sm"
+                tone={receivedAnswer === "no" ? "primary" : "default"}
+                onClick={() => setReceivedAnswer("no")}
+              >
+                No
+              </Button>
+            </div>
+            {receivedAnswer === "no" ? (
+              <p className="mt-2 text-[13px] text-body">
+                The review stays locked. Nothing is marked received or reviewed, and the lead cannot go
+                to Negotiation until the sample has arrived.
+              </p>
+            ) : null}
             {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
             <Footer
               busy={busy}
-              disabled={false}
+              disabled={receivedAnswer !== "yes"}
+              title={receivedAnswer === "yes" ? undefined : "Answer Yes once the sample is actually in their hands."}
               label="They have it"
               tone="primary"
               onCancel={() => setActing(null)}
@@ -415,50 +451,51 @@ export function SampleDeskScreen({
         open={acting?.kind === "feedback"}
         onClose={() => setActing(null)}
         title="What did they think?"
-        width={680}
+        width={560}
       >
         {acting?.kind === "feedback" ? (
           <>
             <Subject row={acting.row} />
-            <div className="grid max-h-[42vh] grid-cols-2 gap-x-4 gap-y-2.5 overflow-y-auto pr-1">
-              {FEEDBACK_FIELDS.map((f) => (
+            <div className="grid max-h-[42vh] grid-cols-1 gap-y-2.5 overflow-y-auto pr-1">
+              {ACTIVE_FEEDBACK_FIELDS.map((f) => (
                 <label key={f.id} className="block">
                   <span className="mb-1 block text-[13px] text-body">{f.label}</span>
-                  <input
+                  <textarea
+                    rows={2}
                     value={fields[f.id] ?? ""}
                     onChange={(e) =>
                       setFields((prev) => ({ ...prev, [f.id]: e.target.value }))
                     }
-                    className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+                    className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand"
                   />
                 </label>
               ))}
             </div>
 
             <div className="mt-4 border-t border-divider pt-3">
-              <span className="mb-1 block text-[13px] font-medium text-ink">The verdict</span>
+              <span className="mb-1 block text-[13px] font-medium text-ink">Verdict · required</span>
               <div className="flex gap-2">
                 <Button
                   size="sm"
                   tone={outcome === "approved" ? "primary" : "default"}
                   onClick={() => setOutcome("approved")}
                 >
-                  They liked it
+                  Approved
+                </Button>
+                <Button
+                  size="sm"
+                  tone={outcome === "more_testing" ? "primary" : "default"}
+                  onClick={() => setOutcome("more_testing")}
+                  title="Neither yes nor no: they want to try it again. The lead stays where it is and the chase keeps counting."
+                >
+                  More Testing Required
                 </Button>
                 <Button
                   size="sm"
                   tone={outcome === "rejected" ? "danger" : "default"}
                   onClick={() => setOutcome("rejected")}
                 >
-                  They did not
-                </Button>
-                <Button
-                  size="sm"
-                  tone={outcome === "more_testing" ? "primary" : "default"}
-                  onClick={() => setOutcome("more_testing")}
-                  title="Neither yes nor no — they want to try it again. The lead stays where it is and the chase keeps counting."
-                >
-                  They want to try again
+                  Rejected
                 </Button>
               </div>
             </div>
@@ -466,12 +503,8 @@ export function SampleDeskScreen({
             {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
             <Footer
               busy={busy}
-              disabled={!Object.values(fields).some((v) => v.trim())}
-              title={
-                Object.values(fields).some((v) => v.trim())
-                  ? undefined
-                  : "Answer at least one of them. A verdict with nothing behind it is the notes field this replaced."
-              }
+              disabled={Boolean(trialReviewProblem(fields, outcome))}
+              title={trialReviewProblem(fields, outcome) ?? undefined}
               label="Record the review"
               tone="primary"
               onCancel={() => setActing(null)}

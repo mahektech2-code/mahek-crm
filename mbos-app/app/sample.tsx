@@ -31,7 +31,7 @@ import { VoiceField } from '../src/components/ui/dictate';
 import { getCustomer } from '../src/data/customers';
 import { getLead } from '../src/data/leads';
 import { takePhoto } from '../src/native/capture';
-import { FEEDBACK_FIELDS, REASON_CODE_NEEDING_REMARKS, type CodedOption } from '../src/engines/funnel';
+import { ACTIVE_FEEDBACK_FIELDS, FEEDBACK_FIELDS, REASON_CODE_NEEDING_REMARKS, trialReviewProblem, type CodedOption } from '../src/engines/funnel';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { dmy, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -125,6 +125,10 @@ export default function SampleRecord() {
      this wrong and the compiler rules forbid it. */
   const [today, setToday] = React.useState(() => isoDate(new Date()));
   const [busy, setBusy] = React.useState(false);
+  /* STEP 2 of Sample / Trial opens with a question: has the sample been received?
+     No keeps the review shut; Yes offers the receipt, and the review only opens
+     once the receipt is recorded and the sample is `Awaiting feedback`. */
+  const [receivedAnswer, setReceivedAnswer] = React.useState<'yes' | 'no' | null>(null);
   /* A REF, not state: a second tap arrives before any re-render has happened,
      so a boolean in state is read at its old value and the cancellation is
      queued twice. The sheet closes on the first press and the write is still
@@ -251,6 +255,8 @@ export default function SampleRecord() {
 
         <View style={{ gap: 8 }}>
           <Line label="Asked for" value={pretty(isoDate(new Date(s.requestedAt)))} />
+          {s.plannedSendDate ? <Line label="Planned to go" value={pretty(s.plannedSendDate)} /> : null}
+          {s.sendingMode ? <Line label="Sending mode" value={s.sendingMode === 'hand_delivery' ? 'Hand Delivery' : 'Courier'} /> : null}
           {s.application ? <Line label="Used on" value={s.application} /> : null}
           {s.dispatchedAt ? <Line label="Sent" value={pretty(isoDate(new Date(s.dispatchedAt)))} /> : null}
           {s.courierDocket ? <Line label="Docket" value={[s.courierName, s.courierDocket].filter(Boolean).join(' · ')} /> : null}
@@ -321,6 +327,22 @@ export default function SampleRecord() {
 
           {s.state === 'Dispatched' ? (
             <>
+              <SectionLabel style={{ marginBottom: 0 }}>Step 2 of 2 · Sample received &amp; review</SectionLabel>
+              <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>Has the sample been received?</T>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Choice label="Yes" selected={receivedAnswer === 'yes'} onPress={() => setReceivedAnswer('yes')} style={{ paddingHorizontal: 16 }} />
+                <Choice label="No" selected={receivedAnswer === 'no'} onPress={() => setReceivedAnswer('no')} style={{ paddingHorizontal: 16 }} />
+              </View>
+              {receivedAnswer === 'no' ? (
+                <Card>
+                  <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
+                    The review stays locked. Nothing is marked received or reviewed, and the lead cannot go to
+                    Negotiation until the sample has arrived.
+                  </T>
+                </Card>
+              ) : null}
+              {receivedAnswer === 'yes' ? (
+              <>
               <PrimaryButton
                 label={busy ? 'Saving…' : 'They got it. Take photo'}
                 disabled={busy}
@@ -363,6 +385,8 @@ export default function SampleRecord() {
                   }
                 }}
               />
+              </>
+              ) : null}
             </>
           ) : null}
 
@@ -489,13 +513,14 @@ export default function SampleRecord() {
       <DispatchSheet
         key={dispatchOpen ? 'd-open' : 'd-shut'}
         open={dispatchOpen}
+        byHand={s.sendingMode === 'hand_delivery'}
         onClose={() => setDispatchOpen(false)}
         onSave={async (d) => {
           const r = await markDispatched(s.id, d);
           if (!r.ok) return notify(r.message, 'error');
           setDispatchOpen(false);
           load();
-          notify('Sent · ' + d.courierDocket);
+          notify(d.courierDocket ? 'Sent · ' + d.courierDocket : 'Handed over');
         }}
       />
 
@@ -701,10 +726,13 @@ function Line({ label, value }: { label: string; value: string }) {
  */
 function DispatchSheet({
   open,
+  byHand,
   onClose,
   onSave,
 }: {
   open: boolean;
+  /** Step 1 said Hand Delivery: no courier and no docket to write. */
+  byHand: boolean;
   onClose: () => void;
   onSave: (d: {
     courierName: string;
@@ -732,17 +760,23 @@ function DispatchSheet({
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>Mark as sent</T>
-      <T s="caption" style={{ marginTop: 2 }}>Who is taking it, and the docket number.</T>
+      <T s="caption" style={{ marginTop: 2 }}>
+        {byHand ? 'Hand delivery: only the day it should be there.' : 'Who is taking it, and the docket number.'}
+      </T>
 
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Courier</SectionLabel>
-        <Input value={courier} onChangeText={(v) => { setCourier(v); setErr(null); }} placeholder="Gati, VRL, our own vehicle" />
-      </View>
+      {byHand ? null : (
+        <>
+          <View style={{ marginTop: 14 }}>
+            <SectionLabel style={{ marginBottom: 6 }}>Courier</SectionLabel>
+            <Input value={courier} onChangeText={(v) => { setCourier(v); setErr(null); }} placeholder="Gati, VRL, our own vehicle" />
+          </View>
 
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Docket number</SectionLabel>
-        <Input value={docket} onChangeText={(v) => { setDocket(v); setErr(null); }} placeholder="Number on the slip" />
-      </View>
+          <View style={{ marginTop: 12 }}>
+            <SectionLabel style={{ marginBottom: 6 }}>Docket number</SectionLabel>
+            <Input value={docket} onChangeText={(v) => { setDocket(v); setErr(null); }} placeholder="Number on the slip" />
+          </View>
+        </>
+      )}
 
       <View style={{ marginTop: 12 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Should be there by</SectionLabel>
@@ -773,8 +807,8 @@ function DispatchSheet({
           disabled={saving}
           onPress={async () => {
             if (savingRef.current) return;
-            if (!courier.trim()) return refuse('Who is taking it? Write the courier.');
-            if (!docket.trim()) return refuse('Write the docket number. It is needed to track it.');
+            if (!byHand && !courier.trim()) return refuse('Who is taking it? Write the courier.');
+            if (!byHand && !docket.trim()) return refuse('Write the docket number. It is needed to track it.');
             if (!date) return refuse('Choose the day it should reach.');
             /* The sheet closes only after the write returns; a second tap
                before that queued a second dispatch mark for one parcel. */
@@ -822,12 +856,15 @@ function ReviewSheet({
   const [fields, setFields] = React.useState<Record<string, string>>(() => {
     const from = (existing ?? {}) as unknown as Record<string, string | null>;
     const out: Record<string, string> = {};
-    for (const f of FEEDBACK_FIELDS) out[f.id] = from[f.id] ?? '';
+    for (const f of ACTIVE_FEEDBACK_FIELDS) out[f.id] = from[f.id] ?? '';
     return out;
   });
-  const [outcome, setOutcome] = React.useState<TrialVerdict>(
-    (existing?.trialOutcome as TrialVerdict) ?? 'pending',
-  );
+  /* No default: a verdict is mandatory, and one nobody chose is not one. A review
+     recorded earlier opens on what it said. */
+  const [outcome, setOutcome] = React.useState<'approved' | 'rejected' | 'more_testing' | null>(() => {
+    const was = existing?.trialOutcome;
+    return was === 'approved' || was === 'rejected' || was === 'more_testing' ? was : null;
+  });
   const [photo, setPhoto] = React.useState<{ mediaId: string; uri: string } | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -863,6 +900,8 @@ function ReviewSheet({
    * until the save is one that arrives after somebody thought they were done.
    */
   const owedWhy = outcome === 'rejected' && !rejectionSaidWhy(fields) ? REJECTION_NEEDS_WHY : null;
+  /* The office's own rule, imported: a verdict and at least one meaningful answer. */
+  const owed = trialReviewProblem(fields, outcome);
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
@@ -870,7 +909,7 @@ function ReviewSheet({
         What did they think?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        Write what they said, in their words. You can leave boxes empty.
+        Step 2 of 2 · Write what they said, in their words. At least one box, and the verdict.
       </T>
 
       {/* All seven are prose and all seven get the microphone. Six of them were
@@ -878,7 +917,7 @@ function ReviewSheet({
           was typed — on a sheet whose own instruction is "their words, not a
           summary", read by somebody typing slowly in a language he does not
           write. `VoiceField` is the same `Input` with a mic in it. */}
-      {FEEDBACK_FIELDS.map((f) => (
+      {ACTIVE_FEEDBACK_FIELDS.map((f) => (
         <View key={f.id} style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>{f.label}</SectionLabel>
           <VoiceField
@@ -890,23 +929,22 @@ function ReviewSheet({
       ))}
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Were they happy with it?</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Verdict</SectionLabel>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          <Choice label="Yes" selected={outcome === 'approved'} onPress={() => setOutcome('approved')} style={{ paddingHorizontal: 16 }} />
-          <Choice label="No" selected={outcome === 'rejected'} onPress={() => setOutcome('rejected')} style={{ paddingHorizontal: 16 }} />
+          <Choice label="Approved" selected={outcome === 'approved'} onPress={() => setOutcome('approved')} style={{ paddingHorizontal: 16 }} />
+          <Choice label="Rejected" selected={outcome === 'rejected'} onPress={() => setOutcome('rejected')} style={{ paddingHorizontal: 16 }} />
           {/* The third real verdict. Without it a trial that happened and
               produced "again, on something else" had to be filed as though
               nobody had answered. */}
           <Choice
-            label="They want to try it again"
+            label="More Testing Required"
             selected={outcome === 'more_testing'}
             onPress={() => setOutcome('more_testing')}
             style={{ paddingHorizontal: 16 }}
           />
-          <Choice label="Not decided" selected={outcome === 'pending'} onPress={() => setOutcome('pending')} style={{ paddingHorizontal: 16 }} />
         </View>
         <T s="caption" style={{ marginTop: 6 }}>
-          Negotiation opens only after a Yes. That is the rule.
+          Negotiation opens only after an Approved verdict. That is the rule.
         </T>
         {/* Arrives the moment "No" is picked, in place, so the boxes above
             are not shoved down a line as his thumb leaves the chip. */}
@@ -945,15 +983,14 @@ function ReviewSheet({
           whyDisabled={owedWhy ?? undefined}
           onPress={async () => {
             if (savingRef.current) return;
-            const any = FEEDBACK_FIELDS.some((f) => (fields[f.id] ?? '').trim());
-            if (!any) return refuse('Write at least one thing they said.');
+            if (owed) return refuse(owed);
             if (owedWhy) return refuse(owedWhy);
             /* The sheet only closes once the write returns, so without this a
                second tap on a slow phone saved the review twice. */
             savingRef.current = true;
             setSaving(true);
             try {
-              await onSave(fields, outcome, photo?.mediaId ?? null);
+              await onSave(fields, outcome!, photo?.mediaId ?? null);
             } finally {
               savingRef.current = false;
               setSaving(false);

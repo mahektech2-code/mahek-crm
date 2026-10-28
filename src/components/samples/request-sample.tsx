@@ -4,12 +4,12 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { Input, Select, Textarea } from "@/components/ui/primitives";
+import { Input } from "@/components/ui/primitives";
 import { Button } from "@/components/console/parts";
 import { ProductField } from "@/components/products/product-field";
-import { requestSample } from "@/lib/actions/lead-samples";
+import { declineSampleRequest, requestSample } from "@/lib/actions/lead-samples";
 import { qualifiedForSample, sampleReadyStage } from "@/lib/engines/lead-ladder";
-import { stageLabel, type LeadSalesType, type LeadStage } from "@/lib/lead-labels";
+import { SAMPLE_SENDING_MODES, stageLabel, type LeadSalesType, type LeadStage } from "@/lib/lead-labels";
 
 /* ---------------------------------------------------------------------------
  * §15 — ASKING FOR A SAMPLE FROM A DESK, which until now nobody could do.
@@ -157,11 +157,8 @@ function RequestForm({
   customerName,
   defaultProductId,
   defaultProductName,
-  defaultApplication,
-  defaultCans,
   leadStage,
   salesType,
-  reasons,
   onClose,
   onRequested,
 }: {
@@ -169,58 +166,56 @@ function RequestForm({
   customerName: string;
   defaultProductId: string | null;
   defaultProductName: string | null;
-  defaultApplication: string | null;
-  /** Cans, where somebody heard a number. One otherwise, as it always was. */
+  /* The three below are still handed in by callers that used to ask for them. They
+     are not asked any more: Step 1 is four questions and none of these is one. */
+  defaultApplication?: string | null;
   defaultCans?: number | null;
+  reasons?: ReadonlyArray<{ code: string; label: string }>;
   leadStage: LeadStage | null;
   salesType: LeadSalesType | null;
-  reasons: ReadonlyArray<{ code: string; label: string }>;
   onClose: () => void;
   onRequested?: () => void;
 }) {
   const router = useRouter();
   const toast = useToast();
 
+  /* SAMPLE / TRIAL, STEP 1 OF 2: Sample requested?, Product name, Sample sending
+     date, Sending mode. No answer is defaulted, so nothing is submitted that a
+     person did not choose. */
+  const [requested, setRequested] = React.useState<"yes" | "no" | null>(null);
   const [productId, setProductId] = React.useState<string | null>(defaultProductId);
-  const [cans, setCans] = React.useState(String(defaultCans && defaultCans > 0 ? Math.round(defaultCans) : 1));
-  const [application, setApplication] = React.useState(defaultApplication ?? "");
-  /* The first of the configured codes, so the commonest answer is already
-     chosen and the field is never submitted empty by somebody who did not
-     notice it. It is still a select rather than a hidden default: "they asked
-     for one" and "they are comparing us against the incumbent" are the two
-     answers this list exists to tell apart. */
-  const [reasonCode, setReasonCode] = React.useState(reasons[0]?.code ?? "");
+  const [sendingDate, setSendingDate] = React.useState("");
+  const [sendingMode, setSendingMode] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  /* Pure, and the SAME function the action reads on the way in — the rule is
-     not restated here, only rendered. A second copy typed into a screen drifts
-     inside a release and the half that drifts is the half somebody reads. */
+  /* Pure, and the SAME function the action reads on the way in. */
   const unqualified = !qualifiedForSample(leadStage, salesType);
   const wantedStage = sampleReadyStage(salesType);
 
-  const quantity = Number(cans);
-  const quantityOk = Number.isInteger(quantity) && quantity > 0 && quantity <= 10000;
-  const ready = Boolean(productId) && quantityOk && application.trim().length > 0 && Boolean(reasonCode);
+  const ready =
+    requested === "no" ||
+    (requested === "yes" && Boolean(productId) && Boolean(sendingDate) && Boolean(sendingMode));
 
   async function save() {
-    if (!productId) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await requestSample(customerId, {
-        productId,
-        quantityCans: quantity,
-        application: application.trim(),
-        reasonCode,
-      });
+      const result =
+        requested === "no"
+          ? await declineSampleRequest(customerId)
+          : await requestSample(customerId, {
+              productId: productId!,
+              sendingDate,
+              sendingMode: sendingMode!,
+            });
       if (!result.ok) {
         setError(result.error);
         return;
       }
       onClose();
       onRequested?.();
-      toast.push(result.message ?? "Sample requested.");
+      toast.push(result.message ?? "Recorded.");
       router.refresh();
     } finally {
       /* Cleared whatever happened. An action that rejects rather than returning
@@ -229,104 +224,104 @@ function RequestForm({
     }
   }
 
+  const choice = (name: string, value: string, label: string, checked: boolean, onPick: () => void) => (
+    <label
+      key={value}
+      className={`flex flex-1 cursor-pointer items-center gap-2 rounded-[6px] border px-3 py-2 text-[13px] ${
+        checked ? "border-brand bg-brand-soft text-ink" : "border-line bg-surface text-body"
+      }`}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        disabled={busy}
+        onChange={onPick}
+      />
+      {label}
+    </label>
+  );
+
   return (
-    <Modal open onClose={onClose} title="Ask for a sample" width={520}>
+    <Modal open onClose={onClose} title="Sample / Trial" width={520}>
       <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
         <div className="font-medium text-ink">{customerName}</div>
         <div className="text-muted">
-          Nothing leaves the godown on this. It is a request, and a manager approves it before
-          anybody packs a can.
+          Step 1 of 2 · Sample Request. Nothing leaves the godown on this. It is a request, and a
+          manager approves it before anybody packs a can.
         </div>
         {/*
          * The warning sits INSIDE the same block as the subject rather than in
          * a banner of its own, because it is a fact about this lead and not an
-         * error about this form — a warn-toned strip across the top of a dialog
-         * reads as something having gone wrong, and nothing has.
+         * error about this form.
          */}
         {unqualified ? (
           <div className="mt-1.5 border-t border-line pt-1.5 text-warn-ink">
             Lead not qualified — Manager approval required.
             <span className="block text-muted">
               It is at {stageLabel(leadStage as LeadStage)}, and a sample normally waits for{" "}
-              {stageLabel(wantedStage)}: the product, the monthly requirement, the potential, the
-              competitor and what they actually need are all answered by then. Ask anyway if a can
-              in their hand is what opens this one — the manager decides, and is told this was the
-              rung.
+              {stageLabel(wantedStage)}. Ask anyway if a can in their hand is what opens this one —
+              the manager decides, and is told this was the rung.
             </span>
           </div>
         ) : null}
       </div>
 
-      <label className="mb-1 block text-[13px] font-medium text-ink">
-        What they are trying · required
-      </label>
-      <ProductField
-        customerId={customerId}
-        productId={productId}
-        productName={defaultProductName}
-        disabled={busy}
-        onPick={(id) => setProductId(id)}
-      />
-      <p className="mt-1 mb-3 text-[12px] text-muted">
-        {defaultProductName
-          ? "Taken from what this lead said they need. Change it where the customer has asked for something else."
-          : "Nobody has named a product on this lead, so there is nothing to carry forward — the catalogue is the only thing that may name one."}
-      </p>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-1 block text-[13px] font-medium text-ink">Cans · required</span>
-          <Input
-            type="number"
-            min={1}
-            max={10000}
-            value={cans}
-            disabled={busy}
-            onChange={(e) => setCans(e.target.value)}
-            className="w-full"
-          />
-          <span className="mt-1 block text-[12px] text-muted">
-            Cans, like every quantity here. Litres are worked out from the pack.
-          </span>
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
-          <Select
-            value={reasonCode}
-            disabled={busy}
-            onChange={(e) => setReasonCode(e.target.value)}
-            className="w-full"
-          >
-            {reasons.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.label}
-              </option>
-            ))}
-          </Select>
-          <span className="mt-1 block text-[12px] text-muted">
-            A code, so &ldquo;how many trials did we send to beat an incumbent&rdquo; is a
-            question somebody can ask.
-          </span>
-        </label>
+      <div className="mb-1 block text-[13px] font-medium text-ink">Sample requested? · required</div>
+      <div className="mb-3 flex gap-2">
+        {choice("requested", "yes", "Yes", requested === "yes", () => setRequested("yes"))}
+        {choice("requested", "no", "No", requested === "no", () => setRequested("no"))}
       </div>
 
-      <label className="mt-3 block">
-        <span className="mb-1 block text-[13px] font-medium text-ink">
-          What it is going to be used on · required
-        </span>
-        <Textarea
-          rows={3}
-          value={application}
-          disabled={busy}
-          onChange={(e) => setApplication(e.target.value)}
-          className="w-full"
-        />
-        <span className="mt-1 block text-[12px] text-muted">
-          {defaultApplication
-            ? "Carried forward from the qualification. Correct it where this trial is for something else."
-            : "A trial on the wrong substrate produces an opinion about the wrong thing — and the customer remembers the opinion, not the substrate."}
-        </span>
-      </label>
+      {requested === "no" ? (
+        <p className="mb-2 text-[12px] text-muted">
+          Nothing is started. The answer is written on this lead&apos;s history, and Step 2 stays
+          locked because there is no sample for it to be about. A sample can be asked for later.
+        </p>
+      ) : null}
+
+      {requested === "yes" ? (
+        <>
+          <label className="mb-1 block text-[13px] font-medium text-ink">
+            Product name · required
+          </label>
+          <ProductField
+            customerId={customerId}
+            productId={productId}
+            productName={defaultProductName}
+            disabled={busy}
+            onPick={(id) => setProductId(id)}
+          />
+          <p className="mt-1 mb-3 text-[12px] text-muted">
+            Search the catalogue and pick from it. A sample of something we do not sell is a
+            promise nobody can keep.
+          </p>
+
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">
+              Sample sending date · required
+            </span>
+            <Input
+              type="date"
+              value={sendingDate}
+              disabled={busy}
+              onChange={(e) => setSendingDate(e.target.value)}
+              className="w-full"
+            />
+            <span className="mt-1 block text-[12px] text-muted">
+              The day it is planned to go. This does not mark it as approved, sent or received.
+            </span>
+          </label>
+
+          <div className="mt-3 mb-1 block text-[13px] font-medium text-ink">Sending mode · required</div>
+          <div className="flex gap-2">
+            {SAMPLE_SENDING_MODES.map((m) =>
+              choice("sendingMode", m.code, m.label, sendingMode === m.code, () => setSendingMode(m.code)),
+            )}
+          </div>
+        </>
+      ) : null}
 
       {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
 
@@ -338,17 +333,19 @@ function RequestForm({
           tone="primary"
           disabled={busy || !ready}
           title={
-            !productId
-              ? "Name the product from the catalogue. A sample of something we do not sell is a promise nobody can keep."
-              : !quantityOk
-                ? "How many cans — a whole number, at least one."
-                : !application.trim()
-                  ? "Say what it is going to be used on. A trial on the wrong substrate answers the wrong question."
-                  : undefined
+            requested === null
+              ? "Answer whether a sample is being requested."
+              : requested === "yes" && !productId
+                ? "Name the product from the catalogue."
+                : requested === "yes" && !sendingDate
+                  ? "Pick the day it is planned to go."
+                  : requested === "yes" && !sendingMode
+                    ? "Courier or Hand Delivery."
+                    : undefined
           }
           onClick={() => void save()}
         >
-          {busy ? "Asking…" : "Ask for it"}
+          {busy ? "Saving…" : requested === "no" ? "Record: no sample" : "Ask for it"}
         </Button>
       </div>
     </Modal>
