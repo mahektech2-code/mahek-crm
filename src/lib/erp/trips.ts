@@ -1,6 +1,7 @@
 import "server-only";
 import { inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { listedTransporterName } from "./transporter-rename";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { erpTransportAllocations, erpTransportEvents, erpTransportPayments, erpTransports, erpTrips } from "@/db/schema";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
@@ -307,7 +308,11 @@ export async function saveTrip(ctx: ErpContext, input: TripInput): Promise<Resul
   if (!DAY.test(date)) return fieldErr("tripDate", "Pick the day of the trip");
   if (date > today()) return fieldErr("tripDate", "A trip cannot be in the future");
   const vehicle = clean(input.vehicleNo, 40);
-  const values = { tripDate: date, vehicleNo: vehicle, driver: clean(input.driver), transporter: clean(input.transporter), note: clean(input.note, 500), updatedAt: new Date(), updatedById: ctx.user.id };
+  /* Picked from ERP → Logistics → Transporters; the one already on the trip stands as it is spelled. */
+  const [was] = input.id ? await db.select({ t: erpTrips.transporter }).from(erpTrips).where(inArray(erpTrips.id, [input.id])) : [];
+  const carrier = await listedTransporterName(db, input.transporter, was?.t);
+  if (!carrier.ok) return fieldErr("transporter", carrier.error);
+  const values = { tripDate: date, vehicleNo: vehicle, driver: clean(input.driver), transporter: carrier.name, note: clean(input.note, 500), updatedAt: new Date(), updatedById: ctx.user.id };
   if (input.id) {
     const [cur] = await db.select().from(erpTrips).where(inArray(erpTrips.id, [input.id]));
     if (!cur) return err("That trip no longer exists.", "not_found");
