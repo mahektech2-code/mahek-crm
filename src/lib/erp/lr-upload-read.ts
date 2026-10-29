@@ -8,7 +8,6 @@ import type { ErpContext } from "./access";
 import { featureState, logSuggestion, outcomeOf, readImages } from "./ai";
 import { cleanLrReading, styleLine, type LrStyle, type LrSuggestion } from "./engines/lr-read";
 import { today } from "./screens/common";
-import { erpId } from "./server";
 
 /* ---------------------------------------------------------------------------
  * Upload LRs: a photo or PDF in, the row's fields filled for the person to
@@ -179,7 +178,6 @@ export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{
         lr_date = case when ${set.lr_date}::date is not null and status = 'unassigned' then ${set.lr_date}::date else lr_date end,
         note = coalesce(note, ${set.note})
       where id = ${id} and status <> 'void'`);
-    if (s.transporter && !lr.transporter) await db.insert(erpTransporters).values({ id: erpId("etr"), name: s.transporter, updatedById: ctx.user.id }).onConflictDoNothing();
     const readingId = await logSuggestion({
       feature: "photos",
       recordType: "erp_lr",

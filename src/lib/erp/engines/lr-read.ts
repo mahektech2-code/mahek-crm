@@ -118,6 +118,33 @@ export function matchTransporter(printed: string | null | undefined, directory: 
   return best?.t ?? null;
 }
 
+/** What is left of a name once case, punctuation and the company-form words are set aside. */
+const FORM_WORDS = new Set(["the", "m", "s", "ms", "pvt", "private", "ltd", "limited", "llp", "co", "company"]);
+export function transporterKey(name: string | null | undefined): string {
+  return (name ?? "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !FORM_WORDS.has(w))
+    .join("");
+}
+
+/**
+ * The listed transporter a TYPED name is — only where it is the same name,
+ * spelled with other capitals, spacing, punctuation or "Pvt Ltd". A name that
+ * is merely close is not taken for one: `near` is a suggestion to say back,
+ * never an answer, because "Shree Roadways" is not "Shree Maruti".
+ */
+export function listedTransporter(typed: string, names: string[]): { name: string | null; near: string | null } {
+  const t = typed.trim().replace(/\s+/g, " ");
+  const exact = names.find((n) => n.trim().toLowerCase() === t.toLowerCase());
+  if (exact) return { name: exact, near: null };
+  const k = transporterKey(t);
+  const same = k ? names.filter((n) => transporterKey(n) === k) : [];
+  if (same.length === 1) return { name: same[0], near: null };
+  const near = matchTransporter(t, names.map((name) => ({ name, label: null, examples: [] })));
+  return { name: null, near: near?.name ?? null };
+}
+
 /** Strips what is not the number: a label read along with it, spaces, a leading "No." */
 export function cleanLrNo(raw: string | null | undefined): string | null {
   let s = (raw ?? "").trim().toUpperCase();
@@ -157,8 +184,9 @@ function daysBetween(a: string, b: string): number {
 export function cleanLrReading(r: LrRawReading, directory: LrStyle[], today: string): LrSuggestion {
   const notes: string[] = [];
   const known = matchTransporter(r.transporter, directory);
-  const transporter = known?.name ?? (r.transporter?.trim() || null);
-  if (r.transporter && !known) notes.push(`"${r.transporter.trim()}" is not a transporter on the desk yet — check the spelling.`);
+  /* Only a name already on the list is offered: a receipt's letterhead is not a reason to add a transporter. */
+  const transporter = known?.name ?? null;
+  if (r.transporter?.trim() && !known) notes.push(`The receipt says "${r.transporter.trim()}", which is not on the transporter list — pick one, or add it under Transporters first.`);
 
   const lrNo = cleanLrNo(r.lrNo);
   let checkNumber = r.confidence !== "high";

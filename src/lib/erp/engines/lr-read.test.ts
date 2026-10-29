@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLrNo, cleanLrReading, fitsStyle, freightTermOf, lrShape, matchTransporter, styleLine, type LrRawReading, type LrStyle } from "./lr-read";
+import { cleanLrNo, cleanLrReading, fitsStyle, freightTermOf, listedTransporter, lrShape, matchTransporter, styleLine, type LrRawReading, type LrStyle } from "./lr-read";
 
 const DIR: LrStyle[] = [
   { name: "Shree Maruti Courier", label: "GR Number", examples: ["1048821", "1048830", "1048902"] },
@@ -87,10 +87,21 @@ test("a date in the future or months old is not filled in", () => {
   assert.equal(cleanLrReading(raw({ lrDate: "2026-02-30" }), DIR, "2026-10-11").lrDate, null);
 });
 
-test("an unknown transporter is kept as printed and said", () => {
+test("an unknown transporter is not offered — it is said, and the list is not added to", () => {
   const s = cleanLrReading(raw({ transporter: "Blue Dart", lrNo: "7781" }), DIR, "2026-10-11");
-  assert.equal(s.transporter, "Blue Dart");
-  assert.ok(s.notes.some((n) => n.includes("not a transporter on the desk")));
+  assert.equal(s.transporter, null);
+  assert.ok(s.notes.some((n) => n.includes('"Blue Dart"') && n.includes("not on the transporter list")));
+});
+
+test("a typed transporter is the listed one only where it is the same name", () => {
+  const names = ["Great India Roadways", "VRL Logistics", "Shree Maruti Courier"];
+  assert.deepEqual(listedTransporter("  great   india roadways ", names), { name: "Great India Roadways", near: null });
+  assert.deepEqual(listedTransporter("The Great India Roadways Pvt. Ltd.", names), { name: "Great India Roadways", near: null });
+  assert.deepEqual(listedTransporter("M/s VRL Logistics", names), { name: "VRL Logistics", near: null });
+  /* Close is a suggestion, never an answer. */
+  assert.equal(listedTransporter("Great India Roadway", names).name, null);
+  assert.equal(listedTransporter("Great India Roadway", names).near, "Great India Roadways");
+  assert.deepEqual(listedTransporter("Blue Dart", names), { name: null, near: null });
 });
 
 test("nonsense figures are dropped", () => {

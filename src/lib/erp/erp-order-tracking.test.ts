@@ -102,6 +102,7 @@ before(async () => {
   await db.insert(customers).values({ id: "cus_shree", name: "Shree Paints", city: "Pune", phone: "9876500001", kind: "customer", area: "Pune", creditDays: 30, freightTerm: "Paid" });
   await db.insert(customers).values({ id: "cus_shop", name: "Ganesh Hardware", city: "Satara", phone: "9876500002", kind: "customer", area: "Satara", thirdParty: true });
   await db.insert(erpCustomerProfiles).values({ customerId: "cus_shree", transporter: "VRL" });
+  await db.execute(sql`insert into erp_transporters (id, name) values ('etr_vrl_tracking', 'VRL') on conflict do nothing`);
   await db.insert(erpFgEntries).values({ id: id("fge"), sourceType: "fill", sourceId: "fin_x", entryDate: TODAY, finishedGoodId: fgId, lotCode: "FG7BH", godownId: "erpg_bhiwandi", quantity: 500, packingType: "Can", skuId });
 });
 
