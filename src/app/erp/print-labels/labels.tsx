@@ -1,5 +1,6 @@
 import {
   boxFoot,
+  boxIdPt,
   boxNameFit,
   labelDate,
   labelNumber,
@@ -8,6 +9,7 @@ import {
   partyPt,
   billedPt,
   pieceWord,
+  stickerIdPt,
   purchaseLotPt,
   purchaseNamePt,
   sfgLotPt,
@@ -80,7 +82,9 @@ export function BoxLabelView({ l, qr }: { l: BoxLabel; qr: Qr }) {
       <div className="top">
         <div className="code">
           <QrCode qr={qr} mm={24} label={`QR code for ${l.id}`} />
-          <div className="mono">{l.id}</div>
+          <div className="id" style={pt(boxIdPt(l.id))}>
+            {l.id}
+          </div>
         </div>
         <div className="head">
           <div className="brand">MAHEK</div>
@@ -208,10 +212,11 @@ export function PurchaseLabelView({ l, qr, copy }: { l: PurchaseLabel; qr: Qr; c
  * The 18 mm QR — 21 modules, near a millimetre each — sits top right beside
  * the party, with the sticker's id printed under
  * it to type when the QR will not read; the band at the foot pairs the
- * transporter with the sticker's place in the order, "Box 3 of 10". Every
- * figure the sticker carried before is still on it: the order, its date and
- * line, the party, area and billing party, the goods, quantity, type, weight,
- * lot size and remark.
+ * transporter with the sticker's place in the order, "Box 3 of 10". The
+ * quantity is what is in THIS box — "4 cans" — not the order's 60: the
+ * order's size is the "of 10" and the lot size. Everything else the sticker
+ * carried is still on it: the order, its date and line, the party, area and
+ * billing party, the goods, type, weight, lot size and remark.
  */
 export function DispatchLabelView({ l, qr, lineId, copy }: { l: DispatchLabel; qr: Qr | null; lineId: string; copy?: number }) {
   const transporter = l.transporter ?? "—";
@@ -234,7 +239,9 @@ export function DispatchLabelView({ l, qr, lineId, copy }: { l: DispatchLabel; q
         {s && qr ? (
           <div className="code">
             <QrCode qr={qr} mm={18} label={`QR code for dispatch sticker ${s.id}`} />
-            <div className="mono id">{s.id}</div>
+            <div className="id" style={pt(stickerIdPt(s.id))}>
+              {s.id}
+            </div>
           </div>
         ) : null}
       </div>
@@ -246,7 +253,7 @@ export function DispatchLabelView({ l, qr, lineId, copy }: { l: DispatchLabel; q
           {l.sku}
         </div>
         <div className="facts">
-          <Cell k="Order qty" v={orderQty(l.type, l.qty)} />
+          <Cell k="Quantity" v={orderQty(l.type, l.qty)} />
           <Cell k="Type" v={l.type} />
           <Cell k="Weight" v={l.weightKg == null ? "—" : `${labelNumber(l.weightKg)} kg`} />
           <Cell k="Lot size" v={String(l.lotSize)} />

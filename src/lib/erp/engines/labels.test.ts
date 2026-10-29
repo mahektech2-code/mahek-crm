@@ -15,6 +15,7 @@ import {
   orderQty,
   packSizePt,
   partyPt,
+  pieceQty,
   printRuns,
   productLine,
   shortRef,
@@ -56,6 +57,9 @@ describe("what a label says", () => {
   it("an order is counted in cans, or in drums on a drum line", () => {
     assert.equal(orderQty("Box", 12), "12 cans");
     assert.equal(orderQty("Can", 1), "1 can");
+    assert.equal(pieceQty("Box", 60, 15), 4, "a sticker on a box of four says four cans, not the order's sixty");
+    assert.equal(pieceQty("Can", 7, 0), 1, "one sticker a can on a loose line");
+    assert.equal(pieceQty("Drum", 3, 0), 1);
     assert.equal(orderQty("Drum", 2), "2 drums");
   });
 
