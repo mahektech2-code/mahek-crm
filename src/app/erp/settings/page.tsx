@@ -16,7 +16,7 @@ export default async function ErpSettings() {
   const ctx = await erpContext();
   const hat = await hatForHeader(ctx.user, "erp");
   return (
-    <Page title={SCREEN.label} sub={SCREEN.sub}>
+    <Page title={SCREEN.label}>
       <div className="grid max-w-[980px] grid-cols-[repeat(auto-fill,minmax(320px,1fr))] items-start gap-5">
         <Card>
           <CardHeader title="Working location" hint="Pre-fills godown on every form and scopes godown lists. Only godowns you are assigned to." />

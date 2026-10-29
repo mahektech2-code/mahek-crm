@@ -47,7 +47,6 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
   return (
     <Page
       title={SCREEN.label}
-      sub={SCREEN.sub}
       actions={
         board ? (
           <>

@@ -25,6 +25,7 @@ import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
 import { ERP_KIT, KitContext, safeKit, useKit, type ScreenKit } from "./kit";
+import { formSub, promptSub } from "./quiet-copy";
 
 /* ---------------------------------------------------------------------------
  * The ERP's overlays, held once for the whole app: the form dialog, the prompt
@@ -396,7 +397,7 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
       title={
         <>
           {spec.title}
-          {spec.sub ? <span className="mt-0.5 block text-meta font-normal text-muted">{spec.sub}</span> : null}
+          {promptSub(spec.sub) ? <span className="mt-0.5 block text-meta font-normal text-muted">{promptSub(spec.sub)}</span> : null}
         </>
       }
       footer={
@@ -787,7 +788,7 @@ function FormDialog({
     <ErpDialog onClose={onClose} label={spec.title} width={width} tall={pages.length > 1 || !!spec.line || !!spec.evidence}>
       <DialogHeader onClose={onClose}>
         <DialogTitle>{spec.title}</DialogTitle>
-        {spec.sub ? <div className="mt-0.5 text-meta text-muted">{spec.sub}</div> : null}
+        {formSub(spec.sub) ? <div className="mt-0.5 text-meta text-muted">{formSub(spec.sub)}</div> : null}
       </DialogHeader>
       {pages.length > 1 ? <StepBar steps={pages.map((p) => p.title || "Details")} active={at} reached={reached} errored={errored} onChange={setPage} /> : null}
       <div className={cx("flex min-h-0 flex-1", spec.evidence && "divide-x divide-divider")}>
@@ -964,7 +965,7 @@ function ResultDialog({ d, onClose, onNext }: { d: NonNullable<ToolResult["dialo
       title={
         <>
           {d.title}
-          {d.sub ? <span className="mt-0.5 block text-meta font-normal text-muted">{d.sub}</span> : null}
+          {promptSub(d.sub) ? <span className="mt-0.5 block text-meta font-normal text-muted">{promptSub(d.sub)}</span> : null}
         </>
       }
       footer={

@@ -1903,6 +1903,22 @@ lists the column keys it already draws in `covers`. Write a screen's
 (the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
 "Add another", "Show the whole order"), never past tenses or "Do …".
 
+**AN ERP SCREEN SAYS AS LITTLE AS IT CAN (Oct 2026).** A label says what to
+type and nothing else: a red `*` for required, a small grey "optional" for the
+rest (never a pill), a calculator icon on a worked-out field and a sparkle on
+one AI read, coloured by how sure it was. A unit in the label's brackets moves
+INTO the box ("Use quantity (litres)" draws "Use quantity" with an L inside;
+`splitLabel` in `_ui/field-label.ts`), except on a select, which has nowhere
+to put it. A field's `hint` sits behind an ⓘ that hover, focus and a TAP open —
+the gate tablet has no hover — and only `hintShown` keeps one written under the
+box, for a hint that changes what is typed. A list page has no subtitle; a form
+keeps one only when it names the record, and a prompt or confirm keeps its
+first sentence, which is what the button will do (`_ui/quiet-copy.ts`). The
+filters are one Filter button; Group, Columns and Export are icons; an empty
+list is its `noDataLine`'s first sentence and the New button. Errors are the
+one thing still written out in full. `quiet-copy.test.ts` pins the rules and
+refuses a page that draws its registry line under the title.
+
 **AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
 The screens had drifted into twenty-two spellings of the small uppercase
 label, four heading sizes, three checkbox looks, ten text-link buttons and
@@ -1965,10 +1981,9 @@ purchase flow sat above forty labels. `app/erp/_ui/dialog.tsx` is the one
 frame — `ErpDialog` (z-60, under the prompt and confirm at z-70), its header,
 body and foot, `TabBar` and `StepBar`. A RECORD (`record-dialog.tsx`) is tabs:
 the screen's own panel first, named for what it is (`PANEL_TAB` — "Purchase
-flow", "Trace", "Test evidence"…), then Details three to a row, then "Not
-available yet" when an action is held back; the actions sit in the foot on
-every tab, and pressing a held-back one opens that tab rather than doing
-nothing. A FORM (`FormDialog` in `erp-ui.tsx`) is pages, planned by
+flow", "Trace", "Test evidence"…), then Details three to a row; the actions sit in the foot on every tab, a
+held-back one drawn with a lock, and pressing it says why in one line (there is
+no "Not available yet" tab any more). A FORM (`FormDialog` in `erp-ui.tsx`) is pages, planned by
 `form-pages.ts` (pure, tested): seven fields or fewer and no lines is one page;
 longer forms are cut at the fields' `sec` headings, small sections packed up to
 eight fields a page; a document's lines are a page of their own; more than one

@@ -8,6 +8,7 @@ import { addressLine, type ShareChannel } from "@/lib/erp/engines/po-share";
 import { Badge } from "./badge";
 import { useKit } from "./kit";
 import { resultError } from "./use-act";
+import { promptSub } from "./quiet-copy";
 
 /* ---------------------------------------------------------------------------
  * THE SHARE WINDOW — how (WhatsApp, email, a copied link), who (the record's
@@ -132,7 +133,7 @@ export function ShareDialog({
       title={
         <>
           {spec.title}
-          {spec.sub ? <span className="mt-0.5 block text-meta font-normal text-muted">{spec.sub}</span> : null}
+          {promptSub(spec.sub) ? <span className="mt-0.5 block text-meta font-normal text-muted">{promptSub(spec.sub)}</span> : null}
         </>
       }
       footer={

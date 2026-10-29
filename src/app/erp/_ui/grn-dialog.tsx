@@ -12,6 +12,7 @@ import { hitSummary, linesFor, searchGrnItems, type GrnItem, type GrnPoLine } fr
 import { Field } from "./field";
 import { checkField, optsFor } from "./form-check";
 import { useKit } from "./kit";
+import { formSub } from "./quiet-copy";
 
 /* ---------------------------------------------------------------------------
  * THE GOODS RECEIPT STARTS FROM THE ITEM THAT ARRIVED. The storekeeper knows
@@ -144,10 +145,10 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
     step === "lines"
       ? `${vendor ?? ""} · ${spec.init?.prFixed ? `PR ${spec.init.prFixed}` : "PR number on save"}`
       : step === "po"
-        ? "Pick the PO this delivery belongs to."
+        ? null
         : vendor
-          ? `Another item from ${vendor}'s truck. Only their open POs are offered.`
-          : (spec.sub ?? "Search the item that came in.");
+          ? `Same truck · ${vendor}`
+          : formSub(spec.sub);
 
   const poLines = picked ? offered(picked) : [];
 
@@ -155,7 +156,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
     <ErpDialog onClose={onClose} label={spec.title} width={step === "lines" ? 920 : 760}>
       <DialogHeader onClose={onClose}>
         <DialogTitle>{spec.title}</DialogTitle>
-        <div className="mt-0.5 text-meta text-muted">{sub}</div>
+        {sub ? <div className="mt-0.5 text-meta text-muted">{sub}</div> : null}
       </DialogHeader>
       {/* The steps follow the truck, not a page order: adding a second item goes back to the first. */}
       <StepBar steps={["Item received", "Purchase order", "Receipt details"]} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
