@@ -244,6 +244,12 @@ export function PriceListDetailScreen({
           were taken against it.
         </Callout>
       ) : null}
+      {published && list.supersededById && list.effectiveTo && list.effectiveTo >= todayIso ? (
+        <Callout tone="brand">
+          A newer version has been published to take over after {longDate(list.effectiveTo)}. Until
+          then this list is still the one shops are priced from.
+        </Callout>
+      ) : null}
       {published && list.expired ? (
         <Callout tone="warn">
           This list passed its validity on {longDate(list.expiresOn ?? todayIso)} and is
@@ -266,21 +272,26 @@ export function PriceListDetailScreen({
               <Button variant="ghost" size="sm" onClick={() => setShowIncl((v) => !v)}>
                 {showIncl ? "Showing GST inclusive" : "Showing ex-GST"}
               </Button>
-              {canManage ? (
+              {canManage && draft ? (
                 <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setPasting(true)}
-                    disabled={!draft}
-                    title={draft ? undefined : "Rates can be pasted into a draft. Publish a new version to change a list in force."}
-                  >
+                  <Button variant="secondary" size="sm" onClick={() => setPasting(true)}>
                     Paste rates
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => setRateOpen({ rate: null, productId: null })}>
                     Add rate
                   </Button>
                 </>
+              ) : canManage && published ? (
+                /* A price on a list in force is changed by a new version, so
+                   that orders taken against this one stay explainable. */
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setEditor({ kind: "edit", listId: list.id })}
+                  title="A price on a list in force is changed by a new version, dated from the day it takes effect."
+                >
+                  New version in the editor
+                </Button>
               ) : null}
             </div>
           }
@@ -299,7 +310,7 @@ export function PriceListDetailScreen({
             title="No prices on this list yet"
             body="Add them one at a time, or paste a column out of the spreadsheet the office already keeps."
             action={
-              canManage ? (
+              canManage && draft ? (
                 <Button variant="primary" onClick={() => setRateOpen({ rate: null, productId: null })}>
                   Add the first price
                 </Button>
@@ -541,7 +552,7 @@ export function PriceListDetailScreen({
           title="Discounts on this list"
           hint="Printed under the prices. Not what anybody may knock off on their own."
           action={
-            canManage ? (
+            canManage && draft ? (
               <Button variant="secondary" size="sm" onClick={() => setTermOpen({ id: null })}>
                 Add
               </Button>
@@ -558,7 +569,7 @@ export function PriceListDetailScreen({
                   <div className="text-sm text-ink">{t.sentence}</div>
                   {t.rawText ? <div className="text-[13px] text-muted">As printed: {t.rawText}</div> : null}
                 </div>
-                {canManage ? (
+                {canManage && draft ? (
                   <RowMenu
                     items={[
                       { label: "Edit", onSelect: () => setTermOpen({ id: t.id }) },
@@ -706,7 +717,7 @@ export function PriceListDetailScreen({
           products={options.products}
           rate={rateOpen.rate}
           presetProductId={rateOpen.productId}
-          readOnly={!canManage}
+          readOnly={!canManage || !draft}
         />
       ) : null}
       <BulkRatesModal
@@ -795,7 +806,7 @@ export function PriceListDetailScreen({
           confirmLabel="Remove it"
           onClose={() => setTermToRemove(null)}
           onConfirm={async (confirmation) => {
-            const r = await removeDiscountTerm(termToRemove, confirmation);
+            const r = await removeDiscountTerm(termToRemove, confirmation, list.id);
             if (r.ok) {
               push(r.message ?? "Removed.");
               router.refresh();

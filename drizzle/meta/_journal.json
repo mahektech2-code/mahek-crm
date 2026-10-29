@@ -2059,6 +2059,13 @@
       "when": 1793606800000,
       "tag": "0296_lr_route",
       "breakpoints": true
+    },
+    {
+      "idx": 294,
+      "version": "7",
+      "when": 1793606900000,
+      "tag": "0297_price_list_kind",
+      "breakpoints": true
     }
   ]
 }

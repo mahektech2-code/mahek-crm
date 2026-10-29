@@ -17,7 +17,7 @@ import type {
 import { getConfig } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
-import { assertCustomerInScope, resolveScope, userIdsInScope } from "@/lib/access-control";
+import { assertCustomerInScope, canFor, resolveScope, userIdsInScope } from "@/lib/access-control";
 import { canonicalState } from "@/lib/india-states";
 import { inferDerivation, perLitrePaise, rateChange } from "@/lib/engines/price-math";
 import {
@@ -1194,12 +1194,24 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
 
 /* ------------------------------------------------------------- requests */
 
+/**
+ * Whose requests this person is shown: everybody's for the PRICE DESK — whoever
+ * holds `pricelist.manage`, which is both levels of Accounts and of the Founder
+ * Dashboard, the people who decide them — and their own for everybody else.
+ * It used to read the LEVEL, so an Accounts associate, who manages prices,
+ * saw an empty queue while the tile above it counted the requests waiting.
+ * Null means the whole queue.
+ */
+async function requestsVisibleTo(): Promise<string | null> {
+  const { user } = await resolveScope();
+  return (await canFor(user, "pricelist.manage")) ? null : user.id;
+}
+
 export async function listRequests(filter?: { status?: "pending" | "all"; customerId?: string }): Promise<RequestView[]> {
-  const { user, role } = await resolveScope();
+  const { user } = await resolveScope();
   const pendingOnly = (filter?.status ?? "pending") === "pending";
-  // A salesman sees what he asked for; a manager sees the queue. The narrower
-  // answer is the default so a screen that forgets to say cannot leak one.
-  const mineOnly = role === "associate";
+  // The narrower answer is the default so a screen that forgets to say cannot leak one.
+  const mineOnly = (await requestsVisibleTo()) !== null;
   const rows = await db.execute<RequestView & { requestedRateExGstPaise: number }>(sql`
     select q.id, q.customer_id as "customerId", c.name as "customerName",
            q.product_id as "productId", p.name as "productName",
@@ -1337,12 +1349,16 @@ export async function searchCustomers(q: string, limit = 10): Promise<CustomerHi
 }
 
 export async function pricingCounts(): Promise<PricingCounts> {
+  /* The tile counts what the Requests tab lists — the queue for the price
+     desk, their own for anybody else. */
+  const mine = await requestsVisibleTo();
   const [row] = await db.execute<PricingCounts>(sql`
     select (select count(*)::int from price_lists where status = 'published') as published,
            (select count(*)::int from price_lists where status = 'draft') as drafts,
            (select count(*)::int from price_list_documents
              where parse_status not in ('published','rejected')) as "documentsWaiting",
-           (select count(*)::int from price_requests where status = 'pending') as "requestsPending",
+           (select count(*)::int from price_requests
+             where status = 'pending' and (${mine}::text is null or requested_by_id = ${mine})) as "requestsPending",
            null::int as "unresolvedCustomers"
   `);
   return row ?? { published: 0, drafts: 0, documentsWaiting: 0, requestsPending: 0, unresolvedCustomers: null };

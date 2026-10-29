@@ -148,6 +148,17 @@ function freightAgrees(scope: ScopeRow, list: ListMeta, geo: CustomerGeo): boole
   return wanted === geo.freightTerm;
 }
 
+/**
+ * The priority a shop's AGREED-PRICES scope carries. A scope at or above it
+ * outranks every other scope of its kind, freight term included: the agreed
+ * list is the shop's own and sits on top of the list it is assigned.
+ */
+export const AGREED_SCOPE_PRIORITY = 1000;
+
+function layerRank(scope: ScopeRow): number {
+  return scope.priority >= AGREED_SCOPE_PRIORITY ? 1 : 0;
+}
+
 /** How well a scope's freight term fits the shop: exact beats unstated. */
 function freightRank(scope: ScopeRow, list: ListMeta, geo: CustomerGeo): number {
   const wanted = scope.freightTermMatch === "any" ? list.freightTerm : scope.freightTermMatch;
@@ -189,6 +200,10 @@ export function resolvePriceList(
     }
 
     candidates.sort((a, b) => {
+      // A shop's own agreed prices LAYER over whatever it is otherwise on, so
+      // that scope wins inside its kind before the freight term is asked.
+      const l = layerRank(b.scope) - layerRank(a.scope);
+      if (l) return l;
       const f = freightRank(b.scope, b.list, geo) - freightRank(a.scope, a.list, geo);
       if (f) return f;
       const p = b.scope.priority - a.scope.priority;

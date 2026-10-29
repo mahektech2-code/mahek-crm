@@ -10962,6 +10962,13 @@ export const priceLists = pgTable(
     /** `per_can` | `per_litre`. Every sample is per can; the second exists for the exception. */
     unitBasis: text("unit_basis").notNull().default("per_can"),
     status: text("status").notNull().default("draft"),
+    /**
+     * `standard` | `agreed`. An `agreed` list is ONE shop's agreed prices, made
+     * by approving a special-price request; it layers over whatever list the
+     * shop is otherwise on, and it is the only list a later approval may write
+     * a rate into. A shared list is never one.
+     */
+    kind: text("kind").notNull().default("standard"),
     termsText: text("terms_text"),
     signatory: text("signatory"),
     notes: text("notes"),
