@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customerContacts, customers, erpCustomerProfiles, mbosUserTerritories, notifications, users } from "@/db/schema";
+import { appAccess, customerContacts, customers, erpCustomerProfiles, mbosUserTerritories, notifications, places, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { createDirectCustomer } from "@/lib/actions/customer-create";
@@ -160,6 +160,51 @@ describe("Adding a customer from Accounts", () => {
     assert.ok(bare.ok, bare.ok ? "" : bare.error);
     const none = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, bare.data.id));
     assert.equal(none.length, 0);
+  });
+
+  test("every customer gets a generated code, and the order sheet's key is left alone", async () => {
+    const a = await createDirectCustomer(input());
+    const b = await createDirectCustomer(input({ name: "Another Shop", phone: "9876500044" }));
+    assert.ok(a.ok && b.ok);
+    const [ra, rb] = [await record(a.data.id), await record(b.data.id)];
+    assert.match(ra.customerCode, /^CUS-\d{5}$/);
+    assert.match(rb.customerCode, /^CUS-\d{5}$/);
+    assert.notEqual(ra.customerCode, rb.customerCode);
+    assert.equal(ra.externalCode, null);
+  });
+
+  test("a picked place files the shop as a person's decision, adding an area that is not listed", async () => {
+    await db.execute(sql`
+      insert into places (id, kind, name, key, parent_id) values
+        ('pl_t_mh', 'state', 'Maharashtra', 'maharashtra', null),
+        ('pl_t_ngd', 'district', 'Nagpur', 'nagpur', 'pl_t_mh'),
+        ('pl_t_ngc', 'city', 'Nagpur', 'nagpur', 'pl_t_ngd')
+      on conflict do nothing
+    `);
+    const r = await createDirectCustomer(
+      input({
+        city: "Nagpur",
+        state: "Maharashtra",
+        place: { state: { id: "pl_t_mh" }, district: { id: "pl_t_ngd" }, city: { id: "pl_t_ngc" }, area: { name: "Sitabuldi" } },
+      }),
+    );
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const c = await record(r.data.id);
+    assert.equal(c.resolvedStateId, "pl_t_mh");
+    assert.equal(c.resolvedDistrictId, "pl_t_ngd");
+    assert.equal(c.resolvedCityId, "pl_t_ngc");
+    assert.ok(c.resolvedAreaId, "the typed area became a place");
+    const [area] = await db.select().from(places).where(eq(places.id, c.resolvedAreaId!));
+    assert.equal(area.name, "Sitabuldi");
+    assert.equal(area.parentId, "pl_t_ngc");
+    assert.equal(c.area, "Sitabuldi");
+    assert.equal(c.placeSource, "manual");
+    assert.ok(c.placeDecidedAt, "marked as a person's decision");
+
+    const missingCity = await createDirectCustomer(
+      input({ name: "No City", phone: "9876500055", place: { state: { id: "pl_t_mh" }, district: { id: "pl_t_ngd" } } }),
+    );
+    assert.equal(missingCity.ok, false);
   });
 
   test("the nightly sales-people pass leaves the seat's name alone", async () => {

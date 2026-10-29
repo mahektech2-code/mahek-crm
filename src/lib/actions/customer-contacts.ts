@@ -21,7 +21,7 @@ import {
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
-import { transporterChoices } from "@/lib/erp/transporter-rename";
+import { customerFormOptions, type CustomerFormOptions } from "@/lib/services/customer-form-service";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
@@ -195,6 +195,13 @@ export type CustomerEditorData = {
     id: string;
     name: string;
     externalCode: string | null;
+    /** "CUS-00001" — generated, never edited. */
+    customerCode: string;
+    /** Where the shop sits on the place tree; null where nothing has placed it. */
+    stateId: string | null;
+    districtId: string | null;
+    cityId: string | null;
+    areaId: string | null;
     customerType: string | null;
     potential: string | null;
     potentialMonthlyPaise: number | null;
@@ -241,8 +248,8 @@ export type CustomerEditorData = {
   birthdayHeadsUpDays: number;
   /** Whether this person may change the credit limit and the supply stop. */
   canDecideCredit: boolean;
-  /** What the Transporter picker offers — the ERP's list plus every spelling in use. */
-  transporterOptions: string[];
+  /** What the pickers offer — the place tree, price lists, counter types, transporters. */
+  options: CustomerFormOptions;
 };
 
 export async function loadCustomerEditor(customerId: string): Promise<Result<CustomerEditorData>> {
@@ -258,6 +265,11 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
         id: c.id,
         name: c.name,
         externalCode: c.externalCode,
+        customerCode: c.customerCode,
+        stateId: c.resolvedStateId,
+        districtId: c.resolvedDistrictId,
+        cityId: c.resolvedCityId,
+        areaId: c.resolvedAreaId,
         customerType: c.customerType,
         potential: c.potential,
         potentialMonthlyPaise: c.potentialMonthlyPaise === null ? null : Number(c.potentialMonthlyPaise),
@@ -300,7 +312,7 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
       today: await today(),
       birthdayHeadsUpDays: (await getConfig())["customers.birthdayHeadsUpDays"],
       canDecideCredit: await canFor(ctx.user, "payment.confirm"),
-      transporterOptions: await transporterChoices(),
+      options: await customerFormOptions(),
     });
   } catch (e) {
     return fromThrown(e);

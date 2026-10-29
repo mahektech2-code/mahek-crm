@@ -1,5 +1,8 @@
 "use server";
 
+import { placePickSchema, resolveCustomerPick } from "@/lib/customer-place";
+import { writeCustomerPlace } from "@/lib/services/customer-form-service";
+import { placeOptions } from "@/lib/services/place-write";
 import { customerEditRefusal } from "@/lib/customer-edit-gate";
 import { renameValues } from "@/lib/customer-rename";
 import { revalidatePath } from "next/cache";
@@ -702,6 +705,8 @@ const customerDetailSchema = z.object({
   counterTypes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   standingInstructions: blankable(1000),
   allocateEmail: blankable(200),
+  /* Where the shop is, picked on the place tree — see lib/customer-place.ts. Sent only when it moved. */
+  place: placePickSchema.optional(),
 });
 
 /** The detail fields that live on the ERP profile, not on `customers`. */
@@ -839,6 +844,12 @@ export async function updateCustomer(
         { field: "creditBlockReason", message: "Required while supply is stopped." },
       ]);
     }
+    /* A picked place is checked BEFORE anything is written, and written after the row. */
+    if (d.place) {
+      const placed = resolveCustomerPick(d.place, await placeOptions());
+      if (!placed.ok) return err(placed.message, "validation", [{ field: `place.${placed.kind}`, message: placed.message }]);
+    }
+
     const blank = (v: string | undefined) => (v === undefined ? undefined : v || null);
     const detail: Partial<typeof customers.$inferInsert> = {};
     const put = <K extends keyof typeof customers.$inferInsert>(k: K, v: (typeof customers.$inferInsert)[K] | undefined) => {
@@ -960,6 +971,12 @@ export async function updateCustomer(
         updatedById: ctx.user.id,
       })
       .where(eq(customers.id, customerId));
+
+    /* Where the shop is: the four ids, the typed mirrors, and the mark that a person chose it. */
+    if (d.place) {
+      const placed = await writeCustomerPlace(customerId, d.place, ctx.user.id);
+      if (!placed.ok) return err(placed.message, "validation");
+    }
 
     /* The dispatch fields, on the ERP profile — created here if this customer has none yet. */
     const profile: Partial<typeof erpCustomerProfiles.$inferInsert> = {};

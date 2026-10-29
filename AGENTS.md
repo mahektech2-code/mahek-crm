@@ -3600,6 +3600,22 @@ columns the second-order rule does (`conversionColumns`: kind `customer`, stage
 (audit, timeline, handset tombstone). So the account leaves every lead list and
 handset Leads tab and joins Customers, the Call Log and collections at once.
 
+**THE CUSTOMER CODE IS GENERATED, AND IT IS NOT `external_code`.**
+`customers.customer_code` ("CUS-00001", `0293`) is set by a database
+sequence on every insert, whatever path writes the row, and is shown read-only
+on both forms. `external_code` is the order sheet's key for the party
+(`SHEET:<NAME>`, matched by the projection on every pass) and is no longer on
+any screen — retyping it cut the shop off from its orders. The forms pick the
+place State → District → City → Area on the reviewed tree
+(`components/customers/customer-place-picker.tsx`, rules in
+`lib/customer-place.ts`, area optional); a district, city or area that is not
+listed is added on save, and the pick is stamped `place_source = 'manual'` with
+`place_decided_at`, so the nightly typed-place pass never moves it. The price
+list is picked from the published lists in force (`priceListNames`), counter
+types from the ERP's Counter type list, and the grade is shown, not typed.
+Dealer code, rating, party segment, allocate email, tagged employee, do not
+contact, beat, territory region and route are off the forms; their columns stay.
+
 **There is no "Add lead" on the Customers screen.** It hard-coded `kind:
 "lead"`, so on a table that no longer lists leads it wrote a record and
 returned the reader to a list the record was not on, which reads as a save that
