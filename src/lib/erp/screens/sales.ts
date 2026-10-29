@@ -454,7 +454,7 @@ async function customersById(ids: string[]): Promise<Map<string, CustomerRow>> {
 
 async function readCustomersById(ids: string[]): Promise<Map<string, CustomerRow>> {
   const out = new Map<string, CustomerRow>();
-  for (let i = 0; i < ids.length; i += 1000) for (const c of await loadCustomers(inArray(customers.id, ids.slice(i, i + 1000)))) out.set(c.id, c);
+  for (let i = 0; i < ids.length; i += 1000) for (const c of await loadCustomers(inArray(customers.id, ids.slice(i, i + 1000)), { any: true })) out.set(c.id, c);
   return out;
 }
 
@@ -624,11 +624,12 @@ async function reopenInvoiceCheck(ctx: ErpContext, orderNo: number, before: Invo
 /* ============================================================== forms */
 
 export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date: string; godown: string; billing: string; delivery: string; transporter: string; source: string }): Promise<FormSpec> {
-  const [gds, parties, skus] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), skuCatalogue()]);
+  const [gds, parties, shops, skus] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), thirdPartyShops(), skuCatalogue()]);
   const active = parties.filter((p) => partyStatus(p) !== "Deactive");
   const names = active.map((p) => p.name);
+  const deliveryNames = withShops(names, shops);
   const party: Record<string, { a: string; si: string; t: string }> = {};
-  for (const p of active)
+  for (const p of [...shops, ...active])
     party[p.name] = {
       a: p.area ?? "",
       si: standingInstructions({ instructions: p.p?.standingInstructions ?? null, deliveryType: p.deliveryType, paymentType: p.freightTerm, weightType: p.p?.weightType ?? null }),
@@ -664,7 +665,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       { k: "source", l: "Order received by", t: "select", req: true, opts: [...ORDER_SOURCES], readOnly: !!fixed && !!fixed.source, hint: "WhatsApp, a phone call or a Sales Order." },
       godownField(gds, { readOnly: !!fixed }),
       { k: "billing", l: "Billing party", t: "select", req: true, opts: names, readOnly: !!fixed },
-      { k: "delivery", l: "Delivery party", t: "select", opts: names, hint: "Blank delivers to the billing party.", readOnly: !!fixed },
+      { k: "delivery", l: "Delivery party", t: "select", opts: deliveryNames, hint: "Blank delivers to the billing party. Third-party shops are listed too.", readOnly: !!fixed },
       { k: "area", l: "Area", t: "derived", calc: "order.area" },
       { k: "si", l: "Standing instructions", t: "derived", calc: "order.si" },
       { k: "transporter", l: "Transporter", t: "text", hint: "Blank uses the delivery party's transporter." },
@@ -737,7 +738,8 @@ const NO_PRICE_LIST = "None applies to this party";
 async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   const [l] = await orderLines({ ids: [id] });
   if (!l) return null;
-  const names = (await loadCustomers()).filter((p) => partyStatus(p) !== "Deactive").map((p) => p.name);
+  const [book, shops] = await Promise.all([loadCustomers(), thirdPartyShops()]);
+  const names = withShops(book.filter((p) => partyStatus(p) !== "Deactive").map((p) => p.name), shops);
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
   const locked = l.inDetails || l.allocations > 0;
@@ -1965,6 +1967,32 @@ async function partyByName(name: string | null): Promise<CustomerRow | null> {
   return p ?? null;
 }
 
+/**
+ * Third-party shops: delivered to, billed through a distributor. They are
+ * mostly leads with no dispatch profile, so the party book leaves them out —
+ * but they are exactly who a delivery party usually is.
+ */
+async function thirdPartyShops(): Promise<CustomerRow[]> {
+  return (await loadCustomers(eq(customers.thirdParty, true), { any: true })).filter((p) => partyStatus(p) !== "Deactive");
+}
+
+function withShops(names: string[], shops: CustomerRow[]): string[] {
+  return [...new Set([...names, ...shops.map((p) => p.name)])].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The delivery party a form names. Read from the whole book, not just the
+ * party book, preferring an account we invoice and then a third-party shop
+ * where two records share a name. Blank means the billing party; a name that
+ * matches nobody is refused rather than quietly becoming the billing party.
+ */
+async function deliveryByName(name: string | null, fallback: CustomerRow): Promise<Result<CustomerRow>> {
+  if (!name) return { ok: true, data: fallback };
+  const rank = (p: CustomerRow) => (p.kind === "customer" ? 0 : p.thirdParty ? 1 : 2);
+  const [p] = (await loadCustomers(eq(customers.name, name), { any: true })).filter((c) => partyStatus(c) !== "Deactive").sort((a, b) => rank(a) - rank(b));
+  return p ? { ok: true, data: p } : fieldErr("delivery", `No party named "${name}". Pick one from the list, or leave it blank to deliver to the billing party.`);
+}
+
 async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<string, string>[]): Promise<Result<unknown>> {
   const godownId = await godownIdByName(text(h.godown));
   if (!godownId) return fieldErr("godown", "Godown is required");
@@ -1974,7 +2002,9 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   /* A draft read off a WhatsApp message came by WhatsApp, whatever the form was sent with. */
   const source = text(h.source) ?? (text(h.inboxId) ? "WhatsApp" : null);
   if (!source || !(ORDER_SOURCES as readonly string[]).includes(source)) return fieldErr("source", "Say how the order was received");
-  const delivery = (await partyByName(text(h.delivery))) ?? billing;
+  const named = await deliveryByName(text(h.delivery), billing);
+  if (!named.ok) return named;
+  const delivery = named.data;
   if (!ls.length) return err("Add at least one SKU.");
   const [skus, prices] = await Promise.all([skuCatalogue(), priceBook([billing.id])]);
   const byName = new Map([...skus.values()].map((s) => [s.name, s]));
@@ -2078,7 +2108,9 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
     const short = (await stockShortfalls([{ l, need }])).get(l.o.id);
     if (short) return fieldErr("status", `Stock is not there: ${short}`);
   }
-  const delivery = (await partyByName(text(h.delivery))) ?? l.delivery;
+  const named = await deliveryByName(text(h.delivery), l.delivery);
+  if (!named.ok) return named;
+  const delivery = named.data;
   const values: Partial<typeof erpOrders.$inferInsert> = {
     status,
     dispatchOn: text(h.dispatchOn),

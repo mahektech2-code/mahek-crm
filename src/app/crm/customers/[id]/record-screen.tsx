@@ -905,7 +905,7 @@ export function RecordScreen({
             <TabList
               count={detail.counts.orders}
               shown={detail.orders.length}
-              empty="No orders recorded against this customer."
+              empty="No orders billed or delivered to this customer."
             >
               {detail.orders.map((o) => (
                 <RowLine
@@ -913,7 +913,9 @@ export function RecordScreen({
                   left={
                     <>
                       {o.orderNo ?? "no number"}
-                      {o.deliveredTo ? (
+                      {o.billedTo ? (
+                        <span className="text-muted"> · billed to {o.billedTo}</span>
+                      ) : o.deliveredTo ? (
                         <span className="text-muted"> → {o.deliveredTo}</span>
                       ) : null}
                     </>

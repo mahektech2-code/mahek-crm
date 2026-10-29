@@ -1,5 +1,5 @@
 import "server-only";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   bills,
@@ -61,6 +61,12 @@ export type RecordOrder = {
   lines: number;
   /** Where the goods went, when that was not the billing party. */
   deliveredTo: string | null;
+  /**
+   * Who was billed, when this customer is the DELIVERY party — a third-party
+   * shop is billed through its distributor, and its orders sit on the
+   * distributor's account; listing only billed orders showed the shop none.
+   */
+  billedTo: string | null;
   counts: boolean;
 };
 
@@ -159,10 +165,13 @@ export async function customerRecordDetail(
         deliveredTo: sql<string | null>`(
           select c.name from customers c where c.id = orders.delivery_customer_id
         )`,
+        billedTo: sql<string | null>`(
+          select c.name from customers c where c.id = orders.customer_id and orders.customer_id <> ${customerId}
+        )`,
         counts: sql<boolean>`${orderCountsSql("orders")}`,
       })
       .from(orders)
-      .where(eq(orders.customerId, customerId))
+      .where(or(eq(orders.customerId, customerId), eq(orders.deliveryCustomerId, customerId)))
       .orderBy(desc(orders.orderedAt))
       .limit(LIMIT),
 
@@ -199,7 +208,7 @@ export async function customerRecordDetail(
       .select({
         bills: sql<number>`(select count(*)::int from bills where bills.customer_id = ${customerId})`,
         receipts: sql<number>`(select count(*)::int from payment_receipts r where r.customer_id = ${customerId})`,
-        orders: sql<number>`(select count(*)::int from orders o where o.customer_id = ${customerId})`,
+        orders: sql<number>`(select count(*)::int from orders o where o.customer_id = ${customerId} or o.delivery_customer_id = ${customerId})`,
         complaints: sql<number>`(select count(*)::int from complaints c where c.customer_id = ${customerId})`,
         reminders: sql<number>`(select count(*)::int from reminders rm where rm.customer_id = ${customerId})`,
       })

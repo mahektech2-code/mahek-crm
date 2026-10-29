@@ -88,6 +88,12 @@ function Detail({
   if (o) {
     facts.push(["Order number", o.number ?? "Not numbered"]);
     facts.push(["Order date", o.orderedAt ? shortDate(o.orderedAt) : "—"]);
+    if (o.deliveredTo) {
+      facts.push([
+        "Delivered to",
+        customerHref ? <Link href={customerHref(o.deliveredTo.id)}>{o.deliveredTo.name}</Link> : o.deliveredTo.name,
+      ]);
+    }
     if (o.dispatchDate) facts.push(["Dispatched", shortDate(o.dispatchDate)]);
     facts.push([
       "Payment term",
