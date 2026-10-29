@@ -429,6 +429,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(labels.length, 1);
     assert.equal(labels[0].label.orderNo, line.orderNo, "the sticker carries the order, which is known before the bill");
     assert.equal(labels[0].label.lotSize, labels[0].copies, "the pieces on the whole order: one sticker each");
+    assert.equal(labels[0].label.qty, 1, "a loose line's sticker is on one can, so it says one can — not the line's seven");
     assert.equal(labels[0].stickers.length, 0, "reading the stickers gives no ids");
     const printed = await dispatchLabels(line.orderNo, admin.id);
     assert.equal(printed[0].stickers.length, printed[0].copies, "printing gives every copy its own sticker id and QR");

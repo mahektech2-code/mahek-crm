@@ -88,6 +88,12 @@ export type DispatchLabel = {
   area: string | null;
   billing: string;
   sku: string;
+  /**
+   * What is in the ONE piece this sticker goes on, in cans: a box's own cans
+   * on a boxed line, one can or drum otherwise. Not the order's total — the
+   * sticker is on a box, and "60 cans" on a box of four is a box a receiver
+   * counts as short. The order's size is "Box 3 of 15" and the lot size.
+   */
   qty: number;
   /** Box | Can | Drum. */
   type: string;
@@ -148,7 +154,12 @@ export function shortRef(id: string): string {
   return own.slice(0, 8).toUpperCase();
 }
 
-/** "12 cans", "1 can", "2 drums": what was ordered, in the unit the line is counted in. */
+/** What one dispatch sticker's piece holds: the cans in one box of a boxed line (boxes are always whole), else one can or drum. */
+export function pieceQty(type: string, qtyCans: number, boxes: number): number {
+  return type === "Box" && boxes > 0 ? Math.round(qtyCans / boxes) : 1;
+}
+
+/** "12 cans", "1 can", "2 drums": a quantity, in the unit the line is counted in. */
 export function orderQty(type: string, qty: number): string {
   const word = type === "Drum" ? "drum" : "can";
   return `${qty} ${word}${qty === 1 ? "" : "s"}`;
