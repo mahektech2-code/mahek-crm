@@ -3,7 +3,7 @@
     "name": "Mahek Factory",
     "slug": "mahek-factory",
     "owner": "dasabhinaba34",
-    "version": "2.1.1",
+    "version": "2.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -56,7 +56,15 @@
         }
       ],
       "./plugins/withReleaseSigning.js",
-      "./plugins/withNoForceDark.js"
+      "./plugins/withNoForceDark.js",
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false,
+          "microphonePermission": false
+        }
+      ]
     ],
     "extra": {
       "site": "https://one.mahekindia.com",
