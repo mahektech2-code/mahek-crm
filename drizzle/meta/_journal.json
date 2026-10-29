@@ -2045,6 +2045,13 @@
       "when": 1793606640000,
       "tag": "0294_customer_code",
       "breakpoints": true
+    },
+    {
+      "idx": 292,
+      "version": "7",
+      "when": 1793606700000,
+      "tag": "0295_dispatch_stickers",
+      "breakpoints": true
     }
   ]
 }

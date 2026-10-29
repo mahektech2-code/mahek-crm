@@ -12653,6 +12653,42 @@ export const erpDispatchOverrides = pgTable(
   ],
 );
 
+/**
+ * ONE ROW PER PRINTED DISPATCH STICKER. Its id is what the sticker's QR
+ * carries and what is printed under it to type when the QR will not read, so
+ * it is short, random and stable: printing the order again prints the same
+ * ids, a line given more boxes gains new ones and one given fewer cancels its
+ * last. Loading pairs each sticker with the box it is stuck on (`unit_id`) —
+ * an order with stickers is loaded by scanning both. An order printed before
+ * stickers had ids has no rows here, and loads as it always did.
+ */
+export const erpDispatchStickers = pgTable(
+  "erp_dispatch_stickers",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    orderNo: integer("order_no").notNull(),
+    /** Minted order within the LINE; the "3 of 10" printed is worked out across the order's live stickers. */
+    seq: integer("seq").notNull(),
+    /** active | cancelled. */
+    status: text("status").notNull().default("active"),
+    unitId: text("unit_id").references(() => erpUnits.id),
+    loadedAt: timestamp("loaded_at", { withTimezone: true }),
+    loadedById: text("loaded_by_id").references(() => users.id),
+    printedById: text("printed_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("erp_dispatch_stickers_line_seq_key").on(t.orderId, t.seq),
+    uniqueIndex("erp_dispatch_stickers_unit_key").on(t.unitId).where(sql`${t.unitId} is not null and ${t.status} = 'active'`),
+    index("erp_dispatch_stickers_order_no_idx").on(t.orderNo),
+    check("erp_dispatch_stickers_status_check", sql`${t.status} in ('active', 'cancelled')`),
+  ],
+);
+
 /* ---- ERP phase 5: logistics, requests, follow-up, petty cash, videos (spec §12–§13) ---- */
 
 /**

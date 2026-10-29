@@ -344,14 +344,29 @@ export type Lorry = {
   sent?: boolean;
 };
 
-export type LorryBox = { id: string; sku: string; lot: string };
+/** A box on the lorry, with the dispatch sticker it was paired with where its order has stickers. */
+export type LorryBox = { id: string; sku: string; lot: string; sticker?: string | null };
 export type LorryOverride = { id: string; unit: string; ordered: string; scanned: string; reason: string; status: string; by: string | null; mine: boolean; decidedBy: string | null; note: string | null };
-export type LorryBoard = { lorry: Lorry | null; boxes: LorryBox[]; overrides: LorryOverride[]; canDecide: boolean };
+/**
+ * An order on the lorry whose dispatch stickers carry ids: how many of its
+ * stickers are on, and the numbers of the ones still off — "missing 4, 9" is
+ * how a box left on the floor is found before the lorry goes.
+ */
+export type LorryStickers = { orderNo: number; party: string; total: number; loaded: number; missing: number[] };
+export type LorryBoard = { lorry: Lorry | null; boxes: LorryBox[]; overrides: LorryOverride[]; canDecide: boolean; stickers?: LorryStickers[] };
+
+/**
+ * HALF A PAIR. An order with dispatch stickers is loaded by scanning a box AND
+ * its sticker, in either order. The first of the two is held here — on the
+ * phone, sent back with the next scan — and the server says what it is
+ * waiting for. Nothing is written until both are in.
+ */
+export type LorryHalf = { kind: "box" | "sticker"; code: string; says: string };
 
 export type LorryScan =
   /* `stale`: the scan changed what the phone's factory data says (a lot allocated, a job made), and the phone fetches it in the background rather than the scan waiting for it. */
-  | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null; stale?: boolean }
-  | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null; repeat?: boolean };
+  | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null; stale?: boolean; half?: LorryHalf | null }
+  | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null; repeat?: boolean; half?: LorryHalf | null };
 
 /** A box scanned on Home: which lorries still need its item. */
 export type LorryFind =

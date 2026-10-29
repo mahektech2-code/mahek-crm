@@ -16,7 +16,7 @@ import { Platform } from "react-native";
 import type { ReactNode } from "react";
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { LorryBoard } from "@/lib/factory/types";
+import type { LorryBoard, LorryHalf } from "@/lib/factory/types";
 import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave, QcLot, ReqDept, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import type { DrumLotView, DrumSaved, LoadBoard, LrFields, LrRecent } from "@/lib/factory/types";
@@ -99,8 +99,10 @@ export type LorryUi = {
   /** A box scanned on Home that more than one lorry needs. */
   pick: { code: string; name: string; lorries: { key: string; name: string | null; need: number }[] } | null;
   busy: boolean;
+  /** A box or dispatch sticker scanned, waiting for its other half: an order with stickers loads by the pair. */
+  half: LorryHalf | null;
 };
-export const LORRY0: LorryUi = { board: null, res: null, ask: null, on: false, decline: null, pick: null, busy: false };
+export const LORRY0: LorryUi = { board: null, res: null, ask: null, on: false, decline: null, pick: null, busy: false, half: null };
 
 export type State = {
   lang: Lang;

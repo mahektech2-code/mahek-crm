@@ -50,11 +50,12 @@ import {
   taskName,
   typedCode,
   taskTarget,
+  stickerCode,
   type ScanMeta,
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LorryHalf, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
@@ -138,6 +139,8 @@ export class FactoryApp extends Component<Props, State> {
   /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
   private scanQ: string[] = [];
   private scanRunning = false;
+  /* The half of a box-and-sticker pair the next scan is sent with. Held here as well as in state: queued scans are sent back to back, before a render. */
+  private held: LorryHalf | null = null;
   private staleTimer: ReturnType<typeof setTimeout> | undefined;
   private ot: ReturnType<typeof setInterval> | undefined;
   private subs: { remove: () => void }[] = [];
@@ -880,7 +883,8 @@ export class FactoryApp extends Component<Props, State> {
     if (!sc || sc.res) return;
     if (st.lorry.res || st.lorry.pick || st.lorry.ask) return;
     if (sc.purpose === "load" && st.flow && isLorryTask(st.flow.task)) return this.lorryScanCode(code);
-    if (sc.purpose === "home" && st.me?.dispatch && boxCode(code)) return this.lorryFindCode(boxCode(code)!);
+    const findable = boxCode(code) ?? stickerCode(code);
+    if (sc.purpose === "home" && st.me?.dispatch && findable) return this.lorryFindCode(findable);
     if (sc.purpose === "lr") {
       const lr = st.lr;
       const no = code.trim().toUpperCase().slice(0, 40);
@@ -1503,6 +1507,12 @@ export class FactoryApp extends Component<Props, State> {
     this.setState((st) => ({ lorry: { ...st.lorry, ...p } }));
   }
 
+  /** The box or sticker now waiting for its other half — or none. */
+  setHalf(h: LorryHalf | null) {
+    this.held = h;
+    this.setLorry({ half: h });
+  }
+
   /** A board from the server: drawn, and the lorry's counts put back into the floor data the steps check. */
   applyLorry(key: string, board: LorryBoard | null, data?: FactoryData | null) {
     this.setState((st) => {
@@ -1522,6 +1532,7 @@ export class FactoryApp extends Component<Props, State> {
     if (!l) return this.toast("Nothing left for this transport. Pull down to refresh.", "warn");
     if (l.sent) return this.toast("Loaded and sent. The office verifies it now.");
     const running = l.task ? this.task(l.task) : undefined;
+    this.held = null;
     this.setState({ lorry: { ...LORRY0 } });
     if (running) this.startTask(running.id);
     else {
@@ -1561,13 +1572,19 @@ export class FactoryApp extends Component<Props, State> {
     const key = f.task.item!;
     this.setLorry({ busy: true });
     try {
-      const r = await call("lorryScan", key, code, f.task.id.startsWith(NEW_LORRY) ? null : f.task.id);
+      const r = await call("lorryScan", key, code, f.task.id.startsWith(NEW_LORRY) ? null : f.task.id, this.held?.code ?? null);
       this.applyLorry(key, r.board, r.ok ? r.data : null);
       if (r.task) this.adoptLorryJob(r.task, r.ok ? r.data : null);
       this.setLorry({ busy: false });
+      /* The server says which half, if any, the next scan goes with. */
+      this.setHalf(r.half ?? null);
       /* What went on is a band and a buzz; only a refusal stops the loader. */
       if (r.ok && r.stale) this.refreshSoon();
-      if (r.ok) this.fed(r.tone, r.code, r.title, r.message);
+      if (r.ok && r.half) {
+        buzz("ok");
+        const sc = this.state.scan;
+        if (sc) this.setState({ scan: { ...sc, res: null, typed: sc.typed != null ? "" : sc.typed, feed: undefined } });
+      } else if (r.ok) this.fed(r.tone, r.code, r.title, r.message);
       else if (r.repeat) this.fed("warn", r.code, "Already on — not counted again", r.text);
       else this.setLorry({ res: { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
     } catch (e) {
@@ -1684,7 +1701,8 @@ export class FactoryApp extends Component<Props, State> {
     const pending = (b?.overrides ?? []).filter((o) => o.status === "Pending").length;
     return (
       <Div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <Btn onClick={() => this.openScan("load")} style={{ ...btn("p", 60), display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }}>{ic("qr", 26, "#FFFFFF")}Scan a box or lot label</Btn>
+        <Btn onClick={() => this.openScan("load")} style={{ ...btn("p", 60), display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }}>{ic("qr", 26, "#FFFFFF")}{this.lorryStickered() ? "Scan box and sticker" : "Scan a box or lot label"}</Btn>
+        {this.lorryStickered() && <MsgBox m={msg("Orders with QR dispatch stickers: scan each box and the dispatch sticker on it, either one first.", "info")} />}
         <Div>
           <Div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
             <Span style={{ fontSize: "16px", fontWeight: 700 }}>{nf(l.loaded) + " of " + nf(l.target) + " loaded"}</Span>
@@ -1710,6 +1728,25 @@ export class FactoryApp extends Component<Props, State> {
             );
           })}
         </Div>
+        {!!b?.stickers?.length && (
+          <Div style={{ ...card, padding: "4px 14px" }}>
+            <Div style={{ fontSize: "15px", fontWeight: 700, padding: "12px 0 6px 0" }}>Dispatch stickers</Div>
+            {b.stickers.map((x) => {
+              const done = x.loaded >= x.total;
+              const left = x.missing.length > 8 ? x.missing.slice(0, 8).join(", ") + " +" + (x.missing.length - 8) : x.missing.join(", ");
+              return (
+                <Div key={x.orderNo} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 0", borderTop: "1px solid #F3F4F7" }}>
+                  <Span style={{ width: "28px", height: "28px", flex: "none", borderRadius: "50%", background: done ? "#E9F5EE" : "#F7F8FA", display: "flex", alignItems: "center", justifyContent: "center" }}>{done ? ic("check", 16, "#1D7A45") : null}</Span>
+                  <Span style={{ flex: 1, minWidth: 0 }}>
+                    <Span style={{ display: "block", fontSize: "16px", lineHeight: "21px", fontWeight: 700 }}>{"Order " + x.orderNo + (x.party ? " · " + x.party : "")}</Span>
+                    <Span style={{ display: "block", fontSize: "13px", lineHeight: "18px", marginTop: "2px", color: done ? "#1D7A45" : "#8A5C05" }}>{done ? "Every sticker is on" : "Still off: " + left}</Span>
+                  </Span>
+                  <Span style={{ fontSize: "16px", fontWeight: 700, whiteSpace: "nowrap", color: done ? "#1D7A45" : "#1A1E28" }}>{x.loaded + " / " + x.total}</Span>
+                </Div>
+              );
+            })}
+          </Div>
+        )}
         <Btn onClick={() => this.setLorry({ on: true })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minHeight: "56px", padding: "12px 14px", background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px", textAlign: "left", cursor: "pointer" }}>
           <Span style={{ flex: 1, fontSize: "16px", fontWeight: 700 }}>{"On the lorry (" + (b?.boxes.length ?? 0) + ")"}</Span>
           {pending > 0 && <Span style={{ fontSize: "13px", fontWeight: 700, color: "#8A5C05" }}>{pending + " override" + (pending > 1 ? "s" : "") + " waiting"}</Span>}
@@ -1741,7 +1778,7 @@ export class FactoryApp extends Component<Props, State> {
               <Div key={x.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #F3F4F7" }}>
                 <Span style={{ flex: 1, minWidth: 0 }}>
                   <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600 }}>{x.id}</Span>
-                  <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{x.sku + " · lot " + x.lot}</Span>
+                  <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{x.sku + " · lot " + x.lot + (x.sticker ? " · sticker " + x.sticker : "")}</Span>
                 </Span>
                 <Btn onClick={() => void this.lorryUnloadBox(x.id)} style={{ height: "40px", padding: "0 14px", borderRadius: "20px", border: "none", background: "#FCECEC", color: "#B3261E", fontSize: "14px", fontWeight: 700, cursor: "pointer", flex: "none" }}>Take off</Btn>
               </Div>
@@ -1779,6 +1816,39 @@ export class FactoryApp extends Component<Props, State> {
         <Div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "10px 16px 16px 16px" }}>
           <Btn onClick={close} style={btn("s", 56)}>Back to loading</Btn>
         </Div>
+      </Div>
+    );
+  }
+
+  /** Whether any order on this lorry has dispatch stickers with ids: those load by box and sticker. */
+  lorryStickered(): boolean {
+    return !!this.state.lorry.board?.stickers?.length;
+  }
+
+  /**
+   * Half a pair, over the camera: which of the two is read, which is wanted
+   * next, and a way to drop it — the wrong box picked up is put down, not
+   * forced through.
+   */
+  renderHalf(h: LorryHalf): ReactNode {
+    const step = (on: boolean, done: boolean, label: string): ReactNode => (
+      <Span style={{ display: "flex", alignItems: "center", gap: "6px", padding: "5px 10px", borderRadius: "14px", fontSize: "14px", fontWeight: 700, background: done ? "rgba(255,255,255,0.22)" : on ? "#FFFFFF" : "rgba(255,255,255,0.10)", color: on && !done ? "#6835FB" : "#FFFFFF" }}>
+        {done ? ic("check", 15, "#FFFFFF") : null}
+        {label}
+      </Span>
+    );
+    const boxFirst = h.kind === "box";
+    return (
+      <Div key={h.code} style={{ flex: "none", margin: "0 12px 4px 12px", borderRadius: "18px", background: "#6835FB", color: "#FFFFFF", padding: "12px 14px 14px 16px", position: "relative", zIndex: 2, animation: "fx-up 160ms cubic-bezier(0.2,0,0.2,1)" }}>
+        <Div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {step(boxFirst, boxFirst, "Box")}
+          <Span style={{ opacity: 0.7 }}>{ic("chev", 16, "#FFFFFF")}</Span>
+          {step(!boxFirst, !boxFirst, "Dispatch sticker")}
+          <Span style={{ flex: 1 }} />
+          <Btn onClick={() => this.setHalf(null)} style={{ height: "36px", padding: "0 14px", borderRadius: "18px", border: "1.5px solid rgba(255,255,255,0.5)", background: "transparent", color: "#FFFFFF", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>Cancel</Btn>
+        </Div>
+        <Div style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 800, marginTop: "10px" }}>{h.says}</Div>
+        <Div style={{ ...mono, fontSize: "14px", fontWeight: 600, marginTop: "2px", opacity: 0.85 }}>{(boxFirst ? "Box " : "Sticker ") + h.code}</Div>
       </Div>
     );
   }
@@ -3836,7 +3906,7 @@ export class FactoryApp extends Component<Props, State> {
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? taskName(this.db(), f.task)) : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order, lot or box label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box as it goes on", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order, lot or box label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: this.lorryStickered() ? "Scan each box and its dispatch sticker" : "Scan each box as it goes on", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1 && !(P === "load" && f && isLorryTask(f.task));
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (DEV || st.cam === "none") ? this.scanLabels() : [];
@@ -3850,7 +3920,7 @@ export class FactoryApp extends Component<Props, State> {
           <Span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</Span>
           {typing ? <Span style={{ width: "48px", height: "48px", flex: "none" }} /> : <Btn onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</Btn>}
         </Div>
-        {P === "load" && !!sc.feed && this.renderFeed(sc.feed)}
+        {P === "load" && (st.lorry.half ? this.renderHalf(st.lorry.half) : !!sc.feed && this.renderFeed(sc.feed))}
         {typing ? this.renderTyping(labels) : (
           <>
         <Div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>

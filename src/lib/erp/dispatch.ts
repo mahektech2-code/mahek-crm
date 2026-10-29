@@ -9,6 +9,7 @@ import { allocationTarget, boxQuantity } from "./engines/sales";
 import { looksLikeUnitId, lotScanVerdict, normaliseCode, packLabel, scanGate, scanVerdict, type ScanLine, type ScanLot, type ScanUnit, type ScanVerdict, type UnitStatus } from "./engines/trace";
 import { fgLots, lockLot, packLots, type Ex } from "./stock";
 import { unitEvent } from "./units";
+import { releaseSticker } from "./dispatch-stickers";
 import { inTx, refuse, type Tx } from "./screens/common";
 
 /* ---------------------------------------------------------------------------
@@ -404,7 +405,17 @@ async function scanLotOntoOrder(ctx: ErpContext, orderNo: number, code: string):
  * the unit's row lock and the lots' locks, so two people scanning one box at
  * two desks cannot both count it.
  */
-export async function scanOntoOrder(ctx: ErpContext, orderNo: number, raw: string): Promise<Result<ScanAnswer>> {
+export async function scanOntoOrder(
+  ctx: ErpContext,
+  orderNo: number,
+  raw: string,
+  /**
+   * A dispatch sticker scanned with the box: the box is judged against the
+   * sticker's line alone, and the sticker is paired with it in the same
+   * transaction that puts it on — so one sticker never goes on two boxes.
+   */
+  sticker?: { id: string; lineId: string },
+): Promise<Result<ScanAnswer>> {
   const code = normaliseCode(raw);
   if (!code) return fieldErr("code", "Scan or type a box id");
   if (!looksLikeUnitId(code)) return scanLotOntoOrder(ctx, orderNo, code);
@@ -412,8 +423,10 @@ export async function scanOntoOrder(ctx: ErpContext, orderNo: number, raw: strin
   let logged: { result: string; message: string; unit: string | null; order: string | null } | null = null;
   const res = await inTx(async (tx) => {
     const unit = await unitFor(tx, code, true);
-    const lines = await scanLines(tx, orderNo);
-    if (!lines.length) return refuse(err(`There is no order ${orderNo}.`, "not_found"));
+    const all = await scanLines(tx, orderNo);
+    if (!all.length) return refuse(err(`There is no order ${orderNo}.`, "not_found"));
+    const lines = sticker ? all.filter((l) => l.id === sticker.lineId) : all;
+    if (!lines.length) return refuse(err(`Sticker ${sticker!.id} is not for a line of order ${orderNo}.`, "not_found"));
     const approved = unit
       ? (await q<{ id: string; line: string }>(tx, sql`select id, order_id as line from erp_dispatch_overrides where unit_id = ${unit.id} and order_id in ${lines.map((l) => l.id)} and status = 'Approved' limit 1`))[0]
       : undefined;
@@ -449,6 +462,12 @@ export async function scanOntoOrder(ctx: ErpContext, orderNo: number, raw: strin
         `);
       }
     }
+    if (sticker) {
+      const claimed = (await tx.execute(sql`
+        update erp_dispatch_stickers set unit_id = ${u.id}, loaded_at = now(), loaded_by_id = ${ctx.user.id}
+         where id = ${sticker.id} and status = 'active' and unit_id is null returning id`)) as unknown as unknown[];
+      if (!claimed.length) return refuse(err(`Sticker ${sticker.id} is already on another box.`, "conflict"));
+    }
     await tx.execute(sql`update erp_units set status = 'scanned', order_id = ${line.id}, scanned_at = now(), scanned_by_id = ${ctx.user.id}, updated_at = now() where id = ${u.id}`);
     await unitEvent(tx, { unitId: u.id, event: "scanned", from: "available", to: "scanned", orderId: line.id, godownId: u.godownId, note: `Order ${orderNo}${verdict.allocation === "swap" ? " · lot swapped in" : verdict.allocation === "allocate" ? " · lot allocated by scan" : ""}`, byId: ctx.user.id });
     if (verdict.substituted && approved) {
@@ -474,6 +493,8 @@ export async function unscanUnit(ctx: ErpContext, unitId: string): Promise<Resul
     if (!u) return refuse(err("No such box.", "not_found"));
     if (u.status !== "scanned") return refuse(err(u.status === "dispatched" ? "That box has been dispatched." : "That box is not scanned onto an order.", "rule_violation"));
     await tx.execute(sql`update erp_units set status = 'available', order_id = null, scanned_at = null, scanned_by_id = null, updated_at = now() where id = ${u.id}`);
+    /* Its dispatch sticker is free again: the box that goes on in its place is paired with it. */
+    await releaseSticker(tx, u.id);
     await unitEvent(tx, { unitId: u.id, event: "unscanned", from: "scanned", to: "available", orderId: u.orderId, godownId: u.godownId, note: `Taken off order ${u.orderNo}`, byId: ctx.user.id });
     await erpAudit(ctx, "erp.dispatch.unscan", "erp_unit", u.id, { orderNo: u.orderNo }, null);
     return okVoid(`${u.id} taken off order ${u.orderNo}`);
