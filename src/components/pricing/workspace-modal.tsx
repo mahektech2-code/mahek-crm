@@ -17,6 +17,7 @@
 import * as React from "react";
 import { cx } from "@/components/ui/primitives";
 import { BodyPortal } from "@/components/ui/body-portal";
+import { useEscape } from "@/components/ui/modal";
 
 export function WorkspaceModal({
   title,
@@ -43,22 +44,24 @@ export function WorkspaceModal({
   maxWidth?: number;
   bodyClassName?: string;
 }) {
+  /*
+   * On the shared Escape stack rather than a window listener of its own, so a
+   * list opened inside the workspace — a ComboBox's options — takes Escape and
+   * the workspace behind it stays open. A dialog opened on top of this one
+   * owns the key too; closing the workspace underneath it would throw away
+   * the work to dismiss a picker.
+   */
+  useEscape(() => {
+    if (document.querySelectorAll('[role="dialog"]').length > 1) return;
+    onRequestClose();
+  });
   React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // A dialog opened on top of this one owns the Escape key; closing the
-      // workspace underneath it would throw away the work to dismiss a picker.
-      if (document.querySelectorAll('[role="dialog"]').length > 1) return;
-      onRequestClose();
-    };
-    window.addEventListener("keydown", handler);
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      window.removeEventListener("keydown", handler);
       document.body.style.overflow = previous;
     };
-  }, [onRequestClose]);
+  }, []);
 
   return (
     <BodyPortal>

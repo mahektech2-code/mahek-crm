@@ -32,7 +32,7 @@ import type { PriceDerivation, PriceListStatus } from "@/db/schema";
 import { checkSheet, copyName, printedDate, type PriceSheet, type SheetCheck } from "@/lib/price-sheet";
 import { savePriceSheet } from "@/lib/actions/price-sheets";
 import {
-  addFamilies,
+  catalogueSheet,
   blankSheet,
   deriveSheet,
   sheetFromProductCells,
@@ -86,6 +86,9 @@ function toEditorScopes(scopes: ScopeView[]): EditorScope[] {
     label: s.scopeLabel ?? s.scopeValue,
     parentKey: s.parentKey,
     freightTermMatch: s.freightTermMatch,
+    priority: s.priority,
+    validFrom: s.validFrom,
+    validTo: s.validTo,
   }));
 }
 
@@ -208,7 +211,7 @@ function EditorBody({
       if (choice.source === "blank") {
         reset(base);
       } else if (choice.source === "catalogue") {
-        reset(addFamilies(base, familiesOf(products.filter((p) => p.active))));
+        reset(catalogueSheet(base, familiesOf(products.filter((p) => p.active))));
       } else if (choice.source === "csv") {
         reset({ ...sheetFromProductCells(base, choice.cells, products), name: choice.filename.replace(/\.[a-z0-9]+$/i, "") });
       } else {
@@ -313,7 +316,16 @@ function EditorBody({
           listId,
           sheet,
           notes,
-          scopes: scopes.map((s) => ({ kind: s.kind, value: s.value, label: s.label, parentKey: s.parentKey, freightTermMatch: s.freightTermMatch })),
+          scopes: scopes.map((s) => ({
+            kind: s.kind,
+            value: s.value,
+            label: s.label,
+            parentKey: s.parentKey,
+            freightTermMatch: s.freightTermMatch,
+            priority: s.priority ?? 0,
+            validFrom: s.validFrom ?? null,
+            validTo: s.validTo ?? null,
+          })),
           parentListId,
           derivation,
           publish: publish ? { supersedesId: supersedesId || null } : null,

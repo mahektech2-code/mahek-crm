@@ -116,6 +116,11 @@ export type SheetProduct = {
 
 /* ------------------------------------------------------------------ packs */
 
+/** How many pack columns fit across one page. The save refuses more, and the review says how to get under it. */
+export const MAX_SHEET_COLUMNS = 24;
+
+export const TOO_MANY_COLUMNS = `A sheet holds at most ${MAX_SHEET_COLUMNS} pack sizes across the page. Use Tidy → “Remove pack columns with no prices”, or remove the pack columns this list does not sell.`;
+
 export function containerOf(p: Pick<SheetProduct, "name" | "packing">): Container {
   const name = p.name.toLowerCase();
   const packing = (p.packing ?? "").toLowerCase();
@@ -527,6 +532,9 @@ export function checkSheet(
     checks.push({ level: "block", code: "date", message: "The effective date is not a date." });
   }
   if (!rates.length) checks.push({ level: "block", code: "empty", message: "No cell has a price yet. A list with no prices is not a list." });
+  if (sheet.columns.length > MAX_SHEET_COLUMNS) {
+    checks.push({ level: "block", code: "columns", message: `${sheet.columns.length} pack sizes. ${TOO_MANY_COLUMNS}` });
+  }
   if (!sheet.refNo?.trim()) checks.push({ level: "warn", code: "ref", message: "No reference number. Every list the office sends carries one." });
   if (!sheet.deliveryBasis) checks.push({ level: "warn", code: "delivery", message: "The header does not say where prices are delivered to." });
   if (sheet.freightTerm === "not_stated") checks.push({ level: "warn", code: "freight", message: "It does not say who pays the transport." });
@@ -616,6 +624,18 @@ export function checkSheet(
   return checks;
 }
 
+/**
+ * The blocking half of `checkSheet`, asked on the SERVER before a list goes
+ * into force. The review page refuses a ₹0 cell, an unnamed list and an empty
+ * one; a check that lives only in a browser is not a check, because a server
+ * action is a URL. Null where nothing blocks.
+ */
+export function publishRefusal(sheet: PriceSheet): string | null {
+  const blocks = checkSheet(sheet, { todayIso: sheet.effectiveFrom }).filter((c) => c.level === "block");
+  if (!blocks.length) return null;
+  return `It cannot be put in force yet: ${blocks.map((b) => b.message).join(" ")}`;
+}
+
 /* ------------------------------------------------------------------- CSV */
 
 export const CSV_HEADERS = [
@@ -692,6 +712,8 @@ export function csvToCells(
   };
   const cells: CsvImport["cells"] = [];
   const unmatched: CsvImport["unmatched"] = [];
+  const mixed = mixedListsRefusal(rows, products, pick);
+  if (mixed) throw new Error(mixed);
   rows.forEach((r, i) => {
     const line = i + 2;
     const idText = pick(r, "Product ID", "product_id", "id", "sku");
@@ -717,6 +739,39 @@ export function csvToCells(
     cells.push({ productId: product.id, printedPaise: notOffered ? null : printed, offered: !notOffered, printedName: pick(r, "Printed name") || null });
   });
   return { cells, unmatched, read: rows.length };
+}
+
+/**
+ * An export of several lists is one row per product PER LIST, so reading it
+ * into one sheet would let whichever list came last win every product and
+ * nothing would say so. Refused, naming the lists, where one product carries
+ * more than one List value. A file with no List column, or one list in it, is
+ * fine.
+ */
+function mixedListsRefusal(
+  rows: Array<Record<string, string>>,
+  products: SheetProduct[],
+  pick: (r: Record<string, string>, ...names: string[]) => string,
+): string | null {
+  const byKey = new Map(products.map((p) => [matchKey(p.name), p.id]));
+  const listsOf = new Map<string, Set<string>>();
+  const allLists = new Set<string>();
+  for (const r of rows) {
+    const list = pick(r, "List");
+    if (!list) continue;
+    const idText = pick(r, "Product ID", "product_id", "id", "sku");
+    const nameText = pick(r, "Product", "SKU name", "name", "product name");
+    const product = idText || (nameText ? (byKey.get(matchKey(nameText)) ?? `name:${matchKey(nameText)}`) : "");
+    if (!product) continue;
+    allLists.add(list);
+    const seen = listsOf.get(product) ?? new Set<string>();
+    seen.add(list);
+    listsOf.set(product, seen);
+  }
+  if (![...listsOf.values()].some((s) => s.size > 1)) return null;
+  const names = [...allLists];
+  const shown = names.slice(0, 3).map((n) => `“${n}”`).join(", ") + (names.length > 3 ? ` and ${names.length - 3} more` : "");
+  return `This file holds ${names.length} price lists (${shown}), and the same product is priced on more than one of them. One sheet is one list — export a single list, or delete the other lists' rows, and read it in again.`;
 }
 
 /* -------------------------------------------------------------- read back */

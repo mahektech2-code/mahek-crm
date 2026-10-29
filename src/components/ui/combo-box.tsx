@@ -165,7 +165,9 @@ export function ComboBox({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      /* Closed by the Escape stack above, which also keeps the dialog behind it open. */
+      /* Closed by the Escape stack above, which also keeps the dialog behind it open.
+         The stack listens on window, so the key is NOT stopped here — a
+         workspace behind this field is on the same stack and stays open. */
       if (open) e.preventDefault();
       return;
     }
