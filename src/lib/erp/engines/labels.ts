@@ -296,6 +296,10 @@ export function partyPt(name: string): number {
   if (pt !== two[two.length - 1] || boldLines(name, pt, 50 * 0.96) <= 2) return pt;
   return fitPt(name, 50, [12, 11, 10], 3);
 }
+/** A box's id under its 24 mm QR on the box label, bold and as wide as the QR — what is typed when the QR is scuffed. */
+export const boxIdPt = (id: string) => fitPt(id, 25, [8, 7.5, 7, 6.5, 6]);
+/** A dispatch sticker's id under its 18 mm QR, as wide as the QR: 10 pt for six digits, smaller for a wide letter id. */
+export const stickerIdPt = (id: string) => fitPt(id, 19, [10, 9.5, 9, 8.5, 8, 7.5, 7]);
 /** "Billed to …" under the party: one line across the label at the largest size that holds it, two small ones where none does. */
 export const billedPt = (billing: string) => fitPt(`Billed to ${billing}`, 72, [8, 7.5, 7, 6.5]);
 /** The goods on a dispatch label: two lines across the label. */

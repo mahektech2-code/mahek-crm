@@ -1,5 +1,6 @@
 import {
   boxFoot,
+  boxIdPt,
   boxNameFit,
   labelDate,
   labelNumber,
@@ -8,6 +9,7 @@ import {
   partyPt,
   billedPt,
   pieceWord,
+  stickerIdPt,
   purchaseLotPt,
   purchaseNamePt,
   sfgLotPt,
@@ -80,7 +82,9 @@ export function BoxLabelView({ l, qr }: { l: BoxLabel; qr: Qr }) {
       <div className="top">
         <div className="code">
           <QrCode qr={qr} mm={24} label={`QR code for ${l.id}`} />
-          <div className="mono">{l.id}</div>
+          <div className="id" style={pt(boxIdPt(l.id))}>
+            {l.id}
+          </div>
         </div>
         <div className="head">
           <div className="brand">MAHEK</div>
@@ -235,7 +239,9 @@ export function DispatchLabelView({ l, qr, lineId, copy }: { l: DispatchLabel; q
         {s && qr ? (
           <div className="code">
             <QrCode qr={qr} mm={18} label={`QR code for dispatch sticker ${s.id}`} />
-            <div className="mono id">{s.id}</div>
+            <div className="id" style={pt(stickerIdPt(s.id))}>
+              {s.id}
+            </div>
           </div>
         ) : null}
       </div>

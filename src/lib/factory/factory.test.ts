@@ -603,8 +603,11 @@ describe("dispatch", () => {
   });
 
   test("an order with dispatch stickers loads by box AND sticker, either first; the sticker pins the line and goes on one box only", async () => {
-    assert.equal(stickerCode("ds 7k3qx9"), "DS-7K3QX9", "typed off the sticker: any case, with or without the dash");
-    assert.equal(stickerCode("DS-7K3QX0"), null, "no 0, O, 1, I or L in an id");
+    assert.equal(stickerCode("ds 234567"), "DS-234567", "typed off the sticker: any case, with or without the dash");
+    assert.equal(stickerCode("DS234567"), "DS-234567");
+    assert.equal(stickerCode("DS-23456"), null, "six digits, no fewer");
+    assert.equal(stickerCode("ds 7k3qx9"), "DS-7K3QX9", "the first stickers' letter ids still read");
+    assert.equal(stickerCode("DS-7K3QX0"), null, "a letter id has no 0, O, 1, I or L");
     const { fc } = await as("imran");
     const [ln] = await q<{ id: string; no: number; sku: string; boxed: boolean; cpb: number; from: string; lot: string; godown: string; fg: string | null }>(sql`
       select o.id, o.order_no as no, o.sku_id as sku, coalesce(pk.empty_boxes_required, 0) > 0 as boxed, coalesce(p.cans_per_box, 1) as cpb,

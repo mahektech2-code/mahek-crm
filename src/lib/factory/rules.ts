@@ -44,18 +44,15 @@ export function boxCode(raw: string): string | null {
 }
 
 /**
- * The letters a dispatch sticker's id is made of: no 0/O, 1/I/L, so one typed
- * off a scuffed sticker is never two ids apart.
- */
-export const STICKER_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-
-/**
- * A dispatch sticker (DS-7K3QX9), as scanned or as typed off the sticker —
- * with or without its dash, any case, spaces dropped — or null.
+ * A dispatch sticker (DS-234567), as scanned or as typed off the sticker —
+ * with or without its dash, any case, spaces dropped — or null. Six digits,
+ * because digits are what a loader reads aloud and types on a phone's number
+ * pad. The first stickers were minted as six letters (DS-7K3QX9, no 0/O/1/I/L)
+ * and a reprint keeps a sticker's id, so those still read.
  */
 export function stickerCode(raw: string): string | null {
   const s = String(raw ?? "").replace(/\s+/g, "").toUpperCase();
-  const m = /^DS-?([2-9A-HJKMNP-Z]{6})$/.exec(s);
+  const m = /^DS-?(\d{6}|[2-9A-HJKMNP-Z]{6})$/.exec(s);
   return m ? "DS-" + m[1] : null;
 }
 

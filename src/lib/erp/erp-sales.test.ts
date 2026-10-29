@@ -433,7 +433,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(labels[0].stickers.length, 0, "reading the stickers gives no ids");
     const printed = await dispatchLabels(line.orderNo, admin.id);
     assert.equal(printed[0].stickers.length, printed[0].copies, "printing gives every copy its own sticker id and QR");
-    assert.ok(printed[0].stickers.every((x, i) => /^DS-[2-9A-HJKMNP-Z]{6}$/.test(x.label.sticker!.id) && x.label.sticker!.pos === i + 1 && x.label.sticker!.of === printed[0].copies));
+    assert.ok(printed[0].stickers.every((x, i) => /^DS-[1-9]\d{5}$/.test(x.label.sticker!.id) && x.label.sticker!.pos === i + 1 && x.label.sticker!.of === printed[0].copies));
     const again = await dispatchLabels(line.orderNo, admin.id);
     assert.deepEqual(again[0].stickers.map((x) => x.label.sticker!.id), printed[0].stickers.map((x) => x.label.sticker!.id), "printed again: the same ids");
     assert.ok((await a.stickers(ctx, line.id, {})).ok);
