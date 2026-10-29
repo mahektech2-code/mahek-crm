@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { orderTraceCode } from "../trace-links";
 import { db } from "@/db";
+import { listedTransporterName, transporterChoices } from "../transporter-rename";
 import {
   bills,
   complaints,
@@ -205,7 +206,7 @@ async function issueDebitNote(tx: Tx, ctx: ErpContext, r: VendorRow): Promise<nu
   return noteNo;
 }
 
-function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[]): ActionSpec[] {
+function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[], carriers: string[]): ActionSpec[] {
   const stage = vStage(r);
   const can = approves(ctx);
   const own = r.requesterId === ctx.user.id && !ctx.administrator;
@@ -239,7 +240,7 @@ function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[]): A
         fields: [
           { k: "godown", l: "From godown", t: "select", req: true, opts: stockGodowns },
           { k: "date", l: "Dispatch date", t: "date", req: true },
-          { k: "transporter", l: "Transporter", t: "text" },
+          { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "From ERP → Logistics → Transporters." },
           { k: "vehicle", l: "Vehicle number", t: "text" },
           { k: "lr", l: "LR / transport details", t: "text" },
           { k: "packing", l: "Packing details", t: "text", hint: "Drums, cans, bags…" },
@@ -292,7 +293,7 @@ async function vendorForm(ctx: ErpContext) {
 const vendorReturns: ScreenModule = {
   key: "vendorReturns",
   async load(ctx, s) {
-    const [rows, lots] = await Promise.all([vendorRows(), rmLots()]);
+    const [rows, lots, carriers] = await Promise.all([vendorRows(), rmLots(), transporterChoices()]);
     const stockAt = (lot: string) => lots.filter((l) => l.lotNo === lot && l.stock > 0).map((l) => l.godown);
     const money = seesMoney(ctx);
     const cols: ColSpec[] = [
@@ -344,7 +345,7 @@ const vendorReturns: ScreenModule = {
           title: `${purchaseReturnLabel(r.no)} · ${r.item}`,
           header: `${r.supplier} · lot ${r.lot} · ${VENDOR_STAGE_LABEL[stage]}`,
           fields,
-          actions: vendorActions(ctx, r, stockAt(r.lot)),
+          actions: vendorActions(ctx, r, stockAt(r.lot), carriers),
           by: stampLine(r.requester, r.createdAt),
           panel: { kind: "returnFlow", data: { steps: ["Purchase return", "Approval", "Debit note", "Return outward", "Confirmed · stock minus"], step: stage === "awaiting_approval" || stage === "awaiting_owner" ? 1 : stage === "to_dispatch" ? 3 : stage === "outward_drafted" ? 3 : stage === "dispatched" ? 5 : 0, stopped: stage === "cancelled" || stage === "rejected" ? VENDOR_STAGE_LABEL[stage] : null } },
         };
@@ -423,6 +424,8 @@ const vendorReturns: ScreenModule = {
       if (!godownId) return fieldErr("godown", "Choose the godown the goods leave from.");
       const date = text(v.date);
       if (!date) return fieldErr("date", "Enter the dispatch date.");
+      const carrier = await listedTransporterName(db, text(v.transporter));
+      if (!carrier.ok) return fieldErr("transporter", carrier.error);
       const outId = erpId("ero");
       const res = await inTx(async (tx) => {
         const [r] = await vendorRows(sql`r.id = ${id}`, tx);
@@ -441,7 +444,7 @@ const vendorReturns: ScreenModule = {
             unit: r.unit,
             stockQty: r.stockQty,
             packing: text(v.packing),
-            transporter: text(v.transporter),
+            transporter: carrier.name,
             vehicleNo: text(v.vehicle),
             lrNo: text(v.lr),
             dispatchDate: date,
@@ -867,7 +870,7 @@ async function customerForm() {
       { k: "qty", l: "Return quantity", t: "num", req: true, min: 1, hint: "Whole cans, or whole boxes on a boxed line." },
       { k: "reason", l: "Return reason", t: "select", req: true, opts: CUSTOMER_REASON_LABELS },
       { k: "remarks", l: "Customer remarks", t: "area", mic: true, wide: true },
-      { k: "transporter", l: "Transporter", t: "text", sec: "Transport" },
+      { k: "transporter", l: "Transporter", t: "suggest", opts: await transporterChoices(), sec: "Transport", hint: "From ERP → Logistics → Transporters." },
       { k: "vehicle", l: "Vehicle number", t: "text" },
       { k: "lr", l: "LR / transport details", t: "text" },
       { k: "photo", l: "Photo / document", t: "photo" },
@@ -1269,6 +1272,8 @@ const customerReturns: ScreenModule = {
       if (refusal) return fieldErr("qty", refusal);
       const reason = reasonByLabel(h.reason ?? "", "customer");
       if (!reason) return fieldErr("reason", "Choose a reason.");
+      const carrier = await listedTransporterName(db, text(h.transporter));
+      if (!carrier.ok) return fieldErr("transporter", carrier.error);
       const litres = returnLitres({ qty, lotFrom: line.lotFrom, cansPerBox: line.cansPerBox, millilitres: line.millilitres });
       const v = returnValue({ qty: valuedQty(line, qty), ratePaise: line.ratePaise, gstBp: line.gstBp, discountBp: line.discountBp });
       const id = erpId("ecr");
@@ -1294,7 +1299,7 @@ const customerReturns: ScreenModule = {
           totalPaise: v?.totalPaise ?? null,
           reasonCode: reason,
           customerRemarks: text(h.remarks),
-          transporter: text(h.transporter),
+          transporter: carrier.name,
           vehicleNo: text(h.vehicle),
           lrNo: text(h.lr),
           createdById: ctx.actor.id,

@@ -108,6 +108,8 @@ before(async () => {
     { userId: head.id, power: "viewPurchaseMoney", grantedById: admin.id },
   ]);
 
+  await db.execute(sql`insert into erp_transporters (id, name) values ('etr_returns_shree', 'Shree Roadways') on conflict do nothing`);
+
   /* A raw-material lot of 100 L at ₹100 a litre + 18% GST, all on the shelf. */
   await db.insert(erpSuppliers).values({ id: "sup_a", name: "Solvent Supplier A", partyCode: "SA" });
   await db.insert(erpRawMaterials).values({ id: "rm_tol", serialNo: 1, name: "Toluene", code: "TOL", unit: "Litre", materialType: "Chemical" });
@@ -170,7 +172,9 @@ describe("vendor side", () => {
   test("stock leaves only when the outward is confirmed, and a reversal gives it back", async () => {
     const [ret] = await db.select().from(erpPurchaseReturns).where(eq(erpPurchaseReturns.lotNo, "SA-TOL-1"));
     const h = await as(head);
-    const prep = await mod("vendorReturns").actions!.prepareOutward(h, ret.id, { godown: "Bhiwandi", date: "2026-10-02", transporter: "Shree Roadways", vehicle: "MH04 1234" });
+    const unlisted = await mod("vendorReturns").actions!.prepareOutward(h, ret.id, { godown: "Bhiwandi", date: "2026-10-02", transporter: "Some Tempo", vehicle: "MH04 1234" });
+    assert.match(msg(unlisted), /"Some Tempo" is not on the transporter list/, "the transporter comes from ERP → Logistics → Transporters");
+    const prep = await mod("vendorReturns").actions!.prepareOutward(h, ret.id, { godown: "Bhiwandi", date: "2026-10-02", transporter: "shree roadways", vehicle: "MH04 1234" });
     assert.ok(prep.ok, msg(prep));
     assert.equal(await stockOf("SA-TOL-1"), 100, "a prepared outward changes nothing");
     const conf = await mod("vendorReturns").actions!.confirmOutward(h, ret.id, {});
