@@ -12749,7 +12749,16 @@ export const erpTransports = pgTable(
     deliveredById: text("delivered_by_id").references(() => users.id),
     /** A proof or reference for the delivery — a POD number, who signed, a photo's name. */
     deliveryProof: text("delivery_proof"),
-    /** 0296: a Mahek Vehicle delivery's customer-signed copy (an `erp_lrs` row of kind signed_copy). */
+    /** 0296 — the transporter's godown or booking office the LR left from, as said on the call. */
+    dispatchedFrom: text("dispatched_from"),
+    /** The last city the transporter said the goods reached; every city is an `erp_transport_events` row with `city`. */
+    currentCity: text("current_city"),
+    /** The city it is going to. Null: read the LR's own destination. */
+    destination: text("destination"),
+    /** Ready for pickup: where the party collects it, and whom to ask there. */
+    pickupPoint: text("pickup_point"),
+    pickupContact: text("pickup_contact"),
+    /** 0297: a Mahek Vehicle delivery's customer-signed copy (an `erp_lrs` row of kind signed_copy). */
     signedCopyId: text("signed_copy_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -12795,7 +12804,7 @@ export const erpLrs = pgTable(
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
     assignedById: text("assigned_by_id").references(() => users.id),
     assignedAt: timestamp("assigned_at", { withTimezone: true }),
-    /* ---- 0296: delivery proof. See "## Delivery proof" in AGENTS.md. ---- */
+    /* ---- 0297: delivery proof. See "## Delivery proof" in AGENTS.md. ---- */
     /** lr | signed_copy — a customer-signed delivery copy is uploaded, read and checked by the same desk. */
     kind: text("kind").notNull().default("lr"),
     /** What the AI read off the photo, kept even where it was not written into `lr_no` (unsure, or already on another LR) — the duplicate check reads it. */
@@ -12836,13 +12845,15 @@ export const erpTransportEvents = pgTable(
     transportId: text("transport_id")
       .notNull()
       .references(() => erpTransports.id, { onDelete: "cascade" }),
-    /** opened | due | at_transport | lr | lr_removed | call | stage | issue | issue_cleared | delivered | reopened | note | packages. */
+    /** opened | due | at_transport | lr | lr_removed | call | stage | dispatched | checkpoint | issue | issue_cleared | delivered | reopened | note | packages. */
     kind: text("kind").notNull(),
     /** The stage the consignment was at after this event. */
     stage: text("stage"),
     note: text("note"),
     /** Shown on the customer's tracking page — a call note about a transporter's excuses is not. */
     shared: boolean("shared").notNull().default(true),
+    /** 0296 — the city the goods were at: a `checkpoint` names one, and the godown a `dispatched` left from. */
+    city: text("city"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
     byId: text("by_id").references(() => users.id),
   },
@@ -13005,7 +13016,7 @@ export const erpOrderMilestones = pgTable(
   {
     id: text("id").primaryKey(),
     orderNo: integer("order_no").notNull(),
-    /** confirmed | preparing | ready | invoice | dispatched | at_transport | lr | in_transit | at_destination | out_for_delivery | delivered. */
+    /** confirmed | preparing | ready | invoice | dispatched | at_transport | lr | in_transit | at_destination | out_for_delivery | ready_for_pickup | delivered. */
     step: text("step").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull(),
     byId: text("by_id").references(() => users.id),

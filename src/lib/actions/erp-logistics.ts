@@ -113,7 +113,7 @@ export async function erpLogisticsDetach(transportId: string, reason: string) {
   return run((ctx) => L.detachLr(ctx, transportId, reason));
 }
 
-export async function erpLogisticsUpdate(transportIds: string[], input: { stage?: string | null; note?: string | null; nextCallOn?: string | null; expectedOn?: string | null; notify?: boolean }) {
+export async function erpLogisticsUpdate(transportIds: string[], input: L.ConsignmentUpdate) {
   return run((ctx) => L.updateConsignment(ctx, ids(transportIds), input ?? {}));
 }
 
@@ -129,7 +129,7 @@ export async function erpLogisticsDelivered(transportIds: string[], input: { dat
   return run((ctx) => L.markDelivered(ctx, ids(transportIds), input));
 }
 
-/* ---- delivery proof on the Documents desk (0296) ---- */
+/* ---- delivery proof on the Documents desk (0297) ---- */
 
 export async function erpLogisticsSetKind(lrId: string, kind: "lr" | "signed_copy") {
   return run((ctx) => L.setLrKind(ctx, String(lrId ?? ""), kind));

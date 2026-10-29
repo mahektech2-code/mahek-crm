@@ -88,6 +88,12 @@ export type DispatchLabel = {
   area: string | null;
   billing: string;
   sku: string;
+  /**
+   * What is in the ONE piece this sticker goes on, in cans: a box's own cans
+   * on a boxed line, one can or drum otherwise. Not the order's total — the
+   * sticker is on a box, and "60 cans" on a box of four is a box a receiver
+   * counts as short. The order's size is "Box 3 of 15" and the lot size.
+   */
   qty: number;
   /** Box | Can | Drum. */
   type: string;
@@ -148,7 +154,12 @@ export function shortRef(id: string): string {
   return own.slice(0, 8).toUpperCase();
 }
 
-/** "12 cans", "1 can", "2 drums": what was ordered, in the unit the line is counted in. */
+/** What one dispatch sticker's piece holds: the cans in one box of a boxed line (boxes are always whole), else one can or drum. */
+export function pieceQty(type: string, qtyCans: number, boxes: number): number {
+  return type === "Box" && boxes > 0 ? Math.round(qtyCans / boxes) : 1;
+}
+
+/** "12 cans", "1 can", "2 drums": a quantity, in the unit the line is counted in. */
 export function orderQty(type: string, qty: number): string {
   const word = type === "Drum" ? "drum" : "can";
   return `${qty} ${word}${qty === 1 ? "" : "s"}`;
@@ -285,6 +296,10 @@ export function partyPt(name: string): number {
   if (pt !== two[two.length - 1] || boldLines(name, pt, 50 * 0.96) <= 2) return pt;
   return fitPt(name, 50, [12, 11, 10], 3);
 }
+/** A box's id under its 24 mm QR on the box label, bold and as wide as the QR — what is typed when the QR is scuffed. */
+export const boxIdPt = (id: string) => fitPt(id, 25, [8, 7.5, 7, 6.5, 6]);
+/** A dispatch sticker's id under its 18 mm QR, as wide as the QR: 10 pt for six digits, smaller for a wide letter id. */
+export const stickerIdPt = (id: string) => fitPt(id, 19, [10, 9.5, 9, 8.5, 8, 7.5, 7]);
 /** "Billed to …" under the party: one line across the label at the largest size that holds it, two small ones where none does. */
 export const billedPt = (billing: string) => fitPt(`Billed to ${billing}`, 72, [8, 7.5, 7, 6.5]);
 /** The goods on a dispatch label: two lines across the label. */

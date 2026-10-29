@@ -43,6 +43,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import * as L from "@/lib/erp/logistics";
+import { today as businessToday } from "@/lib/erp/screens/common";
 import { erpAudit } from "@/lib/erp/server";
 import * as T from "@/lib/erp/trips";
 import { createComplaint } from "@/lib/services/complaint-create";
@@ -233,6 +234,49 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(out.length, 2);
     assert.match(out[0].body, /has reached your area/);
     assert.equal(msg(await L.updateConsignment(ctx, [t.id], { stage: "Close - Received to Party" })), "Pick where the goods are");
+
+    /* 0296 — the route: the godown it left from, the cities since (each dated), where it is going, and a pickup. */
+    assert.match(msg(await L.updateConsignment(ctx, [t.id], { cities: [{ city: "Pune", on: "2026-08-01" }] })), /the goods left on Sun 2 Aug/);
+    const routed = await L.updateConsignment(ctx, [t.id], {
+      dispatchedFrom: "  Kerala Roadways  Bhiwandi ",
+      cities: [
+        { city: "Indore", on: "2026-08-04" },
+        { city: "Nashik", on: "2026-08-03" },
+      ],
+      destination: "Vadakara",
+    });
+    assert.ok(routed.ok, msg(routed));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.dispatchedFrom, "Kerala Roadways Bhiwandi");
+    assert.deepEqual(
+      c.route.map((r) => [r.kind, r.city]),
+      [
+        ["dispatched", "Kerala Roadways Bhiwandi"],
+        ["checkpoint", "Nashik"],
+        ["checkpoint", "Indore"],
+      ],
+      "it left the godown before the first city, and the cities read in the order they were reached",
+    );
+    assert.equal(c.currentCity, "Indore");
+    assert.equal(c.destination, "Vadakara");
+    out = await roadMessages();
+    assert.equal(out.length, 3, "a new city is news, so the customer is told");
+    assert.match(out[0].body, /Reached Indore on Tue 4 Aug/);
+    assert.ok((await L.updateConsignment(ctx, [t.id], { cities: [{ city: "Kozhikode", on: businessToday() }] })).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.currentCity, "Kozhikode");
+    assert.equal(msg(await L.updateConsignment(ctx, [t.id], { stage: "Ready for Pickup" })), "Say where the party collects it — the transporter's office and its area");
+    const pickup = await L.updateConsignment(ctx, [t.id], { stage: "Ready for Pickup", pickupPoint: "Kerala Roadways, Vadakara office", pickupContact: "Suresh 9876500009" });
+    assert.ok(pickup.ok, msg(pickup));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.stage, "Ready for Pickup");
+    assert.equal(c.pickupPoint, "Kerala Roadways, Vadakara office");
+    out = await roadMessages();
+    assert.match(out[0].body, /ready for you to collect/);
+    assert.match(out[0].body, /Collect it from: Kerala Roadways, Vadakara office \(Suresh 9876500009\)/);
+    assert.ok((await L.updateConsignment(ctx, [t.id], { destination: "" })).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.destination, c.lrDestination, "an emptied destination goes back to the LR's own");
 
     /* A problem, solved. */
     assert.equal(msg(await L.raiseIssue(ctx, [t.id], { issue: "Other" })), "Say what the problem is");
@@ -790,7 +834,7 @@ describe("help videos", () => {
   });
 });
 
-describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Vehicle (0296)", () => {
+describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Vehicle (0297)", () => {
   async function dispatchOwn(date: string, qty: number, bill: string, dispatched: string, verify: Record<string, string>) {
     const ctx = await as(admin);
     const made = await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", deliveredBy: "Mahek Vehicle" }, [{ sku: SKU, qty: String(qty), rate: "300" }]);

@@ -18,6 +18,8 @@ import { syncBookOrders } from "./book";
 import {
   addDays,
   attachRefusal,
+  cleanCities,
+  cleanPlace,
   CLOSED,
   isMahekVehicle,
   isProofKind,
@@ -93,7 +95,7 @@ export type Consignment = {
   tripId: string | null;
   tripNo: number | null;
   vehicleNo: string | null;
-  /** Delivered in our own vehicle (0296): no LR; a customer-signed copy closes it. */
+  /** Delivered in our own vehicle (0297): no LR; a customer-signed copy closes it. */
   ownVehicle: boolean;
   /** The driver dispatch recorded, for the call button on a Mahek Vehicle card. */
   driver: string | null;
@@ -105,9 +107,21 @@ export type Consignment = {
   trackToken: string | null;
   lastEventAt: string | null;
   lastEventNote: string | null;
+  /** 0296 — the route: where it left from, the cities reached (oldest first), where it is going, and where to collect it. */
+  dispatchedFrom: string | null;
+  currentCity: string | null;
+  /** Where it is going: what logistics set, else the LR's own destination. */
+  destination: string | null;
+  lrDestination: string | null;
+  pickupPoint: string | null;
+  pickupContact: string | null;
+  route: RouteStop[];
   messagesWaiting: number;
   updatedAt: string;
 };
+
+/** One place on an LR's way: the godown it left from, or a city it reached. */
+export type RouteStop = { kind: "dispatched" | "checkpoint"; city: string; at: string };
 
 type Row = Record<string, unknown>;
 const n = (v: unknown) => (v == null ? null : Number(v));
@@ -157,6 +171,12 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
            t.signed_copy_id as "signedCopyId", sc.file_id as "signedCopyFileId",
            t.issue, t.issue_note as "issueNote", t.note, t.track_token as "trackToken",
            ev.at as "lastEventAt", ev.note as "lastEventNote",
+           t.dispatched_from as "dispatchedFrom", t.current_city as "currentCity",
+           coalesce(t.destination, l.destination) as destination, l.destination as "lrDestination",
+           t.pickup_point as "pickupPoint", t.pickup_contact as "pickupContact",
+           /* The godown it left from is the one recorded now: a corrected godown replaces the old one rather than adding a second start. */
+           coalesce((select json_agg(json_build_object('kind', e.kind, 'city', e.city, 'at', e.at) order by e.at)
+                       from erp_transport_events e where e.transport_id = t.id and e.city is not null and (e.kind = 'checkpoint' or e.id = (select min(d.id) from erp_transport_events d where d.transport_id = t.id and d.kind = 'dispatched' and d.city = t.dispatched_from))), '[]'::json) as route,
            coalesce(msg.waiting, 0) as "messagesWaiting", t.updated_at as "updatedAt"
       from erp_transports t
       join customers c on c.id = t.billing_customer_id
@@ -223,10 +243,59 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       trackToken: s(r.trackToken),
       lastEventAt: r.lastEventAt ? new Date(String(r.lastEventAt)).toISOString() : null,
       lastEventNote: s(r.lastEventNote),
+      dispatchedFrom: s(r.dispatchedFrom),
+      currentCity: s(r.currentCity),
+      destination: s(r.destination),
+      lrDestination: s(r.lrDestination),
+      pickupPoint: s(r.pickupPoint),
+      pickupContact: s(r.pickupContact),
+      route: ((Array.isArray(r.route) ? r.route : []) as { kind: string; city: string; at: string }[]).map((e) => ({ kind: e.kind === "dispatched" ? "dispatched" : "checkpoint", city: String(e.city), at: new Date(String(e.at)).toISOString() })),
       messagesWaiting: Number(r.messagesWaiting ?? 0),
       updatedAt: new Date(String(r.updatedAt)).toISOString(),
     };
   });
+}
+
+/**
+ * What the route fields offer while somebody types (0296): each transporter's
+ * own godowns and booking offices by town, Mahek's godowns, and the cities
+ * already reported or written on an LR in the last six months — so "Pune" is
+ * picked rather than spelt four ways. Suggestions only: anything typed is kept.
+ */
+export type RoutePlace = { value: string; hint: string | null };
+export type RouteSuggestions = { godownsByTransporter: Record<string, RoutePlace[]>; ourGodowns: RoutePlace[]; cities: string[] };
+
+export async function routeSuggestions(): Promise<RouteSuggestions> {
+  const since = addDays(today(), -180);
+  const [tg, ours, cities] = await Promise.all([
+    db.execute(sql`
+      select lower(tr.name) as transporter, nullif(trim(g.label), '') as label, p.name as town
+        from erp_transporter_godowns g
+        join erp_transporters tr on tr.id = g.transporter_id and tr.active
+        left join places p on p.id = g.place_id
+       order by tr.name, g.sort_order
+    `),
+    db.execute(sql`select name, city from erp_godowns where status = 'active' and not reserved order by name`),
+    db.execute(sql`
+      select city from (
+        select initcap(trim(e.city)) as city, count(*) as n from erp_transport_events e where e.city is not null and e.kind = 'checkpoint' and e.at >= ${since}::date group by 1
+        union all
+        select initcap(trim(l.destination)), count(*) from erp_lrs l where l.destination is not null and l.uploaded_at >= ${since}::date group by 1
+      ) x where city <> '' group by city order by sum(n) desc, city limit 300
+    `),
+  ]);
+  /* A godown is offered by its town — what a transporter says on the phone — with its own name beside it. */
+  const godownsByTransporter: Record<string, RoutePlace[]> = {};
+  for (const r of tg as unknown as { transporter: string; label: string | null; town: string | null }[]) {
+    const value = r.town ?? r.label;
+    if (!value) continue;
+    (godownsByTransporter[r.transporter] ??= []).push({ value, hint: r.town && r.label ? r.label : null });
+  }
+  return {
+    godownsByTransporter,
+    ourGodowns: (ours as unknown as { name: string; city: string | null }[]).map((g) => ({ value: g.name, hint: g.city && g.city !== g.name ? `${g.city} · Mahek` : "Mahek godown" })),
+    cities: (cities as unknown as { city: string }[]).map((c) => c.city),
+  };
 }
 
 /** Every bill travelling under one LR. */
@@ -251,7 +320,7 @@ export type UploadedLr = {
   uploadedBy: string | null;
   uploadedAt: string;
   bills: number;
-  /* ---- 0296: delivery proof ---- */
+  /* ---- 0297: delivery proof ---- */
   kind: ProofKind;
   readLrNo: string | null;
   readKind: string | null;
@@ -451,12 +520,17 @@ export async function billLines(orderNo: number, transportId?: string) {
 
 /* ======================================================= writing the flow */
 
-async function addEvent(tx: typeof db, ctx: ErpContext, transportIds: string[], kind: string, stage: string | null, note: string | null, shared = true): Promise<string> {
+async function addEvent(tx: typeof db, ctx: ErpContext, transportIds: string[], kind: string, stage: string | null, note: string | null, shared = true, where: { city?: string | null; at?: Date } = {}): Promise<string> {
   const first = erpId("etev");
   await tx.insert(erpTransportEvents).values(
-    transportIds.map((transportId, i) => ({ id: i === 0 ? first : erpId("etev"), transportId, kind, stage, note, shared, byId: ctx.user.id })),
+    transportIds.map((transportId, i) => ({ id: i === 0 ? first : erpId("etev"), transportId, kind, stage, note, shared, byId: ctx.user.id, city: where.city ?? null, ...(where.at ? { at: where.at } : {}) })),
   );
   return first;
+}
+
+/** The moment a city was reached, from the day it was reported for: now when it is today, else midday of that day in IST. */
+function reachedAt(on: string): Date {
+  return on === today() ? new Date() : new Date(`${on}T12:00:00+05:30`);
 }
 
 async function load(ids: string[]) {
@@ -920,16 +994,36 @@ export async function detachLr(ctx: ErpContext, transportId: string, reason: str
   return okVoid(`Order ${t.orderNo} taken off LR ${t.lrNo}`);
 }
 
+/** What one status update can say — the stage, the call, and the route (0296). */
+export type ConsignmentUpdate = {
+  stage?: string | null;
+  note?: string | null;
+  nextCallOn?: string | null;
+  expectedOn?: string | null;
+  notify?: boolean;
+  /** The transporter's godown or booking office it left from. Undefined: unchanged; empty: cleared. */
+  dispatchedFrom?: string | null;
+  /** Cities reached since the last call, each with the day — as many as the transporter listed. */
+  cities?: { city?: string | null; on?: string | null }[] | null;
+  /** The city it is going to. Undefined: unchanged; empty: back to the LR's own. */
+  destination?: string | null;
+  /** Ready for pickup: where the party collects it, and whom to ask. */
+  pickupPoint?: string | null;
+  pickupContact?: string | null;
+};
+
 /**
  * Step 5 — the transporter was called. A stage that moved is shared with the
  * customer (unless the person says not to); a call that moved nothing books
  * the next call and tells nobody.
+ *
+ * The call can also carry the ROUTE (0296): the godown it was dispatched from,
+ * every city it has reached since the last call — each its own shared event,
+ * dated the day it got there, so a week of updates caught up in one call still
+ * reads as a week — where it is going, and, when the party collects it, where
+ * and from whom. A new city is news, so it is told like a stage that moved.
  */
-export async function updateConsignment(
-  ctx: ErpContext,
-  transportIds: string[],
-  input: { stage?: string | null; note?: string | null; nextCallOn?: string | null; expectedOn?: string | null; notify?: boolean },
-): Promise<Result<{ notified: NotifyOutcome }>> {
+export async function updateConsignment(ctx: ErpContext, transportIds: string[], input: ConsignmentUpdate): Promise<Result<{ notified: NotifyOutcome }>> {
   const ts = (await load(transportIds)).filter((t) => t.materialStage !== CLOSED);
   if (!ts.length) return err("Nothing here is still on the road.", "rule_violation");
   const stage = input.stage?.trim() || null;
@@ -941,31 +1035,80 @@ export async function updateConsignment(
   if (input.nextCallOn && !nextIn) return fieldErr("nextCallOn", "The next call is not a date");
   if (nextIn && nextIn < today()) return fieldErr("nextCallOn", "The next call cannot be in the past");
   const note = input.note?.trim() || null;
+
+  /* The route. Each part is touched only when the screen sent it. */
+  const leftOn = ts.map((t) => t.billDate).filter((d): d is string => !!d).sort()[0] ?? null;
+  const cities = cleanCities(input.cities, today(), leftOn);
+  if (!cities.ok) return fieldErr("cities", cities.error);
+  const from = input.dispatchedFrom === undefined ? undefined : cleanPlace(input.dispatchedFrom);
+  const fromMoved = from !== undefined && ts.some((t) => (t.dispatchedFrom ?? null) !== from);
+  const destination = input.destination === undefined ? undefined : cleanPlace(input.destination);
+  const destinationMoved = destination !== undefined && ts.some((t) => (t.destination ?? null) !== destination);
+  const finalStage = stage ?? ts[0].materialStage;
+  const pickup = finalStage === "Ready for Pickup";
+  const pickupPoint = pickup ? (input.pickupPoint ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null : undefined;
+  const pickupContact = pickup ? (input.pickupContact ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || null : undefined;
+  if (stage === "Ready for Pickup" && !pickupPoint && ts.some((t) => !t.pickupPoint)) return fieldErr("pickupPoint", "Say where the party collects it — the transporter's office and its area");
+  const pickupMoved = pickup && ts.some((t) => (pickupPoint !== undefined && pickupPoint !== null && t.pickupPoint !== pickupPoint) || (pickupContact != null && t.pickupContact !== pickupContact));
+
   const cfg = await getConfig();
   const nextCall = nextIn ?? addDays(today(), cfg["erp.logistics.callEveryDays"]);
   const moved = stage ? ts.filter((t) => t.materialStage !== stage) : [];
   const expectedMoved = expected ? ts.filter((t) => t.expectedDeliveryOn !== expected) : [];
+  const routeNews = cities.cities.length > 0 || fromMoved || pickupMoved;
+  const news = moved.length > 0 || expectedMoved.length > 0 || routeNews;
+  const ids = ts.map((t) => t.id);
   let eventId = "";
   await db.transaction(async (tx) => {
+    const t2 = tx as unknown as typeof db;
     await tx
       .update(erpTransports)
-      .set({ ...(stage ? { materialStage: stage } : {}), ...(expected ? { expectedDeliveryOn: expected } : {}), reminderDate: nextCall, ...(note ? { note } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
-      .where(inArray(erpTransports.id, ts.map((t) => t.id)));
+      .set({
+        ...(stage ? { materialStage: stage } : {}),
+        ...(expected ? { expectedDeliveryOn: expected } : {}),
+        ...(from !== undefined ? { dispatchedFrom: from } : {}),
+        ...(destination !== undefined ? { destination } : {}),
+        ...(pickupPoint ? { pickupPoint } : {}),
+        ...(pickupContact !== undefined && (pickupPoint || pickupContact) ? { pickupContact } : {}),
+        reminderDate: nextCall,
+        ...(note ? { note } : {}),
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      .where(inArray(erpTransports.id, ids));
+    if (fromMoved && from) {
+      /* It left the godown before it reached any city: dated a minute before the first one reported, else now. */
+      const [first] = (await tx.execute(sql`select min(e.at) as at from erp_transport_events e where e.transport_id in ${ids} and e.kind = 'checkpoint'`)) as unknown as { at: unknown }[];
+      const earliest = [first?.at ? new Date(String(first.at)) : null, cities.cities[0] ? reachedAt(cities.cities[0].on) : null].filter((d): d is Date => !!d).sort((x, y) => x.getTime() - y.getTime())[0];
+      await addEvent(t2, ctx, ids, "dispatched", finalStage, `Dispatched from ${from}`, true, { city: from, at: earliest ? new Date(Math.min(Date.now(), earliest.getTime() - 60_000)) : undefined });
+    }
+    for (const c of cities.cities) await addEvent(t2, ctx, ids, "checkpoint", finalStage, `Reached ${c.city}`, true, { city: c.city, at: reachedAt(c.on) });
+    if (destinationMoved) await addEvent(t2, ctx, ids, "note", finalStage, destination ? `Going to ${destination}` : "Destination set back to the LR's", false);
     eventId = await addEvent(
-      tx as unknown as typeof db,
+      t2,
       ctx,
-      ts.map((t) => t.id),
+      ids,
       moved.length ? "stage" : "call",
-      stage ?? ts[0].materialStage,
-      [note, expected && expectedMoved.length ? `Expected ${expected}` : null].filter(Boolean).join(" · ") || null,
-      moved.length > 0 || expectedMoved.length > 0,
+      finalStage,
+      [note, expected && expectedMoved.length ? `Expected ${expected}` : null, pickup && pickupPoint ? `Collect from ${pickupPoint}${pickupContact ? ` (${pickupContact})` : ""}` : null].filter(Boolean).join(" · ") || null,
+      news,
     );
+    /* Where it is now is the newest place any event named — never typed twice. */
+    if (fromMoved || cities.cities.length) {
+      await tx.execute(sql`
+        update erp_transports t
+           set current_city = (select e.city from erp_transport_events e where e.transport_id = t.id and e.city is not null order by e.at desc limit 1)
+         where t.id in ${ids}
+      `);
+    }
   });
-  await erpAudit(ctx, "erp.logistics.update", "erp_transport", ts.map((t) => t.id).join(","), null, { stage, note, nextCall, expected });
+  await erpAudit(ctx, "erp.logistics.update", "erp_transport", ids.join(","), null, { stage, note, nextCall, expected, dispatchedFrom: from, cities: cities.cities, destination, pickupPoint, pickupContact });
   if (moved.length) await syncBookOrders([...new Set(moved.map((t) => t.orderNo))]);
-  const tell = (moved.length > 0 || expectedMoved.length > 0) && input.notify !== false;
-  const notified = tell ? await notifyCustomers(ctx, "stage", ts.map((t) => t.id), eventId, { note }) : NO_NOTIFY;
-  return ok({ notified }, `${moved.length ? "Status updated" : "Call logged"} · next call ${nextCall}${notifyWords(notified)}`);
+  const tell = news && input.notify !== false;
+  const last = cities.cities.at(-1);
+  const notified = tell ? await notifyCustomers(ctx, "stage", ids, eventId, { note, ...(last ? { city: last.city, cityOn: last.on } : {}) }) : NO_NOTIFY;
+  const said = moved.length ? "Status updated" : cities.cities.length ? `${cities.cities.length === 1 ? "City" : `${cities.cities.length} cities`} added` : routeNews ? "Route updated" : "Call logged";
+  return ok({ notified }, `${said} · next call ${nextCall}${notifyWords(notified)}`);
 }
 
 export async function raiseIssue(
@@ -1405,6 +1548,11 @@ export async function notifyCustomers(
       stage: first.materialStage,
       vehicleNo: first.vehicleNo ?? null,
       expectedOn: first.expectedDeliveryOn,
+      city: first.currentCity,
+      dispatchedFrom: first.dispatchedFrom,
+      destination: first.destination ?? lr?.destination ?? null,
+      pickupPoint: first.pickupPoint,
+      pickupContact: first.pickupContact,
       /* The order's own tracking link where it has one — the delivery party's view where this is not the billing party —
          else the consignment's older link, which opens the same page. */
       trackUrl: base ? (orderLinks.get(`${first.orderNo}|${c.id === first.billingCustomerId ? "full" : "delivery"}`) ?? (first.trackToken ? `${base}/track/${first.trackToken}` : null)) : null,

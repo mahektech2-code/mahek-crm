@@ -4,18 +4,18 @@ import { NavLink } from "@/components/shell/nav-link";
 import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
-import { Button, Card, cx, Field, Input, SectionLabel, Select, Textarea } from "@/components/ui/primitives";
+import { Button, Card, cx, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsDeliveredBy, erpLogisticsIssue, erpLogisticsUpdate, erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
 import { Icon } from "../../_ui/icons";
 import { shrinkImage } from "@/lib/shrink-image";
-import { MAHEK_VEHICLE } from "@/lib/erp/engines/logistics";
-import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
+import { addDays, callDue, daysBetween, ISSUES, MAHEK_VEHICLE, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
 import { delayReasonForIssue, reasonsFor } from "@/lib/erp/engines/order-tracking";
-import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
-import { BillRef, byLr, CallLink, DeliveryStatusBadge, DuePill, Empty, LrThumb, NotifyToggle, plural, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
+import type { Consignment, RouteSuggestions, UploadedLr } from "@/lib/erp/logistics";
+import { UpdateLrDialog } from "./update-lr";
+import { BillRef, byLr, CallLink, DeliveryStatusBadge, driverPhone, DuePill, Empty, LrThumb, NotifyToggle, plural, RouteTrail, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
 
 /**
  * STEP 5 AND 6 — following the lorry. One card per LR (one LR is one
@@ -27,13 +27,6 @@ import { BillRef, byLr, CallLink, DeliveryStatusBadge, DuePill, Empty, LrThumb, 
 type Filter = "all" | "calls" | "late" | "issue";
 type Dialog = { kind: "update" | "issue" | "delivered" | "deliveredBy"; group: Consignment[] } | null;
 
-/** A driver's mobile, read out of the name-and-number dispatch typed ("Ramesh 98200 11001"). */
-export function driverPhone(driver: string | null): string | null {
-  const digits = (driver ?? "").replace(/\D/g, "");
-  const m = digits.match(/[6-9]\d{9}$/);
-  return m ? m[0] : null;
-}
-
 export function OnRoad({
   rows,
   today,
@@ -41,6 +34,7 @@ export function OnRoad({
   lateAfterDays,
   notifyOn,
   canWrite,
+  suggestions,
   initialFilter,
   signedWaiting = [],
   transporters = [],
@@ -51,6 +45,7 @@ export function OnRoad({
   lateAfterDays: number;
   notifyOn: boolean;
   canWrite: boolean;
+  suggestions?: RouteSuggestions | null;
   initialFilter?: Filter;
   /** Signed copies on the Documents desk, waiting for the delivery they close. */
   signedWaiting?: UploadedLr[];
@@ -68,7 +63,7 @@ export function OnRoad({
   const needle = q.trim().toLowerCase();
   const shown = groups
     .filter((g) => (filter === "calls" ? isCall(g.bills) : filter === "late" ? isLate(g.bills) : filter === "issue" ? g.bills.some((c) => c.issue) : true))
-    .filter((g) => !needle || g.bills.some((c) => [c.lrNo, c.billNo, c.party, c.deliveryParty, c.transporter, String(c.orderNo), c.area].some((x) => x?.toLowerCase().includes(needle))))
+    .filter((g) => !needle || g.bills.some((c) => [c.lrNo, c.billNo, c.party, c.deliveryParty, c.transporter, String(c.orderNo), c.area, c.currentCity, c.destination, c.dispatchedFrom].some((x) => x?.toLowerCase().includes(needle))))
     .sort((a, b) => (a.bills[0].nextCallOn ?? "9999") .localeCompare(b.bills[0].nextCallOn ?? "9999"));
 
   const calledNoChange = (g: Consignment[]) => run(() => erpLogisticsUpdate(g.map((c) => c.id), { note: g[0].ownVehicle ? "Called the driver — no change" : "Called the transporter — no change", nextCallOn: addDays(today, callEveryDays), notify: false }));
@@ -87,7 +82,7 @@ export function OnRoad({
           ]}
         />
         <span className="ml-auto w-[260px]">
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter" aria-label="Search LR, bill, party, transporter" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter, city" aria-label="Search LR, bill, party, transporter, city" />
         </span>
       </div>
 
@@ -161,6 +156,13 @@ export function OnRoad({
                     No signed copy yet
                   </div>
                 ) : null}
+                {c.route.length || c.destination ? <RouteTrail route={c.route} destination={c.destination} stage={c.stage} className="mt-1.5" /> : null}
+                {c.stage === "Ready for Pickup" && c.pickupPoint ? (
+                  <div className="mt-1 text-meta text-body">
+                    Party collects from <span className="font-medium text-ink">{c.pickupPoint}</span>
+                    {c.pickupContact ? ` · ${c.pickupContact}` : ""}
+                  </div>
+                ) : null}
                 {issue?.issueNote ? <div className="mt-1 text-meta text-danger">{issue.issueNote}</div> : null}
                 {c.lastEventNote ? <div className="mt-1 truncate text-meta text-body">Last: {c.lastEventNote}</div> : null}
               </div>
@@ -215,24 +217,26 @@ export function OnRoad({
         );
       })}
 
-      {dialog?.kind === "deliveredBy" ? <DeliveredByDialog key={`by${dialog.group[0].id}`} group={dialog.group} transporters={transporters} onClose={() => setDialog(null)} /> : null}
-      {dialog?.kind === "delivered" && dialog.group[0].ownVehicle ? (
+      {dialog?.kind === "update" ? (
+        <UpdateLrDialog key={`u${dialog.group[0].id}`} group={dialog.group} today={today} callEveryDays={callEveryDays} notifyOn={notifyOn} suggestions={suggestions ?? null} onClose={() => setDialog(null)} />
+      ) : dialog?.kind === "deliveredBy" ? (
+        <DeliveredByDialog key={`by${dialog.group[0].id}`} group={dialog.group} transporters={transporters} onClose={() => setDialog(null)} />
+      ) : dialog?.kind === "delivered" && dialog.group[0].ownVehicle ? (
         <SignedDeliveredDialog key={`sd${dialog.group[0].id}`} group={dialog.group} today={today} notifyOn={notifyOn} waiting={signedWaiting} onClose={() => setDialog(null)} />
-      ) : dialog && dialog.kind !== "deliveredBy" ? (
-        <ActionDialog key={`${dialog.kind}${dialog.group[0].id}`} dialog={dialog} today={today} callEveryDays={callEveryDays} notifyOn={notifyOn} onClose={() => setDialog(null)} />
+      ) : dialog ? (
+        <ActionDialog key={`${dialog.kind}${dialog.group[0].id}`} dialog={{ kind: dialog.kind, group: dialog.group }} today={today} notifyOn={notifyOn} onClose={() => setDialog(null)} />
       ) : null}
     </div>
   );
 }
 
-function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dialog: NonNullable<Dialog>; today: string; callEveryDays: number; notifyOn: boolean; onClose: () => void }) {
+/** A problem, or the delivery — the two acts on the road that are not a status update (that one is `UpdateLrDialog`). */
+function ActionDialog({ dialog, today, notifyOn, onClose }: { dialog: { kind: "issue" | "delivered"; group: Consignment[] }; today: string; notifyOn: boolean; onClose: () => void }) {
   const { run, pending } = useAct();
   const c = dialog.group[0];
   const ids = dialog.group.map((b) => b.id);
-  const [stage, setStage] = useState<string>(ROAD_STAGES.includes(c.stage as Stage) ? c.stage : "In Transit");
   const [note, setNote] = useState("");
   const [expected, setExpected] = useState(c.expectedDeliveryOn ?? "");
-  const [nextCall, setNextCall] = useState(addDays(today, callEveryDays));
   const [issue, setIssue] = useState<string>("Delayed");
   /* What the customer's tracking page calls it: a delay reason, or nothing (the problem stays internal). */
   const [customerReason, setCustomerReason] = useState<string>(delayReasonForIssue("Delayed") ?? "");
@@ -242,14 +246,12 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [notify, setNotify] = useState(true);
 
   const what = c.ownVehicle ? (c.vehicleNo ?? MAHEK_VEHICLE) : lrLabel(c.lrNo);
-  const title = dialog.kind === "update" ? `Update ${what}` : dialog.kind === "issue" ? `A problem with ${what}` : `${what} delivered`;
+  const title = dialog.kind === "issue" ? `A problem with ${what}` : `${what} delivered`;
   const save = () => {
     const done = (r: { ok: boolean }) => r.ok && onClose();
-    if (dialog.kind === "update") return run(() => erpLogisticsUpdate(ids, { stage, note, expectedOn: expected || null, nextCallOn: nextCall || null, notify }), done);
     if (dialog.kind === "issue") return run(() => erpLogisticsIssue(ids, { issue, note, expectedOn: expected || null, notify, customerReason: customerReason || null }), done);
     return run(() => erpLogisticsDelivered(ids, { date, receivedBy, proof, note, notify }), done);
   };
-  const moved = dialog.kind === "update" && (stage !== c.stage || (expected && expected !== c.expectedDeliveryOn));
 
   return (
     <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
@@ -260,28 +262,6 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
         <div className="text-sm text-body">
           {[...new Set(dialog.group.map((b) => b.deliveryParty))].join(", ")} · {plural(dialog.group.length, "bill")} · {c.transporter ?? "—"}
         </div>
-        {dialog.kind === "update" ? (
-          <>
-            <div>
-              <SectionLabel>Where are the goods?</SectionLabel>
-              <div className="mt-1 grid grid-cols-2 gap-2">
-                {ROAD_STAGES.map((s) => (
-                  <button key={s} type="button" onClick={() => setStage(s)} className={cx("cursor-pointer rounded-control border px-2 py-2 text-meta", stage === s ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas")}>
-                    {STAGE_SHORT[s]}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Expected delivery">
-                <Input type="date" value={expected} min={today} onChange={(e) => setExpected(e.target.value)} />
-              </Field>
-              <Field label={c.ownVehicle ? "Next call to the driver" : "Next call to the transporter"}>
-                <Input type="date" value={nextCall} min={today} onChange={(e) => setNextCall(e.target.value)} />
-              </Field>
-            </div>
-          </>
-        ) : null}
         {dialog.kind === "issue" ? (
           <>
             <Field label="What went wrong?">
@@ -330,16 +310,15 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
             <p className="col-span-2 text-meta text-muted">Close it only once the party has confirmed. Not confirmed yet? Report a problem — Unconfirmed — and it stays open.</p>
           </div>
         ) : null}
-        <Field label={dialog.kind === "update" ? (c.ownVehicle ? "What the driver said" : "What the transporter said") : "Note"}>
+        <Field label="Note">
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         </Field>
-        {dialog.kind === "update" && !moved ? <div className="text-meta text-muted">The stage and the date have not moved, so this is logged as a call and the customer is not messaged.</div> : null}
-        {dialog.kind !== "update" || moved ? <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} /> : null}
+        <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} />
       </DialogBody>
       <DialogFooter>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant={dialog.kind === "issue" ? "danger" : "primary"} disabled={pending || (dialog.kind === "issue" && issue === "Other" && !note.trim())} onClick={save}>
-          {dialog.kind === "delivered" ? "Close as delivered" : dialog.kind === "issue" ? "Record the problem" : "Save update"}
+          {dialog.kind === "delivered" ? "Close as delivered" : "Record the problem"}
         </Button>
       </DialogFooter>
     </ErpDialog>

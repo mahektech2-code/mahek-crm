@@ -189,7 +189,7 @@ export type LrEntry = {
   tray: { uri: string; fileId: string | null; state: "waiting" | "uploading" | "up" | "failed" }[];
   batchBusy: boolean;
   batchMsg: string | null;
-  /** 0296: what the photos are — LRs, or customer-signed copies of a Mahek Vehicle delivery. */
+  /** 0297: what the photos are — LRs, or customer-signed copies of a Mahek Vehicle delivery. */
   kind: "lr" | "signed_copy";
   /** The tray photo open full screen, if one is. */
   preview: number | null;

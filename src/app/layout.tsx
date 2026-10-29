@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { NotificationCenter } from "@/components/shell/notification-center";
-import { VersionGuard } from "@/components/shell/version-guard";
+import { StaffChrome } from "@/components/shell/staff-chrome";
 
 export const metadata: Metadata = {
   title: "MahekOne - CRM",
@@ -33,10 +32,8 @@ export default function RootLayout({
       </head>
       <body>
         {children}
-        {/* The live bell: polls, pops and chimes in every app. */}
-        <NotificationCenter />
-        {/* A tab older than the server: reload it before a save is refused. */}
-        <VersionGuard />
+        {/* The bell and the stale-tab guard — never on a customer's or vendor's link. */}
+        <StaffChrome />
       </body>
     </html>
   );

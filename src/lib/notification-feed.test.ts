@@ -78,9 +78,12 @@ test("ages read in words, and the announced list stays bounded", () => {
   assert.deepEqual(Object.keys(kept).sort(), ["id6", "id7", "id8", "id9"]);
 });
 
-test("the live bell is mounted once, in the root layout, so every app gets it", () => {
+test("the live bell is mounted once, in the root layout, so every app gets it — and never on a public link", () => {
   const root = readFileSync(join(import.meta.dirname, "../app/layout.tsx"), "utf8");
-  assert.match(root, /<NotificationCenter \/>/);
+  assert.match(root, /<StaffChrome \/>/);
+  const chrome = readFileSync(join(import.meta.dirname, "../components/shell/staff-chrome.tsx"), "utf8");
+  assert.match(chrome, /if \(isPublicPath\(pathname\)\) return null;/);
+  assert.match(chrome, /<NotificationCenter \/>/);
 });
 
 test("marking one notification read is limited to the caller's own", () => {

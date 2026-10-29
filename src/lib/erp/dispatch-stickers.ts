@@ -2,7 +2,6 @@ import "server-only";
 import { randomInt } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { STICKER_ALPHABET } from "@/lib/factory/rules";
 import type { Ex } from "./stock";
 
 /* ---------------------------------------------------------------------------
@@ -21,10 +20,9 @@ type Row = Record<string, unknown>;
 
 export type StickerPlace = { id: string; lineId: string; orderNo: number; pos: number; of: number; unitId: string | null; loadedAt: string | null };
 
+/** DS- and six random digits, never starting with 0 — a leading zero is the one a reader drops. */
 function mintId(): string {
-  let s = "DS-";
-  for (let i = 0; i < 6; i++) s += STICKER_ALPHABET[randomInt(STICKER_ALPHABET.length)];
-  return s;
+  return "DS-" + String(randomInt(100000, 1000000));
 }
 
 /**
@@ -44,12 +42,13 @@ export async function ensureStickers(orderNo: number, want: Map<string, number>,
         let seq = mine.reduce((m, h) => Math.max(m, Number(h.seq)), 0);
         for (let i = live.length; i < n; i++) {
           seq += 1;
-          /* Thirty-one letters six deep: a clash is a one-in-a-billion retry, not a refusal. */
+          /* Nine hundred thousand ids: a clash is a retry, and a sticker is never silently left without one. */
           for (let tries = 0; ; tries++) {
             const rows = (await tx.execute(sql`
               insert into erp_dispatch_stickers (id, order_id, order_no, seq, printed_by_id)
               values (${mintId()}, ${lineId}, ${orderNo}, ${seq}, ${byId}) on conflict (id) do nothing returning id`)) as unknown as unknown[];
-            if (rows.length || tries > 5) break;
+            if (rows.length) break;
+            if (tries >= 50) throw new Error("Could not give a dispatch sticker an id that is not already in use.");
           }
         }
       } else if (live.length > n) {

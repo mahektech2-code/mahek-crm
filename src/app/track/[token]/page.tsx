@@ -21,6 +21,7 @@ const STEP_WORD: Record<string, string> = {
   "On the way to Destination area": "Near your area",
   "Reached Destination Area": "In your area",
   "Out for Delivery": "Out for delivery",
+  "Ready for Pickup": "Ready for you to collect",
   "Close - Received to Party": "Delivered",
 };
 const EVENT_WORD: Record<string, string> = {
@@ -28,6 +29,8 @@ const EVENT_WORD: Record<string, string> = {
   at_transport: "Handed over to the transporter",
   lr: "Booked — LR issued",
   stage: "Status updated",
+  dispatched: "Dispatched from the transporter's godown",
+  checkpoint: "Reached a city on the way",
   issue: "Delay reported — we are following up",
   delivered: "Delivered",
 };

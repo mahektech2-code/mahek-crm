@@ -406,7 +406,7 @@ export type LrKit = { ok: true; transporters: string[]; canRead: boolean; recent
 export const LR_BATCH_MAX = 20;
 
 /**
- * What the phone lets somebody pick for one upload (0296). Below the server's
+ * What the phone lets somebody pick for one upload (0297). Below the server's
  * ceiling on purpose: an APK already in the field still sends up to
  * LR_BATCH_MAX, and the server must go on taking it.
  */

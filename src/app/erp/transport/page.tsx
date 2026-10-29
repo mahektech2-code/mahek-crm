@@ -5,7 +5,7 @@ import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { getConfig } from "@/lib/config/store";
 import { refValues } from "@/lib/erp/refs";
-import { consignments, lrUploadKit, messages, placeOptions, transporters, uploadedLrs } from "@/lib/erp/logistics";
+import { consignments, lrUploadKit, messages, placeOptions, routeSuggestions, transporters, uploadedLrs } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { syncDispatchedTransports } from "@/lib/erp/screens/sales";
 import { ListScreen, ListTabs } from "../_ui/list-screen";
@@ -106,6 +106,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   ]);
   const [tree, labels] = view === "transporters" ? await Promise.all([placeOptions(), refValues("consignmentLabel")]) : [[], []];
   const [tripRows, noTrip] = view === "trips" ? await Promise.all([readTrips(), billsWithoutTrip()]) : [[], []];
+  const suggestions = view === "trackLr" ? await routeSuggestions() : null;
   /* A dashboard tile opens a tab narrowed to the bills it counted. */
   const ids = one("f")?.split(",");
   const rows = ids ? all.filter((c) => ids.includes(c.id)) : all;
@@ -155,6 +156,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           lateAfterDays={cfg["erp.logistics.lateAfterDays"]}
           notifyOn={cfg["erp.logistics.notifyCustomers"]}
           canWrite={canWrite}
+          suggestions={suggestions}
           initialFilter={filter === "calls" || filter === "late" || filter === "issue" ? filter : undefined}
           signedWaiting={lrs}
           transporters={dir.filter((t) => t.active).map((t) => t.name)}

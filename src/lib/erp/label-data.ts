@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpPurchases, erpRawMaterials } from "@/db/schema";
-import { lotSize, productLine, shortRef, type BoxLabel, type DispatchLabel, type PurchaseLabel, type Qr, type SfgLabel } from "./engines/labels";
+import { lotSize, pieceQty, productLine, shortRef, type BoxLabel, type DispatchLabel, type PurchaseLabel, type Qr, type SfgLabel } from "./engines/labels";
 import { purchaseFigures, shortLabel } from "./engines/purchase";
 import { packLabel } from "./engines/trace";
 import { refValues } from "./refs";
@@ -238,7 +238,7 @@ export async function dispatchLabels(orderNo: number, mintBy?: string | null): P
       area: l.delivery.area?.trim() || l.delivery.city?.trim() || null,
       billing: l.billing.name,
       sku: l.sku.name,
-      qty: l.o.qtyCans,
+      qty: pieceQty(l.type, l.o.qtyCans, l.boxes),
       type: l.type,
       /* One label a box on a boxed line and one a can otherwise, so the label carries the
          catalogue's own figure — a box's weight or a can's — never the line's total. */

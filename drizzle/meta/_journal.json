@@ -2056,8 +2056,15 @@
     {
       "idx": 293,
       "version": "7",
-      "when": 1793606760000,
-      "tag": "0296_delivery_proof",
+      "when": 1793606800000,
+      "tag": "0296_lr_route",
+      "breakpoints": true
+    },
+    {
+      "idx": 294,
+      "version": "7",
+      "when": 1793606860000,
+      "tag": "0297_delivery_proof",
       "breakpoints": true
     }
   ]

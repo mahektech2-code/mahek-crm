@@ -266,7 +266,7 @@ export function readyUnbilled(lines: { id: string; orderNo: number; party: strin
 
 /**
  * A bill out longer than `stuckLrDays` with no proof of how it went: an LR for
- * a transporter, or — for our own vehicle (0296) — the customer-signed copy,
+ * a transporter, or — for our own vehicle (0297) — the customer-signed copy,
  * which is what closes that delivery.
  */
 export function lrsMissing(

@@ -38,7 +38,8 @@ export const LABEL_CSS = `
 /* ---- the box label, 50 x 50 ---- */
 .lb-box .top { gap: 3mm; }
 .lb-box .code { width: 24mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 0.9mm; }
-.lb-box .code .mono { font-size: 5.5pt; line-height: 1; white-space: nowrap; }
+/* The box's id as wide as the QR above it, in heavy type: it is what is typed when the QR is scuffed. */
+.lb-box .code .id { font-family: Arial, Helvetica, sans-serif; font-weight: 800; line-height: 1; white-space: nowrap; letter-spacing: 0; }
 .lb-box .head { flex: 1; min-width: 0; height: 24mm; display: flex; flex-direction: column; justify-content: space-between; }
 .lb-box .brand { font-size: 7.5pt; line-height: 1; }
 .lb-box .size { font-weight: 800; line-height: 0.8; letter-spacing: -0.3px; white-space: nowrap; }
@@ -85,7 +86,8 @@ export const LABEL_CSS = `
 .lb-dis .area { font-weight: 700; font-size: 11pt; line-height: 1; }
 .lb-dis .billed { line-height: 1.12; }
 .lb-dis .code { width: 19mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 1mm; }
-.lb-dis .code .id { font-size: 9pt; line-height: 1; white-space: nowrap; letter-spacing: 0.2px; }
+/* The id as wide as the QR above it, in heavy digits: it is what is typed when the QR will not read. */
+.lb-dis .code .id { font-family: Arial, Helvetica, sans-serif; font-weight: 800; line-height: 1; white-space: nowrap; letter-spacing: 0; }
 .lb-dis .goods { display: flex; flex-direction: column; gap: 1.6mm; border-top: 0.5mm solid #000; padding-top: 1.8mm; }
 .lb-dis .sku { font-weight: 800; line-height: 1.05; }
 .lb-dis .facts { display: flex; flex-direction: row; justify-content: space-between; align-items: flex-end; gap: 3mm; }
