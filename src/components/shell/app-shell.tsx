@@ -19,6 +19,8 @@ export function AppShell({
   apps,
   nav,
   pinnedNav,
+  look = "classic",
+  app,
   children,
 }: {
   user: User;
@@ -33,12 +35,21 @@ export function AppShell({
   nav: NavGroup[];
   /** The rows above it, narrowed the same way. */
   pinnedNav: NavItem[];
+  /** "v4" draws the app in the ERP's look (`styles/v4-theme.css`) — the CRM
+   *  asks for it; Accounts, which shares this shell, does not yet. */
+  look?: "classic" | "v4";
+  /** Which app is wearing it — the sheet keys the CRM's sentence-case labels
+   *  on this, so the ERP's own capitals are left alone. */
+  app?: string;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
 
   return (
     <ToastProvider>
+      {/* The marker is all the look needs: the sheet answers to it on :root,
+          so portalled dialogs are drawn in the same hand. */}
+      <div data-v4={look === "v4" ? "" : undefined} data-v4-app={look === "v4" ? app : undefined} className="contents">
       {/* The floor, the scroll model and the arrival animation are the frame's
           now — see `app-frame.tsx` for why eight apps could not be left to
           state them for themselves. */}
@@ -53,6 +64,7 @@ export function AppShell({
             apps={apps}
             collapsed={collapsed}
             onToggleSidebar={() => setCollapsed((c) => !c)}
+            v4={look === "v4"}
           />
         }
         sidebar={
@@ -68,6 +80,7 @@ export function AppShell({
       >
         {children}
       </AppFrame>
+      </div>
     </ToastProvider>
   );
 }

@@ -537,7 +537,7 @@ export function ComplaintsScreen({
               ) : (
                 <>
                   <Field
-                    label="Resolution notes · required to close"
+                    label="Resolution notes" required
                     className="mt-5"
                     error={
                       notesError

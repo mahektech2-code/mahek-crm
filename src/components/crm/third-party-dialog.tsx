@@ -246,7 +246,7 @@ export function ThirdPartyDialog({
               </div>
               <Input
                 value={c.note}
-                placeholder="Note — the route, the rate, anything the next person needs (optional)"
+                placeholder="Note — the route, the rate, anything the next person needs"
                 onChange={(e) =>
                   setChosen((prev) =>
                     prev.map((p) =>

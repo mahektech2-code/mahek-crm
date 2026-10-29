@@ -1919,6 +1919,29 @@ list is its `noDataLine`'s first sentence and the New button. Errors are the
 one thing still written out in full. `quiet-copy.test.ts` pins the rules and
 refuses a page that draws its registry line under the title.
 
+**THE CRM WEARS THE ERP'S LOOK AND ITS QUIET RULES (Oct 2026), and nothing on
+it was taken away.** The look is one sheet, `src/styles/v4-theme.css` (it was
+`app/erp/erp-theme.css`), answering to a `data-v4` marker on the shell: the
+ERP's shell carries it, and the CRM's through `AppShell look="v4" app="crm"`.
+Accounts shares `AppShell` and has not asked, so it is drawn as before. Every
+selector names the marker (`quiet-crm.test.ts` refuses one that does not),
+because a stylesheet a layout imported stays in the document after a client
+navigation away. What the CRM gets beyond the ERP's look is keyed on
+`data-v4-app="crm"`: its spaced-capital labels read in sentence case (table
+heads stay capitals). The shared pieces carry the rules: `Field` takes
+`required` (a red `*`), `optional` (small grey) and puts its `hint` behind an
+ⓘ (`components/ui/hint-tip.tsx`) unless `hintShown`; `PageHeader` and the
+console's `ScreenHeader` move a string subtitle behind an ⓘ by the title unless
+`subtitleShown` (for a fact — a month, a record's name); `EmptyState` keeps its
+title and puts the sentence behind the ⓘ. Each does this through classes the
+sheet reads (`ui-field-label`, `ui-hint`, `ui-hint-tip`), so the apps without
+the marker are unchanged. A list with many filters puts them behind one
+`FilterPanelButton` (`components/ui/filter-panel.tsx`) with the chips of what is
+on left on the bar — Customers' nine are there. Never write "· required" or
+"(optional)" into a CRM label; the test refuses it. The Tele CRM canvas
+(claude.ai artifact "Tele CRM — ERP design system and less text") is the
+board-by-board plan, and it lists, per screen, everything that was kept.
+
 **AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
 The screens had drifted into twenty-two spellings of the small uppercase
 label, four heading sizes, three checkbox looks, ten text-link buttons and

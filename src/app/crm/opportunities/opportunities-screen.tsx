@@ -231,7 +231,9 @@ export function OpportunitiesScreen({
       >
         {closing ? (
           <Field
-            label={closing.status === "lost" ? "Why was it lost?" : "What came of it? (optional)"}
+            label={closing.status === "lost" ? "Why was it lost?" : "What came of it?"}
+            required={closing.status === "lost"}
+            optional={closing.status !== "lost"}
             hint={
               closing.status === "won"
                 ? `${closing.row.customerName} — this is you saying it turned into business; nothing here is worked out from their orders.`

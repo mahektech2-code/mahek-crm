@@ -213,14 +213,14 @@ export function ErpShell({
   return (
     <ToastProvider>
       <ErpUiProvider voice={voice}>
-        {/* `data-erp-v4` is what erp-theme.css answers to: the ERP's look, and nothing else's. */}
-        <div data-erp-v4 className="contents">
+        {/* `data-v4` is what styles/v4-theme.css answers to — the v4 look the ERP and the CRM share. */}
+        <div data-v4 className="contents">
         <AppFrame
           /* Used on a tablet at the godown gate as much as at a desk: no 1100px floor. */
           floor={false}
           sidebarFirst
           header={
-            <header data-erp-header className="z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
+            <header data-v4-header className="z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
               <div className="flex flex-none items-center">
                 <HeaderLead
                   apps={apps}

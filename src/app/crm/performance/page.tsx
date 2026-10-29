@@ -51,7 +51,7 @@ export default async function Page({
   if (!reading) {
     return (
       <div className="p-6">
-        <PageHeader title="My performance" subtitle={monthName(period)} />
+        <PageHeader title="My performance" subtitle={monthName(period)} subtitleShown />
         <EmptyState
           title="Nothing to show for this month"
           body="No target has been published for you, and nothing has been sold against a customer you carry. If you expected a target here, your manager sets it on the Sales Dashboard."

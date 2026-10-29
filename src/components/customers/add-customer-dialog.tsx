@@ -244,7 +244,7 @@ function AddCustomerBody({
         {tab === "details" ? (
           <div className="grid grid-cols-2 gap-3">
             <Field
-              label="Business name · required"
+              label="Business name" required
               hint="Exactly as it appears on the bill — the order sheet matches on it."
               error={err("name")}
               className="col-span-2"
@@ -266,7 +266,7 @@ function AddCustomerBody({
             <Field label="Contact person" hint="Who we speak to.">
               <Input value={values.contactPerson} onChange={set("contactPerson")} />
             </Field>
-            <Field label="Mobile · required" hint="The number we ring." error={err("phone")}>
+            <Field label="Mobile" required hint="The number we ring." error={err("phone")}>
               <Input
                 value={values.phone}
                 onChange={set("phone")}
@@ -392,7 +392,7 @@ function AddCustomerBody({
         {tab === "managers" ? (
           <div className="grid grid-cols-2 gap-3">
             <Field
-              label="Account manager · sales · required"
+              label="Account manager · sales" required
               hint="Whose book this account is in — their Call Log, collections and target."
               error={err("sales")}
             >

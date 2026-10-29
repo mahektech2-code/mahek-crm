@@ -10,6 +10,7 @@ import { crmBadgeCounts, customerStatusRequestCount, listNotifications } from "@
 import { leadSidebarCounts } from "@/lib/services/lead-sidebar-service";
 import { today } from "@/lib/recompute";
 import { AppShell } from "@/components/shell/app-shell";
+import "@/styles/v4-theme.css";
 import type { SidebarBadges } from "@/components/shell/sidebar";
 
 export default async function AppLayout({
@@ -48,6 +49,11 @@ export default async function AppLayout({
   if (modules.length === 0) redirect("/apps");
 
   return (
+    <>
+    {/* The v4 look is set in Geist, as the ERP's is. React hoists a precedence
+        stylesheet into the head once, however many pages ask for it. */}
+    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <AppShell
       user={user}
       hat={hat}
@@ -62,9 +68,13 @@ export default async function AppLayout({
       // It is the capability the queue's own actions ask, not a level.
       nav={navForModules(modules.map((m) => m.href), decidesStatus)}
       pinnedNav={pinnedForModules(modules.map((m) => m.href))}
+      // The ERP's look, shared — see styles/v4-theme.css.
+      look="v4"
+      app="crm"
     >
       {children}
     </AppShell>
+    </>
   );
 }
 

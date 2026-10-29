@@ -2072,7 +2072,7 @@ export function QuickReminder({
     >
       <div className="mb-3 text-sm text-muted">{customerName}</div>
       <div className="grid gap-3">
-        <Field label="Due date · required">
+        <Field label="Due date" required>
           <Input
             type="date"
             value={dueDate}
@@ -2081,7 +2081,7 @@ export function QuickReminder({
           />
         </Field>
         <Field
-          label="What was promised · required"
+          label="What was promised" required
           hint="This note is what you will see in the reminders list - write it for your future self."
         >
           <VoiceTextarea

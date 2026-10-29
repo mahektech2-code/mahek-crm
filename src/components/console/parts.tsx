@@ -6,6 +6,7 @@ import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { SalesIcon } from "@/components/console/icons";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
+import { HintTip } from "@/components/ui/hint-tip";
 
 /* ---------------------------------------------------------------------------
  * The pieces every Sales Dashboard screen is built from.
@@ -20,11 +21,15 @@ import { useInLeadHub } from "@/components/leads/hub/hub-context";
 export function ScreenHeader({
   title,
   subtitle,
+  subtitleShown = false,
   actions,
   entity = false,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
+  /** Keep the subtitle written in the v4 look — for a FACT, not an
+   *  explanation. See `PageHeader`. */
+  subtitleShown?: boolean;
   actions?: React.ReactNode;
   /**
    * The title names a RECORD — a lead, a sample, an appointment — rather than
@@ -36,6 +41,8 @@ export function ScreenHeader({
   /* Inside the CRM's Leads frame the frame names the screen; only the
      actions are this header's to draw. */
   const inHub = useInLeadHub();
+  /* The v4 look puts an explanation behind an ⓘ by the title (`ui-hint`). */
+  const tip = typeof subtitle === "string" && !subtitleShown && !entity ? subtitle : null;
   if (inHub && !entity) {
     return actions ? (
       <div className="mb-4 flex flex-wrap items-center justify-end gap-2 print:hidden">
@@ -52,9 +59,12 @@ export function ScreenHeader({
           one exception at 26/32, and it sets its own; the console has one
           heading size and this is it.
         */}
-        <h1 className="text-2xl leading-[30px] font-semibold text-ink">{title}</h1>
+        <h1 className="flex items-center gap-2 text-2xl leading-[30px] font-semibold text-ink">
+          <span className="min-w-0">{title}</span>
+          {tip ? <HintTip text={tip} className="ui-hint-tip hidden" /> : null}
+        </h1>
         {subtitle ? (
-          <p className="mt-1 max-w-[760px] text-[13px] leading-[18px] text-pretty text-muted">
+          <p className={cx("mt-1 max-w-[760px] text-[13px] leading-[18px] text-pretty text-muted", tip ? "ui-hint" : null)}>
             {subtitle}
           </p>
         ) : null}

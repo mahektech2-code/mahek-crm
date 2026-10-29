@@ -420,7 +420,7 @@ function LinkDialog({
         <Input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="The route, the rate, anything the next person needs (optional)"
+          placeholder="The route, the rate, anything the next person needs"
         />
       </div>
     </Modal>

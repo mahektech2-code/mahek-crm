@@ -1,5 +1,6 @@
 import * as React from "react";
 import Link from "next/link";
+import { HintTip } from "@/components/ui/hint-tip";
 import { DashboardFiguresSkeleton } from "@/components/shell/screen-skeleton";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -848,10 +849,8 @@ function PeriodBar({
       <span className="text-[13px] text-muted">
         {rangeLabel(range)} · {comparisonLabel(range, comparison)}
       </span>
-      <span className="flex-1" />
-      <span className="text-[13px] text-muted">
-        The queue and the list below always show today&apos;s work
-      </span>
+      {/* Said once, behind the ⓘ beside the dates it qualifies. */}
+      <HintTip text="The queue and the list below always show today's work, whatever period is picked." />
     </div>
   );
 }

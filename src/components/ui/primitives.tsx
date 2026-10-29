@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Icon } from "@/components/shell/icons";
+import { HintTip } from "./hint-tip";
 import type { SortDirection } from "@/lib/sort-param";
 import { cleanDecimal, parseDecimal, parseRupees, rupeesFromPaise } from "@/lib/format";
 
@@ -208,7 +209,7 @@ export function CardHeader({
 
 export function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cx("text-xs font-medium tracking-label text-muted uppercase", className)}>
+    <div className={cx("ui-section-label text-xs font-medium tracking-label text-muted uppercase", className)}>
       {children}
     </div>
   );
@@ -219,20 +220,29 @@ export function SectionLabel({ children, className }: { children: React.ReactNod
 export function PageHeader({
   title,
   subtitle,
+  subtitleShown = false,
   actions,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
+  /** Keep the subtitle written in the v4 look — for one that is a FACT (a
+   *  month, a date range, a record's name), not an explanation. */
+  subtitleShown?: boolean;
   actions?: React.ReactNode;
 }) {
+  /* In the v4 look a written explanation moves behind an ⓘ beside the title:
+     the page says what it is once, and the sentence is a hover away. Only a
+     string can be a tooltip, so anything else stays written. */
+  const tip = typeof subtitle === "string" && !subtitleShown ? subtitle : null;
   return (
     <div className="mb-4 flex items-start justify-between gap-4">
       <div>
-        <h1 className="text-[28px] leading-[34px] font-semibold text-ink">
-          {title}
+        <h1 className="flex items-center gap-2 text-[28px] leading-[34px] font-semibold text-ink">
+          <span>{title}</span>
+          {tip ? <HintTip text={tip} className="ui-hint-tip hidden" /> : null}
         </h1>
         {subtitle ? (
-          <p className="mt-1 text-[13px] leading-[18px] text-muted">{subtitle}</p>
+          <p className={cx("mt-1 text-[13px] leading-[18px] text-muted", tip ? "ui-hint" : null)}>{subtitle}</p>
         ) : null}
       </div>
       {actions ? (
@@ -515,9 +525,14 @@ export function EmptyState({
   return (
     <div className="px-6 py-14 text-center">
       {icon ? <div className="mb-3 flex justify-center">{icon}</div> : null}
-      <div className="text-lg font-semibold text-ink">{title}</div>
+      <div className="flex items-center justify-center gap-2 text-lg font-semibold text-ink">
+        <span>{title}</span>
+        {/* v4: the sentence moves behind an ⓘ — an empty list is its title
+            and its one action. */}
+        {body ? <HintTip text={body} className="ui-hint-tip hidden" /> : null}
+      </div>
       {body ? (
-        <p className="mx-auto mt-1.5 max-w-[460px] text-[15px] text-muted">
+        <p className="ui-hint mx-auto mt-1.5 max-w-[460px] text-[15px] text-muted">
           {body}
         </p>
       ) : null}
@@ -569,27 +584,51 @@ export function Callout({
 export function Field({
   label,
   hint,
+  hintShown = false,
+  required = false,
+  optional = false,
   error,
   children,
   className,
 }: {
   label: string;
   hint?: string;
+  /** Keep the hint written under the box even in the v4 look — for a hint
+   *  that changes what is typed. Otherwise v4 puts it behind an ⓘ. */
+  hintShown?: boolean;
+  /** A red * after the label (said as "required" to a screen reader). */
+  required?: boolean;
+  /** A small grey "optional" after the label — never a pill, never a word in
+   *  the label itself. */
+  optional?: boolean;
   error?: string | null;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <label className={cx("block", className)}>
-      <span className="mb-1 block text-xs font-medium tracking-label text-muted uppercase">
-        {label}
+      {/* `ui-field-label`, `ui-hint` and `ui-hint-tip` style nothing on their
+          own: the v4 sheet reads them, setting the label in sentence case and
+          trading the line of hint for the ⓘ. Every other app is unchanged. */}
+      <span className="ui-field-label mb-1 flex items-center gap-1 text-xs font-medium tracking-label text-muted uppercase">
+        <span>{label}</span>
+        {required ? (
+          <>
+            <span aria-hidden="true" className="text-danger">*</span>
+            <span className="sr-only">(required)</span>
+          </>
+        ) : null}
+        {optional ? (
+          <span className="text-[11.5px] font-normal tracking-normal text-faint normal-case">optional</span>
+        ) : null}
+        {hint && !hintShown && !error ? <HintTip text={hint} className="ui-hint-tip hidden" /> : null}
       </span>
       {/* Controls fill the field; in filter bars they keep their natural width. */}
       <span className="block [&>select]:w-full">{children}</span>
       {error ? (
         <span className="mt-1 block text-[13px] text-danger">{error}</span>
       ) : hint ? (
-        <span className="mt-1 block text-[13px] text-muted">{hint}</span>
+        <span className={cx("mt-1 block text-[13px] text-muted", hintShown ? null : "ui-hint")}>{hint}</span>
       ) : null}
     </label>
   );
