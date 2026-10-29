@@ -199,7 +199,12 @@ export function LineTable({
                   <Th>#</Th>
                   {fields.map((f) => (
                     <Th key={f.k} align={f.t === "num" ? "right" : "left"}>
-                      {f.l}
+                      {f.l.replace(/\s*\(optional\)\s*$/i, "")}
+                      {f.req ? (
+                        <span aria-hidden="true" className="ml-0.5 text-danger">
+                          *
+                        </span>
+                      ) : null}
                     </Th>
                   ))}
                   <Th aria-label="Remove" />

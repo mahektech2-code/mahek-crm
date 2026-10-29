@@ -39,7 +39,6 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
     <div className="px-6 pt-6 pb-10">
       <QuoteGrid
         title={SCREEN.label}
-        sub={SCREEN.sub}
         key={`${from}|${to}|${q}`}
         sheet={sheet}
         choices={choices}
