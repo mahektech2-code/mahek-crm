@@ -16,7 +16,7 @@ When Logistics opens, and every hour, any line dispatch-verified in the last <Se
 |---|---|
 | Going to the transporter | *Dispatched*, no LR |
 | Waiting for the LR | *At transport* or later, no LR |
-| On the road | Has an LR, not closed |
+| On the road | Has an LR, not closed — or delivered by a Mahek Vehicle, which needs none |
 | Delivered | *Close - Received to Party* |
 
 <Rule title="The phase is never stored">
@@ -33,6 +33,18 @@ Beside the phase, each bill says where it stands as the Order-to-Delivery PRD na
 | **Delivery Pending Confirmation** | Stage *Reached Destination Area*, or its expected day has passed, and nobody has confirmed delivery |
 | **Delivered** | *Close - Received to Party* — only ever the explicit Delivered act |
 | **Exception** | An open problem, whatever the stage |
+</Rule>
+
+## Two ways to deliver, two kinds of proof
+
+**Delivered by** on the order is a **Transporter** or a **Mahek Vehicle**. A Mahek Vehicle is a reserved name on the Transporters list, so every place that carries a transporter — the order, the bill, loading, trips — carries it unchanged; what differs is the proof. A Transporter bill goes to the transporter's godown and is put on the road by its **LR**. A Mahek Vehicle bill is on the road the moment it is dispatch-verified — which then needs the vehicle number and the driver — the team rings the driver for updates, and it is closed only with the **customer-signed copy** and who signed it. Who delivers a bill can change until it is delivered, except that a bill already under an LR keeps its transporter until the LR comes off.
+
+<Rule title="The phone only uploads">
+The floor sends photos — up to 10 at a time, LRs or signed copies — and types nothing. Every copy is checked by the laptop team on the **Documents desk**: what the AI read, what is missing, whether it is a second copy of something, and which bill it belongs to.
+</Rule>
+
+<Rule title="A duplicate is flagged, never thrown away by itself">
+The exact same photo sent twice is stored once. Anything else that looks like a copy already on the desk — the same transporter and LR number, a number one character from another with the same date and boxes, the same number with a transporter not read, a signed copy of the same bill — is shown beside the first one for a person to decide: discard it, or keep both. The same LR number of two different transporters, and different numbers of one transporter, are different papers.
 </Rule>
 
 ## The LR is uploaded by one team and attached by another
@@ -118,7 +130,7 @@ A confirmed WhatsApp in the CRM's log is contact, and quiets the customer on the
 
 The **Today** tab lists bills from the last three days with no vehicle recorded, so they can be put on a trip.
 
-The hourly ERP checks still raise an **LR missing** alert for a bill that left more than <Setting k="erp.ai.alerts.stuckLrDays" /> days ago with no LR.
+The hourly ERP checks still raise an **LR missing** alert for a bill that left more than <Setting k="erp.ai.alerts.stuckLrDays" /> days ago with no LR — and a **Signed copy missing** alert for a Mahek Vehicle bill that old with no signed copy.
 
 ## Where the code and the intent disagree today
 

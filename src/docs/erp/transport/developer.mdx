@@ -94,7 +94,12 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
 
 <Code file="src/lib/erp/logistics.ts" symbol="notifyCustomers" collapsed />
 
-- **Page:** `src/app/erp/transport/page.tsx` (a static route ahead of `[slug]`), tabs in `src/app/erp/transport/parts/`, one consignment at `/erp/transport/[id]`, the Upload LRs modal in `parts/upload-lrs-button.tsx` (opened from the Logistics header and the Dispatch desk; `/erp/transport/upload` only redirects to it), the public link at `/track/[token]`.
+<Code file="src/lib/erp/engines/delivery-proof.ts" symbol="duplicateFlags" collapsed />
+
+<Code file="src/lib/erp/logistics.ts" symbol="markDelivered" collapsed />
+
+- **Page:** `src/app/erp/transport/page.tsx` (a static route ahead of `[slug]`), tabs in `src/app/erp/transport/parts/`, one consignment at `/erp/transport/[id]`, the Upload modal in `parts/upload-lrs-button.tsx` (pick-only, LR or signed copy, opened from the Logistics header and the Dispatch desk; `/erp/transport/upload` only redirects to it), the Documents desk in `parts/documents-desk.tsx`, crop and rotate in `parts/photo-editor.tsx`, the public link at `/track/[token]`.
+- **Delivery proof (0296):** a signed copy is an `erp_lrs` row of `kind = signed_copy`; `erp_transports.signed_copy_id` points at it. Mahek Vehicle is the reserved transporter `MAHEK_VEHICLE` (`isMahekVehicle`), seeded by 0296. The desk's rules are pure in `src/lib/erp/engines/delivery-proof.ts` (`duplicateFlags`, `rankForSignedCopy`, `confidentPick`, `wrongKind`, `missingFor`); the writes are `setLrKind`, `clearDuplicate`, `discardDuplicate`, `replaceLrFile`, `attachReady` and `setDeliveredBy` in `src/lib/erp/logistics.ts`. Photos are read after upload by `readStoredLrs` (`read_lr_no`, `read_kind`, `read_at`; a signed copy's `bill_hint`, `party_hint`, `received_by`, `delivered_on`).
 - **Writes:** `src/lib/actions/erp-logistics.ts`, each through `requireErpWrite("transport")`; the upload also accepts the Dispatch desk.
 - **Reading an LR photo:** `erpLogisticsReadLr(fileId)` → `readUploadedLr` in `src/lib/erp/lr-upload-read.ts` (only the uploader's own unfiled attachment; `featureState("photos", true)`; `readImages` with every transporter's `consignment_label` and last five LR numbers in the prompt), then `cleanLrReading` in `src/lib/erp/engines/lr-read.ts`. Logged as an `erp_ai_suggestions` row (`feature = photos`, `record_type = erp_lr`); `uploadLrs` settles it accepted/edited against what was saved via `settleLrReadings`.
 - **Wati ticks:** `applyWatiEvent` hands an `etmsg_` id to `applyLogisticsWatiEvent`.
@@ -112,7 +117,11 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
   delivered_by_id: "Who pressed Delivered — the confirmation (0285).",
 }} />
 
-<DbTable name="erp_lrs" />
+<DbTable name="erp_lrs" note={{
+  kind: "lr | signed_copy (0296).",
+  read_lr_no: "What the AI read, kept even where it was not written into lr_no — the duplicate check reads it.",
+  dup_cleared_at: "A person said it is not a duplicate; it is never flagged again.",
+}} />
 
 <DbTable name="erp_trips" />
 

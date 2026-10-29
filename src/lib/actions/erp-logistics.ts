@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { err, fromThrown, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
@@ -57,6 +58,19 @@ export async function erpLogisticsUploadLrs(items: L.LrInput[]) {
     const screen = ctx.screens.has("transport") ? "transport" : "dispatch";
     const checked = await requireErpWrite(screen);
     const res = await L.uploadLrs(checked, Array.isArray(items) ? items : []);
+    /* The photos are read after the answer, so ten of them never hold the upload up. */
+    if (res.ok && res.data.ids.length) {
+      const newIds = res.data.ids;
+      const job = async () => {
+        const { readStoredLrs } = await import("@/lib/erp/lr-upload-read");
+        await readStoredLrs(checked, newIds).catch((e) => console.error("[logistics] reading uploads failed:", e instanceof Error ? e.message : e));
+      };
+      try {
+        after(job);
+      } catch {
+        await job();
+      }
+    }
     touched();
     revalidatePath("/erp/dispatch");
     return res;
@@ -111,8 +125,35 @@ export async function erpLogisticsClearIssue(transportIds: string[], note: strin
   return run((ctx) => L.clearIssue(ctx, ids(transportIds), note ?? ""));
 }
 
-export async function erpLogisticsDelivered(transportIds: string[], input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean }) {
+export async function erpLogisticsDelivered(transportIds: string[], input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean; signedCopyId?: string | null }) {
   return run((ctx) => L.markDelivered(ctx, ids(transportIds), input));
+}
+
+/* ---- delivery proof on the Documents desk (0296) ---- */
+
+export async function erpLogisticsSetKind(lrId: string, kind: "lr" | "signed_copy") {
+  return run((ctx) => L.setLrKind(ctx, String(lrId ?? ""), kind));
+}
+
+export async function erpLogisticsReplaceFile(lrId: string, fileId: string) {
+  return run((ctx) => L.replaceLrFile(ctx, String(lrId ?? ""), String(fileId ?? "")));
+}
+
+export async function erpLogisticsClearDuplicate(lrId: string) {
+  return run((ctx) => L.clearDuplicate(ctx, String(lrId ?? "")));
+}
+
+export async function erpLogisticsDiscardDuplicate(lrId: string) {
+  return run((ctx) => L.discardDuplicate(ctx, String(lrId ?? "")));
+}
+
+export async function erpLogisticsAttachReady(pairs: { lrId: string; transportIds: string[]; kind?: "lr" | "signed_copy"; date?: string | null; receivedBy?: string | null }[], opts: { notify?: boolean } = {}) {
+  const clean = (Array.isArray(pairs) ? pairs : []).map((p) => ({ lrId: String(p?.lrId ?? ""), transportIds: ids(p?.transportIds), kind: p?.kind === "signed_copy" ? ("signed_copy" as const) : ("lr" as const), date: typeof p?.date === "string" ? p.date : null, receivedBy: typeof p?.receivedBy === "string" ? p.receivedBy : null })).filter((p) => p.lrId && p.transportIds.length);
+  return run((ctx) => L.attachReady(ctx, clean, { notify: opts?.notify }));
+}
+
+export async function erpLogisticsDeliveredBy(transportIds: string[], transporter: string) {
+  return run((ctx) => L.setDeliveredBy(ctx, ids(transportIds), String(transporter ?? "")));
 }
 
 export async function erpLogisticsReopen(transportId: string, reason: string, confirmation?: ImpactConfirmation) {

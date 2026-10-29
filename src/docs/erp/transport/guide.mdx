@@ -1,49 +1,54 @@
 The **Logistics** screen follows every bill from the factory gate to the party's door: on its way to the transporter's godown at Bhiwandi, waiting for its lorry receipt (LR), on the road, and delivered. The customer gets a WhatsApp at every step. A bill appears here by itself the moment it is dispatch-verified — nobody has to add it. Every bill also says where it stands in plain words: **Logistics Pending**, **In Transit**, **Delivery Pending Confirmation**, **Delivered** or **Exception**. One tempo or truck carrying several bills is a **trip**, and the transport payment for it is recorded once and shared out by litres on **Trips & freight**.
 
+A bill goes one of two ways, chosen on the order as **Delivered by**: a **Transporter**, whose proof is the **LR**, or a **Mahek Vehicle** — our own vehicle — whose proof is the **customer-signed copy** of the bill. A Mahek Vehicle skips the transporter's godown and the LR: it is on the road the moment it leaves, the team rings the driver for updates, and it closes only with the signed copy.
+
 ## The flow, step by step
 
 <Steps>
 <Step title="1. To transporter — follow the goods to Bhiwandi">
 Every bill that has left the factory, grouped by transporter. Under each bill is the vehicle dispatch recorded and its trip — or *No vehicle recorded* in amber. Tick bills and say when they reach the transporter: **Reaches today**, **Reaches tomorrow**, or a day. Correct the **Boxes** count if it is wrong (it is read off the bill's lines). When the transporter has them, press **Reached transporter** — or **All reached** for a whole transporter.
 </Step>
-<Step title="2. The dispatch team uploads the LRs">
-Once the goods are with the transporter, the dispatch team collects the LRs and uploads them with the **Upload LRs** button, which opens a form over the Logistics screen or the Dispatch desk: a photo of each and its number, date, transporter, destination, box count and freight. Nothing on it is required — a photo alone is enough. **Add several photos** makes one row per photo. Each photo is read as it uploads: the LR number, date, transporter, destination, boxes and freight are filled in for you, marked *read*, and a number worth a second look is marked *check* in amber with a line saying why. Anything you have already typed is left alone — check what was read against the photo before you upload. The transporter is picked from the **Transporters** list: a name that is not on it is refused, and one read off a photo that is not on it is left blank with a line saying what the receipt printed. A new transporter is added on the Transporters tab first — nothing typed on an upload, an LR edit or an order adds one. Nothing is attached to a bill yet. At the transporter's godown the dispatch team can do the same from the **Mahek Factory** phone app: **Upload LR** on the home screen takes the photo, reads it the same way, takes the number typed or scanned from the LR's barcode, and puts the LR in the same list.
+<Step title="2. The phone uploads the LRs and signed copies — nothing else">
+The dispatch team photographs each LR as the transporter hands it over, and each customer-signed copy the Mahek Vehicle driver brings back. On the **Mahek Factory** phone app it is **More → Upload LR or signed copy**: pick **LR** or **Signed copy**, take or pick up to 10 photos, and **Send**. Tap a photo to crop, rotate or remove it first. Nothing is typed and nothing is checked on the phone — the office does that on the Documents desk. On a laptop, **Upload** on the Logistics screen or the Dispatch desk does the same: choose LR or Signed copy, drop up to 10 photos or PDFs, **Send**. The same photo sent twice is stored once. Each photo is read by the AI after it arrives: an LR's number, date, transporter, destination, boxes and freight; a signed copy's bill number, party, who signed and the date.
 </Step>
-<Step title="3. LR desk — attach each LR to its bills">
-On the left, the LRs waiting to be attached. An LR uploaded without its number says *Number not typed*: read it off the photo and add it with **Edit** first, because the customer is told it. A wrong upload is **Void**ed with a reason. Pick an LR: the bills it most likely carries rise to the top, with why (same transporter, destination matches, box count). The list holds bills already at the transporter; tick **Also show … not yet marked at the transporter** for the rest. Tick the bills, set the expected delivery and the next call to the transporter, and press **Attach LR & tell customer** (just **Attach LR** when the customer is not to be told). The customer gets a WhatsApp with the LR number, the transporter, the boxes and a tracking link.
+<Step title="3. Documents desk — check each copy and attach it">
+Two tabs, **LRs** and **Signed copies**. On the left, every copy waiting, with who sent it and when, and a mark: a green tick is ready to attach, an amber warning has something to add or fix, a red copy mark may be a duplicate, a clock is still being read. Pick one: the photo is on the left of the panel (open it full size, step to the previous or next, or **crop and rotate** it), what was read is beside it, and anything missing — an LR number the AI could not read, who signed a copy — is typed there and **Save**d. Below, the bills it most likely belongs to, with why (same transporter, destination, box count; for a signed copy, the bill number and party). Tick them and press **Attach** — the bills go on the road and the customer gets the LR number and a tracking link — or, for a signed copy, **Attach & mark delivered**, which closes the Mahek Vehicle delivery. **Attach N ready** at the top does every copy the desk is sure of in one press. A copy that looks like another is shown **side by side**: **Same — discard this one** or **Different — keep both**. A copy uploaded under the wrong tab says so (*Looks like an LR*) with a button to move it. A wrong upload is discarded with the bin, with a reason.
 </Step>
 <Step title="4. On the road — ring and update">
-One card per LR, with the transporter's number. **Call today** lists the ones owed a call. After the call press **Update status** (In transit, Near destination, At destination — the customer is told), **Called — no change** (the next call is booked, nobody is messaged) or **Report a problem** (delayed, damaged, short, held, wrong address, **refused**, **unconfirmed**…). A bill with a problem shows **Exception** until the problem is solved or the bill is delivered.
+One card per LR, with the transporter's number — or, for a Mahek Vehicle, one card per bill with the vehicle number and the driver's number. **Call today** lists the ones owed a call. After the call press **Update status** (In transit, Near destination, At destination — the customer is told), **Called — no change** (the next call is booked, nobody is messaged) or **Report a problem** (delayed, damaged, short, held, wrong address, **refused**, **unconfirmed**…). A bill with a problem shows **Exception** until the problem is solved or the bill is delivered.
 </Step>
 <Step title="5. Delivered">
-When the party has confirmed they have the goods, press **Delivered ✓**, give the day, who received it and — if you have one — a **proof or reference** (a POD number, a signed copy, a photo's name). Your name is recorded as the person who confirmed it. The customer gets a thank-you message, and the bill moves to **Delivered**. If the party has not confirmed yet, do not close it: **Report a problem → Unconfirmed** keeps it open and visible.
+When the party has confirmed they have the goods, press **Delivered ✓**, give the day, who received it and — if you have one — a **proof or reference** (a POD number, a photo's name). A Mahek Vehicle card says **Signed copy & delivered** instead: it needs the customer-signed copy — upload it there, or pick one already on the Documents desk — and who signed for it. **Delivered by…** on a card, or **Send in a Mahek Vehicle** on To transporter, changes who delivers a bill until it is delivered (a bill under an LR keeps its transporter until the LR comes off). Your name is recorded as the person who confirmed it. The customer gets a thank-you message, and the bill moves to **Delivered**. If the party has not confirmed yet, do not close it: **Report a problem → Unconfirmed** keeps it open and visible.
 </Step>
 <Step title="6. Trips & freight — the vehicle and its transport payment">
 When dispatch records a vehicle number, every bill leaving in that vehicle on that day goes on the same **trip**, whatever customers they are for. Bills with no vehicle wait under **Bills on no trip**: tick them and press **New trip with … bills**, or open a trip and **Add bills**. When the transport payment is confirmed, open the trip and press **Record transport payment**: type the total once, tick the bills it covers, and the screen shows the eligible litres, the cost per litre and each bill's share before you save. The shares always add up to the amount exactly. Logistics records the confirmed payment — it does not make it. A wrong one is **Reverse**d with a reason, and its bills can be shared again.
 </Step>
 </Steps>
 
-<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Sales", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The LR desk: an uploaded LR on the left, the bills it carries on the right">
+<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Sales", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The Documents desk: the copies waiting on the left, the chosen one checked and attached on the right">
   <WfBar>
     <WfTitle sub="From the factory gate to the party's door.">Logistics</WfTitle>
+    <WfButton>Upload</WfButton>
   </WfBar>
-  <WfTabs items={["Today", "To transporter", "LR desk", "On the road", "Delivered", "Customer messages", "Trips & freight", "Transporters", "All bills", "Paid freight"]} active="LR desk" />
-  <Hotspot n={1} />
+  <WfTabs items={["Today", "To transporter", "Documents desk", "On the road", "Delivered", "Customer messages", "Trips & freight", "Transporters", "All bills", "Paid freight"]} active="Documents desk" />
+  <WfBar><WfTabs items={["LRs", "Signed copies"]} active="LRs" /><Hotspot n={1} /><WfButton primary>Attach 5 ready</WfButton><Hotspot n={2} /></WfBar>
   <WfTable
-    highlight={0}
-    columns={["", "Bill", "Goes to", "Transporter", "Boxes", "Why"]}
+    highlight={1}
+    columns={["Copy", "Sent by", "Mark"]}
     rows={[
-      ["☑", "T-1119", <b key="a">Customer A</b>, "Transporter X", "12", <span key="b">same transporter <Hotspot n={2} /></span>],
-      ["☐", "T-1112", <b key="c">Customer B</b>, "Transporter Y", "4", "at the transporter"],
+      ["Transporter X · LR 1101", "Worker A · 2:40 pm", "✓"],
+      [<span key="a">Transporter X · no LR no. <Hotspot n={3} /></span>, "Worker A · 2:40 pm", "⚠"],
+      ["Transporter Y · LR 3312?", "Worker A · 2:41 pm", "Possible duplicate"],
     ]}
   />
-  <WfBar><WfButton primary>Attach LR & tell customer</WfButton><Hotspot n={3} /></WfBar>
+  <WfBar><WfButton primary>Attach to 1 bill</WfButton><Hotspot n={4} /></WfBar>
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Tabs.</b> One per step of the flow, plus the customer messages, the transporter list and the two registers.</span>,
-  <span key="2"><b>Why.</b> The reasons this bill is suggested for the LR you picked. A suggestion only — you tick.</span>,
-  <span key="3"><b>Attach.</b> Puts the bills on the road, books the next call, and messages the customer.</span>,
+  <span key="1"><b>Two tabs.</b> LRs for transporter bills, signed copies for Mahek Vehicle deliveries.</span>,
+  <span key="2"><b>Attach all ready.</b> Every copy whose bill the desk is sure of, attached in one press. Each still goes through the ordinary rules.</span>,
+  <span key="3"><b>Something to add.</b> The AI could not read the LR number. Type it from the photo beside the fields, and Save.</span>,
+  <span key="4"><b>Attach.</b> Puts the bills on the road, books the next call, and messages the customer. For a signed copy it marks the delivery delivered.</span>,
 ]} />
 
 ## The tabs
@@ -52,8 +57,8 @@ When dispatch records a vehicle number, every bill leaving in that vehicle on th
 |---|---|
 | **Today** | The four steps as counts, the calls owed today, and what needs attention: problems, lorries running late, bills at the transporter two days with no LR, bills from the last three days with no vehicle recorded, messages not sent. |
 | **To transporter** | Bills on their way to the transporter's godown. |
-| **LR desk** | Uploaded LRs, attached to their bills. |
-| **On the road** | One card per LR until delivery. |
+| **Documents desk** | Every LR and signed copy uploaded from the phone or a laptop: checked, fixed, de-duplicated and attached. |
+| **On the road** | One card per LR — or per Mahek Vehicle bill — until delivery. |
 | **Delivered** | Closed in the last 45 days, with how long each took, who received it, the proof and who confirmed it. **Reopen** if one was closed by mistake. |
 | **Customer messages** | Every WhatsApp the flow wrote. Those that could not go through Wati wait here: **Open in WhatsApp** (the text is already typed), send, then **Mark sent**. |
 | **Trips & freight** | One card per vehicle trip: its vehicle, driver, transporter and day, the bills it carried for every customer, their litres, and the transport payment shared out over them. Filters: **Vehicle missing**, **Cost not shared out**, **Reconciliation required** (a bill's litres changed after the split, so the payment should be reversed and recorded again). |
@@ -69,7 +74,16 @@ A bill appears once it is **dispatch-verified** (Mark dispatch-verified on Order
 Open **Customer messages**. It says why: no Wati template is set for logistics, WhatsApp is switched off by the founder, the number is not a mobile, or the customer is on DND. Send it by hand from there.
 </Faq>
 <Faq q="One LR carries three bills of the same party.">
-Tick all three on the LR desk. The customer gets one message naming the three bills.
+Tick all three on the Documents desk. The customer gets one message naming the three bills.
+</Faq>
+<Faq q="The same LR was photographed twice.">
+The second one is marked as a possible duplicate on the Documents desk and shown beside the first. Press **Same — discard this one**. The exact same photo sent twice never reaches the desk at all — it is stored once.
+</Faq>
+<Faq q="The AI could not read the LR number.">
+The copy has an amber mark on the Documents desk and the LR number box is empty. Read it off the photo beside the box, type it and **Save**, then attach. Where the AI read a number it was not sure of, it is offered under the box to check.
+</Faq>
+<Faq q="How does a Mahek Vehicle delivery close?">
+With the customer-signed copy. The driver brings it back, the dispatch team photographs it as a **Signed copy**, and on the Documents desk's **Signed copies** tab the office checks the bill, the date and who signed, and presses **Attach & mark delivered**. It can also be done from the card on **On the road**. Without the signed copy the delivery stays open, and after <Setting k="erp.ai.alerts.stuckLrDays" /> days it raises a **Signed copy missing** alert.
 </Faq>
 <Faq q="I attached the wrong bill to an LR.">
 Open the bill (click its number) — or use the consignment's page — and take it off the LR with a reason. It goes back to waiting for its LR.
@@ -81,5 +95,5 @@ By litres only. On **Trips & freight**, open the trip, press **Record transport 
 Tick only those bills, and say in **Which part of the trip this covers** what the payment is for. The rest stay unshared, so nothing is paid for twice — and a bill already carrying a share cannot be ticked again until that payment is reversed.
 </Faq>
 <Faq q="What does the customer's tracking link show?">
-The bill, the LR, the transporter and the steps so far. Never prices, call notes or staff names.
+The bill, the LR, the transporter and the steps so far — for a Mahek Vehicle, the vehicle and, once delivered, the signed copy. Never prices, call notes or staff names.
 </Faq>

@@ -48,7 +48,19 @@ const ReadingSchema = z.object({
   freightTerm: z.string().nullable().describe('How freight is paid as printed: "Paid", "To Pay" or "TBB" (to be billed).'),
   freightRupees: z.number().nullable().describe("The total freight in rupees, if printed."),
   confidence: z.enum(["high", "check"]).describe('"high" only if the number is printed clearly and you are sure which number it is.'),
+  paper: z.enum(["lr", "signed_copy", "other"]).describe('What this paper is: "lr" for a transporter\'s lorry receipt; "signed_copy" for our own invoice or delivery challan signed or stamped by the customer on receipt; "other" for anything else.'),
 });
+
+/** A customer-signed delivery copy: our invoice or challan, signed or stamped by the party when the goods arrived. */
+const SignedSchema = z.object({
+  billNo: z.string().nullable().describe("Our invoice / bill number printed on the paper, exactly as printed. Null if none."),
+  party: z.string().nullable().describe("The customer (buyer / consignee) the paper is made out to."),
+  receivedBy: z.string().nullable().describe("The name written or stamped by the person who received the goods. Null if only a signature with no name."),
+  deliveredOn: z.string().nullable().describe("The date written beside the receiver's signature, as YYYY-MM-DD (day first in India). Null if none."),
+  paper: z.enum(["lr", "signed_copy", "other"]).describe('What this paper is: "signed_copy" for our invoice or challan signed by the customer; "lr" for a transporter\'s lorry receipt; "other" for anything else.'),
+});
+
+const SIGNED_SYSTEM = `You read photographs of a paint company's own invoices and delivery challans that the customer signed or stamped when the goods arrived in the company's own vehicle. Transcribe only what is printed or written; never guess. A field that is not there is null. The bill number is OUR invoice number (often like MMI/26-27/1188), not a GSTIN, phone or vehicle number.`;
 
 function systemFor(styles: LrStyle[]): string {
   const directory = styles.length ? styles.map(styleLine).join("\n") : "(none recorded yet)";
@@ -142,11 +154,21 @@ export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{
   let read = 0, skipped = 0;
   for (const id of lrIds) {
     const [lr] = (await db.execute(sql`
-      select id, lr_no as "lrNo", transporter, destination, packages, freight_term as "freightTerm", freight_paise as "freightPaise", note, file_id as "fileId", status
-        from erp_lrs where id = ${id}`)) as unknown as { id: string; lrNo: string | null; transporter: string | null; destination: string | null; packages: number | null; freightTerm: string | null; freightPaise: number | null; note: string | null; fileId: string | null; status: string }[];
+      select id, lr_no as "lrNo", transporter, destination, packages, freight_term as "freightTerm", freight_paise as "freightPaise", note, file_id as "fileId", status, kind
+        from erp_lrs where id = ${id}`)) as unknown as { id: string; lrNo: string | null; transporter: string | null; destination: string | null; packages: number | null; freightTerm: string | null; freightPaise: number | null; note: string | null; fileId: string | null; status: string; kind: string }[];
     if (!lr || !lr.fileId || lr.status === "void") { skipped++; continue; }
+    if (lr.kind === "signed_copy") {
+      if (await readSignedCopy(ctx, lr.id, lr.fileId)) read++;
+      else skipped++;
+      continue;
+    }
     const out = await readImages({ label: "ERP LR batch upload", system, instruction: "Read this lorry receipt.", schema: ReadingSchema, attachmentIds: [lr.fileId] }).catch(() => null);
-    if (!out?.output) { skipped++; continue; }
+    if (!out?.output) {
+      /* Tried and not read: the desk stops saying "reading" and the team types it. */
+      await db.execute(sql`update erp_lrs set read_at = now() where id = ${id}`);
+      skipped++;
+      continue;
+    }
     const s = cleanLrReading(out.output, styles, today());
     /* A number already on another LR is a duplicate photo or a misreading — the desk decides. */
     const [dup] = s.lrNo
@@ -176,7 +198,10 @@ export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{
         freight_term = coalesce(freight_term, ${set.freight_term}),
         freight_paise = coalesce(freight_paise, ${set.freight_paise}::bigint),
         lr_date = case when ${set.lr_date}::date is not null and status = 'unassigned' then ${set.lr_date}::date else lr_date end,
-        note = coalesce(note, ${set.note})
+        note = coalesce(note, ${set.note}),
+        read_lr_no = ${s.lrNo ? s.lrNo.toUpperCase() : null},
+        read_kind = ${out.output.paper ?? null},
+        read_at = now()
       where id = ${id} and status <> 'void'`);
     const readingId = await logSuggestion({
       feature: "photos",
@@ -192,4 +217,38 @@ export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{
     read++;
   }
   return { read, skipped };
+}
+
+/**
+ * A customer-signed copy, read: the bill and party it names, who signed and
+ * when. Fills only what is blank, like an LR's reading, and records what kind
+ * of paper the model thinks it is so the desk can say "Looks like an LR".
+ */
+async function readSignedCopy(ctx: ErpContext, id: string, fileId: string): Promise<boolean> {
+  const out = await readImages({ label: "ERP signed copy upload", system: SIGNED_SYSTEM, instruction: "Read this signed delivery copy.", schema: SignedSchema, attachmentIds: [fileId] }).catch(() => null);
+  if (!out?.output) {
+    await db.execute(sql`update erp_lrs set read_at = now() where id = ${id}`);
+    return false;
+  }
+  const o = out.output;
+  const dateOk = o.deliveredOn && /^\d{4}-\d{2}-\d{2}$/.test(o.deliveredOn) && o.deliveredOn <= today() ? o.deliveredOn : null;
+  await db.execute(sql`
+    update erp_lrs set
+      bill_hint = coalesce(bill_hint, ${o.billNo?.trim().slice(0, 80) || null}),
+      party_hint = coalesce(party_hint, ${o.party?.trim().slice(0, 160) || null}),
+      received_by = coalesce(received_by, ${o.receivedBy?.trim().slice(0, 120) || null}),
+      delivered_on = coalesce(delivered_on, ${dateOk}::date),
+      read_kind = ${o.paper},
+      read_at = now()
+    where id = ${id} and status <> 'void'`);
+  await logSuggestion({
+    feature: "photos",
+    recordType: "erp_lr",
+    inputRef: fileId,
+    proposed: { ...o } as unknown as Record<string, unknown>,
+    confidence: {},
+    servedBy: out.model,
+    userId: ctx.actor.id,
+  });
+  return true;
 }

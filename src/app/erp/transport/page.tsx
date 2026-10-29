@@ -17,7 +17,8 @@ import { FLAG } from "@/lib/erp/ui";
 import { screenTabs } from "../_ui/screen-tabs";
 import { Page } from "../_ui/page-head";
 import { linkClass } from "../_ui/look";
-import { LrDesk } from "./parts/lr-desk";
+import { DocumentsDesk } from "./parts/documents-desk";
+import { nowMs } from "@/lib/format";
 import { Messages } from "./parts/messages";
 import { OnRoad } from "./parts/on-road";
 import { Delivered, Overview } from "./parts/overview";
@@ -33,7 +34,7 @@ import { UploadLrsButton } from "./parts/upload-lrs-button";
  *
  *   Today            the pipeline, the calls owed and what needs attention
  *   To transporter   dispatched bills on their way to the transporter's godown
- *   LR desk          LRs the dispatch team uploaded, attached to their bills
+ *   Documents desk   LRs and signed copies uploaded from the phone, checked and attached
  *   On the road      one card per LR: ring, update, report a problem, deliver
  *   Delivered        closed, with how long it took
  *   Customer messages every WhatsApp the flow wrote, and those to send by hand
@@ -97,9 +98,10 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   await syncDispatchedTransports(ctx.actor.id, cfg["erp.logistics.syncDays"]).catch(() => 0);
   const [all, lrs, outbox, dir, kit] = await Promise.all([
     consignments(),
-    view === "pendingLr" || view === "transport" ? uploadedLrs() : Promise.resolve([]),
+    /* The desk compares each copy with the ones attached lately, so it reads those too. */
+    view === "pendingLr" ? uploadedLrs({ status: "all", recentDays: 120 }) : view === "transport" ? uploadedLrs() : view === "trackLr" ? uploadedLrs({ kind: "signed_copy" }) : Promise.resolve([]),
     view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
-    view === "transporters" || view === "pendingLr" || view === "trips" ? transporters() : Promise.resolve([]),
+    view === "transporters" || view === "pendingLr" || view === "trips" || view === "trackLr" ? transporters() : Promise.resolve([]),
     canWrite ? lrUploadKit() : Promise.resolve(null),
   ]);
   const [tree, labels] = view === "transporters" ? await Promise.all([placeOptions(), refValues("consignmentLabel")]) : [[], []];
@@ -127,18 +129,22 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
         </div>
       ) : null}
 
-      {view === "transport" ? <Overview rows={rows} lrsWaiting={lrs.length} messagesWaiting={waitingMessages} today={today} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} /> : null}
+      {view === "transport" ? <Overview rows={rows} lrsWaiting={lrs.filter((l) => l.status === "unassigned").length} messagesWaiting={waitingMessages} today={today} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} /> : null}
       {view === "toTransport" ? <ToTransport rows={rows.filter((c) => c.phase === "toTransport")} today={today} canWrite={canWrite} /> : null}
       {view === "pendingLr" ? (
-        <LrDesk
-          lrs={lrs}
+        <DocumentsDesk
+          copies={lrs}
           waiting={rows.filter((c) => c.phase === "lrPending")}
           onTheWay={rows.filter((c) => c.phase === "toTransport")}
+          ownOnRoad={rows.filter((c) => c.ownVehicle && c.phase === "onRoad")}
           today={today}
+          nowMs={nowMs()}
           transporters={dir.filter((t) => t.active).map((t) => t.name)}
           callEveryDays={cfg["erp.logistics.callEveryDays"]}
           notifyOn={cfg["erp.logistics.notifyCustomers"]}
           canWrite={canWrite}
+          canRead={kit?.canRead ?? false}
+          initialKind={one("kind") === "signed_copy" ? "signed_copy" : "lr"}
         />
       ) : null}
       {view === "trackLr" ? (
@@ -150,6 +156,8 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           notifyOn={cfg["erp.logistics.notifyCustomers"]}
           canWrite={canWrite}
           initialFilter={filter === "calls" || filter === "late" || filter === "issue" ? filter : undefined}
+          signedWaiting={lrs}
+          transporters={dir.filter((t) => t.active).map((t) => t.name)}
         />
       ) : null}
       {view === "delivered" ? <Delivered rows={rows.filter((c) => c.phase === "delivered")} canWrite={canWrite} /> : null}

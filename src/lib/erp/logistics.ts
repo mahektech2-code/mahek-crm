@@ -19,6 +19,10 @@ import {
   addDays,
   attachRefusal,
   CLOSED,
+  isMahekVehicle,
+  isProofKind,
+  MAHEK_VEHICLE,
+  type ProofKind,
   customerMessage,
   ISSUES,
   lrRowHasAnything,
@@ -89,6 +93,12 @@ export type Consignment = {
   tripId: string | null;
   tripNo: number | null;
   vehicleNo: string | null;
+  /** Delivered in our own vehicle (0296): no LR; a customer-signed copy closes it. */
+  ownVehicle: boolean;
+  /** The driver dispatch recorded, for the call button on a Mahek Vehicle card. */
+  driver: string | null;
+  signedCopyId: string | null;
+  signedCopyFileId: string | null;
   issue: string | null;
   issueNote: string | null;
   note: string | null;
@@ -143,6 +153,8 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
            t.delivered_on::text as "deliveredOn", t.received_by as "receivedBy",
            du.name as "deliveredBy", t.delivery_proof as "deliveryProof",
            t.trip_id as "tripId", tp.trip_no as "tripNo", coalesce(t.vehicle_no, tp.vehicle_no) as "vehicleNo",
+           coalesce(tp.driver, (select min(d.driver) from erp_order_details d where d.transport_id = t.id)) as driver,
+           t.signed_copy_id as "signedCopyId", sc.file_id as "signedCopyFileId",
            t.issue, t.issue_note as "issueNote", t.note, t.track_token as "trackToken",
            ev.at as "lastEventAt", ev.note as "lastEventNote",
            coalesce(msg.waiting, 0) as "messagesWaiting", t.updated_at as "updatedAt"
@@ -151,6 +163,7 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       left join o on o.order_no = t.order_no
       left join customers dc on dc.id = o.delivery_id
       left join erp_lrs l on l.id = t.lr_id
+      left join erp_lrs sc on sc.id = t.signed_copy_id
       left join users du on du.id = t.delivered_by_id
       left join erp_trips tp on tp.id = t.trip_id
       left join erp_transporters tr on lower(tr.name) = lower(coalesce(t.transporter, l.transporter)) and tr.active
@@ -163,6 +176,7 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
   return rows.map((r) => {
     const stage = String(r.stage);
     const lrNo = s(r.lrNo);
+    const transporter = s(r.transporter);
     return {
       id: String(r.id),
       orderNo: Number(r.orderNo),
@@ -176,14 +190,14 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       area: s(r.area),
       godown: s(r.godown),
       salesPerson: s(r.salesPerson),
-      transporter: s(r.transporter),
+      transporter,
       transporterPhone: s(r.transporterPhone),
       transporterTrackUrl: s(r.transporterTrackUrl),
       paymentType: s(r.paymentType),
       packages: n(r.packages),
       litres: n(r.litres),
       stage,
-      phase: phaseOf({ lrNo, materialStage: stage }),
+      phase: phaseOf({ lrNo, materialStage: stage, transporter }),
       transportDueOn: s(r.transportDueOn),
       atTransportAt: r.atTransportAt ? new Date(String(r.atTransportAt)).toISOString() : null,
       lrId: s(r.lrId),
@@ -199,6 +213,10 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       tripId: s(r.tripId),
       tripNo: n(r.tripNo),
       vehicleNo: s(r.vehicleNo),
+      ownVehicle: isMahekVehicle(transporter),
+      driver: s(r.driver),
+      signedCopyId: s(r.signedCopyId),
+      signedCopyFileId: s(r.signedCopyFileId),
       issue: s(r.issue),
       issueNote: s(r.issueNote),
       note: s(r.note),
@@ -233,20 +251,45 @@ export type UploadedLr = {
   uploadedBy: string | null;
   uploadedAt: string;
   bills: number;
+  /* ---- 0296: delivery proof ---- */
+  kind: ProofKind;
+  readLrNo: string | null;
+  readKind: string | null;
+  /** When the photo was read; null while it waits to be read (or reading is off). */
+  readAt: string | null;
+  billHint: string | null;
+  partyHint: string | null;
+  receivedBy: string | null;
+  deliveredOn: string | null;
+  contentHash: string | null;
+  dupClearedAt: string | null;
+  /** Where it was uploaded from: the factory phone, or a laptop. */
+  fromPhone: boolean;
 };
 
-/** LRs the dispatch team uploaded: those waiting to be attached, and the latest attached ones. */
-export async function uploadedLrs(opts: { status?: "unassigned" | "all" } = {}): Promise<UploadedLr[]> {
+/**
+ * Delivery proof on the desk: LRs (and signed copies) waiting to be attached —
+ * or, with `all`, the latest attached ones too, which the duplicate check
+ * compares against. `kind` narrows to one kind.
+ */
+export async function uploadedLrs(opts: { status?: "unassigned" | "all"; kind?: ProofKind; recentDays?: number } = {}): Promise<UploadedLr[]> {
   const rows = (await db.execute(sql`
     select l.id, l.lr_no as "lrNo", l.lr_date::text as "lrDate", l.transporter, l.destination, l.packages,
            l.freight_paise as "freightPaise", l.freight_term as "freightTerm", l.file_id as "fileId", l.note, l.status,
            u.name as "uploadedBy", l.uploaded_at as "uploadedAt",
-           (select count(*)::int from erp_transports t where t.lr_id = l.id) as bills
+           (select count(*)::int from erp_transports t where t.lr_id = l.id or t.signed_copy_id = l.id) as bills,
+           l.kind, l.read_lr_no as "readLrNo", l.read_kind as "readKind", l.read_at as "readAt",
+           l.bill_hint as "billHint", l.party_hint as "partyHint", l.received_by as "receivedBy", l.delivered_on::text as "deliveredOn",
+           a.content_hash as "contentHash", l.dup_cleared_at as "dupClearedAt",
+           exists (select 1 from factory_staff f where f.user_id = l.uploaded_by_id) as "fromPhone"
       from erp_lrs l
       left join users u on u.id = l.uploaded_by_id
+      left join attachments a on a.id = l.file_id
      where ${opts.status === "all" ? sql`l.status <> 'void'` : sql`l.status = 'unassigned'`}
+       ${opts.kind ? sql`and l.kind = ${opts.kind}` : sql``}
+       ${opts.recentDays ? sql`and (l.status = 'unassigned' or l.uploaded_at >= now() - make_interval(days => ${opts.recentDays}::int))` : sql``}
      order by l.uploaded_at desc
-     limit 300
+     limit ${opts.recentDays ? 1500 : 300}
   `)) as unknown as Row[];
   return rows.map((r) => ({
     id: String(r.id),
@@ -263,6 +306,17 @@ export async function uploadedLrs(opts: { status?: "unassigned" | "all" } = {}):
     uploadedBy: s(r.uploadedBy),
     uploadedAt: new Date(String(r.uploadedAt)).toISOString(),
     bills: Number(r.bills ?? 0),
+    kind: isProofKind(r.kind) ? r.kind : "lr",
+    readLrNo: s(r.readLrNo),
+    readKind: s(r.readKind),
+    readAt: r.readAt ? new Date(String(r.readAt)).toISOString() : null,
+    billHint: s(r.billHint),
+    partyHint: s(r.partyHint),
+    receivedBy: s(r.receivedBy),
+    deliveredOn: s(r.deliveredOn),
+    contentHash: s(r.contentHash),
+    dupClearedAt: r.dupClearedAt ? new Date(String(r.dupClearedAt)).toISOString() : null,
+    fromPhone: r.fromPhone === true,
   }));
 }
 
@@ -529,6 +583,13 @@ export type LrInput = {
   note?: string | null;
   /** The photo reading that filled this row, if one did (`lr-upload-read.ts`). */
   readingId?: string | null;
+  /** lr (default) | signed_copy. */
+  kind?: ProofKind | null;
+  /** A signed copy: who signed, the day on it, and the bill and party stamped on it. */
+  receivedBy?: string | null;
+  deliveredOn?: string | null;
+  billHint?: string | null;
+  partyHint?: string | null;
 };
 
 export const FREIGHT_TERMS = ["Paid", "To pay", "TBB"];
@@ -540,11 +601,41 @@ export const FREIGHT_TERMS = ["Paid", "To pay", "TBB"];
  * is skipped. Nothing is attached here: which bills an LR carries is
  * logistics' decision, and that is where the number becomes required.
  */
-export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Result<{ ids: string[] }>> {
+export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Result<{ ids: string[]; already: string[] }>> {
   if (items.length > 50) return err("Upload up to 50 LRs at a time.", "validation");
-  const clean = items
-    .map((i, idx) => ({ ...i, idx, lrNo: (i.lrNo ?? "").trim().toUpperCase(), transporter: (i.transporter ?? "").trim() || null }))
+  const bad0 = items.find((i) => i.kind != null && !isProofKind(i.kind));
+  if (bad0) return err("Upload an LR or a signed copy.", "validation");
+  let clean = items
+    .map((i, idx) => ({ ...i, idx, kind: (i.kind ?? "lr") as ProofKind, lrNo: (i.kind === "signed_copy" ? "" : (i.lrNo ?? "").trim().toUpperCase()), transporter: (i.kind === "signed_copy" ? null : (i.transporter ?? "").trim() || null) }))
     .filter((i) => lrRowHasAnything(i));
+  /* THE SAME PHOTO TWICE IS STORED ONCE, silently: a photo whose bytes are already on a live copy
+     answers with that copy and writes nothing. Two photos of one paper differ in their bytes and
+     reach the desk, which flags them for a person. */
+  const already: string[] = [];
+  const files = clean.map((i) => i.fileId).filter((f): f is string => !!f);
+  if (files.length) {
+    const hits = (await db.execute(sql`
+      select a.id as "fileId", (select l.id from erp_lrs l join attachments b on b.id = l.file_id
+                                  where l.status <> 'void' and b.content_hash = a.content_hash limit 1) as "lrId"
+        from attachments a
+       where a.id in ${files} and a.content_hash is not null`)) as unknown as { fileId: string; lrId: string | null }[];
+    const dupFile = new Map(hits.filter((h) => h.lrId).map((h) => [h.fileId, h.lrId!]));
+    /* And the same bytes twice in one upload: the first one goes. */
+    const firstOf = new Map<string, string>();
+    const hashes = files.length ? ((await db.execute(sql`select id, content_hash as h from attachments where id in ${files}`)) as unknown as { id: string; h: string | null }[]) : [];
+    for (const f of files) {
+      const h = hashes.find((x) => x.id === f)?.h;
+      if (h && !firstOf.has(h)) firstOf.set(h, f);
+    }
+    clean = clean.filter((i) => {
+      if (!i.fileId) return true;
+      const old = dupFile.get(i.fileId);
+      if (old) return void already.push(old), false;
+      const h = hashes.find((x) => x.id === i.fileId)?.h;
+      return !h || firstOf.get(h) === i.fileId;
+    });
+    if (!clean.length && already.length) return ok({ ids: [], already: [...new Set(already)] }, `Already uploaded — ${already.length === 1 ? "this photo is" : "these photos are"} on the desk`);
+  }
   if (!clean.length) return err("Fill in at least one LR — a photo is enough.", "validation");
   const bad = clean.find((i) => i.lrDate && !day(i.lrDate));
   if (bad) return fieldErr(`l${bad.idx + 1}.lrDate`, `Row ${bad.idx + 1}: the date is not a date`);
@@ -594,19 +685,26 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
         godownId: ctx.workingGodown?.id ?? null,
         note: (i.note ?? "").trim() || null,
         uploadedById: ctx.user.id,
+        kind: i.kind,
+        receivedBy: (i.receivedBy ?? "").trim() || null,
+        deliveredOn: day(i.deliveredOn),
+        billHint: (i.billHint ?? "").trim() || null,
+        partyHint: (i.partyHint ?? "").trim() || null,
       });
       await bindErpFiles(tx as unknown as typeof db, [i.fileId], "erp_lr", id, ctx.actor.id);
     }
   });
   /* How the photo readings fared — after the LRs are safe, and never at their cost. */
   await settleLrReadings(ctx, readings).catch((e) => console.error("LR upload: settling photo readings failed:", e instanceof Error ? e.message : e));
-  await erpAudit(ctx, "erp.logistics.lrUpload", "erp_lr", ids.join(","), null, { lrs: clean.map((i) => i.lrNo || null) });
-  return ok({ ids }, `${ids.length} LR${ids.length === 1 ? "" : "s"} uploaded — logistics will attach ${ids.length === 1 ? "it" : "them"} to the bills`);
+  await erpAudit(ctx, "erp.logistics.lrUpload", "erp_lr", ids.join(","), null, { lrs: clean.map((i) => i.lrNo || null), kinds: clean.map((i) => i.kind), already });
+  const word = clean.every((i) => i.kind === "signed_copy") ? (ids.length === 1 ? "signed copy" : "signed copies") : clean.every((i) => i.kind === "lr") ? (ids.length === 1 ? "LR" : "LRs") : ids.length === 1 ? "copy" : "copies";
+  return ok({ ids, already: [...new Set(already)] }, `${ids.length} ${word} uploaded${already.length ? ` · ${already.length} already on the desk` : ""} — the office checks ${ids.length === 1 ? "it" : "them"} on the Documents desk`);
 }
 
 export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Promise<Result<unknown>> {
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
+  if (lr.kind === "signed_copy") return editSignedCopy(ctx, lr, input);
   const lrNo = (input.lrNo ?? "").trim().toUpperCase() || null;
   /* The bills under an attached LR carry its number, and the customer was told it. */
   if (!lrNo && lr.status === "assigned") return fieldErr("lrNo", "This LR is attached to bills, so it needs its number");
@@ -638,6 +736,93 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Pro
   return okVoid(lrNo ? `LR ${lrNo} saved` : "LR saved");
 }
 
+/** A signed copy's own fields: who signed, the day on it, and what it says it is for. */
+async function editSignedCopy(ctx: ErpContext, lr: typeof erpLrs.$inferSelect, input: LrInput): Promise<Result<unknown>> {
+  const deliveredOn = input.deliveredOn ? day(input.deliveredOn) : null;
+  if (input.deliveredOn && !deliveredOn) return fieldErr("deliveredOn", "The delivery date is not a date");
+  if (deliveredOn && deliveredOn > today()) return fieldErr("deliveredOn", "Delivery cannot be in the future");
+  const after = {
+    receivedBy: (input.receivedBy ?? "").trim().slice(0, 120) || null,
+    deliveredOn,
+    billHint: (input.billHint ?? "").trim().slice(0, 80) || null,
+    partyHint: (input.partyHint ?? "").trim().slice(0, 160) || null,
+    note: (input.note ?? "").trim() || null,
+    ...(input.fileId ? { fileId: input.fileId } : {}),
+  };
+  await db.transaction(async (tx) => {
+    await tx.update(erpLrs).set(after).where(eq(erpLrs.id, lr.id));
+    if (input.fileId) await bindErpFiles(tx as unknown as typeof db, [input.fileId], "erp_lr", lr.id, ctx.actor.id);
+    /* Who signed is the delivery's own record once the copy is attached. */
+    if (lr.status === "assigned" && after.receivedBy) await tx.update(erpTransports).set({ receivedBy: after.receivedBy, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.signedCopyId, lr.id));
+  });
+  await erpAudit(ctx, "erp.logistics.signedCopyEdit", "erp_lr", lr.id, lr, after);
+  return okVoid("Signed copy saved");
+}
+
+/**
+ * Uploaded under the wrong kind — an LR sent as a signed copy, or the other
+ * way. Only while it is on the desk: an attached copy is part of a delivery.
+ */
+export async function setLrKind(ctx: ErpContext, lrId: string, kind: ProofKind): Promise<Result<unknown>> {
+  if (!isProofKind(kind)) return err("An upload is an LR or a signed copy.", "validation");
+  const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
+  if (!lr || lr.status === "void") return err("That upload is not on the desk.", "not_found");
+  if (lr.status !== "unassigned") return err("It is attached already. Take it off its bills first.", "rule_violation");
+  if (lr.kind === kind) return okVoid("No change");
+  /* A signed copy carries no LR number, so a number typed on it would sit in the unique index for nothing. */
+  await db.update(erpLrs).set({ kind, ...(kind === "signed_copy" ? { lrNo: null } : {}) }).where(eq(erpLrs.id, lrId));
+  await erpAudit(ctx, "erp.logistics.lrKind", "erp_lr", lrId, { kind: lr.kind }, { kind });
+  return okVoid(kind === "lr" ? "Moved to LRs" : "Moved to signed copies");
+}
+
+/**
+ * A cropped or rotated photo replaces the one on the copy. Only the file
+ * moves — every field typed or read stays as it is — and only the person's
+ * own fresh upload may take its place.
+ */
+export async function replaceLrFile(ctx: ErpContext, lrId: string, fileId: string): Promise<Result<unknown>> {
+  const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
+  if (!lr || lr.status === "void") return err("That upload is not on the desk.", "not_found");
+  const [mine] = (await db.execute(sql`select id from attachments where id = ${fileId} and uploaded_by_id = ${ctx.actor.id} and status = 'available' and parent_id is null`)) as unknown as { id: string }[];
+  if (!mine) return err("That photo is not one you just saved.", "not_found");
+  await db.transaction(async (tx) => {
+    await tx.update(erpLrs).set({ fileId }).where(eq(erpLrs.id, lrId));
+    await bindErpFiles(tx as unknown as typeof db, [fileId], "erp_lr", lrId, ctx.actor.id);
+  });
+  await erpAudit(ctx, "erp.logistics.lrPhoto", "erp_lr", lrId, { fileId: lr.fileId }, { fileId });
+  return okVoid("Photo saved");
+}
+
+/** A person looked at the pair and says they are two different papers: never flagged again. */
+export async function clearDuplicate(ctx: ErpContext, lrId: string): Promise<Result<unknown>> {
+  const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
+  if (!lr || lr.status === "void") return err("That upload is not on the desk.", "not_found");
+  await db.update(erpLrs).set({ dupClearedAt: new Date(), dupClearedById: ctx.user.id }).where(eq(erpLrs.id, lrId));
+  await erpAudit(ctx, "erp.logistics.dupCleared", "erp_lr", lrId, null, { cleared: true });
+  return okVoid("Kept — both stay on the desk");
+}
+
+/**
+ * The same paper twice: the later copy is voided with the earlier one named.
+ * Refused unless the desk's own rule still sees it as a copy of something —
+ * this is the one void that needs no typed confirmation, because it can only
+ * ever remove a second copy of a paper that stays on the desk.
+ */
+export async function discardDuplicate(ctx: ErpContext, lrId: string): Promise<Result<unknown>> {
+  const { duplicateFlags } = await import("./engines/delivery-proof");
+  const desk = await uploadedLrs({ status: "all", recentDays: 120 });
+  const me = desk.find((l) => l.id === lrId);
+  if (!me) return err("That upload is not on the desk.", "not_found");
+  if (me.status !== "unassigned") return err("It is attached to bills — it is not a spare copy.", "rule_violation");
+  const flag = duplicateFlags(desk).get(lrId);
+  if (!flag) return err("This does not look like a copy of anything on the desk any more.", "conflict");
+  const of = desk.find((l) => l.id === flag.ofId);
+  const why = `Duplicate of ${of?.lrNo ? `LR ${of.lrNo}` : of?.billHint ? `the copy for bill ${of.billHint}` : "an earlier upload"}`;
+  await db.update(erpLrs).set({ status: "void", voidReason: why }).where(and(eq(erpLrs.id, lrId), eq(erpLrs.status, "unassigned")));
+  await erpAudit(ctx, "erp.logistics.dupDiscarded", "erp_lr", lrId, { status: "unassigned" }, { status: "void", reason: why, of: flag.ofId });
+  return okVoid("Discarded — the earlier copy stays");
+}
+
 /**
  * A wrong upload is voided with its reason, never deleted — and only while it
  * carries nothing. The person saw what voiding it touches (`erp-lr-void`).
@@ -647,7 +832,7 @@ export async function voidLr(ctx: ErpContext, lrId: string, reason: string, conf
   if (why.length < 3) return fieldErr("reason", "Say why this LR is being voided");
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
-  const [carrying] = await db.select({ id: erpTransports.id }).from(erpTransports).where(eq(erpTransports.lrId, lrId)).limit(1);
+  const [carrying] = await db.select({ id: erpTransports.id }).from(erpTransports).where(sql`${erpTransports.lrId} = ${lrId} or ${erpTransports.signedCopyId} = ${lrId}`).limit(1);
   if (carrying) return err("This LR is attached to bills. Take them off it first.", "rule_violation");
   const refusal = await confirmImpact("erp-lr-void", lrId, confirmation);
   if (refusal) return refusal;
@@ -669,10 +854,13 @@ export async function attachLr(
 ): Promise<Result<{ notified: NotifyOutcome }>> {
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
+  if (lr.kind === "signed_copy") return err("This is a signed copy. It closes a Mahek Vehicle delivery — attach it on the Signed copies tab.", "rule_violation");
   if (!lr.lrNo) return fieldErr("lrNo", "Type the LR number off the photo first (Edit) — the customer is told it.");
   const lrNo = lr.lrNo;
   const ts = await load([...new Set(transportIds)]);
   if (ts.length !== new Set(transportIds).size) return err("A bill you ticked is no longer in logistics. Refresh and try again.", "conflict");
+  const own = ts.find((t) => isMahekVehicle(t.transporter));
+  if (own) return err(`Order ${own.orderNo} goes in a Mahek Vehicle, which carries no LR. Change who delivers it first.`, "rule_violation");
   const delivery = await deliveryParties(ts.map((t) => t.orderNo));
   const refusal = attachRefusal(
     ts.map((t) => ({ id: t.id, orderNo: t.orderNo, deliveryPartyId: delivery.get(t.orderNo) ?? t.billingCustomerId, lrId: t.lrId, materialStage: t.materialStage })),
@@ -746,7 +934,7 @@ export async function updateConsignment(
   if (!ts.length) return err("Nothing here is still on the road.", "rule_violation");
   const stage = input.stage?.trim() || null;
   if (stage && !ROAD_STAGES.includes(stage as never)) return fieldErr("stage", "Pick where the goods are");
-  if (stage && ts.some((t) => !t.lrNo)) return err("A bill with no LR is moved by attaching its LR on the LR desk.", "rule_violation");
+  if (stage && ts.some((t) => !t.lrNo && !isMahekVehicle(t.transporter))) return err("A bill with no LR is moved by attaching its LR on the Documents desk.", "rule_violation");
   const expected = day(input.expectedOn);
   if (input.expectedOn && !expected) return fieldErr("expectedOn", "Expected delivery is not a date");
   const nextIn = day(input.nextCallOn);
@@ -836,7 +1024,7 @@ export async function clearIssue(ctx: ErpContext, transportIds: string[], note: 
 export async function markDelivered(
   ctx: ErpContext,
   transportIds: string[],
-  input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean },
+  input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean; signedCopyId?: string | null },
 ): Promise<Result<{ notified: NotifyOutcome }>> {
   const d = day(input.date);
   if (!d) return fieldErr("date", "Pick the day the party received it");
@@ -848,20 +1036,100 @@ export async function markDelivered(
   const receivedBy = input.receivedBy?.trim() || null;
   const proof = input.proof?.trim().slice(0, 200) || null;
   const note = input.note?.trim() || null;
+  /* A MAHEK VEHICLE DELIVERY CLOSES ONLY WITH THE CUSTOMER-SIGNED COPY, and who signed it. */
+  const own = ts.filter((t) => isMahekVehicle(t.transporter));
+  let copy: typeof erpLrs.$inferSelect | null = null;
+  if (own.length) {
+    const want = input.signedCopyId?.trim() || own.find((t) => t.signedCopyId)?.signedCopyId || null;
+    if (!want) return fieldErr("signedCopy", "A Mahek Vehicle delivery needs the customer-signed copy. Upload it or pick one waiting on the desk.");
+    [copy] = await db.select().from(erpLrs).where(eq(erpLrs.id, want));
+    if (!copy || copy.status === "void" || copy.kind !== "signed_copy") return fieldErr("signedCopy", "That signed copy is not on the desk.");
+    const elsewhere = copy.status === "assigned" && !own.some((t) => t.signedCopyId === copy!.id);
+    if (elsewhere) return fieldErr("signedCopy", "That signed copy already closes another delivery.");
+    if (!receivedBy && !copy.receivedBy) return fieldErr("receivedBy", "Say who signed for it — the name on the copy");
+  }
+  const signer = receivedBy ?? copy?.receivedBy ?? null;
   let eventId = "";
   await db.transaction(async (tx) => {
     await tx
       .update(erpTransports)
-      .set({ materialStage: CLOSED, trackStatus: "Don't Track", deliveredOn: d, receivedBy, deliveredById: ctx.user.id, deliveryProof: proof, issue: null, issueNote: null, issueAt: null, reminderDate: null, ...(note ? { note } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+      .set({ materialStage: CLOSED, trackStatus: "Don't Track", deliveredOn: d, receivedBy: signer, deliveredById: ctx.user.id, deliveryProof: proof, issue: null, issueNote: null, issueAt: null, reminderDate: null, ...(note ? { note } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
       .where(inArray(erpTransports.id, ts.map((t) => t.id)));
-    eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "delivered", CLOSED, [receivedBy ? `Received by ${receivedBy}` : null, proof ? `Proof: ${proof}` : null, note].filter(Boolean).join(" · ") || null);
+    if (copy && own.length) {
+      await tx.update(erpTransports).set({ signedCopyId: copy.id, deliveryProof: proof ?? "Customer-signed copy" }).where(inArray(erpTransports.id, own.map((t) => t.id)));
+      await tx.update(erpLrs).set({ status: "assigned", assignedById: ctx.user.id, assignedAt: new Date(), receivedBy: signer, deliveredOn: d }).where(eq(erpLrs.id, copy.id));
+    }
+    eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "delivered", CLOSED, [signer ? `Received by ${signer}` : null, copy ? "Signed copy" : proof ? `Proof: ${proof}` : null, note].filter(Boolean).join(" · ") || null);
   });
-  await erpAudit(ctx, "erp.logistics.delivered", "erp_transport", ts.map((t) => t.id).join(","), null, { date: d, receivedBy, proof });
+  await erpAudit(ctx, "erp.logistics.delivered", "erp_transport", ts.map((t) => t.id).join(","), null, { date: d, receivedBy: signer, proof, signedCopyId: copy?.id ?? null });
   /* Delivered ends any delay the customer was reading about. */
   await (await import("./order-tracking")).clearDelays(ctx, [...new Set(ts.map((t) => t.orderNo))], "Delivered.");
   await syncBookOrders([...new Set(ts.map((t) => t.orderNo))]);
-  const notified = input.notify === false ? NO_NOTIFY : await notifyCustomers(ctx, "delivered", ts.map((t) => t.id), eventId, { deliveredOn: d, receivedBy });
+  const notified = input.notify === false ? NO_NOTIFY : await notifyCustomers(ctx, "delivered", ts.map((t) => t.id), eventId, { deliveredOn: d, receivedBy: signer });
   return ok({ notified }, `Delivered and closed${notifyWords(notified)}`);
+}
+
+/**
+ * WHO DELIVERS IT CAN CHANGE UNTIL IT IS DELIVERED: a transporter's bill put
+ * on our own vehicle, or the other way. Our own vehicle carries no LR, so a
+ * bill already under an LR keeps its transporter until the LR comes off it;
+ * the order's own lines move with it, so the order book and loading agree.
+ */
+export async function setDeliveredBy(ctx: ErpContext, transportIds: string[], transporterRaw: string): Promise<Result<unknown>> {
+  const ts = (await load([...new Set(transportIds)])).filter((t) => t.materialStage !== CLOSED);
+  if (!ts.length) return err("These are already delivered — who delivered them cannot change now.", "rule_violation");
+  const toOwn = isMahekVehicle(transporterRaw);
+  let transporter = MAHEK_VEHICLE as string;
+  if (!toOwn) {
+    const listed = await listedTransporterName(db, transporterRaw);
+    if (!listed.ok) return fieldErr("transporter", listed.error);
+    if (!listed.name) return fieldErr("transporter", "Pick the transporter");
+    transporter = listed.name;
+  }
+  const lr = ts.find((t) => t.lrId);
+  if (toOwn && lr) return err(`Order ${lr.orderNo} is under LR ${lr.lrNo}. Take it off the LR first.`, "rule_violation");
+  const moving = ts.filter((t) => (t.transporter ?? "").toLowerCase() !== transporter.toLowerCase());
+  if (!moving.length) return okVoid("No change");
+  await db.transaction(async (tx) => {
+    for (const t of moving)
+      await tx
+        .update(erpTransports)
+        .set({ transporter, ...(toOwn ? { trackStatus: "Track", reminderDate: t.reminderDate ?? today() } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpTransports.id, t.id));
+    await tx.execute(sql`update erp_orders set transporter = ${transporter}, updated_at = now() where id in (select order_id from erp_order_details where transport_id in ${moving.map((t) => t.id)})`);
+    await addEvent(tx as unknown as typeof db, ctx, moving.map((t) => t.id), "delivered_by", null, `Delivered by ${transporter}`, false);
+  });
+  await erpAudit(ctx, "erp.logistics.deliveredBy", "erp_transport", moving.map((t) => t.id).join(","), { transporter: moving.map((t) => t.transporter) }, { transporter });
+  await syncBookOrders([...new Set(moving.map((t) => t.orderNo))]);
+  return okVoid(`${moving.length} bill${moving.length === 1 ? "" : "s"} now delivered by ${transporter}`);
+}
+
+/**
+ * ATTACH ALL READY: every pair the desk was sure of, attached in one press.
+ * Each goes through the ordinary `attachLr` (or `markDelivered` for a signed
+ * copy), so every rule still applies; one refused pair is reported and the
+ * rest still go.
+ */
+export async function attachReady(
+  ctx: ErpContext,
+  pairs: { lrId: string; transportIds: string[]; kind?: ProofKind; date?: string | null; receivedBy?: string | null }[],
+  opts: { notify?: boolean } = {},
+): Promise<Result<unknown>> {
+  if (!pairs.length) return err("Nothing is ready to attach.", "rule_violation");
+  if (pairs.length > 50) return err("Attach up to 50 at a time.", "validation");
+  const cfg = await getConfig();
+  let done = 0;
+  const refused: string[] = [];
+  for (const p of pairs) {
+    const r =
+      p.kind === "signed_copy"
+        ? await markDelivered(ctx, p.transportIds, { date: p.date || today(), receivedBy: p.receivedBy ?? null, signedCopyId: p.lrId, notify: opts.notify })
+        : await attachLr(ctx, p.lrId, p.transportIds, { notify: opts.notify, nextCallOn: addDays(today(), cfg["erp.logistics.callEveryDays"]) });
+    if (r.ok) done++;
+    else refused.push(r.error);
+  }
+  if (!done) return err(`Nothing attached: ${refused[0]}`, "rule_violation");
+  return okVoid(`${done} attached${refused.length ? ` · ${refused.length} need a look: ${refused[0]}` : ""}`);
 }
 
 /**
@@ -876,9 +1144,9 @@ export async function reopen(ctx: ErpContext, transportId: string, reason: strin
   if (!t || t.materialStage !== CLOSED) return err("That bill is not closed.", "rule_violation");
   const refusal = await confirmImpact("erp-delivery-reopen", transportId, confirmation);
   if (refusal) return refusal;
-  const stage = t.lrNo ? "Reached Destination Area" : "At transport";
+  const stage = t.lrNo ? "Reached Destination Area" : isMahekVehicle(t.transporter) ? "Out for Delivery" : "At transport";
   await db.transaction(async (tx) => {
-    await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
+    await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo || isMahekVehicle(t.transporter) ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
     await addEvent(tx as unknown as typeof db, ctx, [t.id], "reopened", stage, why, false);
   });
   await erpAudit(ctx, "erp.logistics.reopen", "erp_transport", t.id, { stage: CLOSED }, { stage, reason: why });
@@ -934,6 +1202,9 @@ export async function saveTransporter(
   if (input.id) {
     const [before] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, input.id));
     if (!before) return err("That transporter is gone.", "not_found");
+    /* OUR OWN VEHICLE IS A RESERVED NAME: renaming or switching it off would strand every Mahek Vehicle order. */
+    if (isMahekVehicle(before.name) && !isMahekVehicle(name)) return fieldErr("name", `${MAHEK_VEHICLE} is our own vehicle and keeps its name`);
+    if (isMahekVehicle(before.name) && input.active === false) return fieldErr("active", `${MAHEK_VEHICLE} cannot be switched off — orders choose it on "Delivered by"`);
     const beforeGodowns = (await transporters()).find((t) => t.id === id)?.godowns ?? [];
     const renamed = before.name !== name;
     if (renamed) {
@@ -974,6 +1245,7 @@ export async function mergeTransporter(ctx: ErpContext, fromId: string, intoId: 
   const [from] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, fromId));
   const [into] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, intoId));
   if (!from || !into) return err("That transporter is gone.", "not_found");
+  if (isMahekVehicle(from.name) || isMahekVehicle(into.name)) return err(`${MAHEK_VEHICLE} is our own vehicle, not a transporter — it cannot be merged.`, "rule_violation");
   const refusal = await confirmImpact("erp-transporter-merge", transporterMergeKey(fromId, intoId), confirmation);
   if (refusal) return refusal;
   let rewritten: Record<string, number> = {};
@@ -1131,6 +1403,7 @@ export async function notifyCustomers(
       transporter: first.transporter ?? lr?.transporter ?? null,
       packages: mine.every((t) => t.packages != null) ? mine.reduce((a, t) => a + (t.packages ?? 0), 0) : (lr?.packages ?? null),
       stage: first.materialStage,
+      vehicleNo: first.vehicleNo ?? null,
       expectedOn: first.expectedDeliveryOn,
       /* The order's own tracking link where it has one — the delivery party's view where this is not the billing party —
          else the consignment's older link, which opens the same page. */

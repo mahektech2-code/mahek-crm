@@ -34,6 +34,7 @@ import {
   type TransportFacts,
 } from "./engines/order-tracking";
 import { today } from "./screens/common";
+import { isMahekVehicle } from "./engines/logistics";
 import { erpAudit, erpId } from "./server";
 
 /* ---------------------------------------------------------------------------
@@ -148,7 +149,7 @@ async function readOrders(orderNos: number[]): Promise<Map<number, OrderBasics>>
   return out;
 }
 
-type TransportRow = TransportFacts & { id: string; orderNo: number; lrNo: string | null; lrDate: string | null; lrFileId: string | null; transporter: string | null; expectedOn: string | null; deliveredOn: string | null; receivedBy: string | null; billingId: string };
+type TransportRow = TransportFacts & { id: string; orderNo: number; lrNo: string | null; lrDate: string | null; lrFileId: string | null; signedCopyFileId: string | null; transporter: string | null; expectedOn: string | null; deliveredOn: string | null; receivedBy: string | null; billingId: string };
 
 async function readTransports(orderNos: number[]): Promise<Map<number, TransportRow[]>> {
   const out = new Map<number, TransportRow[]>();
@@ -157,12 +158,13 @@ async function readTransports(orderNos: number[]): Promise<Map<number, Transport
     select t.id, t.order_no as "orderNo", t.material_stage as stage, t.at_transport_at as "atTransportAt", t.lr_no as "lrNo",
            l.lr_date::text as "lrDate", l.file_id as "lrFileId", l.assigned_at as "lrAttachedAt", coalesce(t.transporter, l.transporter) as transporter,
            t.expected_delivery_on::text as "expectedOn", t.delivered_on::text as "deliveredOn", t.received_by as "receivedBy",
-           t.billing_customer_id as "billingId",
+           t.billing_customer_id as "billingId", sc.file_id as "signedCopyFileId",
            (select min(e.at) from erp_transport_events e where e.transport_id = t.id and e.kind = 'delivered') as "deliveredAt",
            coalesce((select json_agg(json_build_object('kind', e.kind, 'stage', e.stage, 'at', e.at) order by e.at)
                        from erp_transport_events e where e.transport_id = t.id and e.shared), '[]'::json) as events
       from erp_transports t
       left join erp_lrs l on l.id = t.lr_id
+      left join erp_lrs sc on sc.id = t.signed_copy_id
      where t.order_no in ${[...new Set(orderNos)]}
      order by t.created_at
   `)) as unknown as Row[];
@@ -185,6 +187,8 @@ async function readTransports(orderNos: number[]): Promise<Map<number, Transport
         lrNo: str(r.lrNo),
         lrDate: str(r.lrDate),
         lrFileId: str(r.lrFileId),
+        signedCopyFileId: str(r.signedCopyFileId),
+        ownVehicle: isMahekVehicle(str(r.transporter)),
         transporter: str(r.transporter),
         expectedOn: str(r.expectedOn),
         deliveredOn: str(r.deliveredOn),
@@ -640,7 +644,8 @@ async function viewOf(t: Tracking, view: "full" | "delivery", token: string): Pr
       resolutionText: h.resolutionText,
     }));
   const rec: Recorded[] = recorded.map((r) => ({ step: r.step as Step, at: r.at.toISOString(), note: r.note }));
-  const journey = buildJourney(rec, holdRecords, reasonLabel);
+  const ownVehicle = ts.length > 0 && ts.every((x) => x.ownVehicle);
+  const journey = buildJourney(rec, holdRecords, reasonLabel, { ownVehicle });
   const delivered = journey.current === "delivered";
   const latest = ts.at(-1) ?? null;
   const hold = journey.openHold;
@@ -648,6 +653,8 @@ async function viewOf(t: Tracking, view: "full" | "delivery", token: string): Pr
   const inv = view === "full" && invoiceLive && cfg["erp.tracking.showInvoice"] ? await invoiceFile(no) : null;
   const lrLive = rec.some((r) => r.step === "lr") && !!latest?.lrNo;
   const lrFile = lrLive && cfg["erp.tracking.showLr"] ? ts.find((x) => x.lrFileId)?.lrFileId ?? null : null;
+  /* Our own vehicle's proof is the copy the customer signed — shown once the delivery is confirmed. */
+  const signedFile = ownVehicle && delivered && cfg["erp.tracking.showLr"] ? ts.find((x) => x.signedCopyFileId)?.signedCopyFileId ?? null : null;
   const dispatched = rec.some((r) => r.step === "dispatched");
   return {
     orderNo: no,
@@ -672,9 +679,13 @@ async function viewOf(t: Tracking, view: "full" | "delivery", token: string): Pr
           : inv
             ? { available: true, label: "Sales Invoice", detail: [o.invoiceNo, o.invoiceDate ? longDay(o.invoiceDate) : null].filter(Boolean).join(" · ") || null }
             : { available: false, label: "Sales Invoice", detail: invoiceLive && cfg["erp.tracking.showInvoice"] ? "Your invoice will be shared with you separately." : "Will appear here when available" },
-      lr: lrFile
-        ? { available: true, label: "LR Copy (Lorry Receipt)", detail: [latest?.lrNo ? `LR ${latest.lrNo}` : null, latest?.lrDate ? longDay(latest.lrDate) : null].filter(Boolean).join(" · ") || null }
-        : { available: false, label: "LR Copy (Lorry Receipt)", detail: lrLive && latest?.lrNo ? `LR ${latest.lrNo}` : "Will appear here when available" },
+      lr: ownVehicle
+        ? signedFile
+          ? { available: true, label: "Signed delivery copy", detail: [latest?.receivedBy ? `Received by ${latest.receivedBy}` : null, latest?.deliveredOn ? longDay(latest.deliveredOn) : null].filter(Boolean).join(" · ") || null }
+          : { available: false, label: "Signed delivery copy", detail: "Will appear here after delivery" }
+        : lrFile
+          ? { available: true, label: "LR Copy (Lorry Receipt)", detail: [latest?.lrNo ? `LR ${latest.lrNo}` : null, latest?.lrDate ? longDay(latest.lrDate) : null].filter(Boolean).join(" · ") || null }
+          : { available: false, label: "LR Copy (Lorry Receipt)", detail: lrLive && latest?.lrNo ? `LR ${latest.lrNo}` : "Will appear here when available" },
     },
     token,
   };
@@ -748,7 +759,7 @@ export async function publicDocument(token: string, kind: string): Promise<{ id:
   if (kind === "lr") {
     if (!v.documents.lr.available) return null;
     const ts = (await readTransports([hit.t.orderNo])).get(hit.t.orderNo) ?? [];
-    const id = ts.find((x) => x.lrFileId)?.lrFileId;
+    const id = ts.length && ts.every((x) => x.ownVehicle) ? ts.find((x) => x.signedCopyFileId)?.signedCopyFileId : ts.find((x) => x.lrFileId)?.lrFileId;
     return id ? { id } : null;
   }
   return null;

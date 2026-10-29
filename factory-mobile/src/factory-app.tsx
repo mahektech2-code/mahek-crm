@@ -55,7 +55,7 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LorryHalf, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_PICK_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LorryHalf, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
@@ -64,6 +64,7 @@ import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { buzz, CameraScanner, GunInput, ScanField, shrinkPhoto } from "./camera";
+import { PhotoPreview } from "./photo-preview";
 
 /**
  * What a photo that did not upload is CALLED on the screen. "No network" only
@@ -1133,6 +1134,7 @@ export class FactoryApp extends Component<Props, State> {
       f: { lrNo: null, lrDate: calendarDay(0), transporter: null, destination: null, packages: null, freightTerm: null, freightRupees: null },
       err: null, saving: false, saved: null,
       many: true, tray: [], batchBusy: false, batchMsg: null,
+      kind: "lr", preview: null, sent: null,
     };
     this.setState({ sheet: null, route: "lr", lr: blank });
     try {
@@ -1152,92 +1154,9 @@ export class FactoryApp extends Component<Props, State> {
     this.setState((s) => (s.lr ? { lr: fn(s.lr) } : null));
   }
 
-  /** One field changed by hand: it is no longer what the photo said. */
-  setLrField<K extends keyof LrFields>(k: K, v: LrFields[K]) {
-    this.setLr((l) => ({ ...l, f: { ...l.f, [k]: v }, read: { ...l.read, [k]: false }, err: null }));
-  }
-
-  async lrPhoto() {
-    let uri: string;
-    try {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) return this.toast("Allow the camera for this app, then take the photo again.");
-      const r = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.85, allowsEditing: false, exif: false });
-      if (r.canceled || !r.assets?.[0]) return;
-      /* An LR is small print: kept larger than a truck photo so the number can be read. */
-      uri = await shrinkPhoto(r.assets[0].uri, 2000);
-    } catch {
-      return this.toast("The camera did not open. Try again.");
-    }
-    this.setLr((l) => ({ ...l, photo: uri, fileId: null, readingId: null, uploading: true, err: null, saved: null }));
-    const sent = await sendPhoto(uri, "lr.jpg", "LR photo");
-    if (!sent.ok) return this.setLr((l) => ({ ...l, uploading: false, err: photoProblem(sent, "Upload LR") }));
-    const id = sent.id;
-    this.setLr((l) => ({ ...l, fileId: id, uploading: false }));
-    if (this.state.lr?.canRead) await this.lrRead(id);
-  }
-
-  /** The office's own reading: fills only what the person has not typed. */
-  async lrRead(fileId: string) {
-    this.setLr((l) => ({ ...l, reading: true }));
-    try {
-      const r = await call("readLr", fileId);
-      if (!r.ok) return this.setLr((l) => ({ ...l, reading: false, notes: [r.text] }));
-      this.setLr((l) => {
-        const f = { ...l.f }, read: LrEntry["read"] = {};
-        (Object.keys(r.fields) as (keyof LrFields)[]).forEach((k) => {
-          const v = r.fields[k];
-          const typed = l.read[k] === false && l.f[k] != null && k !== "lrDate";
-          if (v != null && !typed) {
-            (f as Record<string, unknown>)[k] = v;
-            read[k] = true;
-          }
-        });
-        return { ...l, reading: false, readingId: r.readingId, f, read: { ...l.read, ...read }, check: r.check, notes: r.notes };
-      });
-    } catch {
-      this.setLr((l) => ({ ...l, reading: false, notes: ["The photo could not be read just now. Type the details from the LR."] }));
-    }
-  }
-
-  async saveLr() {
-    const l = this.state.lr;
-    if (!l || l.saving || l.uploading) return;
-    if (l.photo && !l.fileId) return void this.retryLrUpload();
-    if (!l.fileId && !l.f.lrNo) return this.setLr((z) => ({ ...z, err: { title: "Take the LR photo", text: "An LR needs its photo or its number.", fix: "Press Take LR photo." } }));
-    this.setLr((z) => ({ ...z, saving: true, err: null }));
-    try {
-      const r = await call("saveLr", { ...l.f, fileId: l.fileId, readingId: l.readingId });
-      if (!r.ok) return this.setLr((z) => ({ ...z, saving: false, err: { title: r.title, text: r.text, fix: r.fix } }));
-      this.setLr((z) => ({ ...z, saving: false, saved: { id: r.id, msg: r.msg, lrNo: z.f.lrNo }, recent: r.recent }));
-      this.toast(r.msg);
-    } catch {
-      this.setLr((z) => ({ ...z, saving: false, err: { title: "No network", text: "The LR is not uploaded yet.", fix: "Check the Wi-Fi and press Upload LR again. It will not be uploaded twice." } }));
-    }
-  }
-
-  async retryLrUpload() {
-    const l = this.state.lr;
-    if (!l?.photo) return;
-    this.setLr((z) => ({ ...z, uploading: true, err: null }));
-    const sent = await sendPhoto(l.photo, "lr.jpg", "LR photo");
-    if (!sent.ok) return this.setLr((z) => ({ ...z, uploading: false, err: photoProblem(sent, "Upload LR again") }));
-    const id = sent.id;
-    this.setLr((z) => ({ ...z, uploading: false, fileId: id }));
-    if (this.state.lr?.canRead) await this.lrRead(id);
-  }
-
-  nextLr() {
-    const l = this.state.lr;
-    if (!l) return;
-    this.setState({
-      lr: { ...l, photo: null, fileId: null, readingId: null, read: {}, check: false, notes: [], err: null, saved: null, f: { lrNo: null, lrDate: calendarDay(0), transporter: null, destination: null, packages: null, freightTerm: null, freightRupees: null } },
-    });
-  }
-
   /* ---------------------------------------------------------------- many LRs at once
    * The floor brings back a stack of receipts, so the default is a tray of up
-   * to LR_BATCH_MAX photos: taken one after another or picked from the
+   * to LR_PICK_MAX photos: taken one after another or picked from the
    * gallery in one go, uploaded a few at a time, and stored as photo-only LRs
    * in one press. A photo that does not upload stays in the tray to be sent
    * again; nothing is lost to a weak network. Reading the numbers happens on
@@ -1245,17 +1164,17 @@ export class FactoryApp extends Component<Props, State> {
    * ------------------------------------------------------------------------- */
 
   lrRoom(): number {
-    return LR_BATCH_MAX - (this.state.lr?.tray.length ?? 0);
+    return LR_PICK_MAX - (this.state.lr?.tray.length ?? 0);
   }
 
   lrAddToTray(uris: string[]) {
     if (!uris.length) return;
-    this.setLr((l) => ({ ...l, batchMsg: null, err: null, tray: [...l.tray, ...uris.slice(0, LR_BATCH_MAX - l.tray.length).map((uri) => ({ uri, fileId: null, state: "waiting" as const }))] }));
-    if (uris.length > this.lrRoom()) this.toast("Only " + LR_BATCH_MAX + " photos fit in one upload. Upload these, then add the rest.", "warn");
+    this.setLr((l) => ({ ...l, batchMsg: null, err: null, tray: [...l.tray, ...uris.slice(0, LR_PICK_MAX - l.tray.length).map((uri) => ({ uri, fileId: null, state: "waiting" as const }))] }));
+    if (uris.length > this.lrRoom()) this.toast("Only " + LR_PICK_MAX + " photos fit in one upload. Upload these, then add the rest.", "warn");
   }
 
   async lrTrayCamera() {
-    if (this.lrRoom() <= 0) return this.toast("The tray is full — upload these " + LR_BATCH_MAX + " first.", "warn");
+    if (this.lrRoom() <= 0) return this.toast("The tray is full — upload these " + LR_PICK_MAX + " first.", "warn");
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) return this.toast("Allow the camera for this app, then try again.", "warn");
@@ -1269,7 +1188,7 @@ export class FactoryApp extends Component<Props, State> {
 
   async lrTrayGallery() {
     const room = this.lrRoom();
-    if (room <= 0) return this.toast("The tray is full — upload these " + LR_BATCH_MAX + " first.", "warn");
+    if (room <= 0) return this.toast("The tray is full — upload these " + LR_PICK_MAX + " first.", "warn");
     try {
       const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: true, selectionLimit: room, orderedSelection: true, quality: 0.85, exif: false });
       if (r.canceled || !r.assets?.length) return;
@@ -1279,10 +1198,6 @@ export class FactoryApp extends Component<Props, State> {
     } catch {
       this.toast("The gallery did not open. Try again.", "warn");
     }
-  }
-
-  lrTrayRemove(i: number) {
-    this.setLr((l) => (l.batchBusy ? l : { ...l, tray: l.tray.filter((_, j) => j !== i) }));
   }
 
   async lrSendTray() {
@@ -1316,86 +1231,95 @@ export class FactoryApp extends Component<Props, State> {
       return this.setLr((l) => ({ ...l, batchBusy: false, err: photoProblem(why, "Upload again") }));
     }
     try {
-      const r = await call("saveLrPhotos", ids);
+      const r = await call("saveLrPhotos", ids, l0.kind);
       if (!r.ok) return this.setLr((l) => ({ ...l, batchBusy: false, err: { title: r.title, text: r.text, fix: r.fix } }));
       /* What is stored leaves the tray; anything that did not upload stays, to be sent again. */
-      this.setLr((l) => ({ ...l, batchBusy: false, recent: r.recent, batchMsg: r.msg, tray: l.tray.filter((t) => !t.fileId || !ids.includes(t.fileId)).map((t) => ({ ...t, state: "failed" as const })) }));
-      this.toast(r.stored ? r.stored + " LR" + (r.stored === 1 ? "" : "s") + " uploaded" : "Already uploaded");
+      const left = this.state.lr?.tray.filter((t) => !t.fileId || !ids.includes(t.fileId)) ?? [];
+      this.setLr((l) => ({ ...l, batchBusy: false, recent: r.recent, batchMsg: left.length ? r.msg : null, sent: left.length ? null : { n: r.stored + r.already, kind: l.kind, msg: r.msg }, tray: l.tray.filter((t) => !t.fileId || !ids.includes(t.fileId)).map((t) => ({ ...t, state: "failed" as const })) }));
     } catch (e) {
       this.setLr((l) => ({ ...l, batchBusy: false, err: { title: "No network", text: "The photos are uploaded but not yet saved as LRs.", fix: "Press Upload again — nothing will be saved twice." } }));
       if (!(e instanceof NotReceived)) throw e;
     }
   }
 
-  renderLrTray(l: LrEntry, recent: ReactNode, errBox: ReactNode): ReactNode {
+  renderLrTray(l: LrEntry, errBox: ReactNode): ReactNode {
     const n = l.tray.length;
     const waiting = l.tray.filter((t) => t.state !== "up").length;
     const done = l.tray.filter((t) => t.state === "up").length;
-    const addBtn = (label: string, icn: string, run: () => void) => (
-      <Btn onClick={run} style={{ flex: 1, height: "56px", borderRadius: "16px", border: "1.5px solid #DDD2FF", background: n >= LR_BATCH_MAX ? "#F7F8FA" : "#F7F4FF", color: n >= LR_BATCH_MAX ? "#9BA3B2" : "#5223E0", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>
-        {ic(icn, 22, n >= LR_BATCH_MAX ? "#9BA3B2" : "#5223E0")}
-        {label}
-      </Btn>
+    const full = n >= LR_PICK_MAX;
+    const word = l.kind === "lr" ? (waiting === 1 ? "LR" : "LRs") : waiting === 1 ? "signed copy" : "signed copies";
+    const seg = (on: boolean, label: string, run: () => void) => (
+      <Btn onClick={run} style={{ flex: 1, height: "44px", borderRadius: "12px", border: "none", background: on ? "#FFFFFF" : "transparent", color: on ? "#1A1E28" : "#6B7385", fontSize: "15px", fontWeight: 700, boxShadow: on ? "0 1px 3px rgba(26,30,40,0.15)" : "none", cursor: "pointer" }}>{label}</Btn>
+    );
+    const addTile = (icn: string, label: string, run: () => void) => (
+      <Pressable key={label} onPress={run} disabled={full || l.batchBusy} accessibilityRole="button" accessibilityLabel={label} style={{ width: "23.5%", aspectRatio: 0.75, borderRadius: 10, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#C2C8D2", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", opacity: full || l.batchBusy ? 0.4 : 1 }}>
+        {ic(icn, 24, "#5223E0")}
+      </Pressable>
     );
     return (
       <>
-        <Div style={{ ...card, padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-          <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px" }}>
-            <Span style={{ fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>LR photos</Span>
-            <Span style={{ fontSize: "15px", fontWeight: 700, color: n >= LR_BATCH_MAX ? "#8A5C05" : "#6B7385" }}>{n + " / " + LR_BATCH_MAX}</Span>
-          </Div>
-          <Span style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385" }}>{"One photo per receipt — the whole LR, flat, in good light. Up to " + LR_BATCH_MAX + " at a time."}</Span>
-          <Div style={{ display: "flex", gap: "10px" }}>
-            {addBtn("Camera", "camera", () => void this.lrTrayCamera())}
-            {addBtn("Gallery", "photo", () => void this.lrTrayGallery())}
-          </Div>
-          {n > 0 && (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {l.tray.map((t, i) => {
-                const tone = t.state === "up" ? "#1D7A45" : t.state === "failed" ? "#B3261E" : t.state === "uploading" ? "#5223E0" : null;
-                return (
-                  <View key={t.uri} style={{ width: "31.5%", aspectRatio: 1, borderRadius: 12, overflow: "hidden", backgroundColor: "#EDEFF3", borderWidth: tone === "#B3261E" ? 2 : 0, borderColor: "#B3261E" }}>
-                    <Image source={{ uri: t.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
-                    <View style={{ position: "absolute", left: 6, bottom: 6, minWidth: 24, height: 24, paddingHorizontal: 6, borderRadius: 12, backgroundColor: "rgba(26,30,40,0.72)", alignItems: "center", justifyContent: "center" }}>
-                      <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "700" }}>{String(i + 1)}</Text>
-                    </View>
-                    {tone && (
-                      <View style={{ position: "absolute", right: 6, bottom: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: tone, alignItems: "center", justifyContent: "center" }}>
-                        {ic(t.state === "up" ? "check" : t.state === "failed" ? "alert" : "sync", 15, "#FFFFFF")}
-                      </View>
-                    )}
-                    {!l.batchBusy && t.state !== "up" && (
-                      <Pressable onPress={() => this.lrTrayRemove(i)} accessibilityRole="button" accessibilityLabel={"Remove photo " + (i + 1)} hitSlop={8} style={{ position: "absolute", right: 6, top: 6, width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(26,30,40,0.72)", alignItems: "center", justifyContent: "center" }}>
-                        <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700", lineHeight: 18 }}>×</Text>
-                      </Pressable>
-                    )}
+        <Div style={{ display: "flex", gap: "4px", padding: "4px", borderRadius: "16px", background: "#EDEFF3" }}>
+          {seg(l.kind === "lr", "LR", () => this.setLr((x) => (x.batchBusy ? x : { ...x, kind: "lr" })))}
+          {seg(l.kind === "signed_copy", "Signed copy", () => this.setLr((x) => (x.batchBusy ? x : { ...x, kind: "signed_copy" })))}
+        </Div>
+        <Span style={{ fontSize: "15px", fontWeight: 700, color: full ? "#8A5C05" : "#6B7385" }}>{n + " of " + LR_PICK_MAX}</Span>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {l.tray.map((t, i) => {
+            const tone = t.state === "up" ? "#1D7A45" : t.state === "failed" ? "#B3261E" : t.state === "uploading" ? "#5223E0" : null;
+            return (
+              <Pressable key={t.uri} onPress={() => !l.batchBusy && this.setLr((x) => ({ ...x, preview: i }))} accessibilityRole="button" accessibilityLabel={"Photo " + (i + 1) + ", open"} style={{ width: "23.5%", aspectRatio: 0.75, borderRadius: 10, overflow: "hidden", backgroundColor: "#EDEFF3", borderWidth: tone === "#B3261E" ? 2 : 1, borderColor: tone === "#B3261E" ? "#B3261E" : "#E1E4EA" }}>
+                <Image source={{ uri: t.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                {tone && (
+                  <View style={{ position: "absolute", right: 5, bottom: 5, width: 20, height: 20, borderRadius: 10, backgroundColor: tone, alignItems: "center", justifyContent: "center" }}>
+                    {ic(t.state === "up" ? "check" : t.state === "failed" ? "alert" : "sync", 12, "#FFFFFF")}
                   </View>
-                );
-              })}
-            </View>
-          )}
-        </Div>
+                )}
+              </Pressable>
+            );
+          })}
+          {!full && addTile("camera", "Camera", () => void this.lrTrayCamera())}
+          {!full && addTile("photo", "Gallery", () => void this.lrTrayGallery())}
+        </View>
         {l.batchMsg && <MsgBox m={msg(l.batchMsg, "ok")} />}
-        {l.tray.some((t) => t.state === "failed") && !l.batchBusy && <MsgBox m={msg("Photos marked red did not upload. They are kept — press Upload to send them again.", "warn")} />}
+        {l.tray.some((t) => t.state === "failed") && !l.batchBusy && <MsgBox m={msg("Photos marked red did not go. They are kept — press Send to try again.", "warn")} />}
         {errBox}
+        <Div style={{ flex: 1 }} />
         <Btn onClick={() => void this.lrSendTray()} style={btn(!n || l.batchBusy ? "off" : "p", 60)}>
-          {l.batchBusy ? "Uploading " + done + " of " + n + "…" : n ? "Upload " + waiting + " LR" + (waiting === 1 ? "" : "s") : "Add photos to upload"}
+          {l.batchBusy ? "Sending " + done + " of " + n + "…" : n ? "Send " + waiting + " " + word : "Add photos"}
         </Btn>
-        <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385", textAlign: "center" }}>
-          {l.canRead ? "The LR numbers are read from the photos after upload. Logistics checks them and attaches each LR to its bills." : "Logistics reads each LR on the desk and attaches it to its bills."}
-        </Div>
-        {recent}
+        {l.preview != null && l.tray[l.preview] ? (
+          <PhotoPreview
+            uris={l.tray.map((t) => t.uri)}
+            at={l.preview}
+            locked={l.batchBusy}
+            onAt={(i) => this.setLr((x) => ({ ...x, preview: i }))}
+            onReplace={(i, uri) => this.setLr((x) => ({ ...x, tray: x.tray.map((t, j) => (j === i ? { uri, fileId: null, state: "waiting" as const } : t)) }))}
+            onRemove={(i) =>
+              this.setLr((x) => {
+                const tray = x.tray.filter((_, j) => j !== i);
+                return { ...x, tray, preview: tray.length ? Math.min(i, tray.length - 1) : null };
+              })
+            }
+            onClose={() => this.setLr((x) => ({ ...x, preview: null }))}
+          />
+        ) : null}
       </>
     );
   }
 
+  /* ================================================================ upload LRs and signed copies
+   * THE PHONE ONLY UPLOADS (0296). Pick LR or Signed copy, take or pick up to
+   * LR_PICK_MAX photos, Send — nothing is typed and nothing is checked here.
+   * The office reads, de-duplicates and attaches every copy on the Documents
+   * desk. A photo may be cropped, rotated or taken out before it goes.
+   * ------------------------------------------------------------------------- */
   renderLr(): ReactNode {
     const st = this.state, T = this.T(), l = st.lr;
     const home = () => this.setState({ route: "more", lr: null });
     const head = (
       <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
         <Btn onClick={home} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</Btn>
-        <Span style={{ fontSize: "20px", fontWeight: 700 }}>Upload LR</Span>
+        <Span style={{ fontSize: "20px", fontWeight: 700 }}>Upload</Span>
       </Div>
     );
     const page = (children: ReactNode) => <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>{head}{children}</Div>;
@@ -1407,92 +1331,21 @@ export class FactoryApp extends Component<Props, State> {
         <Div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><Span style={{ fontWeight: 700 }}>What to do: </Span>{l.err.fix}</Div>
       </Div>
     );
-    const recent = l.recent.length > 0 && (
-      <Div style={{ ...card, padding: "14px" }}>
-        <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Uploaded lately</Span>
-        {l.recent.slice(0, 8).map((x) => (
-          <Div key={x.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #EDEFF3" }}>
-            <Span style={{ flex: 1, minWidth: 0 }}>
-              <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600 }}>{x.lrNo ?? "No number yet"}</Span>
-              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{[x.transporter, x.destination, x.packages != null ? x.packages + " boxes" : null].filter(Boolean).join(" · ") || "Photo only"}</Span>
-            </Span>
-            <Pill l={x.bills ? x.bills + " bill" + (x.bills === 1 ? "" : "s") : "Waiting"} bg={x.bills ? "#E9F5EE" : "#FDF6E7"} fg={x.bills ? "#1D7A45" : "#8A5C05"} />
-          </Div>
-        ))}
-      </Div>
-    );
-    if (l.saved) {
+    if (l.sent) {
+      const s = l.sent;
       return page(
         <>
-          <Div style={{ ...card, padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-            <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#E9F5EE", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("check", 28, "#1D7A45")}</Span>
-            <Span style={{ flex: 1 }}>
-              <Span style={{ display: "block", fontSize: "22px", fontWeight: 700 }}>{"LR " + (l.saved.lrNo ?? "") + " uploaded"}</Span>
-              <Span style={{ display: "block", fontSize: "15px", color: "#6B7385", marginTop: "2px" }}>{l.saved.msg}</Span>
-            </Span>
+          <Div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "14px", padding: "24px" }}>
+            <Span style={{ width: "76px", height: "76px", borderRadius: "50%", background: "#E9F5EE", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("check", 40, "#1D7A45")}</Span>
+            <Span style={{ fontSize: "21px", fontWeight: 700, textAlign: "center" }}>{s.n + " " + (s.kind === "lr" ? (s.n === 1 ? "LR" : "LRs") : s.n === 1 ? "signed copy" : "signed copies") + " sent"}</Span>
+            <Span style={{ fontSize: "15px", color: "#6B7385", textAlign: "center" }}>The office checks them</Span>
           </Div>
-          <Btn onClick={() => this.nextLr()} style={btn("p", 58)}>Upload the next LR</Btn>
-          {recent}
+          <Btn onClick={() => this.setLr((x) => ({ ...x, sent: null, batchMsg: null, err: null }))} style={btn("p", 58)}>Upload more</Btn>
+          <Btn onClick={home} style={btn("s", 56)}>{T.done}</Btn>
         </>,
       );
     }
-    const seg = (on: boolean, label: string, run: () => void) => (
-      <Btn onClick={run} style={{ flex: 1, height: "44px", borderRadius: "12px", border: "none", background: on ? "#FFFFFF" : "transparent", color: on ? "#1A1E28" : "#6B7385", fontSize: "15px", fontWeight: 700, boxShadow: on ? "0 1px 3px rgba(26,30,40,0.15)" : "none", cursor: "pointer" }}>{label}</Btn>
-    );
-    const modes = (
-      <Div style={{ display: "flex", gap: "4px", padding: "4px", borderRadius: "16px", background: "#EDEFF3" }}>
-        {seg(l.many, "Many photos", () => this.setLr((x) => ({ ...x, many: true, err: null })))}
-        {seg(!l.many, "One LR, typed", () => this.setLr((x) => (x.batchBusy ? x : { ...x, many: false, err: null })))}
-      </Div>
-    );
-    if (l.many) return page(<>{modes}{this.renderLrTray(l, recent, errBox)}</>);
-    const f = l.f;
-    const tag = (k: keyof LrFields) =>
-      l.read[k] ? <Span style={{ marginLeft: "6px", padding: "1px 8px", borderRadius: "10px", fontSize: "12px", fontWeight: 700, background: k === "lrNo" && l.check ? "#FDF6E7" : "#F1ECFF", color: k === "lrNo" && l.check ? "#8A5C05" : "#5223E0" }}>{k === "lrNo" && l.check ? "check" : "read"}</Span> : null;
-    const row = (k: keyof LrFields, label: string, value: string | null, open: () => void, empty = "Tap to choose") => (
-      <Btn key={k} onClick={open} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", cursor: "pointer", textAlign: "left" }}>
-        <Span style={{ fontSize: "15px", color: "#6B7385" }}>{label}{tag(k)}</Span>
-        <Span style={{ fontSize: "17px", fontWeight: 700, color: value ? "#1A1E28" : "#6835FB", textAlign: "right", flexShrink: 1 }}>{value ?? empty}</Span>
-      </Btn>
-    );
-    const text = (k: "lrNo" | "destination", label: string, placeholder: string, upper?: boolean) => (
-      <Div key={k} style={{ ...card, padding: "12px 16px" }}>
-        <Span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>{label}{tag(k)}</Span>
-        <Div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "6px" }}>
-          <Input value={f[k] ?? ""} onChange={(e) => this.setLrField(k, (upper ? String(e.target.value).toUpperCase() : String(e.target.value)).slice(0, 40) || null)} maxLength={40} placeholder={placeholder} aria-label={label} style={{ flex: 1, minWidth: 0, height: "48px", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", fontSize: "19px", fontWeight: 600, color: "#1A1E28", background: "#FFFFFF" }} />
-          {k === "lrNo" && <Btn onClick={() => this.openScan("lr")} aria-label="Scan the LR barcode" style={{ width: "48px", height: "48px", flex: "none", borderRadius: "12px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("qr", 24, "#5223E0")}</Btn>}
-        </Div>
-      </Div>
-    );
-    const pick = (title: string, items: string[], set: (v: string) => void) =>
-      this.setState({ sheet: { type: "tiles", title, groups: [{ cols: 1, items: items.map((v) => ({ l: v, v })) }], pick: (v) => { set(v); this.setState({ sheet: null }); } } });
-    const days = [0, 1, 2, 3].map((n) => calendarDay(n));
-    const dayWord = (d: string | null) => (!d ? null : d === days[0] ? "Today" : d === days[1] ? "Yesterday" : d.split("-").reverse().join("/"));
-    return page(
-      <>
-        {modes}
-        <Btn onClick={() => void this.lrPhoto()} style={{ background: l.photo ? "#FFFFFF" : "#6835FB", border: l.photo ? "1px solid #DDE1E8" : "none", borderRadius: "20px", padding: "18px 20px", color: l.photo ? "#1A1E28" : "#FFFFFF", display: "flex", alignItems: "center", gap: "16px", textAlign: "left", cursor: "pointer", minHeight: "104px" }}>
-          <Span style={{ width: "68px", height: "68px", flex: "none", borderRadius: "18px", background: l.photo ? "#E9F5EE" : "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(l.photo ? "check" : "camera", 36, l.photo ? "#1D7A45" : "#FFFFFF")}</Span>
-          <Span style={{ flex: 1 }}>
-            <Span style={{ display: "block", fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{l.uploading ? "Uploading the photo…" : l.reading ? "Reading the LR…" : l.photo ? "LR photo taken" : "Take LR photo"}</Span>
-            <Span style={{ display: "block", fontSize: "15px", color: l.photo ? "#6B7385" : "#DDD2FF", marginTop: "4px" }}>{l.photo ? "Tap to take it again" : "The whole receipt, flat, in good light"}</Span>
-          </Span>
-        </Btn>
-        {l.notes.length > 0 && <MsgBox m={msg(l.notes.join(" "), l.check ? "warn" : "info")} />}
-        {(l.photo || f.lrNo) && <MsgBox m={msg("Check every value against the photo before you upload.", "info")} />}
-        {text("lrNo", "LR number", "Type or scan", true)}
-        {row("transporter", "Transporter", f.transporter, () => pick("Transporter", l.transporters.length ? l.transporters : f.transporter ? [f.transporter] : [], (v) => this.setLrField("transporter", v)))}
-        {text("destination", "Destination", "Town")}
-        {row("packages", "Boxes", f.packages != null ? nf(f.packages) : null, () => this.openKp({ l: "How many boxes on this LR?", unit: "boxes", v: f.packages, set: (v) => this.setLrField("packages", v) }), "Tap to enter")}
-        {row("lrDate", "LR date", dayWord(f.lrDate), () => pick("LR date", days.map((d) => dayWord(d)!), (v) => this.setLrField("lrDate", days.find((d) => dayWord(d) === v) ?? days[0])))}
-        {row("freightTerm", "Freight", f.freightTerm, () => pick("Freight", l.terms, (v) => this.setLrField("freightTerm", v)))}
-        {row("freightRupees", "Freight amount", f.freightRupees != null ? "₹ " + nf(f.freightRupees) : null, () => this.openKp({ l: "Freight on the LR", unit: "₹", v: f.freightRupees, decimals: true, set: (v) => this.setLrField("freightRupees", v) }), "Tap to enter")}
-        {errBox}
-        <Btn onClick={() => void this.saveLr()} style={btn(l.saving || l.uploading || l.reading || (!l.photo && !f.lrNo) ? "off" : "p", 60)}>{l.saving ? "Uploading…" : "Upload LR"}</Btn>
-        <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385", textAlign: "center" }}>Logistics attaches the LR to its bills and tells the customer.</Div>
-        {recent}
-      </>,
-    );
+    return page(this.renderLrTray(l, errBox));
   }
 
   /* ================================================================ loading a lorry
@@ -4770,7 +4623,7 @@ export class FactoryApp extends Component<Props, State> {
     if (me.qc) tools.push(this.menuRow("Quality check", "Test base liquid lots and approve or reject them", "flask", () => this.openQc()));
     const buy = me.reqs?.length ? this.menuRow("Purchase requirement", "Ask the office to buy what " + (me.reqs.length > 1 ? "your departments need" : REQ_WORD[me.reqs[0]] + " needs") + ", and track it", "cart", () => this.openReq()) : null;
     if (me.drums) tools.push(this.menuRow("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum()));
-    if (me.dispatch) tools.push(this.menuRow("Upload LR", "Photograph the lorry receipt from the transporter", "truck", () => void this.openLr()));
+    if (me.dispatch) tools.push(this.menuRow("Upload LR or signed copy", "Photos only — the office checks them", "truck", () => void this.openLr()));
     return (
       <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
         {this.pageHead(T.more, "Work besides your tasks")}

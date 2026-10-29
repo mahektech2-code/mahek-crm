@@ -21,6 +21,7 @@ export type AlertKind =
   | "readyUnbilled"
   | "testStuck"
   | "lrMissing"
+  | "signedCopyMissing"
   | "cnNotIssued"
   | "packStuck"
   | "duplicateExpense"
@@ -39,6 +40,7 @@ export const ALERT_LABEL: Record<AlertKind, string> = {
   readyUnbilled: "Ready but not billed",
   testStuck: "Test unverified",
   lrMissing: "LR missing",
+  signedCopyMissing: "Signed copy missing",
   cnNotIssued: "Credit note not issued",
   packStuck: "Packing batch incomplete",
   duplicateExpense: "Duplicate-looking expense",
@@ -262,17 +264,38 @@ export function readyUnbilled(lines: { id: string; orderNo: number; party: strin
 
 /* ============================================================== logistics */
 
-export function lrsMissing(transports: { id: string; billNo: string | null; party: string; billDate: string | null; lr: string | null }[], today: string, t: Thresholds): Candidate[] {
+/**
+ * A bill out longer than `stuckLrDays` with no proof of how it went: an LR for
+ * a transporter, or — for our own vehicle (0296) — the customer-signed copy,
+ * which is what closes that delivery.
+ */
+export function lrsMissing(
+  transports: { id: string; billNo: string | null; party: string; billDate: string | null; lr: string | null; transporter?: string | null; stage?: string | null; signedCopyId?: string | null }[],
+  today: string,
+  t: Thresholds,
+): Candidate[] {
+  const own = (x: { transporter?: string | null }) => (x.transporter ?? "").trim().toLowerCase() === "mahek vehicle";
   return transports
-    .filter((x) => !x.lr && x.billDate && daysBetween(x.billDate, today) > t.stuckLrDays)
-    .map((x) => ({
-      kind: "lrMissing" as const,
-      subject: x.id,
-      screen: "pendingLr",
-      recordIds: [x.id],
-      values: { days: daysBetween(x.billDate!, today) },
-      explanation: `Bill ${x.billNo ?? "—"} for ${x.party} left ${daysBetween(x.billDate!, today)} days ago and has no LR number.`,
-    }));
+    .filter((x) => !x.lr && !x.signedCopyId && x.billDate && daysBetween(x.billDate, today) > t.stuckLrDays)
+    .map((x) =>
+      own(x)
+        ? {
+            kind: "signedCopyMissing" as const,
+            subject: x.id,
+            screen: "pendingLr",
+            recordIds: [x.id],
+            values: { days: daysBetween(x.billDate!, today) },
+            explanation: `Bill ${x.billNo ?? "—"} for ${x.party} left in a Mahek Vehicle ${daysBetween(x.billDate!, today)} days ago and its customer-signed copy is not on the desk.`,
+          }
+        : {
+            kind: "lrMissing" as const,
+            subject: x.id,
+            screen: "pendingLr",
+            recordIds: [x.id],
+            values: { days: daysBetween(x.billDate!, today) },
+            explanation: `Bill ${x.billNo ?? "—"} for ${x.party} left ${daysBetween(x.billDate!, today)} days ago and has no LR number.`,
+          },
+    );
 }
 
 export function cnsNotIssued(reqs: { id: string; party: string; approvedAt: Date | null; issued: boolean; accepted: boolean; cn: boolean }[], now: Date, t: Thresholds): Candidate[] {

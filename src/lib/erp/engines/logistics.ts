@@ -77,6 +77,27 @@ export function freightWord(term: string | null | undefined): string | null {
   return k === "paid" ? "Paid" : k === "to_pay" ? "To Pay" : k === "tbb" ? "TBB" : term?.trim() || null;
 }
 
+/* ------------------------------------------------- who delivers it */
+
+/**
+ * MAHEK'S OWN VEHICLE IS A RESERVED TRANSPORTER, by name. Orders, bills, LRs,
+ * trips, loading and a party's default all carry the transporter as text, so a
+ * delivery in our own vehicle is a bill whose transporter is this name and
+ * nothing else changes shape. What differs is the proof: no LR, no stop at a
+ * transporter's godown, and a customer-signed copy closes it (0296).
+ */
+export const MAHEK_VEHICLE = "Mahek Vehicle";
+
+export function isMahekVehicle(transporter: string | null | undefined): boolean {
+  return (transporter ?? "").trim().toLowerCase() === MAHEK_VEHICLE.toLowerCase();
+}
+
+/** The two kinds of delivery proof, and what each is called on a screen. */
+export const PROOF_KINDS = ["lr", "signed_copy"] as const;
+export type ProofKind = (typeof PROOF_KINDS)[number];
+export const PROOF_WORD: Record<ProofKind, string> = { lr: "LR", signed_copy: "Signed copy" };
+export const isProofKind = (v: unknown): v is ProofKind => v === "lr" || v === "signed_copy";
+
 export function isStage(s: string | null | undefined): s is Stage {
   return !!s && (STAGES as readonly string[]).includes(s);
 }
@@ -92,9 +113,11 @@ export function stageStep(stage: string | null | undefined): number {
  * Transit" on the old screen without an LR is still waiting for its LR — the
  * customer cannot be told anything about a lorry nobody can name.
  */
-export function phaseOf(t: { lrNo: string | null; materialStage: string }): Phase {
+export function phaseOf(t: { lrNo: string | null; materialStage: string; transporter?: string | null }): Phase {
   if (t.materialStage === CLOSED) return "delivered";
   if (t.lrNo && t.lrNo.trim()) return "onRoad";
+  /* Our own vehicle goes from the gate to the party: no transporter's godown, no LR to wait for. */
+  if (isMahekVehicle(t.transporter)) return "onRoad";
   return stageStep(t.materialStage) >= 1 ? "lrPending" : "toTransport";
 }
 
@@ -221,6 +244,8 @@ export type MessageFacts = {
   trackUrl: string | null;
   issue?: string | null;
   issueNote?: string | null;
+  /** Our own vehicle's number, where the delivery is a Mahek Vehicle. */
+  vehicleNo?: string | null;
   deliveredOn?: string | null;
   receivedBy?: string | null;
   note?: string | null;
@@ -228,11 +253,12 @@ export type MessageFacts = {
 };
 
 /** What the customer is told the goods are doing, in their words. */
-export function customerStageWords(stage: string, transporter: string | null): string {
-  const by = transporter ? ` with ${transporter}` : "";
+export function customerStageWords(stage: string, transporter: string | null, vehicleNo?: string | null): string {
+  const own = isMahekVehicle(transporter);
+  const by = own ? ` in our own vehicle${vehicleNo ? ` ${vehicleNo}` : ""}` : transporter ? ` with ${transporter}` : "";
   switch (stage) {
     case "Dispatched":
-      return "has left our factory";
+      return own ? `has left our factory${by}` : "has left our factory";
     case "At transport":
       return `has been handed over${by}`;
     case "In Transit":
@@ -271,13 +297,13 @@ export function customerMessage(kind: MessageKind, f: MessageFacts): string {
     lines.push([lr, boxes].filter(Boolean).join(" · ") + ".");
     if (exp) lines.push(exp);
   } else if (kind === "stage") {
-    lines.push(`Update on ${billWords(f.bills)}: your consignment ${customerStageWords(f.stage, f.transporter)}.`);
+    lines.push(`Update on ${billWords(f.bills)}: your consignment ${customerStageWords(f.stage, f.transporter, f.vehicleNo)}.`);
     if (lr) lines.push(`${lr}${f.transporter ? ` (${f.transporter})` : ""}.`);
     if (f.note) lines.push(f.note);
     if (exp) lines.push(exp);
   } else if (kind === "issue") {
     lines.push(`About ${billWords(f.bills)}${lr ? ` (${lr})` : ""}: ${issueSentence(f.issue ?? "Other")}${f.issueNote ? ` — ${f.issueNote}` : ""}.`);
-    lines.push("We are following it up with the transporter and will update you.");
+    lines.push(isMahekVehicle(f.transporter) ? "We are following it up with our driver and will update you." : "We are following it up with the transporter and will update you.");
     if (exp) lines.push(`New expected delivery: ${shortDay(f.expectedOn!)}.`);
   } else {
     lines.push(`Your consignment for ${billWords(f.bills)}${lr ? ` (${lr})` : ""} has been delivered${f.deliveredOn ? ` on ${shortDay(f.deliveredOn)}` : ""}${f.receivedBy ? `, received by ${f.receivedBy}` : ""}.`);
@@ -323,7 +349,7 @@ export function watiParams(kind: MessageKind, f: MessageFacts, body: string): Re
     lr_date: f.lrDate ? shortDay(f.lrDate) : "",
     transporter: f.transporter ?? "",
     boxes: f.packages != null ? String(f.packages) : "",
-    status: kind === "delivered" ? "delivered" : kind === "issue" ? issueSentence(f.issue ?? "Other") : customerStageWords(f.stage, f.transporter),
+    status: kind === "delivered" ? "delivered" : kind === "issue" ? issueSentence(f.issue ?? "Other") : customerStageWords(f.stage, f.transporter, f.vehicleNo),
     expected: f.expectedOn ? shortDay(f.expectedOn) : "",
     track_link: f.trackUrl ?? "",
     message: body.replace(/\s*\n+\s*/g, " ").trim(),
@@ -357,9 +383,22 @@ export function packagesOf(lines: { qtyCans: number; cansPerBox: number | null; 
  * number or any one detail is enough — and a row with nothing in it is skipped
  * rather than refused, because "+ Another LR" leaves one empty behind.
  */
-export function lrRowHasAnything(r: { lrNo?: string | null; fileId?: string | null; transporter?: string | null; destination?: string | null; packages?: number | null; freightTerm?: string | null; freightRupees?: number | null; note?: string | null }): boolean {
+export function lrRowHasAnything(r: {
+  lrNo?: string | null;
+  fileId?: string | null;
+  transporter?: string | null;
+  destination?: string | null;
+  packages?: number | null;
+  freightTerm?: string | null;
+  freightRupees?: number | null;
+  note?: string | null;
+  /* A signed copy's own facts count too (0296). */
+  billHint?: string | null;
+  partyHint?: string | null;
+  receivedBy?: string | null;
+}): boolean {
   const t = (v: string | null | undefined) => !!(v ?? "").trim();
-  return t(r.lrNo) || t(r.fileId) || t(r.transporter) || t(r.destination) || r.packages != null || t(r.freightTerm) || r.freightRupees != null || t(r.note);
+  return t(r.lrNo) || t(r.fileId) || t(r.transporter) || t(r.destination) || r.packages != null || t(r.freightTerm) || r.freightRupees != null || t(r.note) || t(r.billHint) || t(r.partyHint) || t(r.receivedBy);
 }
 
 /** An uploaded LR by name — one uploaded with only its photo has no number yet. */
