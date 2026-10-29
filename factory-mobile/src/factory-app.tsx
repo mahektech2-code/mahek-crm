@@ -64,6 +64,8 @@ import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { buzz, CameraScanner, GunInput, ScanField, shrinkPhoto } from "./camera";
+import { beep, warmBeeps } from "./beep";
+import { scanTone, type ScanMoment } from "./scan-sound";
 
 /**
  * What a photo that did not upload is CALLED on the screen. "No network" only
@@ -206,6 +208,7 @@ export class FactoryApp extends Component<Props, State> {
   /* ================================================================ life */
 
   componentDidMount() {
+    warmBeeps();
     /* The browser preview has no camera: a development build lets a test hand the scanner a code. Never in a release. */
     if (DEV && typeof window !== "undefined") (window as unknown as { __factoryScan?: (c: string) => void }).__factoryScan = (c) => void this.doScan(c);
     this.subs.push({ remove: watchNet((n) => this.setNet(n)) });
@@ -798,6 +801,7 @@ export class FactoryApp extends Component<Props, State> {
     /* A refused box is never scanned past: nothing counts until the loader has seen why. */
     if (this.halted()) {
       buzz("bad");
+      beep("bad");
       return this.toast("Not counted. Tap the card first, then scan it again.", "warn");
     }
     this.scanQ.push(code);
@@ -878,7 +882,24 @@ export class FactoryApp extends Component<Props, State> {
     return n ? n + (n === 1 ? " box" : " boxes") + " on this order" : "";
   }
 
+  /** Where the scan screen stands, for telling what a scan did to it. */
+  scanMoment(): ScanMoment {
+    const st = this.state;
+    return { open: !!st.scan, route: st.route, res: st.scan?.res, feed: st.scan?.feed, lorryRes: st.lorry.res, half: st.lorry.half };
+  }
+
+  /** Every scan, read and then SOUNDED: the beep comes with the answer, from what the answer changed. */
   async doScan(code: string, manual?: boolean) {
+    const before = this.scanMoment();
+    try {
+      await this.readScan(code, manual);
+    } finally {
+      const tone = scanTone(before, this.scanMoment());
+      if (tone) beep(tone);
+    }
+  }
+
+  async readScan(code: string, manual?: boolean) {
     const st = this.state, sc = st.scan;
     if (!sc || sc.res) return;
     if (st.lorry.res || st.lorry.pick || st.lorry.ask) return;
