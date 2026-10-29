@@ -78,6 +78,7 @@ beforeEach(async () => {
   `);
   invalidateConfig();
   await seedConfig();
+  await db.execute(sql`insert into erp_transporters (id, name) values ('etr_create_vrl', 'VRL Logistics') on conflict do nothing`);
   deepa = await makeUser("Deepa Desk", "manager", [{ app: "accounts", role: "manager" }]);
   clerk = await makeUser("Kiran Clerk", "associate", [{ app: "accounts", role: "associate" }]);
   mahesh = await makeUser("Mahesh Field", "associate", [{ app: "field", role: "associate" }]);
@@ -145,6 +146,15 @@ describe("Adding a customer from Accounts", () => {
     assert.ok(r.ok, r.ok ? "" : r.error);
     const [p] = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, r.data.id));
     assert.equal(p?.transporter, "VRL Logistics");
+
+    /* Picked from the Transporters list: another spelling of a listed one is that one, anything else is refused. */
+    const spelled = await createDirectCustomer(input({ name: "Spelled Shop", phone: "9876500034", transporter: "vrl logistics pvt ltd" }));
+    assert.ok(spelled.ok, spelled.ok ? "" : spelled.error);
+    assert.equal((await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, spelled.data.id)))[0]?.transporter, "VRL Logistics");
+    const unlisted = await createDirectCustomer(input({ name: "Unlisted Shop", phone: "9876500035", transporter: "Blue Dart Express" }));
+    assert.equal(unlisted.ok, false);
+    assert.match(unlisted.ok ? "" : unlisted.error, /"Blue Dart Express" is not on the transporter list/);
+    assert.equal((await db.execute(sql`select 1 from erp_transporters where name = 'Blue Dart Express'`)).length, 0, "nothing is added to the list");
 
     const bare = await createDirectCustomer(input({ name: "Plain Shop", phone: "9876500033" }));
     assert.ok(bare.ok, bare.ok ? "" : bare.error);

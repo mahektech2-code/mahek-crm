@@ -1,7 +1,8 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, erpCustomerProfiles, erpRefValues, sheetPartyRows } from "@/db/schema";
+import { customers, erpCustomerProfiles, erpRefValues, erpTransporters, sheetPartyRows } from "@/db/schema";
+import { listedTransporter } from "./engines/lr-read";
 import { sheetKeys } from "@/lib/customer-rename";
 import { erpId } from "./server";
 
@@ -22,8 +23,10 @@ import { erpId } from "./server";
  * parties is a placeholder and is skipped.
  *
  * It also seeds the open reference lists with the values the sheet actually
- * uses, because an empty "Transporter" list on day one is a form nobody can
- * fill in.
+ * uses. Not the transporter: that is picked from the Transporters list, so the
+ * sheet's "Transport Detail" fills the profile only where it IS a listed
+ * transporter (as the list spells it) and is left blank where it is not —
+ * the sheet does not get to add a fourth spelling of one company.
  * ------------------------------------------------------------------------- */
 
 /** "Abc @gmail .com" → "abc@gmail.com"; null where what is left is not an address. */
@@ -51,6 +54,7 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
   let customersFilled = 0;
   // A renamed party is still found under the name the sheet uses.
   const byKey = new Map(all.flatMap((c) => sheetKeys(c).map((k) => [k, c.id] as const)));
+  const carriers = (await db.select({ name: erpTransporters.name }).from(erpTransporters)).map((t) => t.name);
   const existing = new Map(
     (await db.select().from(erpCustomerProfiles)).map((p) => [p.customerId, p]),
   );
@@ -68,7 +72,7 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
       .filter(Boolean);
     const fromSheet = {
       state: p.state,
-      transporter: p.transportDetail,
+      transporter: p.transportDetail?.trim() ? listedTransporter(p.transportDetail, carriers).name : null,
       weightType: p.weightType,
       segment: p.segment,
       grade: p.grade,
@@ -106,7 +110,6 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
   const lists: [string, (string | null)[]][] = [
     ["area", parties.map((p) => p.area)],
     ["state", parties.map((p) => p.state)],
-    ["transporter", parties.map((p) => p.transportDetail)],
     ["segment", parties.map((p) => p.segment)],
     ["counterType", parties.flatMap((p) => (p.counterType ?? "").split(","))],
   ];
