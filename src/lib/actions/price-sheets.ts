@@ -30,7 +30,7 @@ import { publishPriceList } from "@/lib/actions/price-lists";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { joinSignatory, verifySheet } from "@/lib/services/price-sheet-service";
 import { pdfFilename } from "@/lib/price-sheet-pdf";
-import { joinTerms, sheetRates, type PriceSheet } from "@/lib/price-sheet";
+import { joinTerms, MAX_SHEET_COLUMNS, publishRefusal, sheetRates, TOO_MANY_COLUMNS, type PriceSheet } from "@/lib/price-sheet";
 import { err, fieldErr, fromThrown, ok, type FieldError, type Result } from "@/lib/result";
 import { litresSchema } from "../decimal-schemas";
 
@@ -119,7 +119,7 @@ const sheetSchema = z.object({
       sizeLabel: z.string(),
       packLabel: z.string(),
     }),
-  ).max(24, "A sheet with more than 24 pack sizes will not fit on paper."),
+  ).max(MAX_SHEET_COLUMNS, TOO_MANY_COLUMNS),
   rows: z.array(
     z.object({
       key: z.string(),
@@ -147,6 +147,14 @@ const scopeSchema = z.object({
   label: z.string().nullish(),
   parentKey: z.string().default(""),
   freightTermMatch: z.enum(["any", "to_pay", "paid"]).default("any"),
+  /**
+   * Carried through so a new version keeps who wins a tie and when a scope
+   * ends. Re-inserting without them reset every inherited scope to priority 0
+   * and open-ended — another list could win, or a scope meant to end ran on.
+   */
+  priority: z.number().int().min(-1000).max(1000).default(0),
+  validFrom: z.string().regex(ISO_DATE, "That is not a date.").nullish(),
+  validTo: z.string().regex(ISO_DATE, "That is not a date.").nullish(),
 });
 
 export type SheetScopeInput = z.input<typeof scopeSchema>;
@@ -185,7 +193,10 @@ export type SaveSheetResult = {
 
 export async function savePriceSheet(input: SaveSheetInput): Promise<Result<SaveSheetResult>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    // The desk, not just the capability — the same check publishing and bulk
+    // delete ask, so a clerk narrowed off Price lists cannot write a draft by
+    // posting to this URL.
+    const ctx = await requirePriceDesk();
     const parsed = sheetSchema.safeParse(input.sheet);
     if (!parsed.success) return zodErr(parsed.error);
     const sheet = parsed.data as PriceSheet;
@@ -197,6 +208,13 @@ export async function savePriceSheet(input: SaveSheetInput): Promise<Result<Save
     const rates = sheetRates(sheet);
     if (input.publish && !rates.filter((r) => r.offered).length) {
       return err("No cell has a price. A list with no prices cannot be put in force — save it as a draft instead.", "rule_violation");
+    }
+    // The review page's blocking checks, again on the server: a check that
+    // lives only in a browser is not a check. A draft may hold unfinished
+    // work; a list put in force may not offer anything at ₹0.
+    if (input.publish) {
+      const refusal = publishRefusal(sheet);
+      if (refusal) return err(refusal, "rule_violation");
     }
 
     // Every SKU named has to exist. A product id the browser made up is a rate
@@ -253,7 +271,42 @@ export async function savePriceSheet(input: SaveSheetInput): Promise<Result<Save
         });
       }
 
+      // SLABS ARE NOT ON THE SHEET, so the sheet may not destroy them. The grid
+      // is the flat price per SKU (`sheetFromRates` reads only those); a
+      // quantity slab (min cans above one) is kept for every SKU the sheet
+      // still offers, and goes only with its SKU. A new version carries the
+      // source list's slabs across the same way.
+      const keptIds = [...new Set(rates.filter((r) => r.offered).map((r) => r.productId))];
+      const slabSource = input.mode === "version" ? source!.id : input.mode === "update" ? listId : null;
+      const slabs =
+        slabSource && keptIds.length
+          ? await tx
+              .select()
+              .from(priceListRates)
+              .where(and(eq(priceListRates.priceListId, slabSource), inArray(priceListRates.productId, keptIds), sql`${priceListRates.minCans} > 1`))
+          : [];
       await tx.delete(priceListRates).where(eq(priceListRates.priceListId, listId));
+      if (slabs.length) {
+        await tx.insert(priceListRates).values(
+          slabs.map((r) => ({
+            id: gen("plr"),
+            priceListId: listId,
+            productId: r.productId,
+            rateExGstPaise: Number(r.rateExGstPaise),
+            rateInclGstPaise: Number(r.rateInclGstPaise),
+            minCans: r.minCans,
+            maxCans: r.maxCans,
+            offered: r.offered,
+            rawProductText: r.rawProductText,
+            rawPackText: r.rawPackText,
+            rawPriceText: r.rawPriceText,
+            sourceRef: r.sourceRef,
+            matchStatus: r.matchStatus,
+            matchConfidence: r.matchConfidence,
+            updatedById: ctx.user.id,
+          })),
+        );
+      }
       if (rates.length) {
         await tx.insert(priceListRates).values(
           rates.map((r) => ({
@@ -299,6 +352,9 @@ export async function savePriceSheet(input: SaveSheetInput): Promise<Result<Save
               label: s.scopeLabel,
               parentKey: s.parentKey,
               freightTermMatch: s.freightTermMatch as "any" | "to_pay" | "paid",
+              priority: s.priority,
+              validFrom: s.validFrom,
+              validTo: s.validTo,
               raw: true,
             }))
           : null);
@@ -316,6 +372,9 @@ export async function savePriceSheet(input: SaveSheetInput): Promise<Result<Save
             scopeLabel: s.label ?? s.value ?? null,
             parentKey: raw || !GEOGRAPHY.has(s.kind) ? (s.parentKey ?? "") : placeKey(s.parentKey ?? ""),
             freightTermMatch: s.freightTermMatch ?? "any",
+            priority: s.priority ?? 0,
+            validFrom: s.validFrom ?? null,
+            validTo: s.validTo ?? null,
             createdById: ctx.user.id,
           });
         }
@@ -477,7 +536,7 @@ export async function duplicatePriceList(
   input: { name: string; effectiveFrom: string; refNo?: string | null; copyScopes: boolean },
 ): Promise<Result<{ id: string }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     if (!input.name.trim()) return fieldErr("name", "A copy needs a name, or it will be mistaken for the list it came from.");
     if (!ISO_DATE.test(input.effectiveFrom)) return fieldErr("effectiveFrom", "That is not a date.");
     const [row] = await db.select().from(priceLists).where(eq(priceLists.id, id));

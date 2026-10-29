@@ -21,7 +21,7 @@ import { Button, Checkbox, Field, MoneyInput } from "@/components/ui/primitives"
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { setParseRowPrice } from "@/lib/actions/price-lists";
-import { exFromIncl } from "@/lib/engines/price-math";
+import { exFromIncl, inclFromEx } from "@/lib/engines/price-math";
 import { money, parseRupees, rupeesFromPaise } from "@/lib/format";
 import type { ParseRowView } from "@/lib/price-list-views";
 
@@ -30,31 +30,36 @@ export function ParsePriceModal({
   onClose,
   cell,
   gstBp,
+  taxBasis = "inclusive",
 }: {
   open: boolean;
   onClose: () => void;
   cell: ParseRowView | null;
   /** The document header's GST rate, so the ex-GST figure matches what publishing will write. */
   gstBp: number;
+  /** What the document prints: the inclusive figure, or the ex-GST one on a GST-extra list. */
+  taxBasis?: "inclusive" | "exclusive";
 }) {
   if (!open || !cell) return null;
-  return <Body key={cell.id} onClose={onClose} cell={cell} gstBp={gstBp} />;
+  return <Body key={cell.id} onClose={onClose} cell={cell} gstBp={gstBp} taxBasis={taxBasis} />;
 }
 
 function Body({
   onClose,
   cell,
   gstBp,
+  taxBasis,
 }: {
   onClose: () => void;
   cell: ParseRowView;
   gstBp: number;
+  taxBasis: "inclusive" | "exclusive";
 }) {
   const router = useRouter();
   const { run } = useToast();
-  const [rupees, setRupees] = React.useState(
-    cell.rateInclGstPaise !== null ? rupeesFromPaise(cell.rateInclGstPaise) : "",
-  );
+  const exclusive = taxBasis === "exclusive";
+  const printed = exclusive ? cell.rateExGstPaise : cell.rateInclGstPaise;
+  const [rupees, setRupees] = React.useState(printed != null ? rupeesFromPaise(printed) : "");
   const [notOffered, setNotOffered] = React.useState(!cell.offered);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
@@ -71,7 +76,7 @@ function Body({
       const result = await run(
         setParseRowPrice({
           rowId: cell.id,
-          rateInclGstPaise: notOffered ? null : paise,
+          printedPaise: notOffered ? null : paise,
           offered: !notOffered,
         }),
       );
@@ -114,7 +119,11 @@ function Body({
 
       <Field
         label="Price as printed"
-        hint="These lists print the inclusive figure. The ex-GST rate is worked out from it."
+        hint={
+          exclusive
+            ? "This list prints prices before GST. The inclusive figure is worked out from it."
+            : "These lists print the inclusive figure. The ex-GST rate is worked out from it."
+        }
         error={errors.rateInclGstPaise ?? null}
       >
         <MoneyInput
@@ -130,7 +139,9 @@ function Body({
         {notOffered
           ? "Nothing will be written for this cell."
           : paise && paise > 0
-            ? `${money(paise)} including GST · ${money(exFromIncl(paise, gstBp))} before GST at ${(gstBp / 100).toFixed(0)}%`
+            ? exclusive
+              ? `${money(paise)} before GST · ${money(inclFromEx(paise, gstBp))} including GST at ${(gstBp / 100).toFixed(0)}%`
+              : `${money(paise)} including GST · ${money(exFromIncl(paise, gstBp))} before GST at ${(gstBp / 100).toFixed(0)}%`
             : "Type a figure to see the ex-GST rate."}
       </div>
 

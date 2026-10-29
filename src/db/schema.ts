@@ -10876,6 +10876,8 @@ export type PriceParsedHeader = {
   }>;
   /** The terms block as printed, for the list's `termsText`. */
   termsText?: string | null;
+  /** The list's own name, where the file says it — a MahekOne PDF carries it in its Title. */
+  listName?: string | null;
 };
 
 /**
