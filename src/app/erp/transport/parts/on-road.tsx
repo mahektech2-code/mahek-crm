@@ -4,14 +4,15 @@ import { NavLink } from "@/components/shell/nav-link";
 import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
-import { Button, Card, cx, Field, Input, SectionLabel, Select, Textarea } from "@/components/ui/primitives";
+import { Button, Card, cx, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
-import { addDays, callDue, daysBetween, ISSUES, MAX_CITIES_PER_UPDATE, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
+import { addDays, callDue, daysBetween, ISSUES, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
 import { delayReasonForIssue, reasonsFor } from "@/lib/erp/engines/order-tracking";
 import type { Consignment, RouteSuggestions } from "@/lib/erp/logistics";
+import { UpdateLrDialog } from "./update-lr";
 import { BillRef, byLr, CallLink, DeliveryStatusBadge, DuePill, Empty, LrThumb, NotifyToggle, plural, RouteTrail, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
 
 /**
@@ -179,42 +180,22 @@ export function OnRoad({
         );
       })}
 
-      {dialog ? <ActionDialog key={`${dialog.kind}${dialog.group[0].id}`} dialog={dialog} today={today} callEveryDays={callEveryDays} notifyOn={notifyOn} suggestions={suggestions ?? null} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "update" ? (
+        <UpdateLrDialog key={`u${dialog.group[0].id}`} group={dialog.group} today={today} callEveryDays={callEveryDays} notifyOn={notifyOn} suggestions={suggestions ?? null} onClose={() => setDialog(null)} />
+      ) : dialog ? (
+        <ActionDialog key={`${dialog.kind}${dialog.group[0].id}`} dialog={{ kind: dialog.kind, group: dialog.group }} today={today} notifyOn={notifyOn} onClose={() => setDialog(null)} />
+      ) : null}
     </div>
   );
 }
 
-/**
- * What the update dialog offers as "where are the goods". The first is not a
- * stage of its own: dispatched from the transporter's godown IS in transit,
- * with the godown said — so it saves "In Transit" and the godown.
- */
-type Choice = "dispatched" | Stage;
-const CHOICES: { key: Choice; label: string; hint: string }[] = [
-  { key: "dispatched", label: "Dispatched from godown", hint: "The transporter has sent it on from its godown or booking office." },
-  { key: "In Transit", label: STAGE_SHORT["In Transit"], hint: "On the way. Add each city it has reached." },
-  { key: "On the way to Destination area", label: STAGE_SHORT["On the way to Destination area"], hint: "Nearly there — in the destination's district." },
-  { key: "Reached Destination Area", label: STAGE_SHORT["Reached Destination Area"], hint: "At the transporter's office in the destination city." },
-  { key: "Out for Delivery", label: STAGE_SHORT["Out for Delivery"], hint: "On the local vehicle to the party's door." },
-  { key: "Ready for Pickup", label: STAGE_SHORT["Ready for Pickup"], hint: "Waiting at the transporter's office for the party to collect." },
-];
-
-type CityRow = { key: number; city: string; on: string };
-
-function ActionDialog({ dialog, today, callEveryDays, notifyOn, suggestions, onClose }: { dialog: NonNullable<Dialog>; today: string; callEveryDays: number; notifyOn: boolean; suggestions: RouteSuggestions | null; onClose: () => void }) {
+/** A problem, or the delivery — the two acts on the road that are not a status update (that one is `UpdateLrDialog`). */
+function ActionDialog({ dialog, today, notifyOn, onClose }: { dialog: { kind: "issue" | "delivered"; group: Consignment[] }; today: string; notifyOn: boolean; onClose: () => void }) {
   const { run, pending } = useAct();
   const c = dialog.group[0];
   const ids = dialog.group.map((b) => b.id);
-  const [choice, setChoice] = useState<Choice>(ROAD_STAGES.includes(c.stage as Stage) ? (c.stage as Stage) : "In Transit");
-  const stage: Stage = choice === "dispatched" ? "In Transit" : choice;
-  const [from, setFrom] = useState(c.dispatchedFrom ?? "");
-  const [cities, setCities] = useState<CityRow[]>(() => (c.stage === "In Transit" || c.stage === "On the way to Destination area" ? [{ key: 1, city: "", on: today }] : []));
-  const [destination, setDestination] = useState(c.destination ?? "");
-  const [pickupPoint, setPickupPoint] = useState(c.pickupPoint ?? "");
-  const [pickupContact, setPickupContact] = useState(c.pickupContact ?? "");
   const [note, setNote] = useState("");
   const [expected, setExpected] = useState(c.expectedDeliveryOn ?? "");
-  const [nextCall, setNextCall] = useState(addDays(today, callEveryDays));
   const [issue, setIssue] = useState<string>("Delayed");
   /* What the customer's tracking page calls it: a delay reason, or nothing (the problem stays internal). */
   const [customerReason, setCustomerReason] = useState<string>(delayReasonForIssue("Delayed") ?? "");
@@ -223,49 +204,15 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, suggestions, onC
   const [proof, setProof] = useState("");
   const [notify, setNotify] = useState(true);
 
-  const title = dialog.kind === "update" ? `Update ${lrLabel(c.lrNo)}` : dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
-  const filled = cities.filter((r) => r.city.trim());
-  const fromChanged = from.trim() !== (c.dispatchedFrom ?? "");
-  const destinationChanged = destination.trim() !== (c.destination ?? "");
-  const pickupChanged = stage === "Ready for Pickup" && (pickupPoint.trim() !== (c.pickupPoint ?? "") || pickupContact.trim() !== (c.pickupContact ?? ""));
-  const missing =
-    dialog.kind !== "update"
-      ? null
-      : choice === "dispatched" && !from.trim()
-        ? "Pick the godown it was dispatched from."
-        : stage === "Ready for Pickup" && !pickupPoint.trim()
-          ? "Say where the party collects it."
-          : cities.some((r) => r.city.trim() && !r.on)
-            ? "Give each city the day it was reached."
-            : null;
-  const addCity = () => setCities((rs) => [...rs, { key: (rs.at(-1)?.key ?? 0) + 1, city: "", on: rs.at(-1)?.on || today }]);
-  const setCity = (key: number, patch: Partial<CityRow>) => setCities((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  const godowns = [...new Set([...(suggestions?.godownsByTransporter[(c.transporter ?? "").toLowerCase()] ?? []), ...(suggestions?.ourGodowns ?? [])])];
+  const title = dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
   const save = () => {
     const done = (r: { ok: boolean }) => r.ok && onClose();
-    if (dialog.kind === "update")
-      return run(
-        () =>
-          erpLogisticsUpdate(ids, {
-            stage,
-            note,
-            expectedOn: expected || null,
-            nextCallOn: nextCall || null,
-            notify,
-            ...(choice === "dispatched" || fromChanged ? { dispatchedFrom: from } : {}),
-            cities: filled.map((r) => ({ city: r.city, on: r.on })),
-            ...(destinationChanged ? { destination } : {}),
-            ...(stage === "Ready for Pickup" ? { pickupPoint, pickupContact } : {}),
-          }),
-        done,
-      );
     if (dialog.kind === "issue") return run(() => erpLogisticsIssue(ids, { issue, note, expectedOn: expected || null, notify, customerReason: customerReason || null }), done);
     return run(() => erpLogisticsDelivered(ids, { date, receivedBy, proof, note, notify }), done);
   };
-  const moved = dialog.kind === "update" && (stage !== c.stage || !!(expected && expected !== c.expectedDeliveryOn) || filled.length > 0 || (choice === "dispatched" && fromChanged) || pickupChanged);
 
   return (
-    <ErpDialog onClose={onClose} label={title} size={dialog.kind === "update" ? "md" : "sm"} tall={false}>
+    <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
       <DialogHeader onClose={onClose}>
         <DialogTitle>{title}</DialogTitle>
       </DialogHeader>
@@ -273,95 +220,6 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, suggestions, onC
         <div className="text-sm text-body">
           {[...new Set(dialog.group.map((b) => b.deliveryParty))].join(", ")} · {plural(dialog.group.length, "bill")} · {c.transporter ?? "—"}
         </div>
-        {dialog.kind === "update" ? (
-          <>
-            <div>
-              <SectionLabel>Where are the goods?</SectionLabel>
-              <div className="mt-1 grid grid-cols-3 gap-2">
-                {CHOICES.map((o) => (
-                  <button
-                    key={o.key}
-                    type="button"
-                    title={o.hint}
-                    aria-pressed={choice === o.key}
-                    onClick={() => {
-                      setChoice(o.key);
-                      if ((o.key === "In Transit" || o.key === "On the way to Destination area") && !cities.length) addCity();
-                    }}
-                    className={cx("cursor-pointer rounded-control border px-2 py-2 text-meta", choice === o.key ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas")}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-1 text-xs text-muted">{CHOICES.find((o) => o.key === choice)?.hint}</div>
-            </div>
-
-            {choice === "dispatched" || c.dispatchedFrom ? (
-              <Field label={choice === "dispatched" ? "Dispatched from which godown?" : "Dispatched from"}>
-                <Input value={from} onChange={(e) => setFrom(e.target.value)} list="route-godowns" placeholder={c.transporter ? `${c.transporter}'s godown or booking office` : "The transporter's godown"} maxLength={80} />
-              </Field>
-            ) : null}
-
-            <div>
-              <SectionLabel>Cities reached</SectionLabel>
-              {c.route.length ? <RouteTrail route={c.route} destination={null} stage={c.stage} className="mt-1" /> : <div className="mt-1 text-xs text-muted">No city reported yet.</div>}
-              {cities.length ? (
-                <div className="mt-2 space-y-2">
-                  {cities.map((r, i) => (
-                    <div key={r.key} className="grid grid-cols-[minmax(0,1fr)_150px_auto] items-center gap-2">
-                      <Input value={r.city} onChange={(e) => setCity(r.key, { city: e.target.value })} list="route-cities" placeholder={i ? "Next city" : "City it reached — Pune, Nashik, Indore…"} aria-label={`City ${i + 1}`} maxLength={80} />
-                      <Input type="date" value={r.on} max={today} min={c.billDate ?? undefined} onChange={(e) => setCity(r.key, { on: e.target.value })} aria-label={`Day it reached city ${i + 1}`} />
-                      <Button size="sm" variant="ghost" onClick={() => setCities((rs) => rs.filter((x) => x.key !== r.key))} aria-label={`Remove city ${i + 1}`}>
-                        ✕
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {cities.length < MAX_CITIES_PER_UPDATE ? (
-                <Button size="sm" variant="ghost" className="mt-1" onClick={addCity}>
-                  + {cities.length ? "Add another city" : "Add a city it reached"}
-                </Button>
-              ) : null}
-            </div>
-
-            <Field label="Going to (destination city)">
-              <Input value={destination} onChange={(e) => setDestination(e.target.value)} list="route-cities" placeholder={c.lrDestination ? `As on the LR: ${c.lrDestination}` : "The city of the transporter's delivering office"} maxLength={80} />
-            </Field>
-            {destinationChanged && !destination.trim() && c.lrDestination ? <div className="-mt-2 text-xs text-muted">Left empty, it goes back to the LR&apos;s own: {c.lrDestination}.</div> : null}
-
-            {stage === "Ready for Pickup" ? (
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Party collects it from">
-                  <Input value={pickupPoint} onChange={(e) => setPickupPoint(e.target.value)} list="route-godowns" placeholder="Transporter's office and area" maxLength={200} />
-                </Field>
-                <Field label="Whom to ask there">
-                  <Input value={pickupContact} onChange={(e) => setPickupContact(e.target.value)} placeholder="Name and phone — optional" maxLength={120} />
-                </Field>
-              </div>
-            ) : null}
-
-            <div className="grid grid-cols-2 gap-3">
-              <Field label={stage === "Ready for Pickup" ? "Collect by (if the office gave a day)" : "Expected delivery"}>
-                <Input type="date" value={expected} min={today} onChange={(e) => setExpected(e.target.value)} />
-              </Field>
-              <Field label="Next call to the transporter">
-                <Input type="date" value={nextCall} min={today} onChange={(e) => setNextCall(e.target.value)} />
-              </Field>
-            </div>
-            <datalist id="route-godowns">
-              {godowns.map((g) => (
-                <option key={g} value={g} />
-              ))}
-            </datalist>
-            <datalist id="route-cities">
-              {(suggestions?.cities ?? []).map((x) => (
-                <option key={x} value={x} />
-              ))}
-            </datalist>
-          </>
-        ) : null}
         {dialog.kind === "issue" ? (
           <>
             <Field label="What went wrong?">
@@ -410,17 +268,15 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, suggestions, onC
             <p className="col-span-2 text-meta text-muted">Close it only once the party has confirmed. Not confirmed yet? Report a problem — Unconfirmed — and it stays open.</p>
           </div>
         ) : null}
-        <Field label={dialog.kind === "update" ? "What the transporter said" : "Note"}>
+        <Field label="Note">
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         </Field>
-        {dialog.kind === "update" && !moved ? <div className="text-meta text-muted">Nothing the customer would want to know has changed — no new stage, city or date — so this is logged as a call and the customer is not messaged.</div> : null}
-        {missing ? <div className="text-meta text-warn-ink">{missing}</div> : null}
-        {dialog.kind !== "update" || moved ? <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} /> : null}
+        <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} />
       </DialogBody>
       <DialogFooter>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant={dialog.kind === "issue" ? "danger" : "primary"} disabled={pending || !!missing || (dialog.kind === "issue" && issue === "Other" && !note.trim())} onClick={save}>
-          {dialog.kind === "delivered" ? "Close as delivered" : dialog.kind === "issue" ? "Record the problem" : "Save update"}
+        <Button variant={dialog.kind === "issue" ? "danger" : "primary"} disabled={pending || (dialog.kind === "issue" && issue === "Other" && !note.trim())} onClick={save}>
+          {dialog.kind === "delivered" ? "Close as delivered" : "Record the problem"}
         </Button>
       </DialogFooter>
     </ErpDialog>
