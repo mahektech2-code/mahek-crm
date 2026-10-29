@@ -665,6 +665,7 @@ describe("vehicle trips and the transport payment shared by litres (Order-to-Del
     const x = await bill(9201, "cus_shree", 250);
     const y = await bill(9202, "cus_om", 500);
     const z = await bill(9203, "cus_shree", 250);
+    assert.match(msg(await T.saveTrip(ctx, { tripDate: "2026-09-12", vehicleNo: "MH12 XY 9", transporter: "Unlisted Tempo", transportIds: [x, y, z] })), /not on the transporter list/);
     const made = await T.saveTrip(ctx, { tripDate: "2026-09-12", vehicleNo: "MH12 XY 9", transporter: "VRL", transportIds: [x, y, z] });
     assert.ok(made.ok, msg(made));
     const tripId = made.ok ? made.data.id : "";

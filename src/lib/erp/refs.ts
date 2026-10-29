@@ -15,7 +15,6 @@ export const REF_LISTS: { key: string; label: string }[] = [
   { key: "testingList", label: "Testing list" },
   { key: "area", label: "Area" },
   { key: "state", label: "State" },
-  { key: "transporter", label: "Transporter" },
   { key: "segment", label: "Segment" },
   { key: "counterType", label: "Counter type" },
   { key: "complaintType", label: "Complaint type" },
@@ -55,7 +54,7 @@ export const REGIONS = ["West", "North", "South", "East", "Central"];
 /**
  * WHERE A LIST'S VALUES ALREADY LIVE, for the lists a person fills in by hand.
  *
- * Segment, counter type, area, state and transporter were reference lists
+ * Segment, counter type, area and state were reference lists
  * nobody had filled, so the customer form offered "Nothing available" while
  * two thousand customers already carried a segment from the Sales Party
  * sheet. A list is the values somebody wrote on ERP → Settings PLUS the values
@@ -69,8 +68,6 @@ const IN_USE: Record<string, ReturnType<typeof sql>> = {
   state: sql`select state as v from erp_customer_profiles
              union select state from sheet_party_rows where status = 'present'
              union select state from erp_godowns`,
-  /* The Transporters list alone: a spelling a party or the sheet carries is not a transporter to offer. */
-  transporter: sql`select name as v from erp_transporters where active`,
   segment: sql`select segment as v from erp_customer_profiles
                union select segment from sheet_party_rows where status = 'present'`,
   counterType: sql`select unnest(counter_types) as v from erp_customer_profiles

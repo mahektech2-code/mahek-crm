@@ -769,9 +769,21 @@ export const MATRIX: Record<AppId, AppMatrix> = {
   },
   /* The desk. An associate records and reads; the manager decides. */
   /* The Price Desk rides here BY NAME at both levels — see `PRICE_DESK`. */
+  /* The Accounts MANAGER also sets the sales manager seat, by name. The desk
+     already holds `customer.reassign`, which moves the sales seat and its
+     numbers; refusing it the seat beside that one, which moves none, locked
+     the field on Add customer, the lead bypass and the edit form — and a lead
+     arriving with the seat already filled could not be converted at all. */
   accounts: {
     associate: [...LEDGER_WORK, "lead.gstValidate", "pricelist.read", "pricelist.manage"],
-    manager: [...LEDGER_WORK, ...LEDGER_DECISIONS, "lead.gstValidate", "pricelist.read", "pricelist.manage"],
+    manager: [
+      ...LEDGER_WORK,
+      ...LEDGER_DECISIONS,
+      "customer.assignSalesManager",
+      "lead.gstValidate",
+      "pricelist.read",
+      "pricelist.manage",
+    ],
   },
   /* Reading screens. Nothing here writes, so neither level carries a write —
      with one exception: the founder's desk may add, change and delete a price

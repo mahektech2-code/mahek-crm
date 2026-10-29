@@ -3601,7 +3601,7 @@ columns the second-order rule does (`conversionColumns`: kind `customer`, stage
 handset Leads tab and joins Customers, the Call Log and collections at once.
 
 **THE CUSTOMER CODE IS GENERATED, AND IT IS NOT `external_code`.**
-`customers.customer_code` ("CUS-00001", `0293`) is set by a database
+`customers.customer_code` ("CUS-00001", `0294`) is set by a database
 sequence on every insert, whatever path writes the row, and is shown read-only
 on both forms. `external_code` is the order sheet's key for the party
 (`SHEET:<NAME>`, matched by the projection on every pass) and is no longer on
@@ -5501,6 +5501,12 @@ manager's own people, and moving this one moves none. It is its own capability
 into `updateAccountManagers` would have put one function behind one capability
 doing two jobs with two answers about who may do them, and the generous answer
 always wins in the end.
+
+**The Accounts MANAGER holds it too, by name.** The desk already holds
+`customer.reassign`, the stronger of the two; without this one the field was
+locked on Add customer, the lead bypass and the edit form, and a lead that
+arrived with the seat filled could not be converted. In the bypass, somebody
+without it keeps the lead's seat exactly as it is.
 
 **And it takes no `amDecidedAt`.** That mark exists to hold the sheet off the
 two seats it keeps restating; the customer master carries no sales manager at

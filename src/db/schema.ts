@@ -1403,7 +1403,7 @@ export const customers = pgTable(
     /**
      * The customer code people read and quote — "CUS-00001". Set by the
      * database's own sequence on every insert, whatever path writes the row,
-     * and never typed or changed (0293).
+     * and never typed or changed (0294).
      */
     customerCode: text("customer_code")
       .notNull()
