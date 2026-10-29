@@ -135,7 +135,9 @@ export function PriceListDetailScreen({
           <p className="mt-1 text-[13px] text-muted">{listSummary(list)}</p>
           <p className="mt-0.5 text-[13px] text-muted">
             In force from {longDate(list.effectiveFrom)}
-            {list.expiresOn ? ` · ${list.expired ? "expired" : "expires"} ${longDate(list.expiresOn)}` : " · open ended"}
+            {list.expiresOn
+              ? ` · ${list.expired ? (list.validityState === "past_validity_pricing" ? "validity ended" : "expired") : "expires"} ${longDate(list.expiresOn)}`
+              : " · open ended"}
           </p>
           <p className="mt-0.5 text-[13px] text-muted">{FREIGHT_TERM_HINT[list.freightTerm]}</p>
           {detail.parent && list.derivation ? (
@@ -244,10 +246,15 @@ export function PriceListDetailScreen({
           were taken against it.
         </Callout>
       ) : null}
-      {published && list.expired ? (
+      {published && list.expired && list.validityState === "past_validity_pricing" ? (
         <Callout tone="warn">
-          This list passed its validity on {longDate(list.expiresOn ?? todayIso)} and is
+          Past validity — still pricing. This list passed its validity on {longDate(list.expiresOn ?? todayIso)} and is
           still the one shops are priced from. Publish a new version, or extend it.
+        </Callout>
+      ) : published && list.expired ? (
+        <Callout tone="danger">
+          Expired — not pricing. This list passed its end on {longDate(list.expiresOn ?? todayIso)} and no shop is
+          priced from it any more: they fall to the next list that names them, or to none.
         </Callout>
       ) : null}
       {draft ? (

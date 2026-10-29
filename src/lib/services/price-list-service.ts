@@ -1,7 +1,8 @@
 import "server-only";
 import { cache } from "react";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { customers } from "@/db/schema";
 import type {
   PriceDeliveryBasis,
   PriceDerivation,
@@ -21,14 +22,20 @@ import { assertCustomerInScope, resolveScope, userIdsInScope } from "@/lib/acces
 import { canonicalState } from "@/lib/india-states";
 import { inferDerivation, perLitrePaise, rateChange } from "@/lib/engines/price-math";
 import {
+  lineageRoot,
+  listValidity,
   placeKey,
+  rateFromCandidates,
   resolvePriceList,
+  type ChainedRate,
   type CustomerGeo,
   type ListMeta,
   type Resolution,
+  type ResolveOptions,
   type ScopeRow,
 } from "@/lib/engines/price-resolution";
 import { discountTermSentence, SCOPE_KIND_LABEL } from "@/lib/price-list-labels";
+import type { Config } from "@/lib/config/registry";
 import type {
   Comparison,
   CompareRow,
@@ -143,13 +150,32 @@ function scopeSummary(parts: ListRow["scopeParts"]): string {
   return words.join(", ") + (more > 0 ? ` +${more}` : "");
 }
 
-function toSummary(row: ListRow, day: string, defaultValidity: number): PriceListSummary {
-  const validity = row.validityDays ?? defaultValidity;
+/**
+ * What the resolver is told about validity, read off configuration once.
+ * The screens build their "expired" from the same two values through
+ * `listValidity`, so a list the order form prices from is never drawn as one
+ * that has stopped.
+ */
+export function resolveOptionsFrom(
+  config: Pick<Config, "pricing.defaultValidityDays" | "pricing.expiredListsKeepPricing">,
+): ResolveOptions {
+  return {
+    defaultValidityDays: config["pricing.defaultValidityDays"],
+    expiredListsKeepPricing: config["pricing.expiredListsKeepPricing"],
+  };
+}
+
+export async function resolveOptions(): Promise<ResolveOptions> {
+  return resolveOptionsFrom(await getConfig());
+}
+
+function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSummary {
   // A list is valid for its own window from the day it takes effect, and the
   // list that supersedes it ends it sooner. The earlier of the two is what a
-  // screen has to say, or a list replaced last week reads as current.
-  const byValidity = validity > 0 ? addDays(row.effectiveFrom, validity) : null;
-  const expiresOn = row.effectiveTo && (!byValidity || row.effectiveTo < byValidity) ? row.effectiveTo : byValidity;
+  // screen has to say, or a list replaced last week reads as current. Whether
+  // it still PRICES is the resolver's own rule, asked through the same function.
+  const validity = listValidity(row, day, opts);
+  const expiresOn = validity.expiresOn;
   return {
     id: row.id,
     refNo: row.refNo,
@@ -161,6 +187,7 @@ function toSummary(row: ListRow, day: string, defaultValidity: number): PriceLis
     validityDays: row.validityDays,
     expiresOn,
     expired: row.status === "published" && expiresOn != null && expiresOn < day,
+    validityState: row.status === "published" ? validity.state : row.status === "draft" ? "current" : "expired",
     taxBasis: row.taxBasis,
     gstBp: row.gstBp,
     deliveryBasis: row.deliveryBasis,
@@ -223,7 +250,7 @@ export async function listPriceLists(filter?: {
     order by (l.status = 'published') desc, l.effective_from desc, l.name asc, l.id desc
     limit ${LIST_LIMIT}
   `);
-  return [...rows].map((r) => toSummary(r, day, config["pricing.defaultValidityDays"]));
+  return [...rows].map((r) => toSummary(r, day, resolveOptionsFrom(config)));
 }
 
 /* ------------------------------------------------------------------ rates */
@@ -238,7 +265,7 @@ function toDiscountTerm(t: Omit<DiscountTermView, "sentence">): DiscountTermView
 }
 
 const RATE_SELECT = sql`
-  select r.id, r.product_id as "productId", p.name as "productName",
+  select r.id, r.price_list_id as "listId", r.product_id as "productId", p.name as "productName",
          b.name as "brandName", f.name as "formulationName",
          p.millilitres_per_can as "millilitresPerCan", p.cans_per_box as "cansPerBox",
          p.packing, p.active as "productActive",
@@ -419,7 +446,7 @@ export async function priceListDetail(id: string): Promise<PriceListDetail | nul
 
   return {
     list: {
-      ...toSummary(row, day, config["pricing.defaultValidityDays"]),
+      ...toSummary(row, day, resolveOptionsFrom(config)),
       termsText: row.termsText,
       signatory: row.signatory,
       notes: row.notes,
@@ -591,11 +618,23 @@ const SCOPE_COLUMNS = sql`
 `;
 
 /**
- * Every published list and every scope row, once per request.
+ * Which lists can price anything: published ones, and superseded ones that
+ * carry the day they stopped — so an order of last month is read against the
+ * version in force then. The resolver honours the dates either way, so a list
+ * that is still `published` until its successor starts (or one already marked
+ * superseded) resolves on exactly the days it was in force. Drafts and
+ * withdrawn lists never price.
+ */
+const PRICING_LIST = sql`(l.status = 'published' or (l.status = 'superseded' and l.effective_to is not null))`;
+
+/**
+ * Every list that can price, and every scope row on one, once per request.
  *
  * Cached because the resolver needs the whole picture to answer about ONE
  * customer, and the customer record, the order form and the coverage report
- * all ask within a single render.
+ * all ask within a single render. Ordered, so nothing downstream ever depends
+ * on the order the heap happened to return rows in; the resolver breaks its
+ * own ties on ids as well.
  */
 export const activeScopesAndLists = cache(async function activeScopesAndLists(): Promise<{
   scopes: ScopeRow[];
@@ -606,17 +645,90 @@ export const activeScopesAndLists = cache(async function activeScopesAndLists():
       select ${SCOPE_COLUMNS}
         from price_list_scopes sc
         join price_lists l on l.id = sc.price_list_id
-       where l.status = 'published'
+       where ${PRICING_LIST}
+       order by sc.price_list_id asc, sc.id asc
     `),
     db.execute<ListMeta>(sql`
       select l.id, l.name, l.status, l.effective_from::text as "effectiveFrom",
-             l.effective_to::text as "effectiveTo", l.freight_term as "freightTerm", l.version
+             l.effective_to::text as "effectiveTo", l.freight_term as "freightTerm", l.version,
+             l.validity_days as "validityDays"
         from price_lists l
-       where l.status = 'published'
+       where ${PRICING_LIST}
+       order by l.effective_from desc, l.id asc
     `),
   ]);
   return { scopes: [...scopeRows], lists: [...listRows] };
 });
+
+/* ------------------------------------------------- a shop's rates */
+
+/** One row of a list for one product, as both order forms price it. */
+export type PricedRow = {
+  productId: string;
+  rateExGstPaise: number;
+  rateInclGstPaise: number;
+  gstBp: number;
+  minCans: number | null;
+  maxCans: number | null;
+  offered: boolean;
+};
+
+/**
+ * Every row these lists carry for these products — slabs and dashes included,
+ * because the fall-through reads "does the list have this product at all" and
+ * the slab is picked by quantity afterwards. Keyed list → product → rows.
+ *
+ * THE ONE READ OF A RATE. The CRM's order form, the Which-list-applies panel,
+ * the variance report and the ERP's order form all take their rows from here
+ * and their answer from `rateFromCandidates`, so two screens cannot quote one
+ * shop two prices for one SKU on one day. `productIds` null reads every product,
+ * which is what the ERP's form (every SKU it offers) asks for.
+ */
+export async function rowsForLists(
+  listIds: readonly string[],
+  productIds: readonly string[] | null,
+): Promise<Map<string, Map<string, PricedRow[]>>> {
+  const out = new Map<string, Map<string, PricedRow[]>>();
+  if (!listIds.length || (productIds && !productIds.length)) return out;
+  const lists = sql.join(listIds.map((id) => sql`${id}`), sql`, `);
+  const products = productIds ? sql.join(productIds.map((id) => sql`${id}`), sql`, `) : null;
+  const rows = await db.execute<{ listId: string } & PricedRow>(sql`
+    select r.price_list_id as "listId", r.product_id as "productId",
+           r.rate_ex_gst_paise as "rateExGstPaise", r.rate_incl_gst_paise as "rateInclGstPaise",
+           l.gst_bp as "gstBp", r.min_cans as "minCans", r.max_cans as "maxCans", r.offered
+      from price_list_rates r
+      join price_lists l on l.id = r.price_list_id
+     where r.price_list_id in (${lists})
+       ${products ? sql`and r.product_id in (${products})` : sql``}
+     order by r.price_list_id asc, r.product_id asc, r.min_cans asc nulls first, r.id asc
+  `);
+  for (const r of rows) {
+    const byProduct = out.get(r.listId) ?? new Map<string, PricedRow[]>();
+    out.set(r.listId, byProduct);
+    const row: PricedRow = {
+      productId: r.productId,
+      rateExGstPaise: Number(r.rateExGstPaise),
+      rateInclGstPaise: Number(r.rateInclGstPaise),
+      gstBp: Number(r.gstBp),
+      minCans: r.minCans == null ? null : Number(r.minCans),
+      maxCans: r.maxCans == null ? null : Number(r.maxCans),
+      offered: r.offered,
+    };
+    byProduct.set(r.productId, [...(byProduct.get(r.productId) ?? []), row]);
+  }
+  return out;
+}
+
+/** A shop's rate for one product off rows already read: the shared answer. */
+export function chainedRate(
+  resolution: Resolution | null,
+  rows: Map<string, Map<string, PricedRow[]>>,
+  productId: string,
+  cans?: number | null,
+): ChainedRate<PricedRow> | null {
+  if (!resolution) return null;
+  return rateFromCandidates(resolution.candidates, (listId) => rows.get(listId)?.get(productId) ?? [], cans);
+}
 
 type GeoRow = {
   customerId: string;
@@ -641,7 +753,10 @@ function toGeo(row: GeoRow): CustomerGeo {
     [...new Set(values.map((v) => placeKey(v)).filter((v) => v !== ""))];
   return {
     customerId: row.customerId,
-    salesmanIds: [row.salesAmId, row.ownerId].filter((v): v is string => !!v),
+    // The SALES SEAT only. `owner_id` on an imported book is whoever ran the
+    // import — one person on a thousand rows — so a salesman list for that
+    // person used to catch the whole imported book.
+    salesmanIds: row.salesAmId ? [row.salesAmId] : [],
     beatKeys: keys(row.beat),
     areaKeys: keys(row.area, row.resolvedArea),
     cityKeys: keys(row.city, row.resolvedCity),
@@ -698,9 +813,9 @@ async function bookGeography(): Promise<CustomerGeo[]> {
 }
 
 export async function resolveForCustomer(customerId: string, todayIso: string): Promise<Resolution | null> {
-  const [geo, { scopes, lists }] = await Promise.all([customerGeo(customerId), activeScopesAndLists()]);
+  const [geo, { scopes, lists }, opts] = await Promise.all([customerGeo(customerId), activeScopesAndLists(), resolveOptions()]);
   if (!geo) return null;
-  return resolvePriceList(geo, scopes, lists, todayIso);
+  return resolvePriceList(geo, scopes, lists, todayIso, opts);
 }
 
 /* ----------------------------------------------- taking one away */
@@ -753,13 +868,14 @@ export async function pricingShiftWithout(
   };
   const probeScopes = targets.map((t) => ({ ...t, priceListId: probe.id }));
 
-  const [{ scopes, lists }, rows] = await Promise.all([
+  const [{ scopes, lists }, rows, opts] = await Promise.all([
     activeScopesAndLists(),
     db.execute<GeoRow & { name: string }>(sql`
       select g.*, named.name
         from (${GEO_SELECT} where c.status <> 'deactivated') g
         join customers named on named.id = g."customerId"
     `),
+    resolveOptions(),
   ]);
   const scopesAfter = "scopeId" in take ? scopes.filter((s) => s.id !== take.scopeId) : scopes;
   const listsAfter = "listId" in take ? lists.filter((l) => l.id !== take.listId) : lists;
@@ -770,8 +886,8 @@ export async function pricingShiftWithout(
     const geo = toGeo(row);
     if (!resolvePriceList(geo, probeScopes, [probe], asOf)) continue;
     named++;
-    const before = resolvePriceList(geo, scopes, lists, asOf);
-    const after = resolvePriceList(geo, scopesAfter, listsAfter, asOf);
+    const before = resolvePriceList(geo, scopes, lists, asOf, opts);
+    const after = resolvePriceList(geo, scopesAfter, listsAfter, asOf, opts);
     if ((before?.listId ?? null) === (after?.listId ?? null)) continue;
     moves.push({ customerId: row.customerId, name: row.name, toListId: after?.listId ?? null, toListName: after?.listName ?? null });
   }
@@ -780,6 +896,21 @@ export async function pricingShiftWithout(
 }
 
 /* ------------------------------------------------------- one customer */
+
+/**
+ * Throws unless the caller may see this customer — the CRM's own scope rule,
+ * asked of the WHOLE row so every seat it reads is there (a narrow shape makes
+ * the check stricter than the record page's, and a shop somebody may open
+ * would answer "not found" here). False where it does not exist. Read by the
+ * two pricing routes and by `customerPricing`, so a rate is never a way round
+ * the customer's scope.
+ */
+export async function assertPricingCustomerInScope(customerId: string): Promise<boolean> {
+  const [row] = await db.select().from(customers).where(eq(customers.id, customerId));
+  if (!row) return false;
+  await assertCustomerInScope(row);
+  return true;
+}
 
 export async function customerPricing(customerId: string, todayIso: string): Promise<CustomerPricing | null> {
   const [row] = await db.execute<{
@@ -802,13 +933,7 @@ export async function customerPricing(customerId: string, todayIso: string): Pro
       from customers c where c.id = ${customerId}
   `);
   if (!row) return null;
-  await assertCustomerInScope({
-    id: row.id,
-    kind: row.kind,
-    ownerId: row.ownerId,
-    salesAmId: row.salesAmId,
-    backOfficeAmId: row.backOfficeAmId,
-  } as never);
+  await assertPricingCustomerInScope(customerId);
 
   const [config, day, resolution] = await Promise.all([
     getConfig(),
@@ -816,8 +941,8 @@ export async function customerPricing(customerId: string, todayIso: string): Pro
     resolveForCustomer(customerId, todayIso),
   ]);
 
-  const list = resolution ? (await listById(resolution.listId, day, config["pricing.defaultValidityDays"])) : null;
-  const rates = resolution ? await ratesOfList(resolution.listId) : [];
+  const list = resolution ? (await listById(resolution.listId, day, resolveOptionsFrom(config))) : null;
+  const rates = resolution ? await ratesOfShop(resolution) : [];
   const discountTerms = resolution
     ? [...(await db.execute<Omit<DiscountTermView, "sentence">>(sql`
         select t.id, t.kind, t.percent_bp as "percentBp", t.threshold_litres as "thresholdLitres",
@@ -854,14 +979,70 @@ export async function customerPricing(customerId: string, todayIso: string): Pro
     lastOrder: lastOrder ?? null,
     // Their last order was priced off a different list. The telecaller has to
     // say so before the customer finds out from the invoice.
-    listChangedSinceLastOrder: !!(lastOrder?.listId && resolution && lastOrder.listId !== resolution.listId),
+    // It is the LINEAGE that is compared — a list and every version it
+    // replaced — because each new version has a new id, and a routine revision
+    // of the shop's own list is not a change of list.
+    listChangedSinceLastOrder: !!(
+      lastOrder?.listId &&
+      resolution &&
+      (await lineageRootOf(lastOrder.listId)) !== (await lineageRootOf(resolution.listId))
+    ),
     pendingRequests: await listRequests({ status: "pending", customerId }),
   };
 }
 
-async function listById(id: string, day: string, defaultValidity: number): Promise<PriceListSummary | null> {
+async function listById(id: string, day: string, opts: ResolveOptions): Promise<PriceListSummary | null> {
   const [row] = await db.execute<ListRow>(sql`${LIST_SELECT} where l.id = ${id}`);
-  return row ? toSummary(row, day, defaultValidity) : null;
+  return row ? toSummary(row, day, opts) : null;
+}
+
+/** Every list's predecessor, once per request, for following a lineage to its root. */
+const supersedesMap = cache(async function supersedesMap(): Promise<Map<string, string | null>> {
+  const rows = await db.execute<{ id: string; supersedesId: string | null }>(sql`
+    select l.id, l.supersedes_id as "supersedesId" from price_lists l
+  `);
+  return new Map([...rows].map((r) => [r.id, r.supersedesId]));
+});
+
+async function lineageRootOf(listId: string): Promise<string> {
+  const map = await supersedesMap();
+  return lineageRoot(listId, (id) => map.get(id));
+}
+
+/**
+ * What a shop pays, product by product, off its whole candidate chain: the
+ * list that applies, and for every product it has no row for, the next list
+ * down that does (`rateFromCandidates`). Every row carries the list it came
+ * from, so the screen can say which. A product's rows come whole from ONE list
+ * — its slabs are never mixed with another list's.
+ */
+async function ratesOfShop(resolution: Resolution): Promise<RateRow[]> {
+  const ids = resolution.candidates.map((c) => c.listId);
+  if (!ids.length) return [];
+  const rows = await db.execute<RawRate>(sql`
+    ${RATE_SELECT} where r.price_list_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+    order by p.millilitres_per_can asc nulls last, p.name asc, r.min_cans asc nulls first, r.id asc
+  `);
+  const listOf = new Map(resolution.candidates.map((c) => [c.listId, c.listName]));
+  const byListProduct = new Map<string, RateRow[]>();
+  const order: string[] = [];
+  for (const raw of rows) {
+    const r = withPerLitre(raw);
+    const listId = raw.listId!;
+    const key = `${listId}|${r.productId}`;
+    if (!byListProduct.has(key)) byListProduct.set(key, []);
+    byListProduct.get(key)!.push({ ...r, listId, listName: listOf.get(listId) ?? "" });
+    if (!order.includes(r.productId)) order.push(r.productId);
+  }
+  const out: RateRow[] = [];
+  for (const productId of order) {
+    const picked = rateFromCandidates(
+      resolution.candidates,
+      (listId) => byListProduct.get(`${listId}|${productId}`) ?? [],
+    );
+    if (picked) out.push(...picked.rows);
+  }
+  return out;
 }
 
 async function ratesOfList(listId: string): Promise<RateRow[]> {
@@ -875,45 +1056,67 @@ async function ratesOfList(listId: string): Promise<RateRow[]> {
 /**
  * What this shop pays for these products, for an order form.
  *
- * Keyed by product so a cart can be priced in one lookup. An empty answer is
- * the honest one where no list resolves — the form then shows quantities and
- * no money, which is what it did before price lists existed.
+ * Keyed by product so a cart can be priced in one lookup. Each product's rate
+ * is the first list in the shop's chain that has a row for it, so a shop on a
+ * one-rate "agreed prices" list keeps every other product's price from the
+ * list beneath it — and every answer names the list it came from. Where a
+ * quantity is given the slab it falls in is the rate; the slabs ride along
+ * either way, so a form can re-pick as a quantity is typed.
+ *
+ * An empty answer is the honest one where no list resolves — the form then
+ * shows quantities and no money, which is what it did before price lists
+ * existed.
  */
 export async function ratesForCustomer(
   customerId: string,
   productIds: string[],
   todayIso: string,
+  cans?: Record<string, number>,
 ): Promise<CustomerRates> {
-  if (!productIds.length) return {};
+  return (await shopRates(customerId, productIds, todayIso, cans)).rates;
+}
+
+/** The same, with the resolution beside it — the list an order is FILED under is the one that applies. */
+export async function shopRates(
+  customerId: string,
+  productIds: string[],
+  todayIso: string,
+  cans?: Record<string, number>,
+): Promise<{ resolution: Resolution | null; rates: CustomerRates }> {
+  if (!productIds.length) return { resolution: null, rates: {} };
   const resolution = await resolveForCustomer(customerId, todayIso);
-  if (!resolution) return {};
-  const rows = await db.execute<{
-    productId: string;
-    rateExGstPaise: number;
-    rateInclGstPaise: number;
-    gstBp: number;
-    offered: boolean;
-  }>(sql`
-    select r.product_id as "productId", r.rate_ex_gst_paise as "rateExGstPaise",
-           r.rate_incl_gst_paise as "rateInclGstPaise", l.gst_bp as "gstBp", r.offered
-      from price_list_rates r
-      join price_lists l on l.id = r.price_list_id
-     where r.price_list_id = ${resolution.listId}
-       and r.product_id in (${sql.join(productIds.map((id) => sql`${id}`), sql`, `)})
-       and r.min_cans is null
-  `);
+  if (!resolution) return { resolution: null, rates: {} };
+  const rows = await rowsForLists(
+    resolution.candidates.map((c) => c.listId),
+    productIds,
+  );
   const out: CustomerRates = {};
-  for (const r of rows) {
-    out[r.productId] = {
-      listId: resolution.listId,
-      listName: resolution.listName,
-      rateExGstPaise: Number(r.rateExGstPaise),
-      rateInclGstPaise: Number(r.rateInclGstPaise),
-      gstBp: Number(r.gstBp),
-      offered: r.offered,
+  for (const productId of new Set(productIds)) {
+    const picked = chainedRate(resolution, rows, productId, cans?.[productId]);
+    if (!picked) continue;
+    /* A dash shows its figure and says not offered; a quantity no slab covers
+       has no rate at all from that list, and is left out like an unlisted
+       product rather than priced at a slab it is not in. */
+    const shown = picked.row ?? (picked.offered ? null : picked.rows[0] ?? null);
+    if (!shown) continue;
+    out[productId] = {
+      listId: picked.listId,
+      listName: picked.listName,
+      rateExGstPaise: shown.rateExGstPaise,
+      rateInclGstPaise: shown.rateInclGstPaise,
+      gstBp: shown.gstBp,
+      offered: picked.offered && picked.row != null,
+      fellThrough: picked.fellThrough,
+      slabs: picked.rows.map((r) => ({
+        minCans: r.minCans,
+        maxCans: r.maxCans,
+        rateExGstPaise: r.rateExGstPaise,
+        rateInclGstPaise: r.rateInclGstPaise,
+        offered: r.offered,
+      })),
     };
   }
-  return out;
+  return { resolution, rates: out };
 }
 
 /* ------------------------------------------------------------- comparing */
@@ -921,8 +1124,8 @@ export async function ratesForCustomer(
 export async function compareLists(aId: string, bId: string): Promise<Comparison | null> {
   const [config, day] = await Promise.all([getConfig(), today()]);
   const [a, b] = await Promise.all([
-    listById(aId, day, config["pricing.defaultValidityDays"]),
-    listById(bId, day, config["pricing.defaultValidityDays"]),
+    listById(aId, day, resolveOptionsFrom(config)),
+    listById(bId, day, resolveOptionsFrom(config)),
   ]);
   if (!a || !b) return null;
 
@@ -1022,7 +1225,7 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
   for (const row of rows) {
     const geo = toGeo(row);
     if (geo.freightTerm == null) noFreightTerm++;
-    const r = resolvePriceList(geo, scopes, lists, todayIso);
+    const r = resolvePriceList(geo, scopes, lists, todayIso, resolveOptionsFrom(config));
     if (r) {
       resolved++;
       perList.set(r.listId, (perList.get(r.listId) ?? 0) + 1);
@@ -1039,7 +1242,7 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
   }
 
   const listRows = await db.execute<ListRow>(sql`${LIST_SELECT} where l.status = 'published'`);
-  const summaries = [...listRows].map((l) => toSummary(l, day, config["pricing.defaultValidityDays"]));
+  const summaries = [...listRows].map((l) => toSummary(l, day, resolveOptionsFrom(config)));
 
   return {
     customersConsidered: rows.length,
@@ -1071,9 +1274,22 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
  * empty. A line copied in from the sheet (`source = 'sheet'`) is already here
  * as its Order Details row, and reading it twice would double the month.
  * Cancelled lines are not a price anybody agreed to.
+ *
+ * AS OF THE LINE'S OWN DATE, versions included. `activeScopesAndLists` carries
+ * superseded lists with the day they stopped, so a line from before a
+ * revision is read against the version that was in force on it — not against
+ * whatever list happens to be published today. The rate is the shop's chain
+ * rate (`chainedRate`), slab by the line's cans, exactly as an order form would
+ * have quoted it that day.
+ *
+ * NARROWED TO THE READER'S BOOK, as coverage is: a telecaller sees the lines
+ * of the shops they may see. Somebody who sees every book (`userIdsInScope`
+ * answers null — a manager, the price desk) sees every line, including the
+ * sheet's lines no customer was matched to; nobody else can be shown those,
+ * because nothing says whose they are.
  */
 export async function varianceReport(month: string): Promise<VarianceReport> {
-  const { scopes, lists } = await activeScopesAndLists();
+  const [{ scopes, lists }, opts, ids] = await Promise.all([activeScopesAndLists(), resolveOptions(), userIdsInScope()]);
   const from = `${month}-01`;
   const to = addDays(`${month}-01`, 31).slice(0, 8) + "01";
 
@@ -1101,6 +1317,7 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
        where o.status = 'present'
          and o.rate_paise is not null
          and o.order_date >= ${from}::date and o.order_date < ${to}::date
+         and ${bookClause(ids)}
       union all
       select e.order_date::text, e.order_no::text,
              e.billing_customer_id,
@@ -1115,6 +1332,7 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
          and e.status <> 'Cancel'
          and e.rate_paise is not null
          and e.order_date >= ${from}::date and e.order_date < ${to}::date
+         and ${bookClause(ids)}
     ) x
      order by x."orderDate" asc, x."lineId" asc
      limit 2000
@@ -1124,7 +1342,7 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
   // asks the same question twelve times.
   const geoCache = new Map<string, CustomerGeo | null>();
   const resolutionCache = new Map<string, Resolution | null>();
-  const rateCache = new Map<string, Map<string, number>>();
+  const rateCache = new Map<string, Map<string, PricedRow[]>>();
 
   const out: VarianceRow[] = [];
   for (const row of rows) {
@@ -1135,7 +1353,7 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
       if (!resolutionCache.has(key)) {
         if (!geoCache.has(row.customerId)) geoCache.set(row.customerId, await customerGeo(row.customerId));
         const geo = geoCache.get(row.customerId) ?? null;
-        resolutionCache.set(key, geo ? resolvePriceList(geo, scopes, lists, row.orderDate) : null);
+        resolutionCache.set(key, geo ? resolvePriceList(geo, scopes, lists, row.orderDate, opts) : null);
       }
       const r = resolutionCache.get(key) ?? null;
       listId = r?.listId ?? null;
@@ -1143,15 +1361,21 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
     }
 
     let listExPaise: number | null = null;
-    if (listId && row.productId) {
-      if (!rateCache.has(listId)) {
-        const rateRows = await db.execute<{ productId: string; rateExGstPaise: number }>(sql`
-          select r.product_id as "productId", r.rate_ex_gst_paise as "rateExGstPaise"
-            from price_list_rates r where r.price_list_id = ${listId} and r.min_cans is null
-        `);
-        rateCache.set(listId, new Map([...rateRows].map((r) => [r.productId, Number(r.rateExGstPaise)])));
+    const resolution = row.customerId ? (resolutionCache.get(`${row.customerId}|${row.orderDate}`) ?? null) : null;
+    if (resolution && row.productId) {
+      const missing = resolution.candidates.map((c) => c.listId).filter((id) => !rateCache.has(id));
+      if (missing.length) {
+        const read = await rowsForLists(missing, null);
+        for (const id of missing) rateCache.set(id, read.get(id) ?? new Map());
       }
-      listExPaise = rateCache.get(listId)!.get(row.productId) ?? null;
+      const picked = chainedRate(resolution, rateCache, row.productId, row.cans == null ? null : Number(row.cans));
+      if (picked) {
+        // Named for the list the rate came from, which for a product the
+        // shop's own list lacks is the list beneath it.
+        listId = picked.listId;
+        listName = picked.listName;
+        listExPaise = picked.row?.rateExGstPaise ?? null;
+      }
     }
 
     const billed = Number(row.billedExPaise);
