@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { erpCustomerProfiles, sheetPartyRows } from "@/db/schema";
+import { erpCustomerProfiles, places, sheetPartyRows } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { assertCustomerInScope, canFor, NotPermittedError } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
@@ -55,6 +55,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     keys.length ? db.select({ raw: sheetPartyRows.raw, status: sheetPartyRows.status }).from(sheetPartyRows).where(inArray(sheetPartyRows.partyKey, keys)) : Promise.resolve([]),
   ]);
   const profile = profileRows[0] ?? null;
+  /* The place the shop is filed under on the tree, rung by rung; typed text where it is not on the tree. */
+  const placeIds = [customer.resolvedStateId, customer.resolvedDistrictId, customer.resolvedAreaId].filter((x): x is string => !!x);
+  const placeRows = placeIds.length ? await db.select({ id: places.id, name: places.name }).from(places).where(inArray(places.id, placeIds)) : [];
+  const placeName = (pid: string | null) => (pid ? (placeRows.find((p) => p.id === pid)?.name ?? null) : null);
+  const placeNames = { state: placeName(customer.resolvedStateId), district: placeName(customer.resolvedDistrictId), area: placeName(customer.resolvedAreaId) };
   const sheet = sheetRows.find((r) => r.status === "present") ?? sheetRows[0] ?? null;
 
   /* The list row the edit form opens with — the seats and the few fields the form keeps on the row. */
@@ -100,29 +105,24 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       row={row}
       record={{
         statusLabel: customerStatusLabel(customer),
-        externalCode: customer.externalCode,
+        customerCode: customer.customerCode,
         sheetName: customer.sheetName,
-        dealerCode: customer.dealerCode,
         companyName: customer.companyName,
         customerType: customer.customerType,
         customerSince: customer.customerSince,
         email: customer.email,
         potential: customer.potential,
         potentialMonthlyPaise: customer.potentialMonthlyPaise === null ? null : Number(customer.potentialMonthlyPaise),
-        rating: customer.rating,
         segmentation: customer.segmentation,
-        taggedEmployeeName: customer.taggedEmployeeName,
         specialInstructions: customer.specialInstructions,
-        doNotContact: customer.doNotContact,
         whatsappDest: customer.whatsappDest,
         whatsappGroupName: customer.whatsappGroupName,
         whatsappDnd: customer.whatsappDnd,
         whatsappDndReason: customer.whatsappDndReason,
         address: customer.address,
-        region: customer.region,
-        area: customer.area,
-        beat: customer.beat,
-        territoryRegion: customer.territoryRegion,
+        region: placeNames.state ?? customer.region,
+        district: placeNames.district,
+        area: placeNames.area ?? customer.area,
         visitFrequencyDays: customer.visitFrequencyDays,
         gpsPinned: customer.gpsLat !== null,
         gstVerified: customer.gstVerified,

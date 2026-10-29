@@ -152,13 +152,20 @@ const KIND_WORD: Record<PlaceKind, string> = { state: "state", district: "distri
  * so nothing is created twice; a state must be a listed one or one of the
  * country's (`knownState`), and is never invented.
  */
-export function resolvePick(pick: PlacePick, byId: PlaceLookup, nodes: PlaceOption[]): { ok: true; rungs: ResolvedRung[] } | { ok: false; kind: PlaceKind; message: string } {
+export function resolvePick(
+  pick: PlacePick,
+  byId: PlaceLookup,
+  nodes: PlaceOption[],
+  /** Rungs that may be left unpicked — the chain then ends at the rung above. A godown names all four; a customer may stop at its city. */
+  optional: readonly PlaceKind[] = [],
+): { ok: true; rungs: ResolvedRung[] } | { ok: false; kind: PlaceKind; message: string } {
   const rungs: ResolvedRung[] = [];
   let parentId: string | null = null;
   let parentTyped = false;
   for (const kind of PLACE_KINDS) {
     const r = pick[kind];
     const word = KIND_WORD[kind];
+    if (optional.includes(kind) && !r?.id && !tidy(r?.name)) break;
     if (r?.id) {
       const n = byId.get(r.id);
       if (!n || n.kind !== kind || n.parentId !== parentId || parentTyped) return { ok: false, kind, message: `That ${word} is no longer on the list under the one above it. Pick it again.` };

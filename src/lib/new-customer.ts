@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isKnownState } from "@/lib/india-states";
 import { checkGstin } from "@/lib/engines/lead-scan";
+import { placePickSchema } from "@/lib/customer-place";
 
 /* ---------------------------------------------------------------------------
  * ADDING A CUSTOMER DIRECTLY, FROM ACCOUNTS — the rules, PURE and client-safe.
@@ -79,6 +80,8 @@ export const newCustomerSchema = z
       .refine((v) => isKnownState(v), "Pick the state — it decides which salesmen's handsets carry this shop."),
     area: optionalText(120),
     route: optionalText(120),
+    /** Where the shop is, picked on the place tree (lib/customer-place.ts). `city`, `state` and `area` are its names. */
+    place: placePickSchema.optional(),
 
     gstin: z
       .string()
@@ -137,6 +140,7 @@ export const NEW_CUSTOMER_TAB: Record<string, "details" | "address" | "commercia
   state: "address",
   area: "address",
   route: "address",
+  place: "address",
   gstin: "commercial",
   creditTermDays: "commercial",
   creditLimitPaise: "commercial",
