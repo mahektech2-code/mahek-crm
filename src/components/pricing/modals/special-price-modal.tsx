@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { money, parseRupees } from "@/lib/format";
+import { money, parseRupees, rupeesFromPaise } from "@/lib/format";
 import { exFromIncl } from "@/lib/engines/price-math";
 import { requestSpecialPrice } from "@/lib/actions/price-lists";
 import type { RateRow } from "@/lib/price-list-views";
@@ -39,6 +39,8 @@ export function SpecialPriceModal({
   customerName,
   rates,
   gstBp,
+  initialProductId,
+  initialAskedInclPaise,
 }: {
   open: boolean;
   onClose: () => void;
@@ -47,6 +49,10 @@ export function SpecialPriceModal({
   /** The shop's OWN rates — there is nothing to ask a discount off otherwise. */
   rates: RateRow[];
   gstBp: number;
+  /** Optional: the product to open on (Watch opens on the one billed below). */
+  initialProductId?: string;
+  /** Optional: the price to start the box with, GST inclusive (Watch: what was billed). */
+  initialAskedInclPaise?: number;
 }) {
   if (!open) return null;
   return (
@@ -57,6 +63,8 @@ export function SpecialPriceModal({
       customerName={customerName}
       rates={rates}
       gstBp={gstBp}
+      initialProductId={initialProductId}
+      initialAskedInclPaise={initialAskedInclPaise}
     />
   );
 }
@@ -67,18 +75,28 @@ function Body({
   customerName,
   rates,
   gstBp,
+  initialProductId,
+  initialAskedInclPaise,
 }: {
   onClose: () => void;
   customerId: string;
   customerName: string;
   rates: RateRow[];
   gstBp: number;
+  initialProductId?: string;
+  initialAskedInclPaise?: number;
 }) {
   const router = useRouter();
   const { run } = useToast();
   const offered = rates.filter((r) => r.offered);
-  const [productId, setProductId] = React.useState(offered[0]?.productId ?? "");
-  const [asked, setAsked] = React.useState("");
+  const [productId, setProductId] = React.useState(
+    (initialProductId && offered.some((r) => r.productId === initialProductId) ? initialProductId : null) ??
+      offered[0]?.productId ??
+      "",
+  );
+  const [asked, setAsked] = React.useState(
+    initialAskedInclPaise != null && initialAskedInclPaise > 0 ? rupeesFromPaise(initialAskedInclPaise) : "",
+  );
   const [reason, setReason] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
