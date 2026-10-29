@@ -156,8 +156,11 @@ export type JobName =
   | "erp-alerts"
   /** Website review: approvals whose seven days have passed become `expired`, freeing their items. Idempotent. */
   | "website-review-expiry"
+  /** A price list whose successor has taken over, filed as superseded. Hourly and nightly. */
+  | "price-lists-supersede"
   /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
   | "bank-statement-pdfs"
+  | "price-list-stale-reads"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
@@ -239,6 +242,10 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+
+  /* Old price lists whose successor has taken over — the hourly does this
+     too; the nightly is the net on a deployment whose hourly is not called. */
+  results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
 
   /* HRMS's monthly paid-leave credit. Nightly rather than on the 1st: the
      partial unique index makes every run after the first a no-op, and a
@@ -676,6 +683,18 @@ export async function resettleQueues(
  * submit them, and never telling the employee. Hourly, so the message arrives
  * within the hour of the deadline rather than whenever somebody next looks.
  */
+/**
+ * A version published to start on a later day leaves the old list in force
+ * until then (`services/price-supersede.ts`); once the old list's last day has
+ * passed it is filed as superseded here. Idempotent, and the resolver already
+ * stops pricing from it on the day it ends, so a late run is never a wrong price.
+ */
+async function priceListsSupersedeStep() {
+  const { supersedeEndedPriceLists } = await import("./services/price-supersede");
+  const n = await supersedeEndedPriceLists();
+  return { recordsAffected: n, detail: n ? `${n} list${n === 1 ? "" : "s"} superseded` : "no list had ended" };
+}
+
 async function websiteReviewExpiryStep() {
   const { sweepExpiredApprovals } = await import("./website-cms/review-service");
   const expired = await sweepExpiredApprovals();
@@ -755,6 +774,13 @@ async function bankPdfStep() {
   return { recordsAffected: r.deleted, detail: `${r.deleted} statement PDF${r.deleted === 1 ? "" : "s"} deleted` };
 }
 
+/** Price-list reads that died part-way become failed, so "Read again" is offered. */
+async function staleReadsStep() {
+  const { failStaleReads } = await import("./services/price-list-parse-service");
+  const n = await failStaleReads();
+  return { recordsAffected: n, detail: `${n} stalled price-list read${n === 1 ? "" : "s"} marked failed` };
+}
+
 /**
  * WHO THE CALL LOG HOLDS BACK, rebuilt on the hour.
  *
@@ -793,9 +819,11 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
 
   // Website review: approvals past their seven days.
   results.push(await run("website-review-expiry", websiteReviewExpiryStep, triggeredById));
+  results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
 
   // Bank statement PDFs past their days are deleted; the lines stay.
   results.push(await run("bank-statement-pdfs", bankPdfStep, triggeredById));
+  results.push(await run("price-list-stale-reads", staleReadsStep, triggeredById));
 
   // The Top customers report has its own 10:00 IST cron line on the 1st. This
   // is the net under it: a droplet whose crontab predates that line still
@@ -1232,6 +1260,8 @@ export async function runJob(
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
     case "website-review-expiry":
       return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
+    case "price-lists-supersede":
+      return [await run("price-lists-supersede", priceListsSupersedeStep, triggeredById)];
     case "bank-statement-pdfs":
       return [await run("bank-statement-pdfs", bankPdfStep, triggeredById)];
     case "hrms-leave-credit":

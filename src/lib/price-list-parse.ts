@@ -181,6 +181,24 @@ function freightTermOf(text: string, basis: PriceDeliveryBasis | null): PriceFre
   return null;
 }
 
+/** "Page 2 of 2" — what a multi-page list prints at the foot of each page. */
+const PAGE_COUNTER = /^page\s+\d+\s*(?:of|\/)\s*\d+$/i;
+
+/**
+ * The list's own name, where the PDF says it. A list MahekOne generates
+ * carries its name in the document's Title (it is not printed on the paper —
+ * a shop is not shown the office's name for its list), with MahekOne as the
+ * creator. Read back, it used to be rebuilt from the freight term and the
+ * date — "Paid — 30 Oct 2026" — so re-importing our own PDF lost its name.
+ * Anybody else's Title is "Microsoft Word - Odisha.docx" and is not a name.
+ */
+export function listNameFromMeta(meta: { title?: string | null; creator?: string | null } | null | undefined): string | null {
+  if (!meta?.title?.trim() || meta.creator?.trim() !== "MahekOne") return null;
+  const title = meta.title.trim();
+  if (/^Price lists \(\d+\)$/.test(title)) return null;
+  return title;
+}
+
 function parseHeader(lines: string[]): { header: PriceParsedHeader; supersedesFrom: string | null } {
   const all = lines.join("\n");
   const refNo = all.match(/Ref\.?\s*(?:No\.?)?\s*[:.]?\s*([A-Z]{0,4}[\s-]?\d[\w\-\/]*)/i)?.[1]?.trim() ?? null;
@@ -205,7 +223,11 @@ function parseHeader(lines: string[]): { header: PriceParsedHeader; supersedesFr
   if (forIdx >= 0) {
     for (let i = forIdx + 1; i < Math.min(lines.length, forIdx + 4); i++) {
       const cand = lines[i].trim();
-      if (!cand || /^www\.|@|^Account|^Tel|^\d/i.test(cand)) continue;
+      // A page counter is furniture, not a name: on a two-page list with
+      // nobody signing it, "Page 2 of 2" is the next line and was read as the
+      // signatory. Nor is the letterhead footer.
+      if (!cand || /^www\.|@|^Account|^Tel|^\d/i.test(cand) || PAGE_COUNTER.test(cand)) continue;
+      if (/mahek marketing india\s*[—-]/i.test(cand)) break;
       signatory = cand;
       break;
     }
@@ -324,15 +346,23 @@ function parseLongRows(lines: string[]): { rows: ParsedRow[]; columns: ParsedCol
  * The whole document, page texts in. Pages are read as one stream: a grid
  * that continues over a page break is one grid.
  */
-export function parsePriceListText(pages: string[]): ParsedPriceList {
+export function parsePriceListText(
+  pages: string[],
+  meta?: { title?: string | null; creator?: string | null } | null,
+): ParsedPriceList {
   const lines = pages
     .join("\n")
     .split(/\r?\n/)
     .map((l) => l.replace(/ /g, " ").replace(/\s+/g, " ").trim())
-    .filter((l) => l.length > 0);
+    .filter((l) => l.length > 0)
+    // A page counter is not a grid row, a term or a signature.
+    .filter((l) => !PAGE_COUNTER.test(l));
 
   const warnings: string[] = [];
-  const { header, supersedesFrom } = parseHeader(lines);
+  const parsedHeader = parseHeader(lines);
+  const supersedesFrom = parsedHeader.supersedesFrom;
+  const listName = listNameFromMeta(meta);
+  const header: PriceParsedHeader = listName ? { ...parsedHeader.header, listName } : parsedHeader.header;
 
   const termsIdx = lines.findIndex((l) => /^terms\s*(?:&|and)\s*conditions/i.test(l));
   const termsEnd = lines.findIndex((l, i) => i > termsIdx && /^(we strive|for\s+mahek|thank(?:ing)? you)/i.test(l));

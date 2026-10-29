@@ -665,16 +665,29 @@ describe("the price desk's other removals say what they reach first", () => {
     assert.ok(done.ok, done.ok ? "" : done.error);
   });
 
-  test("a discount off a published list names the parties whose sales orders stop offering it", async () => {
+  test("a discount on a published list names the parties offered it, and only comes off a new version", async () => {
     const shop = await makeCustomer({ name: "Kamal Hardware", region: "Maharashtra" });
     const listId = await publishStateList({ name: "Pan Maharashtra", state: key("Maharashtra"), inclTwenty: 228_600, inclFive: 58_400 });
-    const term = await setDiscountTerm({ priceListId: listId, kind: "advance_payment", percentBp: 300 });
-    assert.ok(term.ok, term.ok ? "" : term.error);
-    const report = await impactReport("price-discount-term", term.data.id);
+    /* A discount is set on a draft; a published list carries one it was published with. */
+    assert.equal((await setDiscountTerm({ priceListId: listId, kind: "advance_payment", percentBp: 300 })).ok, false);
+    const termId = id("pld");
+    await db.execute(sql`
+      insert into price_list_discount_terms (id, price_list_id, kind, percent_bp)
+      values (${termId}, ${listId}, 'advance_payment', 300)
+    `);
+    const report = await impactReport("price-discount-term", termId);
     assert.ok(report.ok);
     const erp = report.data.items.find((i) => i.app === "ERP");
     assert.deepEqual(erp?.examples, [shop.name]);
     assert.equal(report.data.confirmWord, "3% off for advance payment");
+    assert.match(report.data.blockers[0] ?? "", /published/, "the modal says why before the button");
+    const refused = await removeDiscountTerm(termId, await confirmed("price-discount-term", termId));
+    assert.equal(!refused.ok && refused.code, "rule_violation");
+
+    const draft = await createPriceList({ name: "Draft terms", effectiveFrom: TODAY });
+    assert.ok(draft.ok);
+    const term = await setDiscountTerm({ priceListId: draft.data.id, kind: "advance_payment", percentBp: 300 });
+    assert.ok(term.ok, term.ok ? "" : term.error);
     const bare = await removeDiscountTerm(term.data.id);
     assert.equal(!bare.ok && bare.code, "validation");
     assert.ok((await removeDiscountTerm(term.data.id, await confirmed("price-discount-term", term.data.id))).ok);

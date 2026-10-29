@@ -89,6 +89,8 @@ export function PublishDocumentModal({
 export function suggestedName(document: DocumentView): string {
   const hints = document.filenameHints;
   const header = document.header;
+  // A list MahekOne issued says its own name; nothing below should replace it.
+  if (header?.listName?.trim()) return header.listName.trim();
   const term = hints?.freightTerm ?? header?.freightTerm ?? null;
   const left = [
     hints?.region ?? hints?.customer ?? null,
@@ -149,7 +151,8 @@ function Body({
     return hit?.id ?? "";
   });
 
-  const [includeSuggested, setIncludeSuggested] = React.useState(document.suggestedCount > 0);
+  // Off until a person ticks it: a suggestion is often the same product at another pack size.
+  const [includeSuggested, setIncludeSuggested] = React.useState(false);
   const [publishNow, setPublishNow] = React.useState(true);
 
   const [scopes, setScopes] = React.useState<ScopeDraft[]>(() => {

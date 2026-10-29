@@ -20,6 +20,7 @@ import {
   familiesOf,
   familyKeyOf,
   familyOf,
+  MAX_SHEET_COLUMNS,
   skuFor,
   sortColumns,
   type Family,
@@ -37,6 +38,10 @@ export type EditorScope = {
   label: string;
   parentKey: string;
   freightTermMatch: "any" | "to_pay" | "paid";
+  /** Kept from a loaded scope so saving a version does not reset who wins a tie or when it ends. */
+  priority?: number;
+  validFrom?: string | null;
+  validTo?: string | null;
 };
 
 export type StartSource = "blank" | "catalogue" | "copy" | "derive" | "csv";
@@ -150,6 +155,41 @@ export function moveRow(sheet: PriceSheet, key: string, by: -1 | 1): PriceSheet 
 
 export function sortRows(sheet: PriceSheet): PriceSheet {
   return { ...sheet, rows: [...sheet.rows].sort((a, b) => a.label.localeCompare(b.label)) };
+}
+
+/**
+ * The "from every active product" start: every active line, with only as many
+ * pack columns as the paper holds. The catalogue carries more packs than one
+ * page fits, so the columns kept are the ones the most lines sell in; a line
+ * whose only pack fell off keeps its row and can have it added back.
+ */
+export function catalogueSheet(base: PriceSheet, families: Family[]): PriceSheet {
+  const full = addFamilies(base, families);
+  if (full.columns.length <= MAX_SHEET_COLUMNS) return full;
+  const sold = new Map<string, number>();
+  for (const r of full.rows) for (const [k, c] of Object.entries(r.cells)) if (c.productId) sold.set(k, (sold.get(k) ?? 0) + 1);
+  const keep = new Set(
+    [...full.columns]
+      .sort((a, b) => (sold.get(b.key) ?? 0) - (sold.get(a.key) ?? 0) || (a.millilitres ?? 0) - (b.millilitres ?? 0))
+      .slice(0, MAX_SHEET_COLUMNS)
+      .map((c) => c.key),
+  );
+  let out = full;
+  for (const c of full.columns) if (!keep.has(c.key)) out = removeColumn(out, c.key);
+  return out;
+}
+
+/**
+ * Drop the columns with no price in any cell — the Tidy that gets a sheet
+ * started from the whole catalogue under the page's limit. A column of dashes
+ * prints nothing anybody can buy, so it goes too.
+ */
+export function pruneUnpricedColumns(sheet: PriceSheet): PriceSheet {
+  const priced = new Set<string>();
+  for (const r of sheet.rows) for (const [k, c] of Object.entries(r.cells)) if (c.productId && c.offered && c.printedPaise != null) priced.add(k);
+  let out = sheet;
+  for (const c of sheet.columns) if (!priced.has(c.key)) out = removeColumn(out, c.key);
+  return out;
 }
 
 /** Drop the columns no row sells in — what is left after lines were removed. */

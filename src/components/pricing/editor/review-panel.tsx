@@ -28,6 +28,7 @@ const GO: Record<string, EditorStep> = {
   empty: "rates",
   unpriced: "rates",
   zero: "rates",
+  columns: "rates",
   nosku: "rates",
   outlier: "rates",
   "per-litre": "rates",

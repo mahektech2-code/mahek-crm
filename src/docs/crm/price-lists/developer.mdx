@@ -129,9 +129,5 @@ Not just `pricelist.manage` — the desk module it was worn at as well.
 
 | Gap | Where |
 |---|---|
-| Resolution checks status and start/end dates but not `validity_days`; an expired list still prices shops | `engines/price-resolution.ts` `resolvePriceList` |
 | Publishing a new version supersedes the old one immediately, even when the new one starts later | `actions/price-lists.ts` `publishPriceList` |
-| A customer-named list wins whole resolution; products not on it get no rate | `engines/price-resolution.ts` |
 | Above-ceiling discounts are refused; there is no manager-authorise flow despite the message | `engines/price-math.ts` `discountAuthority` |
-| Variance resolves past months against today's lists and is not scoped to the reader's book | `price-list-service.ts` `varianceReport` |
-| Slabbed rates are not used on the order form or in variance | `price-list-service.ts` `ratesForCustomer`, `varianceReport` |

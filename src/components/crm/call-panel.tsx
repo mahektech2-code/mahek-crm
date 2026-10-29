@@ -33,6 +33,7 @@ import {
   discountAuthority as discountAuthorityOf,
   priceLine,
 } from "@/lib/engines/price-math";
+import { rateAtQuantity } from "@/lib/engines/price-resolution";
 import type {
   CustomerRates,
   DiscountAuthorityInput,
@@ -1220,8 +1221,8 @@ function CallPanelForm({
    */
   const pricedLines = countedLines
     .map((l) => {
-      const rate = rates[l.product.id];
-      if (!rate || !rate.offered) return null;
+      const rate = rateForQty(rates[l.product.id], l.qty);
+      if (!rate) return null;
       return {
         productId: l.product.id,
         rate,
@@ -1248,8 +1249,12 @@ function CallPanelForm({
         }
       : null;
 
+  /* The list that applies to the shop, not one a line fell through to — each
+     line already names where its own rate came from. */
   const listName =
-    Object.values(rates).find((r) => r.listName)?.listName ?? null;
+    Object.values(rates).find((r) => r.listName && !r.fellThrough)?.listName ??
+    Object.values(rates).find((r) => r.listName)?.listName ??
+    null;
 
   function applyChip(n: QuickNoteOption) {
     const alreadyPicked = picked.includes(n.id);
@@ -3212,9 +3217,9 @@ function CallPanelForm({
                                   Added products
                                 </div>
                                 {onThisOrder.map((l) => {
-                                  const rate = rates[l.product.id];
+                                  const rate = rateForQty(rates[l.product.id], l.qty);
                                   const worth =
-                                    rate && rate.offered && counts(l)
+                                    rate && counts(l)
                                       ? priceLine({
                                           rateExGstPaise: rate.rateExGstPaise,
                                           cans: l.qty,
@@ -4067,4 +4072,17 @@ function AnswerBlock({
       </div>
     </div>
   );
+}
+
+/**
+ * The rate for the cans typed, off the rows the server sent with it: the slab
+ * the quantity falls in, through `rateAtQuantity` — the function the save
+ * prices with — so the figure read out on the call is the figure stored.
+ * Null where the product is not for sale or no slab covers the quantity.
+ */
+function rateForQty(rate: CustomerRates[string] | undefined, qty: number): CustomerRates[string] | null {
+  if (!rate) return null;
+  if (!rate.slabs?.length) return rate.offered ? rate : null;
+  const row = rateAtQuantity(rate.slabs, qty);
+  return row ? { ...rate, rateExGstPaise: row.rateExGstPaise, rateInclGstPaise: row.rateInclGstPaise, offered: true } : null;
 }

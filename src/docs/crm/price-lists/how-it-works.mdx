@@ -73,7 +73,15 @@ Superseded and withdrawn are states; the rows stay. Withdrawing needs a reason. 
 </Rule>
 
 <Rule title="Validity">
-A list is valid for its own validity period from the day it takes effect — <Setting k="pricing.defaultValidityDays" /> days where the list does not say, matching Mahek's printed terms (30 days or until the next revision, whichever is earlier). A published list past that is drawn **Expired** on every screen, and the list index counts lists expiring within a week.
+A list is valid for its own validity period from the day it takes effect — <Setting k="pricing.defaultValidityDays" /> days where the list does not say, matching Mahek's printed terms (30 days or until the next revision, whichever is earlier). What a list past that does is <Setting k="pricing.expiredListsKeepPricing" />: on, it goes on pricing its shops and every screen says **Past validity — still pricing**; off, it stops pricing the day after and the screens say **Expired — not pricing**, and its shops fall to the next list that names them. The screens and the resolver read that from one function, so the two cannot disagree. A list ended by its successor or withdrawn stops pricing whatever the setting says. The list index counts lists expiring within a week.
+</Rule>
+
+<Rule title="A product the shop's list lacks is priced from the next list down">
+Every list that names a shop is kept in order — narrowest first, the same order the winner is chosen in. A product is priced from the **first list in that order that has a row for it**. So a shop's one-rate "agreed prices" list adds that one price to the shop's prices rather than replacing them: every other product still comes from its ordinary list, and the shop's prices say which list each one came from. A list that prints a dash for a product ("not for sale") is an answer, and a wider list does not overrule it.
+</Rule>
+
+<Rule title="As of a date, versions included">
+A rate is resolved as of a date, and a version that has been replaced still answers for the days it was in force. So the variance report reads last month's lines against last month's version, and an ERP order is priced as of its own date. Where a quantity is known (the order forms, variance) a slabbed product takes the slab the quantity falls in.
 </Rule>
 
 <Rule title="Publishing checks">
@@ -169,6 +177,7 @@ Only the person who asked may **withdraw** a request, and only while it is waiti
 <SettingsTable keys={[
   "pricing.gstBp",
   "pricing.defaultValidityDays",
+  "pricing.expiredListsKeepPricing",
   "pricing.associateMaxDiscountBp",
   "pricing.managerMaxDiscountBp",
   "pricing.parseConfidenceFloor",
@@ -178,16 +187,8 @@ Only the person who asked may **withdraw** a request, and only while it is waiti
 
 ## Where the code and the intent disagree today
 
-<Callout kind="warn" title="An expired list still prices shops">
-The setting says a list past its validity is "drawn as expired on every screen rather than silently used". It is drawn as expired — but the resolver only checks status and the start/end dates, not validity, so an expired list keeps resolving for shops and pricing order lines until somebody replaces it.
-</Callout>
-
 - **Superseding ends the old list at once, not on the new list's start date.** Publishing a version that starts next month marks the old one superseded immediately, and a superseded list prices nobody — shops on it have no list until the new one starts.
-- **A shop's "agreed prices" list does not fall through.** Its note says everything not listed falls through to the ordinary list, but a customer-named list wins the whole resolution: products not on it have no rate on the order form.
 - **"Above the ceiling a manager authorises it" has no flow.** The setting describes the order form asking for a manager to authorise; the code refuses the save. Nothing lets a manager authorise a telecaller's discount.
 - **CRM managers are notified of special price requests they cannot decide.** Deciding needs the price desk; the notification sends CRM managers to the CRM's Requests tab, which is read-only.
-- **Variance resolves past months against today's lists.** Superseded lists are excluded, so last month's lines are compared with this month's prices, despite the stated aim of resolving each row as of its own date.
-- **Variance is not narrowed to your book.** Every CRM user sees every billed line for the month.
 - **The "saved order value" is still zero.** With `pricing.useListForOrderValue` on, the form shows a total, but the order is saved with a value of zero and the "rates not held yet" warning; the list rate lives on each line instead.
-- **Slabbed rates are not used on the order form or in variance** — only a product's flat (no quantity band) rate is looked up.
 - **The derivation check skips per-litre rules**, so a derived "plus so much per litre" list is never warned about drift.

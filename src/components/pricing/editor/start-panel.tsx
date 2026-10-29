@@ -67,6 +67,7 @@ export function StartPanel({
       if (!rows.length) throw new Error("That file has no rows under its header.");
       setCsv({ ...csvToCells(rows, products, taxBasis, gstBp), filename: file.name });
     } catch (e) {
+      setCsv(null);
       setCsvError(e instanceof Error ? e.message : "That file could not be read.");
     }
   }

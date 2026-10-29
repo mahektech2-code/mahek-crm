@@ -1,12 +1,28 @@
 import { APP_TIMEZONE } from "./business-date";
 
+/** A text cell a spreadsheet would run as a formula: starts with = + - @, a tab or a carriage return. */
+const FORMULA_START = /^[=+\-@\t\r]/;
+/** A figure (or a phone number, or a lone dash), which may start with a sign and runs nothing. */
+const PLAIN_NUMBER = /^(?:[-+]?\d[\d ,]*(?:\.\d+)?%?|[-+]?\.\d+|[-+])$/;
+
+/**
+ * A cell as it is written into the file. Text that Excel or Sheets would read
+ * as a formula — a product name from an uploaded PDF that begins "=HYPERLINK(" —
+ * is prefixed with a single quote, which every spreadsheet treats as "this is
+ * text". A number, or text that is only a signed figure, is left alone.
+ */
+export function csvCell(v: string | number | null | undefined): string {
+  if (typeof v !== "string") return String(v ?? "");
+  return FORMULA_START.test(v) && !PLAIN_NUMBER.test(v) ? `'${v}` : v;
+}
+
 /** Quote everything — Indian business names contain commas often enough. */
 export function toCsv(
   headers: string[],
   rows: Array<Array<string | number | null | undefined>>,
 ): string {
   const esc = (v: string | number | null | undefined) =>
-    `"${String(v ?? "").replace(/"/g, '""')}"`;
+    `"${csvCell(v).replace(/"/g, '""')}"`;
   return [headers.map(esc).join(",")]
     .concat(rows.map((r) => r.map(esc).join(",")))
     .join("\n");
@@ -111,8 +127,11 @@ export function parseCsv(text: string): Array<Record<string, string>> {
   const [header, ...body] = rows.filter((r) => r.some((v) => v.trim() !== ""));
   if (!header) return [];
 
+  // The quote `csvCell` puts in front of a formula-looking cell is ours, so a
+  // file this app exported reads back to exactly what was exported.
+  const unguard = (v: string) => (v.startsWith("'") && FORMULA_START.test(v.slice(1)) ? v.slice(1) : v);
   const keys = header.map((h) => h.trim());
   return body.map((r) =>
-    Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? "").trim()])),
+    Object.fromEntries(keys.map((k, i) => [k, unguard((r[i] ?? "").trim())])),
   );
 }

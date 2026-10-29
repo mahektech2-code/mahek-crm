@@ -44,6 +44,7 @@ import {
   moveRow,
   pasteBlock,
   pruneColumns,
+  pruneUnpricedColumns,
   removeColumn,
   removeRows,
   setCell,
@@ -190,6 +191,15 @@ export function RatesPanel({
           items={[
             { key: "sort", label: "Sort lines A to Z", onSelect: () => onChange(sortRows(sheet), "Sorted the lines") },
             { key: "prune", label: "Remove pack columns nobody sells", onSelect: () => onChange(pruneColumns(sheet), "Removed empty columns") },
+            {
+              key: "prune-unpriced",
+              label: "Remove pack columns with no prices",
+              onSelect: () => {
+                const next = pruneUnpricedColumns(sheet);
+                const gone = sheet.columns.length - next.columns.length;
+                onChange(next, gone ? `Removed ${gone} pack column${gone === 1 ? "" : "s"} with no prices` : "Every pack column has a price");
+              },
+            },
             {
               key: "remove",
               label: selected.size ? `Remove ${selected.size} ticked line${selected.size === 1 ? "" : "s"}` : "Tick lines to remove them",
@@ -547,6 +557,10 @@ function PriceInput({
               commit();
               onMove(0, -1);
             } else if (e.key === "Escape") {
+              // Escape in a cell undoes the typing; it must not reach the
+              // workspace and close the whole editor.
+              e.preventDefault();
+              e.stopPropagation();
               setText(display(cell));
               setBad(false);
             }

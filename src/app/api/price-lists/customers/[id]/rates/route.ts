@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { checkCapability } from "@/lib/access-control";
-import { ratesForCustomer } from "@/lib/services/price-list-service";
+import { assertPricingCustomerInScope, ratesForCustomer } from "@/lib/services/price-list-service";
 import { today } from "@/lib/recompute";
 
 /**
@@ -12,6 +12,11 @@ import { today } from "@/lib/recompute";
  * telecaller searches and re-rendering the page for each one would lose what
  * they had typed. The business day is read on the SERVER: a rate is resolved
  * as of a date and a browser's idea of today is its own.
+ *
+ * The customer's SCOPE is asked as well as the capability: what a shop has
+ * agreed to pay is a fact about that shop, and holding `pricelist.read` is
+ * not leave to read any shop's by guessing its id. Out of scope and does not
+ * exist answer alike.
  */
 export const runtime = "nodejs";
 
@@ -28,6 +33,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
+  try {
+    if (!(await assertPricingCustomerInScope(id))) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  } catch {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   if (!products.length) return NextResponse.json({});
 
   return NextResponse.json(await ratesForCustomer(id, products, await today()));

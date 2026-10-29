@@ -220,6 +220,7 @@ export const PRESENTATION: Record<string, Presentation> = {
   /* --------------------------------------------------------------- pricing */
   "pricing.gstBp": { tab: "Pricing", group: "The list itself", unit: "basis points" },
   "pricing.defaultValidityDays": { tab: "Pricing", group: "The list itself", unit: "days" },
+  "pricing.expiredListsKeepPricing": { tab: "Pricing", group: "The list itself" },
   "pricing.useListForOrderValue": { tab: "Pricing", group: "On the order form" },
   "pricing.associateMaxDiscountBp": { tab: "Pricing", group: "Discount authority", unit: "basis points" },
   "pricing.managerMaxDiscountBp": { tab: "Pricing", group: "Discount authority", unit: "basis points" },
