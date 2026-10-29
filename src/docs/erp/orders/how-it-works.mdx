@@ -132,8 +132,12 @@ One order number is one Tally invoice (PRD rule 1). **Bill it** needs:
 It asks for the **Tally invoice no.** and **invoice date**, writes them on every live line and bills them in one transaction. A billed order takes no more lines.
 </Rule>
 
-<Rule title="One invoice number is one order">
-An invoice number already on another order is refused, naming that order. Numbers are compared without case or spaces, so *mmi/26-27/ 1119* is *MMI/26-27/1119*.
+<Rule title="One invoice can cover several orders, for one party on one date">
+One Tally invoice may cover several orders. An invoice number already on another order is accepted when that order is billed to the **same party** with the **same invoice date**, and the new order takes the number exactly as it is already written. A different party or a different date is refused, naming the order that holds the number. Numbers are compared without case or spaces, so *mmi/26-27/ 1119* is *MMI/26-27/1119*.
+
+**Bill together** on the bulk bar bills every selected order onto one invoice in one go: all of them or none, and each must be ready to bill on its own. In the book each order still gets its own bill — the first under the Tally number, the rest as *MMI/26-27/1119/ERP1257* — because outstanding and collections are kept per bill.
+
+**Change invoice** on a shared invoice changes it on every order it covers, and is refused once any of them is dispatch-verified. To take one order off a shared invoice, **Undo billing** and bill it again.
 </Rule>
 
 <Rule title="Goods that go later go on a new order">
@@ -167,6 +171,24 @@ One sticker for every box or can: the **customer** (the delivery party), the **p
 </Rule>
 
 Confirming sets the lines **Verified** and **Dispatched**, turns every scanned box **dispatched**, freezes the lots, and puts the order on one record on [Logistics](/docs/erp/transport). Bills recorded with the same vehicle on the same day join one **trip** there.
+
+## The customer's tracking link
+
+<Rule title="Verified is confirmed, and the customer is told">
+When the back office verifies an order (and Accounts have approved a new customer), the order gets **one tracking link** and the customer gets the confirmation: order number, date, each product with its quantity, and the link. Their page then follows the order — preparing, ready, invoice available, dispatched, with the transporter, in transit, delivered — showing only steps somebody actually recorded, each with its time. A step saved twice is told once.
+</Rule>
+
+<Rule title="A hold says why, in words the customer may read">
+**Put order on hold** asks for a reason, the sentence the customer sees (filled from the reason) and an internal note they never see. Every line not yet dispatched goes to Hold From Office; **Resolve hold** puts each back. After dispatch, a delay is reported on Logistics instead.
+</Rule>
+
+<Rule title="The invoice PDF reaches the customer only once it is approved">
+Bill it takes the Tally invoice as a PDF (or **Invoice PDF** adds it later). The customer can open it from their link once the invoice check approves it — never a delivery party's link, which shows no invoice.
+</Rule>
+
+The order's **Customer tracking** tab shows the link, what the customer sees now, the hold, and every message with Copy and Open WhatsApp for those waiting to be sent by hand.
+
+<SettingsTable keys={["erp.tracking.enabled", "erp.tracking.watiTemplate", "erp.tracking.notify", "erp.tracking.holdMessages", "erp.tracking.showInvoice", "erp.tracking.showLr"]} />
 
 ## The bill's figures
 

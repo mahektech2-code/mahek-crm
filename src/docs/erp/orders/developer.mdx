@@ -7,7 +7,7 @@ The Orders screen is ten tabs, each its own server module: nine built in `screen
 | Registry | `src/lib/erp/registry.ts` | The `orders` screen and its views, in flow order: `verifyOrders` (To verify), `readyOrders` (Production), `toBill` (Ready to bill), `invoiceCheck` (Invoice check), `labels` (Dispatch stickers), `orderDetails` (Billing & dispatch), `pendingOrders` (On hold), `batchCodes`, `orders` (All lines), `orderInbox` |
 | Page | `src/app/erp/[slug]/page.tsx` | Generic list page; `?view=` picks the tab |
 | Lines | `src/lib/erp/screens/sales.ts` | `orderLines`, `priceBook`, `orderForm`, `editForm`, `allocateForm`, `orderList`, `inScope`, `lineHandlers`, `statusActions`, `doStatus`, `doReady`, `tellReadyToBill`, `doApprove`, `saveOrder`, `saveEdit`, `saveAllocation`, `stockShortfalls`, `billBlockersFor`, `lineDomains` |
-| The order's checks | `src/lib/erp/screens/sales.ts` | `doVerifyOrder`, `doCorrectOrder`, `reopenOrderCheck` (back office); `doBill`, `doUnbill`, `doChangeInvoice`, `invoiceTakenBy` (the bill); `doApproveInvoice`, `doRejectInvoice`, `invoiceForCheck`, `reopenInvoiceCheck`, `invoiceSnapshot` (the invoice check); `addReview`, `reviewsFor`, `reviewLine`; `holdersOf`, `tell` (notifications); `doStickers`, `doMoveOut` |
+| The order's checks | `src/lib/erp/screens/sales.ts` | `doVerifyOrder`, `doCorrectOrder`, `reopenOrderCheck` (back office); `doBill`, `doUnbill`, `doChangeInvoice`, `invoiceHolders` (the bill; `invoiceShareRefusal` in `engines/order-flow.ts` is the sharing rule); `doApproveInvoice`, `doRejectInvoice`, `invoiceForCheck`, `reopenInvoiceCheck`, `invoiceSnapshot` (the invoice check); `addReview`, `reviewsFor`, `reviewLine`; `holdersOf`, `tell` (notifications); `doStickers`, `doMoveOut` |
 | Order-to-Delivery rules (pure) | `src/lib/erp/engines/order-flow.ts` | `ORDER_SOURCES`, `orderStatusOf`, `productionOf`, `billingOf`, `dispatchOf`, `logisticsOf`, `orderBillBlockers`, `invoiceKey`, `invoiceChanges`, `likelyDuplicate`, `splitForMove` |
 | Batch codes / billing | `src/lib/erp/screens/sales.ts` | `batchCodes`, `orderDetails`, `detailRows`, `allocationCosts`, `verify`, `DISPATCH_PROMPT`, `openTransports`, `extra` |
 | Arithmetic (pure) | `src/lib/erp/engines/sales.ts` | `orderType`, `boxQuantity`, `labelCount`, `allocationState`, `allocationTarget`, `billFigures`, `lotCosting`, `margin`, `standingInstructions`, `targetReached`, `readyStockCheck` |
@@ -40,8 +40,8 @@ sequenceDiagram
   Mod->>Mod: readInvoice, wholeOrders, billBlockersFor(order)
   alt something missing
     Mod-->>UI: Order 1256 cannot be billed yet - it needs ...
-  else invoice no. on another order
-    Mod-->>UI: Invoice X is already on order N
+  else invoice no. on another order for another party or date
+    Mod-->>UI: Invoice X is already on order N, billed to P / dated D
   else nothing missing
     Mod->>DB: one transaction - tally no and date on every live line, entry_status Done, erp_order_details (invoice_check Pending), erp_order_reviews submitted
     Mod->>DB: audit erp.order.bill
@@ -126,7 +126,7 @@ A line added to an existing order (`orderFixed`) is refused when the order is bi
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="doBill" collapsed />
 
-`invoiceTakenBy` compares `upper(regexp_replace(tally_bill_no, '\s', '', 'g'))` across every other order not cancelled — the same key as `invoiceKey`. Goods that go later leave through `doMoveOut`, which splits the line with `splitForMove` and inserts the moved cans under a new `nextNumber(tx, "order")` with `linked_from_order_no`.
+`invoiceHolders` compares `upper(regexp_replace(tally_bill_no, '[[:space:]]', '', 'g'))` across every other order not cancelled — the same key as `invoiceKey` — and returns each holder's party, date and spelling. `invoiceShareRefusal` accepts them only when every holder has the same billing party and invoice date; `doBill` takes many ids (the row's **Bill it** and the bulk **Bill together**) and `doChangeInvoice` moves every undispatched order on the old number together. Goods that go later leave through `doMoveOut`, which splits the line with `splitForMove` and inserts the moved cans under a new `nextNumber(tx, "order")` with `linked_from_order_no`.
 
 ## The invoice check
 

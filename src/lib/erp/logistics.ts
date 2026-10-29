@@ -33,6 +33,7 @@ import {
   type Phase,
 } from "./engines/logistics";
 import { erpAudit, erpId } from "./server";
+import { messageOrigin, skipReason, staffNumbers as readStaffNumbers, watiRoute } from "./customer-messaging";
 import { today } from "./screens/common";
 import { confirmImpact } from "@/lib/impact/registry";
 import { transporterMergeKey, transporterRenameKey } from "./transporter-keys";
@@ -471,6 +472,8 @@ export async function afterDispatchFor(userId: string | null, orderNos: number[]
      where t.order_no in ${orderNos}
        and not exists (select 1 from erp_transport_events e where e.transport_id = t.id)
   `);
+  /* The consignment's first line is written now; the customer's page shows it left. */
+  await (await import("./order-tracking")).syncOrderTracking(orderNos, { userId });
 }
 
 /** Step 1 — the day the goods should reach the transporter's godown. */
@@ -776,9 +779,13 @@ export async function updateConsignment(
 export async function raiseIssue(
   ctx: ErpContext,
   transportIds: string[],
-  input: { issue: string; note?: string | null; expectedOn?: string | null; notify?: boolean },
+  input: { issue: string; note?: string | null; expectedOn?: string | null; notify?: boolean; customerReason?: string | null },
 ): Promise<Result<{ notified: NotifyOutcome }>> {
   if (!(ISSUES as readonly string[]).includes(input.issue)) return fieldErr("issue", "Pick what went wrong");
+  const { delayReasonForIssue, reasonsFor } = await import("./engines/order-tracking");
+  /* What the customer's tracking page calls it. Absent (an older screen): read off the problem. Empty: internal only. */
+  const customerReason = input.customerReason === undefined ? delayReasonForIssue(input.issue) : input.customerReason || null;
+  if (customerReason && !reasonsFor("delay").some((r) => r.code === customerReason && r.code !== "other")) return fieldErr("customerReason", "Pick what the customer is told");
   const note = input.note?.trim() || null;
   if (input.issue === "Other" && !note) return fieldErr("note", "Say what the problem is");
   const ts = (await load(transportIds)).filter((t) => t.materialStage !== CLOSED);
@@ -793,6 +800,12 @@ export async function raiseIssue(
     eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "issue", ts[0].materialStage, `${input.issue}${note ? `: ${note}` : ""}`, input.notify !== false);
   });
   await erpAudit(ctx, "erp.logistics.issue", "erp_transport", ts.map((t) => t.id).join(","), null, input);
+  /* A delay the customer reads as one goes on their tracking page, in the shipped sentence for its reason —
+     never the internal note. Its WhatsApp is the issue message below, so the tracking side tells nobody twice. */
+  if (customerReason) {
+    const { delayFromLogistics } = await import("./order-tracking");
+    await delayFromLogistics(ctx, ts.map((t) => ({ id: t.id, orderNo: t.orderNo })), customerReason, { note, expectedOn: expected, notify: false });
+  }
   const notified = input.notify === false ? NO_NOTIFY : await notifyCustomers(ctx, "issue", ts.map((t) => t.id), eventId, { issue: input.issue, issueNote: note });
   return ok({ notified }, `Problem recorded${notifyWords(notified)}`);
 }
@@ -806,6 +819,7 @@ export async function clearIssue(ctx: ErpContext, transportIds: string[], note: 
     await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "issue_cleared", ts[0].materialStage, `${ts[0].issue} cleared${said ? `: ${said}` : ""}`, false);
   });
   await erpAudit(ctx, "erp.logistics.issueCleared", "erp_transport", ts.map((t) => t.id).join(","), null, { note: said });
+  await (await import("./order-tracking")).clearDelays(ctx, [...new Set(ts.map((t) => t.orderNo))], said ?? "The delay has been cleared.");
   return okVoid("Problem cleared");
 }
 
@@ -839,6 +853,8 @@ export async function markDelivered(
     eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "delivered", CLOSED, [receivedBy ? `Received by ${receivedBy}` : null, proof ? `Proof: ${proof}` : null, note].filter(Boolean).join(" · ") || null);
   });
   await erpAudit(ctx, "erp.logistics.delivered", "erp_transport", ts.map((t) => t.id).join(","), null, { date: d, receivedBy, proof });
+  /* Delivered ends any delay the customer was reading about. */
+  await (await import("./order-tracking")).clearDelays(ctx, [...new Set(ts.map((t) => t.orderNo))], "Delivered.");
   await syncBookOrders([...new Set(ts.map((t) => t.orderNo))]);
   const notified = input.notify === false ? NO_NOTIFY : await notifyCustomers(ctx, "delivered", ts.map((t) => t.id), eventId, { deliveredOn: d, receivedBy });
   return ok({ notified }, `Delivered and closed${notifyWords(notified)}`);
@@ -1072,17 +1088,6 @@ async function deliveryParties(orderNos: number[]): Promise<Map<number, string>>
   return new Map(rows.filter((r) => r.d).map((r) => [Number(r.n), String(r.d)]));
 }
 
-/** The address the customer's tracking link is built against. */
-async function origin(): Promise<string | null> {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
-  try {
-    const { appOrigin } = await import("@/lib/password-reset");
-    return await appOrigin();
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Writes the customer's WhatsApp for one step of the flow and sends it where
  * it can. One message per party per step: an LR carrying three bills is one
@@ -1115,10 +1120,18 @@ export async function notifyCustomers(
     for (const cid of new Set([t.billingCustomerId, delivery.get(t.orderNo) ?? t.billingCustomerId])) recipients.set(cid, [...(recipients.get(cid) ?? []), t]);
   }
   const people = await db.select().from(customers).where(inArray(customers.id, [...recipients.keys()]));
-  const staff = (await db.execute(sql`select right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) as p from users where coalesce(phone, '') <> ''`)) as unknown as { p: string }[];
-  const staffNumbers = new Set(staff.map((x) => x.p));
-  const base = await origin();
+  const staffNumbers = await readStaffNumbers();
+  const base = await messageOrigin();
   const route = await watiRoute(cfg["erp.logistics.watiTemplate"]);
+  const orderLinks = new Map<string, string>();
+  if (base) {
+    const { erpOrderTracking } = await import("@/db/schema");
+    const { isNull } = await import("drizzle-orm");
+    for (const k of await db.select().from(erpOrderTracking).where(and(inArray(erpOrderTracking.orderNo, [...new Set(ts.map((t) => t.orderNo))]), isNull(erpOrderTracking.revokedAt)))) {
+      orderLinks.set(`${k.orderNo}|full`, `${base}/t/${k.token}`);
+      orderLinks.set(`${k.orderNo}|delivery`, `${base}/t/${k.deliveryToken ?? k.token}`);
+    }
+  }
   const out: NotifyOutcome = { ...NO_NOTIFY };
 
   for (const c of people) {
@@ -1134,24 +1147,16 @@ export async function notifyCustomers(
       packages: mine.every((t) => t.packages != null) ? mine.reduce((a, t) => a + (t.packages ?? 0), 0) : (lr?.packages ?? null),
       stage: first.materialStage,
       expectedOn: first.expectedDeliveryOn,
-      trackUrl: base && first.trackToken ? `${base}/track/${first.trackToken}` : null,
+      /* The order's own tracking link where it has one — the delivery party's view where this is not the billing party —
+         else the consignment's older link, which opens the same page. */
+      trackUrl: base ? (orderLinks.get(`${first.orderNo}|${c.id === first.billingCustomerId ? "full" : "delivery"}`) ?? (first.trackToken ? `${base}/track/${first.trackToken}` : null)) : null,
       signature: cfg["erp.logistics.signature"] || "Mahek Marketing India",
       ...extra,
     };
     const body = customerMessage(kind, facts);
     const raw = whatsappNumberFor(c, "general");
     const phone = waNumber(raw);
-    const skip = c.doNotContact
-      ? `${c.name} is marked do not contact.`
-      : c.whatsappDnd
-        ? `${c.name} is on WhatsApp DND.`
-        : c.deletedAt
-          ? `${c.name} is in the trash.`
-          : !phone
-            ? `${raw || "No number"} is not a mobile WhatsApp can reach. Fix it on the customer record.`
-            : staffNumbers.has(phone.slice(-10))
-              ? "That number belongs to somebody who works at Mahek, not to the customer."
-              : null;
+    const skip = skipReason(c, raw, phone, staffNumbers);
     const id = erpId("etmsg");
     const row = { id, customerId: c.id, transportIds: mine.map((t) => t.id), lrId: first.lrId, eventId, kind, phone: phone ?? raw ?? null, body, createdById: ctx.user.id };
     if (skip) {
@@ -1185,23 +1190,6 @@ export async function notifyCustomers(
   return out;
 }
 
-type WatiRoute = { ok: true; name: string; params: string[] } | { ok: false; why: string };
-
-async function watiRoute(templateName: string): Promise<WatiRoute> {
-  const name = (templateName ?? "").trim();
-  if (!name) return { ok: false, why: "No logistics template is named in ERP settings, so this goes by hand." };
-  const { whatsappServiceState } = await import("@/lib/services/whatsapp-switch-service");
-  if (!(await whatsappServiceState()).active) return { ok: false, why: "WhatsApp through Wati is switched off on the Founder Dashboard." };
-  const { listWatiTemplates, isApproved, watiConfig } = await import("@/lib/wati");
-  if (!(await watiConfig())) return { ok: false, why: "No Wati key is configured." };
-  const list = await listWatiTemplates();
-  if (!list.ok) return { ok: false, why: `Wati could not be asked for its templates: ${list.error}` };
-  const t = list.templates.find((x) => x.name === name);
-  if (!t) return { ok: false, why: `There is no Wati template called ${name}.` };
-  if (!isApproved(t)) return { ok: false, why: `The Wati template ${name} is not approved yet.` };
-  return { ok: true, name, params: t.params };
-}
-
 /** A message somebody sent from their own WhatsApp: marked so, with who. */
 export async function markMessageSent(ctx: ErpContext, messageId: string): Promise<Result<unknown>> {
   const [m] = await db.select().from(erpTransportMessages).where(eq(erpTransportMessages.id, messageId));
@@ -1227,7 +1215,8 @@ export async function retryMessage(ctx: ErpContext, messageId: string): Promise<
   if (!m) return err("That message is gone.", "not_found");
   if (!["to_send", "failed"].includes(m.status)) return err("That message is not waiting to be sent.", "conflict");
   const cfg = await getConfig();
-  const route = await watiRoute(cfg["erp.logistics.watiTemplate"]);
+  /* An order tracking message (0292) goes as order tracking's template, not the road's. */
+  const route = m.orderNo ? await watiRoute(cfg["erp.tracking.watiTemplate"], "order tracking") : await watiRoute(cfg["erp.logistics.watiTemplate"]);
   if (!route.ok) return err(route.why, "rule_violation");
   if (route.params.some((p) => p !== "message" && p !== "name" && p !== "party")) return err("This template needs the facts of the step; it can only be retried for templates that take {{message}}. Send it by hand.", "rule_violation");
   const phone = waNumber(m.phone);

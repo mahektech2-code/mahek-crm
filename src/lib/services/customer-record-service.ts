@@ -68,6 +68,8 @@ export type RecordOrder = {
    */
   billedTo: string | null;
   counts: boolean;
+  /** The customer's order tracking page (an ERP order, once verified) — the delivery party's view when this customer is not the one billed. */
+  trackingPath: string | null;
 };
 
 export type RecordComplaint = {
@@ -169,6 +171,13 @@ export async function customerRecordDetail(
           select c.name from customers c where c.id = orders.customer_id and orders.customer_id <> ${customerId}
         )`,
         counts: sql<boolean>`${orderCountsSql("orders")}`,
+        trackingPath: sql<string | null>`(
+          select '/t/' || case when orders.customer_id = ${customerId} then k.token else coalesce(k.delivery_token, k.token) end
+            from erp_order_tracking k
+           where k.revoked_at is null
+             and k.order_no = substring(orders.external_ref from '^ERP-([0-9]+)$')::int
+           limit 1
+        )`,
       })
       .from(orders)
       .where(or(eq(orders.customerId, customerId), eq(orders.deliveryCustomerId, customerId)))

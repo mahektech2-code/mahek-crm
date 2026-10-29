@@ -103,7 +103,7 @@ export async function erpLogisticsUpdate(transportIds: string[], input: { stage?
   return run((ctx) => L.updateConsignment(ctx, ids(transportIds), input ?? {}));
 }
 
-export async function erpLogisticsIssue(transportIds: string[], input: { issue: string; note?: string | null; expectedOn?: string | null; notify?: boolean }) {
+export async function erpLogisticsIssue(transportIds: string[], input: { issue: string; note?: string | null; expectedOn?: string | null; notify?: boolean; customerReason?: string | null }) {
   return run((ctx) => L.raiseIssue(ctx, ids(transportIds), input));
 }
 

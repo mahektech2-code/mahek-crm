@@ -41,6 +41,7 @@ export const PANEL_TAB: Record<string, string> = {
   canPhotos: "Photos",
   canGroup: "Group",
   money: "Summary",
+  orderTracking: "Customer tracking",
 };
 
 export function RecordDialog({

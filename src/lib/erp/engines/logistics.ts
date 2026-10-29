@@ -19,11 +19,11 @@ import { similarity } from "./match";
  * "At transport" is new: the transporter's godown has the goods and the LR has
  * not come yet.
  */
-export const STAGES = ["Dispatched", "At transport", "In Transit", "On the way to Destination area", "Reached Destination Area", "Close - Received to Party"] as const;
+export const STAGES = ["Dispatched", "At transport", "In Transit", "On the way to Destination area", "Reached Destination Area", "Out for Delivery", "Close - Received to Party"] as const;
 export type Stage = (typeof STAGES)[number];
 export const CLOSED: Stage = "Close - Received to Party";
 /** What a status update on the road may move to — reaching the party is its own act, with who signed. */
-export const ROAD_STAGES: Stage[] = ["In Transit", "On the way to Destination area", "Reached Destination Area"];
+export const ROAD_STAGES: Stage[] = ["In Transit", "On the way to Destination area", "Reached Destination Area", "Out for Delivery"];
 
 /** The short word on a board. */
 export const STAGE_SHORT: Record<Stage, string> = {
@@ -32,6 +32,8 @@ export const STAGE_SHORT: Record<Stage, string> = {
   "In Transit": "In transit",
   "On the way to Destination area": "Near destination",
   "Reached Destination Area": "At destination",
+  /* 0292: the goods are on the local vehicle to the party's door — shown to the customer only when the transporter says so. */
+  "Out for Delivery": "Out for delivery",
   "Close - Received to Party": "Delivered",
 };
 
@@ -239,6 +241,8 @@ export function customerStageWords(stage: string, transporter: string | null): s
       return "is on the way to your area";
     case "Reached Destination Area":
       return `has reached your area and will be delivered shortly`;
+    case "Out for Delivery":
+      return "is out for delivery to your address";
     case CLOSED:
       return "has been delivered";
     default:

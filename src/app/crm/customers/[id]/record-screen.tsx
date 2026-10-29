@@ -927,6 +927,15 @@ export function RecordScreen({
                       {/* An order accounts have not agreed to is not a sale,
                           and the figures above do not count it. */}
                       {o.counts ? "" : " · not counted as a sale"}
+                      {/* The page the customer sees — what to read out when they ring to ask where it is. */}
+                      {o.trackingPath ? (
+                        <>
+                          {" · "}
+                          <a href={o.trackingPath} target="_blank" rel="noreferrer" className="text-brand">
+                            Track order ↗
+                          </a>
+                        </>
+                      ) : null}
                     </>
                   }
                   right={money(o.amount)}

@@ -272,7 +272,12 @@ async function syncOne(orderNo: number, lines: LineRow[]): Promise<string[]> {
  * write that can change an order's lines, status, value or dispatch.
  */
 export async function syncBookOrders(orderNos: number[]): Promise<void> {
-  if (!orderNos.length || !(await erpOrdersLive())) return;
+  if (!orderNos.length) return;
+  /* Every ERP order write calls this, so it is also where the customer's
+     tracking catches up — before the live switch, because tracking does not
+     depend on the ERP being the order book. It can never fail the write. */
+  await (await import("./order-tracking")).syncOrderTracking(orderNos);
+  if (!(await erpOrdersLive())) return;
   const unique = [...new Set(orderNos)];
   const all = await linesOf(unique);
   const touched = new Set<string>();
@@ -326,6 +331,8 @@ export async function afterBookDecision(orderId: string): Promise<void> {
       .set({ partyStatus: "Approved By Admin", updatedAt: new Date() })
       .where(and(eq(erpOrders.orderNo, orderNo), eq(erpOrders.partyStatus, "Pending")));
   }
+  /* An approved party may be what confirms the order to its customer. */
+  await (await import("./order-tracking")).syncOrderTracking([orderNo]);
 }
 
 /**

@@ -4850,6 +4850,59 @@ export const SETTINGS = [
     default: "Mahek Marketing India",
   },
   {
+    key: "erp.tracking.enabled",
+    type: "boolean",
+    category: "erp",
+    label: "Customer order tracking",
+    description:
+      "On: every order gets one tracking link the moment the back office verifies it, and the customer's page follows it through preparation, the invoice, dispatch and transport to delivery. Off: no new link is made and nothing new is sent; links already made keep working.",
+    default: true,
+  },
+  {
+    key: "erp.tracking.watiTemplate",
+    type: "text",
+    category: "erp",
+    label: "Order tracking · Wati template",
+    description:
+      "The name of the APPROVED Wati template order tracking messages go out as — the confirmation, invoice, dispatch and hold messages. It may use {{name}}, {{order_no}}, {{order_date}}, {{items}}, {{track_link}} and {{message}} (the whole message in one line). A template asking for anything else is not sent. Blank: every message waits under Logistics → Customer messages to be sent by hand.",
+    default: "",
+  },
+  {
+    key: "erp.tracking.notify",
+    type: "structured",
+    category: "erp",
+    label: "Order tracking · messages to send",
+    description:
+      'Which order steps write a WhatsApp to the customer: {"confirmed": true, "invoice": true, "dispatched": true, "hold": true, "resolved": false}. A step saved twice is told once. The LR and delivery messages are Logistics\' own, under "Tell customers where their goods are".',
+    default: { confirmed: true, invoice: true, dispatched: true, hold: true, resolved: false },
+  },
+  {
+    key: "erp.tracking.holdMessages",
+    type: "structured",
+    category: "erp",
+    label: "Order tracking · what the customer reads for each hold reason",
+    description:
+      'The sentence a hold or delay starts with, by reason: payment_pending, material_shortage, quality_check, production_delay, customer_requested, transporter_delay, route_delay, vehicle_breakdown. {"payment_pending": "Your order is on hold until payment is confirmed."} A reason left out keeps the shipped sentence. Staff may shorten it for one order; "Other" is always written by hand.',
+    default: {},
+  },
+  {
+    key: "erp.tracking.showInvoice",
+    type: "boolean",
+    category: "erp",
+    label: "Order tracking · show the invoice PDF",
+    description:
+      "On: the customer can open the invoice PDF from the tracking page once the invoice is available (approved by the checker, or dispatched with it). The invoice shows prices, and a link can be forwarded; a delivery party that is not the billing party never sees it.",
+    default: true,
+  },
+  {
+    key: "erp.tracking.showLr",
+    type: "boolean",
+    category: "erp",
+    label: "Order tracking · show the LR copy",
+    description: "On: the customer can open the LR copy from the tracking page as soon as it is attached. The LR may show the freight.",
+    default: true,
+  },
+  {
     key: "erp.logistics.callEveryDays",
     type: "integer",
     category: "erp",
@@ -6649,6 +6702,12 @@ export type Config = {
   "erp.logistics.notifyCustomers": boolean;
   "erp.logistics.watiTemplate": string;
   "erp.logistics.signature": string;
+  "erp.tracking.enabled": boolean;
+  "erp.tracking.watiTemplate": string;
+  "erp.tracking.notify": Record<string, boolean>;
+  "erp.tracking.holdMessages": Record<string, string>;
+  "erp.tracking.showInvoice": boolean;
+  "erp.tracking.showLr": boolean;
   "erp.logistics.callEveryDays": number;
   "erp.logistics.lateAfterDays": number;
   "erp.logistics.syncDays": number;

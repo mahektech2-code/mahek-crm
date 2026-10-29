@@ -65,6 +65,7 @@ import {
   dispatchOf,
   invoiceChanges,
   invoiceKey,
+  invoiceShareRefusal,
   likelyDuplicate,
   logisticsOf,
   ORDER_SOURCES,
@@ -72,9 +73,12 @@ import {
   orderStatusOf,
   productionOf,
   splitForMove,
+  type InvoiceHolder,
   type InvoiceSnapshot,
 } from "../engines/order-flow";
 import { assignTripsAtDispatch } from "../trips";
+import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, openHolds, recordHold, sendWords, syncOrderTracking, tellHold, type OpenHold } from "../order-tracking";
+import { reasonByLabel } from "../engines/order-tracking";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 import { confirmImpact } from "@/lib/impact/registry";
 import { impactBatchKey } from "@/lib/impact/batch-key";
@@ -1126,7 +1130,7 @@ const NO_DATA: Record<Scope, string> = {
 };
 
 /** The invoice prompt, asked when an order is billed and when its invoice is changed. */
-function invoicePrompt(title: string, sub: string, init: Record<string, string>): NonNullable<ActionSpec["prompt"]> {
+function invoicePrompt(title: string, sub: string, init: Record<string, string>, withFile = false): NonNullable<ActionSpec["prompt"]> {
   return {
     title,
     sub,
@@ -1134,10 +1138,56 @@ function invoicePrompt(title: string, sub: string, init: Record<string, string>)
     fields: [
       { k: "invoiceNo", l: "Tally invoice no.", t: "text", req: true },
       { k: "invoiceDate", l: "Invoice date", t: "date", req: true },
+      ...(withFile
+        ? [{ k: "invoiceFile", l: "Invoice PDF", t: "photo", wide: true, hint: "The Tally invoice as a PDF or photo. The checker sees it beside the order; the customer can open it from their tracking link once the invoice is approved. It can be added later too." } as FieldSpec]
+        : []),
     ],
     init,
   };
 }
+
+/* ------------------------------------------ customer tracking: holds (PRD §7) */
+
+/** The hold dialog: a reason from the list, the sentence the customer reads (filled from the reason), and a note they never do. */
+function holdPrompt(orderNo: number | null, kit: { labels: string[]; sentence: Record<string, string> }): NonNullable<ActionSpec["prompt"]> {
+  return {
+    title: orderNo ? `Put order ${orderNo} on hold` : "Put these orders on hold",
+    sub: "The customer sees the reason on their tracking page. Every line not yet dispatched goes to Hold From Office.",
+    submit: "Put on hold",
+    fields: [
+      { k: "reason", l: "Reason", t: "select", opts: kit.labels, req: true },
+      {
+        k: "customerText",
+        l: "Message the customer will see",
+        t: "area",
+        req: true,
+        wide: true,
+        fillBy: { by: ["reason"], map: kit.sentence, otherwise: "" },
+        hint: "Filled from the reason. You may shorten it; keep it polite and blame nobody.",
+      },
+      { k: "internalNote", l: "Internal note — never shown to the customer", t: "area", wide: true, mic: true },
+      { k: "nextUpdateOn", l: "Next update by", t: "date" },
+      { k: "notify", l: "Tell the customer on WhatsApp", t: "pick", opts: ["Yes", "No"], def: "Yes" },
+    ],
+  };
+}
+
+const RESOLVE_PROMPT = (h: OpenHold): NonNullable<ActionSpec["prompt"]> => ({
+  title: `Resolve the hold on order ${h.orderNo}`,
+  sub: "The hold and its resolution both stay in the order's history. The lines go back to Under Process; those that were Ready are marked Ready again if the stock is still there.",
+  submit: "Resolve hold",
+  fields: [
+    { k: "resolution", l: "What changed (the customer sees this)", t: "area", req: true, wide: true, mic: true },
+    { k: "notify", l: "Tell the customer on WhatsApp", t: "pick", opts: ["Yes", "No"], def: "No" },
+  ],
+});
+
+const INVOICE_FILE_PROMPT = (orderNo: number, replacing: boolean): NonNullable<ActionSpec["prompt"]> => ({
+  title: `${replacing ? "Replace" : "Upload"} the invoice PDF · order ${orderNo}`,
+  sub: "The customer can open it from their tracking link once the invoice is approved. Replacing the PDF of an approved invoice sends it back to the checker.",
+  submit: "Save",
+  fields: [{ k: "file", l: "Invoice PDF", t: "photo", req: true, wide: true }],
+});
 
 const CORRECTION_PROMPT = (what: string): NonNullable<ActionSpec["prompt"]> => ({
   title: `Send ${what} back for correction`,
@@ -1190,6 +1240,7 @@ function orderList(scope: Scope): ScreenModule {
       const approver = ctx.powers.has("approveParty") && !(await erpOrdersLive());
       const verifier = ctx.powers.has("verifyOrders");
       const checker = ctx.powers.has("checkInvoices");
+      const holdKit = await holdSentences("hold");
       const bulk: BulkSpec[] =
         labels || checking
           ? []
@@ -1198,10 +1249,25 @@ function orderList(scope: Scope): ScreenModule {
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
               { id: "ready", l: "Ready" },
               { id: "underProcess", l: "Under Process" },
-              { id: "hold", l: "Hold From Office" },
+              { id: "hold", l: "Put on hold", prompt: holdPrompt(null, holdKit) },
               /* Which of the selection can be cancelled, and what the order book does with it. */
               { id: "cancel", l: "Cancel", impact: { kind: "erp-order-cancel" } },
               ...(approver ? [{ id: "approve", l: "Approved By Admin" }] : []),
+              /* Several orders for one party onto one Tally invoice. */
+              ...(scope === "toBill" || scope === "readyOrders" || scope === "orders"
+                ? [
+                    {
+                      id: "bill",
+                      l: "Bill together",
+                      prompt: invoicePrompt(
+                        "Bill these orders on one invoice",
+                        "Enter the one invoice made in Tally for every selected order. They must all be billed to the same party, and each must be ready to bill.",
+                        { invoiceNo: "", invoiceDate: today() },
+                        true,
+                      ),
+                    },
+                  ]
+                : []),
             ];
       const byNo = new Map<number, OrderLine[]>();
       /* An order is billed, checked and dispatched WHOLE, so its blockers are read off every line of it — not only the ones this tab draws. */
@@ -1213,11 +1279,12 @@ function orderList(scope: Scope): ScreenModule {
         const rows = (await db.execute(sql`select distinct order_no as n, linked_from_order_no as f from erp_orders where linked_from_order_no in ${orderNos}`)) as unknown as { n: number; f: number }[];
         for (const r of rows) continued.set(Number(r.f), [...(continued.get(Number(r.f)) ?? []), Number(r.n)]);
       }
-      const [prices, reviews, gates] = await Promise.all([
+      const [prices, reviews, gates, holdsOpen] = await Promise.all([
         /* Read for the lines drawn, not inside orderLines: the badges and the dashboard count lines and never price them. */
         priceBook(shown.map((l) => l.billing.id)),
         reviewsFor(orderNos),
         scanGateFor(db, shown.filter((l) => l.inDetails && !l.dispatched).map((l) => l.o.id)),
+        openHolds(orderNos),
       ]);
       return {
         spec: {
@@ -1269,10 +1336,12 @@ function orderList(scope: Scope): ScreenModule {
                       { id: "correctOrder", l: "Send back for correction", why: l.o.orderCheck === "Correction" ? "Already sent back" : "", prompt: CORRECTION_PROMPT(`order ${l.o.orderNo}`) } as ActionSpec,
                     ]
                   : []),
-                ...statusActions(l),
+                ...statusActions(l, { prompt: holdPrompt(l.o.orderNo, holdKit), open: holdsOpen.get(l.o.orderNo) ?? null }),
+                ...(holdsOpen.get(l.o.orderNo)?.kind === "hold" ? [{ id: "resolveHold", l: "Resolve hold", primary: true, prompt: RESOLVE_PROMPT(holdsOpen.get(l.o.orderNo)!) } as ActionSpec] : []),
                 ...(billed
                   ? [
                       { id: "unbill", l: "Undo billing", why: dispatched ? "It has been dispatch-verified" : "", impact: { kind: "erp-order-unbill", id: l.o.id } } as ActionSpec,
+                      { id: "invoiceFile", l: "Invoice PDF", prompt: INVOICE_FILE_PROMPT(l.o.orderNo, false) } as ActionSpec,
                       {
                         id: "changeInvoice",
                         l: "Change invoice",
@@ -1290,6 +1359,7 @@ function orderList(scope: Scope): ScreenModule {
                           `Bill order ${l.o.orderNo}`,
                           `Enter the invoice made in Tally for the whole order — ${live.length} line${live.length === 1 ? "" : "s"}. The invoice check is optional; only a rejected invoice holds dispatch.`,
                           { invoiceNo: l.o.tallyBillNo ?? "", invoiceDate: today() },
+                          true,
                         ),
                       } as ActionSpec,
                     ]),
@@ -1424,6 +1494,8 @@ function orderList(scope: Scope): ScreenModule {
               ...(history.length ? [{ l: "Check history", v: history.map(reviewLine).join("\n"), der: true }] : []),
             ],
             actions,
+            /* The customer's view of the whole order — read when the tab opens, not for every row of the list. */
+            ...(labels ? {} : { panel: { kind: "orderTracking", data: { orderNo: l.o.orderNo, hold: holdsOpen.get(l.o.orderNo)?.reason ?? null } } }),
             by: stampLine(l.by, l.o.createdAt),
           };
         }),
@@ -1521,7 +1593,7 @@ async function tellReadyToBill(ids: string[]) {
  * needs the order verified by the back office (PRD step 3).
  */
 const STATUS_ACTION: Record<string, string> = { "Under Process": "underProcess", "Hold From Office": "hold", Cancel: "cancel" };
-function statusActions(l: OrderLine): ActionSpec[] {
+function statusActions(l: OrderLine, hold?: { prompt: NonNullable<ActionSpec["prompt"]>; open: OpenHold | null }): ActionSpec[] {
   const out: ActionSpec[] = [];
   if (l.o.status !== "Ready")
     out.push({
@@ -1539,6 +1611,10 @@ function statusActions(l: OrderLine): ActionSpec[] {
         : st === "Cancel" && l.allocations
           ? "Release its batch codes first"
           : "";
+    if (st === "Hold From Office" && hold) {
+      out.push({ id: "hold", l: "Put order on hold", why: why || (hold.open ? `The order is already ${hold.open.kind === "hold" ? "on hold" : "marked delayed"}` : ""), prompt: hold.prompt } as ActionSpec);
+      continue;
+    }
     out.push({ id: STATUS_ACTION[st], l: st, why, impact: st === "Cancel" ? { kind: "erp-order-cancel", id: l.o.id } : undefined } as ActionSpec);
   }
   return out;
@@ -1562,6 +1638,19 @@ async function doStatus(ctx: ErpContext, ids: string[], status: string) {
   if (!ok.length) return err(`Not changed: ${refused.join("; ")}.`, "rule_violation");
   const action = `erp.order.${STATUS_ACTION[status] ?? "status"}`;
   const res = await setMany(ctx, ok, { status }, action, (n) => `${plural(n)} ${status}`);
+  /* Lines moved off Hold From Office by hand: once none of an order's live lines
+     is held, its hold is over — closed in the history, so the customer's page
+     never says "on hold" about an order being worked. */
+  if (res.ok && status !== "Hold From Office") {
+    const nos = [...new Set(ls.filter((l) => ok.includes(l.o.id) && l.o.status === "Hold From Office").map((l) => l.o.orderNo))];
+    const open = await openHolds(nos);
+    for (const [no, h] of open) {
+      if (h.kind !== "hold") continue;
+      const still = (await orderLines({ orderNos: [no] })).some((l) => l.o.status === "Hold From Office");
+      if (!still) await closeHold(ctx.user.id, h.id, status === "Cancel" ? "Order cancelled." : "Preparation resumed.");
+    }
+    if (open.size) await syncOrderTracking(nos, { userId: ctx.user.id });
+  }
   if (res.ok && refused.length) return okVoid(`${plural(ok.length)} ${status}. Not changed: ${refused.join("; ")}.`);
   return res;
 }
@@ -1615,6 +1704,8 @@ async function doVerifyOrder(ctx: ErpContext, ids: string[]) {
     }
   }
   if (!done.length) return err(`Not verified: ${refused.join("; ")}.`, "rule_violation");
+  /* Verified is confirmed: the customer's tracking link is made and the confirmation goes. */
+  await syncOrderTracking(done, { userId: ctx.user.id });
   return okVoid(`Verified · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not verified: ${refused.join("; ")}` : ""}`);
 }
 
@@ -1642,6 +1733,7 @@ async function doUnverifyOrder(ctx: ErpContext, ids: string[]) {
     }
   }
   if (!done.length) return err(`Not undone: ${refused.join("; ")}.`, "rule_violation");
+  await syncOrderTracking(done, { userId: ctx.user.id });
   return okVoid(`Back on To verify · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not undone: ${refused.join("; ")}` : ""}`);
 }
 
@@ -1666,17 +1758,152 @@ async function doCorrectOrder(ctx: ErpContext, id: string, values: Record<string
   return okVoid(`Order ${no} sent back for correction`);
 }
 
+/* ------------------------------------------ customer tracking: holds and the invoice PDF */
+
+const yes = (v: string | undefined) => (v ?? "Yes") !== "No";
+
+/**
+ * PUT ON HOLD (PRD §7): an order, never a line — every live line not yet
+ * dispatched goes to Hold From Office, the status each had is remembered so
+ * resolving puts it back, and the reason is kept with the sentence the
+ * customer reads and the note they never do. Goods that have left are
+ * Logistics' to report as a delay. One open hold per order.
+ */
+async function doPutOnHold(ctx: ErpContext, ids: string[], values: Record<string, string>): Promise<Result<unknown>> {
+  const reason = reasonByLabel(text(values.reason) ?? "");
+  if (!reason || reason.kind === "delay") return fieldErr("reason", "Pick the reason");
+  const orders = await wholeOrders(ids);
+  const open = await openHolds([...orders.keys()]);
+  const done: number[] = [];
+  const holdIds: string[] = [];
+  const refused: string[] = [];
+  for (const [no, order] of orders) {
+    const live = order.filter((l) => l.o.status !== "Cancel");
+    const here = live.filter((l) => !l.dispatched);
+    if (!live.length) refused.push(`order ${no} is cancelled`);
+    else if (!here.length) refused.push(`order ${no} has left the factory — report a delay on Logistics`);
+    else if (open.get(no)) refused.push(`order ${no} is already on hold`);
+    else {
+      const lineStatuses = Object.fromEntries(here.map((l) => [l.o.id, l.o.status]));
+      let res: Result<{ holdId: string }> | null = null;
+      await db.transaction(async (tx) => {
+        res = await recordHold(
+          ctx,
+          no,
+          { kind: "hold", reason: reason.code, customerText: text(values.customerText) ?? "", internalNote: text(values.internalNote), nextUpdateOn: text(values.nextUpdateOn), lineStatuses },
+          tx as unknown as typeof db,
+        );
+        if (!res.ok) return;
+        await tx
+          .update(erpOrders)
+          .set({ status: "Hold From Office", updatedAt: new Date(), updatedById: ctx.user.id })
+          .where(inArray(erpOrders.id, here.map((l) => l.o.id)));
+      });
+      const r = res as Result<{ holdId: string }> | null;
+      if (!r) continue;
+      if (!r.ok) {
+        if (orders.size === 1) return r;
+        refused.push(`order ${no}: ${r.error}`);
+        continue;
+      }
+      await erpAudit(ctx, "erp.order.hold", "erp_order", String(no), { lines: lineStatuses }, { reason: reason.code, customerText: values.customerText, internalNote: values.internalNote ?? null });
+      done.push(no);
+      holdIds.push(r.data.holdId);
+    }
+  }
+  if (!done.length) return err(`Not put on hold: ${refused.join("; ")}.`, "rule_violation");
+  await syncBookOrders(done);
+  const told = { sent: 0, toSend: 0, skipped: 0, failed: 0 };
+  for (const h of holdIds) {
+    const o = await tellHold(h, ctx.user.id, yes(values.notify));
+    if (o) for (const k of Object.keys(told) as (keyof typeof told)[]) told[k] += o[k];
+  }
+  return okVoid(`On hold · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not held: ${refused.join("; ")}` : ""}${sendWords(told)}`);
+}
+
+/** Resolving puts each held line back where it was: Under Process, and Ready again where it was Ready and the stock is still on the shelf. */
+async function doResolveHold(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const resolution = text(values.resolution);
+  if (!resolution) return fieldErr("resolution", "Say what changed");
+  const [order] = [...(await wholeOrders([id])).values()];
+  if (!order?.length) return err("That line no longer exists.", "not_found");
+  const no = order[0].o.orderNo;
+  const h = (await openHolds([no])).get(no);
+  if (!h) return err(`Order ${no} is not on hold.`, "rule_violation");
+  const held = order.filter((l) => l.o.status === "Hold From Office" && !l.dispatched && h.lineStatuses[l.o.id] && h.lineStatuses[l.o.id] !== "Hold From Office");
+  const wasReady = held.filter((l) => h.lineStatuses[l.o.id] === "Ready").map((l) => l.o.id);
+  let closed: Result<OpenHold> | null = null;
+  await db.transaction(async (tx) => {
+    closed = await closeHold(ctx.user.id, h.id, resolution, tx as unknown as typeof db);
+    if (!closed.ok || !held.length) return;
+    await tx
+      .update(erpOrders)
+      .set({ status: "Under Process", updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrders.id, held.map((l) => l.o.id)));
+  });
+  const c = closed as Result<OpenHold> | null;
+  if (!c?.ok) return c ?? err("The hold could not be resolved.", "conflict");
+  await erpAudit(ctx, "erp.order.holdResolved", "erp_order", String(no), { holdId: h.id }, { resolution });
+  let ready = "";
+  if (wasReady.length) {
+    const r = await doReady(ctx, wasReady);
+    ready = r.ok ? ` · ${r.message ?? "Ready again"}` : ` · left Under Process: ${r.error}`;
+  } else await syncBookOrders([no]);
+  const told = await tellHold(h.id, ctx.user.id, yes(values.notify));
+  return okVoid(`Hold on order ${no} resolved${ready}${sendWords(told)}`);
+}
+
+/** The Tally invoice as a PDF, on a billed order — added later, or replaced. A replaced PDF on an approved invoice goes back to the checker. */
+async function doInvoiceFile(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const fileId = text(values.file);
+  if (!fileId) return fieldErr("file", "Choose the invoice PDF");
+  const [order] = [...(await wholeOrders([id])).values()];
+  const billed = (order ?? []).filter((l) => l.inDetails && l.o.status !== "Cancel");
+  if (!billed.length) return err("The order is not billed yet; Bill it takes the invoice PDF.", "rule_violation");
+  const no = billed[0].o.orderNo;
+  const had = await invoiceFileFor(no);
+  const reopen = !!had && billed.every((l) => l.invoiceCheck === "Approved") && !billed.some((l) => l.dispatched);
+  let bound = false;
+  await db.transaction(async (tx) => {
+    bound = await bindInvoiceFile(tx as unknown as typeof db, fileId, no, ctx.user.id);
+    if (!bound || !reopen) return;
+    await tx
+      .update(erpOrderDetails)
+      .set({ invoiceCheck: "Pending", invoiceCheckedById: null, invoiceCheckedAt: null, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrderDetails.orderId, billed.map((l) => l.o.id)));
+    await addReview(tx, ctx, no, "invoice", "reset", "Invoice PDF replaced");
+  });
+  if (!bound) return fieldErr("file", "That file could not be attached — upload it again.");
+  await erpAudit(ctx, "erp.order.invoiceFile", "erp_order", String(no), had ? { file: had.id } : null, { file: fileId });
+  if (reopen) await tell(await holdersOf("checkInvoices"), `Invoice to check again · order ${no}`, `${billed[0].billing.name}: the invoice PDF was replaced.`, erpLink("invoiceCheck", {}));
+  await syncOrderTracking([no], { userId: ctx.user.id });
+  return okVoid(`Invoice PDF ${had ? "replaced" : "added"} · order ${no}${reopen ? " · back with the invoice checker" : ""}`);
+}
+
 /* ---------------------------------------------------- step 5: the bill */
 
-async function invoiceTakenBy(no: number, key: string): Promise<number | null> {
-  const [hit] = (await db.execute(sql`
-    select o.order_no as n from erp_orders o
-     where o.order_no <> ${no} and o.status <> 'Cancel'
-       and upper(regexp_replace(coalesce(o.tally_bill_no, ''), '\s', '', 'g')) = ${key}
-     limit 1
-  `)) as unknown as { n: number }[];
-  return hit ? Number(hit.n) : null;
+/**
+ * Every other live order already carrying this invoice number — one row per
+ * order, with its party, its date and the number as it was SPELLED there.
+ * `[[:space:]]` rather than a backslash class: inside a JS template literal a
+ * backslash-s is cooked to a plain "s", so spaces were never stripped and
+ * "MMI/26-27/ 900" did not match "MMI/26-27/900".
+ */
+async function invoiceHolders(except: number[], key: string): Promise<(InvoiceHolder & { spelled: string })[]> {
+  const rows = (await db.execute(sql`
+    select distinct on (o.order_no) o.order_no as n, o.billing_customer_id as "billingId", c.name as "billingName",
+           o.invoice_date::text as "invoiceDate", o.tally_bill_no as spelled
+      from erp_orders o join customers c on c.id = o.billing_customer_id
+     where o.order_no not in ${except} and o.status <> 'Cancel'
+       and upper(regexp_replace(coalesce(o.tally_bill_no, ''), '[[:space:]]', '', 'g')) = ${key}
+     order by o.order_no
+  `)) as unknown as { n: number; billingId: string; billingName: string; invoiceDate: string | null; spelled: string }[];
+  return rows.map((r) => ({ orderNo: Number(r.n), billingId: r.billingId, billingName: r.billingName, invoiceDate: r.invoiceDate, spelled: r.spelled }));
 }
+
+/** "shared with order 8590" — said back when a number joins orders already on it. */
+const sharedWith = (holders: InvoiceHolder[]) =>
+  holders.length ? ` · shared with order${holders.length === 1 ? "" : "s"} ${holders.map((h) => h.orderNo).join(", ")}` : "";
 
 function readInvoice(values: Record<string, string>): { no: string; key: string; date: string } | Result<never> {
   const no = text(values.invoiceNo);
@@ -1690,20 +1917,42 @@ function readInvoice(values: Record<string, string>): { no: string; key: string;
 /**
  * BILL IT: the office has made the bill in Tally, and records its number and
  * date against the WHOLE order, which then waits for the invoice check. One
- * order is one complete bill (rule 1), and one invoice number belongs to one
- * order — a number already on another order is refused, naming it.
+ * order is one complete bill (rule 1) — but one Tally invoice may cover
+ * SEVERAL orders for the same party, so a number already on another order is
+ * accepted where that order has the same party and the same invoice date
+ * (`invoiceShareRefusal`), and refused, naming it, where it does not. Several
+ * orders can be billed onto one invoice at once from the bulk bar; it is all
+ * of them or none.
+ *
+ * Each order still gets its own bill in the book (`syncBookOrders`), under the
+ * Tally number for the first and `<tally>/ERP<order>` for the rest, because
+ * outstanding, collections and allocation are all kept per bill.
  */
-async function doBill(ctx: ErpContext, id: string, values: Record<string, string>) {
+async function doBill(ctx: ErpContext, ids: string[], values: Record<string, string>) {
   const inv = readInvoice(values);
   if ("ok" in inv) return inv;
-  const [order] = [...(await wholeOrders([id])).values()];
-  if (!order?.length) return err("That line no longer exists.", "not_found");
-  const no = order[0].o.orderNo;
-  const blockers = billBlockersFor(order);
-  if (blockers.length) return err(`Order ${no} cannot be billed yet: it needs ${blockers.join("; ")}.`, "rule_violation");
-  const other = await invoiceTakenBy(no, inv.key);
-  if (other != null) return fieldErr("invoiceNo", `Invoice ${inv.no} is already on order ${other}. One invoice is one order.`);
-  const live = order.filter((l) => l.o.status !== "Cancel");
+  const orders = [...(await wholeOrders(ids)).entries()];
+  if (!orders.length) return err("That line no longer exists.", "not_found");
+  const refused: string[] = [];
+  for (const [no, order] of orders) {
+    if (order.some((l) => l.inDetails)) refused.push(`order ${no} is already billed`);
+    else {
+      const blockers = billBlockersFor(order);
+      if (blockers.length) refused.push(`order ${no} needs ${blockers.join("; ")}`);
+    }
+  }
+  if (refused.length) return err(`Not billed: ${refused.join("; ")}.`, "rule_violation");
+  const party = orders[0][1][0].billing;
+  const otherParty = orders.find(([, order]) => order[0].billing.id !== party.id);
+  if (otherParty) return err(`One invoice is for one party: order ${orders[0][0]} is billed to ${party.name} and order ${otherParty[0]} to ${otherParty[1][0].billing.name}.`, "rule_violation");
+  const nos = orders.map(([no]) => no);
+  const holders = await invoiceHolders(nos, inv.key);
+  const refusal = invoiceShareRefusal(inv.no, party.id, inv.date, holders);
+  if (refusal) return fieldErr("invoiceNo", refusal);
+  /* Joining an invoice takes the number as it is already written, so the book
+     sees one spelling — "mmi/26-27/ 900" would be a different bill number. */
+  if (holders.length) inv.no = holders[0].spelled;
+  const live = orders.flatMap(([, order]) => order.filter((l) => l.o.status !== "Cancel"));
   await db.transaction(async (tx) => {
     await tx
       .update(erpOrders)
@@ -1713,16 +1962,22 @@ async function doBill(ctx: ErpContext, id: string, values: Record<string, string
       .insert(erpOrderDetails)
       .values(live.map((l) => ({ orderId: l.o.id, invoiceCheck: "Pending", createdById: ctx.user.id, updatedById: ctx.user.id })))
       .onConflictDoNothing();
-    await addReview(tx, ctx, no, "invoice", "submitted", `Invoice ${inv.no} of ${fd(inv.date)}`, {
-      invoiceNo: inv.no,
-      invoiceDate: inv.date,
-      lines: live.map((l) => ({ id: l.o.id, sku: l.sku.name, qty: l.o.qtyCans, rate: l.o.ratePaise, discount: l.o.discountBp })),
-    });
+    /* The PDF is the invoice's: attached once, to the first order it covers; every order sharing the invoice shows it. */
+    await bindInvoiceFile(tx as unknown as typeof db, text(values.invoiceFile), nos[0], ctx.user.id);
+    for (const no of nos) {
+      const mine = live.filter((l) => l.o.orderNo === no);
+      await addReview(tx, ctx, no, "invoice", "submitted", `Invoice ${inv.no} of ${fd(inv.date)}`, {
+        invoiceNo: inv.no,
+        invoiceDate: inv.date,
+        lines: mine.map((l) => ({ id: l.o.id, sku: l.sku.name, qty: l.o.qtyCans, rate: l.o.ratePaise, discount: l.o.discountBp })),
+      });
+    }
   });
-  await erpAudit(ctx, "erp.order.bill", "erp_order", live.map((l) => l.o.id).join(","), null, { invoiceNo: inv.no, invoiceDate: inv.date });
-  await syncBookOrders([no]);
-  await tell(await holdersOf("checkInvoices"), `Invoice to check · order ${no}`, `${live[0].billing.name}: invoice ${inv.no}, ${plural(live.length)}.`, erpLink("invoiceCheck", {}));
-  return okVoid(`Order ${no} billed · invoice ${inv.no}`);
+  await erpAudit(ctx, "erp.order.bill", "erp_order", live.map((l) => l.o.id).join(","), null, { invoiceNo: inv.no, invoiceDate: inv.date, orderNos: nos });
+  await syncBookOrders(nos);
+  const which = `order${nos.length === 1 ? "" : "s"} ${nos.join(", ")}`;
+  await tell(await holdersOf("checkInvoices"), `Invoice to check · ${which}`, `${party.name}: invoice ${inv.no}, ${plural(live.length)}${sharedWith(holders)}.`, erpLink("invoiceCheck", {}));
+  return okVoid(`${nos.length === 1 ? "Order" : "Orders"} ${nos.join(", ")} billed · invoice ${inv.no}${sharedWith(holders)}`);
 }
 
 /** Taking an order back out of billing, until it has been dispatch-verified. Its invoice check goes with it. */
@@ -1749,6 +2004,12 @@ async function doUnbill(ctx: ErpContext, ids: string[]) {
   return okVoid(`Order${nos.length === 1 ? "" : "s"} ${nos.join(", ")} back out of billing`);
 }
 
+/**
+ * CHANGE INVOICE changes the INVOICE, so where the old number is shared it
+ * moves every order on it — one Tally document has one number and one date,
+ * and correcting it on one order would leave the others disagreeing. Taking a
+ * single order off a shared invoice is Undo billing, then Bill it again.
+ */
 async function doChangeInvoice(ctx: ErpContext, id: string, values: Record<string, string>) {
   const inv = readInvoice(values);
   if ("ok" in inv) return inv;
@@ -1757,17 +2018,26 @@ async function doChangeInvoice(ctx: ErpContext, id: string, values: Record<strin
   if (!billed.length) return err("The order is not billed; Bill it records the invoice.", "rule_violation");
   if (billed.some((l) => l.dispatched)) return err("The order has been dispatch-verified.", "rule_violation");
   const no = billed[0].o.orderNo;
-  const other = await invoiceTakenBy(no, inv.key);
-  if (other != null) return fieldErr("invoiceNo", `Invoice ${inv.no} is already on order ${other}. One invoice is one order.`);
-  const before = invoiceSnapshot(order);
+  const party = billed[0].billing;
+  const oldKey = invoiceKey(billed[0].o.tallyBillNo);
+  const sharing = oldKey ? (await invoiceHolders([no], oldKey)).filter((h) => h.billingId === party.id).map((h) => h.orderNo) : [];
+  const byNo = new Map<number, OrderLine[]>([[no, order]]);
+  if (sharing.length) for (const l of await orderLines({ orderNos: sharing })) byNo.set(l.o.orderNo, [...(byNo.get(l.o.orderNo) ?? []), l]);
+  const left = [...byNo.entries()].filter(([, ls]) => ls.some((l) => l.inDetails && l.dispatched)).map(([n]) => n);
+  if (left.length) return err(`Invoice ${billed[0].o.tallyBillNo} is shared with order${left.length === 1 ? "" : "s"} ${left.join(", ")}, already dispatch-verified, so it cannot change now.`, "rule_violation");
+  const nos = [...byNo.keys()];
+  const refusal = invoiceShareRefusal(inv.no, party.id, inv.date, await invoiceHolders(nos, inv.key));
+  if (refusal) return fieldErr("invoiceNo", refusal);
+  const before = new Map(nos.map((n) => [n, invoiceSnapshot(byNo.get(n)!)]));
   await db
     .update(erpOrders)
     .set({ tallyBillNo: inv.no, invoiceDate: inv.date, updatedAt: new Date(), updatedById: ctx.user.id })
-    .where(inArray(erpOrders.id, billed.map((l) => l.o.id)));
-  await erpAudit(ctx, "erp.order.invoice", "erp_order", String(no), { invoiceNo: before.invoiceNo, invoiceDate: before.invoiceDate }, { invoiceNo: inv.no, invoiceDate: inv.date });
-  await reopenInvoiceCheck(ctx, no, before);
-  await syncBookOrders([no]);
-  return okVoid(`Invoice on order ${no} is now ${inv.no}`);
+    .where(inArray(erpOrders.id, [...byNo.values()].flat().filter((l) => l.inDetails).map((l) => l.o.id)));
+  const was = before.get(no)!;
+  await erpAudit(ctx, "erp.order.invoice", "erp_order", nos.join(","), { invoiceNo: was.invoiceNo, invoiceDate: was.invoiceDate }, { invoiceNo: inv.no, invoiceDate: inv.date, orderNos: nos });
+  for (const n of nos) await reopenInvoiceCheck(ctx, n, before.get(n)!);
+  await syncBookOrders(nos);
+  return okVoid(nos.length === 1 ? `Invoice on order ${no} is now ${inv.no}` : `Invoice on orders ${nos.join(", ")} is now ${inv.no}`);
 }
 
 /* ---------------------------------------- step 6: the independent invoice check */
@@ -1795,6 +2065,7 @@ async function doApproveInvoice(ctx: ErpContext, id: string) {
     await addReview(tx, ctx, got.no, "invoice", "approved", null, invoiceSnapshot(got.order) as unknown as Record<string, unknown>);
   });
   await erpAudit(ctx, "erp.invoice.approve", "erp_order", String(got.no));
+  await syncOrderTracking([got.no], { userId: ctx.user.id });
   return okVoid(`Invoice ${got.billed[0].o.tallyBillNo ?? ""} approved · order ${got.no} can be dispatched`);
 }
 
@@ -1886,7 +2157,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       unverifyOrder: (ctx, ids) => doUnverifyOrder(ctx, ids),
       ready: (ctx, ids) => doReady(ctx, ids),
       underProcess: (ctx, ids) => doUnder(ctx, ids),
-      hold: (ctx, ids) => doStatus(ctx, ids, "Hold From Office"),
+      hold: (ctx, ids, values) => doPutOnHold(ctx, ids, values ?? {}),
       async cancel(ctx, ids, values) {
         const refusal = await confirmImpact("erp-order-cancel", impactBatchKey(ids), readConfirmation(values));
         return refusal ?? doStatus(ctx, ids, "Cancel");
@@ -1897,6 +2168,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       },
       approve: (ctx, ids) => doApprove(ctx, ids),
       stickers: (ctx, ids) => doStickers(ctx, ids),
+      bill: (ctx, ids, values) => doBill(ctx, ids, values),
     },
     actions: {
       verifyOrder: (ctx, id) => doVerifyOrder(ctx, [id]),
@@ -1904,12 +2176,14 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       correctOrder: (ctx, id, values) => doCorrectOrder(ctx, id, values),
       ready: (ctx, id) => doReady(ctx, [id]),
       underProcess: (ctx, id) => doUnder(ctx, [id]),
-      hold: (ctx, id) => doStatus(ctx, [id], "Hold From Office"),
+      hold: (ctx, id, values) => doPutOnHold(ctx, [id], values ?? {}),
+      resolveHold: (ctx, id, values) => doResolveHold(ctx, id, values ?? {}),
+      invoiceFile: (ctx, id, values) => doInvoiceFile(ctx, id, values ?? {}),
       async cancel(ctx, id, values) {
         const refusal = await confirmImpact("erp-order-cancel", id, readConfirmation(values));
         return refusal ?? doStatus(ctx, [id], "Cancel");
       },
-      bill: (ctx, id, values) => doBill(ctx, id, values),
+      bill: (ctx, id, values) => doBill(ctx, [id], values),
       async unbill(ctx, id, values) {
         const refusal = await confirmImpact("erp-order-unbill", id, readConfirmation(values));
         return refusal ?? doUnbill(ctx, [id]);

@@ -20,6 +20,7 @@ import {
   erpFgEntries,
   erpFollowups,
   erpOrderDetails,
+  erpOrderHolds,
   erpOrderReviews,
   erpOrders,
   erpUserPowers,
@@ -298,18 +299,26 @@ describe("marking Ready", () => {
     const [line] = await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${looseId} and ${erpOrders.qtyCans} = 41`);
     const statusNow = async () => (await db.select().from(erpOrders).where(eq(erpOrders.id, line.id)))[0].status;
     const a = mod("orders").actions!;
-    assert.ok((await a.hold(ctx, line.id, {})).ok);
+    /* A hold is an order's, and it says why — in words the customer may read (customer order tracking, 0292). */
+    assert.equal(msg(await a.hold(ctx, line.id, {})), "Pick the reason");
+    assert.ok((await a.hold(ctx, line.id, { reason: "Material shortage", customerText: "Waiting for one of the materials.", internalNote: "Toluene short", notify: "No" })).ok);
     assert.equal(await statusNow(), "Hold From Office");
+    const [held] = await db.select().from(erpOrderHolds).where(eq(erpOrderHolds.orderNo, line.orderNo));
+    assert.equal(held.reason, "material_shortage");
+    assert.equal(held.internalNote, "Toluene short");
+    assert.equal(held.lineStatuses[line.id], "Under Process");
     assert.ok((await a.underProcess(ctx, line.id, {})).ok, "Hold goes back to Under Process");
     assert.equal(await statusNow(), "Under Process");
+    assert.ok((await db.select().from(erpOrderHolds).where(eq(erpOrderHolds.id, held.id)))[0].resolvedAt, "moving the last held line off hold ends the order's hold");
     assert.match(msg(await a.cancel(ctx, line.id, {})), /Check what this affects/, "a cancel is confirmed through the impact modal");
     const cancel = await confirmed("erp-order-cancel", line.id);
     assert.ok(cancel.report.items.some((i) => i.effect === "changed" && /order line cancelled/.test(i.label)), JSON.stringify(cancel.report.items));
     assert.equal(cancel.report.confirmWord, String(line.orderNo));
     assert.ok((await a.cancel(ctx, line.id, cancel.values)).ok);
     assert.equal(await statusNow(), "Cancel");
-    assert.ok((await mod("orders").bulk!.hold(ctx, [line.id], {})).ok, "a cancelled line can be put back");
-    assert.equal(await statusNow(), "Hold From Office");
+    assert.ok((await mod("orders").bulk!.underProcess(ctx, [line.id], {})).ok, "a cancelled line can be put back");
+    assert.equal(await statusNow(), "Under Process");
+    await db.delete(erpOrderHolds).where(eq(erpOrderHolds.orderNo, line.orderNo));
     await db.delete(erpOrders).where(eq(erpOrders.id, line.id));
   });
 });
@@ -429,7 +438,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal((await a.stickers(ctx, line.id, {})).ok, false, "and billing did not lose the record that they are on");
   });
 
-  test("an order is billed only once Ready, one invoice is one order, and a changed invoice goes back to the checker", async () => {
+  test("an order is billed only once Ready, an invoice is shared only on its own date, and a changed invoice goes back to the checker", async () => {
     const ctx = await as(admin);
     assert.ok((await mod("orders").forms!.new(ctx, { source: "WhatsApp", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "3" }])).ok);
     const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 3)));
@@ -440,7 +449,8 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok((await a.verifyOrder(ctx, line.id, {})).ok);
     assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })), /to be Ready — or moved to a new order/);
     assert.ok((await a.ready(ctx, line.id, {})).ok);
-    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: " mmi/26-27/101 ", invoiceDate: TODAY })), /is already on order \d+\. One invoice is one order\./);
+    /* The same party may share an invoice, but only on the invoice's own date. */
+    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: " mmi/26-27/101 ", invoiceDate: "2026-01-01" })), /is already on order \d+, dated .*Orders sharing an invoice share its date\./);
     assert.ok((await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })).ok);
     assert.equal(msg(await a.rejectInvoice(ctx, line.id, {})), "Say why the invoice is rejected");
     assert.ok((await a.rejectInvoice(ctx, line.id, { reason: "Rate should be ₹410" })).ok);
