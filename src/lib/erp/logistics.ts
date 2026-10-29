@@ -37,7 +37,7 @@ import { messageOrigin, skipReason, staffNumbers as readStaffNumbers, watiRoute 
 import { today } from "./screens/common";
 import { confirmImpact } from "@/lib/impact/registry";
 import { transporterMergeKey, transporterRenameKey } from "./transporter-keys";
-import { knownTransporterName, rewriteName } from "./transporter-rename";
+import { listedTransporterName, rewriteName } from "./transporter-rename";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -553,6 +553,12 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
   if (bad) return fieldErr(`l${bad.idx + 1}.lrDate`, `Row ${bad.idx + 1}: the date is not a date`);
   const term = clean.find((i) => i.freightTerm && !FREIGHT_TERMS.includes(i.freightTerm));
   if (term) return fieldErr(`l${term.idx + 1}.freightTerm`, `Row ${term.idx + 1}: freight is Paid, To pay or TBB`);
+  /* A transporter is picked from the list, never added by an upload — and saved as the list spells it. */
+  for (const i of clean) {
+    const listed = await listedTransporterName(db, i.transporter);
+    if (!listed.ok) return fieldErr(`l${i.idx + 1}.transporter`, `Row ${i.idx + 1}: ${listed.error}`);
+    i.transporter = listed.name;
+  }
   const key = (i: { transporter: string | null; lrNo: string }) => `${(i.transporter ?? "").toLowerCase()}|${i.lrNo}`;
   const seen = new Set<string>();
   for (const i of clean) {
@@ -593,7 +599,6 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
         uploadedById: ctx.user.id,
       });
       await bindErpFiles(tx as unknown as typeof db, [i.fileId], "erp_lr", id, ctx.actor.id);
-      if (i.transporter) await tx.insert(erpTransporters).values({ id: erpId("etr"), name: i.transporter, updatedById: ctx.user.id }).onConflictDoNothing();
     }
   });
   /* How the photo readings fared — after the LRs are safe, and never at their cost. */
@@ -608,7 +613,9 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Pro
   const lrNo = (input.lrNo ?? "").trim().toUpperCase() || null;
   /* The bills under an attached LR carry its number, and the customer was told it. */
   if (!lrNo && lr.status === "assigned") return fieldErr("lrNo", "This LR is attached to bills, so it needs its number");
-  const transporter = await knownTransporterName(db, input.transporter, ctx.user.id);
+  const listed = await listedTransporterName(db, input.transporter, lr.transporter);
+  if (!listed.ok) return fieldErr("transporter", listed.error);
+  const transporter = listed.name;
   const [dup] = lrNo
     ? ((await db.execute(sql`select id from erp_lrs where status <> 'void' and id <> ${lrId} and upper(lr_no) = ${lrNo} and lower(coalesce(transporter, '')) = ${(transporter ?? "").toLowerCase()}`)) as unknown as { id: string }[])
     : [];

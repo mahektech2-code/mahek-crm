@@ -79,6 +79,7 @@ before(async () => {
   await db.execute(sql`update app_settings set value = '20'::jsonb where key = 'erp.factory.packBatchBoxes'`);
   invalidateConfig();
   floor = await seedFactoryFloor({ pin: "1234" });
+  await db.execute(sql`insert into erp_transporters (id, name) values ('etr_factory_shree', 'Shree Roadways') on conflict do nothing`);
 });
 
 after(async () => {

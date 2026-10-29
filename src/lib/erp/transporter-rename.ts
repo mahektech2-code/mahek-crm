@@ -1,7 +1,7 @@
 import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { erpId } from "./server";
+import { listedTransporter } from "./engines/lr-read";
 
 /* ---------------------------------------------------------------------------
  * A TRANSPORTER'S NAME IS A JOIN KEY, so renaming one is not a one-row edit.
@@ -85,18 +85,29 @@ export async function rewriteName(tx: Tx, from: string, to: string): Promise<Rec
 }
 
 /**
- * A transporter typed into a form, as the list spells it — and added to the
- * list when it is new, as the LR upload already does. Every carried name then
- * has a row behind it, which is what lets a later rename or merge reach it:
- * a spelling with no row in the list is one nobody can ever correct in one go.
+ * A transporter typed into a form, as the list spells it — and REFUSED when it
+ * is not on the list. Every carried name still has a row behind it, which is
+ * what lets a later rename or merge reach it; but the row is added by a person
+ * on the Transporters screen, never by whatever was typed into an order line or
+ * read off a receipt. Adding them on the way past is how one company became
+ * "Great India", "THE GREAT INDIA" and "Great India Roadways Pvt Ltd".
  */
-export async function knownTransporterName(ex: Tx | typeof db, raw: string | null | undefined, userId: string): Promise<string | null> {
-  const name = (raw ?? "").trim().replace(/\s+/g, " ");
-  if (!name) return null;
-  const find = async () =>
-    ((await ex.execute(sql`select name from erp_transporters where lower(name) = ${name.toLowerCase()} limit 1`)) as unknown as { name: string }[])[0]?.name;
-  const have = await find();
-  if (have) return have;
-  await ex.execute(sql`insert into erp_transporters (id, name, updated_by_id) values (${erpId("etr")}, ${name}, ${userId}) on conflict do nothing`);
-  return (await find()) ?? name;
+export async function listedTransporterName(
+  ex: Tx | typeof db,
+  raw: string | null | undefined,
+  /** What the record already carries: saved again unchanged, an older spelling is left alone rather than refused. */
+  kept?: string | null,
+): Promise<{ ok: true; name: string | null } | { ok: false; error: string }> {
+  const typed = (raw ?? "").trim().replace(/\s+/g, " ");
+  if (!typed) return { ok: true, name: null };
+  if (kept && kept.trim().replace(/\s+/g, " ").toLowerCase() === typed.toLowerCase()) return { ok: true, name: kept };
+  const names = ((await ex.execute(sql`select name from erp_transporters`)) as unknown as { name: string }[]).map((r) => r.name);
+  const { name, near } = listedTransporter(typed, names);
+  if (name) return { ok: true, name };
+  return { ok: false, error: `"${typed}" is not on the transporter list.${near ? ` Did you mean ${near}?` : ""} Pick one from the list, or add it under Transporters first.` };
+}
+
+/** The names a transporter box offers: the active list, as it spells them. */
+export async function transporterChoices(): Promise<string[]> {
+  return ((await db.execute(sql`select name from erp_transporters where active order by lower(name)`)) as unknown as { name: string }[]).map((r) => r.name);
 }

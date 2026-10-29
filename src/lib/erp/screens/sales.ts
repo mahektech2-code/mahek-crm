@@ -26,7 +26,7 @@ import { weightFor } from "@/lib/catalogue";
 import { stamp } from "@/lib/format";
 import { activeScopesAndLists, geographyOf } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
-import { knownTransporterName } from "../transporter-rename";
+import { listedTransporterName, transporterChoices } from "../transporter-rename";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
 import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
@@ -628,7 +628,7 @@ async function reopenInvoiceCheck(ctx: ErpContext, orderNo: number, before: Invo
 /* ============================================================== forms */
 
 export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date: string; godown: string; billing: string; delivery: string; transporter: string; source: string }): Promise<FormSpec> {
-  const [gds, parties, shops, skus] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), thirdPartyShops(), skuCatalogue()]);
+  const [gds, parties, shops, skus, carriers] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), thirdPartyShops(), skuCatalogue(), transporterChoices()]);
   const active = parties.filter((p) => partyStatus(p) !== "Deactive");
   const names = active.map((p) => p.name);
   const deliveryNames = withShops(names, shops);
@@ -672,7 +672,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       { k: "delivery", l: "Delivery party", t: "select", opts: deliveryNames, hint: "Blank delivers to the billing party. Third-party shops are listed too.", readOnly: !!fixed },
       { k: "area", l: "Area", t: "derived", calc: "order.area" },
       { k: "si", l: "Standing instructions", t: "derived", calc: "order.si" },
-      { k: "transporter", l: "Transporter", t: "text", hint: "Blank uses the delivery party's transporter." },
+      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "The day it should leave — the requested date, if the customer gave one. The lists say today, tomorrow or late from it." },
       ...(pricing ? ([{ k: "priceList", l: "Price list", t: "text", readOnly: true, untagged: true, fillBy: { by: ["billing"], map: pricing.list, otherwise: "" } }] as FieldSpec[]) : []),
       ...(pricing && seeAmounts
@@ -742,7 +742,7 @@ const NO_PRICE_LIST = "None applies to this party";
 async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   const [l] = await orderLines({ ids: [id] });
   if (!l) return null;
-  const [book, shops] = await Promise.all([loadCustomers(), thirdPartyShops()]);
+  const [book, shops, carriers] = await Promise.all([loadCustomers(), thirdPartyShops(), transporterChoices()]);
   const names = withShops(book.filter((p) => partyStatus(p) !== "Deactive").map((p) => p.name), shops);
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
@@ -778,7 +778,7 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       { k: "status", l: "Status", t: "select", req: true, opts: ORDER_STATUSES, sec: "Order", hint: "Under Process and Ready are production's; Hold From Office and Cancel are the order's." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "Blank: not planned yet." },
       { k: "delivery", l: "Delivery party", t: "select", req: true, opts: names, readOnly: l.inDetails },
-      { k: "transporter", l: "Transporter", t: "text" },
+      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "From the transporter list. A new one is added under Transporters first." },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails, sec: "Quantity and price" },
       ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0 }] as FieldSpec[]) : []),
       ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100 }] as FieldSpec[]) : []),
@@ -2325,6 +2325,11 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
     );
     if (dup != null) return fieldErr("dupOk", `Order ${dup} for ${billing.name} on this day has exactly these goods. If this is a separate order, pick "${DUP_OK}" and save again.`);
   }
+  /* Picked from the list; the party's own transporter, or the order's when adding to one, stands as it is spelled. */
+  const sameOrder = fixed != null ? (await orderLines({ orderNos: [fixed] }))[0]?.o.transporter : null;
+  const typedCarrier = text(h.transporter);
+  const carrier = await listedTransporterName(db, typedCarrier, sameOrder && sameOrder.trim().toLowerCase() === (typedCarrier ?? "").trim().toLowerCase() ? sameOrder : delivery.p?.transporter);
+  if (!carrier.ok) return fieldErr("transporter", carrier.error);
   let no = 0;
   await db.transaction(async (tx) => {
     no = fixed ?? (await nextNumber(tx, "order"));
@@ -2336,7 +2341,7 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
         godownId,
         billingCustomerId: billing.id,
         deliveryCustomerId: delivery.id,
-        transporter: text(h.transporter) ?? delivery.p?.transporter ?? null,
+        transporter: carrier.name ?? delivery.p?.transporter ?? null,
         skuId: p.sku.id,
         qtyCans: p.qty,
         ratePaise: p.rate,
@@ -2385,12 +2390,14 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
   const named = await deliveryByName(text(h.delivery), l.delivery);
   if (!named.ok) return named;
   const delivery = named.data;
+  const transporter = await listedTransporterName(db, text(h.transporter), l.o.transporter);
+  if (!transporter.ok) return fieldErr("transporter", transporter.error);
   const values: Partial<typeof erpOrders.$inferInsert> = {
     status,
     dispatchOn: text(h.dispatchOn),
     qtyCans: qty,
     deliveryCustomerId: l.inDetails ? l.o.deliveryCustomerId : delivery.id,
-    transporter: await knownTransporterName(db, text(h.transporter), ctx.user.id),
+    transporter: transporter.name,
     transportCostPaise: paise(h.transport) ?? 0,
     remark: text(h.remark),
   };

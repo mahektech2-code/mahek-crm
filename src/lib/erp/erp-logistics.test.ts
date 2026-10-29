@@ -118,6 +118,8 @@ before(async () => {
   await db.insert(erpProductPacking).values({ productId: skuId, emptyBoxesRequired: 0 });
   await db.insert(customers).values({ id: "cus_shree", name: "Shree Paints", city: "Pune", phone: "9876500001", kind: "customer", area: "Pune", creditDays: 30, freightTerm: "Paid", salesAmId: clerk.id });
   await db.insert(erpCustomerProfiles).values({ customerId: "cus_shree", transporter: "VRL" });
+  /* A transporter is on the list before anything may name it: nothing adds one on the way past. */
+  await db.insert(erpTransporters).values([{ id: id("etr"), name: "VRL" }, { id: id("etr"), name: "Gati" }]);
   await db.insert(erpFgEntries).values({ id: id("fge"), sourceType: "fill", sourceId: "fin_x", entryDate: "2026-08-01", finishedGoodId: fgId, lotCode: "FG1BH", godownId: "erpg_bhiwandi", quantity: 100, packingType: "Can", skuId });
 });
 
@@ -166,7 +168,7 @@ describe("dispatch opens the transport record (§18)", () => {
     /* The dispatch team uploads two LRs at once; a number already on the desk is refused. */
     const up = await L.uploadLrs(ctx, [{ lrNo: "lr-7781", lrDate: "2026-08-03", transporter: "VRL", destination: "Pune", packages: 1 }, { lrNo: "LR-9", transporter: "VRL" }]);
     assert.ok(up.ok, msg(up));
-    assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: "LR-7781", transporter: "vrl" }])), "Row 1: LR LR-7781 of vrl is already uploaded");
+    assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: "LR-7781", transporter: "vrl" }])), "Row 1: LR LR-7781 of VRL is already uploaded");
     assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: " " }])), "Fill in at least one LR — a photo is enough.");
     const lrs = await L.uploadedLrs();
     assert.equal(lrs.length, 2);
@@ -179,7 +181,18 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(voiding.report.confirmWord, "LR-9");
     assert.ok(voiding.report.items.some((i) => i.effect === "changed" && /leaves the LR desk/.test(i.label)), JSON.stringify(voiding.report.items));
     assert.ok((await L.voidLr(ctx, nine.id, "duplicate photo", voiding.confirmation)).ok);
-    assert.ok((await db.select().from(erpTransporters)).some((x) => x.name === "VRL"), "a transporter named on an upload joins the directory");
+    /* A name that is not on the list is refused — on an upload and on an edit — and the list does not grow. */
+    const listed = (await db.select().from(erpTransporters)).length;
+    const unlisted = await L.uploadLrs(ctx, [{ lrNo: "LR-x1", transporter: "The Great India Transport" }]);
+    assert.equal(unlisted.ok, false);
+    assert.match(msg(unlisted), /^Row 1: "The Great India Transport" is not on the transporter list/);
+    assert.equal(msg(await L.editLr(ctx, lr.id, { lrNo: "LR-7781", transporter: "VRL Logistcs" })).includes("not on the transporter list"), true);
+    assert.equal((await db.select().from(erpTransporters)).length, listed, "nothing typed or uploaded adds a transporter");
+    /* The same name in other capitals, spacing or "Pvt Ltd" is the listed one, saved as the list spells it. */
+    const spelled = await L.uploadLrs(ctx, [{ lrNo: "LR-x2", transporter: "  gati pvt. ltd " }]);
+    assert.ok(spelled.ok, msg(spelled));
+    assert.equal((await L.uploadedLrs()).find((l) => l.lrNo === "LR-X2")?.transporter, "Gati");
+    for (const sid of spelled.ok ? spelled.data.ids : []) assert.ok((await L.voidLr(ctx, sid, "test row", (await confirmed("erp-lr-void", sid)).confirmation)).ok);
 
     /* No field is required: two LRs with no number from one transporter both land, an empty row is skipped,
        and one with no number cannot be attached until logistics types it off the photo. */

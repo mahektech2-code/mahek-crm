@@ -134,6 +134,8 @@ before(async () => {
     { customerId: "cus_shree", transporter: "VRL", standingInstructions: "Call first", weightType: "With Weight" },
     { customerId: "cus_new", pendingActivation: true },
   ]);
+  await db.execute(sql`delete from erp_transporters where id in ('etr_sales_vrl', 'etr_sales_shree')`);
+  await db.execute(sql`insert into erp_transporters (id, name) values ('etr_sales_vrl', 'VRL'), ('etr_sales_shree', 'Shree Roadways') on conflict do nothing`);
   /* The target is the CRM's Monthly Targets row for the month dispatched in. */
   await db.insert(monthlyTargets).values({ id: id("mt"), customerId: "cus_shree", year: 2026, month: 9, targetAmount: 500000, isDefault: false });
 
