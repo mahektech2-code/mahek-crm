@@ -194,3 +194,39 @@ describe("products and the message", () => {
     assert.match(body, /Track your order: https:\/\/one\.mahekindia\.com\/t\/abc/);
   });
 });
+
+describe("the last mile: delivered to the door, or collected (0296)", () => {
+  const upTo = (steps: string[]) => steps.map((s, i) => ({ step: s as never, at: `2026-11-0${i + 1}T06:00:00.000Z` }));
+  const journey = ["confirmed", "preparing", "ready", "invoice", "dispatched", "at_transport", "in_transit", "at_destination"];
+
+  test("ready for pickup is read off its stage, and only once reported", () => {
+    assert.equal(stepForStage("Ready for Pickup"), "ready_for_pickup");
+    const facts = { lines: [line({ status: "Ready", billed: true, dispatched: true, dispatchedAt: "2026-10-31T12:40:00.000Z", invoiceCheck: "Approved", invoiceCheckedAt: "2026-10-31T10:00:00.000Z" })] };
+    const at = deriveSteps({ ...facts, transports: [road({ stage: "Reached Destination Area", events: [{ kind: "stage", stage: "Reached Destination Area", at: "2026-11-03T06:00:00.000Z" }] })] });
+    assert.ok(!at.has("ready_for_pickup"));
+    const ready = deriveSteps({ ...facts, transports: [road({ stage: "Ready for Pickup", events: [{ kind: "stage", stage: "Ready for Pickup", at: "2026-11-04T06:00:00.000Z" }] })] });
+    assert.equal(ready.get("ready_for_pickup"), "2026-11-04T06:00:00.000Z");
+    assert.ok(!ready.has("out_for_delivery"), "collecting is not going out for delivery");
+  });
+
+  test("at destination, out for delivery is what is waited on — never pickup", () => {
+    const v = buildJourney(upTo(journey), []);
+    const pending = v.entries.filter((e) => e.type === "step" && e.state === "pending").map((e) => (e.type === "step" ? e.step : ""));
+    assert.deepEqual(pending, ["out_for_delivery", "delivered"]);
+  });
+
+  test("ready for pickup is the current step, and out for delivery is no longer waited on", () => {
+    const v = buildJourney(upTo([...journey, "ready_for_pickup"]), []);
+    assert.equal(v.current, "ready_for_pickup");
+    assert.equal(v.currentLabel, "Ready for Pickup");
+    const pending = v.entries.filter((e) => e.type === "step" && e.state === "pending").map((e) => (e.type === "step" ? e.step : ""));
+    assert.deepEqual(pending, ["delivered"]);
+  });
+
+  test("delivered after a pickup: out for delivery is not named as unreported", () => {
+    const v = buildJourney(upTo([...journey, "ready_for_pickup", "delivered"]), []);
+    assert.deepEqual(v.unreported, []);
+    const door = buildJourney(upTo([...journey, "out_for_delivery", "delivered"]), []);
+    assert.deepEqual(door.unreported, [], "pickup is an alternative, never missing");
+  });
+});

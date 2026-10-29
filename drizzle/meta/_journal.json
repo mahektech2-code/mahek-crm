@@ -2052,6 +2052,13 @@
       "when": 1793606700000,
       "tag": "0295_dispatch_stickers",
       "breakpoints": true
+    },
+    {
+      "idx": 293,
+      "version": "7",
+      "when": 1793606800000,
+      "tag": "0296_lr_route",
+      "breakpoints": true
     }
   ]
 }

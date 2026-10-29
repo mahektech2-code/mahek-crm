@@ -9158,6 +9158,20 @@ never `/api/attachments`.
 order flow reads it as Delivery Pending Confirmation, like the destination office.
 No expected delivery is shown before dispatch, and nothing implies live GPS.
 
+**AN LR HAS A ROUTE, TOLD AS IT IS REPORTED** (0296). The Update LR dialog takes
+the godown the transporter dispatched it from, every city it has reached since
+the last call — each its own `checkpoint` event with `city`, dated the day it got
+there, so a week caught up in one call still reads as a week — the destination
+city (empty falls back to the LR's own), and the last mile, which goes one of two
+ways: Out for Delivery, or **Ready for Pickup** with where the party collects it
+and whom to ask. `current_city` is the newest place any event named, never typed
+twice. A new city is news and is told like a stage that moved. Pickup and
+delivery are alternatives, not steps: the strip draws them as one rung, the
+customer's journey never waits on pickup or names it unreported, and once pickup
+happens out-for-delivery is not waited on either. "Dispatched from godown" is not
+a stage — it saves In Transit plus the godown, and a corrected godown replaces
+the old start on the route rather than adding a second.
+
 ## Hire — hiring and onboarding
 
 `/hire`, its own app. The PRD and functional spec are the client's; the

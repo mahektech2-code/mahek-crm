@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachRefusal, callDue, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, packagesOf, phaseOf, rankForLr, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
+import { attachRefusal, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
 
 test("the phase is the stage and the LR together, never stored", () => {
   assert.equal(phaseOf({ lrNo: null, materialStage: "Dispatched" }), "toTransport");
@@ -105,4 +105,41 @@ test("paid freight is read however it was stored", () => {
   assert.equal(freightWord("To Pay"), "To Pay");
   assert.equal(freightWord("Courier"), "Courier", "anything else is shown as stored");
   assert.equal(freightWord(null), null);
+});
+
+test("cities reached: a place and a day each, never in the future or before the goods left, oldest first (0296)", () => {
+  const ok = cleanCities(
+    [
+      { city: "  indore ", on: "2026-10-30" },
+      { city: "Nashik", on: "2026-10-29" },
+      { city: "", on: "" },
+      { city: "Indore", on: "2026-10-30" },
+    ],
+    "2026-10-30",
+    "2026-10-28",
+  );
+  assert.ok(ok.ok);
+  assert.deepEqual(ok.ok && ok.cities, [
+    { city: "Nashik", on: "2026-10-29" },
+    { city: "indore", on: "2026-10-30" },
+  ]);
+  assert.match((cleanCities([{ city: "Pune", on: "2026-10-31" }], "2026-10-30", null) as { error: string }).error, /future/);
+  assert.match((cleanCities([{ city: "Pune", on: "2026-10-20" }], "2026-10-30", "2026-10-28") as { error: string }).error, /left on/);
+  assert.match((cleanCities([{ city: "", on: "2026-10-30" }], "2026-10-30", null) as { error: string }).error, /Name the city/);
+  assert.match((cleanCities([{ city: "Pune", on: "" }], "2026-10-30", null) as { error: string }).error, /day it reached Pune/);
+  const many = Array.from({ length: MAX_CITIES_PER_UPDATE + 1 }, (_, i) => ({ city: `Town ${i}`, on: "2026-10-30" }));
+  assert.ok(!cleanCities(many, "2026-10-30", null).ok);
+  assert.equal(cleanPlace("   "), null);
+  assert.equal(cleanPlace("  Bhiwandi   booking  office "), "Bhiwandi booking office");
+});
+
+test("the route line says only what was reported, and a ready-for-pickup message says where to collect (0296)", () => {
+  assert.equal(routeSentence({ stage: "In Transit", dispatchedFrom: "Bhiwandi", city: "Bhiwandi", cityOn: null, destination: "Indore" }), "Dispatched from Bhiwandi · going to Indore.");
+  assert.equal(routeSentence({ stage: "In Transit", dispatchedFrom: "Bhiwandi", city: "Nashik", cityOn: "2026-10-29", destination: "Indore" }), "Reached Nashik on Thu 29 Oct · going to Indore.");
+  assert.equal(routeSentence({ stage: "Reached Destination Area", city: "Indore", cityOn: "2026-10-30", destination: "Indore" }), "Reached Indore on Fri 30 Oct.");
+  assert.equal(routeSentence({ stage: "In Transit" }), null);
+  const f: MessageFacts = { party: "ADYESH", bills: ["MMI/26-27/1868"], lrNo: "956149749", lrDate: null, transporter: "Kerala Roadways", packages: null, stage: "Ready for Pickup", expectedOn: null, trackUrl: null, signature: "Mahek", pickupPoint: "Kerala Roadways, Vadakara office", pickupContact: "Suresh 98xxxxxx" };
+  const body = customerMessage("stage", f);
+  assert.match(body, /ready for you to collect from Kerala Roadways/);
+  assert.match(body, /Collect it from: Kerala Roadways, Vadakara office \(Suresh 98xxxxxx\)/);
 });

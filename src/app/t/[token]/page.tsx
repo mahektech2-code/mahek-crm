@@ -22,6 +22,8 @@ const WHEN_SHORT = new Intl.DateTimeFormat("en-IN", { timeZone: APP_TIMEZONE, da
 const when = (iso: string | null) => (iso ? WHEN.format(new Date(iso)).replace(/\b(am|pm)\b/, (m) => m.toUpperCase()) : "");
 const whenShort = (iso: string | null) => (iso ? WHEN_SHORT.format(new Date(iso)).replace(/\b(am|pm)\b/, (m) => m.toUpperCase()) : "");
 const day = (d: string | null) => (d ? longDay(d) : "");
+const DAY_SHORT = new Intl.DateTimeFormat("en-IN", { timeZone: APP_TIMEZONE, weekday: "short", day: "numeric", month: "short" });
+const dayShort = (iso: string) => DAY_SHORT.format(new Date(iso));
 
 export default async function OrderTrackingPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
@@ -83,8 +85,22 @@ function TrackView({ v }: { v: OrderTrackingView }) {
                 <>
                   <dt className="text-muted">Last updated</dt>
                   <dd className="text-ink">{when(v.status.lastUpdated) || "—"}</dd>
-                  <dt className="text-muted">Expected delivery</dt>
-                  <dd className="text-ink">{v.expectedOn ? day(v.expectedOn) : "Not available yet"}</dd>
+                  {v.route.length && !v.route.at(-1)!.from ? (
+                    <>
+                      <dt className="text-muted">Last reported at</dt>
+                      <dd className="text-ink">
+                        {v.route.at(-1)!.city} · {dayShort(v.route.at(-1)!.at)}
+                      </dd>
+                    </>
+                  ) : null}
+                  {v.destination ? (
+                    <>
+                      <dt className="text-muted">Going to</dt>
+                      <dd className="text-ink">{v.destination}</dd>
+                    </>
+                  ) : null}
+                  <dt className="text-muted">{v.pickup ? "Collect by" : "Expected delivery"}</dt>
+                  <dd className="text-ink">{v.expectedOn ? day(v.expectedOn) : v.pickup ? "Ready now" : "Not available yet"}</dd>
                 </>
               )}
               {v.transporter ? (
@@ -98,6 +114,40 @@ function TrackView({ v }: { v: OrderTrackingView }) {
               ) : null}
             </dl>
           </section>
+
+          {v.pickup ? (
+            <section role="status" className="grid gap-1 rounded-card border border-success-soft bg-success-soft px-4 py-3">
+              <h2 className="text-base font-semibold text-success">Ready for you to collect</h2>
+              <p className="text-sm text-ink">
+                Collect from <span className="font-semibold">{v.pickup.point}</span>
+                {v.transporter ? ` (${v.transporter})` : ""}.
+              </p>
+              {v.pickup.contact ? <p className="text-sm text-ink">Ask for: {v.pickup.contact}</p> : null}
+              <p className="text-xs text-body">Please carry the LR number{v.lrNo ? ` — ${v.lrNo}` : ""} — the office asks for it.</p>
+            </section>
+          ) : null}
+
+          {v.route.length ? (
+            <section className="rounded-card border border-line bg-surface px-4 py-3.5">
+              <h2 className="mb-2 text-base font-semibold text-ink">On the way</h2>
+              <ol className="grid gap-1.5">
+                {v.route.map((r, i) => (
+                  <li key={`${r.at}${r.city}`} className="grid grid-cols-[16px_1fr_auto] items-baseline gap-2 text-sm">
+                    <span aria-hidden className={`mt-1 h-2.5 w-2.5 rounded-full ${i === v.route.length - 1 ? "bg-brand" : "bg-success"}`} />
+                    <span className={i === v.route.length - 1 ? "font-semibold text-ink" : "text-body"}>{r.from ? `Dispatched from ${r.city}` : `Reached ${r.city}`}</span>
+                    <span className="text-xs text-muted">{dayShort(r.at)}</span>
+                  </li>
+                ))}
+                {v.destination && v.route.at(-1)!.city.toLowerCase() !== v.destination.toLowerCase() && !done ? (
+                  <li className="grid grid-cols-[16px_1fr_auto] items-baseline gap-2 text-sm">
+                    <span aria-hidden className="mt-1 h-2.5 w-2.5 rounded-full border-2 border-line-strong" />
+                    <span className="text-muted">Going to {v.destination}</span>
+                    <span />
+                  </li>
+                ) : null}
+              </ol>
+            </section>
+          ) : null}
 
           <section className="rounded-card border border-line bg-surface px-4 py-3.5 lg:hidden">
             <Products v={v} />
