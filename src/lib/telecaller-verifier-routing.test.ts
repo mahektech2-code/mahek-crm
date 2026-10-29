@@ -126,7 +126,7 @@ const asSeema = () => {
 };
 
 const verify = (customerId: string) =>
-  verifyProspect({ customerId, outcome: "verified", answers: {}, corrections: [] });
+  verifyProspect({ customerId, outcome: "verified", answers: { current_product: "Asian Paints PU" }, corrections: [] });
 
 const NO_REGION = /No Sales Manager covers this lead's region\. Ask an administrator\./;
 

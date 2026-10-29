@@ -7,6 +7,11 @@ import { useToast } from "@/components/ui/toast";
 import { VERIFICATION_SECTIONS, questionsInSection } from "@/lib/lead-labels";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
 import { Button } from "@/components/console/parts";
+import {
+  REQUIRED_WHEN_VERIFIED,
+  isActiveQuestion,
+  missingRequiredAnswers,
+} from "@/lib/verification-form";
 
 /**
  * §8 — the sales manager's verification call, as one screen.
@@ -66,6 +71,10 @@ export function VerificationForm({
   const [followUpNote, setFollowUpNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  /* The same active list as the popup and the desk, and the same Q14 rule: what
+     the shop uses now is asked of a successful verification only. */
+  const missingRequired = missingRequiredAnswers(verdict, answers);
 
   async function submit() {
     if (!verdict) return;
@@ -135,13 +144,23 @@ export function VerificationForm({
       </div>
 
       <div className="max-h-[46vh] overflow-y-auto pr-1">
-        {VERIFICATION_SECTIONS.map((s) => (
-          <Section key={s.id} title={s.title}>
-            {questionsInSection(s.id).map((q) => (
-              <Ask key={q.id} q={q} value={answers[q.id] ?? ""} onChange={setAnswers} />
-            ))}
-          </Section>
-        ))}
+        {VERIFICATION_SECTIONS.map((s) => {
+          const asked = questionsInSection(s.id).filter((q) => isActiveQuestion(q.id));
+          if (!asked.length) return null;
+          return (
+            <Section key={s.id} title={s.title}>
+              {asked.map((q) => (
+                <Ask
+                  key={q.id}
+                  q={q}
+                  value={answers[q.id] ?? ""}
+                  onChange={setAnswers}
+                  required={verdict === "verified" && REQUIRED_WHEN_VERIFIED.includes(q.id)}
+                />
+              ))}
+            </Section>
+          );
+        })}
       </div>
 
       <div className="mt-4 border-t border-divider pt-3">
@@ -165,7 +184,7 @@ export function VerificationForm({
 
         <label className="mt-3 block">
           <span className="mb-1 block text-[13px] font-medium text-ink">
-            {verdict === "follow_up" ? "What has to happen · required" : "Anything to add"}
+            Remarks / Next Action{verdict === "follow_up" ? " · required" : " · optional"}
           </span>
           <textarea
             value={followUpNote}
@@ -189,13 +208,17 @@ export function VerificationForm({
         </Button>
         <Button
           tone="primary"
-          disabled={busy || !verdict || (verdict === "follow_up" && !followUpNote.trim())}
+          disabled={
+            busy || !verdict || (verdict === "follow_up" && !followUpNote.trim()) || missingRequired.length > 0
+          }
           title={
             !verdict
               ? "Say whether this is verified — it is the only part the rest of the funnel reads."
               : verdict === "follow_up" && !followUpNote.trim()
                 ? "Say what has to happen. The salesman cannot work it out from the words alone."
-                : undefined
+                : missingRequired.length
+                  ? "Say what the shop is using now — a verification cannot be recorded without it."
+                  : undefined
           }
           onClick={() => void submit()}
         >
@@ -221,14 +244,19 @@ function Ask({
   q,
   value,
   onChange,
+  required = false,
 }: {
   q: { id: string; ask: string };
   value: string;
   onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  required?: boolean;
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[13px] text-body">{q.ask}</span>
+      <span className="mb-1 block text-[13px] text-body">
+        {q.ask}
+        {required ? <span className="text-warn-ink"> · required</span> : null}
+      </span>
       <input
         value={value}
         onChange={(e) => onChange((prev) => ({ ...prev, [q.id]: e.target.value }))}

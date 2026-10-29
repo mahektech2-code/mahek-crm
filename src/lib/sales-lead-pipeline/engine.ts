@@ -42,6 +42,48 @@ export const SALESMAN_FINDING_FIELDS: FindingField[] = [
   { key: "buyer", findingId: null, label: "Buyer", get: (l) => l.buyer ?? null },
 ];
 
+const CUSTOMER_TYPE_LABEL: Record<string, string> = {
+  dealer: "Dealer",
+  manufacturer: "Manufacturer",
+  distributor: "Distributor",
+  retailer: "Retailer",
+};
+
+const salesmanField = (key: string): FindingField => SALESMAN_FINDING_FIELDS.find((f) => f.key === key)!;
+
+/**
+ * What the manager's VERIFICATION checks, in the order the Verification popup
+ * lists it — the same findings, so the desk and the popup cannot disagree about
+ * what a call is about.
+ *
+ * A list of its own and not an edit to `SALESMAN_FINDING_FIELDS`, which the
+ * Convert modal and the findings card also read. Contact person and decision
+ * maker are not here (the call no longer asks them; `isActiveFinding` is the
+ * rule), credit, application and business type are, and the buyer is a finding
+ * only where it is somebody other than the decision maker — the modal applies
+ * that with `buyerNeedsCheck`, on the stored values.
+ */
+export const VERIFY_FINDING_FIELDS: FindingField[] = [
+  salesmanField("competitor"),
+  salesmanField("monthlyLitres"),
+  salesmanField("potentialPaise"),
+  salesmanField("product"),
+  {
+    key: "creditDays",
+    findingId: "credit_days",
+    label: "Credit Days",
+    get: (l) => (l.creditDaysWanted != null ? `${l.creditDaysWanted} days` : null),
+  },
+  { key: "application", findingId: "application", label: "Application", get: (l) => l.application ?? null },
+  {
+    key: "customerType",
+    findingId: "customer_type",
+    label: "Customer Type",
+    get: (l) => (l.customerType ? (CUSTOMER_TYPE_LABEL[l.customerType] ?? l.customerType) : null),
+  },
+  { key: "buyer", findingId: "buyer", label: "Buyer", get: (l) => l.buyer ?? null },
+];
+
 /** The findings Convert to Prospect confirms — the ones `saveProspectFields` can store. */
 export const CONVERSION_FIELD_KEYS = ["monthlyLitres", "potentialPaise", "product", "competitor", "contact", "decisionMaker"];
 

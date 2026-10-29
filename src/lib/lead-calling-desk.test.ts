@@ -157,7 +157,7 @@ const stageOf = async (leadId: string) =>
 async function managerVerifies(leadId: string, outcome: "verified" | "follow_up" | "not_qualified") {
   setTestUser(manager);
   const r = await recordLeadValidationCall(leadId, {
-    answers: {},
+    answers: { current_product: "Asian Paints PU" },
     outcome,
     followUpNote: outcome === "verified" ? undefined : "The buyer was not on the call.",
     failureReasonCode: outcome === "not_qualified" ? "denies_enquiry" : undefined,

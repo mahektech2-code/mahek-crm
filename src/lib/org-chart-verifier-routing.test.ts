@@ -577,7 +577,7 @@ describe("7. routing never changes who follows a lead up", () => {
 /* ======================================= rules 8 and 9: who may do what to it */
 
 describe("8 and 9. only the designated verifier verifies; review stays separate", () => {
-  const answers = { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" };
+  const answers = { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes", current_product: "Asian Paints PU" };
 
   async function prospectUnder(salesman: U) {
     const lead = await makeLead({
@@ -611,7 +611,7 @@ describe("8 and 9. only the designated verifier verifies; review stays separate"
     await configure();
     const lead = await prospectUnder(rakesh);
     asPritesh();
-    const refused = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const refused = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(refused.ok, false);
     assert.notEqual(refused.ok ? "" : refused.error, "");
     assert.equal((await row(lead.id)).leadVerifiedAt, null);
@@ -1005,7 +1005,7 @@ describe("A. a creator nobody can name is the desk verifier's, and nobody else's
     assert.equal((await route(lead.id)).kind, "refuse");
     assert.equal(await canVerifyLeadById(manoj, lead.id, { designated: true }), false);
     asPritesh();
-    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(r.ok, false);
   });
 });

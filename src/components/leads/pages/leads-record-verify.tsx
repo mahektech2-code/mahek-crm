@@ -6,6 +6,7 @@ import { money } from "@/lib/format";
 import { VERIFICATION_FINDINGS } from "@/lib/lead-labels";
 import { DESK_FIELDS } from "@/lib/engines/lead-calling-desk";
 import { buyerNeedsCheck } from "@/lib/verification-buyer";
+import { isActiveFinding } from "@/lib/verification-form";
 import { today } from "@/lib/recompute";
 import { getConfig } from "@/lib/config/store";
 import { leadRecord, managerCalls } from "@/lib/services/lead-console-service";
@@ -114,7 +115,7 @@ export async function Body({
      decision maker — compared on the two STORED values, never on the labels
      drawn above. */
   const showBuyer = buyerNeedsCheck(record.buyer, record.decisionMaker);
-  const findings: Finding[] = VERIFICATION_FINDINGS.filter((f) => f.id !== "buyer" || showBuyer).map((f) => ({
+  const findings: Finding[] = VERIFICATION_FINDINGS.filter((f) => isActiveFinding(f.id) && (f.id !== "buyer" || showBuyer)).map((f) => ({
     id: f.id,
     label: f.label,
     reported: reported[f.id] ?? null,

@@ -319,7 +319,7 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
     const ok = await verifyProspect({
       customerId: mine.id,
       outcome: "verified",
-      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
     assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
@@ -330,7 +330,7 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
     const refused = await verifyProspect({
       customerId: theirs.id,
       outcome: "verified",
-      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
     assert.equal(refused.ok, false);
@@ -352,7 +352,7 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
     const refused = await verifyProspect({
       customerId: other.id,
       outcome: "verified",
-      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
     assert.equal(refused.ok, false);
@@ -361,7 +361,7 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
     const r = await verifyProspect({
       customerId: mine.id,
       outcome: "verified",
-      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);

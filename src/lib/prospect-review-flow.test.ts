@@ -232,7 +232,7 @@ describe("the Verify call cannot get past what the review enforces", () => {
   test("a lead.verify holder who is not the designated verifier cannot verify by a call", async () => {
     const lead = await prospect();
     setTestUser(otherMgr);
-    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(r.ok, false);
     const after = await row(lead.id);
     assert.equal(after.leadStage, "prospect");
@@ -243,7 +243,7 @@ describe("the Verify call cannot get past what the review enforces", () => {
     const lead = await prospect();
     setTestUser(otherMgr);
     const r = await verifyProspect({
-      customerId: lead.id, outcome: "verified", answers: {}, corrections: [], expectCorrections: false,
+      customerId: lead.id, outcome: "verified", answers: { current_product: "Asian Paints PU" }, corrections: [], expectCorrections: false,
     } as never);
     assert.equal(r.ok, false);
     assert.equal((await row(lead.id)).leadVerifiedAt, null);
@@ -251,7 +251,7 @@ describe("the Verify call cannot get past what the review enforces", () => {
 
   test("a call cannot verify while required Prospect answers are missing", async () => {
     const lead = await prospect({ gstin: null, leadCompetitor: null });
-    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(r.ok, false);
     if (!r.ok) assert.match(r.error, /Not ready to verify/);
     const after = await row(lead.id);
@@ -262,8 +262,79 @@ describe("the Verify call cannot get past what the review enforces", () => {
   test("the designated verifier can still verify by a call", async () => {
     const lead = await prospect();
     setTestUser(mgr);
-    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await row(lead.id)).leadStage, "qualification");
+  });
+});
+
+describe("what the shop is using now is required to verify, and only to verify", () => {
+  test("a call that verifies is refused without it, and nothing is recorded", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.code, "validation");
+      assert.match(r.error, /what the shop is using now/i);
+    }
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.leadVerifiedAt, null);
+    const calls = await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id));
+    assert.equal(calls.length, 0);
+  });
+
+  test("a blank or whitespace-only answer is not an answer", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "   " }, outcome: "verified" });
+    assert.equal(r.ok, false);
+    assert.equal((await row(lead.id)).leadVerifiedAt, null);
+  });
+
+  test("with it, the call verifies and the answer is stored", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    const [call] = await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id));
+    assert.equal(call.currentProduct, "Asian Paints PU");
+  });
+
+  test("Verified-with-corrections (the desk) is held to it too", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const refused = await verifyProspect({
+      customerId: lead.id, outcome: "verified", answers: {}, corrections: [], expectCorrections: false,
+    } as never);
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.match(refused.error, /what the shop is using now/i);
+    assert.equal((await row(lead.id)).leadVerifiedAt, null);
+    const ok = await verifyProspect({
+      customerId: lead.id, outcome: "verified", answers: { current_product: "Asian Paints PU" }, corrections: [], expectCorrections: false,
+    } as never);
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
+  });
+
+  test("a follow-up is not asked for it", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, {
+      answers: {}, outcome: "follow_up", followUpNote: "The buyer was not on the call.",
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "prospect");
+  });
+
+  test("a failed verification is not asked for it either", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, {
+      answers: {}, outcome: "not_qualified", followUpNote: "The shop denies any enquiry.", failureReasonCode: "denies_enquiry",
+    });
+    assert.ok(!(!r.ok && /what the shop is using now/i.test(r.error)), "Q14 must not be demanded of a failed verification");
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
   });
 });

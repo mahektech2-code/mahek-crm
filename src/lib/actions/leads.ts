@@ -1465,6 +1465,16 @@ export async function recordLeadValidationCall(
       await requireProspectVerifier(customerId);
       const missing = await prospectVerificationRefusal(customerId);
       if (missing) return err(missing, "rule_violation");
+
+      /* THE ANSWER A SUCCESSFUL VERIFICATION CANNOT BE WITHOUT. What the shop is
+         using now is asked of Verified and Verified-with-corrections only; a
+         follow-up could not confirm it and a failed verification is a lead that
+         turned out false, so neither is refused for lacking it. This is the WEB
+         action: the handset records its verifications through its own handler,
+         so builds in the field and their queued offline records are unaffected. */
+      const { missingRequiredAnswers, requiredAnswerRefusal } = await import("../verification-form");
+      const unanswered = missingRequiredAnswers("verified", c.answers);
+      if (unanswered.length) return err(requiredAnswerRefusal(unanswered), "validation");
     }
 
     /* Only the DECLARED questions are stored — seventeen now, across four
