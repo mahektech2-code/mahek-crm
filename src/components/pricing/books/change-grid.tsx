@@ -844,7 +844,7 @@ function InstructionModal({ change, onClose, onDone }: { change: ChangeView; onC
         <div className="mt-4">
           <div className="rounded-control border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
             <b>Understood{preview.by !== "MahekOne" ? ` by ${preview.by}` : ""}:</b> {preview.words}
-            <div className="mt-0.5 text-[12px] text-muted">Every price below is computed by MahekOne from this change's current prices; the reader only described the rule.</div>
+            <div className="mt-0.5 text-[12px] text-muted">Every price below is computed by MahekOne from this change&apos;s current prices; the reader only described the rule.</div>
           </div>
           {preview.questions.length ? (
             <div className="mt-2 space-y-1">
