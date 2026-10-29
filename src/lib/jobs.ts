@@ -161,6 +161,8 @@ export type JobName =
   /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
   | "bank-statement-pdfs"
   | "price-list-stale-reads"
+  /** Price Desk · Today: the morning check over every live book, written for today. Nightly; idempotent. */
+  | "price-books-morning"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
@@ -246,6 +248,15 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* Old price lists whose successor has taken over — the hourly does this
      too; the nightly is the net on a deployment whose hourly is not called. */
   results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
+
+  /* The Price Desk's morning check — after the supersede, so it reads the
+     revisions in force. A finding is a courtesy: it must never cost the
+     nightly the steps after it. */
+  try {
+    results.push(await run("price-books-morning", priceBooksMorningStep, triggeredById));
+  } catch (e) {
+    console.error("Nightly: price books morning check failed:", e instanceof Error ? e.message : e);
+  }
 
   /* HRMS's monthly paid-leave credit. Nightly rather than on the 1st: the
      partial unique index makes every run after the first a no-op, and a
@@ -774,6 +785,13 @@ async function bankPdfStep() {
   return { recordsAffected: r.deleted, detail: `${r.deleted} statement PDF${r.deleted === 1 ? "" : "s"} deleted` };
 }
 
+/** The Price Desk's morning check, for today's business date (`services/price-today-service.ts`). */
+async function priceBooksMorningStep() {
+  const { runMorningCheck } = await import("./services/price-today-service");
+  const r = await runMorningCheck(await today());
+  return { recordsAffected: r.written, detail: r.detail };
+}
+
 /** Price-list reads that died part-way become failed, so "Read again" is offered. */
 async function staleReadsStep() {
   const { failStaleReads } = await import("./services/price-list-parse-service");
@@ -1262,6 +1280,8 @@ export async function runJob(
       return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
     case "price-lists-supersede":
       return [await run("price-lists-supersede", priceListsSupersedeStep, triggeredById)];
+    case "price-books-morning":
+      return [await run("price-books-morning", priceBooksMorningStep, triggeredById)];
     case "bank-statement-pdfs":
       return [await run("bank-statement-pdfs", bankPdfStep, triggeredById)];
     case "hrms-leave-credit":
