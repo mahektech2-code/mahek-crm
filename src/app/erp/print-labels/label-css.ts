@@ -27,6 +27,7 @@ export const LABEL_CSS = `
    give descenders room inside the clip without moving anything. */
 .lb .cut { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0.15em 0; margin: -0.15em 0; }
 .lb .clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lb .clamp3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .lb .cell { display: flex; flex-direction: column; gap: 0.9mm; min-width: 0; }
 .lb .cell .v { font-weight: 800; font-size: 13pt; line-height: 1; }
 .lb .top { display: flex; flex-direction: row; }
@@ -75,17 +76,26 @@ export const LABEL_CSS = `
 .lb-pur .remark { font-size: 7.5pt; line-height: 1.2; }
 
 /* ---- the dispatch label, 80 x 80 ---- */
-.lb-dis .to { display: flex; flex-direction: column; gap: 1.5mm; }
+/* No block gives way to another: a sticker that ran out of room would print one line over the next. */
+.lb-dis > * { flex-shrink: 0; }
 .lb-dis .meta { display: flex; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 3mm; font-size: 7pt; line-height: 1; white-space: nowrap; }
+.lb-dis .top { gap: 3mm; align-items: flex-start; }
+.lb-dis .to { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1.5mm; }
 .lb-dis .party { font-weight: 800; line-height: 1.05; }
-.lb-dis .area { font-weight: 700; font-size: 12pt; line-height: 1; }
-.lb-dis .billed { font-size: 8pt; line-height: 1; }
-.lb-dis .goods { display: flex; flex-direction: column; gap: 2.2mm; border-top: 0.5mm solid #000; padding-top: 2.2mm; }
-.lb-dis .sku { font-weight: 800; line-height: 1.1; }
+.lb-dis .area { font-weight: 700; font-size: 11pt; line-height: 1; }
+.lb-dis .billed { line-height: 1.12; }
+.lb-dis .code { width: 19mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 1mm; }
+.lb-dis .code .id { font-size: 9pt; line-height: 1; white-space: nowrap; letter-spacing: 0.2px; }
+.lb-dis .goods { display: flex; flex-direction: column; gap: 1.6mm; border-top: 0.5mm solid #000; padding-top: 1.8mm; }
+.lb-dis .sku { font-weight: 800; line-height: 1.05; }
 .lb-dis .facts { display: flex; flex-direction: row; justify-content: space-between; align-items: flex-end; gap: 3mm; }
 .lb-dis .facts .cell .v { white-space: nowrap; }
 .lb-dis .facts .cell:last-child { align-items: flex-end; }
-.lb-dis .remark { font-size: 7.5pt; line-height: 1.15; }
-.lb-dis .carrier { display: flex; flex-direction: column; gap: 0.9mm; border-top: 0.5mm solid #000; padding-top: 2mm; }
-.lb-dis .carrier .v { font-weight: 800; line-height: 1.05; }
+.lb-dis .remark { font-size: 7pt; line-height: 1.12; }
+.lb-dis .carrier { display: flex; flex-direction: row; justify-content: space-between; align-items: flex-end; gap: 3mm; border-top: 0.5mm solid #000; padding-top: 1.8mm; }
+.lb-dis .carrier .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.9mm; }
+.lb-dis .carrier .who .v { font-weight: 800; line-height: 1.05; }
+.lb-dis .carrier .piece { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 0.9mm; }
+.lb-dis .carrier .piece .n { font-weight: 800; font-size: 17pt; line-height: 0.9; white-space: nowrap; }
+.lb-dis .carrier .piece .of { font-size: 10pt; font-weight: 700; }
 `;

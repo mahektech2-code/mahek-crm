@@ -3,9 +3,10 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { decideOverride, loadingLines, lotInfo, requestOverride, scanOntoOrder, unitInfo, unscanUnit, type LoadingLine } from "@/lib/erp/dispatch";
 import { looksLikeUnitId, normaliseCode } from "@/lib/erp/engines/trace";
-import { lorryKeyOf, lorryLeft, lorryName } from "./rules";
+import { stickerInfo, stickerPlaces, stickeredLines, type StickerInfo } from "@/lib/erp/dispatch-stickers";
+import { lorryKeyOf, lorryLeft, lorryName, stickerCode } from "./rules";
 import { bootstrap, erpCtxFor, factoryAudit, inList, nextTaskId, nowHM, teamDefaults, today, writeTeam, type FactoryCtx } from "./server";
-import type { Lorry, LorryBoard, LorryFind, LorryItem, LorryScan, Team } from "./types";
+import type { Lorry, LorryBoard, LorryFind, LorryHalf, LorryItem, LorryScan, LorryStickers, Team } from "./types";
 
 /* ---------------------------------------------------------------------------
  * LOADING IS BY TRANSPORTER, ITEM BY ITEM.
@@ -27,6 +28,14 @@ import type { Lorry, LorryBoard, LorryFind, LorryItem, LorryScan, Team } from ".
  *
  * A loading job is made at the FIRST SCAN, not when a transport is opened:
  * looking starts nothing, and "Suresh is loading" must mean somebody is.
+ *
+ * AN ORDER WHOSE DISPATCH STICKERS CARRY IDS LOADS BY BOX AND STICKER. The box
+ * label says what is in the box and which lot; the dispatch sticker says which
+ * order and which piece of it. Scanned in either order, the first is held on
+ * the phone as a `LorryHalf` and sent back with the second, and only the pair
+ * is judged and written — the box against the sticker's own line, the sticker
+ * claimed in the same transaction. An order printed before stickers had ids
+ * has none, and its boxes load alone as they always did.
  * ------------------------------------------------------------------------- */
 
 const NOT_YOURS = { title: "Not your work", text: "Loading is the dispatch team's.", fix: "Ask the Production Head." };
@@ -118,8 +127,9 @@ async function boardOf(fc: FactoryCtx, key: string, lines?: LoadingLine[]): Prom
   const [boxes, overrides] = ids.length
     ? await Promise.all([
         db.execute(sql`
-          select u.id, p.name as sku, u.lot_code as lot from erp_units u join products p on p.id = u.sku_id
-           where u.order_id in ${inList(ids)} and u.status = 'scanned' order by u.scanned_at desc nulls last, u.id`) as unknown as Promise<{ id: string; sku: string; lot: string }[]>,
+          select u.id, p.name as sku, u.lot_code as lot, s.id as sticker from erp_units u join products p on p.id = u.sku_id
+            left join erp_dispatch_stickers s on s.unit_id = u.id and s.status = 'active'
+           where u.order_id in ${inList(ids)} and u.status = 'scanned' order by u.scanned_at desc nulls last, u.id`) as unknown as Promise<{ id: string; sku: string; lot: string; sticker: string | null }[]>,
         db.execute(sql`
           select o.id, o.unit_id as unit, op.name as ordered, sp.name as scanned, o.reason, o.status, ru.name as by, o.requested_by_id as "byId",
                  du.name as "decidedBy", o.decision_note as note
@@ -136,7 +146,31 @@ async function boardOf(fc: FactoryCtx, key: string, lines?: LoadingLine[]): Prom
     boxes,
     overrides: overrides.map(({ byId, ...o }) => ({ ...o, mine: byId === fc.user.id })),
     canDecide: c.administrator || c.powers.has("dispatchOverride"),
+    stickers: await stickerCounts(ls),
   };
+}
+
+/** Per order on the lorry with stickers: how many are on, and the numbers still off. */
+async function stickerCounts(ls: LoadingLine[]): Promise<LorryStickers[]> {
+  const nos = [...new Set(ls.map((l) => l.orderNo))];
+  const places = await stickerPlaces(db, nos);
+  if (!places.length) return [];
+  const withIds = [...new Set(places.map((p) => p.orderNo))];
+  const parties = (await db.execute(sql`
+    select distinct on (o.order_no) o.order_no as no, coalesce(dc.name, bc.name) as party
+      from erp_orders o join customers bc on bc.id = o.billing_customer_id left join customers dc on dc.id = o.delivery_customer_id
+     where o.order_no in ${withIds}
+     order by o.order_no, o.created_at`)) as unknown as { no: number; party: string }[];
+  return withIds.map((no) => {
+    const mine = places.filter((p) => p.orderNo === no);
+    return {
+      orderNo: no,
+      party: parties.find((p) => Number(p.no) === no)?.party ?? "",
+      total: mine.length,
+      loaded: mine.filter((p) => p.unitId).length,
+      missing: mine.filter((p) => !p.unitId).map((p) => p.pos),
+    };
+  });
 }
 
 /** The lorry's screen: what is left, what is on, and the overrides. */
@@ -210,20 +244,107 @@ async function orderForBox(lines: LoadingLine[], code: string): Promise<number> 
   return [...lines].sort(dueOrder)[0].orderNo;
 }
 
-/** A box or lot label scanned on the lorry: the order chosen here, the verdict and the write the desk's. */
-export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId: string | null): Promise<LorryScan> {
+/** "Box 3 of 10" for a sticker's piece, or just the sticker's id where its place is not known. */
+const pieceOf = (s: StickerInfo) => (s.pos != null && s.of != null ? `${s.pos} of ${s.of}` : s.id);
+
+/**
+ * A box, a dispatch sticker or a lot label scanned on the lorry: the order
+ * chosen here, the verdict and the write the desk's. `held` is the half of a
+ * box-and-sticker pair scanned just before, which the phone sends back; every
+ * answer says which half the phone should hold next — none, once a pair is in.
+ */
+export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId: string | null, held: string | null = null): Promise<LorryScan> {
   key = String(key ?? "");
-  const code = normaliseCode(String(raw ?? ""));
-  const fail = (title: string, text: string, fix: string, board: LorryBoard | null, task: string | null, override: { sku: string; label: string }[] | null = null, repeat = false): LorryScan => ({ ok: false, code, title, text, fix, board, task, override, repeat });
-  if (!fc.dispatch) return fail(NOT_YOURS.title, NOT_YOURS.text, NOT_YOURS.fix, null, null);
+  const sticker = stickerCode(String(raw ?? ""));
+  const code = sticker ?? normaliseCode(String(raw ?? ""));
+  const heldSticker = held ? stickerCode(held) : null;
+  const heldBox = held && !heldSticker && looksLikeUnitId(normaliseCode(held)) ? normaliseCode(held) : null;
+  /* What the phone keeps holding when this scan changes nothing: the half it already had. */
+  const keep: LorryHalf | null = heldSticker ? { kind: "sticker", code: heldSticker, says: "Now scan the box this sticker is on" } : heldBox ? { kind: "box", code: heldBox, says: "Now scan the dispatch sticker on this box" } : null;
+  const fail = (title: string, text: string, fix: string, board: LorryBoard | null, task: string | null, override: { sku: string; label: string }[] | null = null, repeat = false, half: LorryHalf | null = keep): LorryScan => ({ ok: false, code, title, text, fix, board, task, override, repeat, half });
+  if (!fc.dispatch) return fail(NOT_YOURS.title, NOT_YOURS.text, NOT_YOURS.fix, null, null, null, false, null);
   if (!code) return fail("Nothing was read", "The label was empty.", "Scan the label again.", null, null);
   const lines = await linesOf(fc, key);
-  if (!lines.length) return fail("Nothing left for this transport", "Everything going with it is loaded, or the office has sent it.", "Go back to Home.", await boardOf(fc, key, lines), null);
+  if (!lines.length) return fail("Nothing left for this transport", "Everything going with it is loaded, or the office has sent it.", "Go back to Home.", await boardOf(fc, key, lines), null, null, false, null);
   const ctx = ctxFor(fc);
   /* The job is made by the first scan that puts something on — a wrong label starts nothing. */
   const asked = taskId && /^T-/.test(taskId) ? taskId : null;
 
+  /* The pair is in: the box is judged against the sticker's own line and the sticker claimed with it. */
+  const pair = async (box: string, s: StickerInfo): Promise<LorryScan> => {
+    const res = await scanOntoOrder(ctx, s.orderNo, box, { id: s.id, lineId: s.lineId });
+    if (!res.ok || !res.data.verdict.ok) {
+      const board = await boardOf(fc, key, lines);
+      if (!res.ok) return fail("Not counted", res.error, "Scan the box and its sticker again.", board, board.lorry?.task ?? null, null, false, null);
+      const v = res.data.verdict;
+      if (!v.ok && v.result === "duplicate" && board.boxes.some((b) => b.id === box && b.sticker === s.id))
+        return fail("Already on", `Box ${box} with sticker ${s.id} is already on this lorry.`, "Scan the next box.", board, board.lorry?.task ?? null, null, true, null);
+      if (!v.ok && v.result === "mismatch")
+        return fail("Box and sticker do not match", `Sticker ${s.id} is for ${s.skuName} (order ${s.orderNo}). ${lorryWords(v.message)}`, "Find the box this sticker belongs to, then scan both again.", board, board.lorry?.task ?? null, null, false, null);
+      const [title, fix] = VERDICT[v.ok ? "blocked" : v.result] ?? VERDICT.blocked;
+      return fail(title, lorryWords(v.message), fix, board, board.lorry?.task ?? null, null, false, null);
+    }
+    const v = res.data.verdict;
+    const job = await jobFor(fc, key, asked);
+    const board = await boardOf(fc, key);
+    await factoryAudit(fc, "factory.dispatch.box", job.id, `${box} with sticker ${s.id} (order ${s.orderNo}, ${pieceOf(s)}) loaded on ${lorryName(board.lorry?.name)} · ${v.allocation}`, { lorry: key, order: s.orderNo, sticker: s.id });
+    return {
+      ok: true,
+      code,
+      tone: v.allocation === "swap" ? "warn" : "ok",
+      title: v.allocation === "swap" ? "Lot swapped" : "On the lorry",
+      message: `${s.delivery} · ${pieceOf(s)}. ${lorryWords(v.message)}`,
+      board,
+      task: job.id,
+      data: null,
+      stale: v.allocation !== "matched" || job.made,
+      half: null,
+    };
+  };
+
+  if (sticker) {
+    const s = await stickerInfo(db, sticker);
+    const board = () => boardOf(fc, key, lines);
+    if (!s) return fail("We do not know this sticker", `No dispatch sticker is ${sticker}.`, "Type the code printed under the QR again. If it is torn, tell the dispatch head.", await board(), null);
+    if (s.status !== "active") return fail("This sticker was cancelled", `${sticker} was taken off order ${s.orderNo} when it changed.`, "Peel it off. Print the order's stickers again.", await board(), null);
+    if (s.unitId) {
+      const b = await board();
+      if (b.boxes.some((x) => x.id === s.unitId)) return fail("Already on", `Sticker ${sticker} is on box ${s.unitId}, already on this lorry.`, "Scan the next box.", b, b.lorry?.task ?? null, null, true);
+      return fail("Sticker already used", `Sticker ${sticker} is on box ${s.unitId}.`, "Keep this box aside. Ask the dispatch head.", b, b.lorry?.task ?? null);
+    }
+    if (!lines.some((l) => l.id === s.lineId)) {
+      const b = await board();
+      if (s.godownId !== fc.godown.id) return fail("Not loaded here", `Sticker ${sticker} is for order ${s.orderNo}, which leaves from another godown.`, "Keep it aside. Ask the dispatch head.", b, b.lorry?.task ?? null);
+      if (lorryKeyOf(s.transporter) !== key)
+        return fail("Not for this lorry", `Sticker ${sticker} is order ${s.orderNo} for ${s.delivery}, going with ${lorryName(s.transporter)}.`, "Keep it aside. Load it on that lorry.", b, b.lorry?.task ?? null);
+      return fail("Do not load this", `Order ${s.orderNo} for ${s.delivery} is not ready to load, or has already left.`, "Keep it aside. Ask the dispatch head.", b, b.lorry?.task ?? null);
+    }
+    if (heldSticker && heldSticker !== sticker)
+      return fail("Scan its box first", `Sticker ${heldSticker} is waiting for its box.`, "Scan the box that sticker is on, or press Cancel.", await board(), null);
+    if (heldBox) return pair(heldBox, s);
+    const b = await board();
+    return { ok: true, code, tone: "ok", title: "Sticker read", message: `${s.delivery} · ${s.skuName} · ${pieceOf(s)}.`, board: b, task: b.lorry?.task ?? "", data: null, half: { kind: "sticker", code: sticker, says: "Now scan the box this sticker is on" } };
+  }
+
   if (looksLikeUnitId(code)) {
+    if (heldSticker) {
+      const s = await stickerInfo(db, heldSticker);
+      if (!s || s.status !== "active" || s.unitId) return fail("Scan the sticker again", `Sticker ${heldSticker} cannot be used any more.`, "Scan the sticker, then its box.", await boardOf(fc, key, lines), null, null, false, null);
+      return pair(code, s);
+    }
+    if (heldBox) {
+      if (heldBox === code) return fail("Now its sticker", `Box ${code} is read.`, "Scan the dispatch sticker on this box.", await boardOf(fc, key, lines), null, null, true);
+      return fail("Scan its sticker first", `Box ${heldBox} is waiting for its dispatch sticker.`, "Scan the sticker on that box, or press Cancel.", await boardOf(fc, key, lines), null);
+    }
+    /* A box an order with stickers still wants is not loaded alone: the phone asks for its sticker. */
+    const unit = await unitInfo(code);
+    if (unit && unit.status === "available" && unit.godownId === fc.godown.id) {
+      const wanting = lines.filter((l) => l.skuId === unit.skuId && l.scanned < l.target);
+      if ((await stickeredLines(db, wanting.map((l) => l.id))).size) {
+        const b = await boardOf(fc, key, lines);
+        return { ok: true, code, tone: "ok", title: "Box read", message: `${unit.skuName} · lot ${unit.lotCode}.`, board: b, task: b.lorry?.task ?? "", data: null, half: { kind: "box", code, says: "Now scan the dispatch sticker on this box" } };
+      }
+    }
     const orderNo = await orderForBox(lines, code);
     const res = await scanOntoOrder(ctx, orderNo, code);
     if (!res.ok || !res.data.verdict.ok) {
@@ -244,8 +365,10 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
     const board = await boardOf(fc, key);
     await factoryAudit(fc, "factory.dispatch.box", task, `${code} loaded on ${lorryName(board.lorry?.name)} · ${v.allocation}`, { lorry: key, order: orderNo });
     /* The box's answer does not wait for the whole factory's data to be rebuilt: the phone fetches that in the background. */
-    return { ok: true, code, tone: v.allocation === "swap" ? "warn" : "ok", title: v.allocation === "swap" ? "Lot swapped" : "On the lorry", message: lorryWords(v.message), board, task, data: null, stale: v.allocation !== "matched" || job.made };
+    return { ok: true, code, tone: v.allocation === "swap" ? "warn" : "ok", title: v.allocation === "swap" ? "Lot swapped" : "On the lorry", message: lorryWords(v.message), board, task, data: null, stale: v.allocation !== "matched" || job.made, half: null };
   }
+
+  if (keep) return fail(keep.kind === "box" ? "Scan its sticker first" : "Scan its box first", keep.kind === "box" ? `Box ${keep.code} is waiting for its dispatch sticker.` : `Sticker ${keep.code} is waiting for its box.`, "Finish that one, or press Cancel.", await boardOf(fc, key, lines), null);
 
   /* A lot label: the orders on this lorry that are short of what the lot is, soonest due first. */
   const lot = await lotInfo(code);
@@ -317,6 +440,18 @@ export async function lorryDecide(fc: FactoryCtx, key: string, id: string, appro
 export async function lorryFind(fc: FactoryCtx, raw: string): Promise<LorryFind> {
   const code = normaliseCode(String(raw ?? ""));
   if (!fc.dispatch) return { ok: false, ...NOT_YOURS };
+  /* A dispatch sticker names its order, and so its one lorry. */
+  const sticker = stickerCode(String(raw ?? ""));
+  if (sticker) {
+    const s = await stickerInfo(db, sticker);
+    if (!s) return { ok: false, title: "We do not know this sticker", text: "No dispatch sticker is " + sticker + ".", fix: "Type the code printed under the QR again. If it is torn, tell the dispatch head." };
+    if (s.status !== "active") return { ok: false, title: "This sticker was cancelled", text: sticker + " was taken off order " + s.orderNo + " when it changed.", fix: "Peel it off. Print the order's stickers again." };
+    if (s.unitId) return { ok: false, title: "Already on a lorry", text: "Sticker " + sticker + " is on box " + s.unitId + ".", fix: "Keep it aside. Scan the next one." };
+    if (s.godownId !== fc.godown.id) return { ok: false, title: "Not loaded here", text: "Order " + s.orderNo + " leaves from another godown.", fix: "Keep it aside. Ask the dispatch head." };
+    const lines = await loadingLines(db, fc.godown.id, (t) => lorryKeyOf(t) === lorryKeyOf(s.transporter));
+    if (!lines.some((l) => l.id === s.lineId)) return { ok: false, title: "Do not load this", text: "Order " + s.orderNo + " for " + s.delivery + " is not ready to load, or has already left.", fix: "Keep it aside. Ask the dispatch head." };
+    return { ok: true, code: sticker, name: s.skuName, lorries: [{ key: lorryKeyOf(s.transporter), name: s.transporter?.trim() || null, need: 1 }] };
+  }
   const unit = looksLikeUnitId(code) ? await unitInfo(code) : null;
   if (!unit) return { ok: false, title: "We do not know this box", text: "No box carries " + code + ".", fix: "Scan it again, closer. If it is torn, tell the dispatch head." };
   if (unit.status === "scanned" || unit.status === "dispatched") return { ok: false, title: "Already on a lorry", text: code + " is " + (unit.status === "scanned" ? "already loaded" : "already dispatched") + ".", fix: "Keep it aside. Scan the next box." };

@@ -7,6 +7,7 @@ import { lotSize, productLine, shortRef, type BoxLabel, type DispatchLabel, type
 import { purchaseFigures, shortLabel } from "./engines/purchase";
 import { packLabel } from "./engines/trace";
 import { refValues } from "./refs";
+import { ensureStickers, stickerPlaces } from "./dispatch-stickers";
 import { isStickerLine, orderLines } from "./screens/sales";
 import { fgLots, packLots, sfgLots } from "./stock";
 import { boxHeadroom, looseHeadroom } from "./units";
@@ -205,27 +206,30 @@ export async function purchaseLabel(id: string): Promise<PurchaseLabelRow | null
   };
 }
 
-export type DispatchLabelRow = { label: DispatchLabel; lineId: string; copies: number };
+export type DispatchLabelRow = {
+  label: DispatchLabel;
+  lineId: string;
+  copies: number;
+  /** One per copy, in print order: each sticker's own id, its "3 of 10" and its QR. */
+  stickers: { label: DispatchLabel; qr: Qr }[];
+};
 
 /**
- * Dispatch stickers for an order: one for every box or can on every line
- * `isStickerLine` passes — under process or ready, billed or not, until it
- * leaves. Each carries who it goes to and who is billed, the product, the
- * quantity, type, weight, the LOT SIZE (the stickers on the whole order, so the
- * pieces can be counted on and off the lorry), the remark and the transporter.
- * No lot or box code: the box's own label carries those. Read through the order
- * lines every sales list shares, so the count is the one on the tab.
+ * The order's dispatch stickers, one row per line. With `mintBy` (somebody is
+ * printing) each piece is given its own sticker id first — the same ids every
+ * time it is printed again — so the QR and the code under it are on every
+ * sticker; without it (a read) only the ids already given are shown.
  */
-export async function dispatchLabels(orderNo: number): Promise<DispatchLabelRow[]> {
+export async function dispatchLabels(orderNo: number, mintBy?: string | null): Promise<DispatchLabelRow[]> {
   const lines = (await orderLines({ orderNos: [orderNo] })).filter(isStickerLine);
   if (!lines.length) return [];
   /* Entered order, not newest first: the stickers come off the roll as the order was written. */
   lines.sort((a, b) => a.o.createdAt.getTime() - b.o.createdAt.getTime());
   const size = lotSize(lines);
-  return lines.map((l) => ({
-    lineId: l.o.id,
-    copies: Math.max(0, Math.round(l.labels)),
-    label: {
+  if (mintBy !== undefined) await ensureStickers(orderNo, new Map(lines.map((l) => [l.o.id, Math.max(0, Math.round(l.labels))])), mintBy);
+  const places = await stickerPlaces(db, [orderNo]);
+  return lines.map((l) => {
+    const label: DispatchLabel = {
       kind: "dispatch",
       orderNo: l.o.orderNo,
       date: l.o.orderDate,
@@ -242,6 +246,13 @@ export async function dispatchLabels(orderNo: number): Promise<DispatchLabelRow[
       lotSize: size,
       remark: l.o.remark?.trim() || null,
       transporter: (l.o.transporter ?? l.delivery.p?.transporter ?? "").trim() || null,
-    },
-  }));
+      sticker: null,
+    };
+    return {
+      lineId: l.o.id,
+      copies: Math.max(0, Math.round(l.labels)),
+      label,
+      stickers: places.filter((p) => p.lineId === l.o.id).map((p) => ({ label: { ...label, sticker: { id: p.id, pos: p.pos, of: p.of } }, qr: qrFor(p.id) })),
+    };
+  });
 }

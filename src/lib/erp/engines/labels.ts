@@ -96,6 +96,12 @@ export type DispatchLabel = {
   lotSize: number;
   remark: string | null;
   transporter: string | null;
+  /**
+   * This sticker's own id — what its QR carries and what is printed under it
+   * to type when the QR will not read — and its place among the order's
+   * pieces, "3 of 10". Null only where none could be given (a preview).
+   */
+  sticker: { id: string; pos: number; of: number } | null;
 };
 
 export type Label = BoxLabel | SfgLabel | PurchaseLabel | DispatchLabel;
@@ -268,12 +274,25 @@ export const sfgLotPt = (lot: string) => fitPt(lot, 70, [26, 23, 20, 17, 14]);
 export const purchaseNamePt = (name: string) => fitPt(name, 46, [20, 18, 16, 14, 12], 2);
 /** The lot number on a purchase label, which shares its line with the purchase date. */
 export const purchaseLotPt = (lot: string) => fitPt(lot, 42, [24, 21, 18, 15, 12]);
-/** Who a dispatch label is going to: two lines across the label. */
-export const partyPt = (name: string) => fitPt(name, 72, [16, 14, 12], 2);
+/**
+ * Who a dispatch label is going to, beside its 18 mm QR: two lines while a
+ * readable size fits them, three smaller ones for a name that will not — so a
+ * long name is never cut, and a short one does not spend a line it needs not.
+ */
+export function partyPt(name: string): number {
+  const two = [15, 14, 13, 12];
+  const pt = fitPt(name, 50, two, 2);
+  if (pt !== two[two.length - 1] || boldLines(name, pt, 50 * 0.96) <= 2) return pt;
+  return fitPt(name, 50, [12, 11, 10], 3);
+}
+/** "Billed to …" under the party: one line across the label at the largest size that holds it, two small ones where none does. */
+export const billedPt = (billing: string) => fitPt(`Billed to ${billing}`, 72, [8, 7.5, 7, 6.5]);
 /** The goods on a dispatch label: two lines across the label. */
 export const skuPt = (name: string) => fitPt(name, 72, [14, 13, 12, 11], 2);
-/** The transporter on a dispatch label: two lines across the label. */
-export const transporterPt = (name: string) => fitPt(name, 72, [13, 12, 11], 2);
+/** The transporter on a dispatch label: two lines beside the sticker's place in the order. */
+export const transporterPt = (name: string) => fitPt(name, 50, [13, 12, 11, 10], 2);
+/** "Box" / "Can" / "Drum": what one sticker stands for, from the line's type. */
+export const pieceWord = (type: string) => (type === "Drum" ? "Drum" : type === "Box" ? "Box" : "Can");
 
 /* ======================================================== print runs */
 

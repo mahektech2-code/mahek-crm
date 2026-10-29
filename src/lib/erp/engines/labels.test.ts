@@ -110,9 +110,9 @@ describe("fitting words to a label", () => {
     assert.ok(fit.pt <= 10);
   });
 
-  it("a long party name steps down before it is cut", () => {
-    assert.equal(partyPt("SHREE SHANTI JAIN STORES"), 16);
-    assert.ok(partyPt("SHREE MAHAVIR PAINTS AND HARDWARE STORES") < 16);
+  it("a long party name steps down before it is cut, beside the sticker's QR", () => {
+    assert.equal(partyPt("SHREE SHANTI JAIN STORES"), 15);
+    assert.ok(partyPt("SHREE MAHAVIR PAINTS AND HARDWARE STORES") < 15);
   });
 
   it("the box label's last line says 'Box 1 of 5' while it fits", () => {

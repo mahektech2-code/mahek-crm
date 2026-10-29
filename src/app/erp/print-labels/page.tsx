@@ -79,8 +79,12 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
     title = `Dispatch stickers · order ${order}`;
     empty = "No dispatch stickers for this order. They are printed once a line is under process or ready, and not after it has left.";
     fileName = `dispatch-order-${order}.prn`;
-    for (const r of await dispatchLabels(order))
-      for (let i = 0; i < r.copies; i++) views.push(<DispatchLabelView key={`${r.lineId}:${i}`} l={r.label} lineId={r.lineId} copy={i + 1} />);
+    /* Printing gives each piece its own sticker id — the same ids on every reprint. A preview ("View the ERP as") gives none. */
+    for (const r of await dispatchLabels(order, ctx.viewingAs ? undefined : ctx.actor.id))
+      for (let i = 0; i < r.copies; i++) {
+        const s = r.stickers[i];
+        views.push(s ? <DispatchLabelView key={s.label.sticker!.id} l={s.label} qr={s.qr} lineId={r.lineId} /> : <DispatchLabelView key={`${r.lineId}:${i}`} l={r.label} qr={null} lineId={r.lineId} copy={i + 1} />);
+      }
   } else if (kind === "sfg") {
     title = `SFG label · lot ${sfg}`;
     empty = `No SFG lot ${sfg} was found. Open it from Stock → Semi-finished.`;

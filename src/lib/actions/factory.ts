@@ -368,10 +368,11 @@ export async function factoryLorryBoard(key: string): Promise<LorryBoard | null>
   const fc = await factoryContext();
   return fc ? lorryBoard(fc, key) : null;
 }
-export async function factoryLorryScan(key: string, code: string, taskId: string | null): Promise<LorryScan> {
+/** `half`: the box or dispatch sticker scanned just before, still waiting for its other half. An older app sends none. */
+export async function factoryLorryScan(key: string, code: string, taskId: string | null, half?: string | null): Promise<LorryScan> {
   const fc = await factoryContext();
   if (!fc) return { ok: false, code: String(code ?? ""), ...SIGNED_OUT, board: null, task: null, override: null };
-  return lorryScan(fc, key, code, taskId);
+  return lorryScan(fc, key, code, taskId, half ?? null);
 }
 export async function factoryLorryUnload(key: string, unitId: string): Promise<LorryScan> {
   const fc = await factoryContext();

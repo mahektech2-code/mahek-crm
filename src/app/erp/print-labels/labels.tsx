@@ -6,6 +6,8 @@ import {
   orderQty,
   packSizePt,
   partyPt,
+  billedPt,
+  pieceWord,
   purchaseLotPt,
   purchaseNamePt,
   sfgLotPt,
@@ -200,28 +202,44 @@ export function PurchaseLabelView({ l, qr, copy }: { l: PurchaseLabel; qr: Qr; c
 
 /**
  * THE DISPATCH LABEL, 80 × 80 mm: who it goes to, what it is, and who carries
- * it — each read from across a loading bay. One is printed for every box or
- * can on the line, and every one of them carries the lot size: the pieces on
- * the whole order.
+ * it — each read from across a loading bay — and, since stickers carry an id,
+ * which sticker this is. One is printed for every box or can on the line.
+ *
+ * The 18 mm QR — 21 modules, near a millimetre each — sits top right beside
+ * the party, with the sticker's id printed under
+ * it to type when the QR will not read; the band at the foot pairs the
+ * transporter with the sticker's place in the order, "Box 3 of 10". Every
+ * figure the sticker carried before is still on it: the order, its date and
+ * line, the party, area and billing party, the goods, quantity, type, weight,
+ * lot size and remark.
  */
-export function DispatchLabelView({ l, lineId, copy }: { l: DispatchLabel; lineId: string; copy?: number }) {
+export function DispatchLabelView({ l, qr, lineId, copy }: { l: DispatchLabel; qr: Qr | null; lineId: string; copy?: number }) {
   const transporter = l.transporter ?? "—";
+  const s = l.sticker;
   return (
-    <div className="lb lb-80 lb-dis" data-key={`dispatch:${lineId}`} data-copy={copy}>
-      <div className="to">
-        <div className="meta">
-          <div>Deliver to</div>
-          <div>
-            Order <b>{l.orderNo}</b> · {labelDate(l.date)} · <span className="mono">{l.lineRef}</span>
+    <div className="lb lb-80 lb-dis" data-key={s ? `dispatch:${s.id}` : `dispatch:${lineId}`} data-copy={copy}>
+      <div className="meta">
+        <div>Deliver to</div>
+        <div>
+          Order <b>{l.orderNo}</b> · {labelDate(l.date)} · <span className="mono">{l.lineRef}</span>
+        </div>
+      </div>
+      <div className="top">
+        <div className="to">
+          <div className="party clamp3" style={pt(partyPt(l.delivery))}>
+            {l.delivery}
           </div>
+          {l.area ? <div className="area cut">{l.area}</div> : null}
         </div>
-        <div className="party clamp2" style={pt(partyPt(l.delivery))}>
-          {l.delivery}
-        </div>
-        {l.area ? <div className="area cut">{l.area}</div> : null}
-        <div className="billed cut">
-          Billed to <b>{l.billing}</b>
-        </div>
+        {s && qr ? (
+          <div className="code">
+            <QrCode qr={qr} mm={18} label={`QR code for dispatch sticker ${s.id}`} />
+            <div className="mono id">{s.id}</div>
+          </div>
+        ) : null}
+      </div>
+      <div className="billed clamp2" style={pt(billedPt(l.billing))}>
+        Billed to <b>{l.billing}</b>
       </div>
       <div className="goods">
         <div className="sku clamp2" style={pt(skuPt(l.sku))}>
@@ -240,10 +258,20 @@ export function DispatchLabelView({ l, lineId, copy }: { l: DispatchLabel; lineI
         ) : null}
       </div>
       <div className="carrier">
-        <div className="k">Transporter</div>
-        <div className="v clamp2" style={pt(transporterPt(transporter))}>
-          {transporter}
+        <div className="who">
+          <div className="k">Transporter</div>
+          <div className="v clamp2" style={pt(transporterPt(transporter))}>
+            {transporter}
+          </div>
         </div>
+        {s ? (
+          <div className="piece">
+            <div className="k">{pieceWord(l.type)}</div>
+            <div className="n">
+              {s.pos} <span className="of">of {s.of}</span>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

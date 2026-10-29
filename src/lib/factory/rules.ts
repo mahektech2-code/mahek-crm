@@ -43,6 +43,22 @@ export function boxCode(raw: string): string | null {
   return /^(BX|LU)-\d{6}-\d{6}$/.test(s) ? s : null;
 }
 
+/**
+ * The letters a dispatch sticker's id is made of: no 0/O, 1/I/L, so one typed
+ * off a scuffed sticker is never two ids apart.
+ */
+export const STICKER_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/**
+ * A dispatch sticker (DS-7K3QX9), as scanned or as typed off the sticker —
+ * with or without its dash, any case, spaces dropped — or null.
+ */
+export function stickerCode(raw: string): string | null {
+  const s = String(raw ?? "").replace(/\s+/g, "").toUpperCase();
+  const m = /^DS-?([2-9A-HJKMNP-Z]{6})$/.exec(s);
+  return m ? "DS-" + m[1] : null;
+}
+
 /* ------------------------------------------------------------- naming */
 
 export function lotName(db: FactoryData, x: Lot): string {

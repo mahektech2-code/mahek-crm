@@ -2038,6 +2038,13 @@
       "when": 1793606580000,
       "tag": "0293_transporter_ref_list_retired",
       "breakpoints": true
+    },
+    {
+      "idx": 291,
+      "version": "7",
+      "when": 1793606640000,
+      "tag": "0294_dispatch_stickers",
+      "breakpoints": true
     }
   ]
 }
