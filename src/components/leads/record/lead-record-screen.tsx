@@ -313,7 +313,6 @@ export function LeadRecordScreen({
   assignees,
   canReassign,
   canReassignSalesman,
-  callRecord = null,
   followUpDocs,
   canOverride,
   canPrioritise,
@@ -432,12 +431,6 @@ export function LeadRecordScreen({
   canReassign: boolean;
   /** Holds the Sales Manager screen, and this lead is in their own book — see `ReassignLead`. */
   canReassignSalesman: boolean;
-  /**
-   * The call form's data for somebody who may log a call on this lead without
-   * holding the Calling desk. Drives the Call button and its dialog ONLY — never
-   * `desk`, which also decides whether converting is offered.
-   */
-  callRecord?: DeskLeadRecord | null;
   /** The published files a follow-up in the call form can name. */
   followUpDocs?: FollowUpDocs;
   canOverride: boolean;
@@ -514,7 +507,7 @@ export function LeadRecordScreen({
   openCall?: boolean;
 }) {
   const [verifying, setVerifying] = React.useState(false);
-  const callLead = desk ?? callRecord;
+  const callLead = desk;
   const nextCall = callLead ? nextCallNumber(callLead.phase, callLead.callCount) : null;
   const canCall = canWork && nextCall !== null;
   const [calling, setCalling] = React.useState(Boolean(openCall && callLead && canCall));
@@ -547,7 +540,7 @@ export function LeadRecordScreen({
    */
   const showConvert = isWorkingStage(record.stage) && !park && !closed;
   const convertBlocked: string | null = !desk
-    ? "Converting a Suspect is the Telecaller's, from the Calling desk. A Sales Manager moves it with Move to Prospect once all seven answers are in."
+    ? "This lead is not in your book, so you cannot convert it."
     : !canWork
       ? "Working a lead is the salesman's and the manager's."
       : desk.requestState === "awaiting" || desk.requestState === "followup"

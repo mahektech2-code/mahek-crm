@@ -420,7 +420,7 @@ describe("C — the Telecaller", () => {
     assert.equal((await row(lead.id)).leadStage, "prospect");
   });
 
-  test("the desk grant and the lead's scope are both still enforced", async () => {
+  test("the lead's scope is still enforced; the desk grant is not needed", async () => {
     const lead = await lostAtCallThree();
 
     setTestUser(other);
@@ -430,9 +430,9 @@ describe("C — the Telecaller", () => {
     setTestUser(desk);
     await db.insert(appModuleAccess).values({ id: id("mod"), userId: desk.id, app: "crm", module: "crm.leads" });
     const noDesk = await reopenDeskLead({ customerId: lead.id, reasonCode: "customer_responded" });
-    assert.equal(noDesk.ok, false, "without the Calling desk it is refused at the door");
-    assert.match(!noDesk.ok ? noDesk.error : "", /Calling desk/);
-    assert.equal((await row(lead.id)).leadStage, "lost");
+    assert.doesNotMatch(!noDesk.ok ? noDesk.error : "", /Calling desk/, "not refused for want of the grant");
+    assert.equal(noDesk.ok, true, noDesk.ok ? "" : noDesk.error);
+    assert.notEqual((await row(lead.id)).leadStage, "lost", "the owner reopened her own lead");
   });
 
   test("a loss the Sales Manager closed on a failed verification is theirs to reverse, not the desk's", async () => {

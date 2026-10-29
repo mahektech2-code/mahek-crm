@@ -206,11 +206,12 @@ describe("the Call button is for whoever may call THIS lead", () => {
     assert.equal((await db.select().from(calls).where(sql`${calls.outcomeDetail}->>'qualCall' is not null`)).length, 0);
   });
 
-  test("what follows a call is still the desk's: requesting a Prospect refuses without the Calling desk", async () => {
+  test("requesting a Prospect no longer needs the Calling desk — and a stranger to the lead is still refused", async () => {
     setTestUser(plain);
     const r = await requestProspect({ customerId: leadId });
-    assert.equal(r.ok, false);
-    assert.match(!r.ok ? r.error : "", /Calling desk/);
+    assert.doesNotMatch(!r.ok ? r.error : "", /Calling desk/, "not refused for want of the grant");
+    setTestUser(outsider);
+    assert.equal((await requestProspect({ customerId: leadId })).ok, false, "outside the lead's scope");
   });
 });
 

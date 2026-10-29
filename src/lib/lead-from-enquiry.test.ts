@@ -495,7 +495,7 @@ describe("D — the desk is granted, not inherited", () => {
     assert.equal(await canOpenModule(noGrant.id, DESK_MODULE), false, "an administrator elsewhere holds nothing here");
   });
 
-  test("what follows a call still needs the desk, though they hold lead.work like every CRM associate; a call itself needs the lead in their scope", async () => {
+  test("none of the desk's actions needs the Calling desk grant any more: lead.work and the lead in their scope", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
     const made = await createLead(enquiryId, { ownerId: null });
     assert.ok(made.ok);
@@ -504,9 +504,7 @@ describe("D — the desk is granted, not inherited", () => {
 
     setTestUser(crmOnly);
     const r = await requestProspect({ customerId: leadId });
-    assert.equal(r.ok, false);
-    assert.equal(!r.ok && r.code, "not_permitted");
-    assert.match(!r.ok ? r.error : "", /Calling desk/);
+    assert.doesNotMatch(!r.ok ? r.error : "", /Calling desk/, "not refused for want of the grant (any other rule still applies)");
 
     /* The call itself asks the lead's scope, not the desk: the owner may log it. */
     const call = await logQualificationCall({ customerId: leadId, outcome: "no_answer", answers: {}, noAnswerReason: "busy" });
