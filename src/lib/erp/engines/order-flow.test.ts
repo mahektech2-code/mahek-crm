@@ -6,6 +6,7 @@ import {
   dispatchOf,
   invoiceChanges,
   invoiceKey,
+  invoiceShareRefusal,
   likelyDuplicate,
   logisticsOf,
   orderBillBlockers,
@@ -92,4 +93,12 @@ test("moving part of a line keeps both parts in whole boxes", () => {
   assert.deepEqual(splitForMove(10, 3, 1, true), { ok: true, stays: 7, moves: 3 });
   assert.equal(splitForMove(10, 11, 1, true).ok, false);
   assert.equal(splitForMove(10, 0, 1, true).ok, false);
+});
+
+test("one invoice may cover several orders, for one party on one date", () => {
+  const held = [{ orderNo: 8590, billingId: "c1", billingName: "Colour Camp", invoiceDate: "2026-10-28" }];
+  assert.equal(invoiceShareRefusal("MMI/1", "c1", "2026-10-28", []), null, "a fresh number");
+  assert.equal(invoiceShareRefusal("MMI/1", "c1", "2026-10-28", held), null, "same party, same date: shared");
+  assert.match(invoiceShareRefusal("MMI/1", "c2", "2026-10-28", held) ?? "", /order 8590, billed to Colour Camp/);
+  assert.match(invoiceShareRefusal("MMI/1", "c1", "2026-10-29", held) ?? "", /order 8590, dated 2026-10-28/);
 });

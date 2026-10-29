@@ -429,7 +429,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal((await a.stickers(ctx, line.id, {})).ok, false, "and billing did not lose the record that they are on");
   });
 
-  test("an order is billed only once Ready, one invoice is one order, and a changed invoice goes back to the checker", async () => {
+  test("an order is billed only once Ready, an invoice is shared only on its own date, and a changed invoice goes back to the checker", async () => {
     const ctx = await as(admin);
     assert.ok((await mod("orders").forms!.new(ctx, { source: "WhatsApp", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "3" }])).ok);
     const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 3)));
@@ -440,7 +440,8 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok((await a.verifyOrder(ctx, line.id, {})).ok);
     assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })), /to be Ready — or moved to a new order/);
     assert.ok((await a.ready(ctx, line.id, {})).ok);
-    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: " mmi/26-27/101 ", invoiceDate: TODAY })), /is already on order \d+\. One invoice is one order\./);
+    /* The same party may share an invoice, but only on the invoice's own date. */
+    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: " mmi/26-27/101 ", invoiceDate: "2026-01-01" })), /is already on order \d+, dated .*Orders sharing an invoice share its date\./);
     assert.ok((await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })).ok);
     assert.equal(msg(await a.rejectInvoice(ctx, line.id, {})), "Say why the invoice is rejected");
     assert.ok((await a.rejectInvoice(ctx, line.id, { reason: "Rate should be ₹410" })).ok);
