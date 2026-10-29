@@ -41,6 +41,8 @@ services:
       - caddy_config:/config
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      # The customer-facing host (Caddyfile). Unset: Caddy uses track.mahekindia.com.
+      PUBLIC_LINK_HOST: ${PUBLIC_LINK_HOST:-track.mahekindia.com}
     depends_on:
       - app
     networks: [mahek]

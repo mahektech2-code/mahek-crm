@@ -25,6 +25,7 @@ import {
 } from "./engines/po-share";
 import { poPdfFilename, renderPoPdf, type PoPdfInput } from "./po-pdf";
 import { purchaseOrderViews, type PoView } from "./screens/purchase-flow";
+import { publicLinkOrigin } from "@/lib/public-links";
 
 /* ---------------------------------------------------------------------------
  * SHARING A PURCHASE ORDER. "Share…" on a PO opens a window that picks how
@@ -63,7 +64,9 @@ export async function poShareToken(poId: string): Promise<string | null> {
 }
 
 async function origin(): Promise<string | null> {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
+  /* A link sent outside goes out on the public host where one is set — never the staff workspace's address. */
+  const pub = publicLinkOrigin();
+  if (pub) return pub;
   try {
     const { appOrigin } = await import("@/lib/password-reset");
     return await appOrigin();

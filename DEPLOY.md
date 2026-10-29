@@ -617,6 +617,29 @@ required check is matched by job id, and one that never reports leaves every
 pull request waiting for it with nothing saying why. `branch-ruleset.test.ts`
 fails the build when the two files disagree.
 
+## The customer-facing host (track.mahekindia.com)
+
+Tracking links (`/t/…`, `/track/…`) and vendor POs (`/po/…`) go to people
+outside Mahek, so they go out on their own host instead of the workspace's.
+The same app answers both; on the public host it refuses every other path with
+a 404, and on the workspace host it sends those three paths to the public one
+(308), so links already sent keep working. Until `PUBLIC_LINK_HOST` is set the
+app behaves exactly as before. In this order:
+
+1. **DNS** — an `A` record `track` → the droplet's IP in the mahekindia.com
+   zone (DigitalOcean → Networking → Domains). Wait until
+   `dig +short track.mahekindia.com` answers.
+2. **Caddy** — the Caddyfile and docker-compose.yml on the droplet are copied
+   by hand, not deployed: copy both, then
+   `docker compose up -d caddy` (it fetches the certificate on the first request).
+   Check `https://track.mahekindia.com/t/<a real token>` opens and
+   `https://track.mahekindia.com/login` answers 404.
+3. **The app** — add `PUBLIC_LINK_HOST=track.mahekindia.com` to
+   `/opt/mahekone/.env` and `docker compose up -d app`. New WhatsApp links are
+   written on the public host from then on.
+
+Undo is step 3 in reverse: remove the line and restart the app.
+
 ## Day to day
 
 ```bash

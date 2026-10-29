@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { appFor } from "@/lib/app-routes";
+import { publicRouting } from "@/lib/public-links";
 
 /* ---------------------------------------------------------------------------
  * WHICH APP THIS REQUEST IS FOR, named once, at the edge of the request.
@@ -106,6 +107,10 @@ export function appForApi(
 }
 
 export function proxy(request: NextRequest) {
+  /* The customer-facing host serves the public links and nothing else; the staff host sends them there. */
+  const route = publicRouting(request.headers.get("host") ?? request.nextUrl.host, request.nextUrl.pathname, process.env.PUBLIC_LINK_HOST ?? null);
+  if (route.kind === "refuse") return new NextResponse("Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8", "x-robots-tag": "noindex" } });
+  if (route.kind === "redirect") return NextResponse.redirect(`${route.to}${request.nextUrl.pathname}${request.nextUrl.search}`, 308);
   const app =
     appFor(request.nextUrl.pathname) ??
     appForApi(
