@@ -18,6 +18,7 @@ import {
   SAMPLE_CANCEL_REASONS,
   VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
+  BYPASS_REASONS,
   ORDER_BLOCKERS,
   PROSPECT_REASONS,
   SAMPLE_REASONS,
@@ -3812,6 +3813,15 @@ export const SETTINGS = [
     default: OVERRIDE_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.bypassReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why Accounts converted a lead directly",
+    description:
+      "Asked on Accounts › Customers › Convert a lead, which turns a lead into a customer we invoice without it climbing the funnel. Stored as a code on the audit row and the stage history, so how often the funnel is skipped, and why, can be counted.",
+    default: BYPASS_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.sampleReviewChaseDays",
     type: "structured",
     category: "mbos-leads",
@@ -6954,6 +6964,7 @@ export type Config = {
   "leads.reopenReasons": { code: string; label: string }[];
   "leads.sampleCancelReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
+  "leads.bypassReasons": { code: string; label: string }[];
   "leads.orderBlockers": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;

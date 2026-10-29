@@ -617,6 +617,7 @@ const DESCRIBE: Record<string, Describer> = {
   "customer.updateDistributor": (c) => ["changed how", c.customer(c.a.distributorId, "a distributor"), "serves", c.subject()],
   "customer.removeDistributor": (c) => ["removed", c.customer(c.b.distributorId, "a distributor"), "as a distributor of", c.subject()],
   "customer.convertedFromLead": (c) => ({ says: ["turned the lead", c.subject(), "into a customer"], changes: false }),
+  "customer.bypassConvert": (c) => ({ says: ["converted the lead", c.subject(), "straight to a customer, skipping the funnel"], changes: false }),
   "queue.skip": (c) => ({ says: ["took", c.subject(), "off today's Call Log"], changes: false }),
   "queue.rebuild": (c) => ({ says: ["rebuilt the Call Log for", strong(shortDate(str(c.a.day) ?? ""))], changes: false }),
   "interaction.save": (c) => ({

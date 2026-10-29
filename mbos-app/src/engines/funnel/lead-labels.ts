@@ -578,6 +578,18 @@ export const OVERRIDE_REASONS: readonly CodedOption[] = [
   { code: "other", label: "Other" },
 ] as const;
 
+/**
+ * Why Accounts converted a lead straight to a customer, skipping the funnel.
+ * See `lib/lead-bypass.ts`. Codes, never labels — the list is editable.
+ */
+export const BYPASS_REASONS: readonly CodedOption[] = [
+  { code: "order_today", label: "Order today — must be billed" },
+  { code: "existing_customer", label: "Existing customer, wrongly a lead" },
+  { code: "recorded_late", label: "Work done, not recorded" },
+  { code: "management_instruction", label: "Management instruction" },
+  { code: "other", label: "Other" },
+] as const;
+
 export function labelOf(list: readonly CodedOption[], code: string | null | undefined): string {
   if (!code) return "—";
   return list.find((o) => o.code === code)?.label ?? code;

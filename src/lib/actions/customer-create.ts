@@ -2,13 +2,14 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, employees, erpCustomerProfiles, users } from "@/db/schema";
+import { auditLog, customers, erpCustomerProfiles } from "@/db/schema";
 import { canFor, requireCapability, resolveScope } from "@/lib/access-control";
 import { refOptions } from "@/lib/erp/refs";
 import { canonicalState } from "@/lib/india-states";
-import { newCustomerSchema, type NewCustomerInput, type SeatPick } from "@/lib/new-customer";
+import { newCustomerSchema, type NewCustomerInput } from "@/lib/new-customer";
+import { resolveSeat, type ResolvedSeat } from "@/lib/services/seat-resolve";
 import { notifyUsers } from "@/lib/notify";
 import { partyNameKey } from "@/lib/sheet-parse";
 import { reconcileContacts } from "@/lib/services/customer-contact-service";
@@ -49,27 +50,6 @@ import { err, fromThrown, ok, type Result } from "@/lib/result";
  * ------------------------------------------------------------------------- */
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
-
-type ResolvedSeat = { userId: string | null; name: string | null };
-
-/** A seat pick resolved against the database — never a name off the request. */
-async function resolveSeat(seat: SeatPick, label: string): Promise<ResolvedSeat | string> {
-  if (seat.kind === "none") return { userId: null, name: null };
-  if (seat.kind === "user") {
-    const [u] = await db
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(and(eq(users.id, seat.userId), eq(users.active, true)))
-      .limit(1);
-    return u ? { userId: u.id, name: u.name } : `The ${label} no longer has an active account. Pick somebody else.`;
-  }
-  const [e] = await db
-    .select({ name: employees.name })
-    .from(employees)
-    .where(and(eq(employees.id, seat.employeeId), eq(employees.status, "active")))
-    .limit(1);
-  return e ? { userId: null, name: e.name } : `The ${label} is no longer on the current staff list.`;
-}
 
 export async function createDirectCustomer(
   raw: NewCustomerInput,

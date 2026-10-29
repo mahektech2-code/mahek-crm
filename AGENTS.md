@@ -3582,6 +3582,24 @@ place through `placeShopsNow`. A number or GSTIN already on the book is
 refused; the same name asks once. `customer-create.test.ts` pins it, including
 that the shop is in the salesman's `customerIdsInScope`.
 
+**ACCOUNTS CAN CONVERT A LEAD STRAIGHT TO A CUSTOMER — the bypass.** Accounts
+› Customers › Convert a lead (`components/customers/bypass-convert-dialog.tsx`,
+`lib/actions/lead-bypass.ts`, rules in `lib/lead-bypass.ts`, pure) finds an
+open lead, asks everything an invoiced account needs — bill name, contact
+person, mobile, type of business, a GSTIN whose state code matches the state
+(or "not registered" with a reason), billing address, city, state, sales
+account manager, credit days, price list, freight, delivery — then a coded
+reason (`leads.bypassReasons`), a note and CONVERT typed back. It is
+`customer.reassign` (the Accounts manager and the platform admin) and only from
+the Accounts app (`customerEditRefusal`). One transaction writes the same
+columns the second-order rule does (`conversionColumns`: kind `customer`, stage
+`won`, `customer_since`, `lead_converted_at`) plus the details, the seats with
+`am_decided_at`, `third_party` cleared (distributor links kept), a
+`lead_stage_transitions` row of kind `overridden` naming every skipped rung
+(`stage:<rung>`), a `customer.bypassConvert` audit row, and `recordConversion`
+(audit, timeline, handset tombstone). So the account leaves every lead list and
+handset Leads tab and joins Customers, the Call Log and collections at once.
+
 **There is no "Add lead" on the Customers screen.** It hard-coded `kind:
 "lead"`, so on a table that no longer lists leads it wrote a record and
 returned the reader to a list the record was not on, which reads as a save that
