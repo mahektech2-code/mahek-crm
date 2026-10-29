@@ -45,6 +45,7 @@ import { aiReadInstruction, aiReviewChange, aiSecondOpinion, type ReviewEvidence
 import { aiReadiness } from "@/lib/price-ai/providers";
 import type { ChangeAiReview } from "@/lib/price-book-views";
 import { err, fieldErr, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { longDate } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * EVERY WRITE A PRICE BOOK TAKES — start a change, edit it, check it, send
@@ -814,9 +815,9 @@ export async function approveChange(
       await notifyUsers(
         [...people].map((userId) => ({
           userId,
-          title: goLive > day ? `New prices from ${goLive}: ${bookName}` : `New prices live: ${bookName}`,
+          title: goLive > day ? `New prices from ${longDate(goLive)}: ${bookName}` : `New prices live: ${bookName}`,
           body: goLive > day
-            ? `${bookName} has a new revision approved by ${ctx.user.name}. Shops keep today's prices until ${goLive}.`
+            ? `${bookName} has a new revision approved by ${ctx.user.name}. Shops keep today's prices until ${longDate(goLive)}.`
             : `${bookName} has new prices from today, approved by ${ctx.user.name}.`,
           href: pathOf.has(userId) ? linkFor(pathOf.get(userId)!, facts.change.bookId) : `/crm/price-lists/books/${facts.change.bookId}`,
         })),
@@ -839,7 +840,7 @@ export async function approveChange(
       { published },
       published
         ? goLive > day
-          ? `Approved. It goes live on ${goLive}; until then shops pay the current prices.`
+          ? `Approved. It goes live on ${longDate(goLive)}; until then shops pay the current prices.`
           : "Approved and live from today."
         : "Approved. It needs one more approver.",
     );
@@ -981,7 +982,7 @@ export async function moveGoLive(changeId: string, newDate: string): Promise<Res
     });
     if (newDate <= day) await supersedeEndedPriceLists(day);
     refresh(bookId);
-    return okVoid(newDate <= day ? "Live from today." : `Moved to ${newDate}.`);
+    return okVoid(newDate <= day ? "Live from today." : `Moved to ${longDate(newDate)}.`);
   } catch (e) {
     if (e instanceof Refused) return e.result;
     return fromThrown(e);

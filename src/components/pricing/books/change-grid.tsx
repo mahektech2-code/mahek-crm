@@ -34,6 +34,13 @@ import {
 } from "@/lib/actions/price-books";
 import { packWords, pctWords } from "@/components/pricing/books/stage-labels";
 
+/** "Nano Thinner - 20 Liter (2 Can/Box)" under the Nano Thinner heading reads as "20 Liter (2 Can/Box)". */
+function variantOf(name: string, family: string): string {
+  const cut = name.indexOf(" - ");
+  if (cut > 0 && name.slice(0, cut).trim().toLowerCase() === family.trim().toLowerCase()) return name.slice(cut + 3);
+  return name;
+}
+
 type Edit = { productId: string; minCans: number | null; before: { incl: number; offered: boolean } | null; after: { incl: number; offered: boolean } | null };
 
 type Filter = "all" | "changed" | "flagged";
@@ -196,12 +203,11 @@ export function ChangeGrid({
           <colgroup>
             {editable ? <col style={{ width: 36 }} /> : null}
             <col />
-            <col style={{ width: 80 }} />
-            <col style={{ width: 120 }} />
-            <col style={{ width: 150 }} />
-            <col style={{ width: 80 }} />
             <col style={{ width: 100 }} />
-            <col style={{ width: 110 }} />
+            <col style={{ width: 140 }} />
+            <col style={{ width: 70 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 96 }} />
           </colgroup>
           <thead>
             <tr>
@@ -216,7 +222,6 @@ export function ChangeGrid({
                   />
                 </Th>
               ) : null}
-              <Th>Product</Th>
               <Th>Pack</Th>
               <Th align="right">Live</Th>
               <Th align="right">New (with GST)</Th>
@@ -229,7 +234,7 @@ export function ChangeGrid({
             {families.map((fam) => (
               <React.Fragment key={fam.family}>
                 <tr className="bg-canvas">
-                  <td colSpan={editable ? 8 : 7} className="px-3 py-1.5 text-xs font-semibold tracking-label text-muted uppercase">
+                  <td colSpan={editable ? 7 : 6} className="px-3 py-1.5 text-xs font-semibold tracking-label text-muted uppercase">
                     {fam.family}
                   </td>
                 </tr>
@@ -271,10 +276,9 @@ export function ChangeGrid({
                         </Td>
                       ) : null}
                       <Td className="truncate" title={d.productName}>
-                        <span className="text-ink">{d.productName}</span>
+                        <span className="text-ink">{variantOf(d.productName, d.family) || packWords(d.millilitresPerCan)}</span>
                         {d.minCans ? <span className="ml-1 text-xs text-muted">from {d.minCans} cans</span> : null}
                       </Td>
-                      <Td className="text-[13px] text-muted">{packWords(d.millilitresPerCan)}</Td>
                       <Td align="right">
                         {live != null ? (
                           <span className={cx(d.kind !== "same" ? "text-muted line-through" : "text-body")}>{money(live)}</span>
@@ -840,7 +844,7 @@ function InstructionModal({ change, onClose, onDone }: { change: ChangeView; onC
         <div className="mt-4">
           <div className="rounded-control border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
             <b>Understood{preview.by !== "MahekOne" ? ` by ${preview.by}` : ""}:</b> {preview.words}
-            <div className="mt-0.5 text-[12px] text-muted">Every price below is computed by MahekOne from the live revision; the reader only described the rule.</div>
+            <div className="mt-0.5 text-[12px] text-muted">Every price below is computed by MahekOne from this change's current prices; the reader only described the rule.</div>
           </div>
           {preview.questions.length ? (
             <div className="mt-2 space-y-1">

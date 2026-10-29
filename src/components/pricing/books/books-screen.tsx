@@ -144,13 +144,13 @@ export function BooksScreen({
         {shown.length ? (
           <table className="w-full table-fixed">
             <colgroup>
-              <col style={{ width: 260 }} />
-              <col style={{ width: 230 }} />
-              <col style={{ width: 150 }} />
-              <col style={{ width: 210 }} />
-              <col style={{ width: 90 }} />
-              <col style={{ width: 130 }} />
-              <col style={{ width: 120 }} />
+              <col style={{ width: 240 }} />
+              <col style={{ width: 200 }} />
+              <col style={{ width: 140 }} />
+              <col style={{ width: 200 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 140 }} />
+              <col style={{ width: 140 }} />
             </colgroup>
             <thead>
               <tr>

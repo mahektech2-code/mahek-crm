@@ -295,7 +295,7 @@ export async function bookDetail(bookId: string): Promise<BookDetail | null> {
             ? "draft"
             : v.id === book.live?.listId
               ? "live"
-              : v.id === book.scheduled?.listId
+              : v.id === book.scheduled?.listId || (v.status === "published" && v.effectiveFrom > day)
                 ? "scheduled"
                 : "history";
       return {
