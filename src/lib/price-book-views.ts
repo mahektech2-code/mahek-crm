@@ -22,14 +22,14 @@ export const BOOK_STATE_LABEL: Record<BookState, string> = {
   retired: "Retired",
 };
 
-export const BOOK_STATE_TONE: Record<BookState, "success" | "warning" | "info" | "neutral" | "danger"> = {
+export const BOOK_STATE_TONE: Record<BookState, "success" | "warn" | "brand" | "neutral" | "danger" | "muted"> = {
   live: "success",
-  change_waiting: "warning",
-  scheduled: "info",
-  expiring: "warning",
+  change_waiting: "warn",
+  scheduled: "brand",
+  expiring: "warn",
   expired: "danger",
   draft: "neutral",
-  retired: "neutral",
+  retired: "muted",
 };
 
 export type BookRevisionRef = { listId: string; version: number; effectiveFrom: string; effectiveTo: string | null };
@@ -114,6 +114,38 @@ export type ChangeSummaryRow = {
   goLive: string | null;
   changed: number;
   updatedAt: string;
+};
+
+/** Who a book reaches, wins and loses, rule by rule. */
+export type BookCoverage = {
+  listId: string;
+  rules: Array<{
+    scopeId: string;
+    kind: string;
+    label: string;
+    freight: string;
+    /** Shops this rule names. */
+    reach: number;
+    /** Of those, the shops this book actually prices. */
+    win: number;
+    /** Of those, the shops a narrower or higher book takes. */
+    lose: number;
+  }>;
+  /** Shops this book names that another book wins, and which one and why. Capped at 200. */
+  lost: Array<{ customerId: string; name: string; toListId: string; toListName: string; why: string }>;
+  won: number;
+  /** Of the shops it prices: those with no freight term, and those whose place was never resolved. */
+  wonWithoutFreight: number;
+  wonWithoutPlace: number;
+};
+
+/** How a book sits against the others — said in words on its page. */
+export type BookSits = {
+  ladderBreaks: string[];
+  /** Mean of (this book − other books) / other books over shared products, basis points. */
+  vsBooksBp: number | null;
+  sharedProducts: number;
+  belowLastMonth: { lines: number; givenAwayPaise: number } | null;
 };
 
 export type BookDetail = {

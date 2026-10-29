@@ -1018,6 +1018,60 @@ export async function requestSecondOpinion(changeId: string): Promise<Result<{ t
   }
 }
 
+/* ------------------------------------------------------ who it covers */
+
+/**
+ * COVERAGE BELONGS TO THE BOOK. Who a book covers is edited on its revision
+ * in force (with the ordinary scope actions and their impact report), and
+ * this carries the same rules onto the revision scheduled after it and onto
+ * the open change's draft — so a revision going live next week does not
+ * quietly revert a scope somebody added today.
+ */
+export async function propagateBookCoverage(bookId: string): Promise<Result<{ updated: number }>> {
+  try {
+    const ctx = await requirePriceDesk();
+    const day = await today();
+    const updated = await db.transaction(async (tx) => {
+      const [source] = await tx.execute<{ id: string }>(sql`
+        select id from price_lists
+         where book_id = ${bookId} and status = 'published'
+           and effective_from <= ${day}::date and (effective_to is null or effective_to >= ${day}::date)
+         order by version desc limit 1
+      `);
+      if (!source) throw new Refused(err("This book has no revision in force to copy who it covers from.", "rule_violation"));
+      const targets = await tx.execute<{ id: string }>(sql`
+        select l.id from price_lists l
+         where l.book_id = ${bookId} and l.id <> ${source.id}
+           and ((l.status = 'published' and l.effective_from > ${day}::date)
+                or (l.status = 'draft' and exists (
+                      select 1 from price_changes pc where pc.draft_list_id = l.id and pc.status in ('draft', 'submitted', 'sent_back'))))
+      `);
+      for (const t of targets) {
+        await tx.execute(sql`delete from price_list_scopes where price_list_id = ${t.id}`);
+        await tx.execute(sql`
+          insert into price_list_scopes (id, price_list_id, scope_kind, scope_value, scope_label, parent_key,
+                                         freight_term_match, priority, valid_from, valid_to, created_by_id)
+          select ${sql.raw("'pls_' || substr(md5(random()::text), 1, 12)")}, ${t.id}, s.scope_kind, s.scope_value,
+                 s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, ${ctx.user.id}
+            from price_list_scopes s where s.price_list_id = ${source.id}
+        `);
+      }
+      await audit(tx, ctx, {
+        action: "pricebook.coverage.carry",
+        entityType: "price_list",
+        entityId: source.id,
+        after: { bookId, to: targets.map((t) => t.id) },
+      });
+      return targets.length;
+    });
+    refresh(bookId);
+    return ok({ updated }, updated ? `Carried onto ${updated} later revision${updated === 1 ? "" : "s"}.` : "Saved.");
+  } catch (e) {
+    if (e instanceof Refused) return e.result;
+    return fromThrown(e);
+  }
+}
+
 /* ----------------------------------------------------- the books, listed */
 
 /** For a client that wants to refresh the list without a navigation. */

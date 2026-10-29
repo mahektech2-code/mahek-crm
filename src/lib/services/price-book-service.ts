@@ -33,6 +33,7 @@ import {
 import type { PriceChangeNotify, PriceChangeSource, PriceFreightTerm } from "@/db/schema";
 import type { PriceListSummary } from "@/lib/price-list-views";
 import type {
+  BookCoverage,
   BookDetail,
   BookEvent,
   BookRevision,
@@ -734,6 +735,71 @@ export async function listOverrides(filter?: { customerId?: string; state?: "ope
       createdAt: r.createdAt,
     };
   });
+}
+
+/* -------------------------------------------------------------- coverage */
+
+/** Who a book's revision in force reaches, wins and loses, rule by rule. */
+export async function bookCoverage(listId: string, day: string): Promise<BookCoverage> {
+  const [config, ids, { scopes, lists }] = await Promise.all([getConfig(), userIdsInScope(), activeScopesAndLists()]);
+  const rows = await db.execute<GeoRow & { name: string; resolvedStateId: string | null; resolvedCityId: string | null }>(sql`
+    select g.*, named.name, named.resolved_state_id as "resolvedStateId", named.resolved_city_id as "resolvedCityId"
+      from (${GEO_SELECT} where c.kind = 'customer' and c.status <> 'deactivated' and ${bookClause(ids)}) g
+      join customers named on named.id = g."customerId"
+  `);
+  const opts = resolveOptionsFrom(config);
+  const own = scopes.filter((sc) => sc.priceListId === listId);
+  const rules = new Map(
+    own.map((sc) => [
+      sc.id,
+      {
+        scopeId: sc.id,
+        kind: sc.scopeKind,
+        label: sc.scopeKind === "everybody" ? "Everybody" : (sc.scopeLabel ?? sc.scopeValue),
+        freight: sc.freightTermMatch,
+        reach: 0,
+        win: 0,
+        lose: 0,
+      },
+    ]),
+  );
+  const lost: BookCoverage["lost"] = [];
+  let won = 0;
+  let wonWithoutFreight = 0;
+  let wonWithoutPlace = 0;
+  for (const row of rows) {
+    const r = resolvePriceList(toGeo(row), scopes, lists, day, opts);
+    if (!r) continue;
+    const mine = r.candidates.find((c) => c.listId === listId);
+    if (!mine) continue;
+    const rule = rules.get(mine.scopeId);
+    if (rule) rule.reach++;
+    if (r.listId === listId) {
+      won++;
+      if (rule) rule.win++;
+      if (!row.freightTerm) wonWithoutFreight++;
+      if (!row.resolvedStateId && !row.resolvedCityId) wonWithoutPlace++;
+    } else {
+      if (rule) rule.lose++;
+      if (lost.length < 200) {
+        lost.push({
+          customerId: row.customerId,
+          name: row.name,
+          toListId: r.listId,
+          toListName: r.listName,
+          why: `named as ${r.scope.scopeKind === "everybody" ? "everybody" : `a ${r.scope.scopeKind.replace("_", " ")}`} by ${r.listName}, which is narrower or ranks higher`,
+        });
+      }
+    }
+  }
+  return {
+    listId,
+    rules: [...rules.values()].sort((a, b) => b.reach - a.reach),
+    lost: lost.sort((a, b) => a.name.localeCompare(b.name)),
+    won,
+    wonWithoutFreight,
+    wonWithoutPlace,
+  };
 }
 
 export { PROVIDER_LABEL };
