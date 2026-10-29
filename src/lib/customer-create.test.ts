@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customerContacts, customers, mbosUserTerritories, notifications, users } from "@/db/schema";
+import { appAccess, customerContacts, customers, erpCustomerProfiles, mbosUserTerritories, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { createDirectCustomer } from "@/lib/actions/customer-create";
@@ -138,6 +138,18 @@ describe("Adding a customer from Accounts", () => {
     const bell = await db.select().from(notifications).where(eq(notifications.userId, mahesh.id));
     assert.equal(bell.length, 1);
     assert.match(bell[0].title, /New customer: Shree Ganesh Paints/);
+  });
+
+  test("a transporter named on the form is on the ERP profile; none writes no profile", async () => {
+    const r = await createDirectCustomer(input({ transporter: "VRL Logistics" }));
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const [p] = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, r.data.id));
+    assert.equal(p?.transporter, "VRL Logistics");
+
+    const bare = await createDirectCustomer(input({ name: "Plain Shop", phone: "9876500033" }));
+    assert.ok(bare.ok, bare.ok ? "" : bare.error);
+    const none = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, bare.data.id));
+    assert.equal(none.length, 0);
   });
 
   test("the nightly sales-people pass leaves the seat's name alone", async () => {

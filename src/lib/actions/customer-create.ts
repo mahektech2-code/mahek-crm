@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers } from "@/db/schema";
-import { canFor, requireCapability } from "@/lib/access-control";
+import { auditLog, customers, erpCustomerProfiles } from "@/db/schema";
+import { canFor, requireCapability, resolveScope } from "@/lib/access-control";
+import { refOptions } from "@/lib/erp/refs";
 import { canonicalState } from "@/lib/india-states";
 import { newCustomerSchema, type NewCustomerInput } from "@/lib/new-customer";
 import { resolveSeat, type ResolvedSeat } from "@/lib/services/seat-resolve";
@@ -202,6 +203,16 @@ export async function createDirectCustomer(
         updatedAt: now,
       });
 
+      // The transporter lives on the ERP profile, the same place the edit form
+      // and the ERP's order lines read it from.
+      if (v.transporter) {
+        await tx.insert(erpCustomerProfiles).values({
+          customerId,
+          transporter: v.transporter,
+          updatedById: ctx.user.id,
+        });
+      }
+
       await tx.insert(auditLog).values({
         id: id("aud"),
         actorId: ctx.user.id,
@@ -251,6 +262,20 @@ export async function createDirectCustomer(
       /* no request context (tests, scripts) — nothing cached to invalidate */
     }
     return ok({ id: customerId, name: v.name }, `${v.name} added`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The transporters a customer form offers: the ERP's transporter master, the
+ * Transporter reference list, and every spelling already on a customer — the
+ * same list the ERP's own party form draws.
+ */
+export async function listTransporterChoices(): Promise<Result<string[]>> {
+  try {
+    await resolveScope();
+    return ok(await refOptions("transporter"));
   } catch (e) {
     return fromThrown(e);
   }

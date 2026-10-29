@@ -92,6 +92,8 @@ export const newCustomerSchema = z
     priceTag: optionalText(120),
     freightTerm: z.enum(["paid", "to_pay", ""]).optional().default(""),
     deliveryType: optionalText(60),
+    /** Who carries this shop's goods — kept on the ERP profile, which fills an order's transporter from it. */
+    transporter: optionalText(200),
 
     sales: seatSchema,
     backOffice: seatSchema.optional().default({ kind: "none" }),
@@ -141,6 +143,7 @@ export const NEW_CUSTOMER_TAB: Record<string, "details" | "address" | "commercia
   priceTag: "commercial",
   freightTerm: "commercial",
   deliveryType: "commercial",
+  transporter: "commercial",
   sales: "managers",
   backOffice: "managers",
   salesManager: "managers",

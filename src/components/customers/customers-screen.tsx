@@ -2760,6 +2760,20 @@ function CustomerFormBody({
                 ) : null}
               </Select>
             </Field>
+            <Field label="Transporter" hint="Who carries their goods. The ERP fills each order's transporter from this.">
+              <Select value={detail.transporter} onChange={setD("transporter")}>
+                <option value="">Not stated</option>
+                {/* A saved spelling the list lacks is offered first, so Save never blanks it. */}
+                {detail.transporter && !editor.transporterOptions.includes(detail.transporter) ? (
+                  <option value={detail.transporter}>{detail.transporter}</option>
+                ) : null}
+                {editor.transporterOptions.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <div className="col-span-2 rounded-[4px] border border-line px-3 py-2.5">
               <Checkbox
                 label="Stop supply to this customer"
@@ -2801,9 +2815,6 @@ function CustomerFormBody({
           <>
             <Field label="Company name" hint="The legal name, where it differs from the business name.">
               <Input value={detail.companyName} onChange={setD("companyName")} />
-            </Field>
-            <Field label="Transporter" hint="The ERP fills an order's transporter from this.">
-              <Input value={detail.transporter} onChange={setD("transporter")} />
             </Field>
             <Field label="Weight type">
               <Input value={detail.weightType} onChange={setD("weightType")} />

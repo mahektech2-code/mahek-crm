@@ -21,6 +21,7 @@ import {
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
+import { refOptions } from "@/lib/erp/refs";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
@@ -240,6 +241,8 @@ export type CustomerEditorData = {
   birthdayHeadsUpDays: number;
   /** Whether this person may change the credit limit and the supply stop. */
   canDecideCredit: boolean;
+  /** What the Transporter picker offers — the ERP's list plus every spelling in use. */
+  transporterOptions: string[];
 };
 
 export async function loadCustomerEditor(customerId: string): Promise<Result<CustomerEditorData>> {
@@ -297,6 +300,7 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
       today: await today(),
       birthdayHeadsUpDays: (await getConfig())["customers.birthdayHeadsUpDays"],
       canDecideCredit: await canFor(ctx.user, "payment.confirm"),
+      transporterOptions: await refOptions("transporter"),
     });
   } catch (e) {
     return fromThrown(e);
