@@ -42,6 +42,8 @@ import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
 import { OwnerOptions, UNASSIGNED, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { LeadCallAssistant } from "@/components/leads/calling-desk/lead-call-assistant";
+import { FollowUpSection } from "@/components/leads/calling-desk/follow-up";
+import type { FollowUpDocs } from "@/lib/lead-followup";
 
 /** The outcome as the call dialog's pills say it; the full words ride on the hover. */
 const OUTCOME_SHORT: Record<(typeof CALL_OUTCOMES)[number]["code"], string> = {
@@ -325,15 +327,21 @@ export function LogCallDialog({
   defaultNextDate,
   today,
   onClose,
+  followUpDocs = {},
 }: {
   lead: DeskLeadRecord;
   defaultNextDate: string;
   today: string;
   onClose: () => void;
+  /** The published files a follow-up can name — resolved by the page, re-resolved by the action. */
+  followUpDocs?: FollowUpDocs;
 }) {
   const done = useDone();
   const n = lead.callCount + 1;
   const [outcome, setOutcome] = React.useState<CallOutcome | null>(null);
+  /* FOLLOW-UP: its own option (never a call) and a section inside Spoke. */
+  const [followOnly, setFollowOnly] = React.useState(false);
+  const [fuOpen, setFuOpen] = React.useState(false);
   const [noAnswerReason, setNoAnswerReason] = React.useState("no_response");
   const [text, setText] = React.useState<Partial<Record<DeskFieldKey, string>>>({});
   const [productId, setProductId] = React.useState<string | null>(null);
@@ -406,7 +414,7 @@ export function LogCallDialog({
   const known = q.answered.length + Object.keys(draft).length;
 
   async function save() {
-    if (!outcome) return;
+    if (followOnly || !outcome) return;
     if (notes.trim().length < MIN_CALL_REMARK) {
       setError("Write a short remark about the call — even a no answer needs one.");
       return;
@@ -444,7 +452,9 @@ export function LogCallDialog({
 
   /* What saving does, as one pill in the foot. */
   const verdict: { tone: "success" | "danger" | "warn" | "neutral"; label: string; title?: string } | null =
-    !outcome
+    followOnly
+      ? { tone: "neutral", label: "Follow-up — not a call", title: "Nothing here is counted as a call or as an answer." }
+      : !outcome
       ? null
       : willBeReady
         ? { tone: "success", label: "Ready for Prospect" }
@@ -489,11 +499,13 @@ export function LogCallDialog({
             </span>
           ) : null}
           <Button variant="secondary" onClick={onClose}>
-            Cancel
+            {followOnly ? "Close" : "Cancel"}
           </Button>
+          {followOnly ? null : (
           <Button variant="primary" disabled={!outcome || busy || notes.trim().length < MIN_CALL_REMARK} title={outcome && notes.trim().length < MIN_CALL_REMARK ? "Write a short remark about the call first." : undefined} onClick={() => void save()}>
             {busy ? "Saving…" : willBeLost ? "Save call and mark Lost" : "Save call"}
           </Button>
+          )}
         </>
       }
     >
@@ -512,12 +524,26 @@ export function LogCallDialog({
                 key={o.code}
                 name="outcome"
                 checked={outcome === o.code}
-                onChange={() => setOutcome(o.code)}
+                onChange={() => {
+                  setOutcome(o.code);
+                  setFollowOnly(false);
+                }}
                 title={`${o.label}. ${o.hint}`}
               >
                 {OUTCOME_SHORT[o.code]}
               </OptionPill>
             ))}
+            <OptionPill
+              name="outcome"
+              checked={followOnly}
+              onChange={() => {
+                setFollowOnly(true);
+                setOutcome(null);
+              }}
+              title="Send the lead a product image, the brochure or the price list. This is not a call."
+            >
+              Follow-up
+            </OptionPill>
           </div>
           {outcome === "no_answer" ? (
             <div className="mt-3 max-w-[320px]">
@@ -533,6 +559,13 @@ export function LogCallDialog({
             </div>
           ) : null}
         </div>
+
+        {followOnly ? (
+          <div>
+            <p className={SEC}>What to send</p>
+            <FollowUpSection customerId={lead.id} docs={followUpDocs} hasPhone={Boolean(lead.phone)} />
+          </div>
+        ) : null}
 
         {spoke ? (
           <>
@@ -597,6 +630,22 @@ export function LogCallDialog({
               Remarks <span className="font-normal text-danger">(required)</span>
             </label>
             <Textarea id="call-notes" rows={3} value={notes} placeholder="What happened on this call — even “phone switched off” will do." onChange={(e) => setNotes(e.target.value)} />
+          </div>
+        ) : null}
+
+        {spoke ? (
+          <div>
+            <div className="flex items-center gap-2">
+              <p className={cx(SEC, "mb-0 flex-1")}>Follow-up (optional)</p>
+              <Button variant="secondary" size="sm" onClick={() => setFuOpen((o) => !o)}>
+                {fuOpen ? "Hide" : "Add a follow-up"}
+              </Button>
+            </div>
+            {fuOpen ? (
+              <div className="mt-2.5">
+                <FollowUpSection customerId={lead.id} docs={followUpDocs} hasPhone={Boolean(lead.phone)} />
+              </div>
+            ) : null}
           </div>
         ) : null}
 

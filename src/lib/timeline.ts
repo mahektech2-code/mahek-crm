@@ -126,6 +126,13 @@ export const CRM_EVENT = {
    * other entry in this table.
    */
   opportunity: "sales_opportunity",
+  /**
+   * Somebody asked, in the call form, for a product image, the brochure or the
+   * price list to go to a lead. A REQUEST, never a send: the source id carries the
+   * material, and the wording never says "sent" because only the WhatsApp screen
+   * can confirm that.
+   */
+  followUp: "lead_followup",
 } as const;
 
 /**

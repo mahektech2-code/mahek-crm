@@ -83,6 +83,7 @@ import { priorityLabel, priorityTone } from "@/lib/lead-priority";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { isWorkingStage, nextCallNumber } from "@/lib/engines/lead-calling-desk";
 import { LogCallDialog } from "@/components/leads/calling-desk/dialogs";
+import type { FollowUpDocs } from "@/lib/lead-followup";
 import { timelineActor, type TimelineActorKind } from "./timeline-actor";
 import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
@@ -313,6 +314,7 @@ export function LeadRecordScreen({
   canReassign,
   canReassignSalesman,
   callRecord = null,
+  followUpDocs,
   canOverride,
   canPrioritise,
   canTrash,
@@ -436,6 +438,8 @@ export function LeadRecordScreen({
    * `desk`, which also decides whether converting is offered.
    */
   callRecord?: DeskLeadRecord | null;
+  /** The published files a follow-up in the call form can name. */
+  followUpDocs?: FollowUpDocs;
   canOverride: boolean;
   /**
    * §4.1 — whether this person may say how hard to push the lead. The control
@@ -1071,6 +1075,7 @@ export function LeadRecordScreen({
       {calling && callLead && defaultNextDate ? (
         <LogCallDialog
           lead={callLead}
+          followUpDocs={followUpDocs}
           defaultNextDate={defaultNextDate}
           today={day}
           onClose={() => setCalling(false)}
