@@ -6,6 +6,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { stamp, stampDate } from "@/lib/format";
 import { lastAnswer, lastFinding, type Remembered } from "@/lib/verification-history";
+import {
+  REQUIRED_WHEN_VERIFIED,
+  isActiveQuestion,
+  missingRequiredAnswers,
+} from "@/lib/verification-form";
 import { Button, cx, Input, Select, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -145,7 +150,9 @@ export function VerifyScreen({
    * down here — a second list would drift the day a column is added.
    */
   const consumed = new Set(findings.map((f) => f.lands).filter((x): x is string => Boolean(x)));
-  const remaining = VERIFICATION_QUESTIONS.filter((q) => !consumed.has(q.id));
+  /* Hidden questions are not asked on this form; their stored answers stay on
+     the record. See `lib/verification-form.ts`. */
+  const remaining = VERIFICATION_QUESTIONS.filter((q) => !consumed.has(q.id) && isActiveQuestion(q.id));
 
   /*
    * ASKED IN §5.2'S OWN FOUR SECTIONS, because seventeen boxes in one grid is a
@@ -257,6 +264,8 @@ export function VerifyScreen({
      closed. The action demands both again — a form is not a rule. */
   const needsNote = verdict !== null && verdict !== "verified" && !composedNote.trim();
   const needsFailureReason = verdict === "not_qualified" && !failureReason;
+  /* What the shop uses now is asked of a SUCCESSFUL verification only. */
+  const missingRequired = missingRequiredAnswers(verdict, questions);
 
   async function submit() {
     if (!verdict) return;
@@ -349,7 +358,8 @@ export function VerifyScreen({
     !verdict ||
     unreasonedCorrections.length > 0 ||
     needsNote ||
-    needsFailureReason;
+    needsFailureReason ||
+    missingRequired.length > 0;
 
 
   const record = leadHref(workspace, `leads/${customerId}`);
@@ -423,7 +433,9 @@ export function VerifyScreen({
                     ? "Say what the call established before recording it."
                     : unreasonedCorrections.length
                       ? "A correction has to say what the shop said and why the two differ."
-                      : needsFailureReason
+                      : missingRequired.length
+                        ? "Say what the shop is using now — a verification cannot be recorded without it."
+                        : needsFailureReason
                         ? "Closing a lead needs one of the configured reasons."
                         : needsNote
                           ? verdict === "not_qualified"
@@ -480,14 +492,15 @@ export function VerifyScreen({
             {s.questions.map((q, qi) => {
               const before = lastAnswer(priorCalls, q.id);
               const typed = Boolean((questions[q.id] ?? "").trim());
+              const required = verdict === "verified" && REQUIRED_WHEN_VERIFIED.includes(q.id);
               return (
                 <Row
                   key={q.id}
                   n={sectionStart[si] + qi + 1}
                   label={q.ask}
                   done={typed}
-                  tag={typed ? "answered" : "optional"}
-                  tone={typed ? "done" : "optional"}
+                  tag={typed ? "answered" : required ? "needed" : "optional"}
+                  tone={typed ? "done" : required ? "needed" : "optional"}
                 >
                   {before ? (
                     <Known text={before.text} caption={`Last answered ${stampDate(before.at)}`} />
@@ -563,25 +576,45 @@ export function VerifyScreen({
           );
         })()}
 
+        {/*
+         * REMARKS / NEXT ACTION — not a numbered question.
+         *
+         * It is the call's note, the same `note` the server has always asked
+         * for: the sentence that becomes the salesman's task on a follow-up and
+         * the record of why a lead was closed on a failed verification. It sits
+         * under the result because what it says depends on the result, and it
+         * carries no number because it is not something the shop is asked.
+         */}
         {(() => {
           const required = verdict === "follow_up" || verdict === "not_qualified";
+          const written = Boolean(note.trim());
           return (
-            <Row
-              n={verdictN + 1}
-              label={
-                verdict === "not_qualified" ? "What did the shop say?" : "What should the salesman do?"
-              }
-              done={Boolean(note.trim())}
-              tag={note.trim() ? "answered" : required ? "needed" : "optional"}
-              tone={note.trim() ? "done" : required ? "needed" : "optional"}
-            >
+            <div className="border-t border-divider py-2.5">
+              <div className="mb-1 flex items-baseline justify-between gap-3 text-xs font-bold text-ink">
+                <span>Remarks / Next Action</span>
+                <span
+                  className={cx(
+                    "shrink-0 text-[11px] font-semibold",
+                    written ? "text-success" : required ? "text-warn-ink" : "text-muted",
+                  )}
+                >
+                  {written ? "answered" : required ? "needed" : "optional"}
+                </span>
+              </div>
               <Textarea
                 rows={2}
                 disabled={!canVerify}
                 value={note}
+                placeholder={
+                  verdict === "follow_up"
+                    ? "What should the salesman do?"
+                    : verdict === "not_qualified"
+                      ? "What did the shop actually say?"
+                      : undefined
+                }
                 onChange={(e) => setNote(e.target.value)}
               />
-            </Row>
+            </div>
           );
         })()}
       </Modal>

@@ -245,7 +245,7 @@ describe("the existing save is the only way a lead is verified", () => {
     const r = await verifyProspect({
       customerId: lead.id,
       outcome: "verified",
-      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -259,7 +259,7 @@ describe("the existing save is the only way a lead is verified", () => {
       customerId: lead.id,
       outcome: "verified",
       expectCorrections: true,
-      answers: { visited: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes" },
       corrections: [{ field: "monthly_litres", original: "400 Litres", corrected: "250 Litres", reason: "" }],
     });
     assert.equal(r.ok, false);

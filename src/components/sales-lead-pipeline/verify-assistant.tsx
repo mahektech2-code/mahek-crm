@@ -12,6 +12,8 @@ import {
   type VerifyFindingFill,
 } from "@/lib/engines/verify-intel-decide";
 import type { VerifyAnswerKey, VerifyFindingKey } from "@/lib/verify-intel-schema";
+import { SALESMAN_FINDING_FIELDS } from "@/lib/sales-lead-pipeline/engine";
+import { isActiveDeskAnswer, isActiveFinding } from "@/lib/verification-form";
 
 /* ---------------------------------------------------------------------------
  * THE MANAGER VERIFICATION DIALOG'S VOICE ASSISTANT — at the top of the dialog,
@@ -81,7 +83,21 @@ export function VerifyAssistant({
       setPhase({ kind: "failed", message: result.error });
       return;
     }
-    setPhase({ kind: "done", analysis: result.data.analysis });
+    /* Only what the form still asks: a suggestion for a removed question, or for
+       a finding the call no longer checks, is dropped before it is drawn. */
+    const full = result.data.analysis;
+    const findingIdOf = (key: string) => SALESMAN_FINDING_FIELDS.find((f) => f.key === key)?.findingId ?? null;
+    setPhase({
+      kind: "done",
+      analysis: {
+        ...full,
+        answers: full.answers.filter((f) => isActiveDeskAnswer(f.key)),
+        findings: full.findings.filter((f) => {
+          const id = findingIdOf(f.key);
+          return id === null || isActiveFinding(id);
+        }),
+      },
+    });
   }
 
   const blockedReason = (item: VerifyAnswerFill | VerifyFindingFill) => blockedFor(item, context);
@@ -113,7 +129,7 @@ export function VerifyAssistant({
         rows={2}
         value={typed}
         onChange={(e) => setTyped(e.target.value)}
-        placeholder='Or type it: e.g. "Shop confirms the salesman visited and explained well, uses about 400 litres a month, no price problem, ready for a trial"'
+        placeholder='Or type it: e.g. "Shop uses about 400 litres a month, is on Asian Paints today, ready for a trial"'
       />
       <div className="flex flex-wrap items-center gap-2">
         <DictateButton

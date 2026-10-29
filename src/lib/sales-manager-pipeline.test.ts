@@ -484,7 +484,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     const r = await verifyProspect({
       customerId: lead.id,
       outcome: "verified",
-      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -508,7 +508,7 @@ describe("M — every mutation persists, and the screen is told what the databas
       customerId: lead.id,
       outcome: "verified",
       expectCorrections: true,
-      answers: { visited: "Yes", explained: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes" },
       corrections: [{ field: "competitor", original: "Local thinner", corrected: "Asian Paints", reason: "Shop said so on the phone" }],
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -526,7 +526,7 @@ describe("M — every mutation persists, and the screen is told what the databas
 
   test("'verified with corrections' with nothing corrected is refused before anything is written", async () => {
     const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
-    const r = await verifyProspect({ customerId: lead.id, outcome: "verified", expectCorrections: true, answers: {}, corrections: [] });
+    const r = await verifyProspect({ customerId: lead.id, outcome: "verified", expectCorrections: true, answers: { current_product: "Asian Paints PU" }, corrections: [] });
     assert.equal(r.ok, false);
     assert.equal((await row(lead.id)).leadVerifiedAt, null);
   });
@@ -595,7 +595,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.equal(before.gate.kind, "verify");
     assert.equal((await pipelineDashboard(DAY)).manager.pendingVerification, 1, "the request waits in the same queue");
 
-    const r = await verifyProspect({ customerId: lead.id, outcome: "verified", answers: { visited: "Yes" }, corrections: [] });
+    const r = await verifyProspect({ customerId: lead.id, outcome: "verified", answers: { current_product: "Asian Paints PU", visited: "Yes" }, corrections: [] });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     const after = await row(lead.id);
     assert.notEqual(after.leadStage, "suspect", "verification is what makes the request a Prospect");
@@ -1177,7 +1177,7 @@ describe("A — authorisation is the existing model, asked in the existing order
   test("a telecaller cannot verify, and a salesman cannot approve a sample", async () => {
     const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
     setTestUser(telecaller);
-    const v = await verifyProspect({ customerId: lead.id, outcome: "verified", answers: {}, corrections: [] });
+    const v = await verifyProspect({ customerId: lead.id, outcome: "verified", answers: { current_product: "Asian Paints PU" }, corrections: [] });
     assert.equal(v.ok, false);
     assert.equal((await row(lead.id)).leadVerifiedAt, null, "nothing was written");
 

@@ -427,7 +427,7 @@ describe("a successful verification opens Qualification, on every door", () => {
   test("the console's verification call", async () => {
     const lead = await prospect();
     setTestUser(mgr);
-    const r = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const r = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     const after = await row(lead.id);
     assert.equal(after.leadStage, "qualification");
@@ -446,7 +446,7 @@ describe("a successful verification opens Qualification, on every door", () => {
   test("the Sales Manager pipeline", async () => {
     const lead = await prospect();
     setTestUser(mgr);
-    const r = await verifyProspect({ customerId: lead.id, outcome: "verified", answers: {}, corrections: [] });
+    const r = await verifyProspect({ customerId: lead.id, outcome: "verified", answers: { current_product: "Asian Paints PU" }, corrections: [] });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await row(lead.id)).leadStage, "qualification");
   });
@@ -458,7 +458,7 @@ describe("a successful verification opens Qualification, on every door", () => {
     assert.equal((await row(lead.id)).leadStage, "prospect");
 
     setTestUser(tele);
-    const attempt = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "verified" });
+    const attempt = await recordLeadValidationCall(lead.id, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" });
     assert.equal(attempt.ok, false, "a Telecaller cannot verify");
     const after = await row(lead.id);
     assert.equal(after.leadVerifiedAt, null);
@@ -1003,7 +1003,7 @@ describe("the whole workflow, start to finish", () => {
 
     // 3. The manager verifies; Qualification opens by itself.
     setTestUser(mgr);
-    assert.equal((await recordLeadValidationCall(leadId, { answers: {}, outcome: "verified" })).ok, true);
+    assert.equal((await recordLeadValidationCall(leadId, { answers: { current_product: "Asian Paints PU" }, outcome: "verified" })).ok, true);
     lead = await row(leadId);
     assert.equal(lead.leadStage, "qualification");
     assert.equal(lead.ownerId, tele.id);

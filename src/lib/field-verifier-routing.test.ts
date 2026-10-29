@@ -154,7 +154,7 @@ async function raisedBy(leadId: string, by: U, how: "desk" | "handset", level: L
 const convert = (customerId: string) =>
   convertLeadToProspect({ customerId, reasonCode: "regular_requirement", customerType: "manufacturer", gstin: "27ABCDE1234F1Z5", nextAction: "Call back with the price list", nextActionDate: "2026-12-01" });
 const verify = (customerId: string) =>
-  verifyProspect({ customerId, outcome: "verified", answers: {}, corrections: [] });
+  verifyProspect({ customerId, outcome: "verified", answers: { current_product: "Asian Paints PU" }, corrections: [] });
 
 const asTele = () => { setTestWorkspace(null); setTestUser(tele); };
 const asPritesh = () => { setTestWorkspace(null); setTestUser(pritesh); };

@@ -75,7 +75,7 @@ const prospectFields = () => ({
   leadDecisionMaker: "Owner",
 });
 
-const answers = { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" };
+const answers = { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes", current_product: "Asian Paints PU" };
 const verify = (customerId: string) => verifyProspect({ customerId, outcome: "verified", answers, corrections: [] });
 const row = async (leadId: string) => (await db.select().from(customers).where(eq(customers.id, leadId)))[0];
 

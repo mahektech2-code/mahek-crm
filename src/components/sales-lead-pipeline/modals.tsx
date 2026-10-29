@@ -30,11 +30,14 @@ import {
 import {
   CONVERSION_FIELD_KEYS,
   SALESMAN_FINDING_FIELDS,
+  VERIFY_FINDING_FIELDS,
   qualificationStatus,
   type FindingField,
 } from "@/lib/sales-lead-pipeline/engine";
 import { STAGE_LABEL } from "@/lib/sales-lead-pipeline/reference";
 import type { Lead } from "@/lib/sales-lead-pipeline/types";
+import { buyerNeedsCheck } from "@/lib/verification-buyer";
+import { isActiveFinding } from "@/lib/verification-form";
 import { cleanDecimal, cleanWhole, parseDecimal, rupeesFromPaise } from "@/lib/format";
 import { money as inrText } from "@/lib/format";
 
@@ -411,7 +414,6 @@ function YesNo({ label, value, onChange }: { label: string; value: boolean; onCh
 }
 
 const yn = (v: boolean) => (v ? "Yes" : "No");
-const concernText = (v: boolean) => (v ? "Yes — a concern was raised" : "No concern");
 
 const RESULTS: { code: string; label: string }[] = [
   { code: "verified", label: "Verified" },
@@ -422,19 +424,20 @@ const RESULTS: { code: string; label: string }[] = [
 
 function VerifyModal({ lead, onClose }: ModalProps) {
   const { doVerify, refs, workspace } = useLeadPipeline();
-  const findingFields = SALESMAN_FINDING_FIELDS.filter((f) => f.get(lead));
+  /* The SAME findings and questions as the Verification popup: the shared active
+     list decides, the buyer is a finding only where it is a different person
+     (compared on the stored values), and what the shop uses now is asked of a
+     successful verification. */
+  const activeFields = VERIFY_FINDING_FIELDS.filter(
+    (f) =>
+      isActiveFinding(f.findingId ?? "") &&
+      (f.key !== "buyer" || buyerNeedsCheck(lead.buyer, lead.decisionMaker)),
+  );
+  const findingFields = activeFields.filter((f) => f.get(lead));
   const [rows, setRows] = React.useState<Record<string, FindingRowState>>(() =>
     Object.fromEntries(findingFields.map((f) => [f.key, initialFindingState(f.get(lead) ?? "")])),
   );
-  const [visited, setVisited] = React.useState(true);
-  const [explained, setExplained] = React.useState(true);
-  const [impression, setImpression] = React.useState("");
-  const [genuineInterest, setGenuineInterest] = React.useState(true);
-  const [priceConcern, setPriceConcern] = React.useState(false);
-  const [qualityConcern, setQualityConcern] = React.useState(false);
-  const [creditConcern, setCreditConcern] = React.useState(false);
-  const [serviceConcern, setServiceConcern] = React.useState(false);
-  const [competitorConcern, setCompetitorConcern] = React.useState(false);
+  const [currentProduct, setCurrentProduct] = React.useState("");
   const [readyForTrial, setReadyForTrial] = React.useState(true);
   const [readyForCommercial, setReadyForCommercial] = React.useState(false);
   const [readyForOrder, setReadyForOrder] = React.useState(false);
@@ -457,19 +460,13 @@ function VerifyModal({ lead, onClose }: ModalProps) {
      a finding row to Correct with the shop's value. The reason on that row, the
      result, the failure reason and every note are written by the manager. */
   const applyVoiceAnswer = (key: VerifyAnswerKey, value: boolean | string) => {
+    /* Only the readiness answers are still asked; a suggestion for any other
+       slot is ignored rather than written into a question nobody sees. */
     switch (key) {
-      case "visited": setVisited(value === true); break;
-      case "explained": setExplained(value === true); break;
-      case "genuineInterest": setGenuineInterest(value === true); break;
-      case "priceConcern": setPriceConcern(value === true); break;
-      case "qualityConcern": setQualityConcern(value === true); break;
-      case "creditConcern": setCreditConcern(value === true); break;
-      case "serviceConcern": setServiceConcern(value === true); break;
-      case "competitorConcern": setCompetitorConcern(value === true); break;
       case "readyForTrial": setReadyForTrial(value === true); break;
       case "readyForCommercial": setReadyForCommercial(value === true); break;
       case "readyForOrder": setReadyForOrder(value === true); break;
-      case "impression": if (typeof value === "string") setImpression(value); break;
+      default: return;
     }
     touch(key);
   };
@@ -477,10 +474,7 @@ function VerifyModal({ lead, onClose }: ModalProps) {
     setRows((r) => (r[key] ? { ...r, [key]: { ...r[key], choice: "correct", value } } : r));
   const voiceContext: ApplyContext = {
     touched,
-    current: {
-      visited, explained, impression, genuineInterest, priceConcern, qualityConcern, creditConcern,
-      serviceConcern, competitorConcern, readyForTrial, readyForCommercial, readyForOrder,
-    },
+    current: { readyForTrial, readyForCommercial, readyForOrder },
     rows: rows as ApplyContext["rows"],
   };
 
@@ -488,10 +482,13 @@ function VerifyModal({ lead, onClose }: ModalProps) {
   const unable = findingFields.filter((f) => rows[f.key].choice === "unable");
   const needsReason = corrected.some((f) => !rows[f.key].reason.trim());
 
+  const successful = result === "verified" || result === "verified_with_corrections";
   const problem =
     needsReason
       ? "Every correction needs a reason — it is what settles the salesman's word against the shop's."
-      : result === "followup_required" && !note.trim()
+      : successful && !currentProduct.trim()
+        ? "Say what the shop is using now — a verification cannot be recorded without it."
+        : result === "followup_required" && !note.trim()
         ? "Say what the salesman should do about it — that sentence is what lands on his list."
         : result === "verification_failed" && (!note.trim() || !failure)
           ? "Say what the call found and what the shop actually said — that is the only record of why the lead was closed."
@@ -511,19 +508,11 @@ function VerifyModal({ lead, onClose }: ModalProps) {
       return row.choice === "correct" && row.value.trim() ? row.value.trim() : (f.get(lead) ?? undefined);
     };
     const answers: Record<string, string> = {
-      visited: yn(visited),
-      explained: yn(explained),
-      genuine_interest: yn(genuineInterest),
-      price_issue: concernText(priceConcern),
-      quality_issue: concernText(qualityConcern),
-      credit_concern: concernText(creditConcern),
-      service_issue: concernText(serviceConcern),
-      competitor_concern: concernText(competitorConcern),
       ready_for_trial: yn(readyForTrial),
       ready_for_commercial: yn(readyForCommercial),
       ready_for_order: yn(readyForOrder),
     };
-    if (impression.trim()) answers.impression = impression.trim();
+    if (currentProduct.trim()) answers.current_product = currentProduct.trim();
     const competitor = shopSays("competitor");
     if (competitor) answers.competitor = competitor;
     const litres = shopSays("monthlyLitres");
@@ -572,7 +561,7 @@ function VerifyModal({ lead, onClose }: ModalProps) {
           onCorrect={markVoiceCorrected}
         />
       ) : null}
-      <SalesmanFindingsCard lead={lead} fields={SALESMAN_FINDING_FIELDS} />
+      <SalesmanFindingsCard lead={lead} fields={activeFields} />
 
       <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Confirm salesman findings</div>
       {findingFields
@@ -587,26 +576,12 @@ function VerifyModal({ lead, onClose }: ModalProps) {
           />
         ))}
 
-      <div className="mt-4.5 mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">A. Salesman verification</div>
-      <YesNo label="Did the salesman visit?" value={visited} onChange={answer("visited", setVisited)} />
-      <YesNo label="Did the salesman explain Mahek properly?" value={explained} onChange={answer("explained", setExplained)} />
-      <Field label="Customer's impression of the salesman?" className="mb-3">
-        <Input placeholder="Free notes" value={impression} onChange={(e) => setImpression(e.target.value)} />
+      <div className="mt-4.5 mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">About the business</div>
+      <Field label={`What are you using now?${successful ? " — required" : ""}`} className="mb-3">
+        <Input placeholder="The product or brand the shop uses today" value={currentProduct} onChange={(e) => setCurrentProduct(e.target.value)} />
       </Field>
 
-      <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">B. Opportunity verification</div>
-      <YesNo label="Is the customer genuinely interested in trying it?" value={genuineInterest} onChange={answer("genuineInterest", setGenuineInterest)} />
-
-      <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">C. Objections</div>
-      <div className="mb-3 flex flex-wrap gap-3.5">
-        <CheckField label="Price concern" checked={priceConcern} onChange={answer("priceConcern", setPriceConcern)} />
-        <CheckField label="Quality concern" checked={qualityConcern} onChange={answer("qualityConcern", setQualityConcern)} />
-        <CheckField label="Credit concern" checked={creditConcern} onChange={answer("creditConcern", setCreditConcern)} />
-        <CheckField label="Delivery / service concern" checked={serviceConcern} onChange={answer("serviceConcern", setServiceConcern)} />
-        <CheckField label="Competitor concern" checked={competitorConcern} onChange={answer("competitorConcern", setCompetitorConcern)} />
-      </div>
-
-      <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">D. Readiness</div>
+      <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">What they are ready for</div>
       <div className="mb-3 flex flex-wrap gap-3.5">
         <CheckField label="Ready for trial" checked={readyForTrial} onChange={answer("readyForTrial", setReadyForTrial)} />
         <CheckField label="Ready for commercial discussion" checked={readyForCommercial} onChange={answer("readyForCommercial", setReadyForCommercial)} />
@@ -620,11 +595,6 @@ function VerifyModal({ lead, onClose }: ModalProps) {
         ))}
       </div>
 
-      {result === "followup_required" ? (
-        <Field label="What should the salesman do about it?" className="mt-3">
-          <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="This lands on his task list as written" />
-        </Field>
-      ) : null}
       {result === "verification_failed" ? (
         <div className="mt-3 space-y-3">
           <Callout tone="danger" className="mb-0">
@@ -638,11 +608,28 @@ function VerifyModal({ lead, onClose }: ModalProps) {
               ))}
             </Select>
           </Field>
-          <Field label="What the shop actually said">
-            <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
-          </Field>
         </div>
       ) : null}
+      {/* Remarks / Next Action: the call's note — optional for Verified, required for
+          a follow-up (it becomes the salesman's task) and for a failed verification
+          (the only record of why the lead was closed). Not a numbered question. */}
+      <Field
+        label={`Remarks / Next Action${result === "followup_required" || result === "verification_failed" ? " — required" : " — optional"}`}
+        className="mt-3"
+      >
+        <Textarea
+          rows={3}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={
+            result === "followup_required"
+              ? "What should the salesman do? This lands on his task list as written"
+              : result === "verification_failed"
+                ? "What the shop actually said"
+                : undefined
+          }
+        />
+      </Field>
       {problem ? <p className="mt-3 text-[12.5px] text-muted">{problem}</p> : null}
     </Modal>
   );
