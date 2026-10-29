@@ -24,7 +24,7 @@ sequenceDiagram
   participant L as advanceLeadStage
   participant DB as Postgres
   UI->>A: outcome, answers, next action
-  A->>A: requireCapability("lead.work"), deskRefusal (module), reachable (scope)
+  A->>A: requireCapability("lead.work"), reachable (the lead is in this person's scope)
   A->>DB: callsMade(customerId) — rows with outcome_detail.qualCall
   A->>E: afterCall(callNumber, outcome, merged answers, prior outcomes)
   E-->>A: ready · next · exhausted · lost(cause)
@@ -78,9 +78,9 @@ The desk narrows with `resolveScope` → `scopedToUsers`, **not** `managerScope`
 
 ## Permissions
 
-- <ModuleRef k="crm.lead-calling-desk" /> — off by default. The layout checks it, and **every write** checks it again through `deskRefusal`, because `lead.work` alone is held by every associate.
+- <ModuleRef k="crm.lead-calling-desk" /> — off by default; it opens the Calling desk's own queue screens. The lead page itself is the same for everyone: **every write** needs `lead.work` and the lead in the person's own scope, checked again on the server by `reachable`, so nothing depends on holding the desk screen.
 
-<Code file="src/lib/actions/lead-calling-desk.ts" symbol="deskRefusal" />
+<Code file="src/lib/actions/lead-calling-desk.ts" symbol="reachable" />
 
 <CapabilityGrid names={["lead.work", "lead.verify"]} />
 
@@ -102,8 +102,8 @@ Which answers are compulsory or needed for a Prospect is a flag on `DESK_FIELDS`
 <Step title="Keep stage writes on advanceLeadStage">
 A desk action that set `lead_stage` itself would skip the gate, the transition row and the timeline.
 </Step>
-<Step title="Every new write asks deskRefusal">
-Put it immediately after `requireCapability("lead.work")`.
+<Step title="Every new write asks reachable">
+Put it immediately after `requireCapability("lead.work")`: the lead must be in the caller's own scope.
 </Step>
 <Step title="Do not store derived state">
 "Ready" and "which call" are derived on every read. Only the request is stored, because asking is not being.
