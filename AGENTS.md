@@ -9102,6 +9102,75 @@ skipped with why. Wati's ticks reach them through `applyWatiEvent` (`etmsg_`).
 the shared steps — never call notes, problem notes, prices or staff names,
 because a WhatsApp link gets forwarded.
 
+## Delivery proof — an LR for a transporter, a signed copy for a Mahek Vehicle
+
+**A BILL GOES ONE OF TWO WAYS, and the order says which.** "Delivered by" on
+the ERP order form is a Transporter or a **Mahek Vehicle** — our own vehicle.
+Mahek Vehicle is a RESERVED TRANSPORTER NAME (`MAHEK_VEHICLE`,
+`isMahekVehicle` in `engines/logistics.ts`, seeded into `erp_transporters` by
+`0301`), so every place that carries a transporter as text — the order line,
+the bill, loading by transporter, trips, a party's default — carries it with
+no new column, and lorry loading groups those orders as one "Mahek Vehicle"
+lorry. `carrierOf` in `screens/sales.ts` turns the form's `deliveredBy` into
+the transporter; an older page that sends none keeps meaning its transporter
+box. What differs is the PROOF and the road: a Mahek Vehicle bill is
+`onRoad` the moment it is dispatch-verified (`phaseOf` reads the
+transporter), which then refuses a missing vehicle number or driver; there is
+no transporter's godown and no LR; the team rings the driver (`driverPhone`
+reads the mobile out of the driver text); `updateConsignment` moves it with
+no LR; `attachLr` refuses it; and `markDelivered` closes it ONLY with a
+customer-signed copy and who signed. `setDeliveredBy` changes who delivers a
+bill until it is delivered, never while it is under an LR, and moves the
+order's own lines with it.
+
+**A SIGNED COPY IS AN `erp_lrs` ROW of `kind = signed_copy`** — uploaded,
+read, voided and attached by the LR machinery, with `erp_transports.signed_copy_id`
+pointing at it. It carries no LR number or transporter (both are dropped on
+upload, and `setLrKind` clears the number when an upload moves over), and its
+own facts are `bill_hint`, `party_hint`, `received_by`, `delivered_on`.
+
+**THE PHONE ONLY UPLOADS; THE LAPTOP TEAM CHECKS.** Factory app → More →
+Upload LR or signed copy is pick LR or Signed copy, up to `LR_PICK_MAX` (10)
+photos, crop/rotate/remove each (`factory-mobile/src/photo-preview.tsx`,
+expo-image-manipulator), Send — nothing typed. The laptop's Upload modal is
+the same, pick-only. The server ceiling stays `LR_BATCH_MAX` (20) because an
+APK in the field still sends that many, and `saveLrPhotos` reads a missing
+kind as an LR. Every photo is read AFTER the answer (`readStoredLrs`, in
+`after()`): an LR's fields, a signed copy's bill, party, signer and date, and
+what kind of paper it looks like (`read_kind`). What the AI read is KEPT in
+`read_lr_no` even where it was not written into `lr_no` (unsure, or already
+on another LR), because the duplicate check and the desk's "Use 1101" read it.
+
+**THE SAME BYTES ARE STORED ONCE, SILENTLY; ANYTHING ELSE IS A QUESTION.**
+`uploadLrs` compares `attachments.content_hash`: a photo already on a live copy
+answers with that copy and writes nothing. Everything else is FLAGGED on the
+Documents desk by `duplicateFlags` (`engines/delivery-proof.ts`, pure, run in
+the browser and again by `discardDuplicate`): same transporter + number
+(typed or read) is a duplicate, or "attached" where the first is already on
+bills; the same number with a transporter unread, or a number one character
+from another with the same date and boxes, is a CHECK; a signed copy of the
+same bill (its last digits, `billKey`) is a duplicate. The EARLIER copy is
+never flagged, so discarding the later one always leaves one. "Different —
+keep both" stamps `dup_cleared_at` and the copy is never flagged again;
+"Same — discard" voids it naming the first, the one void with no typed
+confirmation, because it can only remove a second copy. Different numbers of
+one transporter, and one number of two transporters, are different papers.
+
+**THE DOCUMENTS DESK IS THE ONE PLACE A COPY IS CHECKED** (Logistics →
+Documents desk, the `pendingLr` tab, `parts/documents-desk.tsx`). LRs and
+Signed copies tabs; a mark per copy (ready, something to add, possible
+duplicate, being read); the photo with crop and rotate (`parts/photo-editor.tsx`
+→ `replaceLrFile`, which moves only the file); the fields; and the bills
+ranked by `rankForLr` / `rankForSignedCopy`. "Attach N ready" is
+`attachReady`: only copies with no flag, nothing missing (`missingFor`) and
+one CLEAR winner (`confidentPick` at `READY_SCORE`), each through the
+ordinary `attachLr` / `markDelivered`. A copy the AI thinks is the other kind
+says so (`wrongKind`) and moves with one press. A Mahek Vehicle bill out past
+`erp.ai.alerts.stuckLrDays` with no signed copy raises **Signed copy missing**.
+The customer's page skips the transporter's steps for our own vehicle
+(`OWN_VEHICLE_SKIPS`) and offers the signed copy as its document once
+delivered.
+
 ## Customer order tracking
 
 **ONE LINK PER ORDER, FROM CONFIRMATION TO DELIVERY** (the Customer Order

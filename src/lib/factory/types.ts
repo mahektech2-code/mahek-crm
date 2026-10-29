@@ -405,6 +405,13 @@ export type LrKit = { ok: true; transporters: string[]; canRead: boolean; recent
 /** Up to `LR_BATCH_MAX` photos stored in one press — each its own photo-only LR on the desk. */
 export const LR_BATCH_MAX = 20;
 
+/**
+ * What the phone lets somebody pick for one upload (0301). Below the server's
+ * ceiling on purpose: an APK already in the field still sends up to
+ * LR_BATCH_MAX, and the server must go on taking it.
+ */
+export const LR_PICK_MAX = 10;
+
 /** The most batches one mixing job can hold — Give a task, Start a mixing batch and the batch sheet alike. */
 export const MIX_BATCH_MAX = 10;
 

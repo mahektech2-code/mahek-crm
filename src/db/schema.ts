@@ -12780,6 +12780,8 @@ export const erpTransports = pgTable(
     /** Ready for pickup: where the party collects it, and whom to ask there. */
     pickupPoint: text("pickup_point"),
     pickupContact: text("pickup_contact"),
+    /** 0301: a Mahek Vehicle delivery's customer-signed copy (an `erp_lrs` row of kind signed_copy). */
+    signedCopyId: text("signed_copy_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id").references(() => users.id),
@@ -12824,8 +12826,28 @@ export const erpLrs = pgTable(
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
     assignedById: text("assigned_by_id").references(() => users.id),
     assignedAt: timestamp("assigned_at", { withTimezone: true }),
+    /* ---- 0301: delivery proof. See "## Delivery proof" in AGENTS.md. ---- */
+    /** lr | signed_copy — a customer-signed delivery copy is uploaded, read and checked by the same desk. */
+    kind: text("kind").notNull().default("lr"),
+    /** What the AI read off the photo, kept even where it was not written into `lr_no` (unsure, or already on another LR) — the duplicate check reads it. */
+    readLrNo: text("read_lr_no"),
+    /** What the AI thought the paper is: lr | signed_copy | other. */
+    readKind: text("read_kind"),
+    /** When the photo was read; null while it is still waiting to be read. */
+    readAt: timestamp("read_at", { withTimezone: true }),
+    /** A signed copy: the bill number and party the AI read off it, to match it to a delivery. */
+    billHint: text("bill_hint"),
+    partyHint: text("party_hint"),
+    /** A signed copy: who signed, and the day written on it. */
+    receivedBy: text("received_by"),
+    deliveredOn: date("delivered_on"),
+    /** A person said this is NOT a duplicate of the copy it looked like — it is never flagged again. */
+    dupClearedAt: timestamp("dup_cleared_at", { withTimezone: true }),
+    dupClearedById: text("dup_cleared_by_id").references(() => users.id),
   },
   (t) => [
+    index("erp_lrs_kind_status_idx").on(t.kind, t.status),
+    check("erp_lrs_kind_check", sql`${t.kind} in ('lr', 'signed_copy')`),
     uniqueIndex("erp_lrs_number_key").on(sql`lower(coalesce(${t.transporter}, ''))`, sql`upper(${t.lrNo})`).where(sql`${t.status} <> 'void'`),
     index("erp_lrs_status_idx").on(t.status),
     check("erp_lrs_status_check", sql`${t.status} in ('unassigned', 'assigned', 'void')`),

@@ -5,12 +5,12 @@ import { ComboBox } from "@/components/ui/combo-box";
 import { Button, checkboxClass, cx, Input, SectionLabel, Textarea } from "@/components/ui/primitives";
 import { calendarDate } from "@/lib/business-date";
 import { erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
-import { addDays, customerStageWords, MAX_CITIES_PER_UPDATE, ROAD_STAGES, routeSentence, shortDay, STAGE_SHORT, type Stage } from "@/lib/erp/engines/logistics";
+import { addDays, customerStageWords, MAHEK_VEHICLE, MAX_CITIES_PER_UPDATE, ROAD_STAGES, routeSentence, shortDay, STAGE_SHORT, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment, RouteSuggestions } from "@/lib/erp/logistics";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { Icon } from "../../_ui/icons";
 import { insetClass, linkClass } from "../../_ui/look";
-import { CallLink, lrLabel, plural, useAct } from "./common";
+import { CallLink, driverPhone, lrLabel, plural, useAct } from "./common";
 
 /* ---------------------------------------------------------------------------
  * UPDATE AN LR — what somebody fills in with the transporter on the phone.
@@ -45,6 +45,11 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
   const c = group[0];
   const ids = group.map((b) => b.id);
   const transit = c.stage === "In Transit" || c.stage === "On the way to Destination area";
+  /* Our own vehicle: no transporter's godown to leave from and no office to collect from — the driver takes it to the door. */
+  const own = c.ownVehicle;
+  const road = own ? ROAD.filter((o) => o.key !== "dispatched") : ROAD;
+  const lastMile = own ? LAST_MILE.filter((o) => o.key !== "Ready for Pickup") : LAST_MILE;
+  const talkingTo = own ? "driver" : "transporter";
 
   const [choice, setChoice] = useState<Choice>(ROAD_STAGES.includes(c.stage as Stage) ? (c.stage as Stage) : "In Transit");
   const stage: Stage = choice === "dispatched" ? "In Transit" : choice;
@@ -94,7 +99,7 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
   /* What the customer is told — the sentence the WhatsApp leads with, built by the same words the server uses. */
   const last = filled.slice().sort((a, b) => a.on.localeCompare(b.on)).at(-1);
   const preview = [
-    `Your consignment ${customerStageWords(stage, c.transporter)}.`,
+    `Your consignment ${customerStageWords(stage, c.transporter, c.vehicleNo)}.`,
     routeSentence({ stage, dispatchedFrom: from.trim() || null, city: last?.city.trim() ?? c.currentCity, cityOn: last?.on ?? null, destination: destination.trim() || c.lrDestination }),
     stage === "Ready for Pickup" && pickupPoint.trim() ? `Collect it from: ${pickupPoint.trim()}${pickupContact.trim() ? ` (${pickupContact.trim()})` : ""}.` : null,
     expected && stage !== "Ready for Pickup" ? `Expected delivery: ${shortDay(expected)}.` : null,
@@ -119,7 +124,7 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
 
   const reached = ORDER.indexOf(c.stage === "Ready for Pickup" ? "Out for Delivery" : (c.stage as Choice));
   const words = [...ROAD, ...LAST_MILE].find((o) => o.key === choice)?.words;
-  const title = `Update ${lrLabel(c.lrNo)}`;
+  const title = `Update ${own ? (c.vehicleNo ?? MAHEK_VEHICLE) : lrLabel(c.lrNo)}`;
 
   return (
     <ErpDialog onClose={onClose} label={title} size="md" tall={false}>
@@ -129,9 +134,9 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
       <DialogBody className="gap-4">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-body">
           <span>
-            <span className="font-medium text-ink">{[...new Set(group.map((b) => b.deliveryParty))].join(", ")}</span> · {plural(group.length, "bill")} · {c.transporter ?? "No transporter"}
+            <span className="font-medium text-ink">{[...new Set(group.map((b) => b.deliveryParty))].join(", ")}</span> · {plural(group.length, "bill")} · {own ? [c.vehicleNo ?? MAHEK_VEHICLE, c.driver].filter(Boolean).join(" · ") : (c.transporter ?? "No transporter")}
           </span>
-          <CallLink phone={c.transporterPhone} name={c.transporter} />
+          {own ? <CallLink phone={driverPhone(c.driver)} name={c.driver ?? "Driver"} /> : <CallLink phone={c.transporterPhone} name={c.transporter} />}
         </div>
 
         {/* THE JOURNEY SO FAR — the one place the godown, the cities and the destination are shown. */}
@@ -207,10 +212,10 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
         {/* WHAT IS NEW — one choice, in the order the goods travel. */}
         <section aria-label="What is the latest">
           <SectionLabel>What&apos;s the latest?</SectionLabel>
-          <div className="mt-1.5 grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="Where the goods are">
-            {ROAD.map((o, i) => {
+          <div className={cx("mt-1.5 grid gap-1.5", own ? "grid-cols-3" : "grid-cols-4")} role="radiogroup" aria-label="Where the goods are">
+            {road.map((o, i) => {
               const on = choice === o.key;
-              const past = !on && i < reached;
+              const past = !on && ORDER.indexOf(o.key) < reached;
               return (
                 <button
                   key={o.key}
@@ -229,8 +234,8 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
               );
             })}
           </div>
-          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-            {LAST_MILE.map((o) => {
+          <div className={cx("mt-1.5 grid gap-1.5", own ? "grid-cols-1" : "grid-cols-2")}>
+            {lastMile.map((o) => {
               const on = choice === o.key;
               return (
                 <button
@@ -309,12 +314,12 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
               allowNone
             />
           </Labelled>
-          <Labelled label="Next call to the transporter">
+          <Labelled label={`Next call to the ${talkingTo}`}>
             <DayChips value={nextCall} onChange={setNextCall} today={today} min={today} options={[{ label: "Tomorrow", day: addDays(today, 1) }, { label: "In 2 days", day: addDays(today, 2) }, { label: "In 3 days", day: addDays(today, 3) }]} label="Next call" />
           </Labelled>
         </div>
 
-        <Labelled label="What the transporter said">
+        <Labelled label={`What the ${talkingTo} said`}>
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Only for us — the customer never sees this." />
         </Labelled>
 

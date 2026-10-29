@@ -10,7 +10,7 @@ When you open the desk with no order chosen, you see every order with a **Ready*
   <WfBar>
     <WfTitle sub="Pick an order and scan every box onto it before the lorry leaves.">Dispatch desk</WfTitle>
     <WfSpacer />
-    <WfButton>Upload LRs</WfButton>
+    <WfButton>Upload</WfButton>
     <Hotspot n={3} />
   </WfBar>
   <WfBar><WfInput placeholder="Order number" /><WfButton primary>Open</WfButton><Hotspot n={1} /></WfBar>
@@ -28,7 +28,7 @@ When you open the desk with no order chosen, you see every order with a **Ready*
 <Hotspots items={[
   <span key="1"><b>Open an order.</b> Type its number, or click a row. A date in red is already late.</span>,
   <span key="2"><b>Scanned.</b> Boxes scanned so far against how many the order's Ready lines need. A loose line counts cans.</span>,
-  <span key="3"><b>Upload LRs.</b> The same Upload LRs dialog as the [Logistics](/docs/erp/transport) LR desk, so a lorry receipt photographed at the gate can be uploaded from here.</span>,
+  <span key="3"><b>Upload.</b> The same Upload dialog as [Logistics](/docs/erp/transport): LRs or signed copies, photos only — the Documents desk checks them.</span>,
 ]} />
 
 An order reaches the queue the moment one of its lines is marked **Ready** on [Orders](/docs/erp/orders). It does not have to be billed yet — you can scan while the office bills it and the checker approves the invoice. With nothing Ready, the queue says *No order is Ready and waiting to leave.*
