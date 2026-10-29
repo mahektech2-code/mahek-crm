@@ -106,6 +106,14 @@ describe("a field manager", () => {
   });
 });
 
+describe("the Accounts desk and the sales manager seat", () => {
+  test("the manager sets it beside the sales seat; the associate does neither", () => {
+    assert.equal(can({ app: "accounts", role: "manager" }, "customer.assignSalesManager"), true);
+    assert.equal(can({ app: "accounts", role: "manager" }, "customer.reassign"), true);
+    assert.equal(can({ app: "accounts", role: "associate" }, "customer.assignSalesManager"), false);
+  });
+});
+
 describe("conflicts", () => {
   test("an app administrator is warned like anybody else", () => {
     const got = conflictsFor([
