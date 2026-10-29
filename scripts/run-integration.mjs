@@ -196,6 +196,8 @@ const files = [
   // live on its date — maker-checker, the second approver, the instruction.
   "src/lib/price-books.integration.test.ts",
   "src/lib/price-today.integration.test.ts",
+  // Watch: every order line against the book revision live on its own date.
+  "src/lib/price-watch.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only

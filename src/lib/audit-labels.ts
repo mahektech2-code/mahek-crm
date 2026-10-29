@@ -534,6 +534,8 @@ const DESCRIBE: Record<string, Describer> = {
   "pricelist.delete": (c) => ({ says: ["deleted the price list", strong(str(c.b.name) ?? "")], changes: false }),
   "pricelist.customer.assign": (c) => ["changed which price list", c.subject(), "is charged from"],
   "pricelist.request.raise": (c) => ["asked for a special price for", c.subject()],
+  "pricelist.watch.ask": () => ({ says: ["asked why an order line was billed below the price book"], changes: false }),
+  "pricelist.watch.founder": () => ({ says: ["sent money billed below the price book to the founder"], changes: false }),
   "pricelist.request.decide": (c) => [c.a.status === "approved" ? "approved" : "decided", "a special-price request for", c.subject()],
   "mbos.approval.approved": (c) => ({ says: ["approved a field request", ...(num(c.a.approvedAmountPaise) ? ["for", strong(rupees(c.a.approvedAmountPaise)!)] : [])], changes: false }),
   "mbos.approval.rejected": () => ({ says: ["turned down a field request"], changes: false }),
