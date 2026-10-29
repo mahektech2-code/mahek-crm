@@ -68,6 +68,10 @@ import { ResolveProductModal } from "@/components/pricing/modals/resolve-product
 import { ParsePriceModal } from "@/components/pricing/modals/parse-price-modal";
 import { PublishDocumentModal } from "@/components/pricing/modals/publish-document-modal";
 import { RejectDocumentModal } from "@/components/pricing/modals/reject-document-modal";
+import { BookMatchBanner } from "@/components/pricing/imports/book-match-banner";
+import { CellReading, CrossReadPanel } from "@/components/pricing/imports/cross-read-panel";
+import type { ImportFacts } from "@/lib/price-import-views";
+import type { CellComparison } from "@/lib/engines/price-cross-read";
 
 const DELIVERY_BASES: PriceDeliveryBasis[] = ["for_mumbai", "for_godown", "door_delivery", "ex_factory"];
 const FREIGHT_TERMS: PriceFreightTerm[] = ["to_pay", "paid", "not_stated"];
@@ -83,6 +87,7 @@ export function DocumentReviewScreen({
   grid,
   options,
   lists,
+  importFacts,
 }: {
   app: PricingApp;
   basePath: string;
@@ -93,8 +98,11 @@ export function DocumentReviewScreen({
   grid: ParseGrid;
   options: PricingOptions;
   lists: PricingOptions["lists"];
+  /** Which book this looks like, and what the three readers said — the import-as-a-change road. */
+  importFacts?: ImportFacts | null;
 }) {
   const router = useRouter();
+  const [differentBook, setDifferentBook] = React.useState(false);
   const { run } = useToast();
 
   const [resolving, setResolving] = React.useState<ParseRowView | null>(null);
@@ -149,6 +157,7 @@ export function DocumentReviewScreen({
   const gstBp = document.header?.gstBp ?? 1800;
   const publishedAlready = document.parseStatus === "published";
   const rejectedAlready = document.parseStatus === "rejected";
+  const readings = new Map<string, CellComparison>((importFacts?.cross.cells ?? []).map((c) => [c.rowId, c]));
 
   return (
     <div data-app={app}>
@@ -210,6 +219,15 @@ export function DocumentReviewScreen({
       <div className="grid grid-cols-1 gap-4 desk:grid-cols-3">
         {/* ------------------------------------------------------- the grid */}
         <div className="space-y-4 desk:col-span-2">
+          {importFacts?.match ? (
+            <BookMatchBanner
+              match={importFacts.match}
+              basePath={basePath}
+              canManage={canManage}
+              dismissed={differentBook}
+              onDismiss={canManage ? setDifferentBook : undefined}
+            />
+          ) : null}
           {document.problems.length ? (
             <Callout tone={document.parseStatus === "needs_review" ? "warn" : "brand"}>
               <div className="text-[13px]">
@@ -278,6 +296,7 @@ export function DocumentReviewScreen({
                                   canManage={canManage && !publishedAlready}
                                   onResolve={() => setResolving(cell)}
                                   onPrice={() => setPricing(cell)}
+                                  reading={readings.get(cell.id)}
                                 />
                               ) : (
                                 <div className="h-[62px] rounded-[4px] border border-dashed border-divider" />
@@ -368,6 +387,10 @@ export function DocumentReviewScreen({
               )}
             </div>
           </Card>
+
+          {importFacts ? (
+            <CrossReadPanel facts={importFacts} rows={rows} canManage={canManage} locked={publishedAlready || rejectedAlready} />
+          ) : null}
 
           <Card className="p-5">
             <div className="text-sm font-medium text-ink">Not what you expected?</div>
@@ -563,12 +586,14 @@ function CellCard({
   canManage,
   onResolve,
   onPrice,
+  reading,
 }: {
   cell: ParseRowView;
   gstBp: number;
   canManage: boolean;
   onResolve: () => void;
   onPrice: () => void;
+  reading?: CellComparison;
 }) {
   const tone = MATCH_STATUS_TONE[cell.matchStatus];
   const productName =
@@ -631,6 +656,7 @@ function CellCard({
           <span className="block text-[10px] text-muted">{MATCH_STATUS_LABEL[cell.matchStatus]}</span>
         </span>
       </button>
+      <CellReading reading={reading} />
     </div>
   );
 }

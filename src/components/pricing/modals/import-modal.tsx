@@ -50,6 +50,8 @@ import type { DocumentView, ParseGrid, ParseRowView, PricingOptions } from "@/li
 import type { PriceDeliveryBasis, PriceFreightTerm } from "@/db/schema";
 import { groupRupees } from "@/lib/price-sheet";
 import { isReading, isStuck, STALE_READ_MS } from "@/lib/engines/price-document";
+import { BookMatchBanner } from "@/components/pricing/imports/book-match-banner";
+import type { ImportFacts } from "@/lib/price-import-views";
 
 const ACCEPTED = "application/pdf,image/jpeg,image/png";
 const POLL_MS = 700;
@@ -129,8 +131,31 @@ function heldPricedCount(detail: Detail): number {
   return detail.rows.filter((r) => r.matchStatus === "held" && r.offered && r.rateInclGstPaise != null).length;
 }
 
-/** Whether a read file can be approved without anybody looking further. */
-function readiness(row: Row, detail: Detail | undefined, draft: Draft | undefined): { ready: boolean; why: string | null } {
+/**
+ * Whether a read file can be approved without anybody looking further — and,
+ * where it looks like a revision of a book the desk keeps, that the desk has
+ * to DECIDE first (a change on that book, or a new list), and that a cell the
+ * three readers disagree on holds it until a person picks the value.
+ */
+function readiness(
+  row: Row,
+  detail: Detail | undefined,
+  draft: Draft | undefined,
+  facts?: ImportFacts,
+  newBook?: boolean,
+): { ready: boolean; why: string | null; decide?: boolean } {
+  const base = baseReadiness(row, detail, draft);
+  if (!base.ready || !facts) return base;
+  const disagree = facts.cross.counts.disagree;
+  if (disagree) return { ready: false, why: `${disagree} cell${disagree === 1 ? "" : "s"} the readers disagree on` };
+  const m = facts.match;
+  if (m?.winner && !m.refusal && !m.madeChange && !newBook) {
+    return { ready: false, why: `Looks like a revision of ${m.winner.name} — a change on it, or a new book?`, decide: true };
+  }
+  return base;
+}
+
+function baseReadiness(row: Row, detail: Detail | undefined, draft: Draft | undefined): { ready: boolean; why: string | null } {
   if (row.phase !== "read") return { ready: false, why: null };
   if (!detail || !draft) return { ready: false, why: "Loading what was read" };
   const d = detail.document;
@@ -184,6 +209,9 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
   const [resolving, setResolving] = React.useState<ParseRowView | null>(null);
   const [pricing, setPricing] = React.useState<ParseRowView | null>(null);
   const [rejecting, setRejecting] = React.useState<Row | null>(null);
+  /* Which book each file looks like and what the readers said; and the files the desk said are a new book. */
+  const [facts, setFacts] = React.useState<Record<string, ImportFacts>>({});
+  const [newBook, setNewBook] = React.useState<Record<string, boolean>>({});
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const alive = React.useRef(true);
@@ -248,7 +276,19 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
   async function refreshDetail(documentId: string): Promise<Detail | null> {
     const d = await loadDetail(documentId);
     if (d && alive.current) setDetails((m) => ({ ...m, [documentId]: d }));
+    if (d) void loadFacts(documentId);
     return d;
+  }
+
+  async function loadFacts(documentId: string) {
+    try {
+      const r = await fetch(`/api/price-lists/documents/${documentId}/book-match`, { cache: "no-store" });
+      if (!r.ok) return;
+      const f = (await r.json()) as ImportFacts;
+      if (alive.current) setFacts((m) => ({ ...m, [documentId]: f }));
+    } catch {
+      /* The match is advice; a file without one is approved as it always was. */
+    }
   }
 
   async function poll(documentId: string): Promise<DocumentStatusPoll | null> {
@@ -462,7 +502,18 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
 
   /* ---- derived --------------------------------------------------------- */
 
-  const ready = new Map(rows.map((r) => [r.key, readiness(r, r.documentId ? details[r.documentId] : undefined, draftOf(r.documentId))]));
+  const ready = new Map(
+    rows.map((r) => [
+      r.key,
+      readiness(
+        r,
+        r.documentId ? details[r.documentId] : undefined,
+        draftOf(r.documentId),
+        r.documentId ? facts[r.documentId] : undefined,
+        r.documentId ? newBook[r.documentId] : undefined,
+      ),
+    ]),
+  );
   const readyKeys = rows.filter((r) => ready.get(r.key)?.ready).map((r) => r.key);
   const counts = {
     total: rows.length,
@@ -655,7 +706,7 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
                               : r.file.name}
                     </span>
                   </span>
-                  <PhaseBadge row={r} ready={!!rd?.ready} why={rd?.why ?? null} />
+                  <PhaseBadge row={r} ready={!!rd?.ready} why={rd?.why ?? null} decide={!!rd?.decide} />
                 </button>
               </li>
             );
@@ -684,6 +735,26 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
           ) : !currentDetail || !currentDraft ? (
             <p className="py-16 text-center text-[13px] text-muted">Opening what was read…</p>
           ) : (
+            <>
+            {current.documentId && facts[current.documentId]?.match && current.phase === "read" ? (
+              <BookMatchBanner
+                key={current.documentId}
+                match={facts[current.documentId].match!}
+                basePath={basePath}
+                canManage
+                dismissed={!!newBook[current.documentId]}
+                onDismiss={(v) => setNewBook((m) => ({ ...m, [current.documentId!]: v }))}
+                navigate={!running}
+                onMade={(made) => {
+                  patch(current.key, {
+                    phase: "drafted",
+                    outcome: `A change on ${made.bookName} — check it and send it for approval`,
+                    error: null,
+                  });
+                  if (current.documentId) void loadFacts(current.documentId);
+                }}
+              />
+            ) : null}
             <DocumentPane
               row={current}
               detail={currentDetail}
@@ -698,6 +769,7 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
               onPrice={setPricing}
               why={ready.get(current.key)?.why ?? null}
             />
+            </>
           )}
         </div>
       </div>
@@ -1153,7 +1225,7 @@ function RejectInline({ filename, onCancel, onReject }: { filename: string; onCa
   );
 }
 
-function PhaseBadge({ row, ready, why }: { row: Row; ready: boolean; why: string | null }) {
+function PhaseBadge({ row, ready, why, decide = false }: { row: Row; ready: boolean; why: string | null; decide?: boolean }) {
   const stage =
     row.status && (PARSE_STAGES as readonly string[]).includes(row.status.parseStatus)
       ? PARSE_STAGES.indexOf(row.status.parseStatus as (typeof PARSE_STAGES)[number]) + 1
@@ -1176,7 +1248,17 @@ function PhaseBadge({ row, ready, why }: { row: Row; ready: boolean; why: string
     case "rejected":
       return <Badge tone="muted">rejected</Badge>;
     default:
-      return ready ? <Badge tone="success">ready</Badge> : <Badge tone="warn" title={why ?? undefined}>check</Badge>;
+      return ready ? (
+        <Badge tone="success">ready</Badge>
+      ) : decide ? (
+        <Badge tone="brand" title={why ?? undefined}>
+          decide
+        </Badge>
+      ) : (
+        <Badge tone="warn" title={why ?? undefined}>
+          cells to check
+        </Badge>
+      );
   }
 }
 
