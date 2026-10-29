@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { useEscape } from "./modal";
 import { cx } from "./primitives";
 
 /* ---------------------------------------------------------------------------
@@ -44,11 +45,21 @@ export function ComboBox({
   disabled,
   title,
   className,
+  inputClassName,
+  groups,
   emptyHint = "No match — what you type is still proposed",
 }: {
   value: string;
   /** What already exists. A shortcut past typing, never a constraint. */
-  options: string[];
+  options?: string[];
+  /**
+   * The same list under headings — "Kerala Roadways' godowns", "Used before" —
+   * where WHICH kind a row is decides whether it is the right one. A row may
+   * carry a hint (the town a godown is in). Given, it replaces `options`.
+   */
+  groups?: { label: string; options: { value: string; hint?: string | null }[] }[];
+  /** The field's own classes — height and type size — where a screen's controls are bigger than the default. */
+  inputClassName?: string;
   onChange: (next: string) => void;
   /** Not drawn — the accessible name for the field and its list. */
   label: string;
@@ -80,16 +91,20 @@ export function ComboBox({
      way to change your mind with the mouse. */
   const [term, setTerm] = React.useState<string | null>(null);
   const query = (term ?? "").trim().toLowerCase();
-  const matches = query
-    ? options.filter((o) => o.toLowerCase().includes(query))
-    : options;
+  const sections = (groups ?? [{ label: "", options: (options ?? []).map((value) => ({ value, hint: null })) }])
+    .map((g) => ({ label: g.label, options: query ? g.options.filter((o) => o.value.toLowerCase().includes(query) || (o.hint ?? "").toLowerCase().includes(query)) : g.options }))
+    .filter((g) => g.options.length);
+  /* One flat list for the keyboard; the same value under two headings is offered once, under the first. */
+  const seen = new Set<string>();
+  for (const g of sections) g.options = g.options.filter((o) => (seen.has(o.value.toLowerCase()) ? false : (seen.add(o.value.toLowerCase()), true)));
+  const matches = sections.flatMap((g) => g.options.map((o) => o.value));
 
   const place = React.useCallback(() => {
     const field = fieldRef.current;
     if (!field) return;
     const rect = field.getBoundingClientRect();
     const width = Math.max(PANEL_MIN_WIDTH, rect.width);
-    const height = Math.min(MAX_PANEL_HEIGHT, Math.max(ROW_HEIGHT, matches.length * ROW_HEIGHT) + 8);
+    const height = Math.min(MAX_PANEL_HEIGHT, Math.max(ROW_HEIGHT, (matches.length + (groups ? sections.length : 0)) * ROW_HEIGHT) + 8);
     const below = window.innerHeight - rect.bottom;
     setAt({
       top:
@@ -99,13 +114,18 @@ export function ComboBox({
       left: Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN),
       width,
     });
-  }, [matches.length]);
+  }, [matches.length, groups, sections.length]);
 
   const close = React.useCallback(() => {
     setAt(null);
     setActive(-1);
     setTerm(null);
   }, []);
+
+  /* On the shared Escape stack while open, so Escape closes the list and NOT the
+     dialog it sits in — a dialog listening on window would otherwise close too,
+     and take everything typed into it with it. */
+  useEscape(close, open);
 
   React.useEffect(() => {
     if (!open) return;
@@ -134,7 +154,7 @@ export function ComboBox({
      bottom of the panel and looks like nothing is happening. */
   React.useEffect(() => {
     if (active < 0) return;
-    rowsRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
+    rowsRef.current?.querySelector(`[data-row="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   const commit = (next: string) => {
@@ -145,10 +165,8 @@ export function ComboBox({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      if (open) {
-        e.preventDefault();
-        close();
-      }
+      /* Closed by the Escape stack above, which also keeps the dialog behind it open. */
+      if (open) e.preventDefault();
       return;
     }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -202,7 +220,8 @@ export function ComboBox({
         onClick={() => (open ? undefined : place())}
         onKeyDown={onKeyDown}
         className={cx(
-          "h-8 w-full rounded-[4px] border bg-surface pr-7 pl-2 text-[13px] text-ink outline-none disabled:opacity-60",
+          "w-full rounded-[4px] border bg-surface pr-7 pl-2 text-ink outline-none placeholder:text-muted disabled:opacity-60",
+          inputClassName ?? "h-8 text-[13px]",
           open ? "border-brand" : "border-line focus:border-brand",
         )}
       />
@@ -240,27 +259,41 @@ export function ComboBox({
             >
               {matches.length ? (
                 <div ref={rowsRef} role="listbox" aria-label={label} className="overflow-y-auto overscroll-contain py-1">
-                  {matches.map((option, i) => (
-                    <div
-                      key={option}
-                      role="option"
-                      aria-selected={option === value}
-                      onMouseEnter={() => setActive(i)}
-                      onMouseDown={(e) => {
-                        /* Before blur, or the field loses focus and the panel
-                           closes out from under the click. */
-                        e.preventDefault();
-                        commit(option);
-                      }}
-                      className={cx(
-                        "cursor-pointer truncate px-2.5 py-1.5 text-[13px]",
-                        i === active ? "bg-wash text-ink" : "text-body",
-                        option === value ? "font-medium text-ink" : "",
-                      )}
-                    >
-                      {option}
-                    </div>
-                  ))}
+                  {(() => {
+                    let i = -1;
+                    return sections.map((g) => (
+                      <div key={g.label || "all"} role={g.label ? "group" : undefined} aria-label={g.label || undefined}>
+                        {g.label ? <div className="px-2.5 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">{g.label}</div> : null}
+                        {g.options.map((o) => {
+                          i++;
+                          const row = i;
+                          return (
+                            <div
+                              key={o.value}
+                              data-row={row}
+                              role="option"
+                              aria-selected={o.value === value}
+                              onMouseEnter={() => setActive(row)}
+                              onMouseDown={(e) => {
+                                /* Before blur, or the field loses focus and the panel
+                                   closes out from under the click. */
+                                e.preventDefault();
+                                commit(o.value);
+                              }}
+                              className={cx(
+                                "flex cursor-pointer items-baseline gap-2 px-2.5 py-1.5 text-[13px]",
+                                row === active ? "bg-wash text-ink" : "text-body",
+                                o.value === value ? "font-medium text-ink" : "",
+                              )}
+                            >
+                              <span className="truncate">{o.value}</span>
+                              {o.hint ? <span className="ml-auto shrink-0 text-[12px] text-muted">{o.hint}</span> : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
                 </div>
               ) : (
                 /* NOT an empty box. Nothing matching is a real answer here and

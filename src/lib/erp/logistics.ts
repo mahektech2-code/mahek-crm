@@ -244,13 +244,14 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
  * already reported or written on an LR in the last six months — so "Pune" is
  * picked rather than spelt four ways. Suggestions only: anything typed is kept.
  */
-export type RouteSuggestions = { godownsByTransporter: Record<string, string[]>; ourGodowns: string[]; cities: string[] };
+export type RoutePlace = { value: string; hint: string | null };
+export type RouteSuggestions = { godownsByTransporter: Record<string, RoutePlace[]>; ourGodowns: RoutePlace[]; cities: string[] };
 
 export async function routeSuggestions(): Promise<RouteSuggestions> {
   const since = addDays(today(), -180);
   const [tg, ours, cities] = await Promise.all([
     db.execute(sql`
-      select lower(tr.name) as transporter, trim(concat_ws(' · ', nullif(trim(g.label), ''), p.name)) as place
+      select lower(tr.name) as transporter, nullif(trim(g.label), '') as label, p.name as town
         from erp_transporter_godowns g
         join erp_transporters tr on tr.id = g.transporter_id and tr.active
         left join places p on p.id = g.place_id
@@ -259,20 +260,22 @@ export async function routeSuggestions(): Promise<RouteSuggestions> {
     db.execute(sql`select name, city from erp_godowns where status = 'active' and not reserved order by name`),
     db.execute(sql`
       select city from (
-        select initcap(trim(e.city)) as city, count(*) as n from erp_transport_events e where e.city is not null and e.at >= ${since}::date group by 1
+        select initcap(trim(e.city)) as city, count(*) as n from erp_transport_events e where e.city is not null and e.kind = 'checkpoint' and e.at >= ${since}::date group by 1
         union all
         select initcap(trim(l.destination)), count(*) from erp_lrs l where l.destination is not null and l.uploaded_at >= ${since}::date group by 1
       ) x where city <> '' group by city order by sum(n) desc, city limit 300
     `),
   ]);
-  const godownsByTransporter: Record<string, string[]> = {};
-  for (const r of tg as unknown as { transporter: string; place: string | null }[]) {
-    if (!r.place) continue;
-    (godownsByTransporter[r.transporter] ??= []).push(r.place);
+  /* A godown is offered by its town — what a transporter says on the phone — with its own name beside it. */
+  const godownsByTransporter: Record<string, RoutePlace[]> = {};
+  for (const r of tg as unknown as { transporter: string; label: string | null; town: string | null }[]) {
+    const value = r.town ?? r.label;
+    if (!value) continue;
+    (godownsByTransporter[r.transporter] ??= []).push({ value, hint: r.town && r.label ? r.label : null });
   }
   return {
     godownsByTransporter,
-    ourGodowns: (ours as unknown as { name: string; city: string | null }[]).map((g) => (g.city && g.city !== g.name ? `${g.name} · ${g.city}` : g.name)),
+    ourGodowns: (ours as unknown as { name: string; city: string | null }[]).map((g) => ({ value: g.name, hint: g.city && g.city !== g.name ? `${g.city} · Mahek` : "Mahek godown" })),
     cities: (cities as unknown as { city: string }[]).map((c) => c.city),
   };
 }
