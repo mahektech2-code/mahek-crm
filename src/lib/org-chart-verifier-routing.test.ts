@@ -577,7 +577,7 @@ describe("7. routing never changes who follows a lead up", () => {
 /* ======================================= rules 8 and 9: who may do what to it */
 
 describe("8 and 9. only the designated verifier verifies; review stays separate", () => {
-  const answers = { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes", current_product: "Asian Paints PU" };
+  const answers = { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "No", current_product: "Asian Paints PU" };
 
   async function prospectUnder(salesman: U) {
     const lead = await makeLead({

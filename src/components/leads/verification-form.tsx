@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/toast";
 import { VERIFICATION_SECTIONS, questionsInSection } from "@/lib/lead-labels";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
 import { Button } from "@/components/console/parts";
+import { readinessLocked } from "@/lib/verification-readiness";
 import {
   REQUIRED_WHEN_VERIFIED,
   isActiveQuestion,
@@ -156,6 +157,7 @@ export function VerificationForm({
                   value={answers[q.id] ?? ""}
                   onChange={setAnswers}
                   required={verdict === "verified" && REQUIRED_WHEN_VERIFIED.includes(q.id)}
+                  disabled={readinessLocked(q.id, answers)}
                 />
               ))}
             </Section>
@@ -245,11 +247,13 @@ function Ask({
   value,
   onChange,
   required = false,
+  disabled = false,
 }: {
   q: { id: string; ask: string };
   value: string;
   onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   required?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label className="block">
@@ -259,8 +263,9 @@ function Ask({
       </span>
       <input
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange((prev) => ({ ...prev, [q.id]: e.target.value }))}
-        className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+        className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:bg-canvas disabled:opacity-60"
       />
     </label>
   );

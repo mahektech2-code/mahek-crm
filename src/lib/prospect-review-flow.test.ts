@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, auditLog, customers, mbosLeadValidations, notifications, products, users } from "@/db/schema";
+import { appAccess, auditLog, customers, leadStageTransitions, mbosLeadValidations, notifications, products, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
@@ -336,5 +336,159 @@ describe("what the shop is using now is required to verify, and only to verify",
     });
     assert.ok(!(!r.ok && /what the shop is using now/i.test(r.error)), "Q14 must not be demanded of a failed verification");
     assert.equal(r.ok, true, r.ok ? "" : r.error);
+  });
+});
+
+describe("what they are ready for, on a verifying call", () => {
+  const CP = { current_product: "Asian Paints PU" };
+  const setSetting = async (key: string, value: unknown, type: string) => {
+    await db.execute(sql`
+      insert into app_settings (key, value, value_type, category, label)
+      values (${key}, ${JSON.stringify(value)}::jsonb, ${type}, 'mbos-leads', 'test')
+      on conflict (key) do update set value = excluded.value
+    `);
+    invalidateConfig();
+  };
+  const transitionsOf = (leadId: string) =>
+    db.select().from(leadStageTransitions).where(eq(leadStageTransitions.customerId, leadId));
+
+  test("Ready for a trial = Yes with no GST validation and no manager review: the call is saved, the stage does not move", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_trial: "Yes" }, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (r.ok) {
+      assert.match(r.message ?? "", /not made/i);
+      assert.match(r.message ?? "", /GST number has not been validated/);
+      assert.match(r.message ?? "", /not been reviewed and approved/);
+    }
+    const after = await row(lead.id);
+    assert.notEqual(after.leadStage, "sample_trial");
+    assert.ok(after.leadVerifiedAt, "the verification stands");
+    assert.equal((await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id))).length, 1);
+    assert.equal((await transitionsOf(lead.id)).filter((x) => x.reasonCode === "readiness_trial").length, 0);
+  });
+
+  test("Ready for a trial = Yes, both approvals given, moves the lead on and the call is recorded", async () => {
+    const lead = await prospect({ gstVerified: true, gstVerifiedAt: new Date(), gstVerifiedById: mgr.id, leadQualificationReview: "verified" });
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_trial: "Yes" }, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (r.ok) assert.match(r.message ?? "", /Moved to Sample/i);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "sample_trial");
+    assert.ok(after.leadVerifiedAt, "the verification stands");
+    assert.ok(
+      (await transitionsOf(lead.id)).some((t) => t.reasonCode === "readiness_trial" && (t.overriddenConditions?.length ?? 0) > 0),
+      "the skipped conditions are on the audit trail",
+    );
+    assert.equal((await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id))).length, 1);
+  });
+
+  test("Ready for rates and terms = Yes goes to Negotiation with the 'sample not needed' reason", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_commercial: "Yes" }, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "negotiation");
+    const t = (await transitionsOf(lead.id)).find((x) => x.reasonCode === "readiness_sample_not_needed");
+    assert.ok(t, "the explicit reason is recorded");
+    assert.match(t?.note ?? "", /Sample not needed — customer ready for rates and terms/);
+  });
+
+  test("Ready for an order = Yes goes to Negotiation, never 1st Order, and 'Take the order' is owed", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_order: "Yes" }, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "negotiation");
+    assert.equal(after.leadNextAction, "Take the order");
+    assert.ok(after.leadNextActionOwnerId);
+  });
+
+  test("two positive answers are refused on the server and nothing is recorded", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, {
+      answers: { ...CP, ready_for_trial: "Yes", ready_for_order: "Yes" }, outcome: "verified",
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /one of the three/i);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.leadVerifiedAt, null);
+    assert.equal((await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id))).length, 0);
+  });
+
+  test("No, a blank and an unreadable answer move nothing", async () => {
+    for (const answer of ["No", "", "maybe next month", "Not yet"]) {
+      const lead = await prospect();
+      setTestUser(mgr);
+      const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_trial: answer }, outcome: "verified" });
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      assert.equal((await row(lead.id)).leadStage, "qualification", `"${answer}" must not move the lead`);
+      assert.equal((await transitionsOf(lead.id)).filter((t) => t.reasonCode?.startsWith("readiness_")).length, 0);
+    }
+  });
+
+  test("with the override setting off the verification is saved, the stage is not moved, and the refusal is said", async () => {
+    await setSetting("leads.allowManagerOverride", false, "boolean");
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_trial: "Yes" }, outcome: "verified" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (r.ok) {
+      assert.match(r.message ?? "", /Verified/);
+      assert.match(r.message ?? "", /The stage move was not made/);
+      assert.match(r.message ?? "", /Next:/);
+    }
+    const after = await row(lead.id);
+    assert.ok(after.leadVerifiedAt, "the verification is saved");
+    assert.equal(after.leadStage, "qualification");
+    assert.equal(await auditCount(lead.id, "lead.readiness_move_blocked"), 1);
+    const [setting] = await db.execute<{ value: unknown }>(sql`select value from app_settings where key = 'leads.allowManagerOverride'`);
+    assert.equal(setting.value, false, "the global setting is left exactly as found");
+  });
+
+  test("a follow-up with a Yes moves nothing", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, {
+      answers: { ready_for_order: "Yes" }, outcome: "follow_up", followUpNote: "The buyer was not on the call.",
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "prospect");
+    assert.equal((await transitionsOf(lead.id)).length, 0);
+  });
+
+  test("a failed verification with a Yes closes the lead as before and moves nothing else", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const r = await recordLeadValidationCall(lead.id, {
+      answers: { ready_for_trial: "Yes" }, outcome: "not_qualified", followUpNote: "The shop denies any enquiry.", failureReasonCode: "denies_enquiry",
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "lost");
+    assert.equal((await transitionsOf(lead.id)).filter((t) => t.reasonCode?.startsWith("readiness_")).length, 0);
+  });
+
+  test("the Sales Manager desk gets the same move, and its blocked sentence survives", async () => {
+    const lead = await prospect();
+    setTestUser(mgr);
+    const ok = await verifyProspect({
+      customerId: lead.id, outcome: "verified", answers: { ...CP, ready_for_commercial: "Yes" }, corrections: [], expectCorrections: false,
+    } as never);
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
+    assert.equal((await row(lead.id)).leadStage, "negotiation");
+
+    await setSetting("leads.allowManagerOverride", false, "boolean");
+    const other = await prospect();
+    const blocked = await verifyProspect({
+      customerId: other.id, outcome: "verified", answers: { ...CP, ready_for_trial: "Yes" }, corrections: [], expectCorrections: false,
+    } as never);
+    assert.equal(blocked.ok, true, blocked.ok ? "" : blocked.error);
+    if (blocked.ok) assert.match(blocked.message ?? "", /The stage move was not made/);
+    assert.equal((await row(other.id)).leadStage, "qualification");
   });
 });

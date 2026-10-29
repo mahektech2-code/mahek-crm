@@ -245,7 +245,7 @@ describe("the existing save is the only way a lead is verified", () => {
     const r = await verifyProspect({
       customerId: lead.id,
       outcome: "verified",
-      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "No" },
       corrections: [],
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);

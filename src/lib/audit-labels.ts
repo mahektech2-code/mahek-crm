@@ -648,6 +648,14 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "lead.trashed": (c) => ({ says: ["deleted the lead", c.subject(str(c.b.name) ?? "a lead")], changes: false }),
+  "lead.readiness_move_blocked": (c) => ({
+    says: ["could not move the lead", c.subject(), "on a verification call — the stage move was held back"],
+    changes: false,
+  }),
+  "lead.readiness_next_action": (c) => ({
+    says: ["set the next action on", c.subject(), "after a verification call said the customer is ready to order"],
+    changes: false,
+  }),
   "lead.restored": (c) => ({ says: ["restored the deleted lead", c.subject()], changes: false }),
   "lead.priority": (c) => ({ says: ["set the priority of", c.subject(), "to", strong(words(str(c.a.leadPriority) ?? "none"))], changes: false }),
   "lead.deskAssigned": (c) => ({ says: ["gave the lead", c.subject(), "to", c.user(c.a.ownerId)], changes: false }),

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { stamp, stampDate } from "@/lib/format";
 import { lastAnswer, lastFinding, type Remembered } from "@/lib/verification-history";
+import { readinessLocked } from "@/lib/verification-readiness";
 import {
   REQUIRED_WHEN_VERIFIED,
   isActiveQuestion,
@@ -507,7 +508,8 @@ export function VerifyScreen({
                   ) : null}
                   <Textarea
                     rows={2}
-                    disabled={!canVerify}
+                    disabled={!canVerify || readinessLocked(q.id, questions)}
+                    className={readinessLocked(q.id, questions) ? "cursor-not-allowed bg-canvas! opacity-60" : undefined}
                     value={questions[q.id] ?? ""}
                     onChange={(e) => setQuestions((s2) => ({ ...s2, [q.id]: e.target.value }))}
                   />
