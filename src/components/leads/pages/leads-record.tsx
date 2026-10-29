@@ -184,14 +184,14 @@ export async function Body({
    */
   /* The Calling desk's own record of this lead — its three calls — where the
      reader works the desk. Nobody else is shown a call they cannot log. */
-  /* ONE PAGE FOR EVERYONE WHO MAY WORK THE LEAD: the call, the answers and Convert to
-     Prospect are drawn for anybody holding `lead.work` with THIS lead in their own
-     scope - no longer only for holders of the Calling desk. Every action asks the same
-     question again on the server; verifying a Prospect is still the designated
-     verifier's and is not touched. */
+  /* ONE PAGE FOR EVERYONE WHO MAY WORK THE LEAD, in the CRM and in the Sales Dashboard
+     alike: the call, the answers and Convert to Prospect are drawn for anybody holding
+     `lead.work` with THIS lead in their own scope - no longer only for holders of the
+     Calling desk, and no longer only on the CRM's copy of the page. Every action asks
+     the same question again on the server; verifying a Prospect is still the
+     designated verifier's and is not touched. */
   const holdsDesk = await canOpenModule(user.id, DESK_MODULE);
   const desk =
-    workspace === "crm" &&
     (await canLead(user, "lead.work")) &&
     (holdsDesk || (await canLogQualificationCall(id, user.id)))
       ? await deskLeadRecord(id, day)
