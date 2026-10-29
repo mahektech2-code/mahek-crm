@@ -12418,6 +12418,19 @@ export const erpOrders = pgTable(
     /** Dispatch stickers recorded on the LINE: they go on before billing, when there is no order-details row yet (0286). */
     stickersAt: timestamp("stickers_at", { withTimezone: true }),
     stickersById: text("stickers_by_id").references(() => users.id),
+    /*
+     * 0300: WHO DECIDED THE PRICE, where the list did not. `list_rate_paise` is
+     * what the price list said when the rate was set (null: no list rate);
+     * `rate_set_by_id`/`rate_set_at` name whoever typed a rate other than it;
+     * `discount_authorised_by_id` whoever saved a line whose discount — rate
+     * and discount together, `effectiveDiscountBp` — is above what an associate
+     * may give alone. Null on every line written before, and on a line nobody
+     * had to decide anything about.
+     */
+    listRatePaise: bigint("list_rate_paise", { mode: "number" }),
+    rateSetById: text("rate_set_by_id").references(() => users.id),
+    rateSetAt: timestamp("rate_set_at", { withTimezone: true }),
+    discountAuthorisedById: text("discount_authorised_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),

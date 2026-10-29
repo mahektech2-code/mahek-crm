@@ -23,6 +23,9 @@ import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import { resolvePriceList, type CustomerGeo } from "@/lib/engines/price-resolution";
 import { discountTermSentence } from "@/lib/price-list-labels";
 import { weightFor } from "@/lib/catalogue";
+import { getConfig } from "@/lib/config/store";
+import { lineAuthority } from "@/lib/engines/order-price-authority";
+import type { DiscountLevel } from "@/lib/engines/price-math";
 import { stamp } from "@/lib/format";
 import { activeScopesAndLists, geographyOf } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
@@ -697,13 +700,16 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       ...(seeRate && pricing
         ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0, hint: "From the price list. Blank where it has no rate for this SKU: type one.", fillBy: { by: ["priceList", "sku"], map: pricing.rate, otherwise: "" } }] as FieldSpec[])
         : []),
-      ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100 }] as FieldSpec[]) : []),
+      ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100, hint: DISCOUNT_HINT }] as FieldSpec[]) : []),
       { k: "remark", l: "Remark / customer instructions", t: "area", mic: true },
     ],
   });
 }
 
 const DUP_OK = "Yes — it is a separate order";
+
+/** Said under every Discount box: the limit is checked on save, rate and discount together. */
+const DISCOUNT_HINT = "Up to what your level may give on its own. A rate typed under the list counts as a discount too.";
 
 /**
  * What the order form fills in from the price lists: each party's list by
@@ -781,7 +787,7 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "From the transporter list. A new one is added under Transporters first." },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails, sec: "Quantity and price" },
       ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0 }] as FieldSpec[]) : []),
-      ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100 }] as FieldSpec[]) : []),
+      ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100, hint: DISCOUNT_HINT }] as FieldSpec[]) : []),
       { k: "transport", l: "Freight charged to the customer (₹)", t: "num", min: 0, sec: "Billing", hint: "Added to the bill. Not the transport payment, which Logistics records against the trip." },
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
@@ -2267,6 +2273,49 @@ async function deliveryByName(name: string | null, fallback: CustomerRow): Promi
   return p ? { ok: true, data: p } : fieldErr("delivery", `No party named "${name}". Pick one from the list, or leave it blank to deliver to the billing party.`);
 }
 
+/**
+ * WHO MAY TAKE WHAT OFF A PRICE ON THIS FORM — the CRM's rule, asked of the ERP
+ * grant. `pricing.associateMaxDiscountBp` for an associate, the manager's
+ * ceiling for an ERP manager, and everything for an ERP administrator, exactly
+ * as `discountAuthority` answers the CRM's call panel. A typed rate under the
+ * list is a discount too (`lineAuthority`), so typing ₹90 for a ₹100 list rate
+ * is refused wherever 10% off would be.
+ */
+type PriceAuthority = { level: DiscountLevel; ceilings: { associateMaxBp: number; managerMaxBp: number } };
+
+async function priceAuthorityOf(ctx: ErpContext): Promise<PriceAuthority> {
+  const config = await getConfig();
+  return {
+    level: ctx.administrator ? "admin" : (ctx.level ?? "associate"),
+    ceilings: { associateMaxBp: config["pricing.associateMaxDiscountBp"], managerMaxBp: config["pricing.managerMaxDiscountBp"] },
+  };
+}
+
+type PriceDecision = { listRatePaise: number | null; rateSetById: string | null; rateSetAt: Date | null; discountAuthorisedById: string | null };
+
+/** One line's rate and discount, allowed or refused, with whose decision it was. */
+function decidePrice(
+  ctx: ErpContext,
+  authority: PriceAuthority,
+  line: { listRatePaise: number | null; ratePaise: number | null; discountBp: number | null },
+): { ok: true; values: PriceDecision } | { ok: false; field: "rate" | "discount"; reason: string } {
+  const verdict = lineAuthority(line, authority.level, authority.ceilings);
+  if (!verdict.allowed) {
+    /* On the discount where the discount alone is too much; on the rate where the typed rate is what took it over. */
+    const discountAlone = lineAuthority({ ...line, ratePaise: line.listRatePaise }, authority.level, authority.ceilings);
+    return { ok: false, field: !discountAlone.allowed || !verdict.rateOverridden ? "discount" : "rate", reason: verdict.reason ?? "That price is below what you may give on your own." };
+  }
+  return {
+    ok: true,
+    values: {
+      listRatePaise: line.listRatePaise,
+      rateSetById: verdict.rateOverridden ? ctx.user.id : null,
+      rateSetAt: verdict.rateOverridden ? new Date() : null,
+      discountAuthorisedById: verdict.needsAuthority ? ctx.user.id : null,
+    },
+  };
+}
+
 async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<string, string>[]): Promise<Result<unknown>> {
   const godownId = await godownIdByName(text(h.godown));
   if (!godownId) return fieldErr("godown", "Godown is required");
@@ -2284,7 +2333,8 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   const byName = new Map([...skus.values()].map((s) => [s.name, s]));
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
-  const parsed: { sku: Sku; qty: number; rate: number | null; discount: number | null; remark: string | null }[] = [];
+  const authority = await priceAuthorityOf(ctx);
+  const parsed: ({ sku: Sku; qty: number; rate: number | null; discount: number | null; remark: string | null } & PriceDecision)[] = [];
   for (let i = 0; i < ls.length; i++) {
     const l = ls[i];
     const sku = byName.get(l.sku ?? "");
@@ -2297,13 +2347,11 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
     const typedRate = seeRate ? paise(l.rate) : null;
     const typedDisc = seeAmounts ? num(l.discount) : null;
     if (typedDisc != null && (typedDisc < 0 || typedDisc > 100)) return fieldErr(`l${i}.discount`, "Discount must be between 0 and 100");
-    parsed.push({
-      sku,
-      qty,
-      rate: typedRate ?? listRate,
-      discount: typedDisc != null ? Math.round(typedDisc * 100) : null,
-      remark: text(l.remark),
-    });
+    const rate = typedRate ?? listRate;
+    const discount = typedDisc != null ? Math.round(typedDisc * 100) : null;
+    const decided = decidePrice(ctx, authority, { listRatePaise: listRate, ratePaise: rate, discountBp: discount });
+    if (!decided.ok) return fieldErr(`l${i}.${decided.field}`, decided.reason);
+    parsed.push({ sku, qty, rate, discount, remark: text(l.remark), ...decided.values });
   }
   const fixed = int(h.orderFixed);
   const date = text(h.date) ?? today();
@@ -2346,6 +2394,10 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
         qtyCans: p.qty,
         ratePaise: p.rate,
         discountBp: p.discount,
+        listRatePaise: p.listRatePaise,
+        rateSetById: p.rateSetById,
+        rateSetAt: p.rateSetAt,
+        discountAuthorisedById: p.discountAuthorisedById,
         remark: p.remark,
         partyStatus: partyStatus(billing) === "Pending" ? "Pending" : null,
         dispatchOn: text(h.dispatchOn),
@@ -2406,6 +2458,22 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
     const d = num(h.discount);
     if (d != null && (d < 0 || d > 100)) return fieldErr("discount", "Discount must be between 0 and 100");
     values.discountBp = d == null ? null : Math.round(d * 100);
+  }
+  /* A rate or discount that MOVED is decided again, against the list as it
+     stands; one left alone keeps whoever decided it — an old line priced
+     before a list revision is not refused for a quantity change. */
+  const nextRate = "ratePaise" in values ? (values.ratePaise ?? null) : l.o.ratePaise;
+  const nextDisc = "discountBp" in values ? (values.discountBp ?? null) : l.o.discountBp;
+  if (nextRate !== (l.o.ratePaise ?? null) || nextDisc !== (l.o.discountBp ?? null)) {
+    const listRate = (await priceBook([l.o.billingCustomerId])).rateOf(l.o.billingCustomerId, l.sku);
+    const decided = decidePrice(ctx, await priceAuthorityOf(ctx), { listRatePaise: listRate, ratePaise: nextRate, discountBp: nextDisc });
+    if (!decided.ok) return fieldErr(decided.field, decided.reason);
+    values.listRatePaise = decided.values.listRatePaise;
+    values.discountAuthorisedById = decided.values.discountAuthorisedById;
+    if (nextRate !== (l.o.ratePaise ?? null)) {
+      values.rateSetById = decided.values.rateSetById;
+      values.rateSetAt = decided.values.rateSetAt;
+    }
   }
   /* A Done line whose quantity moves is no longer allocated in full. */
   if (qty !== l.o.qtyCans && l.o.entryStatus === "Done") values.entryStatus = "Not Done";

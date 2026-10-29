@@ -55,6 +55,9 @@ import { employeeLateral } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
 import { listBills } from "./payment-service";
+import { activeScopesAndLists, geographyOf, ratesForCustomer } from "./price-list-service";
+import { resolvePriceList } from "../engines/price-resolution";
+import { mergeOfficeRatesIntoTags } from "../engines/order-price-authority";
 import {
   accountKey,
   clearSignInFailures,
@@ -1215,7 +1218,7 @@ export async function buildBootstrap(
     /* Null, so the whole window comes down rather than a delta of it — see
        `planDaysFor`. */
     planDaysFor(principal.user.id, null),
-    priceListRows(),
+    priceListRows(ids),
     schemeRows(null),
     openTasks(principal.user.id),
     openSamples(principal.user.id, ids),
@@ -3274,19 +3277,76 @@ async function unreadNotifications(userId: string) {
  * wholesale: a withdrawn rate has to disappear, and there is no `updated_at`
  * on a row that no longer exists to say so.
  */
-async function priceListRows() {
-  return db.execute<Record<string, unknown>>(sql`
+async function priceListRows(customerIds: string[] = []) {
+  const tagRows = await db.execute<{ priceTag: string; productId: string; ratePaise: number }>(sql`
     select pl.customer_price_tag as "priceTag",
            pl.product_id as "productId",
-           pl.rate_paise as "ratePaise"
+           pl.rate_paise::double precision as "ratePaise"
       from mbos_price_list pl
      where (pl.valid_from is null
             or pl.valid_from <= (now() at time zone ${APP_TIMEZONE})::date)
        and (pl.valid_to is null
             or pl.valid_to >= (now() at time zone ${APP_TIMEZONE})::date)
-     order by pl.customer_price_tag asc, pl.product_id asc
+     order by pl.customer_price_tag asc, pl.product_id asc, pl.valid_from desc nulls last
      limit 20000
   `);
+  /*
+   * THE OFFICE'S RATES, ON THE WIRE EVERY BUILD ALREADY READS.
+   *
+   * The handset prices a cart off this table keyed on the customer's
+   * `priceTag`, and the office decides prices from the price lists Accounts
+   * resolve — two systems, and a salesman could quote one shop a different
+   * rate from the office's. The server now refuses a quote that disagrees with
+   * the office (`checkFieldOrderPrices`), so the phone has to be TOLD the
+   * office's rate or it would be refused for quoting the only one it had.
+   *
+   * Without a new column or a new channel, which an APK in the field could not
+   * read: where every shop in THIS handset's book carrying a tag resolves to
+   * the same price list, that list's rates are sent under the tag, replacing
+   * the tag table's for the products the list carries (and removing a product
+   * the list prints a dash for). A tag whose shops resolve to different lists
+   * keeps the tag table — one tag cannot carry two prices — and those shops
+   * are the ones an APK reading a per-customer rate would fix.
+   */
+  const office = await officeRatesByTag(customerIds);
+  return mergeOfficeRatesIntoTags(tagRows, office);
+}
+
+/** Tag → product → the office's rate (per can, GST included), or null for a dash. */
+async function officeRatesByTag(customerIds: string[]): Promise<Map<string, Map<string, number | null>>> {
+  const out = new Map<string, Map<string, number | null>>();
+  if (!customerIds.length) return out;
+  const tagged = await db.execute<{ id: string; tag: string }>(sql`
+    select c.id, c.price_tag as tag
+      from customers c
+     where c.id in ${sql`(${sql.join(customerIds.map((i) => sql`${i}`), sql`, `)})`}
+       and nullif(trim(c.price_tag), '') is not null
+  `);
+  if (!tagged.length) return out;
+  const day = await today();
+  const [geo, { scopes, lists }] = await Promise.all([geographyOf(tagged.map((t) => t.id)), activeScopesAndLists()]);
+  const byTag = new Map<string, { listIds: Set<string | null>; first: string }>();
+  for (const t of tagged) {
+    const g = geo.get(t.id);
+    const listId = g ? (resolvePriceList(g, scopes, lists, day)?.listId ?? null) : null;
+    const entry = byTag.get(t.tag) ?? { listIds: new Set<string | null>(), first: t.id };
+    entry.listIds.add(listId);
+    byTag.set(t.tag, entry);
+  }
+  const uniform = [...byTag].filter(([, e]) => e.listIds.size === 1 && !e.listIds.has(null));
+  if (!uniform.length) return out;
+  const productIds = (
+    await db.execute<{ id: string }>(sql`select id from products where active = true`)
+  ).map((r) => r.id);
+  for (const [tag, e] of uniform) {
+    /* The same function the order check prices with, for one shop of the
+       tag — so what is sent is what the office will hold the order to. */
+    const rates = await ratesForCustomer(e.first, productIds, day);
+    const m = new Map<string, number | null>();
+    for (const [productId, r] of Object.entries(rates)) m.set(productId, r.offered ? r.rateInclGstPaise : null);
+    if (m.size) out.set(tag, m);
+  }
+  return out;
 }
 
 /**
@@ -3716,7 +3776,7 @@ export async function buildPull(
        * disappear, and a row that no longer exists has no `updated_at` to say
        * so. It is a few hundred rows of three columns; a delta would save
        * nothing worth the way it fails. */
-      priceListRows(),
+      priceListRows(ids),
 
       schemeRows(sinceIso),
 
