@@ -1291,9 +1291,18 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
  * because nothing says whose they are.
  */
 export async function varianceReport(month: string): Promise<VarianceReport> {
-  const [{ scopes, lists }, opts, ids] = await Promise.all([activeScopesAndLists(), resolveOptions(), userIdsInScope()]);
   const from = `${month}-01`;
   const to = addDays(`${month}-01`, 31).slice(0, 8) + "01";
+  return { month, ...(await varianceForRange(from, to)) };
+}
+
+/**
+ * The same reading as `varianceReport` over any window of days: `from`
+ * inclusive, `to` EXCLUSIVE. Today's "billed below price in the last seven
+ * days" is this over a week, so the two cannot disagree about a line.
+ */
+export async function varianceForRange(from: string, to: string): Promise<Omit<VarianceReport, "month">> {
+  const [{ scopes, lists }, opts, ids] = await Promise.all([activeScopesAndLists(), resolveOptions(), userIdsInScope()]);
 
   const rows = await db.execute<{
     orderDate: string;
@@ -1403,7 +1412,6 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
   out.sort((a, b) => (a.deltaBp ?? 1e9) - (b.deltaBp ?? 1e9));
   const priced = out.filter((r) => r.listExPaise != null);
   return {
-    month,
     rows: out,
     summary: {
       lines: out.length,
