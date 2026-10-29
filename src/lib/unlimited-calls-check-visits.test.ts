@@ -15,6 +15,7 @@ import { captureLead } from "@/lib/actions/lead-intake";
 import { logQualificationCall as realLog, requestProspect } from "@/lib/actions/lead-calling-desk";
 import { checkVisitsAction } from "@/lib/actions/check-visits";
 import { canCheckVisits, reportingSalesmen } from "@/lib/services/visit-oversight-service";
+import { canLogQualificationCall } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { afterCall, nextCallNumber, phaseOf } from "@/lib/engines/lead-calling-desk";
 
@@ -197,6 +198,14 @@ describe("the Call button is for whoever may call THIS lead", () => {
     assert.equal(noRemark.ok, false);
     const r = await realLog({ customerId: leadId, outcome: "no_answer", noAnswerReason: "no_response", answers: {}, notes: "Phone switched off" });
     assert.ok(r.ok, r.ok ? "" : r.error);
+  });
+
+  test("a Sales Manager whose SEAT it is can call and convert a lead nobody owns", async () => {
+    await db.update(customers).set({ ownerId: null, salesManagerId: plain.id }).where(eq(customers.id, leadId));
+    setTestUser(plain);
+    const r = await realLog({ customerId: leadId, outcome: "no_answer", noAnswerReason: "no_response", answers: {}, notes: "Phone off" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal(await canLogQualificationCall(leadId, plain.id), true, "the page draws the Call and Convert controls for her");
   });
 
   test("somebody the lead is not in the scope of is refused, desk or no desk", async () => {

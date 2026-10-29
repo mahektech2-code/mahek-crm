@@ -51,9 +51,11 @@ export async function reachLead(lead: Lead, userId: string): Promise<void> {
  * (`assertLeadInScope` over the same seats, no territory carve-out). It only
  * decides whether the Call button is drawn; the action asks again.
  */
-export async function canLogQualificationCall(leadId: string): Promise<boolean> {
+export async function canLogQualificationCall(leadId: string, userId: string): Promise<boolean> {
   const lead = await leadRow(leadId);
   if (!lead || lead.kind !== "lead") return false;
+  /* the lead's own Sales Manager: the same exception `reachable` makes in the action */
+  if (lead.salesManagerId === userId) return true;
   try {
     await assertLeadInScope(leadId, {
       kind: lead.kind,

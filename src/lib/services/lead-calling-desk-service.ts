@@ -469,11 +469,15 @@ function managerNoteFor(
  * clause too and answers 404 for anything outside it.
  */
 async function inDeskScope(customerId: string): Promise<boolean> {
-  const own = scopedToUsers(scopedUserIds((await resolveScope()).scope));
+  const ctx = await resolveScope();
+  const own = scopedToUsers(scopedUserIds(ctx.scope));
+  /* THE LEAD'S OWN SALES MANAGER is on it too: the seat is not part of per-person scope,
+     and on a lead nobody owns she would otherwise be shown nothing. One person, the
+     seat holder - the same exception `reachable` makes in the action. */
   const rows = await db.execute<{ n: number }>(sql`
     select 1 as n from customers
      where customers.id = ${customerId} and customers.lead_stage is not null
-       ${own ? sql`and ${own}` : sql``}
+       ${own ? sql`and (${own} or customers.sales_manager_id = ${ctx.user.id})` : sql``}
      limit 1`);
   return rows.length > 0;
 }
