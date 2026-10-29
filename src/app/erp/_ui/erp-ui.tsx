@@ -414,7 +414,17 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
         {promptRuns(shown).map((run) => {
           const field = (f: FieldSpec) => {
             const onChange = (x: string) => {
-              setV((s) => ({ ...s, [f.k]: x }));
+              /* A field filled from this one (`fillBy`) follows it — a hold's
+                 reason fills the sentence the customer reads — and stays editable. */
+              setV((s) => {
+                const next = { ...s, [f.k]: x };
+                for (const g of spec.fields) {
+                  if (!g.fillBy?.by.includes(f.k)) continue;
+                  const filled = fillOf(g, next);
+                  if (filled !== undefined) next[g.k] = filled;
+                }
+                return next;
+              });
               setErrs((s) => ({ ...s, [f.k]: "" }));
             };
             return f.tile ? (

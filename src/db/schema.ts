@@ -653,6 +653,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_sfg_qc",
   /** A Petty Cash transaction's bill, invoice or slip (0283). */
   "erp_money_txn",
+  /** An order's Tally invoice PDF (0292), parent id the order number — read under Orders, and by the customer through the tracking link once the invoice is available. */
+  "erp_invoice",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -12790,6 +12792,8 @@ export const erpTransportMessages = pgTable(
       .references(() => customers.id),
     /** The bills this message speaks for. */
     transportIds: text("transport_ids").array().notNull(),
+    /** The order a tracking message speaks for (0292) — confirmation, invoice, dispatch, hold — where no consignment exists yet. */
+    orderNo: integer("order_no"),
     lrId: text("lr_id"),
     eventId: text("event_id"),
     /** lr | stage | issue | delivered. */
@@ -12880,6 +12884,103 @@ export const erpOrderReviews = pgTable(
     index("erp_order_reviews_order_idx").on(t.orderNo, t.kind, t.at),
     check("erp_order_reviews_kind_check", sql`${t.kind} in ('order', 'invoice')`),
     check("erp_order_reviews_result_check", sql`${t.result} in ('submitted', 'verified', 'correction', 'approved', 'rejected', 'reset')`),
+  ],
+);
+
+/* ---- 0292: customer order tracking. See "## Customer order tracking" in AGENTS.md. ---- */
+
+/**
+ * ONE TRACKING LINK PER ORDER NUMBER, made when the order is confirmed. `token`
+ * is the billing party's view; `delivery_token` the delivery party's where it is
+ * somebody else (a third-party shop must not see its distributor's invoice).
+ * Regenerating revokes the row and makes a new one, so the old link stops.
+ * `backfilled`: made for an order already in flight on the day this shipped —
+ * nothing is sent to its customer automatically.
+ */
+export const erpOrderTracking = pgTable(
+  "erp_order_tracking",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    token: text("token").notNull(),
+    deliveryToken: text("delivery_token"),
+    backfilled: boolean("backfilled").notNull().default(false),
+    /** Links sent before this (/track/<consignment token>) still open the order — until a regenerate says otherwise. */
+    legacyLinks: boolean("legacy_links").notNull().default(true),
+    opens: integer("opens").notNull().default(0),
+    lastOpenedAt: timestamp("last_opened_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedById: text("revoked_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_order_tracking_token_key").on(t.token),
+    uniqueIndex("erp_order_tracking_delivery_token_key").on(t.deliveryToken),
+    uniqueIndex("erp_order_tracking_live_key").on(t.orderNo).where(sql`${t.revokedAt} is null`),
+  ],
+);
+
+/**
+ * A STEP THE CUSTOMER IS SHOWN, recorded once when it first became true —
+ * append-only. A step that stops being true (verification undone, billing
+ * undone, a delivery reopened) is WITHDRAWN, never deleted; reaching it again
+ * writes a new row. One live row per order per step is what makes a repeated
+ * save write nothing and tell nobody twice.
+ */
+export const erpOrderMilestones = pgTable(
+  "erp_order_milestones",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    /** confirmed | preparing | ready | invoice | dispatched | at_transport | lr | in_transit | at_destination | out_for_delivery | delivered. */
+    step: text("step").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    byId: text("by_id").references(() => users.id),
+    /** A sentence the customer may read beside the step, where there is one. */
+    note: text("note"),
+    backfilled: boolean("backfilled").notNull().default(false),
+    withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_order_milestones_order_idx").on(t.orderNo, t.at),
+    uniqueIndex("erp_order_milestones_live_key").on(t.orderNo, t.step).where(sql`${t.withdrawnAt} is null`),
+  ],
+);
+
+/**
+ * AN ORDER ON HOLD OR A DELIVERY DELAYED, with the reason the customer reads
+ * and the note they never do. Resolved, never deleted: both ends stay in the
+ * order's history. One open at a time per order.
+ */
+export const erpOrderHolds = pgTable(
+  "erp_order_holds",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    /** hold (before dispatch, on Orders) | delay (on the road, from Logistics). */
+    kind: text("kind").notNull(),
+    /** A code from HOLD_REASONS in lib/erp/engines/order-tracking.ts. */
+    reason: text("reason").notNull(),
+    customerText: text("customer_text").notNull(),
+    internalNote: text("internal_note"),
+    nextUpdateOn: date("next_update_on"),
+    revisedDeliveryOn: date("revised_delivery_on"),
+    /** The consignments a delay was raised on. */
+    transportIds: text("transport_ids").array().notNull().default(sql`'{}'::text[]`),
+    /** Line id → its status before the hold, so resolving puts each back. */
+    lineStatuses: jsonb("line_statuses").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
+    raisedById: text("raised_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolutionText: text("resolution_text"),
+  },
+  (t) => [
+    index("erp_order_holds_order_idx").on(t.orderNo, t.raisedAt),
+    uniqueIndex("erp_order_holds_open_key").on(t.orderNo).where(sql`${t.resolvedAt} is null`),
+    check("erp_order_holds_kind_check", sql`${t.kind} in ('hold', 'delay')`),
   ],
 );
 

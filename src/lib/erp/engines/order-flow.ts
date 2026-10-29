@@ -84,7 +84,7 @@ export function logisticsOf(f: Pick<OrderFacts, "dispatched" | "transport">): st
   if (!t) return "Logistics Pending";
   if (t.stage === DELIVERED_STAGE) return "Delivered / Closed";
   if (t.issue) return "Exception";
-  if (t.stage === "Reached Destination Area") return "Delivery Pending Confirmation";
+  if (t.stage === "Reached Destination Area" || t.stage === "Out for Delivery") return "Delivery Pending Confirmation";
   return t.hasLr ? "In Transit" : "Logistics Pending";
 }
 

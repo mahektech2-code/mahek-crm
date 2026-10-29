@@ -339,6 +339,12 @@ const DESCRIBE: Record<string, Describer> = {
   "website.review.published": () => ["published approved website changes"],
   "website.review.enforcement_changed": () => ["changed whether website assignments are enforced"],
   "website.access.denied": () => ["was refused a website action"],
+  /* ---- customer order tracking */
+  "erp.order.hold": () => ["put an order on hold"],
+  "erp.order.holdResolved": () => ["resolved an order's hold"],
+  "erp.order.invoiceFile": () => ["attached an order's invoice PDF"],
+  "erp.tracking.delay": () => ["told a customer their delivery is delayed"],
+  "erp.tracking.regenerate": () => ["made a new tracking link for an order"],
   /* ---- stock checks */
   "erp.floorCheck.record": () => ["recorded a stock check"],
   "erp.stock.adjust": () => ["adjusted stock by hand"],

@@ -8,3 +8,4 @@ import "./scrap";
 import "./returns";
 import "./can-photos";
 import "./money";
+import "./order-tracking";

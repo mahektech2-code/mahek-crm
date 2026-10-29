@@ -172,6 +172,24 @@ One sticker for every box or can: the **customer** (the delivery party), the **p
 
 Confirming sets the lines **Verified** and **Dispatched**, turns every scanned box **dispatched**, freezes the lots, and puts the order on one record on [Logistics](/docs/erp/transport). Bills recorded with the same vehicle on the same day join one **trip** there.
 
+## The customer's tracking link
+
+<Rule title="Verified is confirmed, and the customer is told">
+When the back office verifies an order (and Accounts have approved a new customer), the order gets **one tracking link** and the customer gets the confirmation: order number, date, each product with its quantity, and the link. Their page then follows the order — preparing, ready, invoice available, dispatched, with the transporter, in transit, delivered — showing only steps somebody actually recorded, each with its time. A step saved twice is told once.
+</Rule>
+
+<Rule title="A hold says why, in words the customer may read">
+**Put order on hold** asks for a reason, the sentence the customer sees (filled from the reason) and an internal note they never see. Every line not yet dispatched goes to Hold From Office; **Resolve hold** puts each back. After dispatch, a delay is reported on Logistics instead.
+</Rule>
+
+<Rule title="The invoice PDF reaches the customer only once it is approved">
+Bill it takes the Tally invoice as a PDF (or **Invoice PDF** adds it later). The customer can open it from their link once the invoice check approves it — never a delivery party's link, which shows no invoice.
+</Rule>
+
+The order's **Customer tracking** tab shows the link, what the customer sees now, the hold, and every message with Copy and Open WhatsApp for those waiting to be sent by hand.
+
+<SettingsTable keys={["erp.tracking.enabled", "erp.tracking.watiTemplate", "erp.tracking.notify", "erp.tracking.holdMessages", "erp.tracking.showInvoice", "erp.tracking.showLr"]} />
+
 ## The bill's figures
 
 | Figure | How it is worked out |

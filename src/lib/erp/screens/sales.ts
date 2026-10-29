@@ -77,6 +77,8 @@ import {
   type InvoiceSnapshot,
 } from "../engines/order-flow";
 import { assignTripsAtDispatch } from "../trips";
+import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, openHolds, recordHold, sendWords, syncOrderTracking, tellHold, type OpenHold } from "../order-tracking";
+import { reasonByLabel } from "../engines/order-tracking";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 import { confirmImpact } from "@/lib/impact/registry";
 import { impactBatchKey } from "@/lib/impact/batch-key";
@@ -1128,7 +1130,7 @@ const NO_DATA: Record<Scope, string> = {
 };
 
 /** The invoice prompt, asked when an order is billed and when its invoice is changed. */
-function invoicePrompt(title: string, sub: string, init: Record<string, string>): NonNullable<ActionSpec["prompt"]> {
+function invoicePrompt(title: string, sub: string, init: Record<string, string>, withFile = false): NonNullable<ActionSpec["prompt"]> {
   return {
     title,
     sub,
@@ -1136,10 +1138,56 @@ function invoicePrompt(title: string, sub: string, init: Record<string, string>)
     fields: [
       { k: "invoiceNo", l: "Tally invoice no.", t: "text", req: true },
       { k: "invoiceDate", l: "Invoice date", t: "date", req: true },
+      ...(withFile
+        ? [{ k: "invoiceFile", l: "Invoice PDF", t: "photo", wide: true, hint: "The Tally invoice as a PDF or photo. The checker sees it beside the order; the customer can open it from their tracking link once the invoice is approved. It can be added later too." } as FieldSpec]
+        : []),
     ],
     init,
   };
 }
+
+/* ------------------------------------------ customer tracking: holds (PRD §7) */
+
+/** The hold dialog: a reason from the list, the sentence the customer reads (filled from the reason), and a note they never do. */
+function holdPrompt(orderNo: number | null, kit: { labels: string[]; sentence: Record<string, string> }): NonNullable<ActionSpec["prompt"]> {
+  return {
+    title: orderNo ? `Put order ${orderNo} on hold` : "Put these orders on hold",
+    sub: "The customer sees the reason on their tracking page. Every line not yet dispatched goes to Hold From Office.",
+    submit: "Put on hold",
+    fields: [
+      { k: "reason", l: "Reason", t: "select", opts: kit.labels, req: true },
+      {
+        k: "customerText",
+        l: "Message the customer will see",
+        t: "area",
+        req: true,
+        wide: true,
+        fillBy: { by: ["reason"], map: kit.sentence, otherwise: "" },
+        hint: "Filled from the reason. You may shorten it; keep it polite and blame nobody.",
+      },
+      { k: "internalNote", l: "Internal note — never shown to the customer", t: "area", wide: true, mic: true },
+      { k: "nextUpdateOn", l: "Next update by", t: "date" },
+      { k: "notify", l: "Tell the customer on WhatsApp", t: "pick", opts: ["Yes", "No"], def: "Yes" },
+    ],
+  };
+}
+
+const RESOLVE_PROMPT = (h: OpenHold): NonNullable<ActionSpec["prompt"]> => ({
+  title: `Resolve the hold on order ${h.orderNo}`,
+  sub: "The hold and its resolution both stay in the order's history. The lines go back to Under Process; those that were Ready are marked Ready again if the stock is still there.",
+  submit: "Resolve hold",
+  fields: [
+    { k: "resolution", l: "What changed (the customer sees this)", t: "area", req: true, wide: true, mic: true },
+    { k: "notify", l: "Tell the customer on WhatsApp", t: "pick", opts: ["Yes", "No"], def: "No" },
+  ],
+});
+
+const INVOICE_FILE_PROMPT = (orderNo: number, replacing: boolean): NonNullable<ActionSpec["prompt"]> => ({
+  title: `${replacing ? "Replace" : "Upload"} the invoice PDF · order ${orderNo}`,
+  sub: "The customer can open it from their tracking link once the invoice is approved. Replacing the PDF of an approved invoice sends it back to the checker.",
+  submit: "Save",
+  fields: [{ k: "file", l: "Invoice PDF", t: "photo", req: true, wide: true }],
+});
 
 const CORRECTION_PROMPT = (what: string): NonNullable<ActionSpec["prompt"]> => ({
   title: `Send ${what} back for correction`,
@@ -1192,6 +1240,7 @@ function orderList(scope: Scope): ScreenModule {
       const approver = ctx.powers.has("approveParty") && !(await erpOrdersLive());
       const verifier = ctx.powers.has("verifyOrders");
       const checker = ctx.powers.has("checkInvoices");
+      const holdKit = await holdSentences("hold");
       const bulk: BulkSpec[] =
         labels || checking
           ? []
@@ -1200,7 +1249,7 @@ function orderList(scope: Scope): ScreenModule {
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
               { id: "ready", l: "Ready" },
               { id: "underProcess", l: "Under Process" },
-              { id: "hold", l: "Hold From Office" },
+              { id: "hold", l: "Put on hold", prompt: holdPrompt(null, holdKit) },
               /* Which of the selection can be cancelled, and what the order book does with it. */
               { id: "cancel", l: "Cancel", impact: { kind: "erp-order-cancel" } },
               ...(approver ? [{ id: "approve", l: "Approved By Admin" }] : []),
@@ -1214,6 +1263,7 @@ function orderList(scope: Scope): ScreenModule {
                         "Bill these orders on one invoice",
                         "Enter the one invoice made in Tally for every selected order. They must all be billed to the same party, and each must be ready to bill.",
                         { invoiceNo: "", invoiceDate: today() },
+                        true,
                       ),
                     },
                   ]
@@ -1229,11 +1279,12 @@ function orderList(scope: Scope): ScreenModule {
         const rows = (await db.execute(sql`select distinct order_no as n, linked_from_order_no as f from erp_orders where linked_from_order_no in ${orderNos}`)) as unknown as { n: number; f: number }[];
         for (const r of rows) continued.set(Number(r.f), [...(continued.get(Number(r.f)) ?? []), Number(r.n)]);
       }
-      const [prices, reviews, gates] = await Promise.all([
+      const [prices, reviews, gates, holdsOpen] = await Promise.all([
         /* Read for the lines drawn, not inside orderLines: the badges and the dashboard count lines and never price them. */
         priceBook(shown.map((l) => l.billing.id)),
         reviewsFor(orderNos),
         scanGateFor(db, shown.filter((l) => l.inDetails && !l.dispatched).map((l) => l.o.id)),
+        openHolds(orderNos),
       ]);
       return {
         spec: {
@@ -1285,10 +1336,12 @@ function orderList(scope: Scope): ScreenModule {
                       { id: "correctOrder", l: "Send back for correction", why: l.o.orderCheck === "Correction" ? "Already sent back" : "", prompt: CORRECTION_PROMPT(`order ${l.o.orderNo}`) } as ActionSpec,
                     ]
                   : []),
-                ...statusActions(l),
+                ...statusActions(l, { prompt: holdPrompt(l.o.orderNo, holdKit), open: holdsOpen.get(l.o.orderNo) ?? null }),
+                ...(holdsOpen.get(l.o.orderNo)?.kind === "hold" ? [{ id: "resolveHold", l: "Resolve hold", primary: true, prompt: RESOLVE_PROMPT(holdsOpen.get(l.o.orderNo)!) } as ActionSpec] : []),
                 ...(billed
                   ? [
                       { id: "unbill", l: "Undo billing", why: dispatched ? "It has been dispatch-verified" : "", impact: { kind: "erp-order-unbill", id: l.o.id } } as ActionSpec,
+                      { id: "invoiceFile", l: "Invoice PDF", prompt: INVOICE_FILE_PROMPT(l.o.orderNo, false) } as ActionSpec,
                       {
                         id: "changeInvoice",
                         l: "Change invoice",
@@ -1306,6 +1359,7 @@ function orderList(scope: Scope): ScreenModule {
                           `Bill order ${l.o.orderNo}`,
                           `Enter the invoice made in Tally for the whole order — ${live.length} line${live.length === 1 ? "" : "s"}. The invoice check is optional; only a rejected invoice holds dispatch.`,
                           { invoiceNo: l.o.tallyBillNo ?? "", invoiceDate: today() },
+                          true,
                         ),
                       } as ActionSpec,
                     ]),
@@ -1440,6 +1494,8 @@ function orderList(scope: Scope): ScreenModule {
               ...(history.length ? [{ l: "Check history", v: history.map(reviewLine).join("\n"), der: true }] : []),
             ],
             actions,
+            /* The customer's view of the whole order — read when the tab opens, not for every row of the list. */
+            ...(labels ? {} : { panel: { kind: "orderTracking", data: { orderNo: l.o.orderNo, hold: holdsOpen.get(l.o.orderNo)?.reason ?? null } } }),
             by: stampLine(l.by, l.o.createdAt),
           };
         }),
@@ -1537,7 +1593,7 @@ async function tellReadyToBill(ids: string[]) {
  * needs the order verified by the back office (PRD step 3).
  */
 const STATUS_ACTION: Record<string, string> = { "Under Process": "underProcess", "Hold From Office": "hold", Cancel: "cancel" };
-function statusActions(l: OrderLine): ActionSpec[] {
+function statusActions(l: OrderLine, hold?: { prompt: NonNullable<ActionSpec["prompt"]>; open: OpenHold | null }): ActionSpec[] {
   const out: ActionSpec[] = [];
   if (l.o.status !== "Ready")
     out.push({
@@ -1555,6 +1611,10 @@ function statusActions(l: OrderLine): ActionSpec[] {
         : st === "Cancel" && l.allocations
           ? "Release its batch codes first"
           : "";
+    if (st === "Hold From Office" && hold) {
+      out.push({ id: "hold", l: "Put order on hold", why: why || (hold.open ? `The order is already ${hold.open.kind === "hold" ? "on hold" : "marked delayed"}` : ""), prompt: hold.prompt } as ActionSpec);
+      continue;
+    }
     out.push({ id: STATUS_ACTION[st], l: st, why, impact: st === "Cancel" ? { kind: "erp-order-cancel", id: l.o.id } : undefined } as ActionSpec);
   }
   return out;
@@ -1578,6 +1638,19 @@ async function doStatus(ctx: ErpContext, ids: string[], status: string) {
   if (!ok.length) return err(`Not changed: ${refused.join("; ")}.`, "rule_violation");
   const action = `erp.order.${STATUS_ACTION[status] ?? "status"}`;
   const res = await setMany(ctx, ok, { status }, action, (n) => `${plural(n)} ${status}`);
+  /* Lines moved off Hold From Office by hand: once none of an order's live lines
+     is held, its hold is over — closed in the history, so the customer's page
+     never says "on hold" about an order being worked. */
+  if (res.ok && status !== "Hold From Office") {
+    const nos = [...new Set(ls.filter((l) => ok.includes(l.o.id) && l.o.status === "Hold From Office").map((l) => l.o.orderNo))];
+    const open = await openHolds(nos);
+    for (const [no, h] of open) {
+      if (h.kind !== "hold") continue;
+      const still = (await orderLines({ orderNos: [no] })).some((l) => l.o.status === "Hold From Office");
+      if (!still) await closeHold(ctx.user.id, h.id, status === "Cancel" ? "Order cancelled." : "Preparation resumed.");
+    }
+    if (open.size) await syncOrderTracking(nos, { userId: ctx.user.id });
+  }
   if (res.ok && refused.length) return okVoid(`${plural(ok.length)} ${status}. Not changed: ${refused.join("; ")}.`);
   return res;
 }
@@ -1631,6 +1704,8 @@ async function doVerifyOrder(ctx: ErpContext, ids: string[]) {
     }
   }
   if (!done.length) return err(`Not verified: ${refused.join("; ")}.`, "rule_violation");
+  /* Verified is confirmed: the customer's tracking link is made and the confirmation goes. */
+  await syncOrderTracking(done, { userId: ctx.user.id });
   return okVoid(`Verified · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not verified: ${refused.join("; ")}` : ""}`);
 }
 
@@ -1658,6 +1733,7 @@ async function doUnverifyOrder(ctx: ErpContext, ids: string[]) {
     }
   }
   if (!done.length) return err(`Not undone: ${refused.join("; ")}.`, "rule_violation");
+  await syncOrderTracking(done, { userId: ctx.user.id });
   return okVoid(`Back on To verify · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not undone: ${refused.join("; ")}` : ""}`);
 }
 
@@ -1680,6 +1756,128 @@ async function doCorrectOrder(ctx: ErpContext, id: string, values: Record<string
   await erpAudit(ctx, "erp.order.correction", "erp_order", String(no), null, { reason });
   await tell([live[0].o.createdById], `Order ${no} needs correcting`, `${live[0].billing.name}: ${reason}`, erpLink("verifyOrders", {}), "warn");
   return okVoid(`Order ${no} sent back for correction`);
+}
+
+/* ------------------------------------------ customer tracking: holds and the invoice PDF */
+
+const yes = (v: string | undefined) => (v ?? "Yes") !== "No";
+
+/**
+ * PUT ON HOLD (PRD §7): an order, never a line — every live line not yet
+ * dispatched goes to Hold From Office, the status each had is remembered so
+ * resolving puts it back, and the reason is kept with the sentence the
+ * customer reads and the note they never do. Goods that have left are
+ * Logistics' to report as a delay. One open hold per order.
+ */
+async function doPutOnHold(ctx: ErpContext, ids: string[], values: Record<string, string>): Promise<Result<unknown>> {
+  const reason = reasonByLabel(text(values.reason) ?? "");
+  if (!reason || reason.kind === "delay") return fieldErr("reason", "Pick the reason");
+  const orders = await wholeOrders(ids);
+  const open = await openHolds([...orders.keys()]);
+  const done: number[] = [];
+  const holdIds: string[] = [];
+  const refused: string[] = [];
+  for (const [no, order] of orders) {
+    const live = order.filter((l) => l.o.status !== "Cancel");
+    const here = live.filter((l) => !l.dispatched);
+    if (!live.length) refused.push(`order ${no} is cancelled`);
+    else if (!here.length) refused.push(`order ${no} has left the factory — report a delay on Logistics`);
+    else if (open.get(no)) refused.push(`order ${no} is already on hold`);
+    else {
+      const lineStatuses = Object.fromEntries(here.map((l) => [l.o.id, l.o.status]));
+      let res: Result<{ holdId: string }> | null = null;
+      await db.transaction(async (tx) => {
+        res = await recordHold(
+          ctx,
+          no,
+          { kind: "hold", reason: reason.code, customerText: text(values.customerText) ?? "", internalNote: text(values.internalNote), nextUpdateOn: text(values.nextUpdateOn), lineStatuses },
+          tx as unknown as typeof db,
+        );
+        if (!res.ok) return;
+        await tx
+          .update(erpOrders)
+          .set({ status: "Hold From Office", updatedAt: new Date(), updatedById: ctx.user.id })
+          .where(inArray(erpOrders.id, here.map((l) => l.o.id)));
+      });
+      const r = res as Result<{ holdId: string }> | null;
+      if (!r) continue;
+      if (!r.ok) {
+        if (orders.size === 1) return r;
+        refused.push(`order ${no}: ${r.error}`);
+        continue;
+      }
+      await erpAudit(ctx, "erp.order.hold", "erp_order", String(no), { lines: lineStatuses }, { reason: reason.code, customerText: values.customerText, internalNote: values.internalNote ?? null });
+      done.push(no);
+      holdIds.push(r.data.holdId);
+    }
+  }
+  if (!done.length) return err(`Not put on hold: ${refused.join("; ")}.`, "rule_violation");
+  await syncBookOrders(done);
+  const told = { sent: 0, toSend: 0, skipped: 0, failed: 0 };
+  for (const h of holdIds) {
+    const o = await tellHold(h, ctx.user.id, yes(values.notify));
+    if (o) for (const k of Object.keys(told) as (keyof typeof told)[]) told[k] += o[k];
+  }
+  return okVoid(`On hold · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not held: ${refused.join("; ")}` : ""}${sendWords(told)}`);
+}
+
+/** Resolving puts each held line back where it was: Under Process, and Ready again where it was Ready and the stock is still on the shelf. */
+async function doResolveHold(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const resolution = text(values.resolution);
+  if (!resolution) return fieldErr("resolution", "Say what changed");
+  const [order] = [...(await wholeOrders([id])).values()];
+  if (!order?.length) return err("That line no longer exists.", "not_found");
+  const no = order[0].o.orderNo;
+  const h = (await openHolds([no])).get(no);
+  if (!h) return err(`Order ${no} is not on hold.`, "rule_violation");
+  const held = order.filter((l) => l.o.status === "Hold From Office" && !l.dispatched && h.lineStatuses[l.o.id] && h.lineStatuses[l.o.id] !== "Hold From Office");
+  const wasReady = held.filter((l) => h.lineStatuses[l.o.id] === "Ready").map((l) => l.o.id);
+  let closed: Result<OpenHold> | null = null;
+  await db.transaction(async (tx) => {
+    closed = await closeHold(ctx.user.id, h.id, resolution, tx as unknown as typeof db);
+    if (!closed.ok || !held.length) return;
+    await tx
+      .update(erpOrders)
+      .set({ status: "Under Process", updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrders.id, held.map((l) => l.o.id)));
+  });
+  const c = closed as Result<OpenHold> | null;
+  if (!c?.ok) return c ?? err("The hold could not be resolved.", "conflict");
+  await erpAudit(ctx, "erp.order.holdResolved", "erp_order", String(no), { holdId: h.id }, { resolution });
+  let ready = "";
+  if (wasReady.length) {
+    const r = await doReady(ctx, wasReady);
+    ready = r.ok ? ` · ${r.message ?? "Ready again"}` : ` · left Under Process: ${r.error}`;
+  } else await syncBookOrders([no]);
+  const told = await tellHold(h.id, ctx.user.id, yes(values.notify));
+  return okVoid(`Hold on order ${no} resolved${ready}${sendWords(told)}`);
+}
+
+/** The Tally invoice as a PDF, on a billed order — added later, or replaced. A replaced PDF on an approved invoice goes back to the checker. */
+async function doInvoiceFile(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const fileId = text(values.file);
+  if (!fileId) return fieldErr("file", "Choose the invoice PDF");
+  const [order] = [...(await wholeOrders([id])).values()];
+  const billed = (order ?? []).filter((l) => l.inDetails && l.o.status !== "Cancel");
+  if (!billed.length) return err("The order is not billed yet; Bill it takes the invoice PDF.", "rule_violation");
+  const no = billed[0].o.orderNo;
+  const had = await invoiceFileFor(no);
+  const reopen = !!had && billed.every((l) => l.invoiceCheck === "Approved") && !billed.some((l) => l.dispatched);
+  let bound = false;
+  await db.transaction(async (tx) => {
+    bound = await bindInvoiceFile(tx as unknown as typeof db, fileId, no, ctx.user.id);
+    if (!bound || !reopen) return;
+    await tx
+      .update(erpOrderDetails)
+      .set({ invoiceCheck: "Pending", invoiceCheckedById: null, invoiceCheckedAt: null, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrderDetails.orderId, billed.map((l) => l.o.id)));
+    await addReview(tx, ctx, no, "invoice", "reset", "Invoice PDF replaced");
+  });
+  if (!bound) return fieldErr("file", "That file could not be attached — upload it again.");
+  await erpAudit(ctx, "erp.order.invoiceFile", "erp_order", String(no), had ? { file: had.id } : null, { file: fileId });
+  if (reopen) await tell(await holdersOf("checkInvoices"), `Invoice to check again · order ${no}`, `${billed[0].billing.name}: the invoice PDF was replaced.`, erpLink("invoiceCheck", {}));
+  await syncOrderTracking([no], { userId: ctx.user.id });
+  return okVoid(`Invoice PDF ${had ? "replaced" : "added"} · order ${no}${reopen ? " · back with the invoice checker" : ""}`);
 }
 
 /* ---------------------------------------------------- step 5: the bill */
@@ -1764,6 +1962,8 @@ async function doBill(ctx: ErpContext, ids: string[], values: Record<string, str
       .insert(erpOrderDetails)
       .values(live.map((l) => ({ orderId: l.o.id, invoiceCheck: "Pending", createdById: ctx.user.id, updatedById: ctx.user.id })))
       .onConflictDoNothing();
+    /* The PDF is the invoice's: attached once, to the first order it covers; every order sharing the invoice shows it. */
+    await bindInvoiceFile(tx as unknown as typeof db, text(values.invoiceFile), nos[0], ctx.user.id);
     for (const no of nos) {
       const mine = live.filter((l) => l.o.orderNo === no);
       await addReview(tx, ctx, no, "invoice", "submitted", `Invoice ${inv.no} of ${fd(inv.date)}`, {
@@ -1865,6 +2065,7 @@ async function doApproveInvoice(ctx: ErpContext, id: string) {
     await addReview(tx, ctx, got.no, "invoice", "approved", null, invoiceSnapshot(got.order) as unknown as Record<string, unknown>);
   });
   await erpAudit(ctx, "erp.invoice.approve", "erp_order", String(got.no));
+  await syncOrderTracking([got.no], { userId: ctx.user.id });
   return okVoid(`Invoice ${got.billed[0].o.tallyBillNo ?? ""} approved · order ${got.no} can be dispatched`);
 }
 
@@ -1956,7 +2157,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       unverifyOrder: (ctx, ids) => doUnverifyOrder(ctx, ids),
       ready: (ctx, ids) => doReady(ctx, ids),
       underProcess: (ctx, ids) => doUnder(ctx, ids),
-      hold: (ctx, ids) => doStatus(ctx, ids, "Hold From Office"),
+      hold: (ctx, ids, values) => doPutOnHold(ctx, ids, values ?? {}),
       async cancel(ctx, ids, values) {
         const refusal = await confirmImpact("erp-order-cancel", impactBatchKey(ids), readConfirmation(values));
         return refusal ?? doStatus(ctx, ids, "Cancel");
@@ -1975,7 +2176,9 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       correctOrder: (ctx, id, values) => doCorrectOrder(ctx, id, values),
       ready: (ctx, id) => doReady(ctx, [id]),
       underProcess: (ctx, id) => doUnder(ctx, [id]),
-      hold: (ctx, id) => doStatus(ctx, [id], "Hold From Office"),
+      hold: (ctx, id, values) => doPutOnHold(ctx, [id], values ?? {}),
+      resolveHold: (ctx, id, values) => doResolveHold(ctx, id, values ?? {}),
+      invoiceFile: (ctx, id, values) => doInvoiceFile(ctx, id, values ?? {}),
       async cancel(ctx, id, values) {
         const refusal = await confirmImpact("erp-order-cancel", id, readConfirmation(values));
         return refusal ?? doStatus(ctx, [id], "Cancel");

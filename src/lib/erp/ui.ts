@@ -518,7 +518,7 @@ export const ST_TONE: Record<string, Tone> = {
   Received: "success", "Not Received": "warn", "Bill Not Received": "warn", Posted: "success",
   "Not posted: rate missing": "warn", Done: "success", "Not Done": "warn", "Add More Quantity": "warn",
   "Remove Some Quantity": "danger", Match: "success", "Not Match": "warn",
-  "Close - Received to Party": "success", "In Transit": "info", "Reached Destination Area": "success",
+  "Close - Received to Party": "success", "In Transit": "info", "Reached Destination Area": "success", "Out for Delivery": "success",
   Follow: "success", UnFollow: "muted", Testing: "info", Purchase: "neutral", Yes: "brand", No: "neutral",
   "Approved By Admin": "success", Chemical: "info", "A+": "success", A: "success", "B+": "neutral",
   B: "neutral", C: "warn", Billed: "neutral", Acknowledged: "info", "Resolved automatically": "success",

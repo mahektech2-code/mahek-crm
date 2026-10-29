@@ -126,6 +126,11 @@ after(async () => {
   await db.$client.end();
 });
 
+/* Logistics' own messages. Order tracking writes its confirmation, invoice and
+   dispatch messages to the same outbox (0292); these tests are about the road. */
+const ROAD_KINDS = new Set(["lr", "stage", "issue", "delivered"]);
+const roadMessages = async (o?: Parameters<typeof L.messages>[0]) => (await L.messages(o)).filter((m) => ROAD_KINDS.has(m.kind));
+
 describe("dispatch opens the transport record (§18)", () => {
   test("one transport record per bill", async () => {
     const o = await dispatch("2026-08-01", 10, "MMI/26-27/1", "2026-08-02");
@@ -195,7 +200,7 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(c.stage, "In Transit");
     assert.equal(c.expectedDeliveryOn, "2026-08-06");
     assert.ok(c.nextCallOn, "the next call to the transporter is booked");
-    let out = await L.messages();
+    let out = await roadMessages();
     assert.equal(out.length, 1);
     assert.equal(out[0].kind, "lr");
     assert.equal(out[0].status, "to_send", "no Wati template is named, so it waits to be sent by hand");
@@ -205,13 +210,13 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(out[0].phone, "919876500001");
     assert.equal(msg(await L.attachLr(ctx, lr.id, [t.id], {})), "These bills are already under this LR.");
     assert.ok((await L.markMessageSent(ctx, out[0].id)).ok);
-    assert.equal((await L.messages({ waitingOnly: true })).length, 0);
+    assert.equal((await roadMessages({ waitingOnly: true })).length, 0);
 
     /* A call that moves nothing books the next one and tells nobody; a stage that moves is shared. */
     assert.ok((await L.updateConsignment(ctx, [t.id], { note: "driver on leave" })).ok);
-    assert.equal((await L.messages()).length, 1);
+    assert.equal((await roadMessages()).length, 1);
     assert.ok((await L.updateConsignment(ctx, [t.id], { stage: "Reached Destination Area", note: "at Pune godown" })).ok);
-    out = await L.messages();
+    out = await roadMessages();
     assert.equal(out.length, 2);
     assert.match(out[0].body, /has reached your area/);
     assert.equal(msg(await L.updateConsignment(ctx, [t.id], { stage: "Close - Received to Party" })), "Pick where the goods are");
@@ -229,7 +234,7 @@ describe("dispatch opens the transport record (§18)", () => {
     [c] = await L.consignments({ ids: [t.id] });
     assert.equal(c.phase, "delivered");
     assert.equal(c.nextCallOn, null);
-    assert.match((await L.messages())[0].body, /received by Ramesh/);
+    assert.match((await roadMessages())[0].body, /received by Ramesh/);
     assert.equal(msg(await L.detachLr(ctx, t.id, "wrong bill")), "A delivered bill keeps its LR.");
 
     /* The customer's link names the steps and never a call note. */
@@ -266,7 +271,7 @@ describe("dispatch opens the transport record (§18)", () => {
     await db.update(customers).set({ whatsappDnd: true }).where(eq(customers.id, "cus_shree"));
     const [t] = await db.select().from(erpTransports);
     await L.notifyCustomers(ctx, "stage", [t.id], null);
-    const [m] = await L.messages();
+    const [m] = await roadMessages();
     assert.equal(m.status, "skipped");
     assert.match(m.why ?? "", /DND/);
     await db.update(customers).set({ whatsappDnd: false }).where(eq(customers.id, "cus_shree"));

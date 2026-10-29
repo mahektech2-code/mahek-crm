@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { consignmentLinkRetired, orderLinkForConsignment } from "@/lib/erp/order-tracking";
 import { publicTracking } from "@/lib/erp/logistics";
 import { shortDay, STAGES, STAGE_SHORT, stageStep } from "@/lib/erp/engines/logistics";
 
@@ -19,6 +20,7 @@ const STEP_WORD: Record<string, string> = {
   "In Transit": "In transit",
   "On the way to Destination area": "Near your area",
   "Reached Destination Area": "In your area",
+  "Out for Delivery": "Out for delivery",
   "Close - Received to Party": "Delivered",
 };
 const EVENT_WORD: Record<string, string> = {
@@ -32,6 +34,11 @@ const EVENT_WORD: Record<string, string> = {
 
 export default async function TrackPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  /* A link sent before order tracking now opens the order's page — unless the
+     order's link was made anew, which retires every older link with it. */
+  const order = await orderLinkForConsignment(token);
+  if (order) redirect(`/t/${order}`);
+  if (await consignmentLinkRetired(token)) notFound();
   const t = await publicTracking(token);
   if (!t) notFound();
   const at = stageStep(t.stage);
