@@ -943,6 +943,14 @@ export async function cancelChange(changeId: string, reason: string): Promise<Re
         .update(priceChanges)
         .set({ status: "cancelled", cancelledAt: new Date(), cancelledById: ctx.user.id, cancelReason: reason.trim(), updatedAt: new Date() })
         .where(eq(priceChanges.id, changeId));
+      // A change made from a PDF hands the PDF back: it is a document to review again, not one already spent.
+      if (row.sourceDocumentId) {
+        await tx.execute(sql`
+          update price_list_documents set parse_status = 'needs_review', price_list_id = null,
+                 published_at = null, published_by_id = null, updated_at = now()
+           where id = ${row.sourceDocumentId} and price_list_id = ${row.draftListId}
+        `);
+      }
       await event(tx, { changeId, bookId: row.bookId, kind: row.status === "approved" ? "unscheduled" : "cancelled", actorId: ctx.user.id, note: reason.trim() });
       await audit(tx, ctx, { action: "pricebook.change.cancel", entityType: "price_change", entityId: changeId, after: { reason: reason.trim(), was: row.status } });
     });

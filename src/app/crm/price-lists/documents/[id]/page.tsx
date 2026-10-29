@@ -11,6 +11,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { documentDetail, pricingOptions } from "@/lib/services/price-list-service";
 import { today } from "@/lib/recompute";
+import { importFactsFor } from "@/lib/services/price-import-service";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { DocumentReviewScreen } from "@/components/pricing/document-review-screen";
 
@@ -20,11 +21,12 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const user = await requireUser();
   const { id } = await params;
 
-  const [detail, options, canManage, todayIso] = await Promise.all([
+  const [detail, options, canManage, todayIso, importFacts] = await Promise.all([
     documentDetail(id),
     pricingOptions(),
     priceListDoorCanManage(user, "crm"),
     today(),
+    importFactsFor(id),
   ]);
 
   if (!detail) notFound();
@@ -42,6 +44,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         grid={detail.grid}
         options={options}
         lists={options.lists}
+        importFacts={importFacts}
       />
     </div>
   );

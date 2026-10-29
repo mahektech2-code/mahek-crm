@@ -198,6 +198,8 @@ const files = [
   "src/lib/price-today.integration.test.ts",
   // Watch: every order line against the book revision live on its own date.
   "src/lib/price-watch.integration.test.ts",
+  // A PDF you already have, brought in as a change on its book, and read by three readers.
+  "src/lib/price-imports.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only
