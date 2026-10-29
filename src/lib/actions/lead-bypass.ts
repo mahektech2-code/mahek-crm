@@ -261,15 +261,31 @@ export async function bypassConvertLead(raw: BypassInput): Promise<Result<{ id: 
     const backOffice = await resolveSeat(v.backOffice, "back office account manager");
     if (typeof backOffice === "string") return err(backOffice, "validation", [{ field: "backOffice", message: backOffice }]);
     let salesManager: ResolvedSeat = { userId: null, name: null };
-    if (v.salesManager.kind !== "none") {
-      if (!(await canFor(ctx.user, "customer.assignSalesManager"))) {
+    if (await canFor(ctx.user, "customer.assignSalesManager")) {
+      if (v.salesManager.kind !== "none") {
+        const resolved = await resolveSeat(v.salesManager, "sales manager");
+        if (typeof resolved === "string") return err(resolved, "validation", [{ field: "salesManager", message: resolved }]);
+        salesManager = resolved;
+      }
+    } else {
+      // Without the capability the seat is left exactly as the lead has it —
+      // the form sends the lead's own value back, and that is not a change.
+      const [current] = await db
+        .select({ id: customers.salesManagerId, name: customers.salesManagerPersonName })
+        .from(customers)
+        .where(eq(customers.id, v.leadId));
+      const kept: ResolvedSeat = { userId: current?.id ?? null, name: current?.name ?? null };
+      let unchanged = v.salesManager.kind === "none" || (v.salesManager.kind === "user" && v.salesManager.userId === kept.userId);
+      if (v.salesManager.kind === "employee" && !kept.userId) {
+        const sent = await resolveSeat(v.salesManager, "sales manager");
+        unchanged = typeof sent !== "string" && (sent.name ?? "").trim() === (kept.name ?? "").trim();
+      }
+      if (!unchanged) {
         return err("Setting the sales manager needs a manager or admin.", "not_permitted", [
-          { field: "salesManager", message: "Leave it unassigned." },
+          { field: "salesManager", message: "Leave it as it is." },
         ]);
       }
-      const resolved = await resolveSeat(v.salesManager, "sales manager");
-      if (typeof resolved === "string") return err(resolved, "validation", [{ field: "salesManager", message: resolved }]);
-      salesManager = resolved;
+      salesManager = kept;
     }
 
     /* --- nobody else uses the number or the GSTIN ------------------------ */

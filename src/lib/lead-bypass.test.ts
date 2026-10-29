@@ -229,6 +229,22 @@ describe("W — who, and where", () => {
   });
 });
 
+describe("S — the sales manager seat", () => {
+  test("an Accounts manager sets it, over the one the lead already carried", async () => {
+    const lead = await makeLead({ salesManagerId: telecaller.id, salesManagerPersonName: telecaller.name });
+    const result = await bypassConvertLead(input(lead.id, { salesManager: { kind: "user", userId: manager.id } }));
+    assert.ok(result.ok, result.ok ? "" : result.error);
+    assert.equal((await record(lead.id)).salesManagerId, manager.id);
+  });
+
+  test("the lead's own seat sent back unchanged is kept", async () => {
+    const lead = await makeLead({ salesManagerId: telecaller.id, salesManagerPersonName: telecaller.name });
+    const result = await bypassConvertLead(input(lead.id, { salesManager: { kind: "user", userId: telecaller.id } }));
+    assert.ok(result.ok, result.ok ? "" : result.error);
+    assert.equal((await record(lead.id)).salesManagerId, telecaller.id);
+  });
+});
+
 describe("R — refusals", () => {
   test("an account that is already a customer", async () => {
     const lead = await makeLead({ kind: "customer" });

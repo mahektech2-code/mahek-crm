@@ -5486,6 +5486,12 @@ into `updateAccountManagers` would have put one function behind one capability
 doing two jobs with two answers about who may do them, and the generous answer
 always wins in the end.
 
+**The Accounts MANAGER holds it too, by name.** The desk already holds
+`customer.reassign`, the stronger of the two; without this one the field was
+locked on Add customer, the lead bypass and the edit form, and a lead that
+arrived with the seat filled could not be converted. In the bypass, somebody
+without it keeps the lead's seat exactly as it is.
+
 **And it takes no `amDecidedAt`.** That mark exists to hold the sheet off the
 two seats it keeps restating; the customer master carries no sales manager at
 all, so there is nothing to hold off, and stamping it here would silently
