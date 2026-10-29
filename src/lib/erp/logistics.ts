@@ -1147,7 +1147,8 @@ export async function notifyCustomers(
     const lr = lrs.find((l) => l.id === first.lrId) ?? null;
     const facts: MessageFacts = {
       party: c.name,
-      bills: mine.map((t) => t.billNo ?? `order ${t.orderNo}`),
+      /* A bill raised on two orders has two records and is still one bill to the customer. */
+      bills: [...new Set(mine.map((t) => t.billNo ?? `order ${t.orderNo}`))],
       lrNo: first.lrNo,
       lrDate: lr?.lrDate ?? null,
       transporter: first.transporter ?? lr?.transporter ?? null,

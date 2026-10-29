@@ -13,6 +13,23 @@ import { BillRef, DuePill, Empty, LrThumb, NotifyToggle, plural, ReasonDialog, s
 import { ErpImpactDialog } from "../../_ui/impact-confirm";
 
 /**
+ * AN LR CARRIES BILLS, and one bill can be raised on several orders — each of
+ * which has its own transport record. So the desk lists a BILL once: the party
+ * and the bill number make it one, its boxes are added up, and ticking it
+ * attaches every record under it. A record with no bill number is its own row.
+ */
+type Bill = { key: string; c: Consignment; rows: Consignment[]; packages: number | null };
+
+function byBill(cs: Consignment[]): Bill[] {
+  const out = new Map<string, Consignment[]>();
+  for (const c of cs) {
+    const k = c.billNo?.trim() ? `${c.partyId}|${c.billNo.trim().toUpperCase()}` : c.id;
+    out.set(k, [...(out.get(k) ?? []), c]);
+  }
+  return [...out].map(([key, rows]) => ({ key, c: rows[0], rows, packages: sumPackages(rows) }));
+}
+
+/**
  * STEP 4 — BIFURCATION. On the left, every LR the dispatch team uploaded and
  * nobody has attached; on the right, the bills waiting for an LR. Pick an LR,
  * and the bills it most likely carries rise to the top with the reason beside
@@ -51,14 +68,20 @@ export function LrDesk({
   const [voidImpact, setVoidImpact] = useState<{ lr: UploadedLr; reason: string } | null>(null);
 
   const lr = lrs.find((l) => l.id === pick) ?? null;
-  const pool = useMemo(() => (showAll ? [...waiting, ...onTheWay] : waiting), [showAll, waiting, onTheWay]);
+  const waitingBills = useMemo(() => byBill(waiting), [waiting]);
+  const onTheWayBills = useMemo(() => byBill(onTheWay), [onTheWay]);
+  const pool = useMemo(() => (showAll ? [...waitingBills, ...onTheWayBills] : waitingBills), [showAll, waitingBills, onTheWayBills]);
   const ranked = useMemo(() => {
-    if (!lr) return pool.map((c) => ({ c, score: 0, reasons: [] as string[] }));
-    const r = rankForLr(lr, pool.map((c) => ({ id: c.id, transporter: c.transporter, packages: c.packages, area: c.area ?? c.partyCity, party: c.deliveryParty, atTransport: c.phase === "lrPending" })));
-    return r.map((x) => ({ c: pool.find((c) => c.id === x.id)!, score: x.score, reasons: x.reasons }));
+    if (!lr) return pool.map((b) => ({ b, c: b.c, score: 0, reasons: [] as string[] }));
+    const r = rankForLr(lr, pool.map((b) => ({ id: b.key, transporter: b.c.transporter, packages: b.packages, area: b.c.area ?? b.c.partyCity, party: b.c.deliveryParty, atTransport: b.rows.every((c) => c.phase === "lrPending") })));
+    return r.map((x) => {
+      const b = pool.find((p) => p.key === x.id)!;
+      return { b, c: b.c, score: x.score, reasons: x.reasons };
+    });
   }, [lr, pool]);
 
-  const sel = ranked.filter((x) => ticked.has(x.c.id)).map((x) => x.c);
+  /* Ticking a bill ticks every record it was raised on — one per order on it. */
+  const sel = ranked.filter((x) => ticked.has(x.b.key)).flatMap((x) => x.b.rows);
   const selBoxes = sumPackages(sel);
   const parties = new Set(sel.map((c) => c.deliveryPartyId));
 
@@ -67,11 +90,11 @@ export function LrDesk({
     setTicked(new Set());
     setExpected("");
   };
-  const toggle = (c: Consignment) =>
+  const toggle = (b: Bill) =>
     setTicked((s) => {
       const n = new Set(s);
-      if (n.has(c.id)) n.delete(c.id);
-      else n.add(c.id);
+      if (n.has(b.key)) n.delete(b.key);
+      else n.add(b.key);
       return n;
     });
 
@@ -152,32 +175,33 @@ export function LrDesk({
         </div>
 
         <div className="flex items-center gap-3 border-b border-divider bg-canvas px-4 py-1.5 text-meta text-muted">
-          <span>{plural(waiting.length, "bill")} waiting</span>
-          {onTheWay.length ? (
+          <span>{plural(waitingBills.length, "bill")} waiting</span>
+          {onTheWayBills.length ? (
             <label className="ml-auto flex cursor-pointer items-center gap-1.5">
               <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} className={checkboxClass} />
-              Also show {plural(onTheWay.length, "bill")} not yet marked at the transporter
+              Also show {plural(onTheWayBills.length, "bill")} not yet marked at the transporter
             </label>
           ) : null}
         </div>
 
         {ranked.length ? (
           <div className="max-h-[56vh] overflow-y-auto">
-            {ranked.map(({ c, score, reasons }, i) => (
-              <label key={c.id} className={cx("grid cursor-pointer grid-cols-[24px_minmax(110px,1fr)_minmax(150px,1.6fr)_minmax(110px,1fr)_70px_110px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0", ticked.has(c.id) ? "bg-brand-soft/50" : lr && score >= 5 && i < 6 ? "bg-success-soft/40" : "")}>
-                <input type="checkbox" disabled={!lr || !canWrite} checked={ticked.has(c.id)} onChange={() => toggle(c)} className={checkboxClass} />
+            {ranked.map(({ b, c, score, reasons }, i) => (
+              <label key={b.key} className={cx("grid cursor-pointer grid-cols-[24px_minmax(110px,1fr)_minmax(150px,1.6fr)_minmax(110px,1fr)_70px_110px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0", ticked.has(b.key) ? "bg-brand-soft/50" : lr && score >= 5 && i < 6 ? "bg-success-soft/40" : "")}>
+                <input type="checkbox" disabled={!lr || !canWrite} checked={ticked.has(b.key)} onChange={() => toggle(b)} className={checkboxClass} />
                 <span className="min-w-0">
                   <BillRef c={c} />
-                  <span className="block text-meta text-muted">Order {c.orderNo}</span>
+                  {/* An LR carries bills, so a row is a bill: its date, not the order it came from. */}
+                  <span className="block text-meta text-muted">{c.billDate ? `Billed ${shortDay(c.billDate)}` : "Bill date not given"}</span>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{c.deliveryParty}</span>
                   <span className="block truncate text-meta text-muted">{c.area ?? c.partyCity ?? "—"}</span>
                 </span>
                 <span className="min-w-0 truncate text-meta text-body">{c.transporter ?? "—"}</span>
-                <span className="tabular-nums">{c.packages ?? "—"}</span>
+                <span className="tabular-nums">{b.packages ?? "—"}</span>
                 <span className="flex flex-wrap gap-1">
-                  {lr && reasons.length ? reasons.slice(0, 2).map((r) => <Badge key={r} label={r} tone={r === "same transporter" || r === "destination matches" ? "success" : "neutral"} />) : c.phase === "toTransport" ? <DuePill day={c.transportDueOn} today={today} prefix="Due" /> : <Badge label="At transporter" tone="muted" />}
+                  {lr && reasons.length ? reasons.slice(0, 2).map((r) => <Badge key={r} label={r} tone={r === "same transporter" || r === "destination matches" ? "success" : "neutral"} />) : b.rows.some((x) => x.phase === "toTransport") ? <DuePill day={c.transportDueOn} today={today} prefix="Due" /> : <Badge label="At transporter" tone="muted" />}
                 </span>
               </label>
             ))}
@@ -190,7 +214,7 @@ export function LrDesk({
           <div className="space-y-3 border-t border-divider bg-canvas px-4 py-3">
             {sel.length ? (
               <div className="text-sm text-ink">
-                {plural(sel.length, "bill")} for <b>{[...new Set(sel.map((c) => c.deliveryParty))].join(", ")}</b>
+                {plural(ranked.filter((x) => ticked.has(x.b.key)).length, "bill")} for <b>{[...new Set(sel.map((c) => c.deliveryParty))].join(", ")}</b>
                 {selBoxes != null ? ` · ${plural(selBoxes, "box", "boxes")}` : ""}
                 {lr.packages != null && selBoxes != null && selBoxes !== lr.packages ? <span className="ml-2 text-warn-ink">The LR says {lr.packages} — check the count.</span> : null}
                 {parties.size > 1 ? <span className="ml-2 text-danger">One LR goes to one party.</span> : null}
