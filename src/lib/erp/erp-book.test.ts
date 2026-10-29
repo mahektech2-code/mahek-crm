@@ -207,6 +207,62 @@ describe("an ERP order in the book", () => {
   });
 });
 
+describe("one Tally invoice over several orders", () => {
+  /** Verified, Ready and allocated: everything Bill it asks for. */
+  async function prep(party: string, qty: number) {
+    const o = await take(party, qty);
+    const ctx = await as(admin);
+    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
+    assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
+    assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(qty) }, [], o.id)).ok);
+    return o;
+  }
+  const said = (r: { ok: boolean; error?: string }) => (r.ok ? "" : (r.error ?? ""));
+  const billNo = async (o: typeof erpOrders.$inferSelect) => (await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].tallyBillNo;
+
+  test("several orders for one party bill onto one invoice, each its own bill in the book", async () => {
+    await live(true);
+    /* Two parties of their own, so nothing here is counted by the tests after. */
+    await db.insert(customers).values([
+      { id: "cus_one", name: "One Invoice Traders", city: "Pune", phone: "9876500003", kind: "customer" },
+      { id: "cus_other", name: "Other Paints", city: "Pune", phone: "9876500004", kind: "customer" },
+    ]);
+    await db.insert(erpCustomerProfiles).values([{ customerId: "cus_one" }, { customerId: "cus_other" }]);
+    const ctx = await as(admin);
+    const a = await prep("One Invoice Traders", 71);
+    const b = await prep("One Invoice Traders", 72);
+    const together = await mod("orders").bulk!.bill(ctx, [a.id, b.id], { invoiceNo: "MMI/26-27/900", invoiceDate: "2026-09-14" });
+    assert.ok(together.ok, JSON.stringify(together));
+    assert.equal(await billNo(a), "MMI/26-27/900");
+    assert.equal(await billNo(b), "MMI/26-27/900");
+
+    const c = await prep("One Invoice Traders", 73);
+    assert.match(said(await mod("orders").actions!.bill(ctx, c.id, { invoiceNo: "MMI/26-27/900", invoiceDate: "2026-09-15" })), /dated 2026-09-14/, "an invoice has one date");
+    const joined = await mod("orders").actions!.bill(ctx, c.id, { invoiceNo: "mmi/26-27/ 900", invoiceDate: "2026-09-14" });
+    assert.ok(joined.ok, JSON.stringify(joined));
+    assert.equal(await billNo(c), "MMI/26-27/900", "it joins under the number as already written");
+
+    const d = await prep("Other Paints", 74);
+    assert.match(said(await mod("orders").actions!.bill(ctx, d.id, { invoiceNo: "MMI/26-27/900", invoiceDate: "2026-09-14" })), /billed to One Invoice Traders/, "an invoice has one party");
+    assert.match(said(await mod("orders").bulk!.bill(ctx, [a.id, d.id], { invoiceNo: "MMI/26-27/950", invoiceDate: "2026-09-14" })), /already billed/);
+
+    /* Changing the invoice changes it on every order it covers. */
+    assert.ok((await mod("orders").actions!.changeInvoice(ctx, a.id, { invoiceNo: "MMI/26-27/901", invoiceDate: "2026-09-14" })).ok);
+    for (const o of [a, b, c]) assert.equal(await billNo(o), "MMI/26-27/901");
+
+    for (const o of [a, b]) {
+      assert.ok((await mod("orders").actions!.approveInvoice(ctx, o.id, {})).ok);
+      const sent = await mod("orderDetails").actions!.verify(ctx, o.id, { date: "2026-09-14" });
+      assert.ok(sent.ok, JSON.stringify(sent));
+    }
+    const [ba] = await db.select().from(bills).where(eq(bills.externalRef, `ERPBILL-${a.orderNo}`));
+    const [bb] = await db.select().from(bills).where(eq(bills.externalRef, `ERPBILL-${b.orderNo}`));
+    assert.equal(ba.billNo, "MMI/26-27/901");
+    assert.equal(bb.billNo, `MMI/26-27/901/ERP${b.orderNo}`);
+    assert.match(said(await mod("orders").actions!.changeInvoice(ctx, c.id, { invoiceNo: "MMI/26-27/902", invoiceDate: "2026-09-14" })), /already dispatch-verified/);
+  });
+});
+
 describe("a Pending customer goes to the Accounts queue", () => {
   test("the order waits as pending_approval and cannot be billed; Accounts approving releases it", async () => {
     const o = await take("New Colour House", 6);

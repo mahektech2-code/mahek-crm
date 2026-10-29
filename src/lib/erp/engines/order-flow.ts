@@ -126,6 +126,25 @@ export function invoiceKey(v: string | null | undefined): string | null {
   return s || null;
 }
 
+/** An order already carrying the invoice number somebody is about to record. */
+export type InvoiceHolder = { orderNo: number; billingId: string; billingName: string; invoiceDate: string | null };
+
+/**
+ * WHETHER AN INVOICE NUMBER MAY BE SHARED, and if not, the sentence saying why.
+ * One Tally invoice routinely covers several orders for one party, so a number
+ * already on another order is allowed — but only where that order is billed
+ * to the SAME party on the SAME invoice date, because a Tally invoice has one
+ * party and one date. Anything else is the same number typed twice by mistake,
+ * and it is refused naming the order that already holds it.
+ */
+export function invoiceShareRefusal(invoiceNo: string, billingId: string, invoiceDate: string, holders: InvoiceHolder[]): string | null {
+  const otherParty = holders.find((h) => h.billingId !== billingId);
+  if (otherParty) return `Invoice ${invoiceNo} is already on order ${otherParty.orderNo}, billed to ${otherParty.billingName}. An invoice shared by several orders has to be for one party.`;
+  const otherDate = holders.find((h) => (h.invoiceDate ?? null) !== invoiceDate);
+  if (otherDate) return `Invoice ${invoiceNo} is already on order ${otherDate.orderNo}, dated ${otherDate.invoiceDate ?? "—"}. Orders sharing an invoice share its date.`;
+  return null;
+}
+
 /* ---------------------------------------------- what the checker approved */
 
 export type InvoiceLine = { id: string; qtyCans: number; ratePaise: number | null; discountBp: number | null; gstBp: number | null; skuId: string };
