@@ -69,9 +69,8 @@ const IN_USE: Record<string, ReturnType<typeof sql>> = {
   state: sql`select state as v from erp_customer_profiles
              union select state from sheet_party_rows where status = 'present'
              union select state from erp_godowns`,
-  transporter: sql`select name as v from erp_transporters where active
-                   union select transporter from erp_customer_profiles
-                   union select transport_detail from sheet_party_rows where status = 'present'`,
+  /* The Transporters list alone: a spelling a party or the sheet carries is not a transporter to offer. */
+  transporter: sql`select name as v from erp_transporters where active`,
   segment: sql`select segment as v from erp_customer_profiles
                union select segment from sheet_party_rows where status = 'present'`,
   counterType: sql`select unnest(counter_types) as v from erp_customer_profiles

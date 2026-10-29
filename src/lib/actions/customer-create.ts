@@ -6,7 +6,7 @@ import { eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customers, erpCustomerProfiles } from "@/db/schema";
 import { canFor, requireCapability, resolveScope } from "@/lib/access-control";
-import { refOptions } from "@/lib/erp/refs";
+import { listedTransporterName, transporterChoices } from "@/lib/erp/transporter-rename";
 import { canonicalState } from "@/lib/india-states";
 import { newCustomerSchema, type NewCustomerInput } from "@/lib/new-customer";
 import { resolveSeat, type ResolvedSeat } from "@/lib/services/seat-resolve";
@@ -148,6 +148,10 @@ export async function createDirectCustomer(
       salesManager = resolved;
     }
 
+    /* Picked from the Transporters list, never added by typing it here. */
+    const carrier = await listedTransporterName(db, v.transporter);
+    if (!carrier.ok) return err(carrier.error, "validation", [{ field: "transporter", message: carrier.error }]);
+
     /* --- the row --------------------------------------------------------- */
 
     const customerId = id("cus");
@@ -205,10 +209,10 @@ export async function createDirectCustomer(
 
       // The transporter lives on the ERP profile, the same place the edit form
       // and the ERP's order lines read it from.
-      if (v.transporter) {
+      if (carrier.name) {
         await tx.insert(erpCustomerProfiles).values({
           customerId,
-          transporter: v.transporter,
+          transporter: carrier.name,
           updatedById: ctx.user.id,
         });
       }
@@ -275,7 +279,7 @@ export async function createDirectCustomer(
 export async function listTransporterChoices(): Promise<Result<string[]>> {
   try {
     await resolveScope();
-    return ok(await refOptions("transporter"));
+    return ok(await transporterChoices());
   } catch (e) {
     return fromThrown(e);
   }

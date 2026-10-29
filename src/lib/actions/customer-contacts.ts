@@ -21,7 +21,7 @@ import {
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
-import { refOptions } from "@/lib/erp/refs";
+import { transporterChoices } from "@/lib/erp/transporter-rename";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
@@ -300,7 +300,7 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
       today: await today(),
       birthdayHeadsUpDays: (await getConfig())["customers.birthdayHeadsUpDays"],
       canDecideCredit: await canFor(ctx.user, "payment.confirm"),
-      transporterOptions: await refOptions("transporter"),
+      transporterOptions: await transporterChoices(),
     });
   } catch (e) {
     return fromThrown(e);

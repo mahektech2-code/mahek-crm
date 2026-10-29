@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
+import { listedTransporterName } from "@/lib/erp/transporter-rename";
 import { notificationAppSql } from "@/lib/notification-app-sql";
 import {
   auditLog,
@@ -886,6 +887,15 @@ export async function updateCustomer(
       ]);
     }
 
+    /* The transporter is picked from the Transporters list; the one already on the record stands as it is spelled. */
+    let carrier: string | null | undefined;
+    if (d.transporter !== undefined) {
+      const [had] = await db.select({ t: erpCustomerProfiles.transporter }).from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, customerId));
+      const listed = await listedTransporterName(db, d.transporter, had?.t);
+      if (!listed.ok) return err(listed.error, "validation", [{ field: "transporter", message: listed.error }]);
+      carrier = listed.name;
+    }
+
     /* A CHANGED GSTIN IS NOT THE NUMBER ANYBODY VALIDATED — here as everywhere it
        is written. And if the account is a lead whose Qualification a manager has
        verified, changing the number takes that verification away unless the
@@ -953,7 +963,7 @@ export async function updateCustomer(
 
     /* The dispatch fields, on the ERP profile — created here if this customer has none yet. */
     const profile: Partial<typeof erpCustomerProfiles.$inferInsert> = {};
-    if (d.transporter !== undefined) profile.transporter = d.transporter || null;
+    if (carrier !== undefined) profile.transporter = carrier;
     if (d.weightType !== undefined) profile.weightType = d.weightType || null;
     if (d.partySegment !== undefined) profile.segment = d.partySegment || null;
     if (d.grade !== undefined) profile.grade = d.grade || null;

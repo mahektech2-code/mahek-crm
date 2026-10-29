@@ -93,6 +93,7 @@ beforeEach(async () => {
   `);
   invalidateConfig();
   await seedConfig();
+  await db.execute(sql`insert into erp_transporters (id, name) values ('etr_cc_jai', 'Jai Malhar Transport'), ('etr_cc_sheet', 'Sheet Transport') on conflict do nothing`);
   admin = await makeUser("Ada Admin", "admin", [{ app: "crm", role: "admin" }, { app: "accounts", role: "admin" }]);
   clerk = await makeUser("Tara Telecaller", "associate", [{ app: "crm", role: "associate" }]);
   setTestUser(admin);
@@ -321,6 +322,9 @@ describe("E — the full edit form", () => {
     assert.equal(d.partySegment, "Hardware");
     assert.deepEqual(d.counterTypes, ["Paint", "Hardware"], "a repeated counter is kept once");
     assert.equal(d.standingInstructions, "Call before dispatch");
+    const unlisted = await updateCustomer(c.id, { transporter: "Nobody's Lorries" });
+    assert.equal(unlisted.ok, false, "a transporter not on the list is refused");
+    assert.ok((await updateCustomer(c.id, { transporter: "jai malhar transport" })).ok, "the one already on the record saves again");
     assert.ok((await updateCustomer(c.id, { transporter: "" })).ok);
     const [p] = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, c.id));
     assert.equal(p.transporter, null, "a blank clears it");
@@ -339,8 +343,8 @@ describe("E — the full edit form", () => {
     });
     await db.insert(sheetPartyRows).values([
       row(1, "Typed Paints", { email: "sheet@typed.in", transportDetail: "Sheet Transport", grade: "B", partyStatus: "Pending" }),
-      row(2, "Blank Paints", { email: "Blank @Paints .in", companyName: "Blank Paints LLP", transportDetail: "Sheet Transport", counterType: "Paint, Hardware", partyStatus: "Pending" }),
-      row(3, "Shared Paints", { email: "abc@gmail.com" }),
+      row(2, "Blank Paints", { email: "Blank @Paints .in", companyName: "Blank Paints LLP", transportDetail: "SHEET TRANSPORT PVT LTD", counterType: "Paint, Hardware", partyStatus: "Pending" }),
+      row(3, "Shared Paints", { email: "abc@gmail.com", transportDetail: "Some Lorry Wala" }),
       row(4, "Nobody A", { email: "abc@gmail.com" }),
       row(5, "Nobody B", { email: "ABC@gmail.com" }),
     ]);
@@ -354,6 +358,9 @@ describe("E — the full edit form", () => {
     assert.equal(profiles.get(typed.id)!.transporter, "Our Transport", "a typed transporter stands");
     assert.equal(profiles.get(typed.id)!.grade, "B", "a blank one is filled");
     assert.deepEqual(profiles.get(blank.id)!.counterTypes, ["Paint", "Hardware"]);
+    assert.equal(profiles.get(blank.id)!.transporter, "Sheet Transport", "the sheet's spelling of a listed transporter is the list's");
+    assert.equal(profiles.get(shared.id)?.transporter ?? null, null, "a transporter the list does not have is left blank, not added");
+    assert.equal((await db.execute(sql`select 1 from erp_transporters where name ilike 'some lorry%'`)).length, 0);
     assert.ok([...profiles.values()].every((p) => !p.pendingActivation), "the sheet's Pending never holds a party");
     const again = await seedErpCustomerProfiles();
     assert.equal(again.created + again.filled + again.customersFilled, 0, "a second run changes nothing");

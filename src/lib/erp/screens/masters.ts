@@ -4,6 +4,7 @@ import { has, type Col } from "./common";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { foldName, renameValues } from "@/lib/customer-rename";
 import { db } from "@/db";
+import { listedTransporterName, transporterChoices } from "../transporter-rename";
 import {
   appAccess,
   customers,
@@ -835,13 +836,15 @@ export function partyStatus(r: { status: string; p: { pendingActivation: boolean
 async function customerEditForm(id: string): Promise<FormSpec | null> {
   const [r] = await loadCustomers(eq(customers.id, id));
   if (!r) return null;
-  const [areas, states, transporters, counters, segments] = await Promise.all([
+  const [areas, states, listed, counters, segments] = await Promise.all([
     refOptions("area"),
     refOptions("state"),
-    refOptions("transporter"),
+    transporterChoices(),
     refOptions("counterType"),
     refOptions("segment"),
   ]);
+  /* The Transporters list — and the one already on the record, so an older spelling still shows. */
+  const transporters = r.p?.transporter && !listed.some((t) => t.toLowerCase() === r.p!.transporter!.trim().toLowerCase()) ? [r.p.transporter, ...listed] : listed;
   return {
     screen: "customers",
     id: "edit",
@@ -1092,6 +1095,8 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
       .limit(1);
     if (clash.length) return err(`Another party is already called ${clash[0].name}. Pick a name that tells them apart.`, "validation", [{ field: "name", message: "TAKEN" }]);
   }
+  const carrier = await listedTransporterName(db, text(h.transporter), before.p?.transporter);
+  if (!carrier.ok) return fieldErr("transporter", carrier.error);
   const custValues = {
     ...(rename ?? {}),
     area: text(h.area),
@@ -1110,7 +1115,7 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
   const profileValues = {
     grade,
     state: text(h.state),
-    transporter: text(h.transporter),
+    transporter: carrier.name,
     weightType: text(h.weight),
     counterTypes: multi(h.counter),
     segment: text(h.segment),
