@@ -652,6 +652,7 @@ const DESCRIBE: Record<string, Describer> = {
   }),
   "lead.callingDesk.convertToProspect": (c) => ({ says: ["made", c.subject(), "a prospect"], note: words(str(c.a.reason) ?? "") || null, changes: false }),
   "lead.communication": (c) => ({ says: ["sent", c.subject(), str(c.a.actionCode) ? `a ${words(str(c.a.actionCode)!)}` : "something"], changes: false }),
+  "lead.followup.request": (c) => ({ says: ["started a follow-up for", c.subject(), "— WhatsApp opened, not marked sent"], changes: false }),
   "lead.salesType.set": (c) => ({ says: ["set how", c.subject(), "will be sold to:", strong(words(str(c.a.salesType) ?? "?"))], changes: false }),
   "lead.prospectRequest": (c) => ({ says: ["asked for", c.subject(), "to be made a prospect"], changes: false }),
   "lead.prospectRequest.resubmit": (c) => ({ says: ["asked again for", c.subject(), "to be made a prospect"], changes: false }),

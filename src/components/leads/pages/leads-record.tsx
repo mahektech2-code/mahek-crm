@@ -5,6 +5,7 @@ import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
 import { canLogQualificationCall } from "@/lib/services/lead-reach-service";
+import { FOLLOWUP_MATERIALS, type FollowUpDocs } from "@/lib/lead-followup";
 import { workableLeadIds } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
@@ -192,6 +193,16 @@ export async function Body({
      desk gets the call form's data in a prop of its own, never in `desk`: that
      one also decides whether Convert to Prospect is offered, and converting is
      still the desk's. The action asks the lead's scope again. */
+  /* What a follow-up in the call form can name: the CURRENT published file of each
+     category, the same resolver the Reach-out buttons use. The action resolves it
+     again - this only draws the picker. */
+  const published = await publishedDocuments();
+  const followUpDocs: FollowUpDocs = {};
+  for (const m of FOLLOWUP_MATERIALS) {
+    const d = published[m.category];
+    if (d) followUpDocs[m.code] = { id: d.id, title: d.title, fileHref: d.attachmentId ? `/api/attachments/${d.attachmentId}` : null };
+  }
+
   const callRecord =
     !desk && workspace === "crm" && (await canLead(user, "lead.work")) && (await canLogQualificationCall(id))
       ? await deskLeadRecord(id, day)
@@ -401,6 +412,7 @@ export async function Body({
       requireNextAction={config["leads.requireNextAction"]}
       desk={desk}
       callRecord={callRecord}
+      followUpDocs={followUpDocs}
       defaultNextDate={onOrAfterWorkingDay(addDays(day as BusinessDate, 2), {
         timezone: config["workingDay.timezone"],
         dayBoundaryHour: config["workingDay.dayBoundaryHour"],
