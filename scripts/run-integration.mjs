@@ -79,6 +79,8 @@ const files = [
   "src/lib/erp/erp-traceability.test.ts",
   "src/lib/erp/erp-sales.test.ts",
   "src/lib/erp/erp-logistics.test.ts",
+  // Customer order tracking: one link per order, every step recorded once, holds, documents, messages.
+  "src/lib/erp/erp-order-tracking.test.ts",
   "src/lib/erp/erp-money.test.ts",
   // Accounts → Bank statement management: upload, import only what is new,
   // match each line to what explains it, and the PDF's seven days.

@@ -124,7 +124,7 @@ export function deliveryStatus(
   if (t.phase === "delivered") return "Delivered";
   if (t.issue) return "Exception";
   if (t.phase === "toTransport" || t.phase === "lrPending") return "Logistics Pending";
-  if (t.stage === "Reached Destination Area" || (t.expectedDeliveryOn != null && t.expectedDeliveryOn < today)) return "Delivery Pending Confirmation";
+  if (t.stage === "Reached Destination Area" || t.stage === "Out for Delivery" || (t.expectedDeliveryOn != null && t.expectedDeliveryOn < today)) return "Delivery Pending Confirmation";
   return "In Transit";
 }
 

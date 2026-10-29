@@ -166,6 +166,10 @@ export type JobName =
   | "erp-inbox"
   /** Dispatch-verified lines on no consignment, handed to Logistics — idempotent, runs hourly. */
   | "erp-dispatch-transports"
+  /** Customer order tracking caught up with every order being worked — links and steps; hourly, the net under the writes. */
+  | "order-tracking-sync"
+  /** Deploy day: a link and steps for every confirmed ERP order already in flight, quietly — nobody is messaged. */
+  | "order-tracking-backfill"
   /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
   | "erp-cycle-counts"
   /** Who the Call Log holds back for an open order — the sheet's Taken Order tab, or the ERP's lines once it takes the orders. Hourly. */
@@ -713,6 +717,20 @@ async function erpDispatchTransportsStep() {
   return { recordsAffected: n, detail: n ? `${n} dispatched line${n === 1 ? "" : "s"} handed to Logistics` : "every dispatched line is on a consignment" };
 }
 
+/** Customer order tracking: every order still being worked brought up to date — the net under the Orders and Logistics writes. */
+async function orderTrackingSyncStep() {
+  const { syncOpenOrderTracking } = await import("./erp/order-tracking");
+  const r = await syncOpenOrderTracking();
+  return { recordsAffected: r.steps + r.links, detail: `${r.orders} order${r.orders === 1 ? "" : "s"} checked · ${r.links} new link${r.links === 1 ? "" : "s"} · ${r.steps} step${r.steps === 1 ? "" : "s"} recorded` };
+}
+
+/** Deploy day: every confirmed order already under way gets its link and its steps, quietly. */
+async function orderTrackingBackfillStep() {
+  const { backfillOrderTracking } = await import("./erp/order-tracking");
+  const r = await backfillOrderTracking();
+  return { recordsAffected: r.steps + r.links, detail: `${r.orders} order${r.orders === 1 ? "" : "s"} · ${r.links} link${r.links === 1 ? "" : "s"} made · ${r.steps} step${r.steps === 1 ? "" : "s"} recorded · nobody messaged` };
+}
+
 /** AI-2: new WhatsApp replies screened into the ERP's order inbox, as drafts nobody has accepted. */
 async function erpInboxStep() {
   const { screenWhatsApp } = await import("./erp/ai-orders");
@@ -769,6 +787,7 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
   results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
   results.push(await run("erp-dispatch-transports", erpDispatchTransportsStep, triggeredById));
+  results.push(await run("order-tracking-sync", orderTrackingSyncStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
 
@@ -1232,6 +1251,10 @@ export async function runJob(
       return [await run("erp-levels-plan", () => erpLevelsPlanStep({ dryRun: options.dryRun, force: true, userId: triggeredById ?? null }), triggeredById)];
     case "erp-dispatch-transports":
       return [await run("erp-dispatch-transports", erpDispatchTransportsStep, triggeredById)];
+    case "order-tracking-sync":
+      return [await run("order-tracking-sync", orderTrackingSyncStep, triggeredById)];
+    case "order-tracking-backfill":
+      return [await run("order-tracking-backfill", orderTrackingBackfillStep, triggeredById)];
     case "recompute-order-holds":
       return [await run("recompute-order-holds", orderHoldsStep, triggeredById)];
     case "erp-book-sync":

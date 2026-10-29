@@ -10,6 +10,7 @@ import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "
 import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
 import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
+import { delayReasonForIssue, reasonsFor } from "@/lib/erp/engines/order-tracking";
 import type { Consignment } from "@/lib/erp/logistics";
 import { BillRef, byLr, CallLink, DeliveryStatusBadge, DuePill, Empty, LrThumb, NotifyToggle, plural, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
 
@@ -167,6 +168,8 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [expected, setExpected] = useState(c.expectedDeliveryOn ?? "");
   const [nextCall, setNextCall] = useState(addDays(today, callEveryDays));
   const [issue, setIssue] = useState<string>("Delayed");
+  /* What the customer's tracking page calls it: a delay reason, or nothing (the problem stays internal). */
+  const [customerReason, setCustomerReason] = useState<string>(delayReasonForIssue("Delayed") ?? "");
   const [date, setDate] = useState(today);
   const [receivedBy, setReceivedBy] = useState("");
   const [proof, setProof] = useState("");
@@ -176,7 +179,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const save = () => {
     const done = (r: { ok: boolean }) => r.ok && onClose();
     if (dialog.kind === "update") return run(() => erpLogisticsUpdate(ids, { stage, note, expectedOn: expected || null, nextCallOn: nextCall || null, notify }), done);
-    if (dialog.kind === "issue") return run(() => erpLogisticsIssue(ids, { issue, note, expectedOn: expected || null, notify }), done);
+    if (dialog.kind === "issue") return run(() => erpLogisticsIssue(ids, { issue, note, expectedOn: expected || null, notify, customerReason: customerReason || null }), done);
     return run(() => erpLogisticsDelivered(ids, { date, receivedBy, proof, note, notify }), done);
   };
   const moved = dialog.kind === "update" && (stage !== c.stage || (expected && expected !== c.expectedDeliveryOn));
@@ -194,7 +197,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
           <>
             <div>
               <SectionLabel>Where are the goods?</SectionLabel>
-              <div className="mt-1 grid grid-cols-3 gap-2">
+              <div className="mt-1 grid grid-cols-2 gap-2">
                 {ROAD_STAGES.map((s) => (
                   <button key={s} type="button" onClick={() => setStage(s)} className={cx("cursor-pointer rounded-control border px-2 py-2 text-meta", stage === s ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas")}>
                     {STAGE_SHORT[s]}
@@ -215,10 +218,28 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
         {dialog.kind === "issue" ? (
           <>
             <Field label="What went wrong?">
-              <Select value={issue} onChange={(e) => setIssue(e.target.value)}>
+              <Select
+                value={issue}
+                onChange={(e) => {
+                  setIssue(e.target.value);
+                  setCustomerReason(delayReasonForIssue(e.target.value) ?? "");
+                }}
+              >
                 {ISSUES.map((i) => (
                   <option key={i}>{i}</option>
                 ))}
+              </Select>
+            </Field>
+            <Field label="The customer's tracking page shows">
+              <Select value={customerReason} onChange={(e) => setCustomerReason(e.target.value)}>
+                <option value="">Nothing — keep it internal</option>
+                {reasonsFor("delay")
+                  .filter((r) => r.code !== "other")
+                  .map((r) => (
+                    <option key={r.code} value={r.code}>
+                      Delivery Delayed · {r.label}
+                    </option>
+                  ))}
               </Select>
             </Field>
             <Field label="New expected delivery (if the transporter gave one)">

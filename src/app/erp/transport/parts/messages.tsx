@@ -16,7 +16,18 @@ import { Empty, plural, useAct } from "./common";
  * at the top with the reason: open WhatsApp with the message already in it,
  * send, and mark it sent — or decide it should not go.
  */
-const KIND: Record<string, string> = { lr: "LR shared", stage: "Status update", issue: "Problem", delivered: "Delivered" };
+const KIND: Record<string, string> = {
+  lr: "LR shared",
+  stage: "Status update",
+  issue: "Problem",
+  delivered: "Delivered",
+  /* Order tracking (0292): written before a consignment exists, or about the order rather than the lorry. */
+  confirmed: "Order confirmed",
+  invoice: "Invoice available",
+  dispatched: "Dispatched",
+  hold: "On hold / delayed",
+  resolved: "Hold resolved",
+};
 const STATUS: Record<string, { l: string; tone: "success" | "warn" | "danger" | "muted" | "neutral" }> = {
   sent: { l: "Sent", tone: "success" },
   delivered: { l: "Delivered", tone: "success" },
