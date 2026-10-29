@@ -34,6 +34,10 @@ import {
   Tabs,
 } from "@/components/ui/overlays";
 import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
+import { CustomerPlacePicker } from "@/components/customers/customer-place-picker";
+import { customerPick, resolveCustomerPick, samePick } from "@/lib/customer-place";
+import type { PlacePick } from "@/lib/erp/transporter-godowns";
+import type { PlaceKind } from "@/lib/place-parse";
 import { birthdaySentence, type UpcomingBirthday } from "@/lib/customer-contacts";
 import {
   loadCustomerEditor,
@@ -2230,24 +2234,16 @@ type EditTab = "details" | "contacts" | "address" | "commercial" | "dispatch" | 
 
 /** The extra fields as the inputs hold them — strings, and two switches. */
 type DetailValues = {
-  externalCode: string;
   customerType: string;
   potential: string;
   potentialMonthly: string;
-  rating: string;
   segmentation: string;
-  taggedEmployeeName: string;
-  dealerCode: string;
   customerSince: string;
   specialInstructions: string;
   email: string;
   whatsappDest: string;
   whatsappGroupName: string;
   address: string;
-  region: string;
-  area: string;
-  beat: string;
-  territoryRegion: string;
   visitFrequencyDays: string;
   creditLimit: string;
   creditBlocked: boolean;
@@ -2255,40 +2251,28 @@ type DetailValues = {
   priceTag: string;
   freightTerm: string;
   deliveryType: string;
-  doNotContact: boolean;
   companyName: string;
   transporter: string;
   weightType: string;
-  partySegment: string;
-  grade: string;
-  /** Comma-separated in the box; a list on the wire. */
+  /** One per line here, so a value with a comma in it survives; a list on the wire. */
   counterTypes: string;
   standingInstructions: string;
-  allocateEmail: string;
 };
 
 const rupeesOf = (paise: number | null) => (paise === null ? "" : String(paise / 100));
 
 export function detailValuesOf(c: CustomerEditorData["customer"]): DetailValues {
   return {
-    externalCode: c.externalCode ?? "",
     customerType: c.customerType ?? "",
     potential: c.potential ?? "",
     potentialMonthly: rupeesOf(c.potentialMonthlyPaise),
-    rating: c.rating ?? "",
     segmentation: c.segmentation ?? "",
-    taggedEmployeeName: c.taggedEmployeeName ?? "",
-    dealerCode: c.dealerCode ?? "",
     customerSince: c.customerSince ?? "",
     specialInstructions: c.specialInstructions ?? "",
     email: c.email ?? "",
     whatsappDest: c.whatsappDest,
     whatsappGroupName: c.whatsappGroupName ?? "",
     address: c.address ?? "",
-    region: c.region ?? "",
-    area: c.area ?? "",
-    beat: c.beat ?? "",
-    territoryRegion: c.territoryRegion ?? "",
     visitFrequencyDays: c.visitFrequencyDays === null ? "" : String(c.visitFrequencyDays),
     creditLimit: rupeesOf(c.creditLimitPaise),
     creditBlocked: c.creditBlocked,
@@ -2296,15 +2280,11 @@ export function detailValuesOf(c: CustomerEditorData["customer"]): DetailValues 
     priceTag: c.priceTag ?? "",
     freightTerm: c.freightTerm ?? "",
     deliveryType: c.deliveryType ?? "",
-    doNotContact: c.doNotContact,
     companyName: c.companyName ?? "",
     transporter: c.transporter ?? "",
     weightType: c.weightType ?? "",
-    partySegment: c.partySegment ?? "",
-    grade: c.grade ?? "",
-    counterTypes: c.counterTypes.join(", "),
+    counterTypes: c.counterTypes.join("\n"),
     standingInstructions: c.standingInstructions ?? "",
-    allocateEmail: c.allocateEmail ?? "",
   };
 }
 
@@ -2328,7 +2308,7 @@ export function detailChanges(before: DetailValues, after: DetailValues): Record
     if (k === "potentialMonthly") out.potentialMonthlyPaise = paiseOf(after.potentialMonthly);
     else if (k === "creditLimit") out.creditLimitPaise = paiseOf(after.creditLimit);
     else if (k === "visitFrequencyDays") out.visitFrequencyDays = after.visitFrequencyDays ? Number(after.visitFrequencyDays) : null;
-    else if (k === "counterTypes") out.counterTypes = after.counterTypes.split(",").map((x) => x.trim()).filter(Boolean);
+    else if (k === "counterTypes") out.counterTypes = after.counterTypes.split("\n").map((x) => x.trim()).filter(Boolean);
     else out[k] = typeof after[k] === "string" ? (after[k] as string).trim() : after[k];
   }
   return out;
@@ -2380,7 +2360,6 @@ function CustomerFormBody({
     assignedId: openingSalesValue(kind, initial, people),
     gstin: initial?.gstin ?? "",
     creditTermDays: String(initial?.creditTermDays ?? 30),
-    route: initial?.route ?? "",
     leadSource: initial?.leadSource ?? "",
     /*
      * The same shape as the sales seat. NOT auto-matched to an employee of
@@ -2453,10 +2432,24 @@ function CustomerFormBody({
     (k: keyof DetailValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setDetail((d) => (d ? { ...d, [k]: e.target.value } : d));
-  const setFlag = (k: "creditBlocked" | "doNotContact") => (on: boolean) =>
+  const setFlag = (k: "creditBlocked") => (on: boolean) =>
     setDetail((d) => (d ? { ...d, [k]: on } : d));
   const changes = editor && detail ? detailChanges(detailValuesOf(editor.customer), detail) : {};
-  const changedCount = Object.keys(changes).length;
+
+  /*
+   * WHERE THE SHOP IS, as four rungs on the place tree. Opened from the place
+   * the record is filed under; sent only when it moved, and checked here first
+   * so a missing rung opens the Address tab rather than failing the save.
+   */
+  const openingPick = React.useMemo(
+    () => (editor ? customerPick(editor.customer, editor.options.placeTree) : {}),
+    [editor],
+  );
+  const [pickEdit, setPickEdit] = React.useState<PlacePick | null>(null);
+  const pick = pickEdit ?? openingPick;
+  const [placeError, setPlaceError] = React.useState<{ kind: PlaceKind; message: string } | null>(null);
+  const placeMoved = !!editor && pickEdit !== null && !samePick(pickEdit, openingPick);
+  const changedCount = Object.keys(changes).length + (placeMoved ? 1 : 0);
 
   /*
    * Whether either account manager actually moved, compared against what the
@@ -2506,9 +2499,21 @@ function CustomerFormBody({
             variant="primary"
             disabled={busy}
             onClick={async () => {
+              let placePart: Record<string, unknown> = {};
+              if (placeMoved && editor) {
+                const checked = resolveCustomerPick(pick, editor.options.placeTree);
+                if (!checked.ok) {
+                  setPlaceError(checked);
+                  setTab("address");
+                  return;
+                }
+                // The place carries the city; the old text must not be written over it.
+                placePart = { place: pick, city: undefined };
+              }
+              setPlaceError(null);
               setBusy(true);
               try {
-                await onSubmit({ ...values, ...changes });
+                await onSubmit({ ...values, ...changes, ...placePart });
               } finally {
                 setBusy(false);
               }
@@ -2550,11 +2555,8 @@ function CustomerFormBody({
         </Field>
         {detail ? (
           <>
-            <Field label="Customer code" hint="The code on the sheet or in Tally.">
-              <Input value={detail.externalCode} onChange={setD("externalCode")} />
-            </Field>
-            <Field label="Dealer code">
-              <Input value={detail.dealerCode} onChange={setD("dealerCode")} />
+            <Field label="Customer code" hint="Given automatically when the customer is added.">
+              <Input value={editor?.customer.customerCode ?? ""} readOnly disabled />
             </Field>
             <Field label="Type of business">
               <Select value={detail.customerType} onChange={setD("customerType")}>
@@ -2579,25 +2581,12 @@ function CustomerFormBody({
             <Field label="Could buy a month (₹)" hint="An estimate — saved with your name and today's date.">
               <MoneyInput value={detail.potentialMonthly} onChange={setD("potentialMonthly")} />
             </Field>
-            <Field label="Rating">
-              <Input value={detail.rating} onChange={setD("rating")} placeholder="How valuable back office rates it" />
-            </Field>
             <Field label="Segment">
               <Input value={detail.segmentation} onChange={setD("segmentation")} />
-            </Field>
-            <Field label="Tagged employee" hint="Who HRMS's Sales desk files this party under.">
-              <Input value={detail.taggedEmployeeName} onChange={setD("taggedEmployeeName")} />
             </Field>
             <Field label="Email">
               <Input type="email" value={detail.email} onChange={setD("email")} placeholder="For statements and invoices" />
             </Field>
-            <div className="flex items-end pb-1.5">
-              <Checkbox
-                label="Do not contact — never call or message"
-                checked={detail.doNotContact}
-                onChange={(e) => setFlag("doNotContact")(e.target.checked)}
-              />
-            </div>
             <Field label="What to remember when calling" className="col-span-2">
               <Textarea rows={3} value={detail.specialInstructions} onChange={setD("specialInstructions")} />
             </Field>
@@ -2684,36 +2673,30 @@ function CustomerFormBody({
             <Textarea rows={2} value={detail.address} onChange={setD("address")} />
           </Field>
         ) : null}
-        <Field label="City · required">
-          <Input value={values.city ?? ""} onChange={set("city")} />
-        </Field>
-        {detail ? (
-          <>
-            <Field label="State">
-              <Input value={detail.region} onChange={setD("region")} />
-            </Field>
-            <Field label="Area">
-              <Input value={detail.area} onChange={setD("area")} />
-            </Field>
-            <Field label="Beat">
-              <Input value={detail.beat} onChange={setD("beat")} />
-            </Field>
-            <Field label="Territory region">
-              <Input value={detail.territoryRegion} onChange={setD("territoryRegion")} />
-            </Field>
-          </>
-        ) : null}
-        <Field label="Route">
-          <Input value={values.route ?? ""} onChange={set("route")} />
-        </Field>
+        {editor ? (
+          <CustomerPlacePicker
+            tree={editor.options.placeTree}
+            pick={pick}
+            error={placeError}
+            onChange={(next) => {
+              setPickEdit(next);
+              setPlaceError(null);
+            }}
+          />
+        ) : (
+          // The rest of the record could not be read: the city can still be corrected as text.
+          <Field label="City · required">
+            <Input value={values.city ?? ""} onChange={set("city")} />
+          </Field>
+        )}
         {detail ? (
           <Field label="Visit every (days)" hint="How often a salesman should call in.">
             <Input type="number" min={1} max={365} value={detail.visitFrequencyDays} onChange={setD("visitFrequencyDays")} />
           </Field>
         ) : null}
         <p className="col-span-2 text-[12px] text-muted">
-          The state and area also place the shop on the location tree. A place somebody reviewed by
-          hand is never moved by an edit here.
+          A district, city or area that is not listed is added when you save, under the one above it.
+          The place you pick here is kept — nothing automatic moves it afterwards.
         </p>
       </div>
 
@@ -2740,8 +2723,19 @@ function CustomerFormBody({
                 disabled={!editor.canDecideCredit}
               />
             </Field>
-            <Field label="Price list tag" hint="Which price list applies, as the sheet names it.">
-              <Input value={detail.priceTag} onChange={setD("priceTag")} />
+            <Field label="Price list" hint="Every price list in force, by its full name." className="col-span-2">
+              <Select value={detail.priceTag} onChange={setD("priceTag")} title={detail.priceTag || undefined}>
+                <option value="">Not stated</option>
+                {/* A saved name no longer on the list is kept as an option, so Save never blanks it. */}
+                {detail.priceTag && !editor.options.priceLists.includes(detail.priceTag) ? (
+                  <option value={detail.priceTag}>{detail.priceTag} (not a current price list)</option>
+                ) : null}
+                {editor.options.priceLists.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
             </Field>
             <Field label="Freight">
               <Select value={detail.freightTerm} onChange={setD("freightTerm")}>
@@ -2764,10 +2758,10 @@ function CustomerFormBody({
               <Select value={detail.transporter} onChange={setD("transporter")}>
                 <option value="">Not stated</option>
                 {/* A saved spelling the list lacks is offered first, so Save never blanks it. */}
-                {detail.transporter && !editor.transporterOptions.includes(detail.transporter) ? (
+                {detail.transporter && !editor.options.transporters.includes(detail.transporter) ? (
                   <option value={detail.transporter}>{detail.transporter}</option>
                 ) : null}
-                {editor.transporterOptions.map((t) => (
+                {editor.options.transporters.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -2819,17 +2813,15 @@ function CustomerFormBody({
             <Field label="Weight type">
               <Input value={detail.weightType} onChange={setD("weightType")} />
             </Field>
-            <Field label="Party segment" hint="As the Sales Party sheet names it.">
-              <Input value={detail.partySegment} onChange={setD("partySegment")} />
+            <Field label="Grade" hint="Worked out automatically — not typed.">
+              <Input value={editor?.customer.grade ?? ""} readOnly disabled placeholder="Not worked out yet" />
             </Field>
-            <Field label="Grade">
-              <Input value={detail.grade} onChange={setD("grade")} />
-            </Field>
-            <Field label="Counter types" hint="Separate with commas.">
-              <Input value={detail.counterTypes} onChange={setD("counterTypes")} />
-            </Field>
-            <Field label="Allocate email" className="col-span-2">
-              <Input value={detail.allocateEmail} onChange={setD("allocateEmail")} />
+            <Field label="Counter types" className="col-span-2">
+              <CounterTypesPicker
+                options={editor?.options.counterTypes ?? []}
+                value={detail.counterTypes}
+                onChange={(next) => setDetail((d) => (d ? { ...d, counterTypes: next } : d))}
+              />
             </Field>
             <Field label="Standing instructions" hint="Read by dispatch on every order." className="col-span-2">
               <Textarea rows={2} value={detail.standingInstructions} onChange={setD("standingInstructions")} />
@@ -3118,5 +3110,60 @@ function BulkReminderModal({
         </Field>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Counter types — a dropdown of the ERP's Counter type list (ERP → Settings →
+ * Reference lists), each pick added as a chip that can be taken off. A value
+ * already on the record that the list no longer carries stays a chip.
+ * `value` is one type per line.
+ */
+function CounterTypesPicker({
+  options,
+  value,
+  onChange,
+}: {
+  options: string[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const picked = value.split("\n").map((x) => x.trim()).filter(Boolean);
+  const left = options.filter((o) => !picked.includes(o));
+  const set = (list: string[]) => onChange(list.join("\n"));
+  return (
+    <div className="flex flex-col gap-2">
+      {picked.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {picked.map((p) => (
+            <span key={p} className="inline-flex items-center gap-1 rounded-[4px] border border-line bg-canvas px-2 py-0.5 text-[13px] text-ink">
+              {p}
+              <button
+                type="button"
+                aria-label={`Remove ${p}`}
+                className="text-muted hover:text-danger"
+                onClick={() => set(picked.filter((x) => x !== p))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <Select
+        value=""
+        onChange={(e) => {
+          if (e.target.value) set([...picked, e.target.value]);
+        }}
+        disabled={!left.length}
+      >
+        <option value="">{left.length ? (picked.length ? "Add another counter type…" : "Pick a counter type…") : options.length ? "Every counter type is picked" : "No counter types set up yet"}</option>
+        {left.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </Select>
+    </div>
   );
 }

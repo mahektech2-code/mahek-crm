@@ -1,12 +1,12 @@
 import "server-only";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterContacts, erpTransporterGodowns, erpTransporters, erpTransports, places } from "@/db/schema";
+import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterContacts, erpTransporterGodowns, erpTransporters, erpTransports } from "@/db/schema";
 import { checkGstin } from "@/lib/engines/lead-scan";
-import { placeKey, type PlaceKind } from "@/lib/place-parse";
-import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput, type PlaceOption, type ResolvedRung } from "./transporter-godowns";
+import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput, type ResolvedRung } from "./transporter-godowns";
 import { getConfig } from "@/lib/config/store";
+import { placeIdsFor, placeOptions } from "@/lib/services/place-write";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { whatsappNumberFor } from "@/lib/customer-contacts";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
@@ -361,11 +361,8 @@ export async function transporters(): Promise<Transporter[]> {
   return rows.map((r) => ({ ...r, godowns: byTransporter.get(r.id) ?? [] }));
 }
 
-/** The whole reviewed place tree, for the godown picker. A few thousand rows of four columns. */
-export async function placeOptions(): Promise<PlaceOption[]> {
-  const rows = await db.select({ id: places.id, kind: places.kind, name: places.name, parentId: places.parentId }).from(places);
-  return rows.map((r) => ({ ...r, kind: r.kind as PlaceKind }));
-}
+/** The whole reviewed place tree, for the godown picker. */
+export { placeOptions };
 
 export type TransportEvent = { id: string; kind: string; stage: string | null; note: string | null; shared: boolean; at: string; by: string | null };
 
@@ -1052,30 +1049,10 @@ async function writeGodowns(tx: Tx, transporterId: string, godowns: Godown[]) {
   }
 }
 
-/**
- * The area a godown is filed under, adding the rungs somebody typed because
- * they were not listed. Each is looked for under its parent first — another
- * save may have added it a moment ago — and a race between two inserts is
- * settled by the unique index rather than by a second copy.
- */
+/** The area a godown is filed under, adding the rungs somebody typed (see `place-write.ts`). */
 async function placeFor(tx: Tx, rungs: ResolvedRung[]): Promise<string | null> {
-  let parentId: string | null = null;
-  for (const r of rungs) {
-    if (r.id) {
-      parentId = r.id;
-      continue;
-    }
-    const key = placeKey(r.name);
-    const find = async () =>
-      ((await tx.execute(sql`select id from places where kind = ${r.kind} and key = ${key} and parent_id is not distinct from ${parentId} limit 1`)) as unknown as { id: string }[])[0]?.id;
-    let id = await find();
-    if (!id) {
-      await tx.execute(sql`insert into places (id, kind, name, key, parent_id, shops) values (${`pl_${randomUUID().slice(0, 12)}`}, ${r.kind}, ${r.name}, ${key}, ${parentId}, 0) on conflict do nothing`);
-      id = await find();
-    }
-    parentId = id ?? null;
-  }
-  return parentId;
+  const ids = await placeIdsFor(tx, rungs);
+  return ids.at(-1)?.id ?? null;
 }
 
 /* ===================================================== telling the customer */

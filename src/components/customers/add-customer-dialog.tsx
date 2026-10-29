@@ -4,8 +4,11 @@ import * as React from "react";
 import { Button, Checkbox, Field, Input, MoneyInput, Select, Textarea, cx } from "@/components/ui/primitives";
 import { Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { createDirectCustomer, listTransporterChoices } from "@/lib/actions/customer-create";
-import { INDIA_STATES } from "@/lib/india-states";
+import { createDirectCustomer, listCustomerFormChoices } from "@/lib/actions/customer-create";
+import { CustomerPlacePicker } from "@/components/customers/customer-place-picker";
+import { resolveCustomerPick, rungNameOf } from "@/lib/customer-place";
+import type { PlaceOption, PlacePick } from "@/lib/erp/transporter-godowns";
+import type { PlaceKind } from "@/lib/place-parse";
 import { NEW_CUSTOMER_TAB, newCustomerSchema, seatFromPick, type NewCustomerInput } from "@/lib/new-customer";
 
 /* ---------------------------------------------------------------------------
@@ -35,10 +38,6 @@ const EMPTY = {
   customerType: "",
   externalCode: "",
   address: "",
-  city: "",
-  state: "",
-  area: "",
-  route: "",
   gstin: "",
   creditTermDays: "30",
   creditLimit: "",
@@ -65,7 +64,9 @@ function paiseOf(rupees: string): number | null {
   return Number.isFinite(n) ? Math.round(n * 100) : null;
 }
 
-function toInput(v: Values, allowSameName: boolean): NewCustomerInput {
+type Choices = { placeTree: PlaceOption[]; priceLists: string[]; transporters: string[] };
+
+function toInput(v: Values, allowSameName: boolean, pick: PlacePick, tree: PlaceOption[]): NewCustomerInput {
   return {
     name: v.name,
     contactPerson: v.contactPerson,
@@ -73,12 +74,14 @@ function toInput(v: Values, allowSameName: boolean): NewCustomerInput {
     whatsappPhone: v.whatsappPhone.replace(/\D/g, "").slice(-10),
     email: v.email,
     customerType: v.customerType as NewCustomerInput["customerType"],
-    externalCode: v.externalCode,
+    // Never typed: the database gives every customer its code.
+    externalCode: "",
     address: v.address,
-    city: v.city,
-    state: v.state,
-    area: v.area,
-    route: v.route,
+    // The typed mirrors, from the place picked; the place itself goes as `place`.
+    city: rungNameOf(pick, "city", tree),
+    state: rungNameOf(pick, "state", tree),
+    area: rungNameOf(pick, "area", tree),
+    place: pick,
     gstin: v.gstin,
     creditTermDays: v.creditTermDays === "" ? 30 : Number(v.creditTermDays),
     creditLimitPaise: paiseOf(v.creditLimit),
@@ -126,14 +129,17 @@ function AddCustomerBody({
   const [allowSameName, setAllowSameName] = React.useState(false);
   const [salesManagerTouched, setSalesManagerTouched] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [transporters, setTransporters] = React.useState<string[] | null>(null);
+  const [choices, setChoices] = React.useState<Choices | null>(null);
+  const [pick, setPick] = React.useState<PlacePick>({});
+  const [placeError, setPlaceError] = React.useState<{ kind: PlaceKind; message: string } | null>(null);
+  const transporters = choices?.transporters ?? null;
 
-  // The transporter list is read when the form opens; until it lands the
-  // picker says so rather than offering nothing.
+  // The place tree, the price lists and the transporters are read when the
+  // form opens, so each is as of now; until they land the pickers say so.
   React.useEffect(() => {
     let live = true;
-    listTransporterChoices().then((r) => {
-      if (live) setTransporters(r.ok ? r.data : []);
+    listCustomerFormChoices().then((r) => {
+      if (live) setChoices(r.ok ? r.data : { placeTree: [], priceLists: [], transporters: [] });
     });
     return () => {
       live = false;
@@ -164,7 +170,15 @@ function AddCustomerBody({
   }
 
   async function save() {
-    const input = toInput(values, allowSameName);
+    const tree = choices?.placeTree ?? [];
+    const placed = resolveCustomerPick(pick, tree);
+    if (!placed.ok) {
+      setPlaceError(placed);
+      setTab("address");
+      return;
+    }
+    setPlaceError(null);
+    const input = toInput(values, allowSameName, pick, tree);
     const checked = newCustomerSchema.safeParse(input);
     if (!checked.success) {
       showErrors(checked.error.issues.map((i) => ({ field: String(i.path[0] ?? ""), message: i.message })));
@@ -286,8 +300,8 @@ function AddCustomerBody({
                 <option value="manufacturer">Manufacturer</option>
               </Select>
             </Field>
-            <Field label="Customer code" hint="The code in Tally or on the sheet." error={err("externalCode")}>
-              <Input value={values.externalCode} onChange={set("externalCode")} />
+            <Field label="Customer code" hint="Given automatically when the customer is added.">
+              <Input value="" placeholder="Given on save" readOnly disabled />
             </Field>
           </div>
         ) : null}
@@ -297,31 +311,22 @@ function AddCustomerBody({
             <Field label="Address" className="col-span-2">
               <Textarea rows={2} value={values.address} onChange={set("address")} />
             </Field>
-            <Field label="City · required" error={err("city")}>
-              <Input value={values.city} onChange={set("city")} />
-            </Field>
-            <Field
-              label="State · required"
-              hint="Decides which salesmen's handsets carry this shop."
-              error={err("state")}
-            >
-              <Select value={values.state} onChange={set("state")}>
-                <option value="">Pick a state</option>
-                {INDIA_STATES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Area">
-              <Input value={values.area} onChange={set("area")} />
-            </Field>
-            <Field label="Route">
-              <Input value={values.route} onChange={set("route")} />
-            </Field>
+            {choices ? (
+              <CustomerPlacePicker
+                tree={choices.placeTree}
+                pick={pick}
+                error={placeError}
+                onChange={(next) => {
+                  setPick(next);
+                  setPlaceError(null);
+                }}
+              />
+            ) : (
+              <p className="col-span-2 text-[13px] text-muted">Reading the list of places…</p>
+            )}
             <p className="col-span-2 text-[12px] text-muted">
-              The city and state place the shop on the location tree as soon as it is saved.
+              The state decides which salesmen&apos;s handsets carry this shop. A district, city or area
+              that is not listed is added when you save, under the one above it.
             </p>
           </div>
         ) : null}
@@ -347,8 +352,15 @@ function AddCustomerBody({
             >
               <MoneyInput value={values.creditLimit} onChange={set("creditLimit")} disabled={!canDecideCredit} />
             </Field>
-            <Field label="Price list tag" hint="Which price list applies.">
-              <Input value={values.priceTag} onChange={set("priceTag")} />
+            <Field label="Price list" hint="Every price list in force, by its full name." className="col-span-2">
+              <Select value={values.priceTag} onChange={set("priceTag")} disabled={!choices} title={values.priceTag || undefined}>
+                <option value="">{choices ? "Not stated" : "Loading price lists…"}</option>
+                {(choices?.priceLists ?? []).map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
             </Field>
             <Field label="Freight">
               <Select value={values.freightTerm} onChange={set("freightTerm")}>

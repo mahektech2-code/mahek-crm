@@ -6,7 +6,11 @@ import { eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customers, erpCustomerProfiles } from "@/db/schema";
 import { canFor, requireCapability, resolveScope } from "@/lib/access-control";
-import { listedTransporterName, transporterChoices } from "@/lib/erp/transporter-rename";
+import { listedTransporterName } from "@/lib/erp/transporter-rename";
+import type { PlaceOption } from "@/lib/erp/transporter-godowns";
+import { resolveCustomerPick } from "@/lib/customer-place";
+import { customerFormOptions, writeCustomerPlace } from "@/lib/services/customer-form-service";
+import { placeOptions } from "@/lib/services/place-write";
 import { canonicalState } from "@/lib/india-states";
 import { newCustomerSchema, type NewCustomerInput } from "@/lib/new-customer";
 import { resolveSeat, type ResolvedSeat } from "@/lib/services/seat-resolve";
@@ -71,6 +75,12 @@ export async function createDirectCustomer(
       return err("The credit limit is set by whoever confirms payments in Accounts.", "not_permitted", [
         { field: "creditLimitPaise", message: "Leave it blank, or ask Accounts." },
       ]);
+    }
+
+    /* --- where it is, checked before anything is written ----------------- */
+    if (v.place) {
+      const placed = resolveCustomerPick(v.place, await placeOptions());
+      if (!placed.ok) return err(placed.message, "validation", [{ field: "place", message: placed.message }]);
     }
 
     /* --- is it already on the book? ------------------------------------- */
@@ -240,7 +250,9 @@ export async function createDirectCustomer(
     // and the WhatsApp number as its own contact where it differs.
     await reconcileContacts(customerId, ctx.user.id);
     // Onto the location tree now, not tonight — the handset's territory reads it.
-    await placeShopsNow([customerId]);
+    // A place somebody picked is filed as theirs; otherwise the typed city and state are matched.
+    if (v.place) await writeCustomerPlace(customerId, v.place, ctx.user.id);
+    else await placeShopsNow([customerId]);
 
     /* --- tell the people it landed on ------------------------------------ */
 
@@ -272,14 +284,14 @@ export async function createDirectCustomer(
 }
 
 /**
- * The transporters a customer form offers: the ERP's transporter master, the
- * Transporter reference list, and every spelling already on a customer — the
- * same list the ERP's own party form draws.
+ * What the Add customer form offers, read as it opens: the place tree, the
+ * price lists in force, and the ERP's Transporters list.
  */
-export async function listTransporterChoices(): Promise<Result<string[]>> {
+export async function listCustomerFormChoices(): Promise<Result<{ placeTree: PlaceOption[]; priceLists: string[]; transporters: string[] }>> {
   try {
     await resolveScope();
-    return ok(await transporterChoices());
+    const o = await customerFormOptions();
+    return ok({ placeTree: o.placeTree, priceLists: o.priceLists, transporters: o.transporters });
   } catch (e) {
     return fromThrown(e);
   }

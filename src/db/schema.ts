@@ -1394,7 +1394,21 @@ export const customers = pgTable(
     id: text("id").primaryKey(),
 
     /* identity and contact */
+    /**
+     * The ORDER SHEET's key for this party (`SHEET:<NAME>`), written by the
+     * projection and matched on every pass. Not the customer code, and never
+     * edited on a screen — see `customerCode`.
+     */
     externalCode: text("external_code"),
+    /**
+     * The customer code people read and quote — "CUS-00001". Set by the
+     * database's own sequence on every insert, whatever path writes the row,
+     * and never typed or changed (0294).
+     */
+    customerCode: text("customer_code")
+      .notNull()
+      .default(sql`('CUS-' || lpad(nextval('customer_code_seq')::text, 5, '0'))`)
+      .unique("customers_customer_code_key"),
     name: text("name").notNull(),
     /**
      * The name the SHEETS call this party, kept the first time a person

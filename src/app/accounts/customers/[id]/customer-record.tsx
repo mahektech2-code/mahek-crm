@@ -15,29 +15,24 @@ import { ScreenHeader } from "../../parts";
 
 type Record_ = {
   statusLabel: string;
-  externalCode: string | null;
+  customerCode: string;
   sheetName: string | null;
-  dealerCode: string | null;
   companyName: string | null;
   customerType: string | null;
   customerSince: string | null;
   email: string | null;
   potential: string | null;
   potentialMonthlyPaise: number | null;
-  rating: string | null;
   segmentation: string | null;
-  taggedEmployeeName: string | null;
   specialInstructions: string | null;
-  doNotContact: boolean;
   whatsappDest: string;
   whatsappGroupName: string | null;
   whatsappDnd: boolean;
   whatsappDndReason: string | null;
   address: string | null;
   region: string | null;
+  district: string | null;
   area: string | null;
-  beat: string | null;
-  territoryRegion: string | null;
   visitFrequencyDays: number | null;
   gpsPinned: boolean;
   gstVerified: boolean;
@@ -179,8 +174,7 @@ export function CustomerRecord({
         <Section title="Details" action={edit}>
           <Facts
             items={[
-              ["Customer code", r.externalCode],
-              ["Dealer code", r.dealerCode],
+              ["Customer code", r.customerCode],
               ["Company name", r.companyName],
               ["Name on the sheets", r.sheetName && r.sheetName !== row.name ? r.sheetName : null],
               ["Type of business", r.customerType],
@@ -188,10 +182,7 @@ export function CustomerRecord({
               ["Email", r.email],
               ["Potential", r.potential],
               ["Could buy a month", r.potentialMonthlyPaise === null ? null : money(r.potentialMonthlyPaise)],
-              ["Rating", r.rating],
               ["Segment", r.segmentation],
-              ["Tagged employee", r.taggedEmployeeName],
-              ["Do not contact", r.doNotContact ? "Yes" : "No"],
               ["What to remember", r.specialInstructions],
               ["In MahekOne since", stamp(r.createdAt)],
             ]}
@@ -205,7 +196,7 @@ export function CustomerRecord({
               ["Credit terms", `${row.creditTermDays} days`],
               ["Credit limit", r.creditLimitPaise === null ? "No limit" : money(r.creditLimitPaise)],
               ["Supply", r.creditBlocked ? "Stopped" : "Open"],
-              ["Price list tag", r.priceTag],
+              ["Price list", r.priceTag],
               ["Freight", r.freightTerm ? (FREIGHT_WORD[r.freightTerm] ?? r.freightTerm) : null],
               ["Delivery", r.deliveryType],
             ]}
@@ -217,10 +208,8 @@ export function CustomerRecord({
             items={[
               ["Transporter", profile?.transporter],
               ["Weight type", profile?.weightType],
-              ["Party segment", profile?.segment],
               ["Grade", profile?.grade],
               ["Counter types", profile?.counterTypes.length ? profile.counterTypes.join(", ") : null],
-              ["Allocate email", profile?.allocateEmail],
               ["Standing instructions", profile?.standingInstructions],
               ["ERP approval", profile?.pendingActivation ? "Waiting for approval" : "Approved"],
             ]}
@@ -231,12 +220,10 @@ export function CustomerRecord({
           <Facts
             items={[
               ["Address", r.address],
-              ["City", row.city],
               ["State", r.region],
+              ["District", r.district],
+              ["City", row.city],
               ["Area", r.area],
-              ["Beat", r.beat],
-              ["Territory region", r.territoryRegion],
-              ["Route", row.route],
               ["Visit every", r.visitFrequencyDays ? `${r.visitFrequencyDays} days` : null],
               ["Map pin", r.gpsPinned ? "Pinned from a visit" : "Not pinned"],
             ]}
