@@ -249,7 +249,7 @@ async function scopeWords(listIds: string[]): Promise<Map<string, string>> {
 function stateCell(l: PriceListSummary, day: string): Cell {
   if (l.status === "draft") return { t: "Draft", pill: "muted" };
   if (l.status !== "published") return { t: LIST_STATUS_LABEL[l.status], pill: "muted" };
-  if (l.expired) return { t: "Expired", pill: "bad" };
+  if (l.expired) return l.validityState === "past_validity_pricing" ? { t: "Past validity — still pricing", pill: "warn" } : { t: "Expired — not pricing", pill: "bad" };
   if (expiringSoon(l, day)) return { t: "Expiring", pill: "warn" };
   return { t: "Published", pill: "good" };
 }

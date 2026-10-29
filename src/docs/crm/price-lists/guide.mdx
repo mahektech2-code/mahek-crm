@@ -68,7 +68,8 @@ Figures on this page that come from settings — the GST rate, how long a list s
 | <Pill tone="success">Published</Pill> | In force from its start date. Shops it names are priced from it. |
 | <Pill>Superseded</Pill> | Replaced by a newer version. Kept so old orders can still be explained. |
 | <Pill tone="danger">Withdrawn</Pill> | Taken out of force, with a reason. |
-| <Pill tone="danger">Expired</Pill> | A published list past its validity — <Setting k="pricing.defaultValidityDays" /> days from its start unless the list says otherwise. Nobody has replaced it yet, so the office may not honour its rates. |
+| <Pill tone="warn">Past validity — still pricing</Pill> | A published list past its validity — <Setting k="pricing.defaultValidityDays" /> days from its start unless the list says otherwise — that still prices its shops, because <Setting k="pricing.expiredListsKeepPricing" /> keeps it pricing. Publish a new version, or extend it. |
+| <Pill tone="danger">Expired — not pricing</Pill> | A list past its end that no longer prices anybody: its shops fall to the next list that names them, or to none. |
 | <Pill tone="warn">expires in Nd</Pill> | Runs out within a week. |
 
 The **Transport** column says who pays freight: **To Pay** (the shop pays the transporter on delivery, prices are ex-freight), **Paid** (we pay transport, built into the price up to the transporter's godown) or **Not stated**.
