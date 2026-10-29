@@ -193,7 +193,7 @@ export async function Body({
   const desk =
     workspace === "crm" &&
     (await canLead(user, "lead.work")) &&
-    (holdsDesk || (await canLogQualificationCall(id)))
+    (holdsDesk || (await canLogQualificationCall(id, user.id)))
       ? await deskLeadRecord(id, day)
       : null;
 

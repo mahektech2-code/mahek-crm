@@ -195,9 +195,14 @@ class Refusal extends Error {
 }
 
 /** The lead, checked for scope, or the refusal to hand back. */
-async function reachable(customerId: string) {
+async function reachable(customerId: string, userId?: string) {
   const lead = await leadRow(customerId);
   if (!lead) return { ok: false as const, refusal: err("That lead is not on MahekOne.", "not_found") };
+  /* THE LEAD'S OWN SALES MANAGER may work it. The seat is not part of per-person scope
+     outside the Sales Manager workspace, so on a lead nobody owns she would otherwise
+     reach nothing - exactly where she is expected to act. It names ONE person, the
+     lead's own seat holder, and widens nothing else. */
+  if (userId && lead.kind === "lead" && lead.salesManagerId === userId) return { ok: true as const, lead };
   await assertLeadInScope(customerId, {
     kind: lead.kind,
     ownerId: lead.ownerId,
@@ -278,7 +283,7 @@ export async function logQualificationCall(
        desk does AFTER a call - requesting a Prospect, converting, the manager's
        verification - keeps its own checks and still needs the desk. */
     const ctx = await requireCapability("lead.work");
-    const found = await reachable(p.customerId);
+    const found = await reachable(p.customerId, ctx.user.id);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
@@ -725,7 +730,7 @@ async function preparePromotion(
     write: Partial<ProspectAnswers>;
   }>
 > {
-  const found = await reachable(p.customerId);
+  const found = await reachable(p.customerId, ctx.user.id);
   if (!found.ok) return found.refusal;
   const lead = found.lead;
   const req = await requestOf(p.customerId);
@@ -1373,7 +1378,7 @@ export async function logDeskMessage(
     }
 
     const ctx = await requireCapability("lead.work");
-    const found = await reachable(p.customerId);
+    const found = await reachable(p.customerId, ctx.user.id);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
     if (!isWorkingStage(lead.leadStage)) {
@@ -1450,7 +1455,7 @@ export async function setDeskNextAction(input: z.input<typeof nextSchema>): Prom
     const p = parsed.data;
 
     const ctx = await requireCapability("lead.work");
-    const found = await reachable(p.customerId);
+    const found = await reachable(p.customerId, ctx.user.id);
     if (!found.ok) return found.refusal;
     if (!isWorkingStage(found.lead.leadStage)) {
       return err("The desk's next action is set while the lead is still a Suspect.", "rule_violation");
@@ -1493,8 +1498,8 @@ export async function markDeskLost(input: z.input<typeof lostSchema>): Promise<R
     if (!parsed.success) return zodErr(parsed.error);
     const p = parsed.data;
 
-    await requireCapability("lead.work");
-    const found = await reachable(p.customerId);
+    const ctx = await requireCapability("lead.work");
+    const found = await reachable(p.customerId, ctx.user.id);
     if (!found.ok) return found.refusal;
     const req = await requestOf(p.customerId);
     if (req.state === "awaiting" || req.state === "followup") {
@@ -1563,7 +1568,7 @@ export async function reopenDeskLead(input: z.input<typeof reopenSchema>): Promi
     const p = parsed.data;
 
     const ctx = await requireCapability("lead.work");
-    const found = await reachable(p.customerId);
+    const found = await reachable(p.customerId, ctx.user.id);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
