@@ -130,6 +130,9 @@ async function stagedDocument(cells: Array<Partial<typeof priceListParseRows.$in
     header: header as never,
     uploadedById: desk.id,
   });
+  // A document with no staged cells is a real state (a read that has not got
+  // that far); Drizzle refuses an empty insert, so skip it rather than fail.
+  if (!cells.length) return documentId;
   await db.insert(priceListParseRows).values(
     cells.map((c, i) => ({
       id: id("plp"),
