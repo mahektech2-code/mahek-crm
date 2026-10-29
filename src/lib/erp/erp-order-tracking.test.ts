@@ -224,6 +224,14 @@ describe("customer order tracking", () => {
     assert.ok((await L.clearIssue(ctx, [tr.id], "moving again")).ok);
     assert.equal((await T.publicOrderTracking(t.token))!.hold, null);
 
+    /* 0296 — the route reaches the customer's page: where it left from and each city, never a call note. */
+    assert.ok((await L.updateConsignment(ctx, [tr.id], { dispatchedFrom: "VRL Bhiwandi", cities: [{ city: "Nashik", on: TODAY }], destination: "Indore", note: "driver asleep", notify: false })).ok);
+    page = (await T.publicOrderTracking(t.token))!;
+    assert.deepEqual(page.route.map((r) => [r.from, r.city]), [[true, "VRL Bhiwandi"], [false, "Nashik"]]);
+    assert.equal(page.destination, "Indore");
+    assert.equal(page.pickup, null);
+    assert.ok(!JSON.stringify(page).includes("asleep"));
+
     /* Out for delivery is reported; the destination office is not, and is never ticked. */
     assert.ok((await L.updateConsignment(ctx, [tr.id], { stage: "Out for Delivery", notify: false })).ok);
     assert.equal((await T.publicOrderTracking(t.token))!.status.label, "Out for Delivery");

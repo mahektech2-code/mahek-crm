@@ -16,14 +16,21 @@
  * ------------------------------------------------------------------------- */
 
 /** Every step, in the order the customer meets them. `lr` is a document, not a stage (PRD §5). */
-export const STEPS = ["confirmed", "preparing", "ready", "invoice", "dispatched", "at_transport", "lr", "in_transit", "at_destination", "out_for_delivery", "delivered"] as const;
+export const STEPS = ["confirmed", "preparing", "ready", "invoice", "dispatched", "at_transport", "lr", "in_transit", "at_destination", "out_for_delivery", "ready_for_pickup", "delivered"] as const;
 export type Step = (typeof STEPS)[number];
 
 /** The ten stages of the journey (PRD §5) — every step but the LR copy. */
 export const STAGES: Step[] = STEPS.filter((s) => s !== "lr");
 
 /** Shown only when the transporter reports them. */
-export const OPTIONAL: ReadonlySet<Step> = new Set<Step>(["at_destination", "out_for_delivery"]);
+export const OPTIONAL: ReadonlySet<Step> = new Set<Step>(["at_destination", "out_for_delivery", "ready_for_pickup"]);
+/**
+ * The last mile is one of two (0296): the transporter delivers to the door, or
+ * the party collects from the transporter's office. Ready for pickup is never
+ * offered as a step to come and never named as unreported — it is shown only
+ * when it happened — and once it has, out for delivery is not waited on either.
+ */
+export const ALTERNATIVE: Step = "ready_for_pickup";
 
 export const STEP_LABEL: Record<Step, string> = {
   confirmed: "Order Confirmed",
@@ -36,6 +43,7 @@ export const STEP_LABEL: Record<Step, string> = {
   in_transit: "In Transit",
   at_destination: "Reached Destination Transport Office",
   out_for_delivery: "Out for Delivery",
+  ready_for_pickup: "Ready for Pickup",
   delivered: "Delivered to Customer",
 };
 
@@ -50,6 +58,7 @@ export const STEP_WORDS: Record<Step, string> = {
   in_transit: "Your goods are on the way.",
   at_destination: "Your goods have reached the transporter's office near you.",
   out_for_delivery: "Your goods are on the way to your address.",
+  ready_for_pickup: "Your goods are waiting at the transporter's office for you to collect.",
   delivered: "Delivery has been confirmed.",
 };
 
@@ -98,6 +107,8 @@ export function stepForStage(stage: string | null | undefined): Step | null {
       return "at_destination";
     case "Out for Delivery":
       return "out_for_delivery";
+    case "Ready for Pickup":
+      return "ready_for_pickup";
     case "Close - Received to Party":
       return "delivered";
     default:
@@ -180,7 +191,7 @@ export function deriveSteps(f: OrderFacts): Map<Step, string | null> {
       if (at !== undefined) out.set(s, at);
       else if (furthest >= rank(s)) out.set(s, reachedOrLater(s));
     }
-    for (const s of ["at_destination", "out_for_delivery"] as Step[]) {
+    for (const s of ["at_destination", "out_for_delivery", "ready_for_pickup"] as Step[]) {
       const at = reached(s);
       if (at !== undefined) out.set(s, at);
     }
@@ -264,7 +275,7 @@ export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLa
   let folded = false;
   if (!delivered) {
     for (const s of STAGES) {
-      if (byStep.has(s) || STAGES.indexOf(s) <= curRank) continue;
+      if (byStep.has(s) || STAGES.indexOf(s) <= curRank || s === ALTERNATIVE) continue;
       if (!dispatched && STAGES.indexOf(s) > STAGES.indexOf("dispatched")) {
         folded = true;
         continue;
@@ -279,7 +290,7 @@ export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLa
     currentLabel: current ? STEP_LABEL[current] : "Order received — being checked",
     lastUpdated: times.at(-1) ?? null,
     openHold: open,
-    unreported: delivered ? STAGES.filter((s) => OPTIONAL.has(s) && !byStep.has(s)) : [],
+    unreported: delivered ? STAGES.filter((s) => OPTIONAL.has(s) && !byStep.has(s) && s !== ALTERNATIVE && !(s === "out_for_delivery" && byStep.has(ALTERNATIVE))) : [],
     entries: [...timed, ...pending],
     folded,
   };

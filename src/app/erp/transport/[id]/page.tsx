@@ -6,7 +6,7 @@ import { erpContext } from "@/lib/erp/access";
 import { getConfig } from "@/lib/config/store";
 import { DELIVERY_STATUS_TONE, deliveryStatus } from "@/lib/erp/engines/transport-cost";
 import { PHASE_LABEL, shortDay, STAGE_SHORT, stageStep, STAGES, trackingLink } from "@/lib/erp/engines/logistics";
-import { billLines, consignments, consignmentsOnLr, eventsFor, messages } from "@/lib/erp/logistics";
+import { billLines, consignments, consignmentsOnLr, eventsFor, messages, routeSuggestions } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { erpTraceHref, orderTraceCode } from "@/lib/erp/trace-links";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/primitives";
 import { Page, PageLinks } from "../../_ui/page-head";
 import { Badge } from "../../_ui/badge";
 import { Eyebrow, linkClass, SectionTitle, SubTitle } from "../../_ui/look";
-import { CallLink, LrThumb, StageStrip } from "../parts/common";
+import { CallLink, LrThumb, RouteTrail, StageStrip } from "../parts/common";
 import { Messages } from "../parts/messages";
 import { OnRoad } from "../parts/on-road";
 import { TrackLinkCopy } from "./track-link";
@@ -48,7 +48,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
   const [c] = await consignments({ ids: [id] });
   if (!c) notFound();
   const siblings = c.lrId ? await consignmentsOnLr(c.lrId) : [c];
-  const [events, msgs, lines, cfg] = await Promise.all([eventsFor([c.id]), messages({ transportId: c.id }), billLines(c.orderNo, c.id), getConfig()]);
+  const [events, msgs, lines, cfg, suggestions] = await Promise.all([eventsFor([c.id]), messages({ transportId: c.id }), billLines(c.orderNo, c.id), getConfig(), c.phase === "onRoad" ? routeSuggestions() : null]);
   const today = businessToday();
   const online = trackingLink(c.transporterTrackUrl, c.lrNo);
   const status = deliveryStatus(c, today);
@@ -104,6 +104,10 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
                 ),
               )}
               {fact("Transporter", c.transporter ? <span>{c.transporter}<span className="block"><CallLink phone={c.transporterPhone} name={c.transporter} /></span></span> : null)}
+              {fact("Dispatched from", c.dispatchedFrom)}
+              {fact("Last city", c.currentCity)}
+              {fact("Going to", c.destination)}
+              {c.stage === "Ready for Pickup" ? fact("Collect from", c.pickupPoint ? `${c.pickupPoint}${c.pickupContact ? ` · ${c.pickupContact}` : ""}` : null) : null}
               {fact("Expected delivery", c.expectedDeliveryOn ? shortDay(c.expectedDeliveryOn) : null)}
               {fact("Next call", c.nextCallOn ? shortDay(c.nextCallOn) : null)}
               {c.deliveredOn ? fact("Delivered", `${shortDay(c.deliveredOn)}${c.receivedBy ? ` · ${c.receivedBy}` : ""}`) : null}
@@ -112,10 +116,11 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
               {c.issue ? fact("Problem", <Badge label={c.issue} tone="danger" />) : null}
             </CardGrid>
             {c.issueNote ? <div className="mt-3 text-meta text-danger">{c.issueNote}</div> : null}
+            {c.route.length ? <RouteTrail route={c.route} destination={c.destination} stage={c.stage} className="mt-4" /> : null}
           </Card>
 
           {c.phase === "onRoad" ? (
-            <OnRoad rows={siblings.filter((x) => x.phase === "onRoad")} today={today} callEveryDays={cfg["erp.logistics.callEveryDays"]} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} notifyOn={cfg["erp.logistics.notifyCustomers"]} canWrite={!ctx.viewingAs} />
+            <OnRoad rows={siblings.filter((x) => x.phase === "onRoad")} today={today} callEveryDays={cfg["erp.logistics.callEveryDays"]} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} notifyOn={cfg["erp.logistics.notifyCustomers"]} canWrite={!ctx.viewingAs} suggestions={suggestions} />
           ) : c.phase === "delivered" ? null : (
             <Card className="px-4 py-3 text-sm">
               {c.phase === "toTransport" ? (

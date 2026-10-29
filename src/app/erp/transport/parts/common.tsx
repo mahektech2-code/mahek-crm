@@ -9,8 +9,9 @@ import { Button, checkboxClass, cx, Textarea } from "@/components/ui/primitives"
 import { Badge } from "../../_ui/badge";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { insetClass, linkClass } from "../../_ui/look";
-import { dueWord, STAGES, STAGE_SHORT, stageStep, type Stage } from "@/lib/erp/engines/logistics";
-import type { Consignment } from "@/lib/erp/logistics";
+import { dueWord, shortDay, STAGES, STAGE_SHORT, stageStep, type Stage } from "@/lib/erp/engines/logistics";
+import type { Consignment, RouteStop } from "@/lib/erp/logistics";
+import { calendarDate } from "@/lib/business-date";
 import { DELIVERY_STATUS_TONE, deliveryStatus } from "@/lib/erp/engines/transport-cost";
 
 /* ---------------------------------------------------------------------------
@@ -21,12 +22,17 @@ import { DELIVERY_STATUS_TONE, deliveryStatus } from "@/lib/erp/engines/transpor
 
 export { useAct } from "../../_ui/use-act";
 
-/** The six steps of a consignment, the current one filled. */
+/** The rungs of the strip. Out for delivery and ready for pickup are one rung: the last mile goes one way or the other. */
+const STRIP = STAGES.filter((s) => s !== "Ready for Pickup");
+
+/** The steps of a consignment, the current one filled. */
 export function StageStrip({ stage, compact = false }: { stage: string; compact?: boolean }) {
-  const at = stageStep(stage);
+  const now = STAGES[stageStep(stage)];
+  const at = STRIP.indexOf(now === "Ready for Pickup" ? "Out for Delivery" : now);
+  const label = STAGE_SHORT[now as Stage];
   return (
-    <div className="flex items-center gap-1" title={STAGE_SHORT[STAGES[at] as Stage]}>
-      {STAGES.map((s, i) => (
+    <div className="flex items-center gap-1" title={label}>
+      {STRIP.map((s, i) => (
         <span key={s} className="flex items-center gap-1">
           <span
             className={cx(
@@ -37,8 +43,42 @@ export function StageStrip({ stage, compact = false }: { stage: string; compact?
           />
         </span>
       ))}
-      {!compact ? <span className="ml-2 text-xs font-medium whitespace-nowrap text-body">{STAGE_SHORT[STAGES[at] as Stage]}</span> : null}
+      {!compact ? <span className="ml-2 text-xs font-medium whitespace-nowrap text-body">{label}</span> : null}
     </div>
+  );
+}
+
+/**
+ * THE WAY AN LR HAS COME — the godown it left from, every city reported since,
+ * and where it is going. Each city carries the day it was reached; the newest
+ * is the one in bold. Nothing is drawn for a leg nobody reported.
+ */
+export function RouteTrail({ route, destination, stage, className }: { route: RouteStop[]; destination: string | null; stage: string; className?: string }) {
+  const arrived = stage === "Reached Destination Area" || stage === "Out for Delivery" || stage === "Ready for Pickup" || stage === "Close - Received to Party";
+  const last = route.at(-1);
+  const goingTo = destination && !(last && last.city.toLowerCase() === destination.toLowerCase()) ? destination : null;
+  return (
+    <ol className={cx("flex flex-wrap items-center gap-x-1.5 gap-y-1 text-meta", className)} aria-label="Route">
+      {route.map((r, i) => (
+        <li key={`${r.at}${r.city}`} className="flex items-center gap-1.5">
+          {i ? <span className="text-muted" aria-hidden>→</span> : null}
+          <span className={cx("rounded-control border px-1.5 py-0.5", r === last ? "border-brand/40 bg-brand-soft font-medium text-ink" : "border-line bg-surface text-body")}>
+            {r.kind === "dispatched" ? "From " : ""}
+            {r.city}
+            <span className="ml-1 text-muted">{shortDay(calendarDate(new Date(r.at))).replace(/^\w+ /, "")}</span>
+          </span>
+        </li>
+      ))}
+      {goingTo ? (
+        <li className="flex items-center gap-1.5">
+          {route.length ? <span className="text-muted" aria-hidden>{arrived ? "→" : "⋯"}</span> : null}
+          <span className={cx("rounded-control border border-dashed px-1.5 py-0.5", arrived ? "border-success/50 font-medium text-success" : "border-line text-muted")}>
+            {arrived ? "At " : "To "}
+            {goingTo}
+          </span>
+        </li>
+      ) : null}
+    </ol>
   );
 }
 

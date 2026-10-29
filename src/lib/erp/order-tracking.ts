@@ -148,7 +148,25 @@ async function readOrders(orderNos: number[]): Promise<Map<number, OrderBasics>>
   return out;
 }
 
-type TransportRow = TransportFacts & { id: string; orderNo: number; lrNo: string | null; lrDate: string | null; lrFileId: string | null; transporter: string | null; expectedOn: string | null; deliveredOn: string | null; receivedBy: string | null; billingId: string };
+/** 0296 — a place on the way the customer may see: the godown it left from, or a city it reached. */
+export type TrackingStop = { city: string; at: string; from: boolean };
+
+type TransportRow = TransportFacts & {
+  id: string;
+  orderNo: number;
+  lrNo: string | null;
+  lrDate: string | null;
+  lrFileId: string | null;
+  transporter: string | null;
+  expectedOn: string | null;
+  deliveredOn: string | null;
+  receivedBy: string | null;
+  billingId: string;
+  route: TrackingStop[];
+  destination: string | null;
+  pickupPoint: string | null;
+  pickupContact: string | null;
+};
 
 async function readTransports(orderNos: number[]): Promise<Map<number, TransportRow[]>> {
   const out = new Map<number, TransportRow[]>();
@@ -158,6 +176,9 @@ async function readTransports(orderNos: number[]): Promise<Map<number, Transport
            l.lr_date::text as "lrDate", l.file_id as "lrFileId", l.assigned_at as "lrAttachedAt", coalesce(t.transporter, l.transporter) as transporter,
            t.expected_delivery_on::text as "expectedOn", t.delivered_on::text as "deliveredOn", t.received_by as "receivedBy",
            t.billing_customer_id as "billingId",
+           coalesce(t.destination, l.destination) as destination, t.pickup_point as "pickupPoint", t.pickup_contact as "pickupContact",
+           coalesce((select json_agg(json_build_object('kind', e.kind, 'city', e.city, 'at', e.at) order by e.at)
+                       from erp_transport_events e where e.transport_id = t.id and e.shared and e.city is not null and (e.kind = 'checkpoint' or e.id = (select min(d.id) from erp_transport_events d where d.transport_id = t.id and d.kind = 'dispatched' and d.city = t.dispatched_from))), '[]'::json) as route,
            (select min(e.at) from erp_transport_events e where e.transport_id = t.id and e.kind = 'delivered') as "deliveredAt",
            coalesce((select json_agg(json_build_object('kind', e.kind, 'stage', e.stage, 'at', e.at) order by e.at)
                        from erp_transport_events e where e.transport_id = t.id and e.shared), '[]'::json) as events
@@ -190,6 +211,10 @@ async function readTransports(orderNos: number[]): Promise<Map<number, Transport
         deliveredOn: str(r.deliveredOn),
         receivedBy: str(r.receivedBy),
         billingId: String(r.billingId),
+        route: ((Array.isArray(r.route) ? r.route : []) as { kind: string; city: string; at: string }[]).map((e) => ({ city: String(e.city), at: iso(e.at)!, from: e.kind === "dispatched" })),
+        destination: str(r.destination),
+        pickupPoint: str(r.pickupPoint),
+        pickupContact: str(r.pickupContact),
       },
     ]);
   }
@@ -607,6 +632,10 @@ export type OrderTrackingView = {
   transporter: string | null;
   lrNo: string | null;
   hold: { title: string; text: string; at: string; nextUpdateOn: string | null; revisedOn: string | null } | null;
+  /** 0296 — the way the goods have come (after dispatch only), where they are going, and where to collect them. */
+  route: TrackingStop[];
+  destination: string | null;
+  pickup: { point: string; contact: string | null } | null;
   products: ProductRow[];
   entries: JourneyEntry[];
   folded: boolean;
@@ -661,6 +690,9 @@ async function viewOf(t: Tracking, view: "full" | "delivery", token: string): Pr
     transporter: dispatched ? (latest?.transporter ?? null) : null,
     lrNo: latest?.lrNo ?? null,
     hold: hold ? { title: holdTitle(hold.kind), text: hold.customerText, at: hold.raisedAt, nextUpdateOn: hold.nextUpdateOn, revisedOn: hold.revisedDeliveryOn } : null,
+    route: dispatched ? (latest?.route ?? []) : [],
+    destination: dispatched && !delivered ? (latest?.destination ?? null) : null,
+    pickup: !delivered && latest?.stage === "Ready for Pickup" && latest.pickupPoint ? { point: latest.pickupPoint, contact: latest.pickupContact } : null,
     products: productRows(o.lines.map((l) => l.product)),
     entries: journey.entries,
     folded: journey.folded,

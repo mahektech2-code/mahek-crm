@@ -99,7 +99,7 @@ export async function erpLogisticsDetach(transportId: string, reason: string) {
   return run((ctx) => L.detachLr(ctx, transportId, reason));
 }
 
-export async function erpLogisticsUpdate(transportIds: string[], input: { stage?: string | null; note?: string | null; nextCallOn?: string | null; expectedOn?: string | null; notify?: boolean }) {
+export async function erpLogisticsUpdate(transportIds: string[], input: L.ConsignmentUpdate) {
   return run((ctx) => L.updateConsignment(ctx, ids(transportIds), input ?? {}));
 }
 

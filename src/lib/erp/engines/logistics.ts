@@ -19,11 +19,20 @@ import { similarity } from "./match";
  * "At transport" is new: the transporter's godown has the goods and the LR has
  * not come yet.
  */
-export const STAGES = ["Dispatched", "At transport", "In Transit", "On the way to Destination area", "Reached Destination Area", "Out for Delivery", "Close - Received to Party"] as const;
+export const STAGES = ["Dispatched", "At transport", "In Transit", "On the way to Destination area", "Reached Destination Area", "Out for Delivery", "Ready for Pickup", "Close - Received to Party"] as const;
 export type Stage = (typeof STAGES)[number];
 export const CLOSED: Stage = "Close - Received to Party";
 /** What a status update on the road may move to — reaching the party is its own act, with who signed. */
-export const ROAD_STAGES: Stage[] = ["In Transit", "On the way to Destination area", "Reached Destination Area", "Out for Delivery"];
+export const ROAD_STAGES: Stage[] = ["In Transit", "On the way to Destination area", "Reached Destination Area", "Out for Delivery", "Ready for Pickup"];
+/**
+ * 0296 — the last mile goes one of two ways: the transporter takes it to the
+ * party's door, or the party comes to the transporter's office for it. They are
+ * alternatives, not steps — a consignment ready for pickup never goes out for
+ * delivery, so neither is read as later than the other.
+ */
+export const LAST_MILE: Stage[] = ["Out for Delivery", "Ready for Pickup"];
+/** How many cities one update may add — a week of calls caught up at once, not a typo pasted twenty times. */
+export const MAX_CITIES_PER_UPDATE = 12;
 
 /** The short word on a board. */
 export const STAGE_SHORT: Record<Stage, string> = {
@@ -34,6 +43,8 @@ export const STAGE_SHORT: Record<Stage, string> = {
   "Reached Destination Area": "At destination",
   /* 0292: the goods are on the local vehicle to the party's door — shown to the customer only when the transporter says so. */
   "Out for Delivery": "Out for delivery",
+  /* 0296: waiting at the transporter's office for the party to collect it. */
+  "Ready for Pickup": "Ready for pickup",
   "Close - Received to Party": "Delivered",
 };
 
@@ -224,6 +235,13 @@ export type MessageFacts = {
   deliveredOn?: string | null;
   receivedBy?: string | null;
   note?: string | null;
+  /** 0296 — the route: the city reached (and when), where it is going, and where to collect it. */
+  city?: string | null;
+  cityOn?: string | null;
+  dispatchedFrom?: string | null;
+  destination?: string | null;
+  pickupPoint?: string | null;
+  pickupContact?: string | null;
   signature: string;
 };
 
@@ -243,6 +261,8 @@ export function customerStageWords(stage: string, transporter: string | null): s
       return `has reached your area and will be delivered shortly`;
     case "Out for Delivery":
       return "is out for delivery to your address";
+    case "Ready for Pickup":
+      return `is ready for you to collect${transporter ? ` from ${transporter}` : ""}`;
     case CLOSED:
       return "has been delivered";
     default:
@@ -272,6 +292,9 @@ export function customerMessage(kind: MessageKind, f: MessageFacts): string {
     if (exp) lines.push(exp);
   } else if (kind === "stage") {
     lines.push(`Update on ${billWords(f.bills)}: your consignment ${customerStageWords(f.stage, f.transporter)}.`);
+    const route = routeSentence(f);
+    if (route) lines.push(route);
+    if (f.stage === "Ready for Pickup" && f.pickupPoint) lines.push(`Collect it from: ${f.pickupPoint}${f.pickupContact ? ` (${f.pickupContact})` : ""}. Please carry the LR number.`);
     if (lr) lines.push(`${lr}${f.transporter ? ` (${f.transporter})` : ""}.`);
     if (f.note) lines.push(f.note);
     if (exp) lines.push(exp);
@@ -286,6 +309,49 @@ export function customerMessage(kind: MessageKind, f: MessageFacts): string {
   if (f.trackUrl && kind !== "delivered") lines.push("", `Track it: ${f.trackUrl}`);
   lines.push("", `— ${f.signature}`);
   return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
+ * Where the goods are on the way, in one line — only what somebody reported:
+ * "Dispatched from Bhiwandi · reached Pune on Wed 30 Oct · going to Indore."
+ */
+export function routeSentence(f: Pick<MessageFacts, "city" | "cityOn" | "dispatchedFrom" | "destination" | "stage">): string | null {
+  const parts: string[] = [];
+  if (f.dispatchedFrom && (!f.city || f.city === f.dispatchedFrom)) parts.push(`Dispatched from ${f.dispatchedFrom}`);
+  if (f.city && f.city !== f.dispatchedFrom) parts.push(`${parts.length ? "reached" : "Reached"} ${f.city}${f.cityOn ? ` on ${shortDay(f.cityOn)}` : ""}`);
+  if (f.destination && !LAST_MILE.includes(f.stage as Stage) && f.stage !== "Reached Destination Area") parts.push(`${parts.length ? "going" : "Going"} to ${f.destination}`);
+  return parts.length ? `${parts.join(" · ")}.` : null;
+}
+
+/** A place as typed on a call, tidied: trimmed, spaces collapsed, at most 80 characters. Empty is null. */
+export function cleanPlace(v: string | null | undefined): string | null {
+  const t = (v ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return t || null;
+}
+
+/**
+ * The cities one update adds, checked: each a place and a day, none in the
+ * future, none before the goods left, and the same city on the same day only
+ * once. Returned oldest first, which is the order they were reached in.
+ */
+export function cleanCities(
+  rows: { city?: string | null; on?: string | null }[] | null | undefined,
+  today: string,
+  leftOn: string | null,
+): { ok: true; cities: { city: string; on: string }[] } | { ok: false; error: string } {
+  const out: { city: string; on: string }[] = [];
+  for (const r of rows ?? []) {
+    const city = cleanPlace(r.city);
+    const on = (r.on ?? "").trim();
+    if (!city && !on) continue;
+    if (!city) return { ok: false, error: "Name the city it reached" };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(on)) return { ok: false, error: `Say the day it reached ${city}` };
+    if (on > today) return { ok: false, error: `${city}: a city cannot be reached in the future` };
+    if (leftOn && on < leftOn) return { ok: false, error: `${city}: the goods left on ${shortDay(leftOn)}, so they cannot have reached it before that` };
+    if (!out.some((x) => x.city.toLowerCase() === city.toLowerCase() && x.on === on)) out.push({ city, on });
+  }
+  if (out.length > MAX_CITIES_PER_UPDATE) return { ok: false, error: `Add at most ${MAX_CITIES_PER_UPDATE} cities at a time` };
+  return { ok: true, cities: out.sort((a, b) => a.on.localeCompare(b.on)) };
 }
 
 function issueSentence(issue: string): string {
@@ -325,6 +391,9 @@ export function watiParams(kind: MessageKind, f: MessageFacts, body: string): Re
     boxes: f.packages != null ? String(f.packages) : "",
     status: kind === "delivered" ? "delivered" : kind === "issue" ? issueSentence(f.issue ?? "Other") : customerStageWords(f.stage, f.transporter),
     expected: f.expectedOn ? shortDay(f.expectedOn) : "",
+    city: f.city ?? "",
+    destination: f.destination ?? "",
+    pickup_point: f.pickupPoint ?? "",
     track_link: f.trackUrl ?? "",
     message: body.replace(/\s*\n+\s*/g, " ").trim(),
   };
