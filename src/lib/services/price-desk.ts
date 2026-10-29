@@ -56,6 +56,12 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
  * person, which is exactly what it was before somebody made this draft of it.
  */
 export async function removeDraftList(tx: Tx, id: string): Promise<void> {
+  /* A draft that is a price book's CHANGE is cancelled from the book, never
+     deleted: the change, its checks and its history point at it. */
+  const [change] = await tx.execute<{ id: string }>(sql`select id from price_changes where draft_list_id = ${id} limit 1`);
+  if (change) {
+    throw new Error("This draft is a change on a price book. Cancel the change from the book instead.");
+  }
   await tx.execute(sql`
     update price_lists set parent_list_id = null, updated_at = now()
      where parent_list_id = ${id} and id <> ${id}

@@ -192,6 +192,9 @@ const files = [
   "src/lib/price-fix-b.integration.test.ts",
   "src/lib/price-fix-c.integration.test.ts",
   "src/lib/price-fix-d.integration.test.ts",
+  // Price books: a change edited, checked, approved by somebody else and put
+  // live on its date — maker-checker, the second approver, the instruction.
+  "src/lib/price-books.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only

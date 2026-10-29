@@ -140,6 +140,7 @@ export async function clearSecretAction(name: string, confirmation?: ImpactConfi
 const LABELS: Record<SecretName, string> = {
   "sarvam.apiKey": "The Sarvam key",
   "openai.apiKey": "The OpenAI key",
+  "anthropic.apiKey": "The Anthropic key",
   "msg91.authKey": "The MSG91 key",
   "wati.apiToken": "The Wati key",
   "minimoth.apiKey": "The MiniMoth key",
@@ -163,6 +164,7 @@ const LABELS: Record<SecretName, string> = {
 const USED_FROM: Record<SecretName, string> = {
   "sarvam.apiKey": "Dictation uses it from the next recording.",
   "openai.apiKey": "Dictation uses it from the next recording.",
+  "anthropic.apiKey": "The next price change checked on the Price Desk is reviewed by it as well as by OpenAI.",
   "msg91.authKey": "Nothing uses it — WhatsApp goes through Wati.",
   "wati.apiToken":
     "WhatsApp sending uses it from the next message — but only while the founder has the service switched on. The webhook address changes with it, so paste the new one into Wati.",

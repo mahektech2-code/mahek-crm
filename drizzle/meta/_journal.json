@@ -2073,6 +2073,13 @@
       "when": 1793607200000,
       "tag": "0300_order_rate_override",
       "breakpoints": true
+    },
+    {
+      "idx": 296,
+      "version": "7",
+      "when": 1793607500000,
+      "tag": "0301_price_books",
+      "breakpoints": true
     }
   ]
 }

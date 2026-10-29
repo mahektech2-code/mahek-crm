@@ -93,7 +93,7 @@ const LIST_LIMIT = 500;
  * array cannot be bound as a Postgres array without a type it does not have,
  * so the two ends are written out rather than parameterised.
  */
-function bookClause(ids: string[] | null) {
+export function bookClause(ids: string[] | null) {
   if (ids === null) return sql`true`;
   if (!ids.length) return sql`false`;
   const list = sql.join(ids.map((id) => sql`${id}`), sql`, `);
@@ -102,8 +102,9 @@ function bookClause(ids: string[] | null) {
 
 /* ------------------------------------------------------------------ lists */
 
-type ListRow = {
+export type ListRow = {
   id: string;
+  bookId: string;
   refNo: string | null;
   name: string;
   version: number;
@@ -169,7 +170,7 @@ export async function resolveOptions(): Promise<ResolveOptions> {
   return resolveOptionsFrom(await getConfig());
 }
 
-function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSummary {
+export function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSummary {
   // A list is valid for its own window from the day it takes effect, and the
   // list that supersedes it ends it sooner. The earlier of the two is what a
   // screen has to say, or a list replaced last week reads as current. Whether
@@ -178,6 +179,7 @@ function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSu
   const expiresOn = validity.expiresOn;
   return {
     id: row.id,
+    bookId: row.bookId ?? row.id,
     refNo: row.refNo,
     name: row.name,
     version: row.version,
@@ -208,8 +210,8 @@ function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSu
   };
 }
 
-const LIST_SELECT = sql`
-  select l.id, l.ref_no as "refNo", l.name, l.version, l.status,
+export const LIST_SELECT = sql`
+  select l.id, coalesce(l.book_id, l.id) as "bookId", l.ref_no as "refNo", l.name, l.version, l.status,
          l.effective_from::text as "effectiveFrom",
          l.effective_to::text as "effectiveTo",
          l.validity_days as "validityDays",
@@ -312,7 +314,7 @@ function withPerLitre(row: RawRate): RateRow {
  * holding. A cell with no rate is empty; a cell whose rate says `offered:
  * false` is the document's dash, and the two are different facts.
  */
-function buildGrid(rates: RateRow[]): RateGrid {
+export function buildGrid(rates: RateRow[]): RateGrid {
   const columns = new Map<string, GridColumn>();
   for (const r of rates) {
     const key = `${r.millilitresPerCan ?? "?"}|${r.cansPerBox ?? "?"}|${r.packing ?? ""}`;
@@ -730,7 +732,7 @@ export function chainedRate(
   return rateFromCandidates(resolution.candidates, (listId) => rows.get(listId)?.get(productId) ?? [], cans);
 }
 
-type GeoRow = {
+export type GeoRow = {
   customerId: string;
   salesAmId: string | null;
   ownerId: string | null;
@@ -748,7 +750,7 @@ type GeoRow = {
 };
 
 /** Every spelling a shop can be matched by, folded to keys. */
-function toGeo(row: GeoRow): CustomerGeo {
+export function toGeo(row: GeoRow): CustomerGeo {
   const keys = (...values: Array<string | null>) =>
     [...new Set(values.map((v) => placeKey(v)).filter((v) => v !== ""))];
   return {
@@ -770,7 +772,7 @@ function toGeo(row: GeoRow): CustomerGeo {
   };
 }
 
-const GEO_SELECT = sql`
+export const GEO_SELECT = sql`
   select c.id as "customerId", c.sales_am_id as "salesAmId", c.owner_id as "ownerId",
          c.city, c.area, c.beat, c.region, c.territory_region as "territoryRegion",
          (select p.name from places p where p.id = c.resolved_state_id) as "resolvedState",
@@ -1045,7 +1047,7 @@ async function ratesOfShop(resolution: Resolution): Promise<RateRow[]> {
   return out;
 }
 
-async function ratesOfList(listId: string): Promise<RateRow[]> {
+export async function ratesOfList(listId: string): Promise<RateRow[]> {
   const rows = await db.execute<RawRate>(sql`
     ${RATE_SELECT} where r.price_list_id = ${listId}
     order by p.millilitres_per_can asc nulls last, p.name asc, r.min_cans asc nulls first
