@@ -200,6 +200,9 @@ const files = [
   "src/lib/price-watch.integration.test.ts",
   // A PDF you already have, brought in as a change on its book, and read by three readers.
   "src/lib/price-imports.integration.test.ts",
+  // Overrides: a special price with dates, applied through the shop's agreed
+  // list on the days it starts and ends; a request approved as one.
+  "src/lib/price-overrides.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only
