@@ -2,9 +2,10 @@
 
 import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
-import { Badge, Button, controlClass, cx, type Tone } from "@/components/ui/primitives";
+import { Button, controlClass, cx } from "@/components/ui/primitives";
 import { nf } from "@/lib/erp/ui";
 import { fieldLabelClass, popoverClass } from "./look";
+import { splitLabel } from "./field-label";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
@@ -14,10 +15,12 @@ import { matchOptions, nearEnd, PAGE } from "./option-match";
 import { shrinkImage } from "@/lib/shrink-image";
 
 /* ---------------------------------------------------------------------------
- * One form field, drawn as the CRM draws every field: an uppercase label (with
- * the ERP's tag — Calculated / AI suggestion / Optional — beside it), the
- * control at the CRM's height and border, then the error under it or else the
- * hint.
+ * One form field. The label says what to type and nothing else: a red * when
+ * it must be filled, a quiet "optional" when it need not, an icon when the
+ * app works it out or AI read it, and an i that opens the hint. The unit sits
+ * inside the box. The error is the one thing written out under the field,
+ * because it is the one thing somebody has to act on. A hint that changes
+ * what you type (`hintShown`) stays under the box too.
  * ------------------------------------------------------------------------- */
 
 function control(err: boolean, extra?: string) {
@@ -60,9 +63,10 @@ export function Field({
   onUseSuggestion?: (v: string) => void;
 }) {
   const opts = withSaved(f, value, options);
-  const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req && !f.untagged ? "Optional" : "";
-  const tagTone: Tone =
-    f.conf === "check" || f.conf === "not found" ? "warn" : f.conf || f.t === "suggest" ? "brand" : f.t === "derived" ? "neutral" : "muted";
+  const parts = splitLabel(f.l, f.t);
+  const optional = (!f.req && !f.reqWhen && !f.untagged && !f.conf && f.t !== "derived" && f.t !== "suggest") || !!parts.optional;
+  /* AI's reading of a field is one icon, coloured by how sure it was. */
+  const ai = f.conf ? AI_READ[f.conf] : f.t === "suggest" ? AI_READ.suggest : null;
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
@@ -71,25 +75,91 @@ export function Field({
   return (
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
       <span className={cx("mb-1 flex items-center gap-1.5", fieldLabelClass)}>
-        {f.l}
-        {tag ? (
-          <Badge tone={tagTone} className="tracking-normal normal-case">
-            {tag}
-          </Badge>
+        <span>
+          {parts.label}
+          {parts.unit ? <span className="sr-only"> ({parts.unit})</span> : null}
+          {f.req ? (
+            <>
+              <span aria-hidden="true" className="ml-0.5 text-danger">
+                *
+              </span>
+              <span className="sr-only"> (required)</span>
+            </>
+          ) : null}
+        </span>
+        {optional ? <span className="font-normal text-faint">optional</span> : null}
+        {f.t === "derived" ? (
+          <span title="Worked out for you" className="flex text-faint">
+            <Icon n="calc" s={13} />
+            <span className="sr-only">Worked out for you</span>
+          </span>
         ) : null}
+        {ai ? (
+          <span title={ai.say} className={cx("flex", ai.tone)}>
+            <Icon n="spark" s={13} />
+            <span className="sr-only">{ai.say}</span>
+          </span>
+        ) : null}
+        {f.hint && !f.hintShown && !error ? <HintTip text={f.hint} /> : null}
       </span>
-      <Control f={f} value={value} error={!!error} opts={opts} derived={derived} onChange={onChange} onMic={onMic} onUseSuggestion={onUseSuggestion} />
+      <Control f={f} unit={parts} value={value} error={!!error} opts={opts} derived={derived} onChange={onChange} onMic={onMic} onUseSuggestion={onUseSuggestion} />
       {error ? (
         <span className="mt-1 block text-meta text-danger">{error}</span>
-      ) : f.hint ? (
+      ) : f.hint && f.hintShown ? (
         <span className="mt-1 block text-meta text-muted">{f.hint}</span>
       ) : null}
     </Wrap>
   );
 }
 
+const AI_READ: Record<string, { say: string; tone: string }> = {
+  high: { say: "Read by AI", tone: "text-brand" },
+  check: { say: "Read by AI — check it", tone: "text-warn" },
+  "not found": { say: "AI could not find this", tone: "text-warn" },
+  suggest: { say: "AI suggestion", tone: "text-brand" },
+};
+
+/**
+ * The hint behind an i. Hover or focus shows it, and a tap toggles it, because
+ * the ERP runs on a tablet at the godown gate where nothing hovers.
+ */
+export function HintTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label="About this field"
+        aria-describedby={id}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        onBlur={() => setOpen(false)}
+        className="flex cursor-help rounded-full text-faint hover:text-muted focus-visible:text-brand"
+      >
+        <Icon n="info" s={14} />
+      </button>
+      <span
+        id={id}
+        role="tooltip"
+        className={cx(
+          "pointer-events-none absolute top-full left-0 z-50 mt-1 w-max max-w-[260px] rounded-control bg-ink px-2.5 py-1.5 text-meta font-medium text-white shadow-pop",
+          open ? "block" : "hidden group-hover:block group-focus-within:block",
+        )}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function Control({
   f,
+  unit,
   value,
   error,
   opts,
@@ -99,6 +169,7 @@ function Control({
   onUseSuggestion,
 }: {
   f: FieldSpec;
+  unit: { unit?: string; unitBefore?: boolean };
   value: string;
   error: boolean;
   opts: string[];
@@ -114,12 +185,14 @@ function Control({
       <span
         className={cx(
           /* pre-line: a calculation may list several lines, one per lot. */
-          "flex min-h-8.5 items-center whitespace-pre-line rounded-control border border-dashed bg-canvas px-2.5 py-1.5 text-sm tabular-nums",
-          error ? "border-danger" : "border-line",
+          "flex min-h-8.5 items-center gap-1 whitespace-pre-line rounded-control border bg-canvas px-2.5 py-1.5 text-sm font-medium tabular-nums",
+          error ? "border-danger" : "border-transparent",
           derived ? "text-ink" : "text-line-strong",
         )}
       >
+        {derived && unit.unit && unit.unitBefore ? <span className="font-normal text-faint">{unit.unit}</span> : null}
         {derived || "—"}
+        {derived && unit.unit && !unit.unitBefore ? <span className="font-normal text-faint">{unit.unit}</span> : null}
       </span>
     );
   }
@@ -242,7 +315,7 @@ function Control({
   if (f.t === "photo" || f.t === "video") {
     return <PhotoPicker kind={f.t} upload={f.upload} value={value} error={error} onChange={onChange} />;
   }
-  return (
+  const input = (
     <input
       type={f.t === "num" ? "number" : f.t === "date" ? "date" : "text"}
       value={value}
@@ -251,8 +324,17 @@ function Control({
       max={f.max}
       step={f.t === "num" ? "any" : undefined}
       onChange={(e) => onChange(e.target.value)}
-      className={control(error, f.readOnly ? "bg-canvas text-muted" : undefined)}
+      className={control(error, cx(f.readOnly && "bg-canvas text-muted", unit.unit && (unit.unitBefore ? "pl-6" : "pr-12")))}
     />
+  );
+  if (!unit.unit) return input;
+  return (
+    <span className="relative block">
+      {input}
+      <span aria-hidden="true" className={cx("pointer-events-none absolute top-0 bottom-0 flex items-center text-sm text-faint", unit.unitBefore ? "left-2.5" : "right-2.5")}>
+        {unit.unit}
+      </span>
+    </span>
   );
 }
 

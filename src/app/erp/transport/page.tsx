@@ -81,7 +81,6 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
         server={{ ...page, query }}
         openRow={found ? lightRow(mod, found) : null}
         label={screen.label}
-        sub={screen.sub}
         tabs={tabs}
         toggle={null}
         initialOpen={one("open") ?? null}
@@ -114,7 +113,6 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   return (
     <Page
       title={screen.label}
-      sub={screen.sub}
       actions={
         kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={one("upload") === "1"} /> : null
       }

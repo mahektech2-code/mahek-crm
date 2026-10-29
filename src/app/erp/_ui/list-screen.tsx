@@ -11,7 +11,8 @@ import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, sele
 import { ColumnFilter } from "./column-filter";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
-import { eyebrowClass, LinkButton, linkClass } from "./look";
+import { eyebrowClass, IconButton, LinkButton, linkClass } from "./look";
+import { FilterMenu } from "./filter-menu";
 import { RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { PeriodPicker } from "./period-picker";
@@ -657,10 +658,9 @@ export function ListScreen({
   };
   /* "Nothing here yet. Entries appear as …" reads as a heading and the
      sentence that explains it, not as one bold paragraph. */
-  const [emptyTitle, emptyBody] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
+  const [emptyTitle] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   /* A register read through a window: the period picker, and what to say when the period is empty or too long. */
   const win = server?.window ?? null;
-  const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf, ...Object.values(query.fx), ...Object.keys(query.cf ?? {}).map((k) => `the ${colOf(k).l.toLowerCase()} filter`)].filter(Boolean).join(" · ");
   const pickCf = (k: string, f: ColFilter | null) => {
     const cf = { ...(query.cf ?? {}) };
     if (f) cf[k] = f;
@@ -727,7 +727,7 @@ export function ListScreen({
         <div className={cx("flex flex-wrap items-center gap-2.5", v4 ? "mb-3" : "border-b border-divider px-4 py-3")}>
           <div className="relative w-[300px] max-w-full">
             <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2.25 left-2.5 text-muted" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list" aria-label="Search this list" className="pr-7 pl-7.5" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search this list" className="pr-7 pl-7.5" />
             {q ? (
               <button onClick={() => setQ("")} aria-label="Clear search" className="absolute top-1.75 right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body">
                 <ShellIcon name="close" size={14} />
@@ -745,24 +745,10 @@ export function ListScreen({
               ))}
             </Select>
           ) : null}
-          {(lp.facets ?? []).map((f) =>
-            f.opts.length > 1 || query.fx[f.k] ? (
-              <Select
-                key={f.k}
-                value={query.fx[f.k] ?? ""}
-                onChange={(e) => pickFx(f.k, e.target.value)}
-                aria-label={`Filter by ${lowerFirst(f.l)}`}
-                className={cx("max-w-[220px] cursor-pointer", query.fx[f.k] && "border-brand bg-brand-soft text-brand-hover")}
-              >
-                <option value="">All {lowerFirst(f.l)}</option>
-                {f.opts.map((o) => (
-                  <option key={o.v} value={o.v}>
-                    {o.v} · {nf(o.n)}
-                  </option>
-                ))}
-              </Select>
-            ) : null,
-          )}
+          {(() => {
+            const facets = (lp.facets ?? []).filter((f) => f.opts.length > 1 || query.fx[f.k]);
+            return facets.length ? <FilterMenu facets={facets} value={query.fx} onPick={pickFx} onClear={() => setQuery({ fx: {}, page: 1 })} /> : null;
+          })()}
           {spec.godownKey ? (
             <GodownPicker
               value={gf}
@@ -793,20 +779,7 @@ export function ListScreen({
               ))}
             </span>
           ) : null}
-          {spec.groups ? (
-            <button
-              onClick={() => setQuery({ grp: !query.grp, page: 1 })}
-              aria-pressed={!!gk}
-              className={v4 ? toolbarToggleClass(false) : toolbarToggleClass(!!gk)}
-            >
-              {v4 ? (
-                <span aria-hidden className={cx("relative block h-[15px] w-6.5 flex-none rounded-full transition-colors", gk ? "bg-brand" : "bg-line-strong")}>
-                  <span className={cx("absolute top-0.5 block h-[11px] w-[11px] rounded-full bg-surface transition-all", gk ? "left-[13px]" : "left-0.5")} />
-                </span>
-              ) : null}
-              Group by {spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}
-            </button>
-          ) : null}
+
           {filter ? (
             <span className="inline-flex h-8 items-center gap-1.5 rounded-control border border-brand bg-brand-soft pr-1 pl-2.5 text-meta font-medium text-brand-hover">
               From dashboard · {filter.label}
@@ -834,11 +807,24 @@ export function ListScreen({
               ))}
             </span>
           ) : null}
+          {spec.groups ? (
+            <button
+              type="button"
+              onClick={() => setQuery({ grp: !query.grp, page: 1 })}
+              aria-pressed={!!gk}
+              aria-label={`Group by ${spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}`}
+              title={`Group by ${spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}`}
+              className={cx(toolbarToggleClass(!!gk), "px-2")}
+            >
+              <Icon n="group" s={15} />
+            </button>
+          ) : null}
           {!showCards && !showChat && cols.length > 1 ? <ColumnsMenu cols={lineCols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
           {spec.hidden.length ? (
-            <span className="flex items-center gap-1.5 text-meta text-muted" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
+            <span className="flex items-center gap-1 text-meta text-muted tabular-nums" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
               <Icon n="lock" s={14} />
-              {spec.hidden.length} column{spec.hidden.length > 1 ? "s" : ""} hidden
+              {spec.hidden.length}
+              <span className="sr-only"> column{spec.hidden.length > 1 ? "s" : ""} hidden</span>
             </span>
           ) : null}
         </div>
@@ -854,10 +840,9 @@ export function ListScreen({
           {/* One export for every list: it used to sit beside a "Download"
               that did exactly the same thing on the stock and label lists. */}
           {lp.all ? (
-            <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
+            <IconButton label="Export as CSV" bordered onClick={exportCsv} className="h-9 w-9">
               <Icon n="dl" />
-              Export
-            </Button>
+            </IconButton>
           ) : null}
           {(spec.tools ?? []).map((t) => (
             <Button
@@ -925,15 +910,14 @@ export function ListScreen({
           <EmptyState
             icon={v4 ? <EmptyTile tone="warn" icon="lock" /> : undefined}
             title="That period is too long to show"
-            body={`${win.label} holds ${nf(win.tooWide.n)} rows, and this list reads at most ${nf(win.tooWide.cap)} at a time. Pick a shorter period, or search within one.`}
+            body={`${nf(win.tooWide.n)} rows. Pick a shorter period.`}
           />
         ) : lp.all === 0 && win ? (
-          <EmptyState icon={v4 ? <EmptyTile icon="search" /> : undefined} title={`Nothing in ${lowerFirst(win.label)}`} body={`No rows have a ${lowerFirst(win.dateLabel)} in this period. Pick a longer one to see older rows.`} />
+          <EmptyState icon={v4 ? <EmptyTile icon="search" /> : undefined} title={`Nothing in ${lowerFirst(win.label)}`} />
         ) : lp.all === 0 ? (
           <EmptyState
             icon={v4 ? <EmptyTile icon="file" /> : undefined}
             title={emptyTitle}
-            body={emptyBody}
             action={
               hasNew ? (
                 <Button variant="primary" onClick={() => openNew()} onPointerEnter={warmNew} onFocus={warmNew}>
@@ -946,7 +930,6 @@ export function ListScreen({
           <EmptyState
             icon={v4 ? <EmptyTile tone="muted" icon="search" /> : undefined}
             title="Nothing matches"
-            body={`No rows match ${noMatchBits}.`}
             action={
               <Button variant="secondary" onClick={clearAll}>
                 Clear filters
