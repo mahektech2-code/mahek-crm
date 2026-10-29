@@ -658,6 +658,16 @@ export class FactoryApp extends Component<Props, State> {
     return out;
   }
 
+  /** Every team but loading: a code typed off the label, read like a scan, judged like one. */
+  submitTypedBox() {
+    const sc = this.state.scan;
+    const raw = (sc?.typed ?? "").trim();
+    if (!sc || !raw) return;
+    const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
+    /* The text stays: a code the server refuses comes back to the box to fix, not to an empty one. */
+    void this.doScan(code);
+  }
+
   /** A code typed off the label, or sent by a gun into the Type box: read like a scan, judged like one. */
   submitTyped(raw: string) {
     const sc = this.state.scan;
@@ -3181,6 +3191,7 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose, m = sc.meta, db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const what = { badge: "your company badge", home: "a task sheet, order, lot or box label", rm: "the " + rmName + " drum", sfg: "the base-liquid tank", pm: "the empty-can stack", fg: "the filled-can pallet", load: "the box label going on the lorry", drum: "the GRN label on the empty drum", lr: "the LR receipt" }[P];
+    const typed = sc.typed ?? "", ready = !!typed.trim();
     const noCam = st.cam === "none" || st.cam === "denied";
     const lr = P === "lr";
     return (
@@ -3188,7 +3199,14 @@ export class FactoryApp extends Component<Props, State> {
         {noCam && <div style={{ padding: "10px 12px", borderRadius: "12px", background: "rgba(255,231,168,0.12)", color: "#FFE7A8", fontSize: "14px", lineHeight: "20px" }}>{st.cam === "denied" ? T.camOffType : T.noCamType}</div>}
         <div style={{ fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{lr ? T.typeLr : T.typeTitle}</div>
         {!!what && <div style={{ fontSize: "15px", color: "#C2C8D2" }}>{T.lookingFor + ": " + what}</div>}
-        {/* A scanning gun types here: the box keeps its own text, sends each code the moment the gun stops, and takes the focus back once a card is closed. */}
+        {P !== "load" ? (
+          <>
+            <input value={typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTypedBox()} autoFocus autoComplete="off" aria-label={lr ? T.typeLr : T.typeCode} style={{ width: "100%", height: "64px", minHeight: "64px", boxSizing: "border-box", marginTop: "6px", borderRadius: "16px", border: "2px solid #C6FF34", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 16px", ...mono, fontSize: "24px", fontWeight: 600, letterSpacing: "1px", outline: "none" }} />
+            <div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</div>
+            <button onClick={() => this.submitTypedBox()} style={{ width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }}>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</button>
+          </>
+        ) : (
+        /* Loading: a scanning gun types here: the box keeps its own text, sends each code the moment the gun stops, and takes the focus back once a card is closed. */
         <ScanField
           key={sc.res || st.lorry.res ? "card" : "type"}
           label={lr ? T.typeLr : T.typeCode}
@@ -3197,6 +3215,7 @@ export class FactoryApp extends Component<Props, State> {
           hint=<div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</div>
           button={(ready) => ({ style: { width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }, content: <>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</> })}
         />
+        )}
         <button onClick={() => this.scanInstead()} style={{ width: "100%", height: "54px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic(st.cam === "denied" ? "camOn" : "scanFrame", 22, "#FFFFFF")}{st.cam === "denied" ? T.camOn : T.scanInstead}</button>
         {labels.length > 0 && (
           <>
@@ -3229,7 +3248,7 @@ export class FactoryApp extends Component<Props, State> {
     return (
       <div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
         {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || !!st.lorry.res || !!st.lorry.pick || !!st.lorry.ask} onCode={(c) => this.intake(c)} onState={(s) => this.camState(s)} />}
-        {!typing && !st.lorry.ask && <GunInput onCode={(c) => this.intake(c)} />}
+        {P === "load" && !typing && !st.lorry.ask && <GunInput onCode={(c) => this.intake(c)} />}
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <button onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</button>
           <span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</span>
@@ -3285,7 +3304,7 @@ export class FactoryApp extends Component<Props, State> {
                   {!!sc.dropped && this.droppedNote(sc.dropped)}
                   <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                     <button onClick={() => this.speak(r.title + ". " + r.fix)} aria-label={T.listen} style={{ ...btn("s", 58), width: "64px", flex: "none" }}>{ic("speaker", 20)}</button>
-                    <button onClick={() => this.clearRefusal()} style={{ ...btn("p", 58), flex: 2 }}>{P === "load" ? "OK, scan next" : typing ? T.retry : T.scanAgain}</button>
+                    <button onClick={() => (P === "load" ? this.clearRefusal() : this.setState({ scan: { ...sc, res: null } }))} style={{ ...btn("p", 58), flex: 2 }}>{P === "load" ? "OK, scan next" : typing ? T.retry : T.scanAgain}</button>
                   </div>
                 </div>
               )}
