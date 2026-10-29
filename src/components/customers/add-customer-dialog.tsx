@@ -4,7 +4,7 @@ import * as React from "react";
 import { Button, Checkbox, Field, Input, MoneyInput, Select, Textarea, cx } from "@/components/ui/primitives";
 import { Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { createDirectCustomer } from "@/lib/actions/customer-create";
+import { createDirectCustomer, listTransporterChoices } from "@/lib/actions/customer-create";
 import { INDIA_STATES } from "@/lib/india-states";
 import { NEW_CUSTOMER_TAB, newCustomerSchema, seatFromPick, type NewCustomerInput } from "@/lib/new-customer";
 
@@ -45,6 +45,7 @@ const EMPTY = {
   priceTag: "",
   freightTerm: "",
   deliveryType: "",
+  transporter: "",
   sales: "",
   backOffice: "",
   salesManager: "",
@@ -84,6 +85,7 @@ function toInput(v: Values, allowSameName: boolean): NewCustomerInput {
     priceTag: v.priceTag,
     freightTerm: v.freightTerm as NewCustomerInput["freightTerm"],
     deliveryType: v.deliveryType,
+    transporter: v.transporter,
     sales: seatFromPick(v.sales),
     backOffice: seatFromPick(v.backOffice),
     salesManager: seatFromPick(v.salesManager),
@@ -124,6 +126,19 @@ function AddCustomerBody({
   const [allowSameName, setAllowSameName] = React.useState(false);
   const [salesManagerTouched, setSalesManagerTouched] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [transporters, setTransporters] = React.useState<string[] | null>(null);
+
+  // The transporter list is read when the form opens; until it lands the
+  // picker says so rather than offering nothing.
+  React.useEffect(() => {
+    let live = true;
+    listTransporterChoices().then((r) => {
+      if (live) setTransporters(r.ok ? r.data : []);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const set = (k: keyof Values) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const value = e.target.value;
@@ -347,6 +362,16 @@ function AddCustomerBody({
                 <option value="">Not stated</option>
                 <option value="Door Delivery">Door delivery</option>
                 <option value="Godown Delivery">Godown delivery</option>
+              </Select>
+            </Field>
+            <Field label="Transporter" hint="Who carries their goods. The ERP fills each order's transporter from this.">
+              <Select value={values.transporter} onChange={set("transporter")} disabled={transporters === null}>
+                <option value="">{transporters === null ? "Loading transporters…" : "Not stated"}</option>
+                {(transporters ?? []).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
               </Select>
             </Field>
           </div>

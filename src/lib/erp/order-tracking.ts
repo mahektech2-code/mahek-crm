@@ -563,14 +563,28 @@ export async function regenerateTracking(ctx: ErpContext, orderNo: number): Prom
 
 /* ============================================================ the documents */
 
+/**
+ * The order's invoice PDF: its own, else the one attached to another order on the
+ * SAME invoice — one Tally invoice may cover several orders of one party, and its
+ * PDF is attached once. Never another party's: an invoice is one party's.
+ */
 async function invoiceFile(orderNo: number): Promise<{ id: string; filename: string } | null> {
-  const [f] = await db
-    .select({ id: attachments.id, filename: attachments.filename })
-    .from(attachments)
-    .where(and(eq(attachments.parentType, "erp_invoice"), eq(attachments.parentId, String(orderNo)), eq(attachments.status, "available")))
-    .orderBy(sql`${attachments.createdAt} desc`)
-    .limit(1);
-  return f ?? null;
+  const rows = (await db.execute(sql`
+    select a.id, a.filename
+      from attachments a
+     where a.parent_type = 'erp_invoice' and a.status = 'available'
+       and (a.parent_id = ${String(orderNo)}
+            or a.parent_id in (
+              select distinct o2.order_no::text
+                from erp_orders o
+                join erp_orders o2 on o2.billing_customer_id = o.billing_customer_id
+                  and o2.status <> 'Cancel'
+                  and upper(regexp_replace(coalesce(o2.tally_bill_no, ''), '\s', '', 'g')) = upper(regexp_replace(o.tally_bill_no, '\s', '', 'g'))
+               where o.order_no = ${orderNo} and o.status <> 'Cancel' and coalesce(o.tally_bill_no, '') <> ''))
+     order by (a.parent_id = ${String(orderNo)}) desc, a.created_at desc
+     limit 1
+  `)) as unknown as { id: string; filename: string }[];
+  return rows[0] ? { id: String(rows[0].id), filename: String(rows[0].filename) } : null;
 }
 
 export async function invoiceFileFor(orderNo: number) {
