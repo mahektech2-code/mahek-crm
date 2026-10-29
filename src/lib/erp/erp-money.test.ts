@@ -67,8 +67,19 @@ const daysAgo = (n: number) => new Date(Date.now() + 5.5 * 3_600_000 - n * 86_40
 
 before(async () => {
   await db.execute(sql`truncate users, erp_user_powers, erp_bank_matches, erp_bank_lines, erp_money_txns, erp_advances, erp_cash_receipts, erp_scrap_allocations, audit_log restart identity cascade`);
-  await db.execute(sql`update erp_money_accounts set opening_paise = 0, opening_date = null, active = true`);
   await db.execute(sql`delete from erp_money_accounts where id not in ('macc_kotak', 'macc_icici', 'macc_cash', 'macc_petty')`);
+  /* The four accounts migration 0283 seeds — put back (after clearing any other
+     rows, which may hold the same names) if an earlier suite in the same shard
+     truncated the table, as crm-accounts-impact does. Without this the file
+     depends on which files ran before it. */
+  await db.execute(sql`
+    insert into erp_money_accounts (id, name, kind, sort) values
+      ('macc_kotak', 'Kotak Bank', 'bank', 1),
+      ('macc_icici', 'ICICI Bank', 'bank', 2),
+      ('macc_cash', 'Cash in Hand', 'cash', 3),
+      ('macc_petty', 'Petty Cash', 'petty', 4)
+    on conflict do nothing`);
+  await db.execute(sql`update erp_money_accounts set opening_paise = 0, opening_date = null, active = true`);
   await db.execute(sql`update erp_series set last = 0 where key in ('moneyTxn', 'advance')`);
   await db.insert(appSettings).values({ key: "erp.money.approvalAbovePaise", value: 5_000_000, valueType: "integer", category: "erp", label: "x" }).onConflictDoUpdate({ target: appSettings.key, set: { value: 5_000_000 } });
   invalidateConfig();
