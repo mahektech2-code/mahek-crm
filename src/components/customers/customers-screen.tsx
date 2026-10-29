@@ -91,6 +91,12 @@ const AddCustomerDialog = dynamic(
   { ssr: false },
 );
 
+/* The lead bypass — Accounts only, loaded on first press for the same reason. */
+const BypassConvertDialog = dynamic(
+  () => import("@/components/customers/bypass-convert-dialog").then((m) => m.BypassConvertDialog),
+  { ssr: false },
+);
+
 export type Row = {
   id: string;
   name: string;
@@ -326,6 +332,8 @@ export function CustomersScreen({
    * again.
    */
   const [adding, setAdding] = React.useState(false);
+  // Converting a lead straight to a customer — the same desk, the same capability.
+  const [bypassing, setBypassing] = React.useState(false);
   // The filter URLs need no base path — `navigate()` pushes a relative query
   // string, so the address it builds is already whichever list is open.
   const recordHref = (id: string) =>
@@ -690,6 +698,25 @@ export function CustomersScreen({
             >
               Transfer sales manager
             </Button>
+            {isCrm ? null : (
+              <Button
+                variant="secondary"
+                disabled={!canReassign}
+                title={
+                  canReassign
+                    ? "Convert a lead straight to a customer, skipping the funnel"
+                    : "Converting a lead directly is an Accounts manager or admin action"
+                }
+                onClick={() => setBypassing(true)}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M13 3L4 14h7l-1 7 9-11h-7z" />
+                  </svg>
+                  Convert a lead
+                </span>
+              </Button>
+            )}
             {isCrm ? null : (
               <Button
                 variant="primary"
@@ -1621,6 +1648,23 @@ export function CustomersScreen({
           return result.ok;
         }}
       />
+
+      {bypassing ? (
+        <BypassConvertDialog
+          open={bypassing}
+          onClose={() => setBypassing(false)}
+          onConverted={(converted) => {
+            setBypassing(false);
+            // Straight to the new customer, so the conversion is seen to have landed.
+            router.push(`?q=${encodeURIComponent(converted.name)}`);
+            router.refresh();
+          }}
+          people={backOfficePeople}
+          salesManagerPeople={salesManagerPeople}
+          canAssignSalesManager={canAssignSalesManager}
+          canDecideCredit={canDecideCredit}
+        />
+      ) : null}
 
       {adding ? (
         <AddCustomerDialog

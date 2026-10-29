@@ -169,6 +169,12 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   arrowRight: <path d="M5 12h13M13 6l6 6-6 6" />,
+  pin: (
+    <>
+      <path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z" />
+      <circle cx="12" cy="9" r="2.5" />
+    </>
+  ),
   tick: <path d="m5 13 4 4L19 7" />,
   clock: (
     <>

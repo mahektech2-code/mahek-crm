@@ -45,6 +45,8 @@ const files = [
   "src/lib/crm-accounts-impact.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
+  // Converting a lead straight to a customer from Accounts — the bypass.
+  "src/lib/lead-bypass.test.ts",
   // A lead is raised inside the salesman's own area, and lands there.
   "src/lib/lead-territory.test.ts",
   "src/lib/lead-scope.test.ts",
