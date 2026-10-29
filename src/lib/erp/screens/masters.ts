@@ -766,6 +766,8 @@ export type CustomerRow = {
   sheetName: string | null;
   status: string;
   kind: string;
+  /** Delivered to and billed through a distributor (`customers.thirdParty`). */
+  thirdParty: boolean;
   createdAt: Date;
   /**
    * This month's target, from the CRM's monthly targets — the one customer
@@ -778,8 +780,15 @@ export type CustomerRow = {
   p: typeof erpCustomerProfiles.$inferSelect | null;
 };
 
-export async function loadCustomers(where?: ReturnType<typeof and>): Promise<CustomerRow[]> {
-  const base = or(eq(customers.kind, "customer"), isNotNull(erpCustomerProfiles.customerId));
+/**
+ * The ERP's party book: the customers we invoice, and anybody given a dispatch
+ * profile. `{ any: true }` drops that filter, for reads that NAME a party —
+ * an order's delivery party is very often a third-party shop (a lead, billed
+ * through its distributor) with no profile, and filtering it out made every
+ * screen fall back to the billing party's name.
+ */
+export async function loadCustomers(where?: ReturnType<typeof and>, opts?: { any?: boolean }): Promise<CustomerRow[]> {
+  const base = opts?.any ? undefined : or(eq(customers.kind, "customer"), isNotNull(erpCustomerProfiles.customerId));
   return (await db
     .select({
       id: customers.id,
@@ -800,6 +809,7 @@ export async function loadCustomers(where?: ReturnType<typeof and>): Promise<Cus
       sheetName: customers.sheetName,
       status: customers.status,
       kind: customers.kind,
+      thirdParty: customers.thirdParty,
       createdAt: customers.createdAt,
       monthlyTargetPaise: sql<number | null>`(
         select t.target_amount from monthly_targets t
@@ -811,7 +821,7 @@ export async function loadCustomers(where?: ReturnType<typeof and>): Promise<Cus
     })
     .from(customers)
     .leftJoin(erpCustomerProfiles, eq(erpCustomerProfiles.customerId, customers.id))
-    .where(where ? and(base, where) : base)
+    .where(where && base ? and(base, where) : (where ?? base))
     .orderBy(asc(customers.name))) as CustomerRow[];
 }
 

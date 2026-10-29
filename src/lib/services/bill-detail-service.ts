@@ -90,6 +90,8 @@ export type BillDetail = {
     paymentStatus: string | null;
     paymentReceivedDate: string | null;
     transportName: string | null;
+    /** Where the goods went, when that was not the party billed — a third-party shop. */
+    deliveredTo: { id: string; name: string } | null;
     area: string | null;
     salesMan: string | null;
     segmentCounterType: string | null;
@@ -155,6 +157,10 @@ export async function getBillDetail(billId: string): Promise<BillDetail | null> 
   if (!row) return null;
 
   const { bill: b, order } = row;
+  const [deliveredTo] =
+    order?.deliveryCustomerId && order.deliveryCustomerId !== b.customerId
+      ? await db.select({ id: customers.id, name: customers.name }).from(customers).where(eq(customers.id, order.deliveryCustomerId))
+      : [];
   const dueDate = effectiveDueDate(
     {
       id: b.id,
@@ -312,6 +318,7 @@ export async function getBillDetail(billId: string): Promise<BillDetail | null> 
           paymentStatus: head?.paymentStatus ?? null,
           paymentReceivedDate: head?.paymentReceivedDate ?? null,
           transportName: head?.transportName ?? null,
+          deliveredTo: deliveredTo ?? null,
           area: head?.area ?? null,
           salesMan: head?.salesMan ?? null,
           segmentCounterType: head?.segmentCounterType ?? null,

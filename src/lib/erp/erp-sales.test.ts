@@ -235,6 +235,34 @@ describe("taking an order", () => {
   });
 });
 
+describe("delivering to a third-party shop", () => {
+  /* A shop billed through its distributor is a lead with the mark and, usually, no dispatch profile. */
+  test("the shop is offered, saved and shown as the delivery party, never the billing party", async () => {
+    await db.insert(customers).values({ id: "cus_corner", name: "Corner Hardware", city: "Thane", phone: "9876500009", kind: "lead", thirdParty: true, area: "Thane" });
+    const ctx = await as(admin);
+    const form = await orderForm(ctx);
+    const field = (k: string) => form.header.find((f) => f.k === k) as FieldSpec;
+    assert.ok(field("delivery").opts?.includes("Corner Hardware"), "the delivery list carries third-party shops");
+    assert.ok(!field("billing").opts?.includes("Corner Hardware"), "a shop we do not invoice is not a billing party");
+
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders", delivery: "Corner Hardware" }, [{ sku: LOOSE, qty: "4", rate: "300" }]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [o] = await db.select().from(erpOrders).where(eq(erpOrders.deliveryCustomerId, "cus_corner"));
+    assert.equal(o.billingCustomerId, "cus_nolist");
+
+    const { rows } = await mod("orders").load(ctx);
+    const row = rows.find((x) => x.id === o.id);
+    assert.equal(row?.v.delivery, "Corner Hardware", "the list reads the shop, not the billing party");
+    assert.equal(row?.v.billing, "No List Traders");
+  });
+
+  test("a delivery party nobody holds is refused rather than becoming the billing party", async () => {
+    const ctx = await as(admin);
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders", delivery: "Nobody By This Name" }, [{ sku: LOOSE, qty: "1" }]);
+    assert.match(msg(r), /No party named "Nobody By This Name"/);
+  });
+});
+
 describe("what a line weighs", () => {
   test("a box's weight times the boxes, or a can's times the cans where there is no box", async () => {
     const ctx = await as(admin);
