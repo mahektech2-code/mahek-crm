@@ -266,6 +266,8 @@ const files = [
   "src/lib/crm-sales-manager.test.ts",
   // Verification follows lead.sales_manager_id: the seat holder verifies, at any CRM level.
   "src/lib/lead-verifier-seat.test.ts",
+  // A verifying call's readiness answer moves the lead through the stage engine; GST validation and the manager review are never overridden.
+  "src/lib/lead-readiness-move.test.ts",
   // Qualification: the Salesman collects, the Sales Manager validates GST and reviews.
   "src/lib/qualification-flow.test.ts",
   // A lead the Sales Manager raised herself is approved by the person Mahek designates.

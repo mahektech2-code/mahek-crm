@@ -3,6 +3,7 @@ import { matchesTerritory, type TerritoryKind } from "@/lib/territory-rules";
 import { treeNamesFor } from "@/lib/place-tree";
 import { placeIndexFor } from "@/lib/services/place-tree-service";
 import "server-only";
+import { READINESS_OVERRIDE_REASONS } from "@/lib/verification-readiness";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -1066,7 +1067,14 @@ export async function evaluateLeadStageMove(input: {
       missing,
     };
   }
-  const overrideCodes = config["leads.overrideReasons"].map((r) => r.code);
+  /* The three reasons a verifying call uses when readiness asks for a move are
+     accepted whatever list a deployment has stored: a stored list is a
+     snapshot of the defaults, and a code that is not in it would turn a
+     legitimate, audited move into a refusal for want of a word. */
+  const overrideCodes = [
+    ...config["leads.overrideReasons"].map((r) => r.code),
+    ...READINESS_OVERRIDE_REASONS.map((r) => r.code),
+  ];
   if (!overrideCodes.includes(input.override.reasonCode)) {
     return {
       ok: false,

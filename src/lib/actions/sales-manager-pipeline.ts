@@ -228,7 +228,11 @@ export async function verifyProspect(input: VerifyProspectInput): Promise<Result
       .from(customers)
       .where(eq(customers.id, p.customerId))
       .limit(1);
-    return row?.stage === "qualification" ? ok(null, "Verified — Qualification is open.") : call;
+    /* A refused readiness move leaves the lead in Qualification; its sentence is
+       the one worth reading, so the generic line must not replace it. */
+    return row?.stage === "qualification" && !call.message?.includes("The stage move")
+      ? ok(null, "Verified — Qualification is open.")
+      : call;
   } catch (e) {
     return fromThrown(e);
   }

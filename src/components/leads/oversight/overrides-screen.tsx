@@ -4,6 +4,7 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { stamp } from "@/lib/format";
+import { READINESS_OVERRIDE_REASONS } from "@/lib/verification-readiness";
 import {
   OVERRIDE_REASONS,
   labelOf,
@@ -74,7 +75,9 @@ export function OverridesScreen({
 }) {
   const [condition, setCondition] = React.useState<string | null>(null);
   const list = condition ? rows.filter((r) => r.conditions.includes(condition)) : rows;
-  const vocabulary = reasons.length ? reasons : OVERRIDE_REASONS;
+  const base = reasons.length ? reasons : OVERRIDE_REASONS;
+  /* The reasons a verifying call uses are named too, whatever list is stored. */
+  const vocabulary = [...base, ...READINESS_OVERRIDE_REASONS.filter((r) => !base.some((b) => b.code === r.code))];
 
   const worst = counts[0] ?? null;
   const people = new Set(rows.map((r) => r.actorId).filter(Boolean)).size;

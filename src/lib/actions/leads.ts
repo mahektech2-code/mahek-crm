@@ -65,6 +65,8 @@ import {
   settleQualificationState,
 } from "@/lib/services/lead-qualification-flow-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "@/lib/lead-review-void";
+import { readReadiness, type ReadinessChoice } from "@/lib/verification-readiness";
+import { moveOnReadiness } from "@/lib/services/lead-readiness-move-service";
 import { qualificationAccess, QUALIFICATION_ONLY_FIELDS } from "@/lib/lead-qualification-access";
 import { litresSchema } from "../decimal-schemas";
 
@@ -138,6 +140,40 @@ async function reachableLead(
 /** Which hats this person is wearing, for the two manager-only questions. */
 async function holdsOverride(user: { id: string; role: string }): Promise<boolean> {
   return canAny(await hatsFor(user), "lead.override");
+}
+
+/**
+ * WHAT A VERIFYING CALL DID ABOUT "WHAT THEY ARE READY FOR", as a sentence for
+ * the screen. The verification is already recorded and Qualification already
+ * open before this runs, and nothing here can undo either: a move that is
+ * refused, or that fails, is said in words and the call stands.
+ *
+ * The override is the engine's own — `lead.override`, the deployment's setting
+ * and a recorded reason. This only asks; it never decides who may pass a gate.
+ */
+async function readinessMoveNote(
+  customerId: string,
+  choice: ReadinessChoice | null,
+  who: { id: string; role: string; hat: Parameters<typeof moveOnReadiness>[0]["actor"]["hat"] },
+): Promise<string> {
+  if (!choice) return "";
+  try {
+    const canOverride = await holdsOverride(who);
+    /* Asked only of somebody who holds it, so a denial is never written for a
+       permission nobody was trying to use. */
+    const overrideCtx = canOverride ? await requireCapability("lead.override").catch(() => null) : null;
+    const moved = await moveOnReadiness({
+      customerId,
+      choice,
+      actor: { userId: who.id, hat: who.hat, sourceApp: "crm" },
+      canOverride: Boolean(overrideCtx),
+      overrideHat: overrideCtx ? { app: overrideCtx.authorisedIn, role: overrideCtx.authorisedBy } : null,
+    });
+    if (moved.kind === "none") return "";
+    return moved.kind === "blocked" ? `The stage move was not made: ${moved.message}` : moved.message;
+  } catch {
+    return "The stage move could not be made, and the verification stands.";
+  }
 }
 
 /* ═══════════════════════════════════════════════════ §28 the move itself */
@@ -1460,6 +1496,7 @@ export async function recordLeadValidationCall(
        required Suspect and Prospect answer on the record. Both live in
        `prospect-verifier`; nothing is re-decided here. Follow-up and not-qualified
        are not approvals and are left as they were. */
+    let readinessChoice: ReadinessChoice | null = null;
     if (c.outcome === "verified") {
       const { requireProspectVerifier, prospectVerificationRefusal } = await import("../services/prospect-verifier");
       await requireProspectVerifier(customerId);
@@ -1475,6 +1512,14 @@ export async function recordLeadValidationCall(
       const { missingRequiredAnswers, requiredAnswerRefusal } = await import("../verification-form");
       const unanswered = missingRequiredAnswers("verified", c.answers);
       if (unanswered.length) return err(requiredAnswerRefusal(unanswered), "validation");
+
+      /* ONE readiness answer, validated here and not only on the screens: a
+         request that did not come through a form must not be able to say Yes to
+         two next stages and leave the server to guess which. Checked before
+         anything is written, so a refusal costs nothing. */
+      const reading = readReadiness(c.answers);
+      if (!reading.ok) return err(reading.error, "validation");
+      readinessChoice = reading.choice;
     }
 
     /* Only the DECLARED questions are stored — seventeen now, across four
@@ -1882,22 +1927,24 @@ export async function recordLeadValidationCall(
         customerId,
       ).catch(() => null);
       refresh(customerId);
-      if (opened?.opened) {
-        return ok(
-          null,
-          settled.data.promoted
-            ? "Verified — the lead is now a confirmed Prospect and Qualification is open."
-            : `Verified — ${opened.message.replace(/^Verified — /, "")}`,
-        );
-      }
-      return ok(
-        null,
-        settled.data.promoted
+      const verifiedMessage = opened?.opened
+        ? settled.data.promoted
+          ? "Verified — the lead is now a confirmed Prospect and Qualification is open."
+          : `Verified — ${opened.message.replace(/^Verified(?: —|\.)\s*/, "")}`
+        : settled.data.promoted
           ? "Verified — the lead is now a confirmed Prospect."
           : opened && opened.reason !== "not_prospect" && opened.reason !== "already_open"
             ? `Verified. Qualification did not open yet: ${opened.message}`
-            : "Verified.",
-      );
+            : "Verified.";
+
+      /* Readiness runs AFTER the verification stands and Qualification is open. */
+      const readinessNote = await readinessMoveNote(customerId, readinessChoice, {
+        id: ctx.user.id,
+        role: ctx.user.role,
+        hat: { app: ctx.authorisedIn, role: ctx.authorisedBy },
+      });
+      if (readinessNote) refresh(customerId);
+      return ok(null, readinessNote ? `${verifiedMessage} ${readinessNote}` : verifiedMessage);
     }
 
     if (c.outcome !== "not_qualified") {

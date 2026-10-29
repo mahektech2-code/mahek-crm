@@ -387,14 +387,25 @@ function ConvertModal({ lead, onClose }: ModalProps) {
 
 /* -------------------------------------------------------------- verify */
 
-function CheckField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+function CheckField({
+  label,
+  checked,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
-    <label className="flex items-center gap-2 text-sm text-body">
+    <label className={`flex items-center gap-2 text-sm text-body${disabled ? " opacity-60" : ""}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        className="h-[15px] w-[15px] accent-[#6835FB]"
+        className="h-[15px] w-[15px] accent-[#6835FB] disabled:cursor-not-allowed"
       />
       {label}
     </label>
@@ -438,7 +449,7 @@ function VerifyModal({ lead, onClose }: ModalProps) {
     Object.fromEntries(findingFields.map((f) => [f.key, initialFindingState(f.get(lead) ?? "")])),
   );
   const [currentProduct, setCurrentProduct] = React.useState("");
-  const [readyForTrial, setReadyForTrial] = React.useState(true);
+  const [readyForTrial, setReadyForTrial] = React.useState(false);
   const [readyForCommercial, setReadyForCommercial] = React.useState(false);
   const [readyForOrder, setReadyForOrder] = React.useState(false);
   const [result, setResult] = React.useState("verified");
@@ -463,9 +474,20 @@ function VerifyModal({ lead, onClose }: ModalProps) {
     /* Only the readiness answers are still asked; a suggestion for any other
        slot is ignored rather than written into a question nobody sees. */
     switch (key) {
-      case "readyForTrial": setReadyForTrial(value === true); break;
-      case "readyForCommercial": setReadyForCommercial(value === true); break;
-      case "readyForOrder": setReadyForOrder(value === true); break;
+      /* One readiness answer at a time: a suggestion that would make a second
+         one positive is left for the manager to choose between. */
+      case "readyForTrial":
+        if (value === true && (readyForCommercial || readyForOrder)) return;
+        setReadyForTrial(value === true);
+        break;
+      case "readyForCommercial":
+        if (value === true && (readyForTrial || readyForOrder)) return;
+        setReadyForCommercial(value === true);
+        break;
+      case "readyForOrder":
+        if (value === true && (readyForTrial || readyForCommercial)) return;
+        setReadyForOrder(value === true);
+        break;
       default: return;
     }
     touch(key);
@@ -507,11 +529,12 @@ function VerifyModal({ lead, onClose }: ModalProps) {
       if (row.choice === "unable") return undefined;
       return row.choice === "correct" && row.value.trim() ? row.value.trim() : (f.get(lead) ?? undefined);
     };
-    const answers: Record<string, string> = {
-      ready_for_trial: yn(readyForTrial),
-      ready_for_commercial: yn(readyForCommercial),
-      ready_for_order: yn(readyForOrder),
-    };
+    /* Only the readiness answers the manager gave: an untouched box is not an
+       answer, and a Yes is what asks for a stage move. */
+    const answers: Record<string, string> = {};
+    if (touched.has("readyForTrial")) answers.ready_for_trial = yn(readyForTrial);
+    if (touched.has("readyForCommercial")) answers.ready_for_commercial = yn(readyForCommercial);
+    if (touched.has("readyForOrder")) answers.ready_for_order = yn(readyForOrder);
     if (currentProduct.trim()) answers.current_product = currentProduct.trim();
     const competitor = shopSays("competitor");
     if (competitor) answers.competitor = competitor;
@@ -583,9 +606,9 @@ function VerifyModal({ lead, onClose }: ModalProps) {
 
       <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">What they are ready for</div>
       <div className="mb-3 flex flex-wrap gap-3.5">
-        <CheckField label="Ready for trial" checked={readyForTrial} onChange={answer("readyForTrial", setReadyForTrial)} />
-        <CheckField label="Ready for commercial discussion" checked={readyForCommercial} onChange={answer("readyForCommercial", setReadyForCommercial)} />
-        <CheckField label="Ready for order discussion" checked={readyForOrder} onChange={answer("readyForOrder", setReadyForOrder)} />
+        <CheckField label="Ready for trial" checked={readyForTrial} disabled={readyForCommercial || readyForOrder} onChange={answer("readyForTrial", setReadyForTrial)} />
+        <CheckField label="Ready for commercial discussion" checked={readyForCommercial} disabled={readyForTrial || readyForOrder} onChange={answer("readyForCommercial", setReadyForCommercial)} />
+        <CheckField label="Ready for order discussion" checked={readyForOrder} disabled={readyForTrial || readyForCommercial} onChange={answer("readyForOrder", setReadyForOrder)} />
       </div>
 
       <div className="mt-4 mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Verification result</div>

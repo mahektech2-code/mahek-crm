@@ -128,7 +128,7 @@ const verify = (customerId: string) =>
   verifyProspect({
     customerId,
     outcome: "verified",
-    answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+    answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "No" },
     corrections: [],
   });
 

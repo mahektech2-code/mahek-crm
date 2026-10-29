@@ -484,7 +484,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     const r = await verifyProspect({
       customerId: lead.id,
       outcome: "verified",
-      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      answers: { current_product: "Asian Paints PU", visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "No" },
       corrections: [],
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -498,7 +498,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.equal(rec.verification.done, true);
     assert.equal(rec.verification.result, "verified");
     assert.equal(rec.verification.visitedConfirmed, true);
-    assert.equal(rec.verification.readyForTrial, true);
+    assert.equal(rec.verification.readyForTrial, false);
     assert.equal(rec.verification.by, "Sales Manager");
   });
 
