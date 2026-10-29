@@ -40,6 +40,7 @@ import { DOCUMENT_STATUS_LABEL, DOCUMENT_STATUS_TONE } from "@/lib/price-list-la
 import type { DocumentView } from "@/lib/price-list-views";
 import { stamp } from "@/lib/format";
 import { deleteDocument, reparseDocument } from "@/lib/actions/price-lists";
+import { isReading } from "@/lib/engines/price-document";
 import { ImportModal } from "@/components/pricing/modals/import-modal";
 import { RejectDocumentModal } from "@/components/pricing/modals/reject-document-modal";
 
@@ -74,16 +75,26 @@ export function DocumentsPanel({
 
   function menuFor(document: DocumentView): MenuItem[] {
     const published = document.parseStatus === "published";
+    const rejected = document.parseStatus === "rejected";
+    // Two reads of one file at once doubled every staged row. While a read is
+    // running the server refuses another; a read that died part-way is
+    // offered "Read again" on its review page, and the hourly sweep marks it
+    // failed so it can be re-parsed from here too.
+    const reading = isReading(document.parseStatus);
     return [
       { label: "Review", onSelect: () => router.push(`${basePath}/documents/${document.id}`) },
       {
         label: "Re-parse",
-        disabled: !canManage || published,
+        disabled: !canManage || published || rejected || reading,
         title: !canManage
           ? "Only somebody who can manage price lists may read a file again."
           : published
             ? "This one already became a price list; re-reading it would change nothing."
-            : undefined,
+            : rejected
+              ? "This one was rejected. Upload it again if it should be read after all."
+              : reading
+                ? "It is being read now. If it has stopped, open Review to read it again."
+                : undefined,
         onSelect: () => setDialog({ kind: "reparse", document }),
       },
       {

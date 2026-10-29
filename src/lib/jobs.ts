@@ -158,6 +158,7 @@ export type JobName =
   | "website-review-expiry"
   /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
   | "bank-statement-pdfs"
+  | "price-list-stale-reads"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
@@ -755,6 +756,13 @@ async function bankPdfStep() {
   return { recordsAffected: r.deleted, detail: `${r.deleted} statement PDF${r.deleted === 1 ? "" : "s"} deleted` };
 }
 
+/** Price-list reads that died part-way become failed, so "Read again" is offered. */
+async function staleReadsStep() {
+  const { failStaleReads } = await import("./services/price-list-parse-service");
+  const n = await failStaleReads();
+  return { recordsAffected: n, detail: `${n} stalled price-list read${n === 1 ? "" : "s"} marked failed` };
+}
+
 /**
  * WHO THE CALL LOG HOLDS BACK, rebuilt on the hour.
  *
@@ -796,6 +804,7 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
 
   // Bank statement PDFs past their days are deleted; the lines stay.
   results.push(await run("bank-statement-pdfs", bankPdfStep, triggeredById));
+  results.push(await run("price-list-stale-reads", staleReadsStep, triggeredById));
 
   // The Top customers report has its own 10:00 IST cron line on the 1st. This
   // is the net under it: a droplet whose crontab predates that line still

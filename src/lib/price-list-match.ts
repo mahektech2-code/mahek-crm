@@ -126,7 +126,10 @@ function structuralCandidates(column: ParsedColumn, catalogue: CatalogueSku[]): 
       return sku.cansPerBox === column.cansPerBox;
     }
     if (column.container === "loose") return isLoose(sku) && !isTin(sku);
-    if (column.cansPerBox != null) return sku.cansPerBox === column.cansPerBox && !isTin(sku) && !isDrum(sku);
+    // A SKU with no box count is sold one can at a time — the sheet prints it
+    // "01 Can", and reading that back as 1 must find it. Comparing null to 1
+    // held every such cell of our own PDF on re-import.
+    if (column.cansPerBox != null) return (sku.cansPerBox ?? 1) === column.cansPerBox && !isTin(sku) && !isDrum(sku);
     return !isDrum(sku);
   });
 }

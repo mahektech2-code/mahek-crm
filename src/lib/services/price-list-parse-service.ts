@@ -15,6 +15,7 @@ import { fileStorage } from "@/lib/storage";
 import { extractPages, readWithVision } from "@/lib/price-list-extract";
 import { filenameHints, parsePriceListText, type ParsedPriceList } from "@/lib/price-list-parse";
 import { matchGrid, type AliasRow, type CatalogueSku } from "@/lib/price-list-match";
+import { FINAL_STATUSES, READING_STATUSES, STALE_READ_MS, stagedFigures } from "@/lib/engines/price-document";
 
 /* ---------------------------------------------------------------------------
  * A FILE BECOMES STAGED ROWS, one stage at a time and in the open.
@@ -158,15 +159,60 @@ async function catalogue(): Promise<{ skus: CatalogueSku[]; aliases: AliasRow[] 
  * everything else is rewritten. That is what makes "re-parse" safe after the
  * reading rule changes — the same reason the taken-order reparse exists.
  */
-export async function parseDocument(documentId: string): Promise<{ status: PriceDocumentStatus; problems: string[] }> {
+export type ParseOutcome = { status: PriceDocumentStatus; problems: string[]; refused?: "final" | "running" };
+
+/**
+ * ONE READ AT A TIME, and never of a finished document. The first stage is
+ * CLAIMED with one conditional update: it lands only where the document is not
+ * published or rejected and no live read holds it (a read whose stage started
+ * longer ago than `STALE_READ_MS` is dead, and may be taken over). Two reads
+ * of one file used to both delete the unanswered rows and both insert theirs,
+ * so every count doubled; and a published file could be put back to "parsed"
+ * and published as a second list.
+ */
+async function claim(documentId: string): Promise<"ok" | "final" | "running" | "missing"> {
+  const stale = new Date(Date.now() - STALE_READ_MS);
+  const claimed = await db
+    .update(priceListDocuments)
+    .set({ parseStatus: "extracting", stageNote: "Reading the file", stageStartedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(priceListDocuments.id, documentId),
+        sql`${priceListDocuments.parseStatus} not in (${sql.join(FINAL_STATUSES.map((s) => sql`${s}`), sql`, `)})`,
+        sql`(${priceListDocuments.parseStatus} not in (${sql.join(READING_STATUSES.map((s) => sql`${s}`), sql`, `)})
+             or ${priceListDocuments.stageStartedAt} is null
+             or ${priceListDocuments.stageStartedAt} < ${stale.toISOString()})`,
+      ),
+    )
+    .returning({ id: priceListDocuments.id });
+  if (claimed.length) return "ok";
+  const [doc] = await db.select({ parseStatus: priceListDocuments.parseStatus }).from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
+  if (!doc) return "missing";
+  return (FINAL_STATUSES as readonly string[]).includes(doc.parseStatus) ? "final" : "running";
+}
+
+export async function parseDocument(documentId: string): Promise<ParseOutcome> {
   const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
   if (!doc) return { status: "failed", problems: ["No such document."] };
+
+  const claimed = await claim(documentId);
+  if (claimed === "missing") return { status: "failed", problems: ["No such document."] };
+  if (claimed === "final") {
+    return {
+      status: doc.parseStatus as PriceDocumentStatus,
+      problems: [doc.parseStatus === "published" ? "This one has already become a price list." : "This one was rejected."],
+      refused: "final",
+    };
+  }
+  if (claimed === "running") {
+    return { status: doc.parseStatus as PriceDocumentStatus, problems: ["This file is being read right now. Wait for that read to finish."], refused: "running" };
+  }
 
   try {
     const config = await getConfig();
 
     /* ---- extracting: the words off the page --------------------------- */
-    await stage(documentId, "extracting", "Reading the file");
+    await new Promise((r) => setTimeout(r, STAGE_FLOOR_MS));
     const bytes = await attachmentBytes(doc.attachmentId);
     if (!bytes) throw new Error("The uploaded file could not be read back from storage.");
 
@@ -177,7 +223,7 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
     /* ---- classifying: which layout, and by which reader --------------- */
     await stage(documentId, "classifying", extracted.kind === "pdf_text" ? "Reading the grid" : "No text in the file; asking a model to read it");
     if (extracted.kind === "pdf_text") {
-      parsed = parsePriceListText(extracted.pages);
+      parsed = parsePriceListText(extracted.pages, extracted.meta);
     } else {
       const vision = await readWithVision(bytes.bytes, bytes.contentType);
       if ("error" in vision) throw new Error(vision.error);
@@ -188,7 +234,7 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
     /* ---- normalising: figures and packs ------------------------------- */
     await stage(documentId, "normalising", `${parsed.rows.length} products × ${parsed.columns.length} pack sizes`);
     const gstBp = parsed.header.gstBp ?? config["pricing.gstBp"];
-    const inclusive = (parsed.header.taxBasis ?? "inclusive") === "inclusive";
+    const basis = parsed.header.taxBasis ?? "inclusive";
 
     /* ---- matching: which SKU each cell names -------------------------- */
     await stage(documentId, "matching", "Matching each row to the catalogue");
@@ -222,7 +268,11 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
           const match = matches.get(key);
           if (match?.status === "held") held++;
           if (match?.status === "suggested") suggested++;
-          const incl = cellValue.inclPaise;
+          // Stored as the document PRINTS it, and the other figure beside it.
+          // A list printed GST-extra has already given us the ex figure; the
+          // same whole-number arithmetic as everywhere else, so a re-read
+          // and a later header correction land on the same paisa.
+          const figures = stagedFigures(cellValue.inclPaise, basis, gstBp);
           rows.push({
             id: gen("plp"),
             documentId,
@@ -235,10 +285,8 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
             millilitres: column?.millilitres ?? null,
             cansPerBox: column?.cansPerBox ?? null,
             container: column?.container ?? null,
-            // Stored as the document PRINTS it, and ex-GST beside it. A list
-            // printed GST-extra has already given us the ex figure.
-            rateInclGstPaise: incl == null ? null : inclusive ? incl : Math.round(incl * (1 + gstBp / 10_000)),
-            rateExGstPaise: incl == null ? null : inclusive ? Math.round(incl / (1 + gstBp / 10_000)) : incl,
+            rateInclGstPaise: figures.incl,
+            rateExGstPaise: figures.ex,
             offered: cellValue.offered,
             matchedProductId: match?.productId ?? null,
             matchStatus: match?.status ?? "held",
@@ -259,6 +307,8 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
       parsed.confidence < floor || held > 0 || parsed.warnings.length > 0 ? "needs_review" : "parsed";
 
     const header: PriceParsedHeader = { ...parsed.header, discountTerms: parsed.discountTerms, termsText: parsed.termsText };
+    // Guarded like the claim: a document published or rejected while this
+    // read ran keeps the status a person gave it.
     await db
       .update(priceListDocuments)
       .set({
@@ -276,7 +326,7 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
         parsedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(priceListDocuments.id, documentId));
+      .where(and(eq(priceListDocuments.id, documentId), sql`${priceListDocuments.parseStatus} not in ('published', 'rejected')`));
 
     return { status, problems };
   } catch (e) {
@@ -284,9 +334,35 @@ export async function parseDocument(documentId: string): Promise<{ status: Price
     await db
       .update(priceListDocuments)
       .set({ parseStatus: "failed", stageNote: message, updatedAt: new Date() })
-      .where(eq(priceListDocuments.id, documentId));
+      .where(and(eq(priceListDocuments.id, documentId), sql`${priceListDocuments.parseStatus} not in ('published', 'rejected')`));
     return { status: "failed", problems: [message] };
   }
+}
+
+/**
+ * Reads that died part-way, put down as failed so the screens offer "Read
+ * again". A tab closed mid-read, or a request killed at the route's 300
+ * seconds, leaves the document in a stage nothing will ever finish — and it
+ * was shown as read while it held nothing. A queued file nobody started counts
+ * too. Run hourly; also asked by nothing else, because the screens already
+ * treat a stale stage as stuck on their own.
+ */
+export async function failStaleReads(nowMs = Date.now()): Promise<number> {
+  const stale = new Date(nowMs - STALE_READ_MS).toISOString();
+  const done = await db
+    .update(priceListDocuments)
+    .set({
+      parseStatus: "failed",
+      stageNote: "The read stopped part-way — the window was closed or it ran out of time. Read it again.",
+      updatedAt: new Date(),
+    })
+    .where(
+      sql`(${priceListDocuments.parseStatus} in (${sql.join(READING_STATUSES.map((s) => sql`${s}`), sql`, `)})
+            and coalesce(${priceListDocuments.stageStartedAt}, ${priceListDocuments.createdAt}) < ${stale})
+          or (${priceListDocuments.parseStatus} = 'queued' and ${priceListDocuments.createdAt} < ${stale})`,
+    )
+    .returning({ id: priceListDocuments.id });
+  return done.length;
 }
 
 /** The bytes back out of storage, with the type they were stored under. */

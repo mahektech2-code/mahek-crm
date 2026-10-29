@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -15,6 +15,7 @@ import {
   priceLists,
   priceRequests,
   productAliases,
+  products,
   PRICE_DELIVERY_BASES,
   PRICE_DISCOUNT_KINDS,
   PRICE_FREIGHT_TERMS,
@@ -31,7 +32,9 @@ import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { notifyUsers } from "@/lib/notify";
 import { deriveRate, exFromIncl, inclFromEx, listInclFromEx, roundToRupee } from "@/lib/engines/price-math";
+import { money } from "@/lib/format";
 import { placeKey } from "@/lib/engines/price-resolution";
+import { canReread, isReading, pickDocumentRates, restage, stagedFigures, type TaxBasis } from "@/lib/engines/price-document";
 import { ratesForCustomer, resolveForCustomer } from "@/lib/services/price-list-service";
 import { err, fieldErr, fromThrown, ok, okVoid, type FieldError, type Result } from "@/lib/result";
 
@@ -1155,29 +1158,41 @@ export async function resolveParseRow(input: {
   }
 }
 
+/**
+ * A cell's price, corrected by a person — typed AS THE DOCUMENT PRINTS IT.
+ * On a GST-extra list that is the ex figure, and the inclusive one is grossed
+ * up beside it exactly as the reader stages it; it used to be stored as the
+ * inclusive figure too, so a corrected cell went into force 18% short.
+ */
 export async function setParseRowPrice(input: {
   rowId: string;
-  rateInclGstPaise: number | null;
+  /** The figure as the document prints it, in the document's own tax basis. */
+  printedPaise: number | null;
   offered: boolean;
 }): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
+    if (input.offered && (input.printedPaise == null || !Number.isInteger(input.printedPaise) || input.printedPaise <= 0)) {
+      return fieldErr("rateInclGstPaise", "Type the price as the document prints it, or say it is not offered.");
+    }
     const [row] = await db.select().from(priceListParseRows).where(eq(priceListParseRows.id, input.rowId));
     if (!row) return err("That cell does not exist.", "not_found");
 
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, row.documentId));
+    if (doc?.parseStatus === "published") return err("This document is already a price list. Change the list instead.", "rule_violation");
     const config = await getConfig();
     const header = doc?.header as PriceParsedHeader | null;
     const gstBp = header?.gstBp ?? config["pricing.gstBp"];
-    const inclusive = (header?.taxBasis ?? "inclusive") === "inclusive";
-    const incl = input.offered ? input.rateInclGstPaise : null;
+    const basis: TaxBasis = header?.taxBasis ?? "inclusive";
+    const figures = stagedFigures(input.offered ? input.printedPaise : null, basis, gstBp);
+    const incl = figures.incl;
 
     await db.transaction(async (tx) => {
       await tx
         .update(priceListParseRows)
         .set({
-          rateInclGstPaise: incl,
-          rateExGstPaise: incl == null ? null : inclusive ? exFromIncl(incl, gstBp) : incl,
+          rateInclGstPaise: figures.incl,
+          rateExGstPaise: figures.ex,
           offered: input.offered,
           decidedById: ctx.user.id,
           decidedAt: new Date(),
@@ -1206,12 +1221,38 @@ export async function updateDocumentHeader(documentId: string, header: Partial<P
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
     if (!doc) return err("That document does not exist.", "not_found");
 
-    const merged = { ...((doc.header as PriceParsedHeader | null) ?? {}), ...header } as PriceParsedHeader;
+    if (doc.parseStatus === "published") return err("This document is already a price list. Change the list instead.", "rule_violation");
+    if (isReading(doc.parseStatus)) return err("This file is being read right now. Wait for the read to finish.", "rule_violation");
+
+    const before = (doc.header as PriceParsedHeader | null) ?? null;
+    const merged = { ...(before ?? {}), ...header } as PriceParsedHeader;
+    const config = await getConfig();
+    const from = { basis: (before?.taxBasis ?? "inclusive") as TaxBasis, gstBp: before?.gstBp ?? config["pricing.gstBp"] };
+    const to = { basis: (merged.taxBasis ?? "inclusive") as TaxBasis, gstBp: merged.gstBp ?? config["pricing.gstBp"] };
+    const repriced = from.basis !== to.basis || from.gstBp !== to.gstBp;
     await db.transaction(async (tx) => {
       await tx
         .update(priceListDocuments)
         .set({ header: merged, updatedAt: new Date() })
         .where(eq(priceListDocuments.id, documentId));
+      /* A corrected tax basis or GST rate does not change what the paper
+       * PRINTED; it changes what that figure means. Every staged cell is
+       * worked out again from its printed figure, so publishing reads figures
+       * that agree with the header it is published under. */
+      if (repriced) {
+        const staged = await tx
+          .select({ id: priceListParseRows.id, rateInclGstPaise: priceListParseRows.rateInclGstPaise, rateExGstPaise: priceListParseRows.rateExGstPaise })
+          .from(priceListParseRows)
+          .where(eq(priceListParseRows.documentId, documentId));
+        for (const r of staged) {
+          if (r.rateInclGstPaise == null && r.rateExGstPaise == null) continue;
+          const next = restage(r, from, to);
+          await tx
+            .update(priceListParseRows)
+            .set({ rateInclGstPaise: next.incl, rateExGstPaise: next.ex, updatedAt: new Date() })
+            .where(eq(priceListParseRows.id, r.id));
+        }
+      }
       await audit(tx, ctx, {
         action: "pricelist.document.header",
         entityType: "price_list_document",
@@ -1249,10 +1290,19 @@ export async function publishDocument(
     if (doc.parseStatus === "published") {
       return err("This document has already been published as a price list.", "rule_violation");
     }
+    if (isReading(doc.parseStatus)) {
+      return err("This file is still being read. Wait for the read to finish, then publish it.", "rule_violation");
+    }
 
     const header = (doc.header as PriceParsedHeader | null) ?? null;
     const config = await getConfig();
     const gstBp = parsed.data.gstBp ?? header?.gstBp ?? config["pricing.gstBp"];
+    const taxBasis: TaxBasis = parsed.data.taxBasis ?? header?.taxBasis ?? "inclusive";
+    // The figures were staged under the header the file was READ with; the
+    // list goes into force under this one. Each rate is worked out again from
+    // what the paper printed, so a basis or GST corrected on the publish form
+    // re-prices nothing by accident.
+    const readAs = { basis: (header?.taxBasis ?? "inclusive") as TaxBasis, gstBp: header?.gstBp ?? config["pricing.gstBp"] };
 
     const statuses = input.includeSuggested
       ? ["matched", "alias", "manual", "suggested"]
@@ -1296,17 +1346,48 @@ export async function publishDocument(
       );
     }
 
+    // One rate per SKU: a grid prints one product once per column, but two
+    // rows that resolve to the same SKU would collide on the unique index.
+    // Which one wins is decided, never "the first": see `pickDocumentRates`.
+    const pick = pickDocumentRates([...rows], readAs, { basis: taxBasis, gstBp });
+    if (pick.conflicts.length) {
+      const names = await db
+        .select({ id: products.id, name: products.name })
+        .from(products)
+        .where(inArray(products.id, pick.conflicts.map((c) => c.productId)));
+      const nameOf = new Map(names.map((n) => [n.id, n.name]));
+      const said = pick.conflicts
+        .slice(0, 3)
+        .map((c) => `${nameOf.get(c.productId) ?? c.labels[0]} (${c.prices.map((p) => money(p)).join(" and ")})`)
+        .join("; ");
+      return err(
+        `Two cells price the same product differently, so nothing was published: ${said}${pick.conflicts.length > 3 ? ` and ${pick.conflicts.length - 3} more` : ""}. Point one of the cells at a different product, or skip it, then publish.`,
+        "rule_violation",
+      );
+    }
+
     const warnings: string[] = [];
     if (Number(skipped)) {
       warnings.push(`${skipped} cell${Number(skipped) === 1 ? "" : "s"} had no product and ${Number(skipped) === 1 ? "was" : "were"} left out.`);
     }
+    if (pick.dropped) {
+      warnings.push(`${pick.dropped} cell${pick.dropped === 1 ? "" : "s"} named a product another cell already priced, and ${pick.dropped === 1 ? "was" : "were"} left out.`);
+    }
 
     const listId = gen("pl");
-    // One rate per SKU: a grid prints one product once per column, but two
-    // rows that resolve to the same SKU would collide on the unique index.
-    const seen = new Set<string>();
+    let raced = false;
 
     await db.transaction(async (tx) => {
+      /* ONE LIST PER DOCUMENT. The status was read outside this transaction,
+       * so a double click or two tabs both passed it and made two lists. The
+       * row is locked here and asked again; the loser writes nothing. */
+      const [locked] = await tx.execute<{ parseStatus: string }>(sql`
+        select parse_status as "parseStatus" from price_list_documents where id = ${documentId} for update
+      `);
+      if (!locked || locked.parseStatus === "published" || isReading(locked.parseStatus)) {
+        raced = true;
+        return;
+      }
       await tx.insert(priceLists).values({
         id: listId,
         refNo: parsed.data.refNo?.trim() || header?.refNo || null,
@@ -1315,7 +1396,7 @@ export async function publishDocument(
         documentId,
         effectiveFrom: parsed.data.effectiveFrom,
         validityDays: parsed.data.validityDays ?? header?.validityDays ?? null,
-        taxBasis: parsed.data.taxBasis ?? header?.taxBasis ?? "inclusive",
+        taxBasis,
         gstBp,
         deliveryBasis: parsed.data.deliveryBasis ?? header?.deliveryBasis ?? null,
         freightTerm: parsed.data.freightTerm ?? header?.freightTerm ?? "not_stated",
@@ -1329,20 +1410,18 @@ export async function publishDocument(
       });
 
       const values = [];
-      for (const r of rows) {
-        if (seen.has(r.matchedProductId)) continue;
-        seen.add(r.matchedProductId);
-        const ex = r.rateExGstPaise == null ? null : Number(r.rateExGstPaise);
+      for (const r of pick.chosen) {
         // A dash keeps its SKU and is stored as not offered — "we do not sell
-        // this in this pack on this list" is a fact, and zero is not.
-        if (ex == null && r.offered) continue;
+        // this in this pack on this list" is a fact, and zero is not. The
+        // inclusive figure is the one the paper PRINTED (on an inclusive
+        // list), not one rebuilt from the ex figure a paisa away from it.
         values.push({
           id: gen("plr"),
           priceListId: listId,
           productId: r.matchedProductId,
-          rateExGstPaise: ex ?? 0,
-          rateInclGstPaise: ex == null ? 0 : inclFromEx(ex, gstBp),
-          offered: r.offered && ex != null,
+          rateExGstPaise: r.ex ?? 0,
+          rateInclGstPaise: r.incl ?? 0,
+          offered: r.offered && r.ex != null,
           rawProductText: r.rawProductText,
           rawPackText: r.rawPackText,
           rawPriceText: r.rawPriceText,
@@ -1404,6 +1483,8 @@ export async function publishDocument(
       });
     });
 
+    if (raced) return err("This document has already been published as a price list.", "rule_violation");
+
     if (input.publishNow) {
       const published = await publishPriceList(listId, { supersedesId: input.supersedesId ?? null });
       if (!published.ok) {
@@ -1441,7 +1522,7 @@ export async function rejectDocument(documentId: string, reason: string): Promis
           rejectReason: reason.trim(),
           updatedAt: new Date(),
         })
-        .where(eq(priceListDocuments.id, documentId));
+        .where(and(eq(priceListDocuments.id, documentId), sql`${priceListDocuments.parseStatus} <> 'published'`));
       await audit(tx, ctx, {
         action: "pricelist.document.reject",
         entityType: "price_list_document",
@@ -1465,15 +1546,19 @@ export async function reparseDocument(documentId: string): Promise<Result<{ stat
     if (doc.parseStatus === "published") {
       return err("This one has already become a price list. Re-reading it would change nothing.", "rule_violation");
     }
+    if (doc.parseStatus === "rejected") {
+      return err("This one was rejected. Upload it again if it should be read after all.", "rule_violation");
+    }
+    if (!canReread({ parseStatus: doc.parseStatus, stageStartedAt: doc.stageStartedAt, createdAt: doc.createdAt }, Date.now())) {
+      return err("This file is being read right now. Wait for that read to finish before reading it again.", "rule_violation");
+    }
 
-    // Everything a person answered stands; the rest is read again. That is
-    // what makes re-parsing safe after the reading rule changes.
-    await db
-      .delete(priceListParseRows)
-      .where(and(eq(priceListParseRows.documentId, documentId), isNull(priceListParseRows.decidedById)));
-
+    // Everything a person answered stands; the rest is read again — inside
+    // `parseDocument`, after it has claimed the document, so a second press
+    // cannot delete the rows a running read is about to write beside.
     const { parseDocument } = await import("@/lib/services/price-list-parse-service");
     const result = await parseDocument(documentId);
+    if (result.refused) return err(result.problems[0] ?? "This file cannot be read again now.", "rule_violation");
 
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {
