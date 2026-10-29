@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       keep:
-        description: "How many tags to keep besides `latest` and whatever production is serving."
+        description: "How many tags to keep besides `latest` and whatever production is serving. 0 keeps only those two."
         default: "3"
 
 concurrency:
@@ -85,8 +85,12 @@ jobs:
 
           node -e '
             const rows = require("/tmp/tags.json");
-            const keepCount = Number(process.env.KEEP) || 3;
+            /* 0 is an answer — keep only latest and the live tag — not a blank: `|| 3` read it as "the default". */
+            const asked = Number(process.env.KEEP);
+            const keepCount = process.env.KEEP && Number.isInteger(asked) && asked >= 0 ? asked : 3;
             const live = (process.env.LIVE || "").trim();
+            /* Keeping none but latest is only safe while the live tag is known: never guess with it. */
+            if (!live && keepCount < 1) { console.error("::error::Could not read what production is running, so keep 0 would risk deleting it. Nothing deleted."); process.exit(1); }
             const named = rows.filter(r => r.tag)
               .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
             const protect = new Set(["latest"]);
