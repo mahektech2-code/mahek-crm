@@ -2031,6 +2031,13 @@
       "when": 1793606520000,
       "tag": "0292_customer_order_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 290,
+      "version": "7",
+      "when": 1793606580000,
+      "tag": "0293_transporter_ref_list_retired",
+      "breakpoints": true
     }
   ]
 }
