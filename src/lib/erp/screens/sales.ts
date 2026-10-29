@@ -13,18 +13,17 @@ import {
   erpOrders,
   erpTransports,
   priceListDiscountTerms,
-  priceListRates,
   priceLists,
   products,
   users,
   type PriceDiscountKind,
 } from "@/db/schema";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
-import { resolvePriceList, type CustomerGeo } from "@/lib/engines/price-resolution";
+import { resolvePriceList, type CustomerGeo, type Resolution } from "@/lib/engines/price-resolution";
 import { discountTermSentence } from "@/lib/price-list-labels";
 import { weightFor } from "@/lib/catalogue";
 import { stamp } from "@/lib/format";
-import { activeScopesAndLists, geographyOf } from "@/lib/services/price-list-service";
+import { activeScopesAndLists, chainedRate, geographyOf, resolveOptions, rowsForLists } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
 import { listedTransporterName, transporterChoices } from "../transporter-rename";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
@@ -164,11 +163,19 @@ function lineWeightKg(qtyCans: number, sku: Sku): number | null {
  * rule its price-list screens and its variance report already price by: a
  * list named for the customer, then their salesman, beat, area, city,
  * district, state, customer type, everybody, narrowest wins. Then the SKU's
- * flat row on that list, or failing that a row for another SKU of the same FG
- * product, as the source looks up by FG product. A slab row is not a rate,
- * and a dash ("not for sale on this list") is the list saying so about that
- * SKU: no rate, and no borrowing one from its other packing either. The rate is the list's ex-GST rate,
- * because order details adds GST on top (decision recorded in the phase 4 PR).
+ * row off the CRM's own chain (`chainedRate` in the price-list service): the
+ * first list that names the party AND has a row for the SKU, so a party on a
+ * one-rate "agreed prices" list keeps every other SKU's rate from the list
+ * beneath it. A dash ("not for sale on this list") is the list saying so about
+ * that SKU and does not fall through. With a quantity the slab it falls in is
+ * the rate. The rate is the list's ex-GST rate, because order details adds GST
+ * on top (decision recorded in the phase 4 PR).
+ *
+ * THERE IS NO SIBLING-PACK FALLBACK any more. It used to borrow a rate from
+ * "another SKU of the same FG product", chosen by whichever row the database
+ * returned first — a 1 L can priced at the 20 L rate on one read and the 5 L
+ * on the next, and a rate the CRM never quoted. An SKU no list prices has no
+ * list rate, and the form says so.
  *
  * A list's discounts are SAID, never applied. Every kind a list can carry is
  * conditional — advance payment, prompt payment, a quantity, "other" — and the
@@ -182,70 +189,63 @@ function lineWeightKg(qtyCans: number, sku: Sku): number | null {
  * ("Western line Paid — 1 Aug 2026"), so on prod not one of 446 parties
  * matched and every rate was typed, while Accounts resolved a list for 206.
  *
- * Resolved as of TODAY on the form and on the save alike, so the rate a person
- * is shown is the rate that is written.
+ * The FORM fills as of today, with no quantity, because a fill is keyed on
+ * the party and the SKU alone. The SAVE prices as of the ORDER'S OWN DATE and
+ * its cans: a back-dated order across a revision takes the rate in force on
+ * its date, not today's. Where the rate on the line is still the figure the
+ * form filled in, it is the list's figure and is re-read for the date and the
+ * quantity; a rate somebody typed over it stands.
  */
 type AppliedList = { id: string; name: string; /** Its discount terms, in the Accounts app's words: "3% off for advance payment". */ terms: string[] };
 
 type PriceBook = {
-  /** The list in force for this party, or null where none applies. */
-  listOf: (customerId: string) => AppliedList | null;
-  rateOf: (customerId: string, sku: Sku | undefined) => number | null;
+  /** The list in force for this party on the day (today where none is given), or null where none applies. */
+  listOf: (customerId: string, day?: string) => AppliedList | null;
+  /** The SKU's rate for the party on the day, at the quantity where one is given. */
+  rateOf: (customerId: string, sku: Sku | undefined, day?: string, cans?: number | null) => number | null;
 };
 
 async function priceBook(customerIds: Iterable<string>): Promise<PriceBook> {
   const [book, geo] = await Promise.all([readOnceKeyed("erp.priceBook", readPriceBook), partyGeography([...new Set(customerIds)])]);
-  const day = today();
-  const resolved = new Map<string, AppliedList | null>();
-  const listOf = (customerId: string) => {
-    if (!resolved.has(customerId)) {
+  const resolved = new Map<string, Resolution | null>();
+  const resolutionOf = (customerId: string, day: string) => {
+    const key = `${customerId}|${day}`;
+    if (!resolved.has(key)) {
       const g = geo.get(customerId);
-      const r = g ? resolvePriceList(g, book.scopes, book.lists, day) : null;
-      resolved.set(customerId, r ? { id: r.listId, name: r.listName, terms: book.terms.get(r.listId) ?? [] } : null);
+      resolved.set(key, g ? resolvePriceList(g, book.scopes, book.lists, day, book.opts) : null);
     }
-    return resolved.get(customerId)!;
+    return resolved.get(key)!;
   };
   return {
-    listOf,
-    rateOf(customerId, sku) {
-      const list = listOf(customerId);
-      return list && sku ? book.rateOf(list.id, sku) : null;
+    listOf(customerId, day = today()) {
+      const r = resolutionOf(customerId, day);
+      return r ? { id: r.listId, name: r.listName, terms: book.terms.get(r.listId) ?? [] } : null;
+    },
+    rateOf(customerId, sku, day = today(), cans) {
+      if (!sku) return null;
+      const picked = chainedRate(resolutionOf(customerId, day), book.rows, sku.id, cans);
+      return picked?.row?.rateExGstPaise ?? null;
     },
   };
 }
 
-/** Every published list, its scopes, flat rates and discount terms: the half of the book that does not depend on the party. */
+/** Every list that can price, its scopes, rows and discount terms: the half of the book that does not depend on the party. */
 async function readPriceBook() {
-  const [{ scopes, lists }, rates, terms] = await Promise.all([
+  const [{ scopes, lists }, opts, terms] = await Promise.all([
     activeScopesAndLists(),
-    db
-      .select({ list: priceListRates.priceListId, sku: priceListRates.productId, fg: products.finishedGoodId, rate: priceListRates.rateExGstPaise, offered: priceListRates.offered })
-      .from(priceListRates)
-      .innerJoin(priceLists, eq(priceLists.id, priceListRates.priceListId))
-      .leftJoin(products, eq(products.id, priceListRates.productId))
-      .where(and(eq(priceLists.status, "published"), isNull(priceListRates.minCans))),
+    resolveOptions(),
     db
       .select({ list: priceListDiscountTerms.priceListId, kind: priceListDiscountTerms.kind, percentBp: priceListDiscountTerms.percentBp, thresholdLitres: priceListDiscountTerms.thresholdLitres, thresholdPaise: priceListDiscountTerms.thresholdPaise })
       .from(priceListDiscountTerms)
       .innerJoin(priceLists, eq(priceLists.id, priceListDiscountTerms.priceListId))
-      .where(eq(priceLists.status, "published"))
+      .where(inArray(priceLists.status, ["published", "superseded"]))
       .orderBy(asc(priceListDiscountTerms.percentBp), asc(priceListDiscountTerms.id)),
   ]);
-  /* A dash is kept as null, so the SKU it names does not fall through to its FG product's rate. */
-  const bySku = new Map<string, number | null>();
-  const byFg = new Map<string, number>();
-  for (const r of rates) {
-    bySku.set(`${r.list}|${r.sku}`, r.offered ? Number(r.rate) : null);
-    if (r.offered && r.fg && !byFg.has(`${r.list}|${r.fg}`)) byFg.set(`${r.list}|${r.fg}`, Number(r.rate));
-  }
+  /* The SAME rows the CRM prices from, slabs and dashes included. */
+  const rows = await rowsForLists(lists.map((l) => l.id), null);
   const said = new Map<string, string[]>();
   for (const t of terms) said.set(t.list, [...(said.get(t.list) ?? []), discountTermSentence({ ...t, kind: t.kind as PriceDiscountKind, thresholdPaise: t.thresholdPaise == null ? null : Number(t.thresholdPaise) })]);
-  const rateOf = (listId: string, sku: Sku) => {
-    const own = bySku.get(`${listId}|${sku.id}`);
-    if (own !== undefined) return own;
-    return (sku.fgId ? byFg.get(`${listId}|${sku.fgId}`) : undefined) ?? null;
-  };
-  return { scopes, lists, terms: said, rateOf };
+  return { scopes, lists, opts, terms: said, rows };
 }
 
 /** Where these parties are, for the price-list resolver — read by id, and within a page never one read twice. */
@@ -2282,6 +2282,8 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   if (!ls.length) return err("Add at least one SKU.");
   const [skus, prices] = await Promise.all([skuCatalogue(), priceBook([billing.id])]);
   const byName = new Map([...skus.values()].map((s) => [s.name, s]));
+  /* The order is priced as of its own date, not today's (a back-dated order across a revision). */
+  const orderDate = text(h.date) ?? today();
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
   const parsed: { sku: Sku; qty: number; rate: number | null; discount: number | null; remark: string | null }[] = [];
@@ -2292,9 +2294,15 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
     const qty = int(l.qty);
     if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Minus Quantity Not Allowed");
     if (!boxQuantity(qty, sku.cpb, !isBoxed(sku)).valid) return fieldErr(`l${i}.qty`, "INVALID");
-    const listRate = prices.rateOf(billing.id, sku);
+    /* What the form filled (today, no quantity), and what the list says for
+       THIS order's date and cans. A rate still equal to the fill is the
+       list's own figure, so it is re-read for the date and the quantity; a
+       rate somebody typed over it is theirs and stands. */
+    const filledRate = prices.rateOf(billing.id, sku);
+    const listRate = prices.rateOf(billing.id, sku, orderDate, qty);
     /* Somebody who cannot see the rate cannot set it either: the list decides. */
-    const typedRate = seeRate ? paise(l.rate) : null;
+    const typedRaw = seeRate ? paise(l.rate) : null;
+    const typedRate = typedRaw != null && filledRate != null && typedRaw === filledRate && listRate != null ? null : typedRaw;
     const typedDisc = seeAmounts ? num(l.discount) : null;
     if (typedDisc != null && (typedDisc < 0 || typedDisc > 100)) return fieldErr(`l${i}.discount`, "Discount must be between 0 and 100");
     parsed.push({
@@ -2364,7 +2372,7 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   const inboxId = text(h.inboxId);
   if (inboxId) await (await import("../ai-orders")).markConverted(ctx, inboxId, no);
   const noRate = parsed.filter((p) => p.rate == null).length;
-  const applied = prices.listOf(billing.id);
+  const applied = prices.listOf(billing.id, date);
   return okVoid(
     `Order ${no} saved · ${plural(parsed.length)} · waiting for the back office to verify${noRate ? ` · ${noRate} without a rate: ${applied ? `none on ${applied.name}` : "no price list applies to the party"}` : ""}`,
   );
