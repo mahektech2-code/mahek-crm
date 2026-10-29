@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { publicLinkOrigin } from "@/lib/public-links";
 
 /* ---------------------------------------------------------------------------
  * WHAT EVERY ERP MESSAGE TO A CUSTOMER SHARES: whether Wati can carry it, the
@@ -29,7 +30,9 @@ export async function watiRoute(templateName: string, what = "logistics"): Promi
 
 /** The address a customer's link is built against. */
 export async function messageOrigin(): Promise<string | null> {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
+  /* A link sent outside goes out on the public host where one is set — never the staff workspace's address. */
+  const pub = publicLinkOrigin();
+  if (pub) return pub;
   try {
     const { appOrigin } = await import("@/lib/password-reset");
     return await appOrigin();

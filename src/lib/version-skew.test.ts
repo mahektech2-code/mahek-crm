@@ -63,6 +63,8 @@ test("the build passes a fixed action key, as a secret and never a build-arg", (
 });
 
 test("the guard is mounted for every app, and Caddy waits out a restart", () => {
-  assert.match(readFileSync(join(root, "src/app/layout.tsx"), "utf8"), /<VersionGuard \/>/);
+  /* Through StaffChrome: every app's page, never a customer's or vendor's link. */
+  assert.match(readFileSync(join(root, "src/app/layout.tsx"), "utf8"), /<StaffChrome \/>/);
+  assert.match(readFileSync(join(root, "src/components/shell/staff-chrome.tsx"), "utf8"), /<VersionGuard \/>/);
   assert.match(readFileSync(join(root, "Caddyfile"), "utf8"), /lb_try_duration\s+\d+s/);
 });

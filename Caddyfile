@@ -113,3 +113,36 @@
 		# which on this box takes Postgres down with it.
 	}
 }
+
+# THE CUSTOMER-FACING HOST — tracking links, consignment links and vendor POs.
+# The same app answers it, but the app itself refuses every other path on this
+# host (src/lib/public-links.ts), so it is not a second door into the
+# workspace, and the workspace's own address never reaches a customer. The app
+# sends links out on this host only once PUBLIC_LINK_HOST is set in .env, so
+# add this block and the DNS record first, then set the variable.
+{$PUBLIC_LINK_HOST:track.mahekindia.com} {
+	encode zstd gzip
+
+	reverse_proxy app:3000 {
+		lb_try_duration 30s
+		lb_try_interval 250ms
+	}
+
+	@immutable path /_next/static/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		# A token link is a key; it must never be indexed.
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	log {
+		output file /data/public-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
