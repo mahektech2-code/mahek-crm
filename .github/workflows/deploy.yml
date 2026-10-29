@@ -85,57 +85,39 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      # WAIT FOR A COLLECTION THAT IS ALREADY RUNNING, and only for that.
+      # MAKE ROOM BEFORE THE PUSH, and wait for any collection to finish.
       #
-      # A garbage collection puts the registry READ-ONLY, and a push that lands
-      # inside one fails `401 Unauthorized` on the token fetch — which reads as
-      # a bad credential and is nothing of the kind. It happened the first time
-      # a deploy followed a prune closely: the prune at 21:14 started a
-      # collection, the push at 21:27 landed inside it, and two retries failed
-      # identically before a third, once the window had passed, succeeded with
-      # no change at all.
-      #
-      # The old code waited 15m30s after STARTING a collection, which was
-      # rightly removed — it spent a quarter of an hour of every deploy
-      # watching somebody else's clock, all of it after production was already
-      # serving. But it did protect this, by accident: holding the workflow's
-      # concurrency slot kept the NEXT deploy out of the window. Removing it
-      # removed the accident with the waste.
-      #
-      # So the wait moves to where the risk actually is and becomes
-      # conditional. Nothing is running on the ordinary deploy, this answers in
-      # one API call and moves on; only a deploy that genuinely collides with a
-      # collection pays anything, and it pays it instead of failing.
+      # Pruning only after a successful deploy was a deadlock: a full registry
+      # fails every push, so no deploy succeeds, so nothing prunes — and each
+      # failed push leaves ~100 MB of untagged layers behind. On 29 October it
+      # held every merge off production for six hours. Here, before the push,
+      # every tag but `latest` and the one production runs is deleted, a
+      # garbage collection is started if this push would not fit, and the job
+      # waits for it to finish: a push inside a collection fails `401`, and a
+      # full registry now costs one collection's wait rather than the deploy.
+      # It runs before signing in, so this job's own push token is not one the
+      # collection has to wait out. The rule is `.github/scripts/registry-room.sh`.
       - name: Install doctl
         if: env.HAVE_GC_TOKEN == 'yes'
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_API_TOKEN }}
 
-      - name: Wait for any registry garbage collection
+      - name: Make room in the registry
         if: env.HAVE_GC_TOKEN == 'yes'
-        run: |
-          set -euo pipefail
-          # Bounded. A collection of this registry takes about 25 seconds; ten
-          # minutes is far past any honest run, and timing out must not fail
-          # the deploy — the push is still worth attempting, and its own error
-          # is a better report than one invented here.
-          deadline=$(( SECONDS + 600 ))
-          while [ "${SECONDS}" -lt "${deadline}" ]; do
-            # `get-active` exits non-zero when there is none, which is the
-            # ordinary case and not an error.
-            if ! doctl registry garbage-collection get-active -o json > /tmp/gc.json 2>/dev/null; then
-              echo "No collection running."
-              exit 0
-            fi
-            if [ ! -s /tmp/gc.json ] || ! grep -q '"uuid"' /tmp/gc.json; then
-              echo "No collection running."
-              exit 0
-            fi
-            echo "A garbage collection is running; the registry is read-only. Waiting 20s."
-            sleep 20
-          done
-          echo "::warning title=Still collecting::A garbage collection was still running after 10 minutes. Pushing anyway; if this fails with 401 it is the collection, not the credential."
+        # Housekeeping never fails a deploy: the push is still worth trying,
+        # and its own error is a better report.
+        continue-on-error: true
+        env:
+          KEEP: "0"
+          COLLECT: auto
+          WAIT: "yes"
+          PUSHES: "1"
+          DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.DROPLET_HOST }}
+        run: .github/scripts/registry-room.sh
 
       # A registry-scoped credential, not the account API token. The account
       # token would work — DigitalOcean accepts it as both username and
@@ -404,221 +386,30 @@ jobs:
       # but the registry API cannot list or garbage-collect, and `doctl` wants
       # an account token. So this takes its own secret, and does NOT fall back
       # to the pushing credential.
-      - name: What production is running
-        id: live
+      - uses: actions/checkout@v7
         if: env.HAVE_TOKEN == 'yes'
-        continue-on-error: true
-        env:
-          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-          HOST: ${{ secrets.DROPLET_HOST }}
-        run: |
-          set -euo pipefail
-          # NEVER DELETE THE IMAGE THE DROPLET IS ON.
-          #
-          # "Keep the newest N" is not that rule. After a run of failed deploys
-          # — which is exactly when this job matters — the tag production is
-          # serving is older than the newest N, and pruning takes away the only
-          # thing `docker compose up` could pull if the box restarted. It very
-          # nearly happened by hand: prod sat on the 3rd newest tag with KEEP=3.
-          mkdir -p ~/.ssh
-          echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
-          echo "${HOSTS}" > ~/.ssh/known_hosts
-          image="$(ssh -o BatchMode=yes deploy@"${HOST}" 'grep "^IMAGE=" /opt/mahekone/.env' | head -1)"
-          echo "live=${image##*:}" >> "$GITHUB_OUTPUT"
-          echo "Production is on ${image##*:}"
 
-      # `doctl` is installed by DigitalOcean's own action rather than a URL
-      # assembled here. The URL this used to build —
-      # `/releases/latest/download/doctl-linux-amd64.tar.gz` — does not exist:
-      # doctl's assets carry the version in the filename, so GitHub answered
-      # with a 404 HTML page and `tar` said `not in gzip format`. A download
-      # that 404s into a decompressor is a class of mistake worth not owning.
       - name: Install doctl
         if: env.HAVE_TOKEN == 'yes'
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_API_TOKEN }}
 
+      # FREE THE SPACE STRAIGHT AFTER THE DEPLOY: every tag but `latest` and the
+      # one production now runs is deleted, and a garbage collection is started
+      # EVERY time — to free them and whatever failed pushes left, which only a
+      # collection removes and which no "is it nearly full" reading counts. Not waited on — the next
+      # deploy's build waits for it if it lands inside one. A rollback never
+      # needed the registry's copies: the droplet keeps its own newest images
+      # (see "Pull and restart"). The rule is `.github/scripts/registry-room.sh`.
       - name: Prune old images from the registry
         if: env.HAVE_TOKEN == 'yes'
         env:
+          KEEP: "0"
+          COLLECT: always
+          WAIT: "no"
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
-          LIVE: ${{ steps.live.outputs.live }}
-          # ONE, besides `latest` and whatever production is on — and the
-          # rollback did not get shorter. It was three, which is what 500 MB
-          # holds at ~130 MB an image, and that is the problem: with three kept
-          # the registry is nearly full again straight after a collection, so
-          # every deploy had to start one, and a collection refuses pushes for
-          # up to a quarter of an hour while it waits for push tokens to
-          # expire. The next merge inside that window waited for it — 7m55s on
-          # 26 October, two merges fourteen minutes apart.
-          #
-          # A rollback never needed the registry's copies. The droplet keeps
-          # its own newest three images plus the live one (see "Pull and
-          # restart"), and rolling back is `docker compose up -d app` on a tag
-          # it already holds. Kept here: the image production is on, so a
-          # rebuilt droplet can pull it, and the one deployed before it.
-          KEEP: "1"
-          # Collect when the next pushes might not fit; see the last step.
-          REGISTRY_API: https://api.digitalocean.com/v2/registry
-        run: |
-          set -euo pipefail
-
-          # JSON, NOT `--format`.
-          #
-          # `list-tags --format UpdatedAt,Tag --no-header` is accepted and then
-          # ignored: doctl prints all four columns WITH the header anyway. The
-          # first version of this job took the last field of each line, which is
-          # therefore the manifest digest and not the tag — so it would have
-          # asked the registry to delete tags named `sha256:…`, pruned nothing,
-          # and left the quota exactly where it was while reporting success.
-          # `-o json` is unambiguous and cannot drift like a column layout.
-          doctl registry repository list-tags app -o json > /tmp/tags.json
-
-          node -e '
-            const rows = require("/tmp/tags.json");
-            const keepCount = Number(process.env.KEEP);
-            const live = (process.env.LIVE || "").trim();
-            // A tag with no name is an untagged manifest — the garbage
-            // collection reaps those, there is nothing to delete by name.
-            const named = rows.filter(r => r.tag)
-              .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-            const protect = new Set(["latest"]);
-            if (live) protect.add(live);
-            const keep = new Set([
-              ...protect,
-              ...named.filter(r => !protect.has(r.tag)).slice(0, keepCount).map(r => r.tag),
-            ]);
-            const del = named.filter(r => !keep.has(r.tag)).map(r => r.tag);
-            console.error(`keeping: ${[...keep].join(", ")}`);
-            if (!live) console.error("::warning::Could not read what production is running, so only the newest tags are protected.");
-            /* A TRAILING NEWLINE, and it is not a tidiness. `del.join` alone
-               leaves the last tag unterminated, and the shell below reads
-               this file line by line: `read` returns non-zero at an
-               unterminated EOF, so the loop assigns that tag and then does
-               NOT run its body for it. The last tag was never deleted, on
-               every run this has ever had. With exactly one tag due — which
-               is the ordinary case, since one arrives per deploy and one
-               falls out of the keep window — that is nothing deleted at all,
-               reported as success. It is also what `wc -l` counts, so the
-               log said "Deleting 0 tag(s)" and nobody read it as a fault. */
-            process.stdout.write(del.length ? del.join("\n") + "\n" : "");
-          ' > /tmp/delete.txt
-
-          if [ -s /tmp/delete.txt ]; then
-            echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
-            # The guard is belt and braces beside the trailing newline above:
-            # either alone fixes this, and a file that has lost its terminator
-            # some other way must not quietly drop a tag again.
-            while read -r tag || [ -n "${tag}" ]; do
-              [ -z "${tag}" ] && continue
-              doctl registry repository delete-tag app "${tag}" --force || true
-            done < /tmp/delete.txt
-          else
-            echo "Nothing to prune."
-          fi
-
-          # COLLECT ONLY WHEN THE NEXT PUSHES MIGHT NOT FIT.
-          #
-          # Deleting a tag frees nothing until a collection runs, and a
-          # collection refuses pushes for as long as it is pending — about a
-          # quarter of an hour, because DigitalOcean waits for every push token
-          # issued before it to expire. Started after every deploy, it made the
-          # NEXT deploy wait whenever two merges were close together. So the
-          # registry is asked how full it is, and a collection is started only
-          # when what is free would not hold the pushes it has not counted yet
-          # plus the next two — sized by what a push actually adds, the layers
-          # the newest image has that the one before it does not.
-          #
-          # Anything that cannot be read is answered "collect", which is what
-          # this did on every deploy before: an unknown never risks a push
-          # failing on `denied: quota exceeded`. Garbage from tags deleted on
-          # earlier deploys waits here for the collection that frees it, which
-          # is why this is asked even when nothing was deleted this time.
-          need=yes
-          auth="Authorization: Bearer ${DO_API_TOKEN}"
-          if curl -fsS -H "${auth}" "${REGISTRY_API}" > /tmp/registry.json \
-            && curl -fsS -H "${auth}" "${REGISTRY_API}/subscription" > /tmp/subscription.json \
-            && name="$(node -p 'require("/tmp/registry.json").registry.name')" \
-            && curl -fsS -H "${auth}" "${REGISTRY_API}/${name}/repositories/app/digests?per_page=200" > /tmp/manifests.json; then
-            need="$(node -e '
-              const reg = require("/tmp/registry.json").registry || {};
-              const tier = (require("/tmp/subscription.json").subscription || {}).tier || {};
-              const manifests = (require("/tmp/manifests.json").manifests || [])
-                .filter(m => m.updated_at)
-                .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-              const used = Number(reg.storage_usage_bytes);
-              const quota = Number(tier.included_storage_bytes);
-              // The live API calls it `storage_usage_updated_at`; the godo struct
-              // says `storage_usage_bytes_updated_at`. Either is accepted.
-              const readAtRaw = reg.storage_usage_updated_at ?? reg.storage_usage_bytes_updated_at;
-              const readAt = Date.parse(readAtRaw);
-              if (!(used > 0) || !(quota > 0) || !Number.isFinite(readAt) || manifests.length === 0) {
-                // Say WHICH answer was missing, and the shape that came back
-                // (key names only — none of these carry a credential), so the
-                // next run can be read rather than guessed at.
-                const keys = f => { try { const j = require(f); return Object.keys(j).map(k => `${k}{${j[k] && typeof j[k] === "object" ? Object.keys(j[k]).slice(0, 12).join(",") : typeof j[k]}}`).join(" "); } catch (e) { return String(e.message); } };
-                console.error(`registry: used=${reg.storage_usage_bytes} quota=${tier.included_storage_bytes} readAt=${readAtRaw} manifests=${manifests.length}`);
-                console.error(`shapes: registry ${keys("/tmp/registry.json")} | subscription ${keys("/tmp/subscription.json")} | digests ${keys("/tmp/manifests.json")}`);
-                console.error("::warning::Could not read how full the registry is, so a collection is started as before.");
-                console.log("yes");
-                process.exit(0);
-              }
-              // What a push adds: the blobs an image has that the one before
-              // it does not, the largest over the newest three pairs. With no
-              // blob list, or no older image to compare with, the whole image,
-              // which only ever collects sooner.
-              const blobs = m => new Map((m.blobs || []).map(b => [b.digest, Number(b.compressed_size_bytes) || 0]));
-              const whole = m => Number(m.compressed_size_bytes) || 0;
-              let push = manifests.length === 1 ? whole(manifests[0]) : 0;
-              for (let i = 0; i < Math.min(3, manifests.length - 1); i++) {
-                const mine = blobs(manifests[i]);
-                const before = blobs(manifests[i + 1]);
-                let added = 0;
-                for (const [d, size] of mine) if (!before.has(d)) added += size;
-                push = Math.max(push, mine.size === 0 ? whole(manifests[i]) : added);
-              }
-              const unseen = manifests.filter(m => Date.parse(m.updated_at) > readAt).length;
-              const wanted = (unseen + 2) * push;
-              const free = quota - used;
-              const mb = b => `${Math.round(b / 1e6)} MB`;
-              console.error(`registry: ${mb(used)} of ${mb(quota)} as of ${readAtRaw}, ${unseen} push(es) since; a push adds up to ${mb(push)}; ${mb(free)} free, ${mb(wanted)} wanted.`);
-              console.log(push > 0 && free >= wanted ? "no" : "yes");
-            ')" || need=yes
-          else
-            echo "::warning::The registry API did not answer, so a collection is started as before."
-          fi
-
-          if [ "${need}" != "yes" ]; then
-            echo "::notice::Room for the next pushes, so no garbage collection — the next deploy will not wait for one."
-            exit 0
-          fi
-
-          # STARTED AND LEFT, never waited on.
-          #
-          # Deleting a tag frees NOTHING on DigitalOcean until a collection
-          # runs, so one is started here. The wait that used to follow was 15
-          # minutes 30 seconds of a 20-minute deploy, every single time, all of
-          # it after production was already serving the new image.
-          # DigitalOcean will not begin collecting until every write-scoped
-          # push token issued before the request has expired, and their TTL is
-          # about a quarter of an hour; the collection itself then takes 25
-          # seconds. The loop was watching somebody else's clock.
-          #
-          # It protected nothing, which is the part worth writing down. The
-          # `401 Unauthorized` on push that the wait was written for is
-          # prevented by ORDER — this job runs after `build` has pushed, not
-          # before it — and the NEXT deploy's build waits out a pending
-          # collection itself ("Wait for any registry garbage collection").
-          #
-          # What is given up is the log line saying whether it succeeded.
-          # `doctl registry garbage-collection list` answers that on demand,
-          # and a collection that fails is picked back up by the next deploy
-          # that finds the registry full — which is exactly where the old
-          # `failed` branch pointed anyway.
-          if doctl registry garbage-collection start --include-untagged-manifests --force; then
-            echo "::notice::Garbage collection started. It runs on DigitalOcean's side and takes about fifteen minutes to begin; nothing here waits for it."
-          else
-            echo "::notice::A garbage collection was already running; letting it finish."
-          fi
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.DROPLET_HOST }}
+        run: .github/scripts/registry-room.sh

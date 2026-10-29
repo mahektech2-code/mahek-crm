@@ -26,7 +26,7 @@ on:
     inputs:
       keep:
         description: "How many tags to keep besides `latest` and whatever production is serving. 0 keeps only those two."
-        default: "3"
+        default: "0"
 
 concurrency:
   # Never against a deploy, and never against itself: a collection puts the
@@ -47,25 +47,12 @@ jobs:
           echo '::error title=Registry not pruned::DO_API_TOKEN is not set. DOCR_TOKEN cannot do this - it is registry-scoped, and the registry API needs an account token.'
           exit 1
 
-      # NEVER DELETE THE IMAGE THE DROPLET IS ON — and this workflow needs that
-      # rule more than the deploy's copy does, not less. It is run precisely
-      # after a run of failed deploys, which is exactly when the tag production
-      # is serving has fallen outside the newest N.
-      - name: What production is running
-        id: live
-        continue-on-error: true
-        env:
-          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-          HOST: ${{ secrets.DROPLET_HOST }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
-          echo "${HOSTS}" > ~/.ssh/known_hosts
-          image="$(ssh -o BatchMode=yes deploy@"${HOST}" 'grep "^IMAGE=" /opt/mahekone/.env' | head -1)"
-          echo "live=${image##*:}" >> "$GITHUB_OUTPUT"
-          echo "Production is on ${image##*:}"
+      # The same rule the deploy runs before every push and after every
+      # deploy — `.github/scripts/registry-room.sh` — by hand, for the moment
+      # the quota has already bitten. It never deletes what production runs or
+      # `latest`, and it always starts a collection, since a full registry is
+      # usually untagged layers from failed pushes that only a collection frees.
+      - uses: actions/checkout@v7
 
       - uses: digitalocean/action-doctl@v2
         with:
@@ -73,71 +60,11 @@ jobs:
 
       - name: Prune old images from the registry
         env:
-          LIVE: ${{ steps.live.outputs.live }}
           KEEP: ${{ inputs.keep }}
-        run: |
-          set -euo pipefail
-
-          # JSON, not `--format`: doctl prints all four columns with the header
-          # whatever it is asked for, so a column-position read takes the
-          # manifest digest and deletes nothing while reporting success.
-          doctl registry repository list-tags app -o json > /tmp/tags.json
-
-          node -e '
-            const rows = require("/tmp/tags.json");
-            /* 0 is an answer — keep only latest and the live tag — not a blank: `|| 3` read it as "the default". */
-            const asked = Number(process.env.KEEP);
-            const keepCount = process.env.KEEP && Number.isInteger(asked) && asked >= 0 ? asked : 3;
-            const live = (process.env.LIVE || "").trim();
-            /* Keeping none but latest is only safe while the live tag is known: never guess with it. */
-            if (!live && keepCount < 1) { console.error("::error::Could not read what production is running, so keep 0 would risk deleting it. Nothing deleted."); process.exit(1); }
-            const named = rows.filter(r => r.tag)
-              .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-            const protect = new Set(["latest"]);
-            if (live) protect.add(live);
-            const keep = new Set([
-              ...protect,
-              ...named.filter(r => !protect.has(r.tag)).slice(0, keepCount).map(r => r.tag),
-            ]);
-            const del = named.filter(r => !keep.has(r.tag)).map(r => r.tag);
-            console.error(`keeping: ${[...keep].join(", ")}`);
-            if (!live) console.error("::warning::Could not read what production is running, so only the newest tags are protected. Check before re-running a deploy.");
-            /* A TRAILING NEWLINE, and it is not a tidiness. `del.join` alone
-               leaves the last tag unterminated, and the shell below reads
-               this file line by line: `read` returns non-zero at an
-               unterminated EOF, so the loop assigns that tag and then does
-               NOT run its body for it. The last tag was never deleted, on
-               every run this has ever had. With exactly one tag due — which
-               is the ordinary case, since one arrives per deploy and one
-               falls out of the keep window — that is nothing deleted at all,
-               reported as success. It is also what `wc -l` counts, so the
-               log said "Deleting 0 tag(s)" and nobody read it as a fault. */
-            process.stdout.write(del.length ? del.join("\n") + "\n" : "");
-          ' > /tmp/delete.txt
-
-          if [ ! -s /tmp/delete.txt ]; then
-            echo '::notice::Nothing to prune, so nothing to collect. If a push is still failing on quota, raise the keep input or check the repository name.'
-            exit 0
-          fi
-
-          echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
-          # The guard is belt and braces beside the trailing newline above:
-          # either alone fixes this, and a file that has lost its terminator
-          # some other way must not quietly drop a tag again.
-          while read -r tag || [ -n "${tag}" ]; do
-            [ -z "${tag}" ] && continue
-            doctl registry repository delete-tag app "${tag}" --force || true
-          done < /tmp/delete.txt
-
-          # Deleting a tag frees nothing until a collection runs. Started and
-          # left, never waited on: DigitalOcean will not begin until every
-          # write-scoped push token issued before the request has expired —
-          # about a quarter of an hour — and the collection itself takes about
-          # 25 seconds. THAT WAIT IS WHY A DEPLOY RE-RUN SHOULD NOT FOLLOW THIS
-          # IMMEDIATELY: give it twenty minutes, or the push lands inside the
-          # read-only window and fails 401 looking like a bad credential.
-          if doctl registry garbage-collection start --include-untagged-manifests --force; then
-            echo "::notice::Garbage collection started. It begins in about fifteen minutes and takes under a minute. Wait for it before re-running Deploy."
-          else
-            echo "::notice::A garbage collection was already running; letting it finish."
-          fi
+          COLLECT: always
+          WAIT: "no"
+          DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.DROPLET_HOST }}
+        run: .github/scripts/registry-room.sh
