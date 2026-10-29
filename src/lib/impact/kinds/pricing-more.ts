@@ -16,6 +16,7 @@ import { discountTermSentence } from "@/lib/price-list-labels";
 import type { PriceDiscountKind } from "@/db/schema";
 import { today } from "@/lib/recompute";
 import { requirePriceDesk } from "@/lib/services/price-desk";
+import { draftOnlyRefusal } from "@/lib/engines/price-supersede";
 import { pricingShiftWithout } from "@/lib/services/price-list-service";
 import type { ImpactItem } from "../types";
 import type { ImpactSource } from "../registry";
@@ -160,12 +161,15 @@ export const priceDiscountTermImpact: ImpactSource = {
             : "The list is no longer in force, so nobody is offered it today.",
       });
     }
+    /* `removeDiscountTerm` refuses anything but a draft; the modal says so
+       before the button rather than after it. */
+    const notDraft = draftOnlyRefusal(row.status, "Taking a discount off it");
     return {
       title: `${sentence} on ${row.listName}`,
       verb: "Remove",
       confirmWord: typeable(sentence, "REMOVE"),
       items,
-      blockers: [],
+      blockers: notDraft ? [notDraft] : [],
     };
   },
 };

@@ -1308,7 +1308,7 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   /* ================================================================ upload LRs and signed copies
-   * THE PHONE ONLY UPLOADS (0297). Pick LR or Signed copy, take or pick up to
+   * THE PHONE ONLY UPLOADS (0301). Pick LR or Signed copy, take or pick up to
    * LR_PICK_MAX photos, Send — nothing is typed and nothing is checked here.
    * The office reads, de-duplicates and attaches every copy on the Documents
    * desk. A photo may be cropped, rotated or taken out before it goes.

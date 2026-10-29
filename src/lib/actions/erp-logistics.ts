@@ -129,7 +129,7 @@ export async function erpLogisticsDelivered(transportIds: string[], input: { dat
   return run((ctx) => L.markDelivered(ctx, ids(transportIds), input));
 }
 
-/* ---- delivery proof on the Documents desk (0297) ---- */
+/* ---- delivery proof on the Documents desk (0301) ---- */
 
 export async function erpLogisticsSetKind(lrId: string, kind: "lr" | "signed_copy") {
   return run((ctx) => L.setLrKind(ctx, String(lrId ?? ""), kind));

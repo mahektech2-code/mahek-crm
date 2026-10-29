@@ -50,7 +50,7 @@ import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { MenuButton } from "@/components/pricing/menu-button";
 import type { PriceListSummary, PricingApp, PricingCounts, PricingOptions } from "@/lib/price-list-views";
 import type { PriceFreightTerm } from "@/db/schema";
-import { FREIGHT_TERM_LABEL, LIST_STATUS_LABEL, LIST_STATUS_TONE } from "@/lib/price-list-labels";
+import { FREIGHT_TERM_LABEL, LIST_STATUS_LABEL, LIST_STATUS_TONE, validityBadge } from "@/lib/price-list-labels";
 import { deleteDraftPriceList } from "@/lib/actions/price-lists";
 import { deleteDraftPriceLists, publishDraftPriceLists, type BulkOutcome } from "@/lib/actions/price-sheets";
 import { longDate, shortDate } from "@/lib/format";
@@ -492,9 +492,12 @@ export function PriceListsScreen({
                   <Td>
                     <div className="flex flex-wrap items-center gap-1">
                       <Badge tone={LIST_STATUS_TONE[list.status]}>{LIST_STATUS_LABEL[list.status]}</Badge>
-                      {list.expired ? (
-                        <Badge tone="danger" title={`Expired on ${longDate(list.expiresOn)}`}>
-                          expired
+                      {validityBadge(list) ? (
+                        <Badge
+                          tone={validityBadge(list)!.tone}
+                          title={`Validity ended ${longDate(list.expiresOn)}. ${validityBadge(list)!.hint}`}
+                        >
+                          {validityBadge(list)!.label}
                         </Badge>
                       ) : expiringSoon(list) ? (
                         <Badge tone="warn">expires in {daysBetween(todayIso, list.expiresOn!)}d</Badge>
@@ -699,7 +702,11 @@ function ListCard({
       </div>
       <div className="mt-3 flex flex-wrap gap-1">
         <Badge tone={LIST_STATUS_TONE[list.status]}>{LIST_STATUS_LABEL[list.status]}</Badge>
-        {list.expired ? <Badge tone="danger">expired</Badge> : expiring ? <Badge tone="warn">expires in {daysBetween(todayIso, list.expiresOn!)}d</Badge> : null}
+        {validityBadge(list) ? (
+          <Badge tone={validityBadge(list)!.tone} title={validityBadge(list)!.hint}>
+            {validityBadge(list)!.label}
+          </Badge>
+        ) : expiring ? <Badge tone="warn">expires in {daysBetween(todayIso, list.expiresOn!)}d</Badge> : null}
         <Badge tone="muted">{FREIGHT_TERM_LABEL[list.freightTerm]}</Badge>
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-y-1.5 text-[12.5px]">

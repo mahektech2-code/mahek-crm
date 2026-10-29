@@ -2063,8 +2063,22 @@
     {
       "idx": 294,
       "version": "7",
-      "when": 1793606860000,
-      "tag": "0297_delivery_proof",
+      "when": 1793606900000,
+      "tag": "0297_price_list_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 295,
+      "version": "7",
+      "when": 1793607200000,
+      "tag": "0300_order_rate_override",
+      "breakpoints": true
+    },
+    {
+      "idx": 296,
+      "version": "7",
+      "when": 1793607260000,
+      "tag": "0301_delivery_proof",
       "breakpoints": true
     }
   ]

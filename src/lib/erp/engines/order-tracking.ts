@@ -91,7 +91,7 @@ export type TransportFacts = {
   deliveredAt: string | null;
   /** Shared events, oldest first: when each stage was first reached. */
   events: { kind: string; stage: string | null; at: string }[];
-  /** Delivered in our own vehicle (0297): there is no transporter to hand it to, so that step never applies. */
+  /** Delivered in our own vehicle (0301): there is no transporter to hand it to, so that step never applies. */
   ownVehicle?: boolean;
 };
 

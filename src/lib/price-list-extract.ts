@@ -35,10 +35,23 @@ export type ExtractedPages = {
   /** Empty for a scan or an image: there was nothing to read without a model. */
   pages: string[];
   pageCount: number;
+  /** The PDF's Title and Creator, where it has them — a MahekOne PDF keeps the list's name there. */
+  meta?: { title: string | null; creator: string | null };
 };
 
 /** Below this, a page is a picture of words rather than words. */
 const TEXT_PER_PAGE_FLOOR = 40;
+
+/** The PDF's Title and Creator, which is where a MahekOne PDF keeps the list's name. Never fails the read. */
+async function documentMeta(pdf: { getMetadata: () => Promise<{ info?: unknown }> }): Promise<{ title: string | null; creator: string | null }> {
+  try {
+    const { info } = await pdf.getMetadata();
+    const i = (info ?? {}) as { Title?: unknown; Creator?: unknown };
+    return { title: typeof i.Title === "string" ? i.Title : null, creator: typeof i.Creator === "string" ? i.Creator : null };
+  } catch {
+    return { title: null, creator: null };
+  }
+}
 
 export async function extractPages(bytes: Uint8Array, contentType: string): Promise<ExtractedPages> {
   if (contentType.startsWith("image/")) return { kind: "image", pages: [], pageCount: 1 };
@@ -49,7 +62,7 @@ export async function extractPages(bytes: Uint8Array, contentType: string): Prom
   const pages = (Array.isArray(text) ? text : [text]).map((p) => p ?? "");
   const readable = pages.filter((p) => p.replace(/\s/g, "").length >= TEXT_PER_PAGE_FLOOR);
   if (!readable.length) return { kind: "pdf_scan", pages: [], pageCount: totalPages };
-  return { kind: "pdf_text", pages, pageCount: totalPages };
+  return { kind: "pdf_text", pages, pageCount: totalPages, meta: await documentMeta(pdf) };
 }
 
 /* ---------------------------------------------------------------- vision */

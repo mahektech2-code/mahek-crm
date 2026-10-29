@@ -67,6 +67,8 @@ import { latestReopen } from "../services/lead-reopen-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "../lead-review-void";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
 import { orderCountsSql } from "../order-status";
+import { ratesForCustomer } from "../services/price-list-service";
+import { judgeFieldOrderPrices, pricedFromList, type OfficeRate } from "../engines/order-price-authority";
 import { canAny, grantingHat, hatsFor } from "../access-control";
 import { handsetSampleRefusal } from "../sales-gate";
 import {
@@ -1769,6 +1771,7 @@ async function authoredOrder(principal: MbosPrincipal, orderId: string) {
       approvedAt: orders.approvedAt,
       totalAmount: orders.totalAmount,
       lineItems: orders.lineItems,
+      orderedAt: orders.orderedAt,
     })
     .from(orders)
     .where(eq(orders.id, orderId))
@@ -1835,6 +1838,12 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
   const config = await getConfig();
   const checked = await checkOrderLines(p.lines, customer.name, config);
   if (!checked.ok) return { kind: "rejected", value: checked.value };
+  /* The same prices a new order is held to, on the day the order is FOR. */
+  const priced = await checkFieldOrderPrices(customer, p.lines, checked.byId, calendarDate(new Date(order.orderedAt)), {
+    totalAmountPaise: p.totalAmountPaise,
+    valueUnavailable: p.totalAmountPaise === 0,
+  });
+  if (!priced.ok) return { kind: "rejected", value: priced.value };
 
   if (
     config["mbos.credit.blockOnLimitExceeded"] &&
@@ -1861,6 +1870,7 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
       .set({
         lineItems: lines,
         totalAmount: p.totalAmountPaise,
+        priceListId: priced.priceListId,
         updatedAt: new Date(),
         updatedById: principal.user.id,
       })
@@ -1952,6 +1962,12 @@ async function handleOrderChangeRequest(principal: MbosPrincipal, item: SyncItem
   const config = await getConfig();
   const checked = await checkOrderLines(p.lines, customer.name, config);
   if (!checked.ok) return { kind: "rejected", value: checked.value };
+  /* The same prices a new order is held to, on the day the order is FOR. */
+  const priced = await checkFieldOrderPrices(customer, p.lines, checked.byId, calendarDate(new Date(order.orderedAt)), {
+    totalAmountPaise: p.totalAmountPaise,
+    valueUnavailable: p.totalAmountPaise === 0,
+  });
+  if (!priced.ok) return { kind: "rejected", value: priced.value };
 
   const [waiting] = await db
     .select({ id: orderChangeRequests.id })
@@ -2129,6 +2145,75 @@ async function handleOrderProgress(
 
 
 /**
+ * WHAT THE OFFICE SAYS EACH LINE COSTS THIS CUSTOMER, on the order's date.
+ *
+ * The list Accounts resolve for the BILLING party first — `ratesForCustomer`,
+ * the same function the CRM's order form prices with — at the rate the shop
+ * pays (GST included), which is what a handset line is in. Then, only for a
+ * product that list does not carry, the handset's own `mbos_price_list` row
+ * for the customer's STORED price tag. The tag is read off the customer row,
+ * never off the payload.
+ */
+async function officeRatesFor(
+  customerId: string,
+  productIds: string[],
+  onDate: string,
+): Promise<Map<string, OfficeRate & { listId: string | null }>> {
+  const out = new Map<string, OfficeRate & { listId: string | null }>();
+  if (!productIds.length) return out;
+  const listed = await ratesForCustomer(customerId, productIds, onDate);
+  for (const [productId, r] of Object.entries(listed)) {
+    out.set(productId, { ratePaise: r.rateInclGstPaise, source: "list", basis: r.listName, offered: r.offered, listId: r.listId });
+  }
+  const missing = productIds.filter((pid) => !out.has(pid));
+  if (!missing.length) return out;
+  const [row] = await db.execute<{ priceTag: string | null }>(sql`
+    select price_tag as "priceTag" from customers where id = ${customerId}
+  `);
+  const tag = row?.priceTag?.trim() ? row.priceTag : null;
+  if (!tag) return out;
+  const tagged = await db.execute<{ productId: string; ratePaise: string }>(sql`
+    select distinct on (product_id)
+           product_id as "productId", rate_paise as "ratePaise"
+      from mbos_price_list
+     where customer_price_tag = ${tag}
+       and product_id in ${sql`(${sql.join(missing.map((i) => sql`${i}`), sql`, `)})`}
+       and (valid_from is null or valid_from <= ${onDate}::date)
+       and (valid_to is null or valid_to >= ${onDate}::date)
+     order by product_id, valid_from desc nulls last
+  `);
+  for (const r of tagged) {
+    out.set(r.productId, { ratePaise: Number(r.ratePaise), source: "tag", basis: tag, offered: true, listId: null });
+  }
+  return out;
+}
+
+/**
+ * Every line of a field order against the office's rates — on a new order, an
+ * edit and a change request alike, because each puts lines on the same order.
+ * The rule is `judgeFieldOrderPrices`; this words its refusals.
+ */
+async function checkFieldOrderPrices(
+  customer: { id: string; name: string },
+  lines: { productId: string; quantityCans: number; ratePaise?: number | null }[],
+  byId: Map<string, { name: string }>,
+  onDate: string,
+  order: { totalAmountPaise: number; valueUnavailable: boolean },
+): Promise<{ ok: true; priceListId: string | null } | { ok: false; value: Rejection }> {
+  const office = await officeRatesFor(customer.id, [...new Set(lines.map((l) => l.productId))], onDate);
+  const verdict = judgeFieldOrderPrices(lines, office, order);
+  if (verdict.ok) return { ok: true, priceListId: pricedFromList(lines, office) };
+  const name = (verdict.productId && byId.get(verdict.productId)?.name) || "A product";
+  const message =
+    verdict.code === "not_offered"
+      ? `${name} is not for sale to ${customer.name} on ${verdict.basis}. Take it off the order, or ask accounts.`
+      : verdict.code === "price_changed"
+        ? `${name} is ${rupees(verdict.officePaise ?? 0)} a can for ${customer.name} on ${verdict.basis}, not the ${rupees(verdict.quotedPaise ?? 0)} quoted. Sync, confirm the rate with the shop and take the order again.`
+        : `The order for ${customer.name} says ${rupees(verdict.quotedPaise ?? 0)}, more than its lines add up to (${rupees(verdict.officePaise ?? 0)}). Sync and take the order again.`;
+  return { ok: false, value: reject(verdict.code === "total_mismatch" ? "validation" : "price_changed", message) };
+}
+
+/**
  * THE BAR EVERY LINE ON AN ORDER HAS TO CLEAR, whichever door it came in by —
  * a new order, an edit before approval, or a change request after it. A
  * discontinued SKU cannot go on an order, and no line may be below the
@@ -2212,7 +2297,11 @@ const orderSchema = z.object({
   /** What the handset believed the customer owed when it took the order. */
   outstandingAsOfPaise: z.number().int().nullish(),
   outstandingAsOf: z.number().nullish(),
-  /** The price tag the lines were priced against, where they were priced. */
+  /**
+   * The price tag the handset says it priced against. Accepted from every
+   * build and NEVER READ: the price basis is the customer row and the office's
+   * resolved list (`checkFieldOrderPrices`), whatever a payload claims.
+   */
   priceTag: z.string().nullish(),
   visitId: z.string().nullish(),
   /**
@@ -2362,36 +2451,21 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const checked = await checkOrderLines(p.lines, customer.name, config);
   if (!checked.ok) return { kind: "rejected", value: checked.value };
   const byId = checked.byId;
-  const productIds = checked.productIds;
 
-  /* --- the price the handset quoted, against the price list today. --- */
-  if (p.priceTag) {
-    const day = await today();
-    const priced = await db.execute<{ productId: string; ratePaise: string }>(sql`
-      select distinct on (product_id)
-             product_id as "productId", rate_paise as "ratePaise"
-        from mbos_price_list
-       where customer_price_tag = ${p.priceTag}
-         and product_id in ${sql`(${sql.join(productIds.map((i) => sql`${i}`), sql`, `)})`}
-         and (valid_from is null or valid_from <= ${day}::date)
-         and (valid_to is null or valid_to >= ${day}::date)
-       order by product_id, valid_from desc nulls last
-    `);
-    const rates = new Map(priced.map((r) => [r.productId, Number(r.ratePaise)]));
-    for (const line of p.lines) {
-      const current = rates.get(line.productId);
-      if (line.ratePaise != null && current != null && current !== line.ratePaise) {
-        const product = byId.get(line.productId);
-        return {
-          kind: "rejected",
-          value: reject(
-            "price_changed",
-            `${product?.name ?? "A product"} is now ${rupees(current)} a can on the ${p.priceTag} list, not the ${rupees(line.ratePaise)} quoted to ${customer.name}. Confirm the new rate with the shop and take the order again.`,
-          ),
-        };
-      }
-    }
-  }
+  /* --- the price of every line, decided by the OFFICE on the order's date.
+   *
+   * It used to run only where the payload carried a `priceTag`, and to read
+   * that tag rather than the customer's — so a payload that left it out stored
+   * any rate and any total. The basis is the customer's ROW now: the price list
+   * Accounts resolve for them (`ratesForCustomer`), and the handset's tag table
+   * only for a product no list carries. What the handset says it priced from is
+   * not read. --- */
+  const orderDay = calendarDate(p.orderedAt ? new Date(p.orderedAt) : new Date(item.clientCreatedAt));
+  const priced = await checkFieldOrderPrices(customer, p.lines, byId, orderDay, {
+    totalAmountPaise: p.totalAmountPaise,
+    valueUnavailable: Boolean(p.valueUnavailable) || p.totalAmountPaise === 0,
+  });
+  if (!priced.ok) return { kind: "rejected", value: priced.value };
 
   /* --- the credit limit, against what they owe NOW rather than what the
    * handset last saw. This is the whole reason the check is repeated here. --- */
@@ -2496,6 +2570,8 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       status: "pending_approval",
       orderedAt,
       totalAmount: p.totalAmountPaise,
+      /* The list the office priced it from, where one did — see `pricedFromList`. */
+      priceListId: priced.priceListId,
       creditDays: p.creditDays ?? null,
       expectedDispatch: p.expectedDispatch ?? null,
       lineItems: lines,

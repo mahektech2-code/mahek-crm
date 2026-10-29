@@ -33,6 +33,33 @@ export const LIST_STATUS_TONE: Record<PriceListStatus, "neutral" | "success" | "
   withdrawn: "danger",
 };
 
+/**
+ * The words for a list past its end, from `listValidity` — the same answer the
+ * resolver prices by. "Expired" alone over a list that is still pricing shops
+ * was the screen and the order form disagreeing about one list.
+ */
+export const VALIDITY_LABEL: Record<"past_validity_pricing" | "expired", string> = {
+  past_validity_pricing: "Past validity — still pricing",
+  expired: "Expired — not pricing",
+};
+
+export const VALIDITY_HINT: Record<"past_validity_pricing" | "expired", string> = {
+  past_validity_pricing:
+    "Its validity days have run out, and shops are still priced from it until it is replaced or withdrawn. Publish a new version, or extend it.",
+  expired: "It no longer prices any shop: they fall to the next list that names them, or to none.",
+};
+
+/** The badge a published list past its end carries, or null where it is current. */
+export function validityBadge(list: {
+  status: PriceListStatus;
+  expired: boolean;
+  validityState: "current" | "past_validity_pricing" | "expired";
+}): { label: string; hint: string; tone: "warn" | "danger" } | null {
+  if (list.status !== "published" || !list.expired || list.validityState === "current") return null;
+  const state = list.validityState;
+  return { label: VALIDITY_LABEL[state], hint: VALIDITY_HINT[state], tone: state === "expired" ? "danger" : "warn" };
+}
+
 export const FREIGHT_TERM_LABEL: Record<PriceFreightTerm, string> = {
   to_pay: "To Pay",
   paid: "Paid",

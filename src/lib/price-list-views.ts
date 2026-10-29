@@ -19,7 +19,7 @@ import type {
   PriceParsedHeader,
   PriceScopeKind,
 } from "@/db/schema";
-import type { Resolution } from "@/lib/engines/price-resolution";
+import type { Resolution, ValidityState } from "@/lib/engines/price-resolution";
 
 /**
  * WHICH DOOR A PRICE LIST SCREEN WAS OPENED THROUGH.
@@ -43,7 +43,14 @@ export type PriceListSummary = {
   validityDays: number | null;
   /** effectiveFrom plus the validity, or the configured default. Null when open-ended by rule. */
   expiresOn: string | null;
+  /** Past `expiresOn` — its validity or its end date. Whether it still PRICES is `validityState`. */
   expired: boolean;
+  /**
+   * `listValidity`'s answer, the one the resolver also reads: `current`,
+   * `past_validity_pricing` (past its validity days and still pricing under
+   * `pricing.expiredListsKeepPricing`) or `expired` (not pricing).
+   */
+  validityState: ValidityState;
   taxBasis: "inclusive" | "exclusive";
   gstBp: number;
   deliveryBasis: PriceDeliveryBasis | null;
@@ -86,6 +93,14 @@ export type RateRow = {
   matchStatus: PriceMatchStatus;
   matchConfidence: number | null;
   updatedAt: string;
+  /**
+   * The list this row belongs to. Read for a SHOP it is where the rate came
+   * from: the list that applies, or one below it the product fell through
+   * to. The name is filled only there; on a list's own detail every row is
+   * that list's.
+   */
+  listId?: string;
+  listName?: string;
 };
 
 export type GridColumn = {
@@ -385,6 +400,20 @@ export type CustomerRates = Record<
     rateInclGstPaise: number;
     gstBp: number;
     offered: boolean;
+    /** True where the list that applies has no row for this product and a wider list priced it. */
+    fellThrough: boolean;
+    /**
+     * Every row the source list has for the product, slabs included, so the
+     * order form can pick the slab for the quantity typed with
+     * `rateAtQuantity` — the same function the save prices with.
+     */
+    slabs: Array<{
+      minCans: number | null;
+      maxCans: number | null;
+      rateExGstPaise: number;
+      rateInclGstPaise: number;
+      offered: boolean;
+    }>;
   }
 >;
 

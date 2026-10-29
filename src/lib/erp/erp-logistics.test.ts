@@ -834,7 +834,7 @@ describe("help videos", () => {
   });
 });
 
-describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Vehicle (0297)", () => {
+describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Vehicle (0301)", () => {
   async function dispatchOwn(date: string, qty: number, bill: string, dispatched: string, verify: Record<string, string>) {
     const ctx = await as(admin);
     const made = await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", deliveredBy: "Mahek Vehicle" }, [{ sku: SKU, qty: String(qty), rate: "300" }]);

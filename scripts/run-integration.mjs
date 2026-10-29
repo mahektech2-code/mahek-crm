@@ -186,6 +186,12 @@ const files = [
   // its rates, publishing stores the PDF read back cell by cell, and the
   // price desk is Accounts and the Founder Dashboard — not a sales manager.
   "src/lib/price-sheets.integration.test.ts",
+  // The price-list bug fixes (Oct 2026): writes and versions, resolution and
+  // variance, the editor and the PDF import, and the handset/ERP price checks.
+  "src/lib/price-fix-a.integration.test.ts",
+  "src/lib/price-fix-b.integration.test.ts",
+  "src/lib/price-fix-c.integration.test.ts",
+  "src/lib/price-fix-d.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only

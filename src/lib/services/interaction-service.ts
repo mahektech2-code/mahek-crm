@@ -35,7 +35,7 @@ import {
 } from "../recompute";
 import { isAttemptAllowed } from "../engines/escalation";
 import { discountAuthority } from "../engines/price-math";
-import { ratesForCustomer } from "./price-list-service";
+import { shopRates } from "./price-list-service";
 import type { NextStep, NextStepKind } from "../engines/next-step";
 import { consecutiveNoAnswerSql, nextStepForCustomer } from "./queue-service";
 import { closeRemindersOnEvidence } from "./worklist-services";
@@ -915,10 +915,20 @@ export async function saveInteraction(
    * away with nobody's name against it, which is what the order sheet already
    * shows happening at 10%.
    */
-  const lineRates = lines.length
-    ? await ratesForCustomer(billingCustomer.id, lines.map((l) => l.productId), day)
-    : {};
-  const priceListId = Object.values(lineRates)[0]?.listId ?? null;
+  /* Priced at each line's own cans, so a slabbed SKU takes the slab the
+     quantity falls in — the same `rateAtQuantity` the form draws with. The
+     order is FILED under the list that applies to the shop, not under
+     whichever list one line happened to fall through to. */
+  const priced = lines.length
+    ? await shopRates(
+        billingCustomer.id,
+        lines.map((l) => l.productId),
+        day,
+        Object.fromEntries(lines.map((l) => [l.productId, l.quantity])),
+      )
+    : { resolution: null, rates: {} };
+  const lineRates = priced.rates;
+  const priceListId = priced.resolution?.listId ?? null;
 
   /*
    * THE CEILING IS THE CRM LEVEL, because this is the CRM's order form.

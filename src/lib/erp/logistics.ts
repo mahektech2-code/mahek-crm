@@ -95,7 +95,7 @@ export type Consignment = {
   tripId: string | null;
   tripNo: number | null;
   vehicleNo: string | null;
-  /** Delivered in our own vehicle (0297): no LR; a customer-signed copy closes it. */
+  /** Delivered in our own vehicle (0301): no LR; a customer-signed copy closes it. */
   ownVehicle: boolean;
   /** The driver dispatch recorded, for the call button on a Mahek Vehicle card. */
   driver: string | null;
@@ -320,7 +320,7 @@ export type UploadedLr = {
   uploadedBy: string | null;
   uploadedAt: string;
   bills: number;
-  /* ---- 0297: delivery proof ---- */
+  /* ---- 0301: delivery proof ---- */
   kind: ProofKind;
   readLrNo: string | null;
   readKind: string | null;

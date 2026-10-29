@@ -58,6 +58,7 @@ import type { DocumentView, ParseGrid, ParseRowView, PricingApp, PricingOptions 
 import type { PriceDeliveryBasis, PriceFreightTerm, PriceParsedHeader } from "@/db/schema";
 import { longDate, money, periodLabel, stamp } from "@/lib/format";
 import { updateDocumentHeader, reparseDocument } from "@/lib/actions/price-lists";
+import { isStuck } from "@/lib/engines/price-document";
 import {
   ParseAnimation,
   isTerminalParseStatus,
@@ -116,6 +117,12 @@ export function DocumentReviewScreen({
         <ReadingWatch
           documentId={document.id}
           filename={document.filename}
+          createdAt={document.createdAt}
+          canManage={canManage}
+          onReread={async () => {
+            await run(reparseDocument(document.id));
+            router.refresh();
+          }}
           /* Seeded from what the SERVER already knows, so the first frame
            * shows the stage the file is actually at rather than "waiting to
            * start" until the first poll lands. */
@@ -141,6 +148,7 @@ export function DocumentReviewScreen({
 
   const gstBp = document.header?.gstBp ?? 1800;
   const publishedAlready = document.parseStatus === "published";
+  const rejectedAlready = document.parseStatus === "rejected";
 
   return (
     <div data-app={app}>
@@ -370,13 +378,15 @@ export function DocumentReviewScreen({
             <Button
               className="mt-3"
               variant="secondary"
-              disabled={!canManage || publishedAlready}
+              disabled={!canManage || publishedAlready || rejectedAlready}
               title={
                 !canManage
                   ? "Only somebody who can manage price lists may read a file again."
                   : publishedAlready
                     ? "This one already became a price list; re-reading it would change nothing."
-                    : undefined
+                    : rejectedAlready
+                      ? "This one was rejected. Upload it again if it should be read after all."
+                      : undefined
               }
               onClick={() => setReparsing(true)}
             >
@@ -397,6 +407,7 @@ export function DocumentReviewScreen({
         open={pricing !== null}
         cell={pricing}
         gstBp={gstBp}
+        taxBasis={document.header?.taxBasis ?? "inclusive"}
         onClose={() => setPricing(null)}
       />
 
@@ -439,16 +450,27 @@ export function DocumentReviewScreen({
 function ReadingWatch({
   documentId,
   filename,
+  createdAt,
+  canManage,
+  onReread,
   seed,
   onDone,
 }: {
   documentId: string;
   filename: string;
+  createdAt: string;
+  canManage: boolean;
+  onReread: () => Promise<void>;
   /** What the server had when it rendered — the first frame, before any poll. */
   seed: DocumentStatusPoll;
   onDone: () => void;
 }) {
   const [status, setStatus] = React.useState<DocumentStatusPoll>(seed);
+  /* A read that died part-way — the tab that started it closed, or the
+   * request ran out of time — never reaches a terminal status. Polling it for
+   * ever drew a reading animation over a file holding nothing. */
+  const [stuck, setStuck] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     let live = true;
@@ -465,6 +487,10 @@ function ReadingWatch({
             onDone();
             return;
           }
+          if (isStuck({ parseStatus: next.parseStatus, stageStartedAt: next.stageStartedAt, createdAt }, Date.now())) {
+            setStuck(true);
+            return;
+          }
         }
       } catch {
         /* A poll that could not be made is a poll that happens next time. */
@@ -477,7 +503,34 @@ function ReadingWatch({
       live = false;
       if (timer) clearTimeout(timer);
     };
-  }, [documentId, onDone]);
+  }, [documentId, onDone, createdAt]);
+
+  if (stuck) {
+    return (
+      <Card className="p-6 text-center">
+        <div className="text-[15px] font-semibold text-ink">This read stopped part-way</div>
+        <p className="mx-auto mt-1 max-w-[480px] text-[13px] text-muted">
+          The window that started it was closed, or it ran out of time. Nothing was read off {filename} — read it again.
+        </p>
+        <Button
+          className="mt-4"
+          variant="primary"
+          disabled={!canManage || busy}
+          title={canManage ? undefined : "Only somebody who can manage price lists may read a file again."}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onReread();
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Reading…" : "Read again"}
+        </Button>
+      </Card>
+    );
+  }
 
   return <ParseAnimation status={status} filename={filename} />;
 }

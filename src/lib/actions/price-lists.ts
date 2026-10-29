@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -15,6 +15,7 @@ import {
   priceLists,
   priceRequests,
   productAliases,
+  products,
   PRICE_DELIVERY_BASES,
   PRICE_DISCOUNT_KINDS,
   PRICE_FREIGHT_TERMS,
@@ -31,9 +32,18 @@ import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { notifyUsers } from "@/lib/notify";
 import { deriveRate, exFromIncl, inclFromEx, listInclFromEx, roundToRupee } from "@/lib/engines/price-math";
-import { placeKey } from "@/lib/engines/price-resolution";
+import { money } from "@/lib/format";
+import { AGREED_SCOPE_PRIORITY, placeKey } from "@/lib/engines/price-resolution";
+import { canReread, isReading, pickDocumentRates, restage, stagedFigures, type TaxBasis } from "@/lib/engines/price-document";
 import { ratesForCustomer, resolveForCustomer } from "@/lib/services/price-list-service";
-import { err, fieldErr, fromThrown, ok, okVoid, type FieldError, type Result } from "@/lib/result";
+import { publishedSuccessor, supersedePredecessor } from "@/lib/services/price-supersede";
+import {
+  draftOnlyRefusal,
+  newVersionRefusal,
+  scopeDatesProblem,
+  withdrawRefusal,
+} from "@/lib/engines/price-supersede";
+import { err, fieldErr, fromThrown, ok, okVoid, type Err, type FieldError, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
  * EVERY WRITE A PRICE LIST TAKES.
@@ -365,9 +375,11 @@ export async function setRate(input: z.input<typeof rateInput>): Promise<Result<
 
     const list = await listRow(parsed.data.priceListId);
     if (!list) return err("That price list does not exist.", "not_found");
-    if (list.status === "superseded" || list.status === "withdrawn") {
-      return err(`This list is ${list.status}. Publish a new version to change a price.`, "rule_violation");
-    }
+    /* A price is set on a DRAFT. A published list rewritten in place would
+       price orders differently from that moment with no version recording
+       it — the same reason `removeRate` and `bulkSetRates` refuse. */
+    const notDraft = draftOnlyRefusal(list.status, "Changing a price on it");
+    if (notDraft) return err(notDraft, "rule_violation");
 
     const rates = bothRates(parsed.data.rateExGstPaise, parsed.data.rateInclGstPaise, list.gstBp, list.derivation != null);
     if (!rates) return fieldErr("rateInclGstPaise", "Type a price.");
@@ -569,6 +581,8 @@ export async function addScope(input: z.input<typeof scopeInput>): Promise<Resul
     if (parsed.data.scopeKind !== "everybody" && !value) {
       return fieldErr("scopeValue", "Say which one this list applies to.");
     }
+    const dates = scopeDatesProblem(parsed.data.validFrom, parsed.data.validTo);
+    if (dates) return fieldErr("validTo", dates);
 
     const id = gen("pls");
     await db.transaction(async (tx) => {
@@ -608,6 +622,14 @@ export async function updateScope(
     const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListScopes).where(eq(priceListScopes.id, id));
     if (!row) return err("That scope does not exist.", "not_found");
+    for (const d of [input.validFrom, input.validTo]) {
+      if (d && !ISO_DATE.test(d)) return fieldErr(d === input.validFrom ? "validFrom" : "validTo", "That is not a date.");
+    }
+    const dates = scopeDatesProblem(
+      input.validFrom !== undefined ? input.validFrom : row.validFrom,
+      input.validTo !== undefined ? input.validTo : row.validTo,
+    );
+    if (dates) return fieldErr("validTo", dates);
 
     const kind = input.scopeKind ?? row.scopeKind;
     await db.transaction(async (tx) => {
@@ -683,6 +705,21 @@ export async function setDiscountTerm(input: {
     if (!Number.isInteger(input.percentBp) || input.percentBp <= 0 || input.percentBp > 10_000) {
       return fieldErr("percentBp", "A discount is a percentage above zero.");
     }
+    const list = await listRow(input.priceListId);
+    if (!list) return err("That price list does not exist.", "not_found");
+    /* A discount printed under the prices is offered on every sales order
+       naming the list — a term of the list, set on a draft like its rates. */
+    const notDraft = draftOnlyRefusal(list.status, "Changing a discount on it");
+    if (notDraft) return err(notDraft, "rule_violation");
+    if (input.id) {
+      const [term] = await db
+        .select({ priceListId: priceListDiscountTerms.priceListId })
+        .from(priceListDiscountTerms)
+        .where(eq(priceListDiscountTerms.id, input.id));
+      if (!term || term.priceListId !== input.priceListId) {
+        return err("That discount is not on this list.", "not_found");
+      }
+    }
     const id = input.id ?? gen("plt");
     await db.transaction(async (tx) => {
       if (input.id) {
@@ -695,7 +732,7 @@ export async function setDiscountTerm(input: {
             thresholdPaise: input.thresholdPaise ?? null,
             rawText: input.rawText ?? null,
           })
-          .where(eq(priceListDiscountTerms.id, input.id));
+          .where(and(eq(priceListDiscountTerms.id, input.id), eq(priceListDiscountTerms.priceListId, input.priceListId)));
       } else {
         await tx.insert(priceListDiscountTerms).values({
           id,
@@ -721,11 +758,19 @@ export async function setDiscountTerm(input: {
   }
 }
 
-export async function removeDiscountTerm(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
+export async function removeDiscountTerm(
+  id: string,
+  confirmation?: ImpactConfirmation,
+  priceListId?: string,
+): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListDiscountTerms).where(eq(priceListDiscountTerms.id, id));
     if (!row) return err("That term does not exist.", "not_found");
+    if (priceListId && row.priceListId !== priceListId) return err("That discount is not on this list.", "not_found");
+    const list = await listRow(row.priceListId);
+    const notDraft = list ? draftOnlyRefusal(list.status, "Taking a discount off it") : null;
+    if (notDraft) return err(notDraft, "rule_violation");
     /* On a published list it leaves the printed sheet and every ERP sales
        order that names the list — the parties were listed by name. */
     const refusal = await confirmImpact("price-discount-term", id, confirmation);
@@ -748,74 +793,119 @@ export async function removeDiscountTerm(id: string, confirmation?: ImpactConfir
 
 /* -------------------------------------------------------------- publishing */
 
+/** A refusal decided inside a transaction: thrown to roll it back, caught and returned. */
+class Refused extends Error {
+  constructor(readonly result: Err) {
+    super(result.error);
+  }
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** The list row, LOCKED for the rest of the transaction — the read a status check must be made on. */
+async function lockedList(tx: Tx, id: string) {
+  const [row] = await tx.select().from(priceLists).where(eq(priceLists.id, id)).for("update");
+  return row ?? null;
+}
+
 export async function publishPriceList(
   id: string,
   input?: { supersedesId?: string | null; effectiveFrom?: string },
 ): Promise<Result<{ warnings: string[] }>> {
   try {
     const ctx = await requirePriceDesk();
-    const row = await listRow(id);
-    if (!row) return err("That price list does not exist.", "not_found");
-    if (row.status !== "draft") return err(`This list is already ${row.status}.`, "rule_violation");
+    const first = await listRow(id);
+    if (!first) return err("That price list does not exist.", "not_found");
+    if (first.status !== "draft") return err(`This list is already ${first.status}.`, "rule_violation");
 
-    const effectiveFrom = input?.effectiveFrom ?? row.effectiveFrom;
+    const effectiveFrom = input?.effectiveFrom ?? first.effectiveFrom;
     if (!ISO_DATE.test(effectiveFrom)) return fieldErr("effectiveFrom", "That is not a date.");
+    if (input?.supersedesId === id) return fieldErr("supersedesId", "A list cannot supersede itself.");
 
-    const [{ rates }] = await db.execute<{ rates: number }>(sql`
-      select count(*)::int as rates from price_list_rates where price_list_id = ${id}
-    `);
-    if (!Number(rates)) {
-      return err("This list has no rates in it. A list with no prices is not a list.", "rule_violation");
-    }
-
-    const warnings: string[] = [];
-    const [{ scopes }] = await db.execute<{ scopes: number }>(sql`
-      select count(*)::int as scopes from price_list_scopes where price_list_id = ${id}
-    `);
-
-    const supersedes = input?.supersedesId ? await listRow(input.supersedesId) : null;
-    if (input?.supersedesId && !supersedes) return fieldErr("supersedesId", "That list does not exist.");
-    if (supersedes && supersedes.status !== "published") {
-      return fieldErr("supersedesId", `That list is ${supersedes.status}, so there is nothing to supersede.`);
-    }
-
-    // A derived list is checked against its own rule before it goes out. Not
-    // refused: the office overrides a cell deliberately often enough that a
-    // block would be worked around, and a warning is read.
     const config = await getConfig();
-    if (row.parentListId && row.derivation) {
-      const drift = await db.execute<{ name: string; expected: number; actual: number }>(sql`
-        select p.name,
-               child.rate_ex_gst_paise as actual,
-               parent.rate_ex_gst_paise as expected
-          from price_list_rates child
-          join price_list_rates parent
-            on parent.price_list_id = ${row.parentListId}
-           and parent.product_id = child.product_id
-           and coalesce(parent.min_cans, 0) = coalesce(child.min_cans, 0)
-          join products p on p.id = child.product_id
-         where child.price_list_id = ${id}
-      `);
-      const tolerance = config["pricing.derivationTolerancePaise"];
-      let off = 0;
-      for (const d of drift) {
-        const expected = deriveRate(Number(d.expected), null, row.derivation as PriceDerivation);
-        if (expected != null && Math.abs(expected - Number(d.actual)) > tolerance) off++;
-      }
-      if (off) warnings.push(`${off} rate${off === 1 ? " is" : "s are"} further from this list's own rule than the tolerance allows.`);
-    }
+    const day = await today();
+    const warnings: string[] = [];
+    let name = first.name;
+    let rateCount = 0;
 
+    /* EVERYTHING that decides is read inside the transaction, on locked rows.
+       Read outside it, a double click or a second tab both saw a draft and
+       both published — copying the old list's scopes twice. The status guard
+       on the final update is the second half of the same answer. */
     await db.transaction(async (tx) => {
+      const row = await lockedList(tx, id);
+      if (!row) throw new Refused(err("That price list does not exist.", "not_found"));
+      if (row.status !== "draft") throw new Refused(err(`This list is already ${row.status}.`, "rule_violation"));
+      name = row.name;
+
+      const [{ rates }] = await tx.execute<{ rates: number }>(sql`
+        select count(*)::int as rates from price_list_rates where price_list_id = ${id}
+      `);
+      rateCount = Number(rates);
+      if (!rateCount) {
+        throw new Refused(err("This list has no rates in it. A list with no prices is not a list.", "rule_violation"));
+      }
+      const [{ scopes }] = await tx.execute<{ scopes: number }>(sql`
+        select count(*)::int as scopes from price_list_scopes where price_list_id = ${id}
+      `);
+
+      const supersedes = input?.supersedesId ? await lockedList(tx, input.supersedesId) : null;
+      if (input?.supersedesId && !supersedes) throw new Refused(fieldErr("supersedesId", "That list does not exist."));
+      if (supersedes && supersedes.status !== "published") {
+        throw new Refused(fieldErr("supersedesId", `That list is ${supersedes.status}, so there is nothing to supersede.`));
+      }
       if (supersedes) {
-        await tx
-          .update(priceLists)
-          .set({
-            status: "superseded",
-            effectiveTo: addDays(effectiveFrom, -1),
-            updatedAt: new Date(),
-            updatedById: ctx.user.id,
-          })
-          .where(eq(priceLists.id, supersedes.id));
+        /* One successor per list. A second would date the old list out to a
+           different day and leave two versions claiming to take over. */
+        const already = await publishedSuccessor(tx, supersedes.id, id);
+        if (already) {
+          throw new Refused(
+            fieldErr(
+              "supersedesId",
+              `${supersedes.name} is already being replaced by ${already.name} from ${already.effectiveFrom}. Supersede that version instead.`,
+            ),
+          );
+        }
+      }
+
+      // A derived list is checked against its own rule before it goes out. Not
+      // refused: the office overrides a cell deliberately often enough that a
+      // block would be worked around, and a warning is read.
+      if (row.parentListId && row.derivation) {
+        const drift = await tx.execute<{ name: string; expected: number; actual: number }>(sql`
+          select p.name,
+                 child.rate_ex_gst_paise as actual,
+                 parent.rate_ex_gst_paise as expected
+            from price_list_rates child
+            join price_list_rates parent
+              on parent.price_list_id = ${row.parentListId}
+             and parent.product_id = child.product_id
+             and coalesce(parent.min_cans, 0) = coalesce(child.min_cans, 0)
+            join products p on p.id = child.product_id
+           where child.price_list_id = ${id}
+        `);
+        const tolerance = config["pricing.derivationTolerancePaise"];
+        let off = 0;
+        for (const d of drift) {
+          const expected = deriveRate(Number(d.expected), null, row.derivation as PriceDerivation);
+          if (expected != null && Math.abs(expected - Number(d.actual)) > tolerance) off++;
+        }
+        if (off) warnings.push(`${off} rate${off === 1 ? " is" : "s are"} further from this list's own rule than the tolerance allows.`);
+      }
+
+      if (supersedes) {
+        /* Dated out to the day before this one starts — and still PUBLISHED
+           until then when that day is in the future, so the shops on it keep
+           their prices instead of falling to a wider list in between. */
+        const ended = await supersedePredecessor(tx, {
+          oldId: supersedes.id,
+          newFrom: effectiveFrom,
+          day,
+          userId: ctx.user.id,
+        });
+        if (ended.status === "published") {
+          warnings.push(`${supersedes.name} stays in force until ${ended.effectiveTo}; this one takes over on ${effectiveFrom}.`);
+        }
 
         // A new version with nobody on it would silently apply to nothing;
         // inheriting the scopes is what makes "publish next month's list"
@@ -845,7 +935,7 @@ export async function publishPriceList(
         warnings.push("Nobody is on this list yet, so no shop will be priced from it. Add who it applies to.");
       }
 
-      await tx
+      const published = await tx
         .update(priceLists)
         .set({
           status: "published",
@@ -856,20 +946,23 @@ export async function publishPriceList(
           updatedAt: new Date(),
           updatedById: ctx.user.id,
         })
-        .where(eq(priceLists.id, id));
+        .where(and(eq(priceLists.id, id), eq(priceLists.status, "draft")))
+        .returning({ id: priceLists.id });
+      if (!published.length) throw new Refused(err("This list has just been published by somebody else.", "conflict"));
 
       await audit(tx, ctx, {
         action: "pricelist.publish",
         entityType: "price_list",
         entityId: id,
         before: { status: "draft" },
-        after: { status: "published", effectiveFrom, supersedes: supersedes?.id ?? null, rates: Number(rates) },
+        after: { status: "published", effectiveFrom, supersedes: supersedes?.id ?? null, rates: rateCount },
       });
     });
 
     refresh();
-    return ok({ warnings }, `${row.name} is in force from ${effectiveFrom}.`);
+    return ok({ warnings }, `${name} is in force from ${effectiveFrom}.`);
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -882,14 +975,23 @@ export async function withdrawPriceList(id: string, reason: string, confirmation
     }
     const row = await listRow(id);
     if (!row) return err("That price list does not exist.", "not_found");
-    if (row.status === "withdrawn") return err("That list has already been withdrawn.", "rule_violation");
+    /* Only a list in force is withdrawn: a draft is deleted, and a superseded
+       list already ended on the day its successor began — withdrawing it
+       would rewrite that end date. */
+    const notWithdrawable = withdrawRefusal(row.status);
+    if (notWithdrawable) return err(notWithdrawable, "rule_violation");
     /* Every shop it prices falls to another list or to none — the person saw
        which, by name, and nothing has moved since. */
     const refusal = await confirmImpact("price-list-withdrawal", id, confirmation);
     if (refusal) return refusal;
 
     const day = await today();
+    let restored: string | null = null;
     await db.transaction(async (tx) => {
+      const locked = await lockedList(tx, id);
+      if (!locked) throw new Refused(err("That price list does not exist.", "not_found"));
+      const now = withdrawRefusal(locked.status);
+      if (now) throw new Refused(err(now, "rule_violation"));
       await tx
         .update(priceLists)
         .set({
@@ -901,95 +1003,151 @@ export async function withdrawPriceList(id: string, reason: string, confirmation
           updatedAt: new Date(),
           updatedById: ctx.user.id,
         })
-        .where(eq(priceLists.id, id));
+        .where(and(eq(priceLists.id, id), eq(priceLists.status, "published")));
+
+      /* A version withdrawn BEFORE it took over never took over: the list it
+         was to replace is still the one in force, and it goes on being so
+         rather than ending on a day nothing replaces it. */
+      if (locked.supersedesId && locked.effectiveFrom > day) {
+        const back = await tx
+          .update(priceLists)
+          .set({ effectiveTo: null, updatedAt: new Date(), updatedById: ctx.user.id })
+          .where(
+            and(
+              eq(priceLists.id, locked.supersedesId),
+              eq(priceLists.status, "published"),
+              eq(priceLists.effectiveTo, addDays(locked.effectiveFrom, -1)),
+            ),
+          )
+          .returning({ id: priceLists.id });
+        restored = back[0]?.id ?? null;
+      }
+
       await audit(tx, ctx, {
         action: "pricelist.withdraw",
         entityType: "price_list",
         entityId: id,
         before: { status: row.status },
-        after: { status: "withdrawn", reason: reason.trim() },
+        after: { status: "withdrawn", reason: reason.trim(), predecessorRestored: restored },
       });
     });
 
     refresh();
-    return okVoid("Withdrawn. Nothing is priced from it from today.");
+    return okVoid(
+      restored
+        ? "Withdrawn before it started. The version it was to replace stays in force."
+        : "Withdrawn. Nothing is priced from it from today.",
+    );
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
 
 /* ------------------------------------------------------------- versioning */
 
-export async function newVersion(
+type VersionInput = { effectiveFrom: string; name?: string; refNo?: string | null };
+type DeskCtx = Awaited<ReturnType<typeof requirePriceDesk>>;
+
+/**
+ * The source LOCKED, checked, and either the draft version already open on it
+ * or a new one copied from it — inside the caller's transaction, so a second
+ * click cannot make a second draft and `bulkRevise` cannot leave a half-made one.
+ */
+async function draftVersionIn(
+  tx: Tx,
+  ctx: DeskCtx,
   id: string,
-  input: { effectiveFrom: string; name?: string; refNo?: string | null },
-): Promise<Result<{ id: string }>> {
+  input: VersionInput,
+): Promise<{ id: string; version: number; existing: boolean }> {
+  const row = await lockedList(tx, id);
+  if (!row) throw new Refused(err("That price list does not exist.", "not_found"));
+  const refusal = newVersionRefusal(row.status);
+  if (refusal) throw new Refused(err(refusal, "rule_violation"));
+
+  /* One open draft per list. Two would each publish as "the next version" and
+     the second would find the first already taking over. */
+  const [open] = await tx
+    .select({ id: priceLists.id, version: priceLists.version })
+    .from(priceLists)
+    .where(and(eq(priceLists.supersedesId, id), eq(priceLists.status, "draft")))
+    .limit(1);
+  if (open) return { id: open.id, version: open.version, existing: true };
+
+  const newId = gen("pl");
+  await tx.insert(priceLists).values({
+    id: newId,
+    refNo: input.refNo !== undefined ? input.refNo : row.refNo,
+    name: input.name?.trim() || row.name,
+    version: row.version + 1,
+    supersedesId: row.id,
+    documentId: null,
+    effectiveFrom: input.effectiveFrom,
+    validityDays: row.validityDays,
+    taxBasis: row.taxBasis,
+    gstBp: row.gstBp,
+    deliveryBasis: row.deliveryBasis,
+    freightTerm: row.freightTerm,
+    freightPerLitrePaise: row.freightPerLitrePaise,
+    parentListId: row.parentListId,
+    derivation: row.derivation,
+    unitBasis: row.unitBasis,
+    kind: row.kind,
+    status: "draft",
+    termsText: row.termsText,
+    signatory: row.signatory,
+    notes: row.notes,
+    createdById: ctx.user.id,
+    updatedById: ctx.user.id,
+  });
+
+  await tx.execute(sql`
+    insert into price_list_rates (id, price_list_id, product_id, rate_ex_gst_paise, rate_incl_gst_paise,
+                                  min_cans, max_cans, offered, match_status, updated_by_id)
+    select ${sql.raw("'plr_' || substr(md5(random()::text), 1, 12)")}, ${newId}, r.product_id,
+           r.rate_ex_gst_paise, r.rate_incl_gst_paise, r.min_cans, r.max_cans, r.offered,
+           'manual', ${ctx.user.id}
+      from price_list_rates r where r.price_list_id = ${id}
+  `);
+  await tx.execute(sql`
+    insert into price_list_discount_terms (id, price_list_id, kind, percent_bp, threshold_litres, threshold_paise, raw_text)
+    select ${sql.raw("'plt_' || substr(md5(random()::text), 1, 12)")}, ${newId}, t.kind, t.percent_bp,
+           t.threshold_litres, t.threshold_paise, t.raw_text
+      from price_list_discount_terms t where t.price_list_id = ${id}
+  `);
+  await tx.execute(sql`
+    insert into price_list_scopes (id, price_list_id, scope_kind, scope_value, scope_label, parent_key,
+                                   freight_term_match, priority, valid_from, valid_to, created_by_id)
+    select ${sql.raw("'pls_' || substr(md5(random()::text), 1, 12)")}, ${newId}, s.scope_kind, s.scope_value,
+           s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, ${ctx.user.id}
+      from price_list_scopes s where s.price_list_id = ${id}
+  `);
+
+  await audit(tx, ctx, {
+    action: "pricelist.version",
+    entityType: "price_list",
+    entityId: newId,
+    after: { from: id, version: row.version + 1, effectiveFrom: input.effectiveFrom },
+  });
+  return { id: newId, version: row.version + 1, existing: false };
+}
+
+export async function newVersion(id: string, input: VersionInput): Promise<Result<{ id: string }>> {
   try {
     const ctx = await requirePriceDesk();
     if (!ISO_DATE.test(input.effectiveFrom)) return fieldErr("effectiveFrom", "That is not a date.");
-    const row = await listRow(id);
-    if (!row) return err("That price list does not exist.", "not_found");
 
-    const newId = gen("pl");
-    await db.transaction(async (tx) => {
-      await tx.insert(priceLists).values({
-        id: newId,
-        refNo: input.refNo !== undefined ? input.refNo : row.refNo,
-        name: input.name?.trim() || row.name,
-        version: row.version + 1,
-        supersedesId: row.id,
-        documentId: null,
-        effectiveFrom: input.effectiveFrom,
-        validityDays: row.validityDays,
-        taxBasis: row.taxBasis,
-        gstBp: row.gstBp,
-        deliveryBasis: row.deliveryBasis,
-        freightTerm: row.freightTerm,
-        freightPerLitrePaise: row.freightPerLitrePaise,
-        parentListId: row.parentListId,
-        derivation: row.derivation,
-        unitBasis: row.unitBasis,
-        status: "draft",
-        termsText: row.termsText,
-        signatory: row.signatory,
-        notes: row.notes,
-        createdById: ctx.user.id,
-        updatedById: ctx.user.id,
-      });
-
-      await tx.execute(sql`
-        insert into price_list_rates (id, price_list_id, product_id, rate_ex_gst_paise, rate_incl_gst_paise,
-                                      min_cans, max_cans, offered, match_status, updated_by_id)
-        select ${sql.raw("'plr_' || substr(md5(random()::text), 1, 12)")}, ${newId}, r.product_id,
-               r.rate_ex_gst_paise, r.rate_incl_gst_paise, r.min_cans, r.max_cans, r.offered,
-               'manual', ${ctx.user.id}
-          from price_list_rates r where r.price_list_id = ${id}
-      `);
-      await tx.execute(sql`
-        insert into price_list_discount_terms (id, price_list_id, kind, percent_bp, threshold_litres, threshold_paise, raw_text)
-        select ${sql.raw("'plt_' || substr(md5(random()::text), 1, 12)")}, ${newId}, t.kind, t.percent_bp,
-               t.threshold_litres, t.threshold_paise, t.raw_text
-          from price_list_discount_terms t where t.price_list_id = ${id}
-      `);
-      await tx.execute(sql`
-        insert into price_list_scopes (id, price_list_id, scope_kind, scope_value, scope_label, parent_key,
-                                       freight_term_match, priority, valid_from, valid_to, created_by_id)
-        select ${sql.raw("'pls_' || substr(md5(random()::text), 1, 12)")}, ${newId}, s.scope_kind, s.scope_value,
-               s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, ${ctx.user.id}
-          from price_list_scopes s where s.price_list_id = ${id}
-      `);
-
-      await audit(tx, ctx, {
-        action: "pricelist.version",
-        entityType: "price_list",
-        entityId: newId,
-        after: { from: id, version: row.version + 1, effectiveFrom: input.effectiveFrom },
-      });
-    });
+    const made = await db.transaction((tx) => draftVersionIn(tx, ctx, id, input));
 
     refresh();
-    return ok({ id: newId }, `Version ${row.version + 1} is a draft. Change what has moved, then publish it.`);
+    return ok(
+      { id: made.id },
+      made.existing
+        ? `Version ${made.version} is already a draft — opened it rather than starting a second one.`
+        : `Version ${made.version} is a draft. Change what has moved, then publish it.`,
+    );
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -999,33 +1157,42 @@ export async function bulkRevise(
   input: { derivation: PriceDerivation; effectiveFrom: string; name?: string; refNo?: string | null; roundToRupee: boolean },
 ): Promise<Result<{ id: string; sample: Array<{ productName: string; fromEx: number; toEx: number }> }>> {
   try {
-    await requirePriceDesk();
+    const ctx = await requirePriceDesk();
     const derivation = derivationSchema.safeParse(input.derivation);
     if (!derivation.success) return zodErr(derivation.error);
-
-    const created = await newVersion(id, { effectiveFrom: input.effectiveFrom, name: input.name, refNo: input.refNo });
-    if (!created.ok) return created;
-    const newId = created.data.id;
-
-    const ctx = await requirePriceDesk();
-    const list = await listRow(newId);
-    const gstBp = list?.gstBp ?? 1800;
-
-    const rows = await db.execute<{
-      id: string;
-      productName: string;
-      rateExGstPaise: number;
-      millilitresPerCan: number | null;
-    }>(sql`
-      select r.id, p.name as "productName", r.rate_ex_gst_paise as "rateExGstPaise",
-             p.millilitres_per_can as "millilitresPerCan"
-        from price_list_rates r join products p on p.id = r.product_id
-       where r.price_list_id = ${newId}
-       order by p.name asc
-    `);
+    if (!ISO_DATE.test(input.effectiveFrom)) return fieldErr("effectiveFrom", "That is not a date.");
 
     const sample: Array<{ productName: string; fromEx: number; toEx: number }> = [];
-    await db.transaction(async (tx) => {
+    /* ONE transaction: the new version and every moved rate, or neither. Two
+       left a draft behind with the old prices in it whenever the second failed. */
+    const newId = await db.transaction(async (tx) => {
+      const made = await draftVersionIn(tx, ctx, id, input);
+      if (made.existing) {
+        /* Its rates may already have been changed by hand; moving them again
+           would move them twice. */
+        throw new Refused(
+          err(
+            `Version ${made.version} of this list is already a draft. Revise that draft, or delete it, before revising every price again.`,
+            "conflict",
+          ),
+        );
+      }
+      const [list] = await tx.select().from(priceLists).where(eq(priceLists.id, made.id));
+      const gstBp = list?.gstBp ?? 1800;
+
+      const rows = await tx.execute<{
+        id: string;
+        productName: string;
+        rateExGstPaise: number;
+        millilitresPerCan: number | null;
+      }>(sql`
+        select r.id, p.name as "productName", r.rate_ex_gst_paise as "rateExGstPaise",
+               p.millilitres_per_can as "millilitresPerCan"
+          from price_list_rates r join products p on p.id = r.product_id
+         where r.price_list_id = ${made.id}
+         order by p.name asc
+      `);
+
       for (const row of rows) {
         const from = Number(row.rateExGstPaise);
         const moved = deriveRate(from, row.millilitresPerCan, derivation.data);
@@ -1040,14 +1207,16 @@ export async function bulkRevise(
       await audit(tx, ctx, {
         action: "pricelist.revise",
         entityType: "price_list",
-        entityId: newId,
+        entityId: made.id,
         after: { from: id, derivation: derivation.data, rates: rows.length },
       });
+      return made.id;
     });
 
     refresh();
     return ok({ id: newId, sample }, "Every rate has been moved. Check them, then publish.");
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -1155,29 +1324,41 @@ export async function resolveParseRow(input: {
   }
 }
 
+/**
+ * A cell's price, corrected by a person — typed AS THE DOCUMENT PRINTS IT.
+ * On a GST-extra list that is the ex figure, and the inclusive one is grossed
+ * up beside it exactly as the reader stages it; it used to be stored as the
+ * inclusive figure too, so a corrected cell went into force 18% short.
+ */
 export async function setParseRowPrice(input: {
   rowId: string;
-  rateInclGstPaise: number | null;
+  /** The figure as the document prints it, in the document's own tax basis. */
+  printedPaise: number | null;
   offered: boolean;
 }): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
+    if (input.offered && (input.printedPaise == null || !Number.isInteger(input.printedPaise) || input.printedPaise <= 0)) {
+      return fieldErr("rateInclGstPaise", "Type the price as the document prints it, or say it is not offered.");
+    }
     const [row] = await db.select().from(priceListParseRows).where(eq(priceListParseRows.id, input.rowId));
     if (!row) return err("That cell does not exist.", "not_found");
 
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, row.documentId));
+    if (doc?.parseStatus === "published") return err("This document is already a price list. Change the list instead.", "rule_violation");
     const config = await getConfig();
     const header = doc?.header as PriceParsedHeader | null;
     const gstBp = header?.gstBp ?? config["pricing.gstBp"];
-    const inclusive = (header?.taxBasis ?? "inclusive") === "inclusive";
-    const incl = input.offered ? input.rateInclGstPaise : null;
+    const basis: TaxBasis = header?.taxBasis ?? "inclusive";
+    const figures = stagedFigures(input.offered ? input.printedPaise : null, basis, gstBp);
+    const incl = figures.incl;
 
     await db.transaction(async (tx) => {
       await tx
         .update(priceListParseRows)
         .set({
-          rateInclGstPaise: incl,
-          rateExGstPaise: incl == null ? null : inclusive ? exFromIncl(incl, gstBp) : incl,
+          rateInclGstPaise: figures.incl,
+          rateExGstPaise: figures.ex,
           offered: input.offered,
           decidedById: ctx.user.id,
           decidedAt: new Date(),
@@ -1206,12 +1387,38 @@ export async function updateDocumentHeader(documentId: string, header: Partial<P
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
     if (!doc) return err("That document does not exist.", "not_found");
 
-    const merged = { ...((doc.header as PriceParsedHeader | null) ?? {}), ...header } as PriceParsedHeader;
+    if (doc.parseStatus === "published") return err("This document is already a price list. Change the list instead.", "rule_violation");
+    if (isReading(doc.parseStatus)) return err("This file is being read right now. Wait for the read to finish.", "rule_violation");
+
+    const before = (doc.header as PriceParsedHeader | null) ?? null;
+    const merged = { ...(before ?? {}), ...header } as PriceParsedHeader;
+    const config = await getConfig();
+    const from = { basis: (before?.taxBasis ?? "inclusive") as TaxBasis, gstBp: before?.gstBp ?? config["pricing.gstBp"] };
+    const to = { basis: (merged.taxBasis ?? "inclusive") as TaxBasis, gstBp: merged.gstBp ?? config["pricing.gstBp"] };
+    const repriced = from.basis !== to.basis || from.gstBp !== to.gstBp;
     await db.transaction(async (tx) => {
       await tx
         .update(priceListDocuments)
         .set({ header: merged, updatedAt: new Date() })
         .where(eq(priceListDocuments.id, documentId));
+      /* A corrected tax basis or GST rate does not change what the paper
+       * PRINTED; it changes what that figure means. Every staged cell is
+       * worked out again from its printed figure, so publishing reads figures
+       * that agree with the header it is published under. */
+      if (repriced) {
+        const staged = await tx
+          .select({ id: priceListParseRows.id, rateInclGstPaise: priceListParseRows.rateInclGstPaise, rateExGstPaise: priceListParseRows.rateExGstPaise })
+          .from(priceListParseRows)
+          .where(eq(priceListParseRows.documentId, documentId));
+        for (const r of staged) {
+          if (r.rateInclGstPaise == null && r.rateExGstPaise == null) continue;
+          const next = restage(r, from, to);
+          await tx
+            .update(priceListParseRows)
+            .set({ rateInclGstPaise: next.incl, rateExGstPaise: next.ex, updatedAt: new Date() })
+            .where(eq(priceListParseRows.id, r.id));
+        }
+      }
       await audit(tx, ctx, {
         action: "pricelist.document.header",
         entityType: "price_list_document",
@@ -1249,10 +1456,19 @@ export async function publishDocument(
     if (doc.parseStatus === "published") {
       return err("This document has already been published as a price list.", "rule_violation");
     }
+    if (isReading(doc.parseStatus)) {
+      return err("This file is still being read. Wait for the read to finish, then publish it.", "rule_violation");
+    }
 
     const header = (doc.header as PriceParsedHeader | null) ?? null;
     const config = await getConfig();
     const gstBp = parsed.data.gstBp ?? header?.gstBp ?? config["pricing.gstBp"];
+    const taxBasis: TaxBasis = parsed.data.taxBasis ?? header?.taxBasis ?? "inclusive";
+    // The figures were staged under the header the file was READ with; the
+    // list goes into force under this one. Each rate is worked out again from
+    // what the paper printed, so a basis or GST corrected on the publish form
+    // re-prices nothing by accident.
+    const readAs = { basis: (header?.taxBasis ?? "inclusive") as TaxBasis, gstBp: header?.gstBp ?? config["pricing.gstBp"] };
 
     const statuses = input.includeSuggested
       ? ["matched", "alias", "manual", "suggested"]
@@ -1296,17 +1512,48 @@ export async function publishDocument(
       );
     }
 
+    // One rate per SKU: a grid prints one product once per column, but two
+    // rows that resolve to the same SKU would collide on the unique index.
+    // Which one wins is decided, never "the first": see `pickDocumentRates`.
+    const pick = pickDocumentRates([...rows], readAs, { basis: taxBasis, gstBp });
+    if (pick.conflicts.length) {
+      const names = await db
+        .select({ id: products.id, name: products.name })
+        .from(products)
+        .where(inArray(products.id, pick.conflicts.map((c) => c.productId)));
+      const nameOf = new Map(names.map((n) => [n.id, n.name]));
+      const said = pick.conflicts
+        .slice(0, 3)
+        .map((c) => `${nameOf.get(c.productId) ?? c.labels[0]} (${c.prices.map((p) => money(p)).join(" and ")})`)
+        .join("; ");
+      return err(
+        `Two cells price the same product differently, so nothing was published: ${said}${pick.conflicts.length > 3 ? ` and ${pick.conflicts.length - 3} more` : ""}. Point one of the cells at a different product, or skip it, then publish.`,
+        "rule_violation",
+      );
+    }
+
     const warnings: string[] = [];
     if (Number(skipped)) {
       warnings.push(`${skipped} cell${Number(skipped) === 1 ? "" : "s"} had no product and ${Number(skipped) === 1 ? "was" : "were"} left out.`);
     }
+    if (pick.dropped) {
+      warnings.push(`${pick.dropped} cell${pick.dropped === 1 ? "" : "s"} named a product another cell already priced, and ${pick.dropped === 1 ? "was" : "were"} left out.`);
+    }
 
     const listId = gen("pl");
-    // One rate per SKU: a grid prints one product once per column, but two
-    // rows that resolve to the same SKU would collide on the unique index.
-    const seen = new Set<string>();
+    let raced = false;
 
     await db.transaction(async (tx) => {
+      /* ONE LIST PER DOCUMENT. The status was read outside this transaction,
+       * so a double click or two tabs both passed it and made two lists. The
+       * row is locked here and asked again; the loser writes nothing. */
+      const [locked] = await tx.execute<{ parseStatus: string }>(sql`
+        select parse_status as "parseStatus" from price_list_documents where id = ${documentId} for update
+      `);
+      if (!locked || locked.parseStatus === "published" || isReading(locked.parseStatus)) {
+        raced = true;
+        return;
+      }
       await tx.insert(priceLists).values({
         id: listId,
         refNo: parsed.data.refNo?.trim() || header?.refNo || null,
@@ -1315,7 +1562,7 @@ export async function publishDocument(
         documentId,
         effectiveFrom: parsed.data.effectiveFrom,
         validityDays: parsed.data.validityDays ?? header?.validityDays ?? null,
-        taxBasis: parsed.data.taxBasis ?? header?.taxBasis ?? "inclusive",
+        taxBasis,
         gstBp,
         deliveryBasis: parsed.data.deliveryBasis ?? header?.deliveryBasis ?? null,
         freightTerm: parsed.data.freightTerm ?? header?.freightTerm ?? "not_stated",
@@ -1329,20 +1576,18 @@ export async function publishDocument(
       });
 
       const values = [];
-      for (const r of rows) {
-        if (seen.has(r.matchedProductId)) continue;
-        seen.add(r.matchedProductId);
-        const ex = r.rateExGstPaise == null ? null : Number(r.rateExGstPaise);
+      for (const r of pick.chosen) {
         // A dash keeps its SKU and is stored as not offered — "we do not sell
-        // this in this pack on this list" is a fact, and zero is not.
-        if (ex == null && r.offered) continue;
+        // this in this pack on this list" is a fact, and zero is not. The
+        // inclusive figure is the one the paper PRINTED (on an inclusive
+        // list), not one rebuilt from the ex figure a paisa away from it.
         values.push({
           id: gen("plr"),
           priceListId: listId,
           productId: r.matchedProductId,
-          rateExGstPaise: ex ?? 0,
-          rateInclGstPaise: ex == null ? 0 : inclFromEx(ex, gstBp),
-          offered: r.offered && ex != null,
+          rateExGstPaise: r.ex ?? 0,
+          rateInclGstPaise: r.incl ?? 0,
+          offered: r.offered && r.ex != null,
           rawProductText: r.rawProductText,
           rawPackText: r.rawPackText,
           rawPriceText: r.rawPriceText,
@@ -1404,6 +1649,8 @@ export async function publishDocument(
       });
     });
 
+    if (raced) return err("This document has already been published as a price list.", "rule_violation");
+
     if (input.publishNow) {
       const published = await publishPriceList(listId, { supersedesId: input.supersedesId ?? null });
       if (!published.ok) {
@@ -1441,7 +1688,7 @@ export async function rejectDocument(documentId: string, reason: string): Promis
           rejectReason: reason.trim(),
           updatedAt: new Date(),
         })
-        .where(eq(priceListDocuments.id, documentId));
+        .where(and(eq(priceListDocuments.id, documentId), sql`${priceListDocuments.parseStatus} <> 'published'`));
       await audit(tx, ctx, {
         action: "pricelist.document.reject",
         entityType: "price_list_document",
@@ -1465,15 +1712,19 @@ export async function reparseDocument(documentId: string): Promise<Result<{ stat
     if (doc.parseStatus === "published") {
       return err("This one has already become a price list. Re-reading it would change nothing.", "rule_violation");
     }
+    if (doc.parseStatus === "rejected") {
+      return err("This one was rejected. Upload it again if it should be read after all.", "rule_violation");
+    }
+    if (!canReread({ parseStatus: doc.parseStatus, stageStartedAt: doc.stageStartedAt, createdAt: doc.createdAt }, Date.now())) {
+      return err("This file is being read right now. Wait for that read to finish before reading it again.", "rule_violation");
+    }
 
-    // Everything a person answered stands; the rest is read again. That is
-    // what makes re-parsing safe after the reading rule changes.
-    await db
-      .delete(priceListParseRows)
-      .where(and(eq(priceListParseRows.documentId, documentId), isNull(priceListParseRows.decidedById)));
-
+    // Everything a person answered stands; the rest is read again — inside
+    // `parseDocument`, after it has claimed the document, so a second press
+    // cannot delete the rows a running read is about to write beside.
     const { parseDocument } = await import("@/lib/services/price-list-parse-service");
     const result = await parseDocument(documentId);
+    if (result.refused) return err(result.problems[0] ?? "This file cannot be read again now.", "rule_violation");
 
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {
@@ -1632,41 +1883,63 @@ export async function decidePriceRequest(
 ): Promise<Result<{ listId: string | null }>> {
   try {
     const ctx = await requirePriceDesk();
-    const [row] = await db.select().from(priceRequests).where(eq(priceRequests.id, id));
-    if (!row) return err("That request does not exist.", "not_found");
-    if (row.status !== "pending") return err(`That request was already ${row.status}.`, "rule_violation");
+    const [first] = await db.select().from(priceRequests).where(eq(priceRequests.id, id));
+    if (!first) return err("That request does not exist.", "not_found");
+    if (first.status !== "pending") return err(`That request was already ${first.status}.`, "rule_violation");
 
     const day = await today();
     const effectiveFrom = input.effectiveFrom ?? day;
     if (!ISO_DATE.test(effectiveFrom)) return fieldErr("effectiveFrom", "That is not a date.");
 
-    const [customer] = await db.execute<{ name: string }>(sql`select name from customers where id = ${row.customerId}`);
-    const [product] = await db.execute<{ name: string }>(sql`select name from products where id = ${row.productId}`);
+    const [customer] = await db.execute<{ name: string }>(sql`select name from customers where id = ${first.customerId}`);
+    const [product] = await db.execute<{ name: string }>(sql`select name from products where id = ${first.productId}`);
+    const config = await getConfig();
 
     let listId: string | null = null;
-    if (input.decision === "approved") {
-      const config = await getConfig();
-      const parentList = row.currentListId ? await listRow(row.currentListId) : null;
-      const gstBp = parentList?.gstBp ?? config["pricing.gstBp"];
+    /* The pending check is made on the LOCKED row. Read outside the
+       transaction, two people deciding at once both saw "pending": two
+       approvals made two agreed lists, and approve-against-refuse was won by
+       whoever saved last while both were told they had decided it. */
+    const row = await db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(priceRequests).where(eq(priceRequests.id, id)).for("update");
+      if (!locked) throw new Refused(err("That request does not exist.", "not_found"));
+      if (locked.status !== "pending") {
+        throw new Refused(err(`That request has just been ${locked.status} by somebody else.`, "conflict"));
+      }
 
-      /* One special list per shop, not one per price. A shop that has been
-       * given a second special price joins the list it already has, so
-       * everything else keeps falling through to the ordinary list behind it. */
-      const [existing] = await db.execute<{ id: string }>(sql`
-        select l.id from price_lists l
-          join price_list_scopes s on s.price_list_id = l.id
-         where l.status = 'published'
-           and s.scope_kind = 'customer' and s.scope_value = ${row.customerId}
-         order by l.effective_from desc limit 1
-      `);
+      if (input.decision === "approved") {
+        const ex = Number(locked.requestedRateExGstPaise);
+        /* Serialise approvals for ONE shop, so two different requests for it
+           cannot each find no agreed list and each make one. */
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"agreed-prices:" + locked.customerId}))`);
 
-      await db.transaction(async (tx) => {
+        /* The shop's OWN agreed-prices list, and nothing else. Any list with a
+           customer scope naming the shop used to qualify — which is also what
+           a shared list ASSIGNED to the shop looks like, so approving one
+           shop's price rewrote it for every shop on that list. */
+        const [existing] = await tx.execute<{ id: string; gstBp: number }>(sql`
+          select l.id, l.gst_bp as "gstBp" from price_lists l
+           where l.kind = 'agreed'
+             and l.status = 'published'
+             and (l.effective_to is null or l.effective_to >= ${day}::date)
+             and exists (select 1 from price_list_scopes s
+                          where s.price_list_id = l.id
+                            and s.scope_kind = 'customer' and s.scope_value = ${locked.customerId})
+             and not exists (select 1 from price_list_scopes s
+                              where s.price_list_id = l.id
+                                and not (s.scope_kind = 'customer' and s.scope_value = ${locked.customerId}))
+           order by l.effective_from desc, l.id desc
+           limit 1
+           for update of l
+        `);
+
         if (existing) {
           listId = existing.id;
-          const ex = Number(row.requestedRateExGstPaise);
-          const [already] = await tx.execute<{ id: string }>(sql`
-            select r.id from price_list_rates r
-             where r.price_list_id = ${existing.id} and r.product_id = ${row.productId}
+          /* At the GST of the list being written, not the list behind it. */
+          const gstBp = Number(existing.gstBp);
+          const [already] = await tx.execute<{ id: string; rateExGstPaise: number }>(sql`
+            select r.id, r.rate_ex_gst_paise as "rateExGstPaise" from price_list_rates r
+             where r.price_list_id = ${existing.id} and r.product_id = ${locked.productId}
                and coalesce(r.min_cans, 0) = 0
           `);
           if (already) {
@@ -1683,25 +1956,35 @@ export async function decidePriceRequest(
             await tx.insert(priceListRates).values({
               id: gen("plr"),
               priceListId: existing.id,
-              productId: row.productId,
+              productId: locked.productId,
               rateExGstPaise: ex,
               rateInclGstPaise: inclFromEx(ex, gstBp),
               matchStatus: "manual",
               updatedById: ctx.user.id,
             });
           }
+          await audit(tx, ctx, {
+            action: "pricelist.rate.set",
+            entityType: "price_list",
+            entityId: existing.id,
+            before: already ? { productId: locked.productId, rateExGstPaise: Number(already.rateExGstPaise) } : undefined,
+            after: { productId: locked.productId, rateExGstPaise: ex, request: id },
+          });
         } else {
+          const parentList = locked.currentListId ? await listRow(locked.currentListId) : null;
+          const gstBp = parentList?.gstBp ?? config["pricing.gstBp"];
           listId = gen("pl");
           await tx.insert(priceLists).values({
             id: listId,
             name: `${customer?.name ?? "Customer"} — agreed prices`,
             version: 1,
+            kind: "agreed",
             effectiveFrom,
             taxBasis: parentList?.taxBasis ?? "inclusive",
             gstBp,
             deliveryBasis: parentList?.deliveryBasis ?? null,
             freightTerm: "not_stated",
-            parentListId: row.currentListId,
+            parentListId: locked.currentListId,
             status: "published",
             publishedAt: new Date(),
             publishedById: ctx.user.id,
@@ -1712,65 +1995,54 @@ export async function decidePriceRequest(
           await tx.insert(priceListRates).values({
             id: gen("plr"),
             priceListId: listId,
-            productId: row.productId,
-            rateExGstPaise: Number(row.requestedRateExGstPaise),
-            rateInclGstPaise: inclFromEx(Number(row.requestedRateExGstPaise), gstBp),
+            productId: locked.productId,
+            rateExGstPaise: ex,
+            rateInclGstPaise: inclFromEx(ex, gstBp),
             matchStatus: "manual",
             updatedById: ctx.user.id,
           });
+          /* It LAYERS over whatever list the shop is assigned rather than
+             competing with it: the agreed priority outranks every other
+             customer scope (see AGREED_SCOPE_PRIORITY). */
           await tx.insert(priceListScopes).values({
             id: gen("pls"),
             priceListId: listId,
             scopeKind: "customer",
-            scopeValue: row.customerId,
+            scopeValue: locked.customerId,
             scopeLabel: customer?.name ?? null,
             freightTermMatch: "any",
-            priority: 0,
+            priority: AGREED_SCOPE_PRIORITY,
             createdById: ctx.user.id,
           });
         }
+      }
 
-        await tx
-          .update(priceRequests)
-          .set({
-            status: "approved",
-            decidedById: ctx.user.id,
-            decidedAt: new Date(),
-            decisionNote: input.note?.trim() || null,
-            resultingListId: listId,
-            updatedAt: new Date(),
-          })
-          .where(eq(priceRequests.id, id));
+      const decided = await tx
+        .update(priceRequests)
+        .set({
+          status: input.decision,
+          decidedById: ctx.user.id,
+          decidedAt: new Date(),
+          decisionNote: input.note?.trim() || null,
+          resultingListId: input.decision === "approved" ? listId : null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(priceRequests.id, id), eq(priceRequests.status, "pending")))
+        .returning({ id: priceRequests.id });
+      if (!decided.length) throw new Refused(err("That request has just been decided by somebody else.", "conflict"));
 
-        await audit(tx, ctx, {
-          action: "pricelist.request.decide",
-          entityType: "price_request",
-          entityId: id,
-          before: { status: "pending" },
-          after: { status: "approved", listId },
-        });
+      await audit(tx, ctx, {
+        action: "pricelist.request.decide",
+        entityType: "price_request",
+        entityId: id,
+        before: { status: "pending" },
+        after:
+          input.decision === "approved"
+            ? { status: "approved", listId }
+            : { status: "refused", note: input.note?.trim() ?? null },
       });
-    } else {
-      await db.transaction(async (tx) => {
-        await tx
-          .update(priceRequests)
-          .set({
-            status: "refused",
-            decidedById: ctx.user.id,
-            decidedAt: new Date(),
-            decisionNote: input.note?.trim() || null,
-            updatedAt: new Date(),
-          })
-          .where(eq(priceRequests.id, id));
-        await audit(tx, ctx, {
-          action: "pricelist.request.decide",
-          entityType: "price_request",
-          entityId: id,
-          before: { status: "pending" },
-          after: { status: "refused", note: input.note?.trim() ?? null },
-        });
-      });
-    }
+      return locked;
+    });
 
     /* The person who asked is told, with the reason in the message rather than
      * behind a link — they have to ring the shop back and say something. */
@@ -1795,6 +2067,7 @@ export async function decidePriceRequest(
       input.decision === "approved" ? "Approved. The shop is on its own price from now on." : "Refused, and they have been told.",
     );
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -1812,10 +2085,12 @@ export async function withdrawPriceRequest(id: string, confirmation?: ImpactConf
     if (refusal) return refusal;
 
     await db.transaction(async (tx) => {
-      await tx
+      const gone = await tx
         .update(priceRequests)
         .set({ status: "withdrawn", decidedAt: new Date(), updatedAt: new Date() })
-        .where(eq(priceRequests.id, id));
+        .where(and(eq(priceRequests.id, id), eq(priceRequests.status, "pending")))
+        .returning({ id: priceRequests.id });
+      if (!gone.length) throw new Refused(err("That request has just been decided.", "conflict"));
       await audit(tx, ctx, {
         action: "pricelist.request.withdraw",
         entityType: "price_request",
@@ -1827,6 +2102,7 @@ export async function withdrawPriceRequest(id: string, confirmation?: ImpactConf
     refresh(row.customerId);
     return okVoid("Withdrawn.");
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -1850,14 +2126,31 @@ export async function assignCustomerList(input: {
       if (list.status !== "published") {
         return fieldErr("priceListId", `That list is ${list.status}, so nothing would be priced from it.`);
       }
+      if (list.kind === "agreed") {
+        return fieldErr(
+          "priceListId",
+          "That is one shop's agreed prices. It sits on top of whatever list a shop is assigned; pick the ordinary list instead.",
+        );
+      }
     }
 
     await db.transaction(async (tx) => {
       // A shop is named by ONE list at a time; putting it on a second would
       // leave the priority to decide, which nobody would think to look at.
-      await tx
-        .delete(priceListScopes)
-        .where(and(eq(priceListScopes.scopeKind, "customer"), eq(priceListScopes.scopeValue, input.customerId)));
+      //
+      // What is replaced is the shop's ASSIGNMENT: a customer scope on an
+      // ordinary list that still prices or will. Its agreed-prices list is not
+      // an assignment — it layers on top — and a superseded or withdrawn
+      // list's scope is the record of who that list priced, kept with it.
+      await tx.execute(sql`
+        delete from price_list_scopes s
+         using price_lists l
+         where l.id = s.price_list_id
+           and s.scope_kind = 'customer'
+           and s.scope_value = ${input.customerId}
+           and l.kind <> 'agreed'
+           and l.status in ('draft', 'published')
+      `);
 
       if (input.priceListId) {
         await tx.insert(priceListScopes).values({

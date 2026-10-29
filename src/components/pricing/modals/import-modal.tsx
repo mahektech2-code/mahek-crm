@@ -49,6 +49,7 @@ import {
 import type { DocumentView, ParseGrid, ParseRowView, PricingOptions } from "@/lib/price-list-views";
 import type { PriceDeliveryBasis, PriceFreightTerm } from "@/db/schema";
 import { groupRupees } from "@/lib/price-sheet";
+import { isReading, isStuck, STALE_READ_MS } from "@/lib/engines/price-document";
 
 const ACCEPTED = "application/pdf,image/jpeg,image/png";
 const POLL_MS = 700;
@@ -115,7 +116,11 @@ function draftFor(detail: Detail, options: PricingOptions, todayIso: string): Dr
     // A list that supersedes another inherits its customers on publish, so it
     // needs no scope of its own; otherwise the region the filename named.
     scope: supersedes ? "none" : state ? `state:${state.key}` : "everybody",
-    includeSuggested: d.suggestedCount > 0,
+    // A suggestion is the matcher's guess — often the same product at another
+    // pack size, where the catalogue lacks the one printed. Included by
+    // default, "Approve all ready" could put a 20 L price on the 5 L SKU.
+    // It is a person's tick, never the default.
+    includeSuggested: false,
   };
 }
 
@@ -135,6 +140,11 @@ function readiness(row: Row, detail: Detail | undefined, draft: Draft | undefine
   // loses a price if it is approved as it stands.
   const heldPriced = heldPricedCount(detail);
   if (heldPriced) return { ready: false, why: `${heldPriced} price${heldPriced === 1 ? "" : "s"} with no product` };
+  // Unanswered suggestions are work, unless somebody ticked to include them
+  // for this file — which is a decision made about this file, by a person.
+  if (d.suggestedCount && !draft.includeSuggested) {
+    return { ready: false, why: `${d.suggestedCount} match${d.suggestedCount === 1 ? "" : "es"} worth checking` };
+  }
   if (!draft.name.trim()) return { ready: false, why: "No name" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.effectiveFrom)) return { ready: false, why: "No effective date" };
   return { ready: true, why: null };
@@ -202,13 +212,20 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
     setRows((current) => current.map((r) => (r.key === key ? { ...r, ...next } : r)));
   }, []);
 
-  function addFiles(list: FileList | null) {
-    if (!list?.length) return;
+  /**
+   * Takes an ARRAY, copied out of the input before anything else happens. A
+   * `FileList` is live: the callers reset `input.value` so the same file can be
+   * picked twice, which empties the list — and the state updater below runs
+   * later, so it read an empty list and choosing files by clicking added
+   * nothing. Only drag and drop worked.
+   */
+  function addFiles(files: File[]) {
+    if (!files.length) return;
     setError(null);
     setRows((current) => {
       const seen = new Set(current.map((r) => `${r.file.name}:${r.file.size}`));
       const added: Row[] = [];
-      for (const file of Array.from(list)) {
+      for (const file of files) {
         const id = `${file.name}:${file.size}`;
         if (seen.has(id)) continue;
         seen.add(id);
@@ -312,11 +329,37 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
       setRows((c) => c.map((r) => next.find((n) => n.key === r.key) ?? r));
 
       /* A file imported before opens straight into what was read then —
-         approvable if it never became a list, a link to the list if it did. */
+         approvable if it never became a list, a link to the list if it did.
+         But only where it WAS read: one still queued, or one whose read died
+         part-way, is read now, and one another window is reading is watched
+         until it finishes. It used to be called "read" whatever it was, and a
+         half-read file sat there approvable with nothing in it. */
       for (const { row, documentId } of seenBefore) {
-        void refreshDetail(documentId).then((d) => {
+        void refreshDetail(documentId).then(async (first) => {
+          let d = first;
           if (!d) return patch(row.key, { phase: "failed", error: "It was imported before, and that document could not be read back." });
-          const s = d.document.parseStatus;
+          let s = d.document.parseStatus;
+          const doc = { parseStatus: s, stageStartedAt: d.document.stageStartedAt, createdAt: d.document.createdAt };
+          if (s === "queued" || isStuck(doc, Date.now())) {
+            await parseOne(row, documentId);
+            return;
+          }
+          if (isReading(s)) {
+            const until = Date.now() + STALE_READ_MS;
+            while (alive.current && isReading(s) && Date.now() < until) {
+              await sleep(POLL_MS);
+              const p = await poll(documentId);
+              if (p) {
+                patch(row.key, { status: p });
+                s = p.parseStatus;
+              }
+            }
+            if (!alive.current) return;
+            if (isReading(s)) {
+              return patch(row.key, { phase: "failed", error: "Another window was reading this file and it never finished. Read it again." });
+            }
+            d = (await refreshDetail(documentId)) ?? d;
+          }
           patch(row.key, {
             phase: s === "published" ? "approved" : s === "rejected" ? "rejected" : s === "failed" ? "failed" : "read",
             listId: d.document.priceListId,
@@ -409,7 +452,11 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
     patch(row.key, { phase: "reading", error: null });
     const r = await run(reparseDocument(row.documentId));
     const final = await poll(row.documentId);
-    patch(row.key, { phase: r.ok && final?.parseStatus !== "failed" ? "read" : "failed", status: final });
+    patch(row.key, {
+      phase: r.ok && final?.parseStatus !== "failed" ? "read" : "failed",
+      status: final,
+      error: !r.ok ? r.error : final?.parseStatus === "failed" ? (final.stageNote ?? "Could not be read.") : null,
+    });
     await refreshDetail(row.documentId);
   }
 
@@ -468,7 +515,7 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
           onDrop={(e) => {
             e.preventDefault();
             setDragging(false);
-            addFiles(e.dataTransfer.files);
+            addFiles(Array.from(e.dataTransfer.files ?? []));
           }}
           onClick={() => inputRef.current?.click()}
           className={cx(
@@ -490,8 +537,9 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
             accept={ACCEPTED}
             className="hidden"
             onChange={(e) => {
-              addFiles(e.target.files);
+              const files = Array.from(e.target.files ?? []);
               e.target.value = "";
+              addFiles(files);
             }}
           />
         </div>
@@ -543,8 +591,9 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
             accept={ACCEPTED}
             className="hidden"
             onChange={(e) => {
-              addFiles(e.target.files);
+              const files = Array.from(e.target.files ?? []);
               e.target.value = "";
+              addFiles(files);
             }}
           />
         </label>
@@ -678,6 +727,7 @@ function Workbench({ onClose, basePath, todayIso }: { onClose: () => void; baseP
         open={!!pricing}
         cell={pricing}
         gstBp={currentDetail?.document.header?.gstBp ?? 1800}
+        taxBasis={currentDetail?.document.header?.taxBasis ?? "inclusive"}
         onClose={() => {
           setPricing(null);
           if (current?.documentId) void refreshDetail(current.documentId);

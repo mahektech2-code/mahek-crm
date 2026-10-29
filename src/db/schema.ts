@@ -10876,6 +10876,8 @@ export type PriceParsedHeader = {
   }>;
   /** The terms block as printed, for the list's `termsText`. */
   termsText?: string | null;
+  /** The list's own name, where the file says it — a MahekOne PDF carries it in its Title. */
+  listName?: string | null;
 };
 
 /**
@@ -10962,6 +10964,13 @@ export const priceLists = pgTable(
     /** `per_can` | `per_litre`. Every sample is per can; the second exists for the exception. */
     unitBasis: text("unit_basis").notNull().default("per_can"),
     status: text("status").notNull().default("draft"),
+    /**
+     * `standard` | `agreed`. An `agreed` list is ONE shop's agreed prices, made
+     * by approving a special-price request; it layers over whatever list the
+     * shop is otherwise on, and it is the only list a later approval may write
+     * a rate into. A shared list is never one.
+     */
+    kind: text("kind").notNull().default("standard"),
     termsText: text("terms_text"),
     signatory: text("signatory"),
     notes: text("notes"),
@@ -12411,6 +12420,19 @@ export const erpOrders = pgTable(
     /** Dispatch stickers recorded on the LINE: they go on before billing, when there is no order-details row yet (0286). */
     stickersAt: timestamp("stickers_at", { withTimezone: true }),
     stickersById: text("stickers_by_id").references(() => users.id),
+    /*
+     * 0300: WHO DECIDED THE PRICE, where the list did not. `list_rate_paise` is
+     * what the price list said when the rate was set (null: no list rate);
+     * `rate_set_by_id`/`rate_set_at` name whoever typed a rate other than it;
+     * `discount_authorised_by_id` whoever saved a line whose discount — rate
+     * and discount together, `effectiveDiscountBp` — is above what an associate
+     * may give alone. Null on every line written before, and on a line nobody
+     * had to decide anything about.
+     */
+    listRatePaise: bigint("list_rate_paise", { mode: "number" }),
+    rateSetById: text("rate_set_by_id").references(() => users.id),
+    rateSetAt: timestamp("rate_set_at", { withTimezone: true }),
+    discountAuthorisedById: text("discount_authorised_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -12758,7 +12780,7 @@ export const erpTransports = pgTable(
     /** Ready for pickup: where the party collects it, and whom to ask there. */
     pickupPoint: text("pickup_point"),
     pickupContact: text("pickup_contact"),
-    /** 0297: a Mahek Vehicle delivery's customer-signed copy (an `erp_lrs` row of kind signed_copy). */
+    /** 0301: a Mahek Vehicle delivery's customer-signed copy (an `erp_lrs` row of kind signed_copy). */
     signedCopyId: text("signed_copy_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -12804,7 +12826,7 @@ export const erpLrs = pgTable(
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
     assignedById: text("assigned_by_id").references(() => users.id),
     assignedAt: timestamp("assigned_at", { withTimezone: true }),
-    /* ---- 0297: delivery proof. See "## Delivery proof" in AGENTS.md. ---- */
+    /* ---- 0301: delivery proof. See "## Delivery proof" in AGENTS.md. ---- */
     /** lr | signed_copy — a customer-signed delivery copy is uploaded, read and checked by the same desk. */
     kind: text("kind").notNull().default("lr"),
     /** What the AI read off the photo, kept even where it was not written into `lr_no` (unsure, or already on another LR) — the duplicate check reads it. */

@@ -182,6 +182,7 @@ function PreviewBody({ onClose, basePath }: { open: boolean; onClose: () => void
                         <Th>Product</Th>
                         <Th align="right">Ex GST</Th>
                         <Th align="right">Inclusive</Th>
+                        <Th>From</Th>
                       </tr>
                     </thead>
                     <tbody>
@@ -189,9 +190,25 @@ function PreviewBody({ onClose, basePath }: { open: boolean; onClose: () => void
                         <Tr key={r.id}>
                           <Td className={cx("max-w-[320px] truncate", r.offered ? null : "text-muted")} title={r.productName}>
                             {r.productName}
+                            {r.minCans != null || r.maxCans != null ? (
+                              <span className="text-muted">
+                                {" "}
+                                · {r.minCans ?? 1}
+                                {r.maxCans != null ? `–${r.maxCans}` : "+"} cans
+                              </span>
+                            ) : null}
                           </Td>
                           <Td align="right">{r.offered ? money(r.rateExGstPaise) : "—"}</Td>
                           <Td align="right">{r.offered ? money(r.rateInclGstPaise) : "—"}</Td>
+                          {/* Where the rate came from: the list that applies, or
+                              — for a product it has no row for — the next list
+                              down that does. */}
+                          <Td
+                            className={cx("max-w-[200px] truncate", r.listId === answer.list?.id ? "text-muted" : "text-body")}
+                            title={r.listId === answer.list?.id ? "The list that applies" : "Not on the list that applies; priced from the next list that names this shop"}
+                          >
+                            {r.listName ?? "—"}
+                          </Td>
                         </Tr>
                       ))}
                     </tbody>

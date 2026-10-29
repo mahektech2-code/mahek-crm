@@ -33,6 +33,7 @@ import {
   FREIGHT_TERM_LABEL,
   REQUEST_STATUS_LABEL,
   listSummary,
+  validityBadge,
 } from "@/lib/price-list-labels";
 import type { CustomerPricing, PricingApp, PricingOptions } from "@/lib/price-list-views";
 import { WhyThisPriceModal } from "./modals/why-this-price-modal";
@@ -64,6 +65,12 @@ export function CustomerPricesPanel({
 
   const list = pricing.list;
   const offered = pricing.rates.filter((r) => r.offered);
+  /* How many of the shop's prices came from a list below the one that applies, by list. */
+  const fellThrough = [
+    ...pricing.rates
+      .filter((r) => r.listId && list && r.listId !== list.id && r.listName)
+      .reduce((m, r) => m.set(r.listName!, (m.get(r.listName!) ?? 0) + 1), new Map<string, number>()),
+  ];
 
   /**
    * The list as plain text, for WhatsApp.
@@ -116,9 +123,9 @@ export function CustomerPricesPanel({
                 >
                   {list.name}
                 </Link>
-                {list.expired ? (
-                  <Badge tone="danger" title="Nobody has replaced it. The office may not honour this rate.">
-                    Expired
+                {validityBadge(list) ? (
+                  <Badge tone={validityBadge(list)!.tone} title={validityBadge(list)!.hint}>
+                    {validityBadge(list)!.label}
                   </Badge>
                 ) : null}
                 {pricing.listChangedSinceLastOrder ? (
@@ -134,6 +141,15 @@ export function CustomerPricesPanel({
                 </Badge>
               </div>
               <p className="mt-1 text-[12px] text-muted">{listSummary(list)}</p>
+              {fellThrough.length ? (
+                /* Products the shop's own list has no row for are priced from the
+                   next list that names the shop. Said, so a one-rate agreed-price
+                   list is not read as the whole of what they pay. */
+                <p className="mt-1 text-[12px] text-muted">
+                  {fellThrough.map(([name, n]) => `${n} ${n === 1 ? "price" : "prices"} from ${name}`).join(" · ")} —
+                  not on {list.name}, so the next list for this shop prices them.
+                </p>
+              ) : null}
               {pricing.listChangedSinceLastOrder && pricing.lastOrder?.listName ? (
                 <p className="mt-1 text-[12px] text-muted">
                   Their last order, {shortDate(pricing.lastOrder.orderedAt)}, was priced

@@ -25,6 +25,8 @@
  * ------------------------------------------------------------------------- */
 
 import type { PriceFreightTerm, PriceScopeKind } from "@/db/schema";
+import { addDays } from "@/lib/business-date";
+import { pickSlab, type SlabRate } from "@/lib/engines/price-math";
 
 /** Narrowest first. The order IS the rule. */
 export const SCOPE_SPECIFICITY: readonly PriceScopeKind[] = [
@@ -61,12 +63,63 @@ export type ListMeta = {
   effectiveTo: string | null;
   freightTerm: PriceFreightTerm;
   version: number;
+  /** The list's own validity in days; null takes the configured default. */
+  validityDays?: number | null;
 };
+
+/**
+ * How the resolver treats a list whose VALIDITY has passed — its effective
+ * date plus its validity days (or the configured default). Its effective_to is
+ * a different fact: a list ended by its successor or withdrawn is out of force
+ * whatever this says.
+ *
+ * Absent means the shipped behaviour: a list past its validity goes on
+ * pricing. That is `pricing.expiredListsKeepPricing`'s default too, so the
+ * screens and the resolver read one answer from one setting.
+ */
+export type ResolveOptions = {
+  expiredListsKeepPricing: boolean;
+  defaultValidityDays: number;
+};
+
+export type ValidityState = "current" | "past_validity_pricing" | "expired";
+
+/**
+ * THE ONE ANSWER TO "IS THIS LIST PAST ITS VALIDITY, AND DOES IT STILL PRICE".
+ *
+ * Read by the resolver (which lists may win) and by every screen that draws a
+ * list's state, so a screen cannot say "expired" over a list the order form is
+ * still pricing from — which it did, because the screens counted validity days
+ * and the resolver did not.
+ *
+ *   - `expiresOn` is the earlier of the validity end and effective_to;
+ *   - `current`: neither has passed;
+ *   - `past_validity_pricing`: the validity has passed, the setting keeps it
+ *     pricing, and nothing has ended it;
+ *   - `expired`: effective_to has passed, or the validity has and the setting
+ *     stops past-validity lists pricing.
+ */
+export function listValidity(
+  list: Pick<ListMeta, "effectiveFrom" | "effectiveTo"> & { validityDays?: number | null },
+  day: string,
+  opts: ResolveOptions,
+): { validUntil: string | null; expiresOn: string | null; pastValidity: boolean; state: ValidityState } {
+  const days = list.validityDays ?? opts.defaultValidityDays;
+  /* Kept to the reading the screens have always printed: valid until the
+     effective date plus its days, and past it the day after. */
+  const validUntil = days > 0 ? addDays(list.effectiveFrom, days) : null;
+  const expiresOn = list.effectiveTo && (!validUntil || list.effectiveTo < validUntil) ? list.effectiveTo : validUntil;
+  const pastValidity = validUntil != null && validUntil < day;
+  const ended = list.effectiveTo != null && list.effectiveTo < day;
+  const state: ValidityState =
+    ended || (pastValidity && !opts.expiredListsKeepPricing) ? "expired" : pastValidity ? "past_validity_pricing" : "current";
+  return { validUntil, expiresOn, pastValidity, state };
+}
 
 /** Everything a shop can be matched on. Each kind is a LIST of keys because a shop has several spellings. */
 export type CustomerGeo = {
   customerId: string;
-  /** The seat that sells to it, and the owner behind it — either may hold a list. */
+  /** The sales seat (sales_am_id) — the one person a salesman list may name. Never the owner, who on an imported book is whoever ran the import. */
   salesmanIds: string[];
   beatKeys: string[];
   areaKeys: string[];
@@ -87,11 +140,27 @@ export type ResolutionStep = {
   chosen: string | null;
 };
 
+/** One list that names this shop, in the order the resolver would reach it. */
+export type ResolutionCandidate = {
+  listId: string;
+  listName: string;
+  kind: PriceScopeKind;
+  scopeId: string;
+};
+
 export type Resolution = {
   listId: string;
   listName: string;
   scope: ScopeRow;
   chain: ResolutionStep[];
+  /**
+   * EVERY list that names this shop on the day, narrowest first and in the
+   * order ties are broken — the winner is `candidates[0]`. A product the
+   * winner has no row for is priced from the next list here that has one
+   * (`rateFromCandidates`), which is what makes a one-rate "agreed prices"
+   * list an addition to a shop's prices rather than a replacement for them.
+   */
+  candidates: ResolutionCandidate[];
 };
 
 /** The fold a place key is compared on — one definition, shared with the place master. */
@@ -99,10 +168,18 @@ export function placeKey(raw: string | null | undefined): string {
   return (raw ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function inForce(list: ListMeta, today: string): boolean {
-  if (list.status !== "published") return false;
+/**
+ * In force on the day. A SUPERSEDED list is in force inside its own dates —
+ * which is what lets last month's order be read against last month's list —
+ * but only where it carries an end: one with no effective_to says nothing
+ * about when it stopped, and must never win today. Drafts and withdrawn lists
+ * never price.
+ */
+function inForce(list: ListMeta, today: string, opts?: ResolveOptions): boolean {
+  if (list.status !== "published" && !(list.status === "superseded" && list.effectiveTo)) return false;
   if (list.effectiveFrom > today) return false;
   if (list.effectiveTo && list.effectiveTo < today) return false;
+  if (opts && !opts.expiredListsKeepPricing && listValidity(list, today, opts).pastValidity) return false;
   return true;
 }
 
@@ -148,6 +225,17 @@ function freightAgrees(scope: ScopeRow, list: ListMeta, geo: CustomerGeo): boole
   return wanted === geo.freightTerm;
 }
 
+/**
+ * The priority a shop's AGREED-PRICES scope carries. A scope at or above it
+ * outranks every other scope of its kind, freight term included: the agreed
+ * list is the shop's own and sits on top of the list it is assigned.
+ */
+export const AGREED_SCOPE_PRIORITY = 1000;
+
+function layerRank(scope: ScopeRow): number {
+  return scope.priority >= AGREED_SCOPE_PRIORITY ? 1 : 0;
+}
+
 /** How well a scope's freight term fits the shop: exact beats unstated. */
 function freightRank(scope: ScopeRow, list: ListMeta, geo: CustomerGeo): number {
   const wanted = scope.freightTermMatch === "any" ? list.freightTerm : scope.freightTermMatch;
@@ -168,46 +256,152 @@ export function resolvePriceList(
   scopes: readonly ScopeRow[],
   lists: readonly ListMeta[],
   today: string,
+  opts?: ResolveOptions,
 ): Resolution | null {
   const listsById = new Map(lists.map((l) => [l.id, l]));
   const chain: ResolutionStep[] = [];
+  const candidates: ResolutionCandidate[] = [];
+  const seen = new Set<string>();
   let winner: { scope: ScopeRow; list: ListMeta } | null = null;
 
   for (const kind of SCOPE_SPECIFICITY) {
-    const candidates = scopes
+    const found = scopes
       .filter((s) => s.scopeKind === kind && scopeInForce(s, today) && scopeNames(s, geo))
       .map((s) => ({ scope: s, list: listsById.get(s.priceListId) }))
-      .filter((c): c is { scope: ScopeRow; list: ListMeta } => !!c.list && inForce(c.list, today))
+      .filter((c): c is { scope: ScopeRow; list: ListMeta } => !!c.list && inForce(c.list, today, opts))
       .filter((c) => freightAgrees(c.scope, c.list, geo));
 
-    const matched = candidates.map((c) => ({ scopeId: c.scope.id, listId: c.list.id, listName: c.list.name }));
-
-    if (!candidates.length) {
-      chain.push({ kind, matched, note: noMatchNote(kind, geo), chosen: null });
-      if (winner) break;
-      continue;
-    }
-
-    candidates.sort((a, b) => {
+    found.sort((a, b) => {
+      // A shop's own agreed prices LAYER over whatever it is otherwise on, so
+      // that scope wins inside its kind before the freight term is asked.
+      const l = layerRank(b.scope) - layerRank(a.scope);
+      if (l) return l;
       const f = freightRank(b.scope, b.list, geo) - freightRank(a.scope, a.list, geo);
       if (f) return f;
       const p = b.scope.priority - a.scope.priority;
       if (p) return p;
-      return b.list.effectiveFrom.localeCompare(a.list.effectiveFrom);
+      const e = b.list.effectiveFrom.localeCompare(a.list.effectiveFrom);
+      if (e) return e;
+      /* A full tie must not be decided by the order the database happened to
+         return the rows in, or one shop prices differently on two reads. The
+         id is arbitrary, but it is the SAME every time. */
+      return a.list.id.localeCompare(b.list.id) || a.scope.id.localeCompare(b.scope.id);
     });
-    const best = candidates[0];
+    for (const c of found) {
+      if (seen.has(c.list.id)) continue;
+      seen.add(c.list.id);
+      candidates.push({ listId: c.list.id, listName: c.list.name, kind, scopeId: c.scope.id });
+    }
+
+    /* The chain of reasons stops at the winning kind, as it always has; the
+       candidates go on, because fall-through needs the whole order. */
+    if (winner) continue;
+    const matched = found.map((c) => ({ scopeId: c.scope.id, listId: c.list.id, listName: c.list.name }));
+    if (!found.length) {
+      chain.push({ kind, matched, note: noMatchNote(kind, geo), chosen: null });
+      continue;
+    }
+    const best = found[0];
     winner = best;
     chain.push({
       kind,
       matched,
-      note: winNote(kind, best, candidates.length, geo),
+      note: winNote(kind, best, found.length, geo),
       chosen: best.list.id,
     });
-    break;
   }
 
   if (!winner) return null;
-  return { listId: winner.list.id, listName: winner.list.name, scope: winner.scope, chain };
+  return { listId: winner.list.id, listName: winner.list.name, scope: winner.scope, chain, candidates };
+}
+
+/* ------------------------------------------------- a rate off the chain */
+
+/** A row of a list for one product, as the fall-through reads it. */
+export type ChainRate = SlabRate;
+
+export type ChainedRate<T extends ChainRate> = {
+  /** The list the price came from — the winner, or one it fell through to. */
+  listId: string;
+  listName: string;
+  /** The row that applies: the base rate, or the slab for the quantity. Null where none does. */
+  row: T | null;
+  /** Every row that list has for the product, slabs included. */
+  rows: T[];
+  /** False where the list prints a dash: listed and not for sale. It does NOT fall through. */
+  offered: boolean;
+  /** True where the rate came from a list below the winner. */
+  fellThrough: boolean;
+};
+
+/**
+ * The base row of a product on one list: the flat row, or where a list only
+ * prints slabs, the lowest slab — the figure the grid already shows for it.
+ */
+export function baseRow<T extends ChainRate>(rows: readonly T[]): T | null {
+  const flat = rows.find((r) => r.minCans == null && r.maxCans == null);
+  if (flat) return flat;
+  return [...rows].sort((a, b) => (a.minCans ?? 0) - (b.minCans ?? 0))[0] ?? null;
+}
+
+/**
+ * The rate for a quantity off ONE list's rows for a product: the slab the
+ * quantity falls in where a quantity is known, the base row where none is.
+ * Shared by the save and by the order form in the browser, so a quantity
+ * typed after the rates were fetched gives the figure the save will write.
+ */
+export function rateAtQuantity<T extends ChainRate>(rows: readonly T[], cans?: number | null): T | null {
+  const offered = rows.filter((r) => r.offered);
+  if (!offered.length) return null;
+  return cans != null && cans > 0 ? pickSlab(offered, cans) : baseRow(offered);
+}
+
+/**
+ * WHAT THIS SHOP PAYS FOR ONE PRODUCT, off the candidate chain.
+ *
+ * The first list in the chain that has ANY row for the product decides it.
+ * A dash on that list ("not for sale here") is an answer and does not fall
+ * through: a list that says "not to you" must not be overruled by a wider list
+ * that says otherwise. A quantity no slab covers is likewise that list's
+ * answer — it prices the product, just not in that quantity.
+ *
+ * Null where no list in the chain prices the product at all.
+ */
+export function rateFromCandidates<T extends ChainRate>(
+  candidates: readonly Pick<ResolutionCandidate, "listId" | "listName">[],
+  rowsOf: (listId: string) => readonly T[],
+  cans?: number | null,
+): ChainedRate<T> | null {
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    const rows = [...rowsOf(c.listId)];
+    if (!rows.length) continue;
+    return {
+      listId: c.listId,
+      listName: c.listName,
+      row: rateAtQuantity(rows, cans),
+      rows,
+      offered: rows.some((r) => r.offered),
+      fellThrough: i > 0,
+    };
+  }
+  return null;
+}
+
+/**
+ * A list and the lists it replaced are ONE list for "has their list changed":
+ * the root of the supersedes chain names the lineage, so a routine new version
+ * of the shop's own list is not a change to warn a customer about.
+ */
+export function lineageRoot(listId: string, supersedesOf: (id: string) => string | null | undefined): string {
+  let id = listId;
+  const seen = new Set<string>([id]);
+  for (;;) {
+    const parent = supersedesOf(id);
+    if (!parent || seen.has(parent)) return id;
+    seen.add(parent);
+    id = parent;
+  }
 }
 
 function noMatchNote(kind: PriceScopeKind, geo: CustomerGeo): string {

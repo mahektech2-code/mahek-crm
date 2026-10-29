@@ -1657,10 +1657,19 @@ export const SETTINGS = [
     category: "pricing",
     label: "How long a list is valid, where the list does not say",
     description:
-      "Mahek's own terms say 30 days from the effective date or until the next revision, whichever is earlier. A list past this is drawn as expired on every screen rather than silently used.",
+      "Mahek's own terms say 30 days from the effective date or until the next revision, whichever is earlier. What a list past this does - go on pricing, said as past its validity, or stop pricing - is pricing.expiredListsKeepPricing.",
     default: 30,
     min: 1,
     max: 365,
+  },
+  {
+    key: "pricing.expiredListsKeepPricing",
+    type: "boolean",
+    category: "pricing",
+    label: "Keep pricing from a list past its validity",
+    description:
+      "On, a published list past its validity days goes on pricing shops until it is replaced or withdrawn, and every screen says it is past its validity and still pricing. Off, a list past its validity stops pricing the day after - its shops fall to the next list that names them, or to none - and the screens say it has expired and is not pricing. A list ended by its successor or withdrawn stops pricing whatever this says. On is the shipped default so that no shop loses its prices the day this setting arrived.",
+    default: true,
   },
   {
     key: "pricing.associateMaxDiscountBp",
@@ -6598,6 +6607,7 @@ export type Config = {
   "products.searchMinChars": number;
   "pricing.gstBp": number;
   "pricing.defaultValidityDays": number;
+  "pricing.expiredListsKeepPricing": boolean;
   "pricing.associateMaxDiscountBp": number;
   "pricing.managerMaxDiscountBp": number;
   "pricing.parseConfidenceFloor": number;

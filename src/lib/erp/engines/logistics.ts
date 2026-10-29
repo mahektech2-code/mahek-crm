@@ -95,7 +95,7 @@ export function freightWord(term: string | null | undefined): string | null {
  * trips, loading and a party's default all carry the transporter as text, so a
  * delivery in our own vehicle is a bill whose transporter is this name and
  * nothing else changes shape. What differs is the proof: no LR, no stop at a
- * transporter's godown, and a customer-signed copy closes it (0297).
+ * transporter's godown, and a customer-signed copy closes it (0301).
  */
 export const MAHEK_VEHICLE = "Mahek Vehicle";
 
@@ -461,7 +461,7 @@ export function lrRowHasAnything(r: {
   freightTerm?: string | null;
   freightRupees?: number | null;
   note?: string | null;
-  /* A signed copy's own facts count too (0297). */
+  /* A signed copy's own facts count too (0301). */
   billHint?: string | null;
   partyHint?: string | null;
   receivedBy?: string | null;
