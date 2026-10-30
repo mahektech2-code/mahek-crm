@@ -76,3 +76,16 @@ export async function erpInvoicePanel(no: number) {
     return refused(e);
   }
 }
+
+/** The Print invoices pop-up: the orders behind a selection of order lines, and which have a PDF. */
+export async function erpInvoicePrintList(lineIds: unknown) {
+  try {
+    await requireErpForm("orders");
+    const ids = Array.isArray(lineIds) ? lineIds.filter((x): x is string => typeof x === "string").slice(0, 2000) : [];
+    if (!ids.length) return err("Nothing selected.", "validation");
+    const { invoicePrintList } = await import("@/lib/erp/invoice-panel");
+    return ok(await invoicePrintList(ids));
+  } catch (e) {
+    return refused(e);
+  }
+}

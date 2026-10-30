@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
+import { invoicePrintList } from "@/lib/erp/invoice-panel";
 import { db } from "@/db";
 import {
   appAccess,
@@ -405,6 +406,8 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     const withPdf = (await mod("invoiceCheck").load(ctx)).rows.find((r) => r.id === loose.id);
     assert.match(String(withPdf?.v.invoice), /^y:\d+$/, "and view and print once it is attached");
     assert.equal(withPdf?.panel?.kind, "orderInvoice", "the checker opens the invoice first");
+    const [listed] = await invoicePrintList([loose.id, loose.id]);
+    assert.equal(listed?.hasPdf, true, "Print invoices offers the order once, with its PDF");
     assert.match(say(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), /approved · order \d+ can be dispatched/);
     const [d0] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d0.invoiceCheck, "Approved");

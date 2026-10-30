@@ -50,15 +50,7 @@ export function invoiceCopies(raw: unknown): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(n, INVOICE_COPIES_MAX) : 1;
 }
 
-/** The orders' Tally invoices as one PDF — what the view and print buttons open. */
-export function erpInvoicesPdfHref(orderNos: (number | string)[], opts: { copies?: number; download?: boolean } = {}): string {
-  const p = new URLSearchParams({ orders: orderNos.join(",") });
-  if (opts.copies && opts.copies > 1) p.set("copies", String(invoiceCopies(opts.copies)));
-  if (opts.download) p.set("download", "1");
-  return `/api/erp/invoices?${p.toString()}`;
-}
-
-/** The print sheet for the orders' invoices, copies changeable there. */
-export function erpInvoicePrintHref(orderNos: (number | string)[]): string {
-  return `/erp/print-invoices?orders=${encodeURIComponent(orderNos.join(","))}`;
+/** The orders' Tally invoices as one PDF — what our own viewer reads. Copies are added when printing, not here. */
+export function erpInvoicesPdfHref(orderNos: (number | string)[]): string {
+  return `/api/erp/invoices?${new URLSearchParams({ orders: orderNos.join(",") }).toString()}`;
 }

@@ -4,9 +4,9 @@ import { invoicePack, orderNosOf } from "@/lib/erp/invoice-print";
 import { invoiceCopies } from "@/lib/erp/trace-links";
 
 /**
- * GET ?orders=10082,10080&copies=1&download=1 — the orders' Tally invoices as
- * one PDF. Each file is read through `canRead`, so it opens for exactly the
- * people who may open Orders. Inline unless `download` is asked.
+ * GET ?orders=10082,10080 — the orders' Tally invoices as one PDF, for the
+ * ERP's own viewer and printing. Each file is read through `canRead`, so it
+ * opens for exactly the people who may open Orders.
  */
 export async function GET(request: Request) {
   const user = await getCurrentUser();
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   return new NextResponse(Buffer.from(pack.pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `${url.searchParams.get("download") ? "attachment" : "inline"}; filename="${name}"`,
+      "Content-Disposition": `inline; filename="${name}"`,
       "Cache-Control": "private, no-store",
       "X-Invoice-Missing": pack.missing.join(","),
     },
