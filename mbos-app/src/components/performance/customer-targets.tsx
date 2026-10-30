@@ -63,6 +63,21 @@ export function useCustomerTargets(period: string | null, visit: number): Custom
   return period && read?.key.startsWith(`${period}#`) ? read.value : null;
 }
 
+/**
+ * The card's title, the same in every state. It sits directly under his own
+ * revenue target and draws a rupee figure "of" a rupee figure, so it has to
+ * say on its face that this is the SUM of his shops' targets — read as
+ * "Your customers' targets" it was taken for a second copy of his own.
+ */
+function CardTitle() {
+  return (
+    <>
+      <T s="label">Shop targets</T>
+      <T s="micro">Sum of each shop&apos;s monthly target</T>
+    </>
+  );
+}
+
 /** Rows drawn before "Show more" — a book can carry hundreds of shops. */
 const PAGE = 20;
 
@@ -86,7 +101,7 @@ export function CustomerTargetsCard({
   if (!period) {
     return (
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <T s="small" style={{ color: C.body, marginTop: 6 }}>
           Each shop&apos;s target is set month by month. Pick This month or Last month to see
           them shop by shop.
@@ -98,7 +113,7 @@ export function CustomerTargetsCard({
   if (!data) {
     return (
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <T s="small" style={{ color: C.muted, marginTop: 6 }}>
           Loading…
         </T>
@@ -109,7 +124,7 @@ export function CustomerTargetsCard({
   if (!data.rows.length) {
     return (
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <T s="small" style={{ color: C.body, marginTop: 6 }}>
           {data.computedAt
             ? `None of your customers carries a target for ${monthWords}, and none has bought or has an order waiting.`
@@ -126,7 +141,7 @@ export function CustomerTargetsCard({
   return (
     <>
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
           <CountUp
             value={summary.achievedPaise}
@@ -134,7 +149,7 @@ export function CustomerTargetsCard({
             style={[typeScale.body, { fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
           />
           <T s="small" style={{ color: C.muted }}>
-            {summary.targetPaise ? `of ${inrFromPaise(summary.targetPaise)}` : 'no targets set'}
+            {summary.targetPaise ? `billed of ${inrFromPaise(summary.targetPaise)}` : 'billed · no targets set'}
           </T>
         </View>
         {summary.targetPaise ? (
@@ -162,13 +177,12 @@ export function CustomerTargetsCard({
             the office approves it.
           </T>
         ) : null}
-        {/* The two targets are different grains, and the screen must not
-            suggest one adds up to the other: a customer target is what one
-            account is expected to buy, and his own target is what he is
-            appraised on. */}
+        {/* The two targets are different grains AND different measures: a
+            shop's target is met by what was BILLED to it, his own revenue
+            target by orders the office accepted. Said once, plainly, so the
+            two rupee figures are never read as one number twice. */}
         <T s="micro" style={{ marginTop: 8 }}>
-          Each shop&apos;s own monthly target, set by the office. It is a separate figure from your
-          revenue target above — the two are not meant to add up.
+          Measured on bills, not orders — this is not your own target above.
         </T>
       </Card>
 

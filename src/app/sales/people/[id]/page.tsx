@@ -5,7 +5,8 @@ import { getSetting } from "@/lib/config/store";
 import { endOfMonth } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { hometownTree } from "@/lib/services/hometown-service";
-import { SalesmanScreen } from "./salesman-screen";
+import { readingsForPeriod, type PerformanceReading } from "@/lib/services/performance-service";
+import { SalesmanScreen, type ScoreFigures } from "./salesman-screen";
 
 export const metadata = { title: "Salesman — Sales Dashboard — MahekOne" };
 
@@ -38,13 +39,23 @@ export default async function Page({
   lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
   const previous = lastMonth.toISOString().slice(0, 7);
 
-  const [record, current, before, evidence, retentionHours, towns] = await Promise.all([
+  /* The SALES figures — value, collected, new shops — come from the score's
+     own reading, not from the field-activity query beside it. That query
+     counts orders by who typed them, at the price with GST, pending and
+     declined included, and money still waiting on accounts; the score counts
+     accepted orders of the shops credited to him, net of GST, and confirmed
+     money only. Two definitions on two screens gave one man two order values
+     for one month. The field query still answers what only it can: visits,
+     orders taken in the field, days worked. */
+  const [record, current, before, evidence, retentionHours, towns, scoreNow, scoreBefore] = await Promise.all([
     salesmanRecord(id),
     performance(`${thisMonth}-01`, endOfMonth(thisMonth)),
     performance(`${previous}-01`, endOfMonth(previous)),
     dayEvidence(id, day),
     getSetting("mbos.attendance.selfieRetentionHours"),
     hometownTree(),
+    readingsForPeriod(thisMonth, now, { userIds: [id] }),
+    readingsForPeriod(previous, now, { userIds: [id] }),
   ]);
 
   /* `salesmanRecord` answers null for anybody who does not hold the field app,
@@ -59,6 +70,8 @@ export default async function Page({
       month={thisMonth}
       thisMonth={current.find((r) => r.salesmanId === id) ?? null}
       lastMonth={before.find((r) => r.salesmanId === id) ?? null}
+      score={figuresOf(scoreNow[0])}
+      scoreLast={figuresOf(scoreBefore[0])}
       day={day}
       longDay={longDay(day)}
       today={now}
@@ -68,6 +81,23 @@ export default async function Page({
       towns={towns}
     />
   );
+}
+
+/** The plain figures the screen needs — a reading carries Maps, which cannot cross to a client. */
+function figuresOf(r: PerformanceReading | undefined): ScoreFigures {
+  if (!r) {
+    return { hasTarget: false, scoreBp: null, rating: null, revenuePaise: 0, revenueTargetPaise: null, collectedPaise: 0, newCustomers: 0 };
+  }
+  const revenue = r.score.components.find((c) => c.key === "revenue");
+  return {
+    hasTarget: r.hasTarget,
+    scoreBp: r.hasTarget ? r.score.totalBp : null,
+    rating: r.hasTarget ? r.rating : null,
+    revenuePaise: r.actuals.revenuePaise,
+    revenueTargetPaise: r.hasTarget ? revenue?.target || null : null,
+    collectedPaise: r.actuals.collectionPaise,
+    newCustomers: r.actuals.newCustomers,
+  };
 }
 
 /** Rendered as a UTC calendar date, which is what an ISO day already is. */

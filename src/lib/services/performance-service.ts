@@ -22,6 +22,7 @@ import { billCreditDaysSql } from "@/lib/bill-terms";
 import { creditedToSql } from "@/lib/sales-attribution";
 import { orderCountsSql } from "@/lib/order-status";
 import {
+  achievementBp,
   alertsFor,
   forecast,
   ratingFor,
@@ -183,6 +184,14 @@ export type PersonActuals = {
    * share, and it is the same role `overdueAtStartPaise` plays for collection.
    */
   activityAssigned: number;
+  /**
+   * The part of `revenuePaise` and `millilitres` ordered on the `asOf` day —
+   * today, for a window that holds it. The forecast and the pace check measure
+   * against COMPLETED working days, so today's sales have to come out of the
+   * run rate they divide, or this morning's orders lift the whole projection.
+   */
+  revenueOnAsOfPaise: number;
+  millilitresOnAsOf: number;
 };
 
 type LineRow = {
@@ -193,6 +202,7 @@ type LineRow = {
   /** Net of GST and after discount. Null where nobody stated one — see below. */
   net_amount_paise: number | null;
   order_id: string;
+  on_as_of: boolean;
 };
 
 function emptyActuals(userId: string): PersonActuals {
@@ -208,6 +218,8 @@ function emptyActuals(userId: string): PersonActuals {
     overdueAtStartPaise: 0,
     activity: 0,
     activityAssigned: 0,
+    revenueOnAsOfPaise: 0,
+    millilitresOnAsOf: 0,
   };
 }
 
@@ -283,9 +295,10 @@ export function orderLinesOf(
  */
 export async function actualsForPeriod(
   period: string,
+  asOf?: string,
 ): Promise<Map<string, PersonActuals>> {
   const { from, to } = monthWindow(period);
-  return actualsForWindow(from, to);
+  return actualsForWindow(from, to, asOf);
 }
 
 /**
@@ -304,8 +317,10 @@ export async function actualsForPeriod(
 export async function actualsForWindow(
   from: string,
   to: string,
+  /** Today, where known. Shapes the activity population and `…OnAsOf`. */
+  asOf?: string,
 ): Promise<Map<string, PersonActuals>> {
-  if (!ISO_DAY.test(from) || !ISO_DAY.test(to)) {
+  if (!ISO_DAY.test(from) || !ISO_DAY.test(to) || (asOf !== undefined && !ISO_DAY.test(asOf))) {
     throw new Error(`Not a pair of days: ${from} to ${to}`);
   }
   const catalogue = await loadCatalogue();
@@ -338,7 +353,12 @@ export async function actualsForWindow(
            o.line_items,
            o.call_id,
            o.total_amount,
-           o.net_amount_paise
+           o.net_amount_paise,
+           ${sql.raw(
+             asOf
+               ? `(o.ordered_at >= '${asOf} 00:00:00+05:30'::timestamptz)`
+               : "false",
+           )} as on_as_of
       from orders o
       join customers c on c.id = o.customer_id
      where ${orderCountsSql("o")}
@@ -400,7 +420,10 @@ export async function actualsForWindow(
      * subtraction from somebody's month, and there is no honest way to derive a
      * net figure from a number whose convention nobody recorded.
      */
-    actuals.revenuePaise += Number(row.net_amount_paise ?? row.total_amount ?? 0);
+    const orderValue = Number(row.net_amount_paise ?? row.total_amount ?? 0);
+    actuals.revenuePaise += orderValue;
+    const millilitresBefore = actuals.millilitres;
+    if (row.on_as_of) actuals.revenueOnAsOfPaise += orderValue;
 
     const lines = orderLinesOf(row, crmByCall);
 
@@ -452,6 +475,7 @@ export async function actualsForWindow(
       const formulationId = facts.formulationId ?? catalogue.residualFormulationId;
       if (formulationId) addTo(actuals.byFormulation, formulationId, amount, ml);
     }
+    if (row.on_as_of) actuals.millilitresOnAsOf += actuals.millilitres - millilitresBefore;
   }
 
   /* ---- new customers: the FIRST order that ever counted, landing here ---- */
@@ -461,13 +485,28 @@ export async function actualsForWindow(
    * is won when they place an order the business accepted, and the month it
    * counts in is the month of that first order.
    */
-  const newCustomers = await db.execute<{ user_id: string | null; n: number }>(sql`
-    with first_order as (
+  /*
+   * `performance.newCustomerBasis` decides WHICH first: the first counting
+   * order, or the first bill — the same bills, valued and filtered the same
+   * way, that a customer's monthly target is measured on (`billedValueSql`).
+   * The setting was on the Settings screen for months and nothing read it, so
+   * choosing "first bill" changed nothing anywhere.
+   */
+  const firstEvent =
+    config["performance.newCustomerBasis"] === "first-bill"
+      ? sql`
+      select bb.customer_id, min(bb.bill_date::timestamp at time zone ${sql.raw(`'${APP_TIMEZONE}'`)}) as first_at
+        from bills bb
+        left join orders bo on bo.id = bb.order_id
+       where bo.id is null or ${orderCountsSql("bo")}
+       group by bb.customer_id`
+      : sql`
       select o.customer_id, min(o.ordered_at) as first_at
         from orders o
        where ${orderCountsSql("o")}
-       group by o.customer_id
-    )
+       group by o.customer_id`;
+  const newCustomers = await db.execute<{ user_id: string | null; n: number }>(sql`
+    with first_order as (${firstEvent})
     select ${creditedToSql("c")} as user_id, count(*)::int as n
       from first_order f
       join customers c on c.id = f.customer_id
@@ -572,6 +611,18 @@ export async function actualsForWindow(
    * April raises MARCH's figure when the cache is next rebuilt — the month it
    * was asked of, not the month it was got round to.
    */
+  /*
+   * AND ONLY WHAT HAS FALLEN DUE BY NOW. Read mid-month, "due inside the
+   * month" counted every task due next week as asked and not done, so the
+   * share read low every day until the month ended and the score with it.
+   * With `asOf` the population is what was due before today, plus today's
+   * tasks that are already done — a task due this evening is not yet missed,
+   * and one finished this morning is not withheld. A closed window is
+   * unaffected: every day in it is before today.
+   */
+  const dueByNow = asOf
+    ? sql`and (due_date < ${asOf}::date or (due_date = ${asOf}::date and status = 'done'))`
+    : sql``;
   const activity = await db.execute<{
     user_id: string | null;
     assigned: number;
@@ -583,6 +634,7 @@ export async function actualsForWindow(
       from mbos_tasks
      where due_date >= ${from}::date
        and due_date <= ${to}::date
+       ${dueByNow}
      group by 1
   `);
   for (const row of activity) {
@@ -607,7 +659,7 @@ export async function unattributedForPeriod(period: string): Promise<{
 }> {
   const { from, to } = monthWindow(period);
   const rows = await db.execute<{ total: string; customers: number }>(sql`
-    select coalesce(sum(o.total_amount), 0) as total,
+    select coalesce(sum(coalesce(o.net_amount_paise, o.total_amount)), 0) as total,
            count(distinct o.customer_id)::int as customers
       from orders o
       join customers c on c.id = o.customer_id
@@ -673,6 +725,8 @@ export type PerformanceReading = {
   period: string;
   targetId: string | null;
   hasTarget: boolean;
+  /** Draft only where the caller asked for drafts — Accounts' scorecard. */
+  targetStatus: "draft" | "published" | null;
   score: ScoreResult;
   mix: MixResult;
   /**
@@ -701,6 +755,7 @@ type TargetRow = {
   new_customer_target: number | null;
   collection_target_bp: number | null;
   activity_target_bp: number | null;
+  status?: "draft" | "published";
 };
 
 const num = (v: string | number | null | undefined) =>
@@ -717,16 +772,22 @@ const num = (v: string | number | null | undefined) =>
 export async function readingsForPeriod(
   period: string,
   today: BusinessDate,
-  options: { userIds?: string[]; includeDrafts?: boolean } = {},
+  options: {
+    userIds?: string[];
+    includeDrafts?: boolean;
+    /** People to read even with no target and no sales — see the rebuild. */
+    alsoUserIds?: string[];
+  } = {},
 ): Promise<PerformanceReading[]> {
   const config = await getConfig();
   const [actuals, days, targets] = await Promise.all([
-    actualsForPeriod(period),
+    actualsForPeriod(period, today),
     workingDaysIn(period, today),
     db.execute<TargetRow>(sql`
       select t.id, t.user_id, u.name as user_name,
              t.revenue_target_paise, t.volume_target_ml,
-             t.new_customer_target, t.collection_target_bp, t.activity_target_bp
+             t.new_customer_target, t.collection_target_bp, t.activity_target_bp,
+             t.status
         from sales_targets t
         join users u on u.id = t.user_id
        where t.period = ${period}
@@ -740,6 +801,7 @@ export async function readingsForPeriod(
   const userIds = new Set<string>([
     ...targets.map((t) => t.user_id),
     ...actuals.keys(),
+    ...(options.alsoUserIds ?? []),
   ]);
   const wanted = options.userIds ? new Set(options.userIds) : null;
 
@@ -773,12 +835,17 @@ export async function readingsForPeriod(
       period,
       targetId: target?.id ?? null,
       hasTarget: target !== null,
+      targetStatus: target?.status ?? null,
       score,
       mix,
       rating: ratingFor(score.totalBp, config),
       alerts: alertsFor(
         {
           revenueBp: by("revenue")?.achievementBp ?? null,
+          revenueCompletedBp: achievementBp(
+            a.revenuePaise - a.revenueOnAsOfPaise,
+            num(target?.revenue_target_paise),
+          ),
           volumeBp: by("volume")?.achievementBp ?? null,
           collectionBp: by("collection")?.achievementBp ?? null,
           activityBp: by("activity")?.achievementBp ?? null,
@@ -792,12 +859,14 @@ export async function readingsForPeriod(
       ),
       revenueForecast: forecast({
         actual: a.revenuePaise,
+        actualToday: a.revenueOnAsOfPaise,
         target: num(target?.revenue_target_paise),
         workingDaysElapsed: days.elapsed,
         workingDaysTotal: days.total,
       }),
       volumeForecast: forecast({
         actual: a.millilitres,
+        actualToday: a.millilitresOnAsOf,
         target: num(target?.volume_target_ml),
         workingDaysElapsed: days.elapsed,
         workingDaysTotal: days.total,
@@ -859,7 +928,13 @@ function scoreActuals(
       target: target?.revenuePaise ?? 0,
     },
     { key: "volume", actual: a.millilitres, target: target?.millilitres ?? 0 },
-    { key: "mix", actual: 0, target: 0, achievementBp: mix.achievementBp },
+    {
+      key: "mix",
+      actual: 0,
+      target: 0,
+      achievementBp: mix.achievementBp,
+      asked: mixBands.length > 0,
+    },
     {
       key: "newCustomers",
       actual: a.newCustomers,
@@ -877,6 +952,7 @@ function scoreActuals(
       key: "collection",
       actual: a.collectionPaise,
       target: Math.round((a.overdueAtStartPaise * (target?.collectionBp ?? 0)) / 10_000),
+      asked: (target?.collectionBp ?? 0) > 0,
     },
     {
       // A PERCENTAGE OF WHAT WAS ASKED, not a count of tasks — the same
@@ -895,6 +971,7 @@ function scoreActuals(
       key: "activity",
       actual: a.activity,
       target: Math.round((a.activityAssigned * (target?.activityBp ?? 0)) / 10_000),
+      asked: (target?.activityBp ?? 0) > 0,
     },
   ];
 
@@ -1023,6 +1100,8 @@ export type HandsetRangeReading = {
   totalScoreBp: number | null;
   rating: string | null;
   untargeted: string[];
+  /** Asked for, but nothing to measure yet — a mix set and nothing sold. */
+  unmeasured: string[];
   unmatchedRevenuePaise: number;
   categories: {
     name: string;
@@ -1053,13 +1132,13 @@ function dayCount(a: string, b: string): number {
  * picked range and the Sales Dashboard's person modal, so the two cannot
  * score one month two ways.
  */
-async function scoreRange(userId: string, from: string, to: string) {
+async function scoreRange(userId: string, from: string, to: string, asOf?: string) {
   const config = await getConfig();
   const firstMonth = from.slice(0, 7);
   const lastMonth = to.slice(0, 7);
 
   const [actuals, targets] = await Promise.all([
-    actualsForWindow(from, to),
+    actualsForWindow(from, to, asOf),
     db.execute<TargetRow & { period: string }>(sql`
       select t.id, t.user_id, u.name as user_name, t.period,
              t.revenue_target_paise, t.volume_target_ml,
@@ -1129,8 +1208,9 @@ export async function handsetReadingForRange(
   userId: string,
   from: string,
   to: string,
+  asOf?: string,
 ): Promise<HandsetRangeReading> {
-  return handsetReadingFrom(await scoreRange(userId, from, to), from, to);
+  return handsetReadingFrom(await scoreRange(userId, from, to, asOf), from, to);
 }
 
 /** The handset's shape, from a scored range. */
@@ -1167,6 +1247,7 @@ function handsetReadingFrom(
     totalScoreBp: targets.length ? score.totalBp : null,
     rating: targets.length ? ratingFor(score.totalBp, config) : null,
     untargeted: score.untargeted,
+    unmeasured: score.unmeasured,
     unmatchedRevenuePaise: a.unmatchedPaise,
     categories: mix.categories.map((c) => ({
       name: c.name,
@@ -1246,7 +1327,7 @@ export async function personPerformance(
   const userName = names.get(userId);
   if (!userName) return null;
 
-  const core = await scoreRange(userId, from, to);
+  const core = await scoreRange(userId, from, to, todayDate);
   const reading = handsetReadingFrom(core, from, to);
   const { config, score, mix } = core;
   const by = (k: string) => score.components.find((c) => c.key === k);
@@ -1267,6 +1348,10 @@ export async function personPerformance(
       alerts = alertsFor(
         {
           revenueBp: by("revenue")?.achievementBp ?? null,
+          revenueCompletedBp: achievementBp(
+            core.a.revenuePaise - core.a.revenueOnAsOfPaise,
+            reading.revenueTargetPaise ?? 0,
+          ),
           volumeBp: by("volume")?.achievementBp ?? null,
           collectionBp: by("collection")?.achievementBp ?? null,
           activityBp: by("activity")?.achievementBp ?? null,
@@ -1281,12 +1366,14 @@ export async function personPerformance(
     }
     revenueForecast = forecast({
       actual: reading.revenueActualPaise,
+      actualToday: core.a.revenueOnAsOfPaise,
       target: reading.revenueTargetPaise ?? 0,
       workingDaysElapsed: days.elapsed,
       workingDaysTotal: days.total,
     });
     volumeForecast = forecast({
       actual: reading.volumeActualMl,
+      actualToday: core.a.millilitresOnAsOf,
       target: reading.volumeTargetMl ?? 0,
       workingDaysElapsed: days.elapsed,
       workingDaysTotal: days.total,
@@ -1443,11 +1530,35 @@ function rangeDaysBetween(a: string, b: string): number {
 export async function recomputeSalesPerformance(
   period: string,
   today: BusinessDate,
+  /** Only these people — a target saved for one person rebuilds one row. */
+  userIds?: string[],
 ): Promise<{ people: number }> {
-  const readings = await readingsForPeriod(period, today);
+  /*
+   * EVERY ROW ALREADY HELD FOR THE PERIOD IS REWRITTEN, not only the people
+   * with a target or a sale today. Somebody whose target was withdrawn and
+   * whose shops moved to a colleague drops out of both lists, and his row used
+   * to keep last week's figures for ever — on the server, and on his phone,
+   * which upserts by period and is never told a row stopped. Rewriting it to
+   * what is true now (nothing asked, nothing sold) moves `computed_at`, so the
+   * next pull carries the correction down.
+   */
+  const held = await db.execute<{ user_id: string }>(sql`
+    select user_id from sales_performance where period = ${period}
+  `);
+  const readings = await readingsForPeriod(period, today, {
+    userIds,
+    alsoUserIds: held.map((r) => r.user_id),
+  });
 
   for (const reading of readings) {
     const by = (k: string) => reading.score.components.find((c) => c.key === k);
+    /*
+     * An unasked component is stored as NULL, never as the engine's zero.
+     * Zero read on the phone as "your target is ₹0" and, beside a score of 0
+     * and the lowest rating word, as a man scored at the bottom of the scale
+     * for a month nobody had set him anything. No target, no rating either.
+     */
+    const asked = (k: string) => (reading.hasTarget ? by(k)?.target || null : null);
     const rowId = newId("sperf");
 
     const inserted = await db.execute<{ id: string }>(sql`
@@ -1464,15 +1575,15 @@ export async function recomputeSalesPerformance(
         total_score_bp, rating, untargeted, unmatched_revenue_paise, computed_at
       ) values (
         ${rowId}, ${reading.userId}, ${period}, ${reading.targetId},
-        ${by("revenue")?.target ?? null}, ${reading.actuals.revenuePaise}, ${by("revenue")?.achievementBp ?? null},
-        ${by("volume")?.target ?? null}, ${reading.actuals.millilitres}, ${by("volume")?.achievementBp ?? null},
+        ${asked("revenue")}, ${reading.actuals.revenuePaise}, ${by("revenue")?.achievementBp ?? null},
+        ${asked("volume")}, ${reading.actuals.millilitres}, ${by("volume")?.achievementBp ?? null},
         ${reading.mix.achievementBp},
-        ${by("newCustomers")?.target ?? null}, ${reading.actuals.newCustomers}, ${by("newCustomers")?.achievementBp ?? null},
-        ${by("collection")?.target ?? null}, ${reading.actuals.collectionPaise}, ${by("collection")?.achievementBp ?? null},
+        ${asked("newCustomers")}, ${reading.actuals.newCustomers}, ${by("newCustomers")?.achievementBp ?? null},
+        ${asked("collection")}, ${reading.actuals.collectionPaise}, ${by("collection")?.achievementBp ?? null},
         ${reading.actuals.overdueAtStartPaise},
-        ${by("activity")?.target ?? null}, ${reading.actuals.activity}, ${by("activity")?.achievementBp ?? null},
+        ${asked("activity")}, ${reading.actuals.activity}, ${by("activity")?.achievementBp ?? null},
         ${reading.actuals.activityAssigned},
-        ${reading.score.totalBp}, ${reading.rating},
+        ${reading.hasTarget ? reading.score.totalBp : 0}, ${reading.hasTarget ? reading.rating : null},
         ${JSON.stringify(reading.score.untargeted)}::jsonb,
         ${reading.unmatchedPaise}, now()
       )

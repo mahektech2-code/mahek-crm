@@ -115,6 +115,8 @@ type Row = Omit<
   period: string;
   categories: string | null;
   untargeted: string | null;
+  /** 1/0 from the office; null on a row synced before it sent one. */
+  hasTarget: number | null;
 };
 
 /**
@@ -132,7 +134,7 @@ export async function listPerformance(): Promise<SyncedMonth[]> {
             collectionTargetPaise, collectionActualPaise, collectionBasePaise,
             activityTarget, activityActual, activityAssigned,
             totalScoreBp, rating, untargeted, unmatchedRevenuePaise,
-            categories, computedAt
+            categories, computedAt, hasTarget
        FROM performance
       ORDER BY period DESC`,
   );
@@ -155,6 +157,11 @@ export async function listPerformance(): Promise<SyncedMonth[]> {
     categories: parseCategories(r.categories),
     untargeted: parseKeys(r.untargeted),
     /*
+     * THE OFFICE'S ANSWER WHERE IT SENT ONE — `target_id is not null` on the
+     * score row. The guess below is kept only for a row synced before that
+     * column reached the wire — it infers from figures that cannot say, and
+     * is not to be trusted where the fact is present.
+     *
      * A target exists if ANY of the six was asked for.
      *
      * Not "a row exists": the office writes a row for anybody who sold
@@ -167,12 +174,14 @@ export async function listPerformance(): Promise<SyncedMonth[]> {
      * out of 100. A figure above zero, or a mix that was scored, is a target.
      */
     hasTarget:
-      Boolean(r.revenueTargetPaise) ||
-      Boolean(r.volumeTargetMl) ||
-      Boolean(r.newCustomerTarget) ||
-      Boolean(r.collectionTargetPaise) ||
-      Boolean(r.activityTarget) ||
-      r.mixAchievementBp !== null,
+      r.hasTarget !== null && r.hasTarget !== undefined
+        ? Boolean(r.hasTarget)
+        : Boolean(r.revenueTargetPaise) ||
+          Boolean(r.volumeTargetMl) ||
+          Boolean(r.newCustomerTarget) ||
+          Boolean(r.collectionTargetPaise) ||
+          Boolean(r.activityTarget) ||
+          r.mixAchievementBp !== null,
   }));
 }
 

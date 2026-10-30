@@ -30,6 +30,7 @@ import {
   ScreenHeader,
   Table,
 } from "@/components/console/parts";
+import { scoreText } from "@/lib/score-format";
 
 export const metadata = { title: "Performance — Sales Dashboard — MahekOne" };
 
@@ -126,7 +127,7 @@ export default async function Page({
                     };
                     return [
                       r.userName,
-                      r.hasTarget ? (r.score.totalBp / 100).toFixed(1) : "",
+                      r.hasTarget ? scoreText(r.score.totalBp) : "",
                       r.hasTarget ? r.rating : "No target set",
                       rupeesFromPaise(r.actuals.revenuePaise),
                       by("revenue"),
@@ -273,7 +274,7 @@ export default async function Page({
                     {r.hasTarget ? (
                       <>
                         <span className="block font-medium text-ink tabular-nums">
-                          {(r.score.totalBp / 100).toFixed(1)}
+                          {scoreText(r.score.totalBp)}
                         </span>
                         <Pill tone={ratingTone(r.score.totalBp)}>{r.rating}</Pill>
                       </>

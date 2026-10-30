@@ -11,6 +11,7 @@ import {
   forecast,
   mixCategoryScoreBp,
   rankPerformance,
+  ratingEnd,
   ratingFor,
   scoreMix,
   weightedScore,
@@ -329,6 +330,33 @@ describe("month-end forecast", () => {
     assert.equal(f.shortfall, 1_300_000_00);
   });
 
+  test("today's sales are not part of the run rate the completed days set", () => {
+    // ₹10L over ten finished days, ₹1L this morning, 25 working days. Dividing
+    // ₹11L by the ten finished days projected ₹27.5L; the rate is ₹1L a day
+    // and the month is ₹25L.
+    const f = forecast({
+      actual: 11_00_000_00,
+      actualToday: 1_00_000_00,
+      target: 30_00_000_00,
+      workingDaysElapsed: 10,
+      workingDaysTotal: 25,
+    });
+    assert.equal(f.projected, 25_00_000_00);
+  });
+
+  test("the projection never falls below what is already sold", () => {
+    // Everything so far came in today: the completed days project nothing,
+    // but the month already holds the ₹2L.
+    const f = forecast({
+      actual: 2_00_000_00,
+      actualToday: 2_00_000_00,
+      target: 30_00_000_00,
+      workingDaysElapsed: 5,
+      workingDaysTotal: 25,
+    });
+    assert.equal(f.projected, 2_00_000_00);
+  });
+
   test("a target already met asks for nothing more per day", () => {
     const f = forecast({
       actual: 1_400_000_00,
@@ -385,6 +413,47 @@ describe("pace", () => {
   });
 });
 
+describe("pace counts completed days against completed days", () => {
+  test("a big morning does not hide a slow fortnight", () => {
+    // 30% so far, but 25 points of it came in today. Over the thirteen days
+    // that are actually finished he is at 5% — far behind.
+    const input = {
+      revenueBp: 3000,
+      volumeBp: 3000,
+      collectionBp: BP,
+      activityBp: BP,
+      newCustomerActual: 1,
+      newCustomerTarget: 3,
+      mix: scoreMix(BANDS, [], C),
+      workingDaysElapsed: 13,
+      workingDaysTotal: 26,
+    };
+    const relaxed = { ...C, "performance.paceWarningPercent": 50 };
+    assert.equal(alertsFor(input, relaxed).find((a) => a.key === "behind-pace"), undefined);
+    assert.ok(
+      alertsFor({ ...input, revenueCompletedBp: 500 }, relaxed).find((a) => a.key === "behind-pace"),
+    );
+  });
+});
+
+describe("asked but not yet measurable", () => {
+  test("a mix set on a month with nothing sold is left out, and is NOT called untargeted", () => {
+    const mix = scoreMix(BANDS, [], C);
+    const score = weightedScore(
+      [
+        { key: "revenue", actual: 50, target: 100 },
+        { key: "mix", actual: 0, target: 0, achievementBp: mix.achievementBp, asked: true },
+        { key: "volume", actual: 0, target: 0 },
+      ],
+      C,
+    );
+    assert.deepEqual(score.unmeasured, ["mix"]);
+    assert.deepEqual(score.untargeted, ["volume"]);
+    // Still out of the sum: revenue carries all of the weight.
+    assert.equal(score.totalBp, 5000);
+  });
+});
+
 describe("rating", () => {
   test("the default bands read off the brief's §14 table", () => {
     assert.equal(ratingFor(9500, C), "Excellent");
@@ -395,6 +464,13 @@ describe("rating", () => {
     assert.equal(ratingFor(6000, C), "Needs improvement");
     assert.equal(ratingFor(5999, C), "Poor");
     assert.equal(ratingFor(0, C), "Poor");
+  });
+
+  test("the colour comes off the same bands as the word", () => {
+    assert.equal(ratingEnd(9000, C), "top");
+    assert.equal(ratingEnd(8999, C), "middle");
+    assert.equal(ratingEnd(6000, C), "middle");
+    assert.equal(ratingEnd(5999, C), "bottom");
   });
 });
 

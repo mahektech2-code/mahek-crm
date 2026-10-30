@@ -1218,7 +1218,9 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
  * Harmless to call on any day: it only ever creates a row where `period` has
  * none, so a hand-triggered re-run at noon touches nothing already there.
  */
-export async function copyForwardSalesTargets(forMonth?: string): Promise<number> {
+export async function copyForwardSalesTargets(
+  forMonth?: string,
+): Promise<{ created: number; failed: string[] }> {
   const day = await today();
   const period = forMonth ?? monthKey(day);
   const previous = addMonths(period, -1);
@@ -1235,43 +1237,66 @@ export async function copyForwardSalesTargets(forMonth?: string): Promise<number
     .where(and(eq(salesTargets.period, previous), eq(salesTargets.status, "published")));
 
   let created = 0;
+  const failed: string[] = [];
   for (const prior of priorTargets) {
     if (have.has(prior.userId)) continue;
 
-    const targetId = id("stg");
-    await db.insert(salesTargets).values({
-      id: targetId,
-      userId: prior.userId,
-      period,
-      revenueTargetPaise: prior.revenueTargetPaise,
-      volumeTargetMl: prior.volumeTargetMl,
-      newCustomerTarget: prior.newCustomerTarget,
-      collectionTargetBp: prior.collectionTargetBp,
-      activityTarget: prior.activityTarget,
-      notes: prior.notes,
-      status: "published",
-      publishedAt: new Date(),
-      carriedForward: true,
-    });
+    /*
+     * One person, one transaction. A half-copied target — the figures without
+     * the mix under them — scores on fewer components than were asked, and the
+     * weights are quietly restated over what is left. And one person's failure
+     * is caught rather than thrown: this loop used to die on the first bad row
+     * and leave everybody after it with no target for the month at all.
+     */
+    try {
+      await db.transaction(async (tx) => {
+        const targetId = id("stg");
+        await tx.insert(salesTargets).values({
+          id: targetId,
+          userId: prior.userId,
+          period,
+          revenueTargetPaise: prior.revenueTargetPaise,
+          volumeTargetMl: prior.volumeTargetMl,
+          newCustomerTarget: prior.newCustomerTarget,
+          collectionTargetBp: prior.collectionTargetBp,
+          // `activityTargetBp` is the figure the score reads; `activityTarget`
+          // is retired and copying only it dropped activity from every
+          // carried-forward target. Both are carried, so neither is lost.
+          activityTargetBp: prior.activityTargetBp,
+          activityTarget: prior.activityTarget,
+          notes: prior.notes,
+          status: "published",
+          publishedAt: new Date(),
+          carriedForward: true,
+        });
 
-    const bands = await db
-      .select()
-      .from(salesTargetCategories)
-      .where(eq(salesTargetCategories.targetId, prior.id));
-    for (const band of bands) {
-      await db.insert(salesTargetCategories).values({
-        id: id("stc"),
-        targetId,
-        categoryId: band.categoryId,
-        minimumBp: band.minimumBp,
-        targetBp: band.targetBp,
-        stretchBp: band.stretchBp,
+        const bands = await tx
+          .select()
+          .from(salesTargetCategories)
+          .where(eq(salesTargetCategories.targetId, prior.id));
+        for (const band of bands) {
+          // A band is about a category OR a formulation. Copying only the
+          // category wrote a row with neither, which the check constraint
+          // refuses.
+          await tx.insert(salesTargetCategories).values({
+            id: id("stc"),
+            targetId,
+            categoryId: band.categoryId,
+            formulationId: band.formulationId,
+            minimumBp: band.minimumBp,
+            targetBp: band.targetBp,
+            stretchBp: band.stretchBp,
+          });
+        }
       });
+      created++;
+    } catch (error) {
+      console.error(`copyForwardSalesTargets: ${prior.userId}`, error);
+      failed.push(prior.userId);
     }
-    created++;
   }
 
-  return created;
+  return { created, failed };
 }
 
 /* ------------------------------------------------------------ salespeople */

@@ -190,6 +190,27 @@ export function isoDate(d: Date): string {
   );
 }
 
+const IST_DAY = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: 'Asia/Kolkata',
+});
+
+/**
+ * TODAY IN ASIA/KOLKATA, `YYYY-MM-DD`, whatever zone the phone is set to.
+ *
+ * `isoDate` reads the device's own zone, which is right for the hundred-odd
+ * places it formats a day somebody picked or a local midnight already built,
+ * and wrong for "which month is he being scored on" — that is the office's
+ * day, and a phone left on UTC would open the 1st's score on the previous
+ * month until half past five. Kept apart from `isoDate` rather than changing
+ * it, because shifting the zone under a date-only value moves it by a day.
+ */
+export function todayIst(): string {
+  return IST_DAY.format(new Date());
+}
+
 /**
  * How far away, in words a person walking a beat would use.
  *

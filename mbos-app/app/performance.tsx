@@ -7,7 +7,7 @@ import { Card, Choice, PrimaryButton, T } from '../src/components/ui/primitives'
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Appear, CountUp, FillBar, Swap } from '../src/components/ui/motion';
 import { color as C, radius, weight, tabular, type as typeScale } from '../src/theme/tokens';
-import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { dmy, inrFromPaise, plural, todayIst } from '../src/lib/format';
 import { activitySub, collectionLine } from '../src/engines/performance-labels';
 import {
   PRESETS,
@@ -71,7 +71,10 @@ type Live =
 
 export default function PerformanceScreen() {
   const back = useCameFrom('more');
-  const [today] = React.useState(() => isoDate(new Date()));
+  /* The office's day, re-read on every focus below: a screen left open
+     overnight into the 1st must move to the new month, not go on scoring the
+     old one under "This month". */
+  const [today, setToday] = React.useState(todayIst);
   const [months, setMonths] = React.useState<PerformanceMonth[] | null>(null);
   const [key, setKey] = React.useState<PeriodKey>('this-month');
   const [custom, setCustom] = React.useState<Period | null>(null);
@@ -82,6 +85,8 @@ export default function PerformanceScreen() {
 
   const load = React.useCallback(() => {
     let alive = true;
+    /* A string, so an unchanged day is no re-render. */
+    setToday(todayIst());
     void listPerformance().then((rows) => {
       if (!alive) return;
       setMonths(rows);

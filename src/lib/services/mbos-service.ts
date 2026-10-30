@@ -3478,6 +3478,11 @@ async function performanceFor(
            p.untargeted,
            p.unmatched_revenue_paise as "unmatchedRevenuePaise",
            p.computed_at as "computedAt",
+           /* Whether a published target stands behind this row at all. The
+              office writes a row for anybody who sold something, target or
+              not, and stores an unasked component as zero — so the phone could
+              only GUESS from the figures, and guessed wrong. This is the fact. */
+           (p.target_id is not null) as "hasTarget",
            /*
             * A BAND IS ABOUT A FORMULATION NOW, and an inner join onto
             * product_categories silently dropped every one of them.

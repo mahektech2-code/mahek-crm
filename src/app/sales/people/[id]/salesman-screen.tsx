@@ -5,6 +5,7 @@ import Link from "next/link";
 import { money, rupeesFromPaise, shortDate, stamp } from "@/lib/format";
 import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
+import { scoreText } from "@/lib/score-format";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
 import type { HometownState } from "@/lib/services/hometown-service";
@@ -62,11 +63,24 @@ const TABS = [
 
 type Tab = (typeof TABS)[number];
 
+/** This person's month as the Performance screen scores it. */
+export type ScoreFigures = {
+  hasTarget: boolean;
+  scoreBp: number | null;
+  rating: string | null;
+  revenuePaise: number;
+  revenueTargetPaise: number | null;
+  collectedPaise: number;
+  newCustomers: number;
+};
+
 export function SalesmanScreen({
   record,
   month,
   thisMonth,
   lastMonth,
+  score,
+  scoreLast,
   day,
   longDay,
   today,
@@ -80,6 +94,8 @@ export function SalesmanScreen({
   /** Null where he did nothing at all in the month, which is a real answer. */
   thisMonth: PerformanceRow | null;
   lastMonth: PerformanceRow | null;
+  score: ScoreFigures;
+  scoreLast: ScoreFigures;
   /** The day the Day check tab is showing. Defaults to today. */
   day: string;
   longDay: string;
@@ -140,19 +156,12 @@ export function SalesmanScreen({
               csv={() => [
                 ["Figure", month, "Last month"],
                 ["Orders taken", thisMonth?.orders ?? 0, lastMonth?.orders ?? ""],
-                [
-                  "Order value (Rs)",
-                  Math.round((thisMonth?.orderValuePaise ?? 0) / 100),
-                  lastMonth ? rupeesFromPaise(lastMonth.orderValuePaise) : "",
-                ],
-                [
-                  "Collected (Rs)",
-                  Math.round((thisMonth?.collectedPaise ?? 0) / 100),
-                  lastMonth ? rupeesFromPaise(lastMonth.collectedPaise) : "",
-                ],
+                ["Score", score.scoreBp === null ? "" : scoreText(score.scoreBp), scoreLast.scoreBp === null ? "" : scoreText(scoreLast.scoreBp)],
+                ["Sales, net of GST (Rs)", rupeesFromPaise(score.revenuePaise), rupeesFromPaise(scoreLast.revenuePaise)],
+                ["Collected, confirmed (Rs)", rupeesFromPaise(score.collectedPaise), rupeesFromPaise(scoreLast.collectedPaise)],
                 ["Visits", thisMonth?.visits ?? 0, lastMonth?.visits ?? ""],
                 ["Verified visits", thisMonth?.verifiedVisits ?? 0, lastMonth?.verifiedVisits ?? ""],
-                ["New shops", thisMonth?.newCustomers ?? 0, lastMonth?.newCustomers ?? ""],
+                ["New customers", score.newCustomers, scoreLast.newCustomers],
                 ["Days worked", thisMonth?.daysWorked ?? 0, lastMonth?.daysWorked ?? ""],
               ]}
             />
@@ -201,12 +210,10 @@ export function SalesmanScreen({
         reads as a trend. Two numbers side by side say the same thing and
         cannot be wrong.
 
-        There is no target and no score here. `sales_targets` sets one for
-        SOME field salesmen and not others, so a percentage would appear for
-        some people and not for others on the same screen with nothing saying
-        why -- and an achievement figure against a target nobody set is a
-        number invented on this page. The Performance screen is where a target
-        is read against.
+        The sales figures and the score are the Performance screen's own
+        reading of him, so this page and that one cannot quote him two order
+        values for one month. Where nobody set him a target the score says so
+        in words rather than showing a percentage of nothing.
       */}
       <MetricRow
         metrics={[
@@ -216,15 +223,21 @@ export function SalesmanScreen({
             sub: lastMonth ? `${lastMonth.orders} last month` : undefined,
           },
           {
-            label: "Order value",
-            value: thisMonth?.orderValuePaise ? money(thisMonth.orderValuePaise) : "—",
-            /* Captured, not booked: an MBOS order waits on accounts. */
-            sub: "captured in the field, before approval",
+            label: "Score",
+            value: score.scoreBp === null ? "No target" : scoreText(score.scoreBp),
+            sub: score.rating ?? (scoreLast.scoreBp === null ? undefined : `${scoreText(scoreLast.scoreBp)} last month`),
+          },
+          {
+            label: "Sales",
+            value: score.revenuePaise ? money(score.revenuePaise) : "—",
+            sub: score.revenueTargetPaise
+              ? `of ${money(score.revenueTargetPaise)} target · accepted, net of GST`
+              : "accepted orders, net of GST",
           },
           {
             label: "Collected",
-            value: thisMonth?.collectedPaise ? money(thisMonth.collectedPaise) : "—",
-            sub: "what he says he took in",
+            value: score.collectedPaise ? money(score.collectedPaise) : "—",
+            sub: "confirmed, against overdue bills",
           },
           {
             label: "Visits",
@@ -234,9 +247,9 @@ export function SalesmanScreen({
               : undefined,
           },
           {
-            label: "New shops",
-            value: thisMonth ? String(thisMonth.newCustomers) : "0",
-            sub: lastMonth ? `${lastMonth.newCustomers} last month` : undefined,
+            label: "New customers",
+            value: String(score.newCustomers),
+            sub: `${scoreLast.newCustomers} last month`,
           },
           {
             label: "Days worked",
