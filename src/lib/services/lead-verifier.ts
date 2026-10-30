@@ -287,6 +287,9 @@ async function approvalRoute(
   if (opts.designated && seats?.id) {
     const gate = await orgDesignatedGate(seats.id, seats.ownerId, user.id);
     if (!gate.ok) return null;
+    /* The person the Org Chart names (or the request was addressed to) verifies it: the
+       chart's own eligibility never required a seat on this lead, so neither does this. */
+    if (gate.viaOrg) return "designated";
   }
   const designated = seats ? await approverFor(seats) : null;
   if (designated) {
@@ -420,6 +423,19 @@ export async function requireQualificationApprover(customerId: string): Promise<
   const ctx = await requireLeadVerifier(customerId);
   const seats = await seatsOf(customerId);
   if (!seats) return { ok: true, ctx };
+  /* ORG CHART FIRST FOR THE REVIEW TOO: whoever collected the answers (the owner) is
+     the starting point and the nearest eligible manager above them reviews. Where
+     the chart cannot answer, the rules below apply exactly as before. */
+  if (seats.ownerId) {
+    const { orgChartVerifierFor } = await import("./org-verifier-resolver");
+    const org = await orgChartVerifierFor(seats.ownerId);
+    if (org.ok && org.id !== ctx.user.id && ctx.user.role !== "admin") {
+      return {
+        ok: false,
+        message: `Qualification on this lead is reviewed by ${org.name || "the manager above the person who collected it"}, who is above them on the Org Chart.`,
+      };
+    }
+  }
   const designated = await approverFor(seats);
   if (designated && designated.id === ctx.user.id) return { ok: true, ctx };
   if (seats.ownerId && seats.ownerId === ctx.user.id) {
@@ -646,7 +662,10 @@ export async function fieldRoutingOn(): Promise<boolean> {
 
 /** Is a Salesman's lead verified through the org chart rather than by one named account? */
 export async function orgModeOn(): Promise<boolean> {
-  return Boolean((await getConfig())["leads.fieldVerifierByOrgChart"]);
+  /* RETIRED. The Org Chart is now asked FIRST for every request (`orgChartVerifierFor`),
+     so there is no switch to turn it on; this stays only so the older seat passes that
+     asked it read "off" and behave as they did while it was off. */
+  return false;
 }
 
 /* --------------------------------------------------- what was written at raising */
@@ -752,7 +771,7 @@ async function canActAsVerifier(p: Person): Promise<boolean> {
  * when the account was made or by `npm run employee:link` — and is NEVER
  * inferred from a name: the book carries two "Pritesh Doshi" rows.
  */
-type OrgData = {
+export type OrgData = {
   managerOf: Map<string, string>;
   employees: Map<string, ChainEmployee>;
   accounts: Array<{ id: string; role: string; active: boolean; employeeId: string | null; name: string }>;
@@ -760,7 +779,7 @@ type OrgData = {
   nameOfUser: Map<string, string>;
 };
 
-async function loadOrgData(exec: Reader = db): Promise<OrgData> {
+export async function loadOrgData(exec: Reader = db): Promise<OrgData> {
   const [links, people, accounts] = await Promise.all([
     exec
       .select({ employeeId: employeeReporting.employeeId, managerId: employeeReporting.managerId })
@@ -787,7 +806,7 @@ async function loadOrgData(exec: Reader = db): Promise<OrgData> {
  * The org-chart verifier for ONE Salesman. Which accounts on his reporting line
  * can verify is worked out only for the people on that line.
  */
-async function orgVerifierFor(
+export async function orgVerifierFor(
   data: OrgData,
   subjectUserId: string | null,
   creatorUserId: string | null,
@@ -844,7 +863,7 @@ const ORG_REFUSAL_TAIL =
  * `lead` is `{ id, ownerId }` and the OWNER is read from the argument, so a caller
  * that is about to write a new owner can ask about the lead as it WILL be.
  *
- * With `leads.fieldVerifierByOrgChart` on, a lead that belongs on the field route
+ * (Retired switch: the Org Chart is now always asked first.) A lead that belongs on the field route
  * is verified by the nearest eligible manager above THE SALESMAN on the org chart
  * (see `engines/org-verifier-chain.ts`) and by no configured account.
  */
@@ -1035,8 +1054,37 @@ export async function orgDesignatedGate(
   customerId: string,
   ownerId: string | null,
   userId: string,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!(await orgModeOn())) return { ok: true };
+): Promise<{ ok: true; viaOrg?: boolean } | { ok: false; message: string }> {
+  /* Set where this person is the one the Org Chart names (or the one it was addressed to):
+     they may verify without holding a seat on THIS lead, which the chart never asked of them. */
+  let viaOrg = false;
+  /* ORG CHART FIRST, FOR EVERY LEAD, with the switch off or on: the person who ASKED
+     is never the one who verifies, and where the chart names somebody above them,
+     that person - or whoever the request was addressed to, or an administrator - is
+     who may. Where the chart cannot answer the lead is judged exactly as it was
+     (the named-person settings, then seats), minus the requester. */
+  {
+    const { orgChartVerifierFor, pendingRequestOf, userRole } = await import("./org-verifier-resolver");
+    const pending = await pendingRequestOf(customerId);
+    if (pending?.requesterId && pending.pending) {
+      if (pending.requesterId === userId) {
+        return {
+          ok: false,
+          message:
+            "You asked for this verification yourself, so somebody else does it: the manager above you on the Org Chart, or the person named in Settings where the chart cannot say.",
+        };
+      }
+      const org = await orgChartVerifierFor(pending.requesterId);
+      if (org.ok && org.id !== userId && pending.addresseeId !== userId && (await userRole(userId)) !== "admin") {
+        return {
+          ok: false,
+          message: `Only ${org.name || "the manager above the person who asked"}, who is above them on the Org Chart, verifies this lead.`,
+        };
+      }
+      viaOrg = (org.ok && org.id === userId) || pending.addresseeId === userId;
+    }
+  }
+  if (!(await orgModeOn())) return { ok: true, viaOrg };
   const route = await fieldRouteFor({ id: customerId, ownerId });
   /* In org-chart mode EVERY answer names one person or refuses: a refusal blocks
      everybody (fail closed), and a named person is the only one allowed - an
@@ -1525,7 +1573,7 @@ export function realignNotice(out: Pick<RealignOutcome, "blocked">): string | nu
  * it, or above whoever raised it. By employee id, never by name; null where the
  * chart cannot say, and then NOBODY is guessed.
  *
- * Off (`leads.fieldVerifierByOrgChart`), always null: the old pass is the owner.
+ * Always null now that the switch is retired: the old pass is the owner.
  */
 export async function seatForNewLead(input: {
   ownerId: string | null;

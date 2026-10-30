@@ -420,12 +420,13 @@ describe("Seema's own lead is never hers to verify", () => {
 
 describe("an unknown creator falls back to Pritesh — only when nothing else answered, and only if usable", () => {
   test("a lead with no creator record and no seat goes to Pritesh instead of a regional guess", async () => {
-    // Not configured: the regional default answers, exactly as main does today.
+    /* Not configured: the only regional answer is the requester herself, and nobody
+       verifies their own request - refused in words (the Org Chart cannot answer: mgr is unlinked). */
     const before = await makeLead({ ownerId: mgr.id });
     asMgr();
     const old = await convert(before.id);
-    assert.equal(old.ok, true, old.ok ? "" : old.error);
-    assert.equal((await row(before.id)).leadManagerId, mgr.id, "the regional guess");
+    assert.equal(old.ok, false);
+    assert.match(old.ok ? "" : old.error, /nobody verifies their own request/);
 
     await configure();
     const lead = await makeLead({ ownerId: mgr.id });
@@ -462,8 +463,8 @@ describe("an unknown creator falls back to Pritesh — only when nothing else an
     const lead = await makeLead({ ownerId: mgr.id });
     asMgr();
     const r = await convert(lead.id);
-    assert.equal(r.ok, true, r.ok ? "" : r.error);
-    assert.equal((await row(lead.id)).leadManagerId, mgr.id, "the regional default, as before");
+    assert.equal(r.ok, false, "the regional default is the requester herself, so it is refused");
+    assert.match(r.ok ? "" : r.error, /nobody verifies their own request/);
     assert.notEqual((await row(lead.id)).leadManagerId, pritesh.id);
   });
 

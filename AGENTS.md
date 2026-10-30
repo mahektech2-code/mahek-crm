@@ -8805,6 +8805,33 @@ ships, a handset on the old screen draws the new conditions as bare ticks the
 server will not accept as answers. The engine copies are byte-identical as
 always (`mbos-wire.test.ts`).
 
+**THE ORG CHART DECIDES WHO VERIFIES, AND THE NAMED-PERSON SETTINGS ARE ONLY THE
+FALLBACK.** Whoever MAKES a request (presses Request, or Convert to Prospect) is
+the starting point, and the nearest eligible person above them on the Org Chart
+verifies it — never whoever owns the lead. `orgChartVerifierFor` in
+`services/org-verifier-resolver.ts` is the one resolver; the routing of the
+request (`preparePromotion`), the act of verifying (`orgDesignatedGate`, which
+the console, the Sales Manager pipeline and the handset all pass through) and the
+Qualification review (`requireQualificationApprover`, from whoever completed it)
+all ask it, so a screen cannot offer a call the permission check then refuses.
+The walk is `engines/org-verifier-chain` and is unchanged: it skips a leaver,
+someone with no account, an inactive one, one who cannot verify, and never names
+the requester.
+
+**The requester is never the verifier or the reviewer**, whatever else they hold.
+Where the chart names someone else, only that person (or the one the request was
+addressed to, or an administrator) may verify. When the chart CANNOT answer — the
+requester is not linked to an employee in HRMS, or nobody above them can verify —
+the older rules answer as a fallback (`leads.telecallerVerifierEmail`,
+`leads.selfRaisedVerifierEmail`, the seats), still minus the requester; if the
+fallback would be the requester the conversion is REFUSED in words saying what to
+fix (link them in HRMS, or name another verifier in Settings). A fallback is
+VISIBLE: a `verifier_fallback` timeline entry and a note on the lead's next
+action say why the chart could not answer, so who still needs linking in HRMS can
+be read off the book. `leads.fieldVerifierByOrgChart` is RETIRED (the chart is
+always tried first) and `orgModeOn()` answers false so the older seat passes
+behave as they did while it was off.
+
 **A LEAD THE SALES MANAGER RAISED HERSELF IS APPROVED BY SOMEBODY ELSE, AND SHE
 COLLECTS ITS ANSWERS — a refinement of the paragraph above, which made a
 Salesman the only collector.** A lead is SELF-RAISED where she holds the seat

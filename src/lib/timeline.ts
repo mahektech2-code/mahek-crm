@@ -133,6 +133,12 @@ export const CRM_EVENT = {
    * can confirm that.
    */
   followUp: "lead_followup",
+  /**
+   * A verification that went through the named-person settings because the Org
+   * Chart could not name a verifier. It exists so the people who still need linking
+   * in HRMS can be read off the leads themselves.
+   */
+  verifierFallback: "verifier_fallback",
 } as const;
 
 /**

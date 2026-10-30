@@ -3869,15 +3869,6 @@ export const SETTINGS = [
     default: "",
   },
   {
-    key: "leads.fieldVerifierByOrgChart",
-    type: "boolean",
-    category: "mbos-leads",
-    label: "Verify a Salesman's leads through the org chart",
-    description:
-      "On: a lead a Salesman raised on the handset, or any lead a Salesman currently holds, is verified by the nearest manager above THAT Salesman on the HRMS org chart who has an active MahekOne account and can verify. The chain is followed by employee record (an account's linked employee), never by name; a manager who has left, has no account, is inactive or cannot verify is passed over to the next one up. If nobody on the chain can be used the lead is NOT routed anywhere else - it says why and waits for the chart or the accounts to be fixed. The lead's creator never verifies it, and a Telecaller's or Sales Manager's own lead is still the desk verifier's. Off (the default): the person named in 'Who verifies a lead a Salesman raised or holds' is used, exactly as before. Check the org chart and accounts before turning this on.",
-    default: false,
-  },
-  {
     key: "leads.figuresFreshDays",
     type: "integer",
     category: "mbos-leads",
@@ -6971,7 +6962,6 @@ export type Config = {
   "leads.selfRaisedVerifierEmail": string;
   "leads.telecallerVerifierEmail": string;
   "leads.fieldVerifierEmail": string;
-  "leads.fieldVerifierByOrgChart": boolean;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;

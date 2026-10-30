@@ -56,6 +56,7 @@ import {
   type ProspectFault,
 } from "@/lib/engines/lead-prospect-answers";
 import { ladderFor } from "@/lib/engines/lead-ladder";
+import { orgChartVerifierFor, orgFallbackWords } from "@/lib/services/org-verifier-resolver";
 import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
@@ -720,6 +721,8 @@ async function preparePromotion(
     salesType: "direct" | "third_party";
     setsSalesType: boolean;
     managerId: string;
+    /** Set where the Org Chart could not name a verifier and the settings were used instead. */
+    fallbackNote: string | null;
     /** The Sales Manager the verification is owed to — the same owner the dry run
         above was asked with, so a caller's real write can never name a different one. */
     nextActionOwnerId: string;
@@ -869,7 +872,12 @@ async function preparePromotion(
    * lead stays a Suspect — ready, waiting for somebody to be set — rather than
    * becoming a Prospect nobody can verify.
    */
-  let managerId: string | null = null;
+  /* THE ORG CHART IS ALWAYS ASKED FIRST, starting from whoever is making this request:
+     the nearest eligible manager above them verifies it. Everything below is the
+     FALLBACK for a chart that cannot answer, kept exactly as it was. */
+  const orgPick = await orgChartVerifierFor(ctx.user.id);
+  let managerId: string | null = orgPick.ok ? orgPick.id : null;
+  const fallbackNote = orgPick.ok ? null : `Routed through Settings, not the Org Chart: ${orgFallbackWords(orgPick.reason)}.`;
   /* A LEAD A SALESMAN RAISED OR NOW HOLDS is verified by the person Mahek
      designates for exactly that (`leads.fieldVerifierEmail`), and this answers
      FIRST: current Salesman assignment overrides who raised the lead, and the
@@ -878,7 +886,9 @@ async function preparePromotion(
      Blank, it is off and everything below is exactly what it was. An unknown
      creator is only a fallback — it applies after every seat below has had its
      say, so an org-chart or decided seat is never undone by it. */
-  const fieldRoute = await fieldRouteFor({ id: p.customerId, ownerId: lead.ownerId }, ctx.user.id);
+  const fieldRoute = managerId
+    ? ({ kind: "off" } as Awaited<ReturnType<typeof fieldRouteFor>>)
+    : await fieldRouteFor({ id: p.customerId, ownerId: lead.ownerId }, ctx.user.id);
   if (fieldRoute.kind === "refuse") return err(fieldRoute.message, "rule_violation");
   if (fieldRoute.kind === "verifier") managerId = fieldRoute.id;
   /* THE LEAD'S OWN SALES MANAGER COMES FIRST. Verification follows `sales_manager_id`,
@@ -954,6 +964,14 @@ async function preparePromotion(
       "rule_violation",
     );
   }
+  /* THE REQUESTER IS NEVER THE VERIFIER. If the fallback would send it to the person
+     asking, refuse and say what to fix, rather than a Prospect nobody else can verify. */
+  if (managerId === ctx.user.id) {
+    return err(
+      "Nobody can verify this but you, and nobody verifies their own request. Ask HR to link you to your manager in HRMS, or an administrator to name another verifier in Settings.",
+      "rule_violation",
+    );
+  }
   const nextActionOwnerId: string = managerId;
 
   /* THE DRY RUN. The same gate the promotion will be asked, with what this
@@ -996,6 +1014,7 @@ async function preparePromotion(
     salesType: salesType as "direct" | "third_party",
     setsSalesType,
     managerId,
+    fallbackNote,
     nextActionOwnerId,
     day,
     answers,
@@ -1069,7 +1088,7 @@ export async function requestProspect(
 
     const prepared = await preparePromotion(p, ctx, { action: "Sales manager verification", date: due });
     if (!prepared.ok) return prepared;
-    const { lead, req, salesType, setsSalesType, managerId, nextActionOwnerId, answers, write } = prepared.data;
+    const { lead, req, salesType, setsSalesType, managerId, fallbackNote, nextActionOwnerId, answers, write } = prepared.data;
     const resubmitted = req.state === "returned";
 
     const now = new Date();
@@ -1086,7 +1105,8 @@ export async function requestProspect(
         leadNextAction: "Sales manager verification",
         leadNextActionDate: due,
         leadNextActionOwnerId: nextActionOwnerId,
-        leadNextActionOutcome: "Verify what the calling desk collected, then confirm the Prospect",
+        leadNextActionOutcome:
+          "Verify what the calling desk collected, then confirm the Prospect" + (fallbackNote ? ` — ${fallbackNote}` : ""),
         leadLastActivityDate: day,
         updatedAt: now,
       };
@@ -1115,6 +1135,20 @@ export async function requestProspect(
           config["leads.prospectReasons"].find((r) => r.code === p.reasonCode)?.label ?? p.reasonCode ?? "no reason given"
         }${p.note ? ` · ${p.note}` : ""}. Their next step: ${nextStepWords(answers)}. Not a Prospect until the Sales Manager confirms.`,
       });
+
+      /* A FALLBACK IS SEEN, not buried: the Org Chart could not name a verifier, so the
+         lead's history says so and who still needs linking in HRMS can be read off it. */
+      if (fallbackNote) {
+        await writeTimelineEvent(tx, {
+          customerId: p.customerId,
+          eventType: CRM_EVENT.verifierFallback,
+          sourceApp: "crm",
+          sourceRecordId: `${requestId}:fallback`,
+          occurredAt: now,
+          actorUserId: ctx.user.id,
+          summary: fallbackNote,
+        });
+      }
 
       await tx.insert(auditLog).values({
         id: gen("aud"),
@@ -1239,7 +1273,7 @@ export async function convertLeadToProspect(
     const due = addDays(day, config["leads.verificationDueDays"]);
     const prepared = await preparePromotion(p, ctx, { action: QUAL_NEXT.verify, date: due });
     if (!prepared.ok) return prepared;
-    const { lead, salesType, setsSalesType, managerId, answers, write } = prepared.data;
+    const { lead, salesType, setsSalesType, managerId, fallbackNote, answers, write } = prepared.data;
 
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -1307,11 +1341,24 @@ export async function convertLeadToProspect(
         action: QUAL_NEXT.verify,
         date: due,
         ownerId: managerId,
-        outcome: "Verify the visit and what the desk collected, then Qualification opens",
+        outcome:
+          "Verify the visit and what the desk collected, then Qualification opens" + (fallbackNote ? ` — ${fallbackNote}` : ""),
       },
     });
     if (!moved.ok) {
       return err(`Not converted: ${moved.error}`, "rule_violation");
+    }
+
+    if (fallbackNote) {
+      await writeTimelineEvent(db, {
+        customerId: p.customerId,
+        eventType: CRM_EVENT.verifierFallback,
+        sourceApp: "crm",
+        sourceRecordId: `convert:${p.customerId}:${Date.now()}:fallback`,
+        occurredAt: new Date(),
+        actorUserId: ctx.user.id,
+        summary: fallbackNote,
+      });
     }
 
     await db.insert(auditLog).values({
