@@ -232,7 +232,7 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
     invoiceNo: h.invoiceNo == null ? null : String(h.invoiceNo),
     lines: lines.map((l) => {
       const unitsExist = withUnits.has(l.id);
-      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, target: l.target, scanned: l.scanned }) };
+      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, lotAllocated: l.alloc.length > 0, target: l.target, scanned: l.scanned }) };
     }),
     units: units.map((u) => ({ id: String(u.id), lineId: String(u.lineId), sku: String(u.sku), lotCode: String(u.lotCode), status: String(u.status), scannedAt: u.scannedAt == null ? null : new Date(u.scannedAt as string).toISOString(), by: u.by == null ? null : String(u.by) })),
     scans: scans.map((s) => ({ at: new Date(s.at as string).toISOString(), code: String(s.code), result: String(s.result), message: String(s.message), by: s.by == null ? null : String(s.by) })),
@@ -618,7 +618,7 @@ export async function scanGateFor(ex: Ex, orderIds: string[]): Promise<Map<strin
   const asked = new Set(orderIds);
   for (const lines of (await scanLinesFor(ex, nos.map((n) => Number(n.no)))).values())
     for (const l of lines)
-      if (asked.has(l.id)) out.set(l.id, scanGate({ requireScan: cfg["erp.dispatch.requireScan"], lotsHaveUnits: withUnits.has(l.id), target: l.target, scanned: l.scanned }));
+      if (asked.has(l.id)) out.set(l.id, scanGate({ requireScan: cfg["erp.dispatch.requireScan"], lotsHaveUnits: withUnits.has(l.id), lotAllocated: l.alloc.length > 0, target: l.target, scanned: l.scanned }));
   return out;
 }
 
