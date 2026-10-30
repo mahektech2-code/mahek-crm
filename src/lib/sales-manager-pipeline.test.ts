@@ -441,7 +441,7 @@ describe("M — every mutation persists, and the screen is told what the databas
 
     const rec = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(rec.stage, "prospect");
-    assert.equal(rec.gate.kind, "verify", "the record reads the same database and offers the next step");
+    assert.equal(rec.gate.kind, "awaitingVerification", "she asked for it herself, so somebody above her verifies - she is not offered the call");
   });
 
   test("convert refuses with the gate's own words, and the answers already typed are kept", async () => {

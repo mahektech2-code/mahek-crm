@@ -301,7 +301,7 @@ const files = [
   "src/lib/impact/admin-removals.test.ts",
   // Saving where a salesman works can hand him the shops in those places — only the count shown, only with customer.reassign.
   "src/lib/area-handover.test.ts",
-  "src/lib/org-chart-verifier-routing.test.ts",
+  "src/lib/org-chart-verification.test.ts",
   // A lead still at the legacy `new` / `contacted` stage converts to Prospect once the desk
   // gives it a sales type: it is relabelled as the Suspect it is, not refused as off-ladder.
   "src/lib/convert-legacy-stage.test.ts",

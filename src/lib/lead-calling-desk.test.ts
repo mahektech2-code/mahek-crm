@@ -1259,8 +1259,10 @@ describe("round three: the record reads the way V6 draws it", () => {
     assert.equal(rec?.timeline[0]?.who, "system");
     const i = (rec?.timeline ?? []).findIndex((t) => /Prospect requested/.test(t.title));
     assert.ok(i > 0);
-    assert.equal(rec?.timeline[i + 1]?.title, "Sales Manager notified — verification task raised");
-    assert.equal(rec?.timeline[i + 1]?.who, "system");
+    /* a "routed through Settings" fallback note may sit between the two, so find the notice by its words */
+    const j = (rec?.timeline ?? []).findIndex((t, k) => k > i && t.title === "Sales Manager notified — verification task raised");
+    assert.ok(j > i, "the notice follows the request");
+    assert.equal(rec?.timeline[j]?.who, "system");
     assert.equal(rec?.timeline[i]?.who, "desk");
   });
 });
