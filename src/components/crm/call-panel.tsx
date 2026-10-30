@@ -65,6 +65,13 @@ import {
   StockCheck,
 } from "@/components/crm/inbound-context";
 import { BodyPortal } from "@/components/ui/body-portal";
+import {
+  CALL_STEP_LABEL,
+  callSteps,
+  clampStep,
+  firstStepWithError,
+  type CallStep,
+} from "@/lib/call-form-steps";
 
 /**
  * The dates customers actually ask for, as one tap each. Anything else still
@@ -996,6 +1003,18 @@ function CallPanelForm({
   // disagree about it.
   const singleSelect = Boolean(outcome && singleSelectOutcomes.includes(outcome));
 
+  /* THE STEPS THIS CALL ASKS. Which ones depends on the answers, so where the
+     person is gets kept inside them: an outcome changed off Order Taken takes
+     the order step away, and somebody standing on it goes back, not on. */
+  const [stepRaw, setStep] = React.useState<CallStep>("happened");
+  const steps = callSteps({
+    orderReceived: isOrderReceived,
+    takesProducts: needsProducts,
+    hasNextStep: chips.length > 0 || actionOptions.length > 0 || offersOpportunity,
+  });
+  const step = clampStep(steps, stepRaw);
+  const stepIndex = steps.indexOf(step);
+
   // The script follows the outcome once one is chosen; before that, whatever
   // general guidance exists.
   const [scriptId, setScriptId] = React.useState<string | null>(null);
@@ -1301,6 +1320,135 @@ function CallPanelForm({
     setNotes((t) => addLabel(t, n.label));
   }
 
+  /**
+   * What stops this step being finished, field by field — or null. Next asks
+   * it of the step it leaves; Save asks it of every step, in order.
+   */
+  function stepProblems(st: CallStep): Record<string, string> | null {
+    if (st === "happened") {
+      if (!type) return { type: "Pick how this happened." };
+      if (isInbound && !callerRole) return { callerRole: "Say who called." };
+      if (isInbound && !callReason) return { callReason: "Say why they called." };
+    }
+    if (st === "outcome" && !isOrderReceived && !outcome) {
+      return { outcome: "Pick how the call ended." };
+    }
+    // A line somebody put on the order and never counted is a question, not a
+    // blank. Dropping it silently is how an order goes out one product short
+    // and nobody finds out until the customer rings about it.
+    if (st === "order" && needsProducts && unquantified.length) {
+      return {
+        productQuantities:
+          unquantified.length === 1
+            ? `How many cans of ${unquantified[0].product.name}? Give a quantity, or take it off the order.`
+            : `${unquantified.length} products have no quantity. Give each one a number, or take it off the order.`,
+      };
+    }
+
+    /*
+     * The reason's own mandatory boxes, checked here so the telecaller is told
+     * at the field rather than by a round trip — the server checks the same
+     * thing against the same `reasonFieldsFor`, because a rule that lives in a
+     * browser is not a rule.
+     */
+    const missing = reasonFields.find(
+      (f) => f.required && !(reasonDetail[f.key] ?? "").trim(),
+    );
+    if (st === "happened" && missing) {
+      return {
+        [`reasonDetail.${missing.key}`]: `${missing.label} is needed for a ${CALL_REASON_LABEL[callReason]} call.`,
+      };
+    }
+    const missingOutcome = outcomeFields.find(
+      (f) =>
+        outcomeFieldRequired(f, outcomeDetail) &&
+        !(outcomeDetail[f.key] ?? "").trim(),
+    );
+    if (st === "outcome" && missingOutcome) {
+      return {
+        [`outcomeDetail.${missingOutcome.key}`]: `${missingOutcome.label} is needed.`,
+      };
+    }
+    if (st === "next" && needsActionDate && !nextActionDate) {
+      return { nextActionDate: "Say which day this is for." };
+    }
+    /* A yes with nothing named is the box left half-filled. Refused here and
+       not silently dropped, or the telecaller believes they recorded one. */
+    if (st === "next" && offersOpportunity && hasOpportunity && !oppProduct.trim()) {
+      return { "opportunity.product": "Name what they might buy, or answer No." };
+    }
+
+    /*
+     * A DISCOUNT ABOVE WHAT THIS PERSON MAY GIVE IS REFUSED HERE AND AGAIN ON
+     * THE SERVER.
+     *
+     * The engine's own sentence is what the field shows — "you may give up to
+     * 2% on your own" tells somebody what to do next, and a bare "not allowed"
+     * teaches them to press the button again. The server runs the same
+     * function against the caller's real level, because a form is not a rule.
+     */
+    if (st === "order" && mayDiscount && discountAuthority) {
+      const refusals: Record<string, string> = {};
+      for (const l of countedLines) {
+        const bp = discountBpOf(l.product.id);
+        if (!bp) continue;
+        const verdict = discountAuthorityOf(bp, discountAuthority.level, {
+          associateMaxBp: discountAuthority.associateMaxBp,
+          managerMaxBp: discountAuthority.managerMaxBp,
+        });
+        if (!verdict.allowed && verdict.reason) {
+          refusals[`lineDiscount.${l.product.id}`] = verdict.reason;
+        }
+      }
+      if (Object.keys(refusals).length) return refusals;
+    }
+    return null;
+  }
+
+  /**
+   * Open a step, at its top — or, where it is opened for a refusal, scrolled
+   * to the first message on it, so the field to fix is in front of them.
+   */
+  function showStep(target: CallStep, toError = false) {
+    setStep(target);
+    requestAnimationFrame(() => {
+      const box = document.getElementById("call-log-scroll");
+      const err = toError
+        ? box?.querySelector(
+            `[data-call-step="${target}"] .text-danger.block, [data-call-step="${target}"] p.text-danger`,
+          )
+        : null;
+      if (err) err.scrollIntoView({ block: "center", behavior: "smooth" });
+      else box?.scrollTo({ top: 0 });
+    });
+  }
+
+  /** Leave this step for another. Going forward checks every step passed. */
+  function goToStep(target: CallStep) {
+    const to = steps.indexOf(target);
+    if (to === -1) return;
+    for (let i = stepIndex; i < to; i++) {
+      const problems = stepProblems(steps[i]);
+      if (problems) {
+        setErrors((e) => ({ ...e, ...problems }));
+        showStep(steps[i], true);
+        const first = Object.values(problems)[0];
+        if (first) push(first, "error");
+        return;
+      }
+    }
+    showStep(target);
+  }
+
+  function clearError(key: string) {
+    setErrors((e) => {
+      if (!(key in e)) return e;
+      const next = { ...e };
+      delete next[key];
+      return next;
+    });
+  }
+
   async function save(advance: boolean) {
     if (!target) return;
 
@@ -1317,80 +1465,13 @@ function CallPanelForm({
       if (first) push(`Not saved yet: ${first}`, "error");
     };
 
-    // A line somebody put on the order and never counted is a question, not a
-    // blank. Dropping it silently is how an order goes out one product short
-    // and nobody finds out until the customer rings about it.
-    if (needsProducts && unquantified.length) {
-      refuse({
-        productQuantities:
-          unquantified.length === 1
-            ? `How many cans of ${unquantified[0].product.name}? Give a quantity, or take it off the order.`
-            : `${unquantified.length} products have no quantity. Give each one a number, or take it off the order.`,
-      });
-      return;
-    }
-
-    /*
-     * The reason's own mandatory boxes, checked here so the telecaller is told
-     * at the field rather than by a round trip — the server checks the same
-     * thing against the same `reasonFieldsFor`, because a rule that lives in a
-     * browser is not a rule.
-     */
-    const missing = reasonFields.find(
-      (f) => f.required && !(reasonDetail[f.key] ?? "").trim(),
-    );
-    if (missing) {
-      refuse({
-        [`reasonDetail.${missing.key}`]: `${missing.label} is needed for a ${CALL_REASON_LABEL[callReason]} call.`,
-      });
-      return;
-    }
-    const missingOutcome = outcomeFields.find(
-      (f) =>
-        outcomeFieldRequired(f, outcomeDetail) &&
-        !(outcomeDetail[f.key] ?? "").trim(),
-    );
-    if (missingOutcome) {
-      refuse({
-        [`outcomeDetail.${missingOutcome.key}`]: `${missingOutcome.label} is needed.`,
-      });
-      return;
-    }
-    if (needsActionDate && !nextActionDate) {
-      refuse({ nextActionDate: "Say which day this is for." });
-      return;
-    }
-    /* A yes with nothing named is the box left half-filled. Refused here and
-       not silently dropped, or the telecaller believes they recorded one. */
-    if (offersOpportunity && hasOpportunity && !oppProduct.trim()) {
-      refuse({ "opportunity.product": "Name what they might buy, or answer No." });
-      return;
-    }
-
-    /*
-     * A DISCOUNT ABOVE WHAT THIS PERSON MAY GIVE IS REFUSED HERE AND AGAIN ON
-     * THE SERVER.
-     *
-     * The engine's own sentence is what the field shows — "you may give up to
-     * 2% on your own" tells somebody what to do next, and a bare "not allowed"
-     * teaches them to press the button again. The server runs the same
-     * function against the caller's real level, because a form is not a rule.
-     */
-    if (mayDiscount && discountAuthority) {
-      const refusals: Record<string, string> = {};
-      for (const l of countedLines) {
-        const bp = discountBpOf(l.product.id);
-        if (!bp) continue;
-        const verdict = discountAuthorityOf(bp, discountAuthority.level, {
-          associateMaxBp: discountAuthority.associateMaxBp,
-          managerMaxBp: discountAuthority.managerMaxBp,
-        });
-        if (!verdict.allowed && verdict.reason) {
-          refusals[`lineDiscount.${l.product.id}`] = verdict.reason;
-        }
-      }
-      if (Object.keys(refusals).length) {
-        refuse(refusals);
+    /* Every step this call asks, in order: a refusal opens the step that
+       holds it, so the message is beside the field rather than off-screen. */
+    for (const st of steps) {
+      const problems = stepProblems(st);
+      if (problems) {
+        refuse(problems);
+        showStep(st, true);
         return;
       }
     }
@@ -1523,12 +1604,19 @@ function CallPanelForm({
           canAdvance: Boolean(onSaved),
         });
       } else if (result.fieldErrors?.length) {
-        // The server names the field, so the message lands next to it.
+        // The server names the field, so the message lands next to it — on
+        // the step that holds it.
         setErrors(
           Object.fromEntries(
             result.fieldErrors.map((f) => [f.field, f.message]),
           ),
         );
+        const at = firstStepWithError(
+          steps,
+          result.fieldErrors.map((f) => f.field),
+        );
+        if (at) showStep(at, true);
+        push(`Not saved yet: ${result.fieldErrors[0].message}`, "error");
       }
     } finally {
       setBusy(false);
@@ -1536,6 +1624,7 @@ function CallPanelForm({
   }
 
   function reset() {
+    setStep("happened");
     setType(null);
     setOutcome(null);
     setNotes("");
@@ -1763,6 +1852,79 @@ function CallPanelForm({
   if (!target) return null;
 
   const isLead = target.kind === "lead";
+
+  /* Everything this call will say, read back on the Review step — one row per
+     answer, each opening the step it came from. */
+  const reviewRows: ReviewRow[] = [];
+  {
+    reviewRows.push({ step: "happened", label: "Notes", value: notes.trim() || "None" });
+    const how = [TYPES.find((t) => t.key === type)?.label ?? "Not picked"];
+    if (isInbound) {
+      if (callerRole)
+        how.push(
+          (CALLER_ROLE_LABEL[callerRole] ?? callerRole) +
+            (callerName.trim() ? ` (${callerName.trim()})` : ""),
+        );
+      if (callReason) how.push(CALL_REASON_LABEL[callReason] ?? callReason);
+    }
+    reviewRows.push({ step: "happened", label: "How", value: how.join(" · ") });
+    if (!isOrderReceived) {
+      const answered = outcomeFields.filter((f) => (outcomeDetail[f.key] ?? "").trim()).length;
+      reviewRows.push({
+        step: "outcome",
+        label: "Outcome",
+        value: outcome
+          ? (OUTCOME_LABEL[outcome] ?? outcome) +
+            (answered ? ` · ${answered} answer${answered === 1 ? "" : "s"}` : "")
+          : "Not picked",
+      });
+    }
+    if (needsCategory) {
+      reviewRows.push({
+        step: "outcome",
+        label: "Complaint",
+        value:
+          (complaintCategories.find((c) => c.value === category)?.label ?? category) +
+          (complaintDescription.trim() ? ` · ${complaintDescription.trim()}` : "") +
+          (complaintImages.length ? ` · ${complaintImages.length} photo${complaintImages.length === 1 ? "" : "s"}` : "") +
+          (requestCn ? " · credit note asked for" : ""),
+      });
+    }
+    if (steps.includes("order")) {
+      reviewRows.push({
+        step: "order",
+        label: "Order",
+        value: (isOrderReceived ? `${shortDate(orderDate)} · ` : "") + orderSummary,
+      });
+    }
+    if (steps.includes("next")) {
+      const pickedLabels = chips.filter((c) => picked.includes(c.id)).map((c) => c.label);
+      if (chips.length)
+        reviewRows.push({ step: "next", label: "Quick notes", value: pickedLabels.join(" · ") || "None" });
+      if (actionOptions.length)
+        reviewRows.push({
+          step: "next",
+          label: "Next action",
+          value: activeActions.length
+            ? activeActions.map((a) => NEXT_ACTION_LABEL[a] ?? a).join(" · ") +
+              (needsActionDate && nextActionDate ? ` · ${shortDate(nextActionDate)}` : "")
+            : "None",
+        });
+      if (offersOpportunity)
+        reviewRows.push({
+          step: "next",
+          label: "Opportunity",
+          value:
+            hasOpportunity === true
+              ? [oppProduct.trim(), oppQuantity.trim(), oppValue.trim() ? `₹${oppValue.trim()}` : "", oppDate ? shortDate(oppDate) : ""]
+                  .filter(Boolean)
+                  .join(" · ")
+              : hasOpportunity === false
+                ? "No"
+                : "Not answered",
+        });
+    }
+  }
 
   /*
    * WHY THIS CALL EXISTS — all of it.
@@ -2372,12 +2534,50 @@ function CallPanelForm({
                 </div>
 
                 <div
+                  id="call-log-scroll"
                   className={cx(
                     "h-full min-h-0 overflow-y-auto px-6 py-5",
                     tab === "log" ? "block" : "hidden",
                   )}
                 >
                   <div className="mx-auto max-w-[720px]">
+{/* THE FORM IS STEPS. Each step is drawn hidden rather than
+                        unmounted while another is open, so the assistant, the
+                        searches and the pickers keep what they hold as the
+                        telecaller moves back and forth. */}
+                    {saved ? (
+                      <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
+                        <div className="text-lg font-semibold text-ink">
+                          Log saved
+                        </div>
+                        <div className="mt-1 text-sm text-muted">{saved}</div>
+                        <div className="mt-4 flex flex-wrap justify-center gap-2">
+                          {hasNext ? (
+                            <Button
+                              variant="primary"
+                              onClick={() => onSaved?.(true)}
+                            >
+                              Next customer
+                            </Button>
+                          ) : null}
+                          <Button variant="secondary" onClick={reset}>
+                            Log another interaction
+                          </Button>
+                          <Button variant="secondary" onClick={onClose}>
+                            Close
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <StepRail
+                          steps={steps}
+                          step={step}
+                          onPick={goToStep}
+                        />
+
+                        {/* ============================== 1 · what happened */}
+                        <div data-call-step="happened" className={step === "happened" ? "block" : "hidden"}>
                     {!saved && target ? (
                       <CallAssistant
                         key={target.customerId}
@@ -2419,82 +2619,71 @@ function CallPanelForm({
                         <div id="call-log-form-start" />
                       </div>
                     ) : null}
-                    {saved ? (
-                      <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
-                        <div className="text-lg font-semibold text-ink">
-                          Log saved
-                        </div>
-                        <div className="mt-1 text-sm text-muted">{saved}</div>
-                        <div className="mt-4 flex flex-wrap justify-center gap-2">
-                          {hasNext ? (
-                            <Button
-                              variant="primary"
-                              onClick={() => onSaved?.(true)}
-                            >
-                              Next customer
-                            </Button>
+                          {aiFilled.length ? (
+                            <p className="mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
+                              <span className="font-medium text-ink">Filled from what you said: </span>
+                              {aiFilled.join(" · ")}.{" "}
+                              {aiPending
+                                ? "It could not tell who rang whom — pick one below and the rest goes in."
+                                : "Check each step before you save."}
+                            </p>
                           ) : null}
-                          <Button variant="secondary" onClick={reset}>
-                            Log another interaction
-                          </Button>
-                          <Button variant="secondary" onClick={onClose}>
-                            Close
-                          </Button>
-                        </div>
-                      </div>
-                    ) : !type ? (
-                      <>
-                        <div className="text-[15px] font-semibold text-ink">
-                          How did this interaction happen?
-                        </div>
-                        {aiFilled.length ? (
-                          <p className="mt-1 mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
-                            The assistant has the form ready ({aiFilled.join(" · ")}).
-                            It could not tell from what was said who rang whom — pick
-                            one and the form opens filled in.
-                          </p>
-                        ) : (
-                          /* The three cards say it; "pick one to start" said
-                             it again. */
-                          <div className="mb-3" />
-                        )}
-                        <div className="grid grid-cols-3 gap-2">
-                          {TYPES.map((t) => (
-                            <button
-                              key={t.key}
-                              onClick={() => {
-                                setType(t.key);
-                                /* The direction was the one thing the assistant
-                                   was waiting for; now the rest can go in. */
-                                if (aiPending && t.key !== "order_received") {
-                                  applyAssistant({ ...aiPending, direction: t.key });
-                                }
-                              }}
-                              className="flex cursor-pointer items-center gap-3 rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left hover:border-brand"
-                            >
-                              <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
-                                <Icon name={t.icon} size={18} />
-                              </span>
-                              <span>
-                                <span className="block text-sm font-medium text-ink">
-                                  {t.label}
-                                </span>
-                                <span className="block text-[13px] text-muted">
-                                  {t.sub}
-                                </span>
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    ) : !chosen ? (
-                      <>
-                        <button
-                          onClick={() => setType(null)}
-                          className="mb-3 cursor-pointer text-[13px] text-brand"
-                        >
-                          ← {TYPES.find((t) => t.key === type)?.label}
-                        </button>
+                          <Field
+                            label="How did this happen?"
+                            required
+                            group
+                            error={errors.type ?? null}
+                          >
+                            <div className="grid grid-cols-3 gap-2">
+                              {TYPES.map((t) => (
+                                <button
+                                  key={t.key}
+                                  type="button"
+                                  aria-pressed={type === t.key}
+                                  onClick={() => {
+                                    if (type === t.key) return;
+                                    /* An outcome the new direction does not
+                                       offer goes with the old one. */
+                                    if (
+                                      outcome &&
+                                      t.key !== "order_received" &&
+                                      !OUTCOMES[t.key].includes(outcome as never)
+                                    ) {
+                                      pickOutcome(null);
+                                    }
+                                    setType(t.key);
+                                    clearError("type");
+                                    /* The direction was the one thing the
+                                       assistant was waiting for; now the rest
+                                       can go in. */
+                                    if (aiPending && t.key !== "order_received") {
+                                      applyAssistant({ ...aiPending, direction: t.key });
+                                    }
+                                  }}
+                                  className={cx(
+                                    "flex cursor-pointer items-center gap-3 rounded-[4px] border px-3 py-2.5 text-left",
+                                    type === t.key
+                                      ? "border-brand bg-brand-soft"
+                                      : "border-line bg-surface hover:border-brand",
+                                  )}
+                                >
+                                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
+                                    <Icon name={t.icon} size={18} />
+                                  </span>
+                                  <span>
+                                    <span className="block text-sm font-medium text-ink">
+                                      {t.label}
+                                    </span>
+                                    <span className="block text-[13px] text-muted">
+                                      {t.sub}
+                                    </span>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </Field>
+                          {type ? (
+                            <>
                         {script ? (
                           <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
                             <div className="flex items-baseline gap-2">
@@ -2555,7 +2744,8 @@ function CallPanelForm({
                             ) : null}
                           </div>
                         ) : null}
-
+                            </>
+                          ) : null}
                         {/* ------------------------------------ who rang
                             Asked FIRST, and only inbound. A price question from
                             the owner and the same question from a store boy are
@@ -2573,7 +2763,10 @@ function CallPanelForm({
                               {CALLER_ROLES.map((r) => (
                                 <button
                                   key={r.code}
-                                  onClick={() => setCallerRole(r.code)}
+                                  onClick={() => {
+                                    setCallerRole(r.code);
+                                    clearError("callerRole");
+                                  }}
                                   aria-pressed={callerRole === r.code}
                                   className={cx(
                                     "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
@@ -2656,6 +2849,7 @@ function CallPanelForm({
                                           : outcome;
                                     if (presetOutcome !== outcome) pickOutcome(presetOutcome);
                                     setCallReason(r.code);
+                                    clearError("callReason");
                                     /* Changing the reason changes the questions,
                                        so the old answers go with it — carrying a
                                        price enquiry's packaging onto a delivery
@@ -2679,71 +2873,12 @@ function CallPanelForm({
                             </div>
                           </>
                         ) : null}
-
-                        <div
-                          className={cx(
-                            "text-[15px] font-semibold text-ink",
-                            isInbound && "mt-5",
-                          )}
-                        >
-                          What was the outcome?
-                        </div>
-                        {/* The outcome is how the call ENDED, and it is held back
-                            until the classification is answered — not disabled
-                            and clickable-looking, which teaches people the screen
-                            is broken, but said in words. */}
-                        {isInbound && !classified ? (
-                          <p className="mt-1.5 text-[13px] text-muted">
-                            Answer who called and why first — they are what the
-                            call was about; this is how it ended.
-                          </p>
-                        ) : null}
-                        {/* A grid of three: nine outcomes read in one look
-                            rather than scrolled past one per line. */}
-                        <div className="mt-3 grid grid-cols-3 gap-2">
-                          {OUTCOMES[
-                            type as Exclude<InteractionType, "order_received">
-                          ].map((o) => (
-                            <button
-                              key={o}
-                              disabled={!classified}
-                              title={
-                                classified
-                                  ? undefined
-                                  : "Answer who called and why first"
-                              }
-                              onClick={() => pickOutcome(o)}
-                              className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand disabled:cursor-not-allowed disabled:border-line disabled:bg-canvas disabled:text-muted disabled:hover:border-line"
-                            >
-                              {OUTCOME_LABEL[o]}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() =>
-                            isOrderReceived ? setType(null) : pickOutcome(null)
-                          }
-                          className="mb-3 cursor-pointer text-[13px] text-brand"
-                        >
-                          ← {TYPES.find((t) => t.key === type)?.label}
-                          {/* The reason belongs in this line: it is what the call
-                              was about, and the outcome alone reads as the whole
-                              classification when it is half of it. */}
-                          {callReason ? ` · ${CALL_REASON_LABEL[callReason]}` : ""}
-                          {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
-                        </button>
-
-                        {aiFilled.length ? (
-                          <p className="mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
-                            <span className="font-medium text-ink">Filled from what you said: </span>
-                            {aiFilled.join(" · ")}. Check each one before you save —
-                            nothing is saved until you press Save.
-                          </p>
-                        ) : null}
-
+                          {isInbound && (errors.callerRole || errors.callReason) ? (
+                            <p className="mt-1.5 text-[13px] text-danger">
+                              {errors.callerRole ?? errors.callReason}
+                            </p>
+                          ) : null}
+                          {isInbound ? <div className="mt-4" /> : null}
                         {/* --------------------------------- the ledger, read back
                             Not a figure the telecaller has to go and find: the
                             outstanding total and the open bills are already on
@@ -2809,7 +2944,6 @@ function CallPanelForm({
                             )}
                           </div>
                         ) : null}
-
                         {/* ------------------------- what the reason asks for
                             Rendered from `reasonFieldsFor`, which is also what
                             the server validates against — one list, so a box that
@@ -2876,7 +3010,55 @@ function CallPanelForm({
                             name="reason"
                           />
                         ) : null}
+                        {/* WHERE NOTHING BACKS IT, SAY SO.
+                            There is no quotation record and no stock system, and
+                            a screen that implied otherwise would have somebody
+                            telling a customer stock is confirmed on the strength
+                            of a dropdown. Naming the gap is what turns it into
+                            something somebody can fix. */}
+                        {unbacked ? (
+                          <p className="mb-3.5 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
+                            {unbacked}
+                          </p>
+                        ) : null}
+                        </div>
 
+                        {/* ==================================== 2 · outcome */}
+                        <div data-call-step="outcome" className={step === "outcome" ? "block" : "hidden"}>
+                          {type && !isOrderReceived ? (
+                            <Field
+                              label="What was the outcome?"
+                              required
+                              group
+                              error={errors.outcome ?? null}
+                            >
+                              {/* A grid of three: nine outcomes read in one
+                                  look rather than scrolled past one per line. */}
+                              <div className="grid grid-cols-3 gap-2">
+                                {OUTCOMES[
+                                  type as Exclude<InteractionType, "order_received">
+                                ].map((o) => (
+                                  <button
+                                    key={o}
+                                    type="button"
+                                    aria-pressed={outcome === o}
+                                    onClick={() => {
+                                      pickOutcome(o);
+                                      clearError("outcome");
+                                    }}
+                                    className={cx(
+                                      "cursor-pointer rounded-[4px] border px-3 py-2.5 text-left text-sm font-medium",
+                                      outcome === o
+                                        ? "border-brand bg-brand-soft text-[#5223E0]"
+                                        : "border-line bg-surface text-ink hover:border-brand",
+                                    )}
+                                  >
+                                    {OUTCOME_LABEL[o]}
+                                  </button>
+                                ))}
+                              </div>
+                            </Field>
+                          ) : null}
                         {/* ------------------------- what the OUTCOME asks for
                             The same renderer, because they are the same kind of
                             question — a coded answer with one value — and two
@@ -2884,7 +3066,9 @@ function CallPanelForm({
                             of them always renders `required` differently. */}
                         {outcomeFields.length ? (
                           <AnswerBlock
-                            heading={OUTCOME_LABEL[outcome!] ?? ""}
+                            /* The outcome grid above already says which one
+                               was picked; a heading would say it twice. */
+                            heading=""
                             fields={outcomeFields}
                             answers={outcomeDetail}
                             onChange={(k, v) =>
@@ -2907,7 +3091,6 @@ function CallPanelForm({
                             }}
                           />
                         ) : null}
-
                         {/* WHICH ATTEMPT THIS IS, read off the queue's own ladder
                             rather than counted here. Nobody spoke to anybody, so
                             this and the reason above it are the whole form — a
@@ -2918,34 +3101,6 @@ function CallPanelForm({
                             {attemptLabel}
                           </p>
                         ) : null}
-
-                        {/* WHERE NOTHING BACKS IT, SAY SO.
-                            There is no quotation record and no stock system, and
-                            a screen that implied otherwise would have somebody
-                            telling a customer stock is confirmed on the strength
-                            of a dropdown. Naming the gap is what turns it into
-                            something somebody can fix. */}
-                        {unbacked ? (
-                          <p className="mb-3.5 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
-                            {unbacked}
-                          </p>
-                        ) : null}
-
-                        {isOrderReceived ? (
-                          <Field
-                            label="Order date"
-                            hint="Choose the date the order came in."
-                            error={errors.orderDate ?? null}
-                          >
-                            <Input
-                              type="date"
-                              value={orderDate}
-                              max={today()}
-                              onChange={(e) => setOrderDate(e.target.value)}
-                            />
-                          </Field>
-                        ) : null}
-
                         {needsCategory ? (
                           <Field
                             label="Complaint category"
@@ -3012,7 +3167,24 @@ function CallPanelForm({
                             </Field>
                           </>
                         ) : null}
+                        </div>
 
+                        {/* ====================================== 3 · order */}
+                        <div data-call-step="order" className={step === "order" ? "block" : "hidden"}>
+                        {isOrderReceived ? (
+                          <Field
+                            label="Order date"
+                            hint="Choose the date the order came in."
+                            error={errors.orderDate ?? null}
+                          >
+                            <Input
+                              type="date"
+                              value={orderDate}
+                              max={today()}
+                              onChange={(e) => setOrderDate(e.target.value)}
+                            />
+                          </Field>
+                        ) : null}
                         {needsProducts ? (
                           <div className="mb-3.5">
                             {/* The label row carries the running total, so what is
@@ -3390,7 +3562,10 @@ function CallPanelForm({
                             ) : null}
                           </div>
                         ) : null}
+                        </div>
 
+                        {/* ================================== 4 · next step */}
+                        <div data-call-step="next" className={step === "next" ? "block" : "hidden"}>
                         {chips.length ? (
                           <div className="mb-3.5">
                             <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -3427,7 +3602,6 @@ function CallPanelForm({
                             </div>
                           </div>
                         ) : null}
-
                         {/* --------------------------------- what happens next
                             Codes from THIS reason's own list — "Arrange stock"
                             against a price enquiry is an answer to a question
@@ -3546,7 +3720,6 @@ function CallPanelForm({
                             ) : null}
                           </div>
                         ) : null}
-
                         {/* ----------------------------------- the opportunity
                             Asked on every inbound call, because the whole reason
                             somebody rings is that they want something — and a
@@ -3633,9 +3806,12 @@ function CallPanelForm({
                             ) : null}
                           </div>
                         ) : null}
+                        </div>
 
-                        {/* Notes live once, under the assistant at the top of
-                            this tab — see the box above. */}
+                        {/* ===================================== 5 · review */}
+                        <div data-call-step="review" className={step === "review" ? "block" : "hidden"}>
+                          <CallReview rows={reviewRows} onChange={goToStep} />
+                        </div>
                       </>
                     )}
                   </div>
@@ -3673,17 +3849,6 @@ function CallPanelForm({
               </span>
             ) : null}
 
-            {chosen && !saved ? (
-              <button
-                onClick={() =>
-                  isOrderReceived ? setType(null) : pickOutcome(null)
-                }
-                className="inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 text-[13px] text-muted hover:text-body"
-              >
-                ◀ {isOrderReceived ? "Change type" : "Change outcome"}
-              </button>
-            ) : null}
-
             <span className="flex-1" />
 
             {saved ? (
@@ -3696,11 +3861,17 @@ function CallPanelForm({
               {saved ? "Done" : "Close"}
             </Button>
 
+            {tab === "log" && !saved && stepIndex > 0 ? (
+              <Button variant="secondary" onClick={() => goToStep(steps[stepIndex - 1])}>
+                ◀ Back
+              </Button>
+            ) : null}
+
             {tab !== "log" ? (
               <Button variant="primary" onClick={() => setTab("log")}>
                 Log this call ▸
               </Button>
-            ) : chosen && !saved ? (
+            ) : saved ? null : step === "review" ? (
               <>
                 <Button
                   variant="primary"
@@ -3719,7 +3890,14 @@ function CallPanelForm({
                   </Button>
                 ) : null}
               </>
-            ) : null}
+            ) : (
+              <Button
+                variant="primary"
+                onClick={() => goToStep(steps[stepIndex + 1])}
+              >
+                Next: {CALL_STEP_LABEL[steps[stepIndex + 1]]} ▸
+              </Button>
+            )}
           </div>
         </div>
 
@@ -4087,4 +4265,90 @@ function rateForQty(rate: CustomerRates[string] | undefined, qty: number): Custo
   if (!rate.slabs?.length) return rate.offered ? rate : null;
   const row = rateAtQuantity(rate.slabs, qty);
   return row ? { ...rate, rateExGstPaise: row.rateExGstPaise, rateInclGstPaise: row.rateInclGstPaise, offered: true } : null;
+}
+
+type ReviewRow = { step: CallStep; label: string; value: string };
+
+/**
+ * Where the telecaller is in the call form, and the way back to any step
+ * already passed. A later step is reached through Next, which checks each
+ * step it leaves — the same check a click here runs.
+ */
+function StepRail({
+  steps,
+  step,
+  onPick,
+}: {
+  steps: CallStep[];
+  step: CallStep;
+  onPick: (s: CallStep) => void;
+}) {
+  const at = steps.indexOf(step);
+  return (
+    <nav
+      aria-label="Steps"
+      className="sticky top-[-20px] z-10 -mt-5 mb-5 flex items-center gap-2 border-b border-divider bg-surface py-2.5"
+    >
+      {steps.map((s, i) => {
+        const done = i < at;
+        const now = i === at;
+        return (
+          <React.Fragment key={s}>
+            {i > 0 ? <span className="h-px w-6 flex-none bg-line" aria-hidden="true" /> : null}
+            <button
+              type="button"
+              onClick={() => onPick(s)}
+              aria-current={now ? "step" : undefined}
+              className={cx(
+                "flex cursor-pointer items-center gap-2 rounded-[4px] py-1 text-[13px]",
+                now ? "font-medium text-ink" : done ? "text-ink" : "text-muted",
+              )}
+            >
+              <span
+                className={cx(
+                  "flex size-[22px] flex-none items-center justify-center rounded-full border text-[11.5px] font-semibold",
+                  done || now
+                    ? "border-brand bg-brand text-white"
+                    : "border-line bg-surface text-muted",
+                )}
+              >
+                {done ? "✓" : i + 1}
+              </span>
+              {CALL_STEP_LABEL[s]}
+            </button>
+          </React.Fragment>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** Everything the call will say, each line with the way back to change it. */
+function CallReview({
+  rows,
+  onChange,
+}: {
+  rows: ReviewRow[];
+  onChange: (s: CallStep) => void;
+}) {
+  return (
+    <div className="flex flex-col">
+      {rows.map((r) => (
+        <div
+          key={r.label}
+          className="flex items-start gap-4 border-b border-divider py-2.5 text-[13px]"
+        >
+          <span className="w-[120px] flex-none text-muted">{r.label}</span>
+          <span className="min-w-0 flex-1 break-words whitespace-pre-line text-ink">{r.value}</span>
+          <button
+            type="button"
+            onClick={() => onChange(r.step)}
+            className="flex-none cursor-pointer text-[13px] font-medium text-brand"
+          >
+            Change
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }

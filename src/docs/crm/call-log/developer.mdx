@@ -8,6 +8,7 @@ The Call Log is a **pure engine** (`buildQueue`) fed by **one service** (`queue-
 | Page (server) | `src/app/crm/call-log/page.tsx` | Reads `getQueue()`, `dayActivity()`, config, quick notes, popular products, call scripts; builds `callTargets` and the ad-hoc target for `?customer=` |
 | Screen (client) | `src/app/crm/call-log/queue-screen.tsx` | Header, progress, metrics, filter pills, held-back strip, rows, `j`/`k`/`Enter` |
 | Call panel | `src/components/crm/call-panel.tsx` | The logging form, Save & next, and the `NextStepDialog` |
+| Call form steps | `src/lib/call-form-steps.ts` | Which of the five steps a call asks, which step a field error opens, and where to go when a step drops out — pure |
 | Next-step words | `src/lib/next-step-labels.ts`, `src/components/crm/next-step-dialog.tsx` | Badge vocabulary, long and short |
 | Service | `src/lib/services/queue-service.ts` | `queueInputs`, `settledQueueForRequest`, `settleDayList`, `getQueue`, `nextStepForCustomer` |
 | Engine (pure) | `src/lib/engines/queue.ts` | `buildQueue`, reasons, windows, suppression, ordering, routine day, no-answer ladder |

@@ -588,6 +588,7 @@ export function Field({
   required = false,
   optional = false,
   error,
+  group = false,
   children,
   className,
 }: {
@@ -602,11 +603,19 @@ export function Field({
    *  the label itself. */
   optional?: boolean;
   error?: string | null;
+  /** A row of buttons rather than one box. Drawn as a `div` with role
+   *  "group", because a `<label>` around buttons hands its own text to the
+   *  first of them as that button's name. */
+  group?: boolean;
   children: React.ReactNode;
   className?: string;
 }) {
+  const Tag = group ? "div" : "label";
   return (
-    <label className={cx("block", className)}>
+    <Tag
+      className={cx("block", className)}
+      {...(group ? { role: "group", "aria-label": label } : {})}
+    >
       {/* `ui-field-label`, `ui-hint` and `ui-hint-tip` style nothing on their
           own: the v4 sheet reads them, setting the label in sentence case and
           trading the line of hint for the ⓘ. Every other app is unchanged. */}
@@ -630,7 +639,7 @@ export function Field({
       ) : hint ? (
         <span className={cx("mt-1 block text-[13px] text-muted", hintShown ? null : "ui-hint")}>{hint}</span>
       ) : null}
-    </label>
+    </Tag>
   );
 }
 

@@ -66,7 +66,7 @@ The list is put together the first time anybody opens it each morning and then *
 The first row is your next call. Press **Call** (or <Kbd>Enter</Kbd>) to open the call panel. The panel shows who they are, what they buy, what they owe, their last three calls — and the reason you are ringing.
 </Step>
 <Step title="Make the call, then log what happened">
-Choose how the interaction happened, then the outcome, then fill in what the outcome asks for. Details are in [Logging a call](#logging-a-call) below.
+The form is five steps — **What happened**, **Outcome**, **Order**, **Next step**, **Review** — and **Next** takes you through them. Details are in [Logging a call](#logging-a-call) below.
 </Step>
 <Step title="Read what happens next, then move on">
 After saving, a small window tells you **when this customer comes back to your Call Log and why**. Press **Next customer** — or use **Save & next ▸** in the panel to save and move in one go.
@@ -102,34 +102,25 @@ The row also shows the contact person, phone, last order date, how long since an
 
 ## Logging a call
 
-<Wireframe url="/crm/call-log" caption="The call panel, logging an outbound call that ended in an order">
+<Wireframe url="/crm/call-log" caption="The call panel, logging an outbound call that ended in an order — the Order step">
   <WfPanel title="Customer A · contact person · phone" side>
     <WfBar><WfPill tone="danger">Reminder overdue</WfPill><WfPill tone="brand">Stock check</WfPill><Hotspot n={1} /></WfBar>
     <WfTabs items={["Information", "Call log", "Script"]} active="Call log" />
-    <WfField label="Notes"><WfBlock h={34} label="Speak or type — the microphone works in any language" /></WfField>
-    <WfField label="How did this interaction happen?">
-      <WfBar><WfButton primary>We Called Them</WfButton><WfButton>They Called Us</WfButton><WfButton>Order Received</WfButton><Hotspot n={2} /></WfBar>
-    </WfField>
-    <WfField label="What was the outcome?">
-      <WfBar><WfButton primary>Order Taken</WfButton><WfButton>No Order</WfButton><WfButton>No Answer</WfButton><WfButton>Payment Promised</WfButton><WfButton>Follow-up</WfButton><WfText muted>…</WfText><Hotspot n={3} /></WfBar>
-    </WfField>
+    <WfBar><WfPill tone="brand">✓ What happened</WfPill><WfPill tone="brand">✓ Outcome</WfPill><WfPill tone="brand">3 Order</WfPill><WfPill>4 Next step</WfPill><WfPill>5 Review</WfPill><Hotspot n={2} /></WfBar>
     <WfField label="Products and quantity">
       <WfInput placeholder="Search product to add…" wide />
       <WfTable columns={["Product", "Cans"]} rows={[["Nano Thinner – 20 Liter (Loose)", "6"], ["PU Sealer – 4 Liter (4 Can/Box)", "8"]]} />
-      <WfBar><WfText muted>2 products · 14 cans · 152 L</WfText><Hotspot n={4} /></WfBar>
+      <WfBar><WfText muted>2 products · 14 cans · 152 L</WfText><Hotspot n={3} /></WfBar>
     </WfField>
-    <WfField label="Next action"><WfBar><WfPill>Confirm dispatch</WfPill><WfPill>Send price list</WfPill><Hotspot n={5} /></WfBar></WfField>
-    <WfBar><WfSpacer /><WfButton>Save log</WfButton><WfButton primary>Save & next ▸</WfButton><Hotspot n={6} /></WfBar>
+    <WfBar><WfSpacer /><WfButton>◀ Back</WfButton><WfButton primary>Next: Next step ▸</WfButton><Hotspot n={4} /></WfBar>
   </WfPanel>
 </Wireframe>
 
 <Hotspots items={[
   <span key="1"><b>Why you are calling.</b> Every reason, strongest first. The <i>Information</i> tab has their buying pattern, target and last three calls; <i>Script</i> has the call script for this situation.</span>,
-  <span key="2"><b>How it happened.</b> You rang them, they rang you, or an order arrived on WhatsApp with no call. Everything after this depends on it.</span>,
-  <span key="3"><b>The outcome.</b> How the call ended. Each outcome asks for its own details — see the table below.</span>,
-  <span key="4"><b>Order lines.</b> Quantities are in cans. The panel works out litres for you. Frequently bought products are offered first.</span>,
-  <span key="5"><b>Next action.</b> Anything you agreed to do. If it has a date, it becomes a reminder you will see on the day.</span>,
-  <span key="6"><b>Save.</b> <i>Save & next</i> saves and opens the next customer on the list.</span>,
+  <span key="2"><b>The steps.</b> <i>What happened</i>: notes, the assistant, how it happened (you rang them, they rang you, or an order arrived with no call) and, when they rang, who and why. <i>Outcome</i>: how the call ended and what that outcome asks. <i>Order</i>: products and quantities — only when the call took an order. <i>Next step</i>: quick notes, the next action and its date, and any sales opportunity. <i>Review</i>: everything said back. Tap a step you have done to go back to it.</span>,
+  <span key="3"><b>Order lines.</b> Quantities are in cans. The panel works out litres for you. Frequently bought products are offered first.</span>,
+  <span key="4"><b>Next and Save.</b> <i>Next</i> checks the step you are on and tells you what is missing. On <i>Review</i>, <i>Save log</i> saves; <i>Save & next</i> saves and opens the next customer. If anything is still missing, Save opens the step it is on.</span>,
 ]} />
 
 ### What each outcome asks you for
@@ -146,7 +137,7 @@ The row also shows the contact person, phone, last order date, how long since an
 | **Casual Talk** | Purpose | Records the contact. |
 | **Transport Follow-up** | — | Records a delivery chase. |
 
-For a call **they** made, you also choose **who called** (owner, purchase, accounts…) and **why** — answer those before the outcome.
+For a call **they** made, the first step also asks **who called** (owner, purchase, accounts…) and **why** — Next will not move on until both are answered.
 
 <Callout kind="warn" title="A common mistake">
 Logging an order that came in on WhatsApp as *We Called Them → Order Taken*. Use **Order Received** instead and give the order date — otherwise the record says you rang them on a day you did not.
