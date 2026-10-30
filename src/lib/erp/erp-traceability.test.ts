@@ -24,7 +24,7 @@ import { setTestUser } from "@/lib/auth";
 import { calendarDate } from "@/lib/business-date";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
-import { decideOverride, requestOverride, scanOntoOrder, unscanUnit } from "@/lib/erp/dispatch";
+import { decideOverride, dispatchBoard, dispatchQueue, pickableBoxes, requestOverride, scanOntoOrder, unscanUnit } from "@/lib/erp/dispatch";
 import { traceCode, traceDashboard } from "@/lib/erp/traceability";
 import { boxLabels, unlabelledStock } from "@/lib/erp/label-data";
 import { erpGiveIds } from "@/lib/actions/erp-trace";
@@ -168,6 +168,22 @@ describe("the dispatch desk", () => {
     const a = await as(admin);
     const r = await mod("orderDetails").bulk!.verify(a, [lineId], { date: TODAY });
     assert.match(msg(r), /still to scan at the Dispatch desk/);
+  });
+
+  test("the queue carries what it is found by, and the box list offers only boxes this order could take", async () => {
+    const q = (await dispatchQueue()).find((o) => o.orderNo === orderNo);
+    assert.ok(q, "the order is on the queue");
+    assert.equal(q.billing, "ABC Paints");
+    assert.deepEqual(q.products, [BOX1]);
+    const board = await dispatchBoard(orderNo);
+    assert.ok(board);
+    const boxes = await pickableBoxes(board);
+    const lots = new Set(boxes.map((b) => b.lotCode));
+    assert.ok(lots.has("FP1BH") && lots.has("FP2BH"), `both 1 L lots are offered: ${[...lots]}`);
+    assert.ok(!lots.has("FP3BH"), "a 500 ml box is never offered for a 1 L line");
+    assert.ok(boxes.every((b) => b.sku === BOX1 && b.lineId === lineId));
+    assert.equal(boxes[0].lotCode, "FP1BH", "the allocated lot comes first");
+    assert.ok(boxes.findIndex((b) => !b.allocated) > boxes.findLastIndex((b) => b.allocated), "allocated before the rest");
   });
 
   test("a matching box counts; the same box again, an unknown code and a box of the wrong pack size are stopped", async () => {
