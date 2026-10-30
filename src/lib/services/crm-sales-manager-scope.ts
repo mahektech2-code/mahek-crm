@@ -162,6 +162,26 @@ export const teamOwnerIdsFor = cache(async function teamOwnerIdsFor(
 });
 
 /**
+ * THE TEAM BOOK OF AN ASSOCIATE WHO HOLDS THE SALES MANAGER MODULE, or null.
+ *
+ * The seat and the people who answer to her — the SAME `teamOwnerIdsFor` the
+ * Sales Manager desk reads — handed to `baseManagerScope` so the Leads tab, its
+ * search and the unified lead record narrow by the same people the desk does.
+ * An administrator is never narrowed, and somebody without the module gets
+ * nothing: a reporting line alone grants no view.
+ */
+export async function associateTeamBook(user: {
+  id: string;
+  name: string;
+  role: string;
+}): Promise<{ seatId: string; ownerIds: string[] } | null> {
+  if (isAdminUser(user)) return null;
+  const { canOpenModule } = await import("../access");
+  if (!(await canOpenModule(user.id, "crm.sales-manager"))) return null;
+  return { seatId: user.id, ownerIds: await teamOwnerIdsFor(user.id, user.name) };
+}
+
+/**
  * `and (<alias>.sales_manager_id = <them> or <alias>.owner_id in <their team>)`
  * for queries that join `customers` but were narrowed by SALESMAN rather than
  * by lead (the sample desk, the nurture schedule). Empty for every other scope,

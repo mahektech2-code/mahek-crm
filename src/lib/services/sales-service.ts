@@ -116,6 +116,16 @@ export type ManagerScope = {
    * which was written for managers — see `leadsVisible`.
    */
   own?: boolean;
+  /**
+   * SET ONLY FOR AN ASSOCIATE WHO HOLDS THE CRM SALES MANAGER MODULE (and only on
+   * a CRM request): the leads carrying their Sales Manager seat, and the leads
+   * owned by the people who answer to them (see `teamOwnerIdsFor`). `seatVisible`
+   * ADDS these to the own book, so an Associate-level Sales Manager sees her team
+   * everywhere the lead lists and the record read are narrowed — and it only
+   * ever widens READS: every write asks `assertCustomerInScope`, which this does
+   * not touch.
+   */
+  teamBook?: { seatId: string; ownerIds: string[] };
 };
 
 /**
@@ -185,7 +195,20 @@ const baseManagerScope = cache(async function managerScope(): Promise<ManagerSco
   ]);
   const standing = scopeStanding({ platformAdmin, requestApp, levelInRequestApp, levelInSales });
   if (standing === "national") return { national: true, regions: [], salesmanIds: null };
-  if (standing === "own") return { national: false, regions: [], salesmanIds: [userId], own: true };
+  if (standing === "own") {
+    const own: ManagerScope = { national: false, regions: [], salesmanIds: [userId], own: true };
+    /* An Associate who holds the Sales Manager module is a Sales Manager for the
+       people who report to her, whatever her LEVEL says. Her own book stays, and
+       her seat and her team are added to it — on the CRM only; the Sales
+       Dashboard keeps the scope it always had. Nobody without the module gets
+       anything: the module is the grant, the Org Chart only says whose leads. */
+    if (requestApp === "crm") {
+      const { associateTeamBook } = await import("./crm-sales-manager-scope");
+      const teamBook = await associateTeamBook(user);
+      if (teamBook) return { ...own, teamBook };
+    }
+    return own;
+  }
 
   const rows = await db.execute<{ region: string }>(sql`
     -- REGIONS ONLY. The table also holds a salesman's working cities now, and
@@ -351,8 +374,17 @@ function seatVisible(scope: ManagerScope, column: string) {
      the old rule rather than guess. */
   if (scope.own && /owner_id$/.test(column)) {
     const seat = sql.raw(column.replace(/owner_id$/, "sales_manager_id"));
+    /* AN ASSOCIATE WHO IS ALSO A SALES MANAGER adds her seat and her team to her
+       own book: one `or`, so a lead that qualifies by two paths is still one row. */
+    const book = scope.teamBook
+      ? sql` or ${seat} = ${scope.teamBook.seatId}${
+          scope.teamBook.ownerIds.length
+            ? sql` or ${sql.raw(column)} in (${sql.join(scope.teamBook.ownerIds.map((i) => sql`${i}`), sql`, `)})`
+            : sql``
+        }`
+      : sql``;
     return sql`and (${sql.raw(column)} in ${inIds}
-                or (${sql.raw(column)} is null and (${seat} is null or ${seat} in ${inIds})))`;
+                or (${sql.raw(column)} is null and (${seat} is null or ${seat} in ${inIds}))${book})`;
   }
   return sql`and (${sql.raw(column)} in ${inIds}
               or ${sql.raw(column)} is null)`;
