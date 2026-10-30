@@ -34,6 +34,7 @@ import { expenseLines } from "@/lib/services/expense-claims-service";
 import { expenseBookFor, type MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 import { addDays, today } from "@/lib/format";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -59,7 +60,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),

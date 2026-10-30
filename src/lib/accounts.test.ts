@@ -67,6 +67,7 @@ import {
   rejectReceipt,
 } from "@/lib/services/receipt-service";
 import { listBills } from "@/lib/services/payment-service";
+import { testPhone } from "@/lib/test-phone";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -84,7 +85,7 @@ async function makeUser(name: string, role: "associate" | "manager", app: "crm" 
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -134,7 +135,7 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Customer ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact Person",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai",
       ownerId: priya.id,
       salesAmId: priya.id,

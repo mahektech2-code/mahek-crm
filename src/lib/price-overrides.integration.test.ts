@@ -34,6 +34,7 @@ import { addScope, createPriceList, decidePriceRequest, publishPriceList, reques
 import { cancelOverride, createOverride, endOverride, extendOverride, requestContextAction } from "@/lib/actions/price-overrides";
 import { ratesForCustomer } from "@/lib/services/price-list-service";
 import { remindEndingOverrides, shopPricesView, syncAllOverrides, syncShopOverrides } from "@/lib/services/price-override-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -51,7 +52,7 @@ async function makeUser(name: string, role: "associate" | "manager", apps: Array
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -82,7 +83,7 @@ async function makeShop(name = `Shop ${randomUUID().slice(0, 6)}`) {
       id: id("cus"),
       name,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Thane",
       region: "Maharashtra",
       kind: "customer",

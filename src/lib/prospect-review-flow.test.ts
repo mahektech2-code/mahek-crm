@@ -11,6 +11,7 @@ import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { confirmProspectReview, resubmitProspectForReview, returnProspectForCorrection } from "@/lib/actions/prospect-review";
 import { loadQualificationReview } from "@/lib/services/lead-qualification-review-service";
 import { PROSPECT_REVIEW_AUDIT, PROSPECT_REVIEW_NEXT } from "@/lib/prospect-review";
+import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
  * THE PROSPECT REVIEW, run against the real database: Confirm, Return,
@@ -33,7 +34,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -52,7 +53,7 @@ const prospect = async (over: Partial<typeof customers.$inferInsert> = {}) =>
         id: id("cus"),
         name: `Lead ${randomUUID().slice(0, 6)}`,
         contactPerson: "Ganesh",
-        phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+        phone: testPhone(),
         city: "Nashik",
         kind: "lead",
         leadStage: "prospect",

@@ -26,6 +26,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, users } from "@/db/schema";
 import { proposePlaces, resolvePlaces } from "@/lib/services/place-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -54,7 +55,7 @@ async function shop(
     .values({
       id: id("cus"),
       name,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       city: opts.city ?? "whatever the sheet typed",
       ownerId: owner.id,
     })
@@ -87,7 +88,7 @@ before(async () => {
       id: id("usr"),
       name: "Place Owner",
       email: `places-${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "manager",
       initials: "PO",

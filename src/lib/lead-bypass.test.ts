@@ -29,6 +29,7 @@ import { setTestCustomerEditApp } from "@/lib/customer-edit-gate";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { bypassConvertLead, loadLeadForBypass, searchLeadsForBypass } from "@/lib/actions/lead-bypass";
 import type { BypassInput } from "@/lib/lead-bypass";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 type Level = "associate" | "manager" | "admin";
@@ -40,7 +41,7 @@ async function makeUser(name: string, role: Level, apps: { app: "crm" | "account
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),

@@ -22,6 +22,7 @@ import { auditLog, passwordResets, sessions, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { changePassword } from "@/lib/actions/account";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const OLD = "old-password-1";
@@ -66,7 +67,7 @@ beforeEach(async () => {
       id: id("usr"),
       name: "Priya Sharma",
       email: `priya-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: await hashPassword(OLD),
       role: "associate",
       initials: "PS",

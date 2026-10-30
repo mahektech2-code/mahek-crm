@@ -30,6 +30,7 @@ import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { decidePinCorrection } from "@/lib/actions/sales";
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -59,7 +60,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -83,7 +84,7 @@ async function makeShop(name: string, pin: { lat: number; lng: number } | null) 
     .values({
       id: id("cus"),
       name,
-      phone: String(9822000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       city: "Nagpur",
       kind: "customer",
       ownerId: salesman.id,

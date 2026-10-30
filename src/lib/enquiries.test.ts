@@ -64,6 +64,7 @@ import {
   unlinkOrder,
 } from "@/lib/services/enquiry-service";
 import { POST as ingestEnquiry } from "@/app/api/public/enquiries/route";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -78,7 +79,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -97,7 +98,7 @@ async function makeCustomer(ownerId: string, over: Partial<typeof customers.$inf
       id: id("cus"),
       name: over.name ?? `Customer ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact Person",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai",
       ownerId,
       salesAmId: ownerId,

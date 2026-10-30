@@ -25,6 +25,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { listCustomersPage, listPlaceFilterOptions } from "@/lib/queries";
 import { leadPlaceOptions, leadsPage } from "@/lib/services/sales-service";
 import { importPlaceTree, resolveTypedPlaces } from "@/lib/services/place-tree-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-10-02";
@@ -37,7 +38,7 @@ async function shop(name: string, over: Partial<typeof customers.$inferInsert> =
     .values({
       id: id("cus"),
       name,
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "whatever the sheet typed",
       kind: "customer",
       ...over,
@@ -84,7 +85,7 @@ beforeEach(async () => {
       id: id("usr"),
       name: "Place Admin",
       email: `place-admin-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "admin",
       initials: "PA",

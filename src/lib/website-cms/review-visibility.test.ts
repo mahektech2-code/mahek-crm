@@ -52,6 +52,7 @@ import {
 import { createItem, dashboardSummary, listItems, transitionItems } from "@/lib/website-cms/service";
 import { uploadMedia } from "@/lib/website-cms/media-service";
 import { loadChrome } from "@/app/website/cms-ui/chrome";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -64,7 +65,7 @@ async function makeUser(name: string, grants: { modules?: string[] } = {}): Prom
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s+/g, ".")}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),

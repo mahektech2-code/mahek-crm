@@ -41,6 +41,7 @@ import {
   type BillSortKey,
 } from "@/lib/services/payment-service";
 import { outstandingTotals } from "@/lib/engines/outstanding";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -54,7 +55,7 @@ async function makeUser(name: string) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}_${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "manager",
       initials: name.slice(0, 2).toUpperCase(),
@@ -78,7 +79,7 @@ async function makeCustomer(name: string) {
       id: id("cus"),
       name,
       contactPerson: "Contact Person",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nagpur",
       ownerId: deepa.id,
       salesAmId: deepa.id,

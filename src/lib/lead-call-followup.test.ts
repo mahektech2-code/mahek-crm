@@ -18,6 +18,7 @@ import {
   leadUpcomingFollowUps,
   moveLeadFollowUpsTo,
 } from "@/lib/services/lead-followup-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const D1 = "2026-12-01";
@@ -33,7 +34,7 @@ async function makeUser(name: string) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),
@@ -50,7 +51,7 @@ async function makeLead() {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "suspect",

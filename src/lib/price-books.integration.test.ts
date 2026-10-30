@@ -44,6 +44,7 @@ import {
 import { bookDetail, changeDetail, listBooks } from "@/lib/services/price-book-service";
 import { ratesForCustomer, resolveForCustomer } from "@/lib/services/price-list-service";
 import { supersedeEndedPriceLists } from "@/lib/services/price-supersede";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -63,7 +64,7 @@ async function makeUser(name: string, role: "associate" | "manager", apps: Array
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -94,7 +95,7 @@ async function makeShop() {
       id: id("cus"),
       name: `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Thane",
       region: "Maharashtra",
       kind: "customer",

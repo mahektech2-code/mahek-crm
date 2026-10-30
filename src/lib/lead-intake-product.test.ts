@@ -10,6 +10,7 @@ import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store"
 import { listActiveProducts } from "@/lib/services/product-service";
 import { GET as productSearchRoute } from "@/app/api/product-search/route";
 import { captureLead, captureLeadBatch } from "@/lib/actions/lead-intake";
+import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
  * "WHAT THEY WANT" AT INTAKE: words, or a product chosen from the catalogue.
@@ -29,7 +30,7 @@ let retired: { id: string; name: string };
 
 const CAPTURE = (over: Record<string, unknown> = {}) => ({
   name: `Shop ${randomUUID().slice(0, 6)}`,
-  phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+  phone: testPhone(),
   city: "Nagpur",
   source: "telecalling",
   ...over,
@@ -66,7 +67,7 @@ beforeEach(async () => {
       id: id("usr"),
       name: "Tara Telecaller",
       email: `tara-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: "TT",
@@ -156,7 +157,7 @@ describe("what they want, written in words, and left empty", () => {
 
 describe("the other doors are unchanged", () => {
   test("a bulk file's product column is still free text, and sets no product id", async () => {
-    const phone = String(9300000000 + Math.floor(Math.random() * 99999999));
+    const phone = testPhone();
     const r = await captureLeadBatch(
       [
         {

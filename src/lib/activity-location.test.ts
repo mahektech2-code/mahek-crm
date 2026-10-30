@@ -58,6 +58,7 @@ import {
   type MbosPrincipal,
 } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -1955,7 +1956,7 @@ describe("Releasing a handset", () => {
         id: id("usr"),
         name: "Vikram Rao",
         email: `vikram-${randomUUID().slice(0, 6)}@test.local`,
-        phone: `98200${Math.floor(10000 + Math.random() * 89999)}`,
+        phone: testPhone(),
         passwordHash: "x",
         role: "manager",
         initials: "VR",
@@ -2023,7 +2024,7 @@ describe("Releasing a handset", () => {
         id: id("usr"),
         name: "Anjali",
         email: `anjali-${randomUUID().slice(0, 6)}@test.local`,
-        phone: `98200${Math.floor(10000 + Math.random() * 89999)}`,
+        phone: testPhone(),
         passwordHash: "x",
         role: "associate",
         initials: "AJ",

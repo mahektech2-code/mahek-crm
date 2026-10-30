@@ -30,6 +30,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
 import { getQueue, queueProgress } from "@/lib/services/queue-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -48,7 +49,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -76,7 +77,7 @@ async function makeOverdueCustomer(ownerId: string) {
       id: id("cus"),
       name: `Customer ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact Person",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai",
       ownerId,
       salesAmId: ownerId,

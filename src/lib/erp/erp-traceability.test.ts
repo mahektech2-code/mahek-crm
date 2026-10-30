@@ -30,6 +30,7 @@ import { boxLabels, unlabelledStock } from "@/lib/erp/label-data";
 import { erpDispatchVerify, erpGiveIds } from "@/lib/actions/erp-trace";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 /* The dashboard counts the real today, so the documents are dated it too. */
@@ -45,7 +46,7 @@ const BOX5 = `ERPX Nano ${tag} - 500 ml (4 Can/Box)`;
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;

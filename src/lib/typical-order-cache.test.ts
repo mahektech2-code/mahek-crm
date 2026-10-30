@@ -27,6 +27,7 @@ import { appAccess, customers, orders, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { recomputeBuyingCycle } from "@/lib/recompute";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -61,7 +62,7 @@ async function makeCustomer() {
       id: id("cus"),
       name: `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nagpur",
       region: "Maharashtra",
       status: "active",
@@ -112,7 +113,7 @@ beforeEach(async () => {
       id: id("usr"),
       name: "Manager",
       email: `manager-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "manager",
       initials: "MG",

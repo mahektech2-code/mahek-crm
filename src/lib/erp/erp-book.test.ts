@@ -45,6 +45,7 @@ import { customerProducts } from "@/lib/services/product-service";
 import { varianceReport } from "@/lib/services/price-list-service";
 import { runJob } from "@/lib/jobs";
 import { ORDER_TABS_RETIRED, PARTY_TAB_RETIRED } from "@/lib/engines/sheet-retirement";
+import { testPhone } from "@/lib/test-phone";
 
 const tag = randomUUID().slice(0, 6);
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -53,7 +54,7 @@ const SKU = `ERPB Primer 1 L ${tag} (Loose)`;
 async function makeUser(name: string, level: "associate" | "manager" | "admin", app: "erp" | "accounts" = "erp") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app, role: level });
   return u;

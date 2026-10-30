@@ -51,6 +51,7 @@ import {
   pipelineSidebar,
 } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAY = "2026-09-24";
@@ -80,7 +81,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -100,7 +101,7 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "suspect",
@@ -642,7 +643,7 @@ describe("R — a Sales Manager who raises a lead is its Sales Manager, at once"
     captureLead({
       salesType: "direct",
       name: `Raised ${randomUUID().slice(0, 6)}`,
-      phone: String(9800000000 + Math.floor(Math.random() * 99999999)),
+      phone: testPhone(),
       city: "Nashik",
       source: "telecalling",
       ...over,
@@ -786,7 +787,7 @@ describe("Recently — raised within the last 7 calendar days, in IST", () => {
 /* ═══════════════════════════════════════════════ E — the six-field Edit */
 
 describe("E — the Sales Manager's Edit: six fields, inside the book, and nothing else", () => {
-  const freshPhone = () => `98765${String(Math.floor(Math.random() * 99999)).padStart(5, "0")}`;
+  const freshPhone = () => testPhone();
   const audits = async (leadId: string) =>
     (
       await db.execute<{ action: string }>(

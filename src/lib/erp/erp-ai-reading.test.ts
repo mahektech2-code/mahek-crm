@@ -51,6 +51,7 @@ const poFor = async (item: string, qty: number) => {
 };
 import { orderForm } from "@/lib/erp/screens/sales";
 import { rmLotStock } from "@/lib/erp/stock";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const tag = randomUUID().slice(0, 6);
@@ -60,7 +61,7 @@ const BOXED = `ERPR NC Thinner ${tag} - 1 Liter (24 Can/Box)`;
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;

@@ -17,6 +17,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { reopenSalesManagerLead } from "@/lib/actions/lead-reopen";
 import { bulkStagePayload } from "@/lib/lead-bulk-stage";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -29,7 +30,7 @@ async function makeManager() {
       id: id("usr"),
       name: "Sales Manager",
       email: `mgr-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "manager",
       initials: "SM",
@@ -46,7 +47,7 @@ async function makeLead(stage: "suspect" | "prospect" = "prospect") {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: stage,

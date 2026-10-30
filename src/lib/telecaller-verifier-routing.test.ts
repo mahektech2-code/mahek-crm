@@ -41,6 +41,7 @@ import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { isTelecallerHandled, telecallerRouteFor } from "@/lib/services/lead-verifier";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 type Level = "associate" | "manager" | "admin";
@@ -60,7 +61,7 @@ async function makeUser(name: string, level: Level, apps: [string, Level][], mod
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),
@@ -91,7 +92,7 @@ async function makeSuspect(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "suspect",

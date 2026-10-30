@@ -27,6 +27,7 @@ import { designationStandings, listErpDesignations } from "@/lib/services/erp-de
 import { listAccess } from "@/lib/services/access-service";
 import { impactReport } from "@/lib/impact/registry";
 import { accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const ALL = moduleKeysForApp("erp");
@@ -38,7 +39,7 @@ async function makeUser(name: string, level: "associate" | "manager" | "admin", 
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s/g, ".")}@designation.test`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),

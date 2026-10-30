@@ -21,6 +21,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { customerIdsInScope, type MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -65,7 +66,7 @@ function lead(payload: Record<string, unknown>): SyncItem {
     clientCreatedAt: Date.now(),
     payload: {
       name: "Test Shop",
-      mobile: String(9800000000 + Math.floor(Math.random() * 99_999_999)),
+      mobile: testPhone(),
       salesType: "direct",
       stage: "suspect",
       ...payload,
@@ -182,7 +183,7 @@ describe("A district or a town is matched on the reviewed tree", () => {
       .values({
         id: id("cus"),
         name: `Shop in ${town}`,
-        phone: String(9700000000 + Math.floor(Math.random() * 99_999_999)),
+        phone: testPhone(),
         city: "typed anything",
         region: "Maharashtra",
         kind: "customer",

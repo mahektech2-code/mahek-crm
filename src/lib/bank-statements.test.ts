@@ -21,6 +21,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig } from "@/lib/config/store";
 import { checkBalances, checkRows, type ReadRow } from "@/lib/engines/bank-statements";
 import * as S from "@/lib/services/bank-statement-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const msg = (r: { ok: boolean; error?: string; fieldErrors?: { message: string }[] }) => (r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?"));
@@ -34,7 +35,7 @@ let clerk: typeof users.$inferSelect;
 async function makeUser(name: string, level: "associate" | "manager") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@bank.test`, phone: String(9830000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@bank.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "accounts", role: level });
   return u;

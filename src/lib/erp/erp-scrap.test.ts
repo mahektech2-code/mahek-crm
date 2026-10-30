@@ -36,6 +36,7 @@ import { DRUM_CATEGORY, RETURNABLE_NOT_FOR_SALE } from "@/lib/erp/engines/drums"
 import { impactPart } from "@/lib/erp/ui";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 /** The report the impact modal shows to `u`, and the payload it sends back with the act — typed exactly as asked. */
 async function confirmed(u: typeof users.$inferSelect, kind: string, recordId: string): Promise<{ report: ImpactReport; values: Record<string, string> }> {
@@ -52,7 +53,7 @@ const BHW = "erpg_bhiwandi";
 async function makeUser(name: string, level: "associate" | "manager" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@scrap.test`, phone: String(9822000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@scrap.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;

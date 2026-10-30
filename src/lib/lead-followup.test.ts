@@ -20,6 +20,7 @@ import { COMMUNICATION_ACTIONS } from "@/lib/lead-labels";
 import { CRM_EVENT } from "@/lib/timeline";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { FOLLOWUP_MATERIALS, followUpSentence, whatsappHref } from "@/lib/lead-followup";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = () => randomUUID().replaceAll("-", "").slice(0, 20);
@@ -31,7 +32,7 @@ async function makeUser(name: string, modules: string[]) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),
@@ -69,7 +70,7 @@ beforeEach(async () => {
   tele = await makeUser("Telecaller T", ["crm.dashboard", "crm.leads", DESK_MODULE]);
   outsider = await makeUser("Outsider O", ["crm.dashboard", "crm.leads"]);
   setTestUser(tele);
-  const r = await captureLead({ salesType: "direct", name: "Follow Lead", phone: String(9100000000 + Math.floor(Math.random() * 99999999)), city: "Nashik", source: "telecalling" });
+  const r = await captureLead({ salesType: "direct", name: "Follow Lead", phone: testPhone(), city: "Nashik", source: "telecalling" });
   assert.ok(r.ok, r.ok ? "" : r.error);
   leadId = r.data.customerId;
 });
