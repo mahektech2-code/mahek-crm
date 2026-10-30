@@ -192,6 +192,17 @@ const files = [
   "src/lib/price-fix-b.integration.test.ts",
   "src/lib/price-fix-c.integration.test.ts",
   "src/lib/price-fix-d.integration.test.ts",
+  // Price books: a change edited, checked, approved by somebody else and put
+  // live on its date — maker-checker, the second approver, the instruction.
+  "src/lib/price-books.integration.test.ts",
+  "src/lib/price-today.integration.test.ts",
+  // Watch: every order line against the book revision live on its own date.
+  "src/lib/price-watch.integration.test.ts",
+  // A PDF you already have, brought in as a change on its book, and read by three readers.
+  "src/lib/price-imports.integration.test.ts",
+  // Overrides: a special price with dates, applied through the shop's agreed
+  // list on the days it starts and ends; a request approved as one.
+  "src/lib/price-overrides.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only

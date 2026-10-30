@@ -64,6 +64,32 @@ export default async function IntegrationsPage() {
       </Section>
 
       <Section
+        id="price-ai"
+        title="Price checks (AI)"
+        hint="The second model that reviews price changes on the Price Desk, independently of OpenAI. Optional — without it OpenAI reviews alone, and the screens say so. AI never writes or approves a price."
+      >
+        <Card>
+          <div className="divide-y divide-divider">
+            {secrets
+              .filter((s) => s.name === "anthropic.apiKey")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Anthropic API key",
+                    env: "ANTHROPIC_API_KEY",
+                    what: "Reviews each price change beside OpenAI without seeing its answer, gives a second opinion before approval, and reads special-price requests. Which model is a setting under Accounts → Settings → Price lists.",
+                    where: "console.anthropic.com → Settings → API keys. A key restricted to this workspace is enough.",
+                  }}
+                />
+              ))}
+          </div>
+        </Card>
+      </Section>
+
+      <Section
         id="enquiries"
         title="Website enquiries"
         hint="What the website's own backend proves it holds when it forwards a submitted enquiry. Server to server only — it never reaches a browser on either side."

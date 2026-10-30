@@ -93,7 +93,7 @@ const LIST_LIMIT = 500;
  * array cannot be bound as a Postgres array without a type it does not have,
  * so the two ends are written out rather than parameterised.
  */
-function bookClause(ids: string[] | null) {
+export function bookClause(ids: string[] | null) {
   if (ids === null) return sql`true`;
   if (!ids.length) return sql`false`;
   const list = sql.join(ids.map((id) => sql`${id}`), sql`, `);
@@ -102,8 +102,9 @@ function bookClause(ids: string[] | null) {
 
 /* ------------------------------------------------------------------ lists */
 
-type ListRow = {
+export type ListRow = {
   id: string;
+  bookId: string;
   refNo: string | null;
   name: string;
   version: number;
@@ -169,7 +170,7 @@ export async function resolveOptions(): Promise<ResolveOptions> {
   return resolveOptionsFrom(await getConfig());
 }
 
-function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSummary {
+export function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSummary {
   // A list is valid for its own window from the day it takes effect, and the
   // list that supersedes it ends it sooner. The earlier of the two is what a
   // screen has to say, or a list replaced last week reads as current. Whether
@@ -178,6 +179,7 @@ function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSu
   const expiresOn = validity.expiresOn;
   return {
     id: row.id,
+    bookId: row.bookId ?? row.id,
     refNo: row.refNo,
     name: row.name,
     version: row.version,
@@ -208,8 +210,8 @@ function toSummary(row: ListRow, day: string, opts: ResolveOptions): PriceListSu
   };
 }
 
-const LIST_SELECT = sql`
-  select l.id, l.ref_no as "refNo", l.name, l.version, l.status,
+export const LIST_SELECT = sql`
+  select l.id, coalesce(l.book_id, l.id) as "bookId", l.ref_no as "refNo", l.name, l.version, l.status,
          l.effective_from::text as "effectiveFrom",
          l.effective_to::text as "effectiveTo",
          l.validity_days as "validityDays",
@@ -312,7 +314,7 @@ function withPerLitre(row: RawRate): RateRow {
  * holding. A cell with no rate is empty; a cell whose rate says `offered:
  * false` is the document's dash, and the two are different facts.
  */
-function buildGrid(rates: RateRow[]): RateGrid {
+export function buildGrid(rates: RateRow[]): RateGrid {
   const columns = new Map<string, GridColumn>();
   for (const r of rates) {
     const key = `${r.millilitresPerCan ?? "?"}|${r.cansPerBox ?? "?"}|${r.packing ?? ""}`;
@@ -730,7 +732,7 @@ export function chainedRate(
   return rateFromCandidates(resolution.candidates, (listId) => rows.get(listId)?.get(productId) ?? [], cans);
 }
 
-type GeoRow = {
+export type GeoRow = {
   customerId: string;
   salesAmId: string | null;
   ownerId: string | null;
@@ -748,7 +750,7 @@ type GeoRow = {
 };
 
 /** Every spelling a shop can be matched by, folded to keys. */
-function toGeo(row: GeoRow): CustomerGeo {
+export function toGeo(row: GeoRow): CustomerGeo {
   const keys = (...values: Array<string | null>) =>
     [...new Set(values.map((v) => placeKey(v)).filter((v) => v !== ""))];
   return {
@@ -770,7 +772,7 @@ function toGeo(row: GeoRow): CustomerGeo {
   };
 }
 
-const GEO_SELECT = sql`
+export const GEO_SELECT = sql`
   select c.id as "customerId", c.sales_am_id as "salesAmId", c.owner_id as "ownerId",
          c.city, c.area, c.beat, c.region, c.territory_region as "territoryRegion",
          (select p.name from places p where p.id = c.resolved_state_id) as "resolvedState",
@@ -1045,7 +1047,7 @@ async function ratesOfShop(resolution: Resolution): Promise<RateRow[]> {
   return out;
 }
 
-async function ratesOfList(listId: string): Promise<RateRow[]> {
+export async function ratesOfList(listId: string): Promise<RateRow[]> {
   const rows = await db.execute<RawRate>(sql`
     ${RATE_SELECT} where r.price_list_id = ${listId}
     order by p.millilitres_per_can asc nulls last, p.name asc, r.min_cans asc nulls first
@@ -1289,9 +1291,85 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
  * because nothing says whose they are.
  */
 export async function varianceReport(month: string): Promise<VarianceReport> {
-  const [{ scopes, lists }, opts, ids] = await Promise.all([activeScopesAndLists(), resolveOptions(), userIdsInScope()]);
   const from = `${month}-01`;
   const to = addDays(`${month}-01`, 31).slice(0, 8) + "01";
+  return { month, ...(await varianceForRange(from, to)) };
+}
+
+/**
+ * The same reading as `varianceReport` over any window of days: `from`
+ * inclusive, `to` EXCLUSIVE, at most 2,000 lines as the month report always
+ * read. Today's "billed below price in the last seven days" is this over a
+ * week, so the two cannot disagree about a line.
+ */
+export async function varianceForRange(from: string, to: string): Promise<Omit<VarianceReport, "month">> {
+  const out: VarianceRow[] = (await varianceRowsForRange(from, to, { limit: 2000 })).map((r) => ({
+    orderDate: r.orderDate,
+    orderNumber: r.orderNumber,
+    customerId: r.customerId,
+    customerName: r.customerName,
+    productId: r.productId,
+    productName: r.productName,
+    cans: r.cans,
+    billedExPaise: r.billedExPaise,
+    listExPaise: r.listExPaise,
+    listId: r.listId,
+    listName: r.listName,
+    deltaPaise: r.deltaPaise,
+    deltaBp: r.deltaBp,
+    sheetDiscountBp: r.sheetDiscountBp,
+  }));
+
+  out.sort((a, b) => (a.deltaBp ?? 1e9) - (b.deltaBp ?? 1e9));
+  const priced = out.filter((r) => r.listExPaise != null);
+  return {
+    rows: out,
+    summary: {
+      lines: out.length,
+      onList: priced.filter((r) => r.deltaPaise === 0).length,
+      belowList: priced.filter((r) => (r.deltaPaise ?? 0) < 0).length,
+      aboveList: priced.filter((r) => (r.deltaPaise ?? 0) > 0).length,
+      unresolved: out.length - priced.length,
+      totalBelowPaise: priced
+        .filter((r) => (r.deltaPaise ?? 0) < 0)
+        .reduce((sum, r) => sum + Math.abs(r.deltaPaise ?? 0) * (r.cans ?? 1), 0),
+    },
+  };
+}
+
+/**
+ * A variance line with what the record says about WHO took it. The sheet names
+ * a salesman as text (`sales_man`); the ERP names the account that created the
+ * line and — since 0300 — whoever typed a rate other than the list's and
+ * whoever saved its discount. Null wherever the record does not say.
+ */
+export type VarianceRangeRow = VarianceRow & {
+  lineId: string;
+  source: "sheet" | "erp";
+  takenByName: string | null;
+  takenById: string | null;
+  rateSetById: string | null;
+  rateSetByName: string | null;
+  discountAuthorisedById: string | null;
+  discountAuthorisedByName: string | null;
+  /** The resolved list row's inclusive rate and GST, where one resolved. */
+  listInclPaise: number | null;
+  listGstBp: number | null;
+};
+
+/**
+ * Every priced order line from `from` (INCLUSIVE) to `to` (EXCLUSIVE), each
+ * judged against the list live on its own date — the body of the month
+ * report, over any window. Oldest first, at most `limit` lines (20,000 unless
+ * said; the month report keeps its 2,000).
+ */
+export async function varianceRowsForRange(
+  from: string,
+  to: string,
+  options?: { limit?: number },
+): Promise<VarianceRangeRow[]> {
+  const limit = options?.limit ?? 20_000;
+  const [{ scopes, lists }, opts, ids] = await Promise.all([activeScopesAndLists(), resolveOptions(), userIdsInScope()]);
 
   const rows = await db.execute<{
     orderDate: string;
@@ -1303,6 +1381,14 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
     cans: number | null;
     billedExPaise: number;
     sheetDiscountBp: number | null;
+    lineId: string;
+    source: "sheet" | "erp";
+    takenByName: string | null;
+    takenById: string | null;
+    rateSetById: string | null;
+    rateSetByName: string | null;
+    discountAuthorisedById: string | null;
+    discountAuthorisedByName: string | null;
   }>(sql`
     select * from (
       select o.order_date::text as "orderDate", o.order_number as "orderNumber",
@@ -1310,7 +1396,10 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
              coalesce(c.name, o.billing_party_name, 'Unknown') as "customerName",
              o.matched_product_id as "productId",
              coalesce(p.name, o.description, 'Unknown') as "productName",
-             o.cans, o.rate_paise as "billedExPaise", o.discount_bp as "sheetDiscountBp", o.id as "lineId"
+             o.cans, o.rate_paise as "billedExPaise", o.discount_bp as "sheetDiscountBp", o.id as "lineId",
+             'sheet'::text as "source", nullif(btrim(o.sales_man), '') as "takenByName", null::text as "takenById",
+             null::text as "rateSetById", null::text as "rateSetByName",
+             null::text as "discountAuthorisedById", null::text as "discountAuthorisedByName"
         from sheet_order_rows o
         left join customers c on c.id = o.matched_customer_id
         left join products p on p.id = o.matched_product_id
@@ -1324,10 +1413,16 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
              coalesce(c.name, 'Unknown'),
              e.sku_id,
              coalesce(p.name, 'Unknown'),
-             e.qty_cans, e.rate_paise, e.discount_bp, e.id
+             e.qty_cans, e.rate_paise, e.discount_bp, e.id,
+             'erp'::text, cu.name, e.created_by_id,
+             e.rate_set_by_id, ru.name,
+             e.discount_authorised_by_id, du.name
         from erp_orders e
         left join customers c on c.id = e.billing_customer_id
         left join products p on p.id = e.sku_id
+        left join users cu on cu.id = e.created_by_id
+        left join users ru on ru.id = e.rate_set_by_id
+        left join users du on du.id = e.discount_authorised_by_id
        where e.source = 'erp'
          and e.status <> 'Cancel'
          and e.rate_paise is not null
@@ -1335,7 +1430,7 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
          and ${bookClause(ids)}
     ) x
      order by x."orderDate" asc, x."lineId" asc
-     limit 2000
+     limit ${limit}
   `);
 
   // One resolution per customer per date, not per line: a twelve-line order
@@ -1344,7 +1439,7 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
   const resolutionCache = new Map<string, Resolution | null>();
   const rateCache = new Map<string, Map<string, PricedRow[]>>();
 
-  const out: VarianceRow[] = [];
+  const out: VarianceRangeRow[] = [];
   for (const row of rows) {
     let listId: string | null = null;
     let listName: string | null = null;
@@ -1361,6 +1456,8 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
     }
 
     let listExPaise: number | null = null;
+    let listInclPaise: number | null = null;
+    let listGstBp: number | null = null;
     const resolution = row.customerId ? (resolutionCache.get(`${row.customerId}|${row.orderDate}`) ?? null) : null;
     if (resolution && row.productId) {
       const missing = resolution.candidates.map((c) => c.listId).filter((id) => !rateCache.has(id));
@@ -1375,6 +1472,8 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
         listId = picked.listId;
         listName = picked.listName;
         listExPaise = picked.row?.rateExGstPaise ?? null;
+        listInclPaise = picked.row?.rateInclGstPaise ?? null;
+        listGstBp = picked.row?.gstBp ?? null;
       }
     }
 
@@ -1395,25 +1494,19 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
       deltaPaise,
       deltaBp,
       sheetDiscountBp: row.sheetDiscountBp,
+      lineId: row.lineId,
+      source: row.source,
+      takenByName: row.takenByName,
+      takenById: row.takenById,
+      rateSetById: row.rateSetById,
+      rateSetByName: row.rateSetByName,
+      discountAuthorisedById: row.discountAuthorisedById,
+      discountAuthorisedByName: row.discountAuthorisedByName,
+      listInclPaise,
+      listGstBp,
     });
   }
-
-  out.sort((a, b) => (a.deltaBp ?? 1e9) - (b.deltaBp ?? 1e9));
-  const priced = out.filter((r) => r.listExPaise != null);
-  return {
-    month,
-    rows: out,
-    summary: {
-      lines: out.length,
-      onList: priced.filter((r) => r.deltaPaise === 0).length,
-      belowList: priced.filter((r) => (r.deltaPaise ?? 0) < 0).length,
-      aboveList: priced.filter((r) => (r.deltaPaise ?? 0) > 0).length,
-      unresolved: out.length - priced.length,
-      totalBelowPaise: priced
-        .filter((r) => (r.deltaPaise ?? 0) < 0)
-        .reduce((sum, r) => sum + Math.abs(r.deltaPaise ?? 0) * (r.cans ?? 1), 0),
-    },
-  };
+  return out;
 }
 
 /* ------------------------------------------------------------- requests */

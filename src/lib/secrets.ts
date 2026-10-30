@@ -60,6 +60,8 @@ import { appSecrets } from "@/db/schema";
 export const SECRET_NAMES = {
   "sarvam.apiKey": "SARVAM_API_KEY",
   "openai.apiKey": "OPENAI_API_KEY",
+  /** The second, independent reviewer on the Price Desk (`lib/price-ai`). Optional: without it, OpenAI reviews alone and says so. */
+  "anthropic.apiKey": "ANTHROPIC_API_KEY",
   "msg91.authKey": "MSG91_AUTH_KEY",
   /**
    * WhatsApp's sending key — Wati's v3 API token (a scoped `wati_…` key). It

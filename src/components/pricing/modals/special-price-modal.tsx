@@ -27,10 +27,13 @@ import {
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { money, parseRupees } from "@/lib/format";
+import { money, parseRupees, rupeesFromPaise } from "@/lib/format";
 import { exFromIncl } from "@/lib/engines/price-math";
 import { requestSpecialPrice } from "@/lib/actions/price-lists";
 import type { RateRow } from "@/lib/price-list-views";
+import { askFactsAction } from "@/lib/actions/price-overrides";
+import type { ShopProductFacts } from "@/components/pricing/overrides/types";
+import { FactsPanel } from "@/components/pricing/overrides/facts-panel";
 
 export function SpecialPriceModal({
   open,
@@ -39,6 +42,8 @@ export function SpecialPriceModal({
   customerName,
   rates,
   gstBp,
+  initialProductId,
+  initialAskedInclPaise,
 }: {
   open: boolean;
   onClose: () => void;
@@ -47,6 +52,10 @@ export function SpecialPriceModal({
   /** The shop's OWN rates — there is nothing to ask a discount off otherwise. */
   rates: RateRow[];
   gstBp: number;
+  /** Optional: the product to open on (Watch opens on the one billed below). */
+  initialProductId?: string;
+  /** Optional: the price to start the box with, GST inclusive (Watch: what was billed). */
+  initialAskedInclPaise?: number;
 }) {
   if (!open) return null;
   return (
@@ -57,6 +66,8 @@ export function SpecialPriceModal({
       customerName={customerName}
       rates={rates}
       gstBp={gstBp}
+      initialProductId={initialProductId}
+      initialAskedInclPaise={initialAskedInclPaise}
     />
   );
 }
@@ -67,18 +78,28 @@ function Body({
   customerName,
   rates,
   gstBp,
+  initialProductId,
+  initialAskedInclPaise,
 }: {
   onClose: () => void;
   customerId: string;
   customerName: string;
   rates: RateRow[];
   gstBp: number;
+  initialProductId?: string;
+  initialAskedInclPaise?: number;
 }) {
   const router = useRouter();
   const { run } = useToast();
   const offered = rates.filter((r) => r.offered);
-  const [productId, setProductId] = React.useState(offered[0]?.productId ?? "");
-  const [asked, setAsked] = React.useState("");
+  const [productId, setProductId] = React.useState(
+    (initialProductId && offered.some((r) => r.productId === initialProductId) ? initialProductId : null) ??
+      offered[0]?.productId ??
+      "",
+  );
+  const [asked, setAsked] = React.useState(
+    initialAskedInclPaise != null && initialAskedInclPaise > 0 ? rupeesFromPaise(initialAskedInclPaise) : "",
+  );
   const [reason, setReason] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
@@ -211,6 +232,8 @@ function Body({
             </p>
           ) : null}
 
+          {productId ? <AskFacts key={productId} customerId={customerId} productId={productId} askedEx={askedEx} /> : null}
+
           <Field
             label="Why"
             hint="What they said, and what is at stake. Whoever decides this was not on the call."
@@ -226,5 +249,33 @@ function Body({
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The facts whoever decides will read, shown to the person asking before they
+ * send it: what the shop really buys, how it pays, what the shops around it
+ * pay, and what the price asked gives away. Shown only — nothing here is
+ * stored with the request.
+ */
+function AskFacts({ customerId, productId, askedEx }: { customerId: string; productId: string; askedEx: number | null }) {
+  const [facts, setFacts] = React.useState<ShopProductFacts | null | "failed">(null);
+  React.useEffect(() => {
+    let live = true;
+    (async () => {
+      const r = await askFactsAction(customerId, productId);
+      if (live) setFacts(r.ok ? r.data : "failed");
+    })();
+    return () => {
+      live = false;
+    };
+  }, [customerId, productId]);
+  if (facts === null) return <p className="text-[13px] text-muted">Reading what this shop buys and pays…</p>;
+  if (facts === "failed") return null;
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium tracking-label text-muted uppercase">What whoever decides will see</div>
+      <FactsPanel facts={facts} askedExGstPaise={askedEx} months={3} />
+    </div>
   );
 }

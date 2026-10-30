@@ -34,6 +34,8 @@ export type PricingApp = "crm" | "accounts" | "founder";
 
 export type PriceListSummary = {
   id: string;
+  /** The book (lineage) this version belongs to — its first version's id. */
+  bookId: string;
   refNo: string | null;
   name: string;
   version: number;

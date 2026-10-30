@@ -1724,6 +1724,116 @@ export const SETTINGS = [
       "On, the order form fills each line's rate from the list that resolves for the customer and shows the order's worth; the telecaller can still change a rate inside their discount authority. Off, the form shows the list rate for reference and values nothing. It is separate from the products.priceSource switch on purpose - that one decides what the reports count an order as worth, and flipping it is a deliberate act that should follow, not precede, the lists being complete.",
     default: true,
   },
+  {
+    key: "pricing.changes.makerChecker",
+    type: "boolean",
+    category: "pricing",
+    label: "A price change is approved by somebody other than its maker",
+    description:
+      "On, whoever edited a price book cannot approve the change - somebody else on the Price Desk does, and the database refuses the same person in both seats. Off is for a desk run by one person, where a second pair of eyes does not exist; every approval still records who made and who approved it.",
+    default: true,
+  },
+  {
+    key: "pricing.changes.secondApproverAbovePaise",
+    type: "integer",
+    category: "pricing",
+    label: "Monthly effect above which a change needs a second approver",
+    description:
+      "Paise a month, at the last months' volume of the book's shops: 10000000 is one lakh rupees. A change worth more than this, up or down, needs two approvers, neither of them its maker. Zero turns the money test off.",
+    default: 10000000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "pricing.changes.secondApproverDropPercent",
+    type: "integer",
+    category: "pricing",
+    label: "Price cut, in percent, that needs a second approver",
+    description:
+      "Any one price cut deeper than this percent puts the whole change in front of a second approver - a cut is the move most often typed by mistake and the one a shop never gives back. Zero turns the test off.",
+    default: 10,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "pricing.changes.bigMovePercent",
+    type: "integer",
+    category: "pricing",
+    label: "A price move larger than this percent is flagged",
+    description:
+      "Either way. A flag stops the change being sent until its maker fixes the price or writes why it is intended; the note travels to the approver.",
+    default: 15,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "pricing.changes.typoFactor",
+    type: "integer",
+    category: "pricing",
+    label: "How many times off the other books a price is a likely typo",
+    description:
+      "A price this many times more, or less, than the same product in every other live book is flagged as a likely slipped digit, with the nearest ten-times figure offered as the fix. 5 catches ₹625 typed for ₹6,258.",
+    default: 5,
+    min: 2,
+    max: 100,
+  },
+  {
+    key: "pricing.changes.effectVolumeMonths",
+    type: "integer",
+    category: "pricing",
+    label: "Months of volume a change's money effect is measured on",
+    description:
+      "The effect of a change is its price moves times what the book's shops bought, as cans a month averaged over this many whole months.",
+    default: 3,
+    min: 1,
+    max: 24,
+  },
+  {
+    key: "pricing.ai.enabled",
+    type: "boolean",
+    category: "pricing",
+    label: "Use AI to read, review and explain prices",
+    description:
+      "On, the Price Desk can describe a change in words, have it reviewed independently by OpenAI and Anthropic, get a second opinion before approving, and see a recommendation on special-price requests. AI never writes a price or approves anything: every figure is computed by code and every decision is a person's. Off, every screen works without it.",
+    default: true,
+  },
+  {
+    key: "pricing.ai.openaiModel",
+    type: "text",
+    category: "pricing",
+    label: "OpenAI model for prices",
+    description: "The OpenAI model that reads instructions and reviews changes. Needs the OpenAI key on Admin Console → Integrations.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "pricing.ai.anthropicModel",
+    type: "text",
+    category: "pricing",
+    label: "Anthropic model for prices",
+    description:
+      "The Anthropic model that reviews changes independently of OpenAI - the two never see each other's answer, and a disagreement is shown rather than averaged. Needs the Anthropic key on Admin Console → Integrations.",
+    default: "claude-sonnet-5-5",
+  },
+  {
+    key: "pricing.overrides.reminderDays",
+    type: "integer",
+    category: "pricing",
+    label: "Days before a special price ends that the desk is reminded",
+    description: "The desk and whoever asked for it are told this many days before an override's end date, once.",
+    default: 7,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: "pricing.today.expiringDays",
+    type: "integer",
+    category: "pricing",
+    label: "A book expiring within this many days with nothing scheduled is on Today",
+    description: "Price Desk Today lists a live book whose validity runs out within this many days and that has no change scheduled to follow it.",
+    default: 14,
+    min: 1,
+    max: 120,
+  },
 
   /* ---------------------------------------------------------- interactions */
   {
@@ -6613,6 +6723,17 @@ export type Config = {
   "pricing.parseConfidenceFloor": number;
   "pricing.derivationTolerancePaise": number;
   "pricing.useListForOrderValue": boolean;
+  "pricing.changes.makerChecker": boolean;
+  "pricing.changes.secondApproverAbovePaise": number;
+  "pricing.changes.secondApproverDropPercent": number;
+  "pricing.changes.bigMovePercent": number;
+  "pricing.changes.typoFactor": number;
+  "pricing.changes.effectVolumeMonths": number;
+  "pricing.ai.enabled": boolean;
+  "pricing.ai.openaiModel": string;
+  "pricing.ai.anthropicModel": string;
+  "pricing.overrides.reminderDays": number;
+  "pricing.today.expiringDays": number;
   "interactions.singleSelectOutcomes": string[];
 
   "whatsapp.mode": "manual" | "automatic";

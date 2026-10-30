@@ -172,6 +172,24 @@ Only the person who asked may **withdraw** a request, and only while it is waiti
 - **Coverage** resolves every active customer in your book today and counts who is on which list, who is on **no** list (up to 200 listed), and who has no freight term. A published list nobody resolves to is called out. A shop on no list is being priced from memory.
 - **Variance** takes every priced line for a month (up to 2,000) — the order sheet's Order Details tab and the ERP's own order lines, not cancelled; a line copied into the ERP from the sheet is read once, as its sheet row — and compares the billed ex-GST rate with what the list says for that shop on that order date — **at**, **below**, **above**, or **no list resolved** — and totals what was given away below the list. Once the ERP takes the orders the sheet stops being typed, so later months come from the ERP alone.
 
+## Price books, changes and approval
+
+A **book** is a lineage: a price list and every version that superseded it (`price_lists.book_id`, kept by a database trigger). Its published versions are its **revisions**. Nothing is copied, retired and relinked by hand any more: a **change** is a draft copy of the book's newest revision, and approving it publishes that draft on its go-live date with the same rule every version has always followed — the revision before it is dated out to the day before and goes on pricing until then, and who the book covers is carried across.
+
+- **Edit → Check → Approve → Live.** A check is tied to the exact prices it read; editing after it makes it stale, and the change cannot be sent until it is checked again.
+- **The check** refuses a ₹0 price and a go-live date in the past, and flags (to be fixed or explained) a product dropped from the live revision, GST that does not add up, a bigger pack dearer per litre than a smaller one, a move larger than <Setting k="pricing.changes.bigMovePercent" />%, a price <Setting k="pricing.changes.typoFactor" />× off the other books (with the likely intended figure), and a special price the new book price would undercut.
+- **Maker-checker** (<Setting k="pricing.changes.makerChecker" />): whoever made a change does not approve it. Somebody else may *take a change over*, which makes them its maker.
+- **A second approver** is needed when the change is worth more than <Setting k="pricing.changes.secondApproverAbovePaise" /> paise a month at the book's shops' last <Setting k="pricing.changes.effectVolumeMonths" /> months of volume, or cuts any price by more than <Setting k="pricing.changes.secondApproverDropPercent" />%.
+- **Who a book covers belongs to the book.** A rule added on the book is carried onto the revision scheduled after it and onto the open change.
+
+## AI on the Price Desk — advice only
+
+With <Setting k="pricing.ai.enabled" /> on, two models help: OpenAI (<Setting k="pricing.ai.openaiModel" />) and Anthropic (<Setting k="pricing.ai.anthropicModel" />). They read a sentence into a rule (*Describe the change*), review a change **independently** (neither sees the other's answer, and each finding is named for who raised it), give the approver a second opinion, and read PDFs as a second and third reader. **No model writes a price, approves anything or publishes a list**: every figure is computed by code from the rule, and every decision is a person's. Every answer is kept in `price_ai_runs` with what it was about.
+
+## Today and the morning check
+
+Every morning the live books are checked for pack-ladder breaks, likely typos against the other books, GST that does not round-trip, books expiring within <Setting k="pricing.today.expiringDays" /> days with nothing scheduled, books that name nobody, and special prices ending within <Setting k="pricing.overrides.reminderDays" /> days or below their volume condition. Findings are listed on **Today** until fixed or dismissed with a note.
+
 ## Every setting that shapes pricing
 
 <SettingsTable keys={[

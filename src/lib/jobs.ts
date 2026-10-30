@@ -161,6 +161,10 @@ export type JobName =
   /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
   | "bank-statement-pdfs"
   | "price-list-stale-reads"
+  /** Price Desk · Today: the morning check over every live book, written for today. Nightly; idempotent. */
+  | "price-books-morning"
+  /** Special prices (overrides) applied to each shop's agreed list on the days they start and end, and reminders before they end. Hourly and nightly. */
+  | "price-overrides-sync"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
@@ -246,6 +250,16 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* Old price lists whose successor has taken over — the hourly does this
      too; the nightly is the net on a deployment whose hourly is not called. */
   results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
+  results.push(await run("price-overrides-sync", priceOverridesSyncStep, triggeredById));
+
+  /* The Price Desk's morning check — after the supersede, so it reads the
+     revisions in force. A finding is a courtesy: it must never cost the
+     nightly the steps after it. */
+  try {
+    results.push(await run("price-books-morning", priceBooksMorningStep, triggeredById));
+  } catch (e) {
+    console.error("Nightly: price books morning check failed:", e instanceof Error ? e.message : e);
+  }
 
   /* HRMS's monthly paid-leave credit. Nightly rather than on the 1st: the
      partial unique index makes every run after the first a no-op, and a
@@ -774,6 +788,30 @@ async function bankPdfStep() {
   return { recordsAffected: r.deleted, detail: `${r.deleted} statement PDF${r.deleted === 1 ? "" : "s"} deleted` };
 }
 
+/** The Price Desk's morning check, for today's business date (`services/price-today-service.ts`). */
+async function priceBooksMorningStep() {
+  const { runMorningCheck } = await import("./services/price-today-service");
+  const r = await runMorningCheck(await today());
+  return { recordsAffected: r.written, detail: r.detail };
+}
+
+/**
+ * Overrides start and end on dates, and the agreed list that prices them only
+ * moves when something publishes a revision — this. Idempotent per shop, so
+ * every run after the first on a day writes nothing; the reminder is once per
+ * override (`reminded_at`).
+ */
+async function priceOverridesSyncStep() {
+  const { syncAllOverrides, remindEndingOverrides } = await import("./services/price-override-service");
+  const day = await today();
+  const r = await syncAllOverrides(day);
+  const reminded = await remindEndingOverrides(day);
+  const bits = [`${r.shops} shop${r.shops === 1 ? "" : "s"} checked`, `${r.changed} updated`, `${reminded} reminder${reminded === 1 ? "" : "s"}`];
+  if (r.skipped.length) bits.push(`${r.skipped.length} waiting: ${r.skipped.slice(0, 3).join(" ")}`);
+  if (r.failed.length) bits.push(`${r.failed.length} failed: ${r.failed.slice(0, 3).join("; ")}`);
+  return { recordsAffected: r.changed + reminded, detail: bits.join(", ") };
+}
+
 /** Price-list reads that died part-way become failed, so "Read again" is offered. */
 async function staleReadsStep() {
   const { failStaleReads } = await import("./services/price-list-parse-service");
@@ -824,6 +862,7 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   // Bank statement PDFs past their days are deleted; the lines stay.
   results.push(await run("bank-statement-pdfs", bankPdfStep, triggeredById));
   results.push(await run("price-list-stale-reads", staleReadsStep, triggeredById));
+  results.push(await run("price-overrides-sync", priceOverridesSyncStep, triggeredById));
 
   // The Top customers report has its own 10:00 IST cron line on the 1st. This
   // is the net under it: a droplet whose crontab predates that line still
@@ -1262,6 +1301,10 @@ export async function runJob(
       return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
     case "price-lists-supersede":
       return [await run("price-lists-supersede", priceListsSupersedeStep, triggeredById)];
+    case "price-books-morning":
+      return [await run("price-books-morning", priceBooksMorningStep, triggeredById)];
+    case "price-overrides-sync":
+      return [await run("price-overrides-sync", priceOverridesSyncStep, triggeredById)];
     case "bank-statement-pdfs":
       return [await run("bank-statement-pdfs", bankPdfStep, triggeredById)];
     case "hrms-leave-credit":

@@ -94,6 +94,19 @@ The level passed to `discountAuthority` is the person's level **in the CRM** (`l
   resulting_list_id: "The shop's own agreed-prices list, on approval.",
 }} />
 
+## Price books
+
+- Engines (pure): `engines/price-change.ts` (diff, checks, money effect, send/approve rules), `engines/price-instruction.ts` (sentence → rule → prices), `engines/price-overrides.ts`, `engines/price-morning-check.ts`, `engines/price-watch.ts`, `engines/price-book-match.ts`, `engines/price-cross-read.ts`.
+- Shared write internals: `services/price-write.ts` — `draftVersionIn` and `publishDraftIn`, used by both the list actions and the change workflow.
+- Reads: `services/price-book-service.ts`; writes: `actions/price-books.ts`, `actions/price-today.ts`, `actions/price-watch.ts`, `actions/price-imports.ts`.
+- AI: `price-ai/providers.ts` (OpenAI and Anthropic, every run recorded), `price-ai/change-ai.ts`, `price-ai/watch-ai.ts`, `price-ai/pdf-read.ts`.
+
+<Code file="src/lib/engines/price-change.ts" symbol="runChecks" collapsed />
+
+<Code file="src/lib/engines/price-change.ts" symbol="approvalRefusal" />
+
+<DbTable name="price_changes" note={{ draft_list_id: "The change's draft version of the book; approving publishes it.", checked_hash: "The rates the last check read; a different hash means the check is stale." }} />
+
 ## Access
 
 - **Module:** <ModuleRef k="crm.price-lists" />. Reading is every CRM user's; no CRM screen draws a write control.

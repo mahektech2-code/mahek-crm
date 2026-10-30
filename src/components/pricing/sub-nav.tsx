@@ -18,14 +18,35 @@
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 
-export type PricingTabKey = "lists" | "documents" | "requests" | "coverage" | "variance";
+export type PricingTabKey =
+  | "today"
+  | "books"
+  | "lists"
+  | "documents"
+  | "requests"
+  | "overrides"
+  | "shops"
+  | "coverage"
+  | "variance"
+  | "watch";
 
+/*
+ * PRICE BOOKS joined these tabs rather than replacing any of them. Today,
+ * Books, Overrides, Shop prices and Watch are the book workflow; Lists and the
+ * four screens after it are every list as it always was, so nothing anybody
+ * used before moved.
+ */
 const TABS: Array<{ key: PricingTabKey; label: string; suffix: string }> = [
+  { key: "today", label: "Today", suffix: "/today" },
+  { key: "books", label: "Books", suffix: "/books" },
   { key: "lists", label: "Lists", suffix: "" },
   { key: "documents", label: "Documents", suffix: "/documents" },
   { key: "requests", label: "Requests", suffix: "/requests" },
+  { key: "overrides", label: "Overrides", suffix: "/overrides" },
+  { key: "shops", label: "Shop prices", suffix: "/shops" },
   { key: "coverage", label: "Coverage", suffix: "/coverage" },
   { key: "variance", label: "Variance", suffix: "/variance" },
+  { key: "watch", label: "Watch", suffix: "/watch" },
 ];
 
 export function PricingSubNav({
@@ -36,7 +57,7 @@ export function PricingSubNav({
   current: PricingTabKey;
 }) {
   return (
-    <div className="mb-5 flex items-center border-b border-line">
+    <div className="mb-5 flex items-center overflow-x-auto border-b border-line">
       {TABS.map((tab) => {
         const active = tab.key === current;
         return (

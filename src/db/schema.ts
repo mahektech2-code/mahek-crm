@@ -10971,6 +10971,12 @@ export const priceLists = pgTable(
      * a rate into. A shared list is never one.
      */
     kind: text("kind").notNull().default("standard"),
+    /**
+     * THE BOOK this version belongs to: the id of the lineage's first version.
+     * Kept by the `price_lists_book_id` trigger on every insert and on every
+     * change of `supersedes_id`, so no write path has to remember it.
+     */
+    bookId: text("book_id"),
     termsText: text("terms_text"),
     signatory: text("signatory"),
     notes: text("notes"),
@@ -10988,6 +10994,7 @@ export const priceLists = pgTable(
     index("price_lists_status_idx").on(t.status, t.effectiveFrom),
     index("price_lists_supersedes_idx").on(t.supersedesId),
     index("price_lists_parent_idx").on(t.parentListId),
+    index("price_lists_book_idx").on(t.bookId, t.version),
   ],
 );
 
@@ -11172,6 +11179,185 @@ export const priceRequests = pgTable(
     index("price_requests_customer_idx").on(t.customerId),
   ],
 );
+
+/* ---------------------------------------------------------------------------
+ * PRICE BOOKS — one book per audience, edited in place.
+ *
+ * A BOOK is a lineage of `price_lists` versions (`price_lists.book_id`). Its
+ * published versions are its REVISIONS. A CHANGE is a draft version of the
+ * book's newest revision wrapped in a workflow — edit, check, approve, go live
+ * on a date — so nothing is ever copied, retired and relinked by hand: the
+ * existing version rules (supersede at a date, scopes carried across) do it.
+ * ------------------------------------------------------------------------- */
+
+export const PRICE_CHANGE_STATUSES = ["draft", "submitted", "sent_back", "approved", "cancelled"] as const;
+export type PriceChangeStatus = (typeof PRICE_CHANGE_STATUSES)[number];
+export const PRICE_CHANGE_SOURCES = ["editor", "import", "restore", "instruction"] as const;
+export type PriceChangeSource = (typeof PRICE_CHANGE_SOURCES)[number];
+
+/** How a change tells people once it is approved. */
+export type PriceChangeNotify = {
+  /** WhatsApp the PDF to the book's shops on this day (null: do not). */
+  shopsOn?: string | null;
+  /** Tell the salesmen and telecallers whose shops are on the book. */
+  team?: boolean;
+};
+
+/** One flag the maker said is intended, with why. */
+export type PriceChangeAck = { note: string; byId: string; at: string };
+
+export const priceChanges = pgTable(
+  "price_changes",
+  {
+    id: text("id").primaryKey(),
+    bookId: text("book_id").notNull(),
+    baseListId: text("base_list_id").references(() => priceLists.id),
+    draftListId: text("draft_list_id")
+      .notNull()
+      .references(() => priceLists.id),
+    status: text("status").notNull().default("draft"),
+    title: text("title"),
+    reason: text("reason"),
+    source: text("source").notNull().default("editor"),
+    sourceDocumentId: text("source_document_id"),
+    restoredFromListId: text("restored_from_list_id"),
+    makerId: text("maker_id")
+      .notNull()
+      .references(() => users.id),
+    goLive: date("go_live"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    approverId: text("approver_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    needsSecond: boolean("needs_second").notNull().default(false),
+    secondApproverId: text("second_approver_id").references(() => users.id),
+    secondApprovedAt: timestamp("second_approved_at", { withTimezone: true }),
+    approverNote: text("approver_note"),
+    sendBackReason: text("send_back_reason"),
+    notify: jsonb("notify").$type<PriceChangeNotify>().notNull().default({}),
+    /** The last check's flags, as `engines/price-change.ts` wrote them. */
+    checks: jsonb("checks").$type<unknown>(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    /** A hash of the draft's rates when it was checked: an edit after it makes the check stale. */
+    checkedHash: text("checked_hash"),
+    acks: jsonb("acks").$type<Record<string, PriceChangeAck>>().notNull().default({}),
+    summary: jsonb("summary").$type<unknown>(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelReason: text("cancel_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("price_changes_draft_key").on(t.draftListId),
+    index("price_changes_status_idx").on(t.status, t.updatedAt),
+  ],
+);
+
+export const priceChangeEvents = pgTable(
+  "price_change_events",
+  {
+    id: text("id").primaryKey(),
+    changeId: text("change_id")
+      .notNull()
+      .references(() => priceChanges.id, { onDelete: "cascade" }),
+    bookId: text("book_id").notNull(),
+    kind: text("kind").notNull(),
+    actorId: text("actor_id").references(() => users.id),
+    note: text("note"),
+    detail: jsonb("detail").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("price_change_events_change_idx").on(t.changeId, t.createdAt),
+    index("price_change_events_book_idx").on(t.bookId, t.createdAt),
+  ],
+);
+
+/** Every AI answer about prices, kept with its subject. Advice only — nothing reads it to decide. */
+export const priceAiRuns = pgTable(
+  "price_ai_runs",
+  {
+    id: text("id").primaryKey(),
+    subjectKind: text("subject_kind").notNull(),
+    subjectId: text("subject_id").notNull(),
+    feature: text("feature").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model"),
+    ok: boolean("ok").notNull().default(false),
+    output: jsonb("output").$type<unknown>(),
+    error: text("error"),
+    ms: integer("ms"),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("price_ai_runs_subject_idx").on(t.subjectKind, t.subjectId, t.createdAt)],
+);
+
+/**
+ * AN OVERRIDE — one shop × one product × dates. Applied through the shop's
+ * agreed-prices list (`kind = 'agreed'`), which layers over its book per
+ * product; this row says when it starts and ends, and the sync job publishes
+ * a revision of the agreed list on each of those days.
+ */
+export const priceOverrides = pgTable(
+  "price_overrides",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id),
+    rateExGstPaise: bigint("rate_ex_gst_paise", { mode: "number" }).notNull(),
+    rateInclGstPaise: bigint("rate_incl_gst_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    validFrom: date("valid_from").notNull(),
+    validTo: date("valid_to"),
+    minCansPerMonth: integer("min_cans_per_month"),
+    requestId: text("request_id"),
+    agreedListId: text("agreed_list_id"),
+    note: text("note"),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelReason: text("cancel_reason"),
+    remindedAt: timestamp("reminded_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("price_overrides_customer_idx").on(t.customerId, t.productId, t.validFrom),
+    index("price_overrides_dates_idx").on(t.validFrom, t.validTo),
+  ],
+);
+
+/** What the morning check found over the live books. */
+export const priceBookFindings = pgTable(
+  "price_book_findings",
+  {
+    id: text("id").primaryKey(),
+    runDay: date("run_day").notNull(),
+    bookId: text("book_id"),
+    listId: text("list_id"),
+    productId: text("product_id"),
+    kind: text("kind").notNull(),
+    severity: text("severity").notNull().default("medium"),
+    message: text("message").notNull(),
+    moneyPaise: bigint("money_paise", { mode: "number" }),
+    detail: jsonb("detail").$type<unknown>(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    dismissedById: text("dismissed_by_id").references(() => users.id),
+    dismissNote: text("dismiss_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("price_book_findings_day_idx").on(t.runDay, t.severity)],
+);
+
+export type PriceChange = typeof priceChanges.$inferSelect;
+export type PriceChangeEvent = typeof priceChangeEvents.$inferSelect;
+export type PriceOverride = typeof priceOverrides.$inferSelect;
+export type PriceBookFinding = typeof priceBookFindings.$inferSelect;
 
 export type PriceListDocument = typeof priceListDocuments.$inferSelect;
 export type PriceList = typeof priceLists.$inferSelect;

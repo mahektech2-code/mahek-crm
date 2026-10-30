@@ -270,6 +270,11 @@ const STOPS: Record<SecretName, Felt> = {
     label: "dictation's writing — Tighten and Rewrite",
     note: "Tighten and Rewrite disappear from the dictation modal, and recordings over 30 seconds can no longer be heard.",
   },
+  "anthropic.apiKey": {
+    app: "Accounts",
+    label: "the second, independent AI review of price changes",
+    note: "Price changes are reviewed by OpenAI alone, and the screens say a second reviewer is not connected. Nothing about prices themselves changes.",
+  },
   "msg91.authKey": { app: "MahekOne", label: "nothing", note: "Nothing uses it — WhatsApp goes through Wati." },
   "wati.apiToken": {
     app: "Founder",
@@ -311,6 +316,7 @@ const STOPS: Record<SecretName, Felt> = {
 const TITLE: Record<SecretName, string> = {
   "sarvam.apiKey": "the Sarvam key",
   "openai.apiKey": "the OpenAI key",
+  "anthropic.apiKey": "the Anthropic key",
   "msg91.authKey": "the MSG91 key",
   "wati.apiToken": "the Wati key",
   "minimoth.apiKey": "the MiniMoth key",
