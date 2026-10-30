@@ -16,7 +16,7 @@ import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
-import { crmSalesManagerScopeFor, inCrmSalesManagerWorkspace } from "./crm-sales-manager-scope";
+import { crmSalesManagerScopeFor, inCrmSalesManagerWorkspace, teamOwnerIdsFor } from "./crm-sales-manager-scope";
 import { isPlatformAdmin, levelInApp, requestAppId } from "../access-control";
 import { scopeStanding } from "../sales-gate";
 import { sql, type SQL } from "drizzle-orm";
@@ -104,6 +104,12 @@ export type ManagerScope = {
    * screen's scope moved.
    */
   salesManagerId?: string;
+  /**
+   * SET WITH `salesManagerId`: the people who answer to that Sales Manager, and
+   * the manager. A lead they own is in the book as well as one carrying the
+   * seat — see `teamOwnerIdsFor`.
+   */
+  teamOwnerIds?: string[];
   /**
    * SET ONLY FOR AN ASSOCIATE (`scopeStanding` = "own"): their book and nothing
    * else. It exists so `seatVisible` can leave out the "nobody owns it" arm,
@@ -256,7 +262,10 @@ const baseManagerScope = cache(async function managerScope(): Promise<ManagerSco
  */
 const crmManagerScope = cache(async function crmManagerScope(): Promise<ManagerScope> {
   const { requireUser } = await import("../auth");
-  return crmSalesManagerScopeFor(await requireUser());
+  const user = await requireUser();
+  const scope = crmSalesManagerScopeFor(user);
+  if (!scope.salesManagerId) return scope;
+  return { ...scope, teamOwnerIds: await teamOwnerIdsFor(user.id, user.name) };
 });
 
 /**
@@ -322,7 +331,10 @@ function seatVisible(scope: ManagerScope, column: string) {
        guessing one would fail OPEN. Nothing in this workspace passes one. */
     if (!/owner_id$/.test(column)) return sql`and false`;
     const seat = column.replace(/owner_id$/, "sales_manager_id");
-    return sql`and ${sql.raw(seat)} = ${scope.salesManagerId}`;
+    const team = scope.teamOwnerIds ?? [];
+    if (!team.length) return sql`and ${sql.raw(seat)} = ${scope.salesManagerId}`;
+    const owners = sql.join(team.map((i) => sql`${i}`), sql`, `);
+    return sql`and (${sql.raw(seat)} = ${scope.salesManagerId} or ${sql.raw(column)} in (${owners}))`;
   }
   if (scope.salesmanIds === null) return sql``;
   const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
