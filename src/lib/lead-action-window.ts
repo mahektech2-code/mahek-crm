@@ -97,6 +97,31 @@ export function convertedOff(view: string | undefined): SQL {
 }
 
 /**
+ * LOST LEADS HAVE A SECTION OF THEIR OWN, AND NOT THE MAIN LIST.
+ *
+ * `notConverted` deliberately lets `lost` through, so the Leads list used to
+ * carry every closed lead in the book beside the live ones — a manager's
+ * 1,500-lead team read as 1,500 things to work when most were finished. Mahek's
+ * answer is that a lost lead is found, searched and opened in the Lost leads
+ * section (`lead-lost-service.ts`, which asks `leadsVisible` and nothing here),
+ * and the working list is work. It is spliced into the same places
+ * `convertedOff` is — the page of rows, the select-everything ids, the
+ * dropdown options and the tile counts — so a count beside the list cannot
+ * disagree with the list.
+ *
+ * ONE VIEW KEEPS THEM: `lost30` exists to show what closed this month, so it
+ * reads the lost population on purpose. Said here rather than dropped, because
+ * the tile, the view and the Sales Manager pipeline's own figure all read it.
+ * (A lead's own record is not a list and never asks this: a lost lead still
+ * opens by id, from the Lost section, a bell or a link.)
+ *
+ * Parenthesised-free and starting with `and`, like `convertedOff`.
+ */
+export function lostOff(view: string | undefined, alias = "c"): SQL {
+  return view === "lost30" ? sql`` : sql`and ${sql.raw(alias)}.lead_stage::text <> 'lost'`;
+}
+
+/**
  * A park read back — the other half of "owed", and the reason neither window
  * is one column.
  *

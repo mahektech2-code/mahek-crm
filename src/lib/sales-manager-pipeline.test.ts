@@ -333,7 +333,10 @@ describe("R — the reads are counted in the database", () => {
     await makeLead({ name: "Gone", leadStage: "lost", leadLostReason: "price" });
     await makeLead({ name: "Old", leadStage: "contacted", leadSalesType: null });
     const rows = (await pipelineList(DAY, {})).rows;
-    const gone = rows.find((r) => r.name === "Gone")!;
+    /* Lost leads are in the Lost section and not the working list; the one view
+       that shows what closed this month still draws them, as a Lost row. */
+    assert.equal(rows.some((r) => r.name === "Gone"), false, "a lost lead is not in the main list");
+    const gone = (await pipelineList(DAY, { view: "lost30" })).rows.find((r) => r.name === "Gone")!;
     assert.equal(gone.lost, true);
     assert.equal(gone.stage, null);
     const old = rows.find((r) => r.name === "Old")!;

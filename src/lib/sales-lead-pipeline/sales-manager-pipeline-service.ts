@@ -1,4 +1,5 @@
 import "server-only";
+import { lostLeadsPage } from "@/lib/services/lead-lost-service";
 import { notConverted } from "@/lib/lead-action-window";
 import { capCutOffLiveLeads } from "@/lib/sales-lead-pipeline/desk";
 
@@ -1400,7 +1401,10 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
     today: day,
     greeting: greetingFor(user.name),
     rows,
-    lostHidden: book.rows.length - live.length,
+    /* The main list no longer carries lost leads (`lostOff`), so the number the
+       footnote quotes is the Lost section's own count of this book — the same
+       scope, and the same figure that section opens with. */
+    lostHidden: (await lostLeadsPage({ perPage: 1 })).total,
     truncated: book.truncated,
   };
 }
