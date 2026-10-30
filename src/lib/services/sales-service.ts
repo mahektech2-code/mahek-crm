@@ -1,6 +1,6 @@
 import "server-only";
 import { QUAL_NEXT } from "@/lib/qualification-next";
-import { convertedOff, notConverted } from "../lead-action-window";
+import { convertedOff, lostOff, notConverted } from "../lead-action-window";
 import { bandFor, type HealthBand } from "../engines/inactivity";
 import {
   LEGACY_SALES_TYPE,
@@ -2496,6 +2496,7 @@ export async function leadsPage(
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
        ${convertedOff(options.view)}
+       ${lostOff(options.view)}
        ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}`;
   const narrowed = leadFilterClause(filters, day, {
@@ -2642,6 +2643,7 @@ export async function leadIdsMatching(
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
        ${convertedOff(options.view)}
+       ${lostOff(options.view)}
        ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}
        ${leadFilterClause(options.filters ?? {}, day, {
@@ -2717,6 +2719,7 @@ export async function leadFilterOptions(
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
        and ${notConverted()}
+       ${lostOff(undefined)}
        ${leadsVisible(scope)}`;
 
   const [owners, sources, stages] = await Promise.all([
@@ -5995,7 +5998,7 @@ export async function leadPlaceOptions(
   return placeFilterOptions({
     from: sql`customers c`,
     alias: "c",
-    where: sql`c.lead_stage is not null and c.lead_archived = ${archived} and ${notConverted()} ${leadsVisible(scope)}`,
+    where: sql`c.lead_stage is not null and c.lead_archived = ${archived} and ${notConverted()} ${lostOff(undefined)} ${leadsVisible(scope)}`,
     picks,
   });
 }
