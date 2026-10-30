@@ -21,9 +21,11 @@ export function isPublicPath(pathname: string | null | undefined): boolean {
   return !!pathname && PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
-/** What the public host may also serve: the page's own scripts, styles and icon. */
+/** What the public host may also serve: the page's own scripts, styles and the Mahek logo as its icon. */
+export const ICON_PATHS = ["/favicon.ico", "/icon.png", "/apple-icon.png"] as const;
+
 export function isPublicAsset(pathname: string): boolean {
-  return pathname.startsWith("/_next/") || pathname === "/favicon.ico" || pathname === "/robots.txt";
+  return pathname.startsWith("/_next/") || (ICON_PATHS as readonly string[]).includes(pathname) || pathname === "/robots.txt";
 }
 
 /** A host as written in the setting or a Host header: lower case, no port, no scheme. */
