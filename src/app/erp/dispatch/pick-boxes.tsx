@@ -28,9 +28,9 @@ export function PickBoxesButton({ board, boxes, onDone }: { board: DispatchBoard
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button type="button" variant="secondary" className="h-12" onClick={() => setOpen(true)} disabled={!boxes.length} title={boxes.length ? "Choose boxes from a list instead of scanning" : "No box in stock matches this order's waiting lines"}>
+      <Button type="button" variant="secondary" className="h-12" onClick={() => setOpen(true)} disabled={!boxes.length} title={boxes.length ? "Choose boxes or loose cans from a list instead of scanning" : "No box or loose can in stock matches this order's waiting lines"}>
         <Icon n="filter" s={15} />
-        Pick boxes
+        Pick from list
       </Button>
       {open ? (
         <PickBoxesDialog
@@ -47,7 +47,7 @@ export function PickBoxesButton({ board, boxes, onDone }: { board: DispatchBoard
 }
 
 function PickBoxesDialog({ board, boxes, onClose }: { board: DispatchBoard; boxes: PickableBox[]; onClose: (added: boolean) => void }) {
-  const lines = board.lines.filter((l) => !l.cancelled && !l.dispatched && l.boxed);
+  const lines = board.lines.filter((l) => !l.cancelled && !l.dispatched);
   const [term, setTerm] = useState("");
   const [lineIds, setLineIds] = useState<string[]>([]);
   const [lots, setLots] = useState<string[]>([]);
@@ -114,10 +114,10 @@ function PickBoxesDialog({ board, boxes, onClose }: { board: DispatchBoard; boxe
   if (outcomes) {
     const good = outcomes.filter((o) => o.ok).length;
     return (
-      <ErpDialog onClose={() => onClose(true)} label="Boxes added" size="md" tall={false}>
+      <ErpDialog onClose={() => onClose(true)} label="Added" size="md" tall={false}>
         <DialogHeader onClose={() => onClose(true)}>
           <DialogTitle>
-            {nf(good)} of {nf(outcomes.length)} boxes added
+            {nf(good)} of {nf(outcomes.length)} added
           </DialogTitle>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-1">
@@ -128,7 +128,7 @@ function PickBoxesDialog({ board, boxes, onClose }: { board: DispatchBoard; boxe
             </div>
           ))}
         </DialogBody>
-        <DialogFooter left={good < outcomes.length ? "A box that was not added is in the scan log with the reason." : undefined}>
+        <DialogFooter left={good < outcomes.length ? "Anything not added is in the scan log with the reason." : undefined}>
           <Button variant="primary" onClick={() => onClose(true)}>
             Done
           </Button>
@@ -138,15 +138,15 @@ function PickBoxesDialog({ board, boxes, onClose }: { board: DispatchBoard; boxe
   }
 
   return (
-    <ErpDialog onClose={() => !busy && onClose(false)} label="Pick boxes" size="lg">
+    <ErpDialog onClose={() => !busy && onClose(false)} label="Pick from list" size="lg">
       <DialogHeader onClose={() => !busy && onClose(false)}>
-        <DialogTitle>Pick boxes for order {board.orderNo}</DialogTitle>
+        <DialogTitle>Pick boxes or loose cans for order {board.orderNo}</DialogTitle>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-3">
         <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <label className="flex flex-col gap-1">
-            <span className={fieldLabelClass}>Box no., lot or product</span>
-            <Input value={term} onChange={(e) => setTerm(e.target.value)} autoFocus placeholder="e.g. 876" aria-label="Search boxes" className="h-9 font-mono" />
+            <span className={fieldLabelClass}>Label no., lot or product</span>
+            <Input value={term} onChange={(e) => setTerm(e.target.value)} autoFocus placeholder="e.g. 876" aria-label="Search labels" className="h-9 font-mono" />
           </label>
           <label className="flex flex-col gap-1">
             <span className={fieldLabelClass}>Product</span>
@@ -168,7 +168,7 @@ function PickBoxesDialog({ board, boxes, onClose }: { board: DispatchBoard; boxe
 
         <div className="flex items-center justify-between gap-3 text-meta">
           <span className="text-muted">
-            {nf(shown.length)} of {nf(boxes.length)} boxes{shown.length < boxes.length ? " match" : ""}
+            {nf(shown.length)} of {nf(boxes.length)} labels{shown.length < boxes.length ? " match" : ""}
           </span>
           <span className="flex gap-4">
             <LinkButton onClick={fillNeeded}>Tick what each line needs</LinkButton>
@@ -189,17 +189,17 @@ function PickBoxesDialog({ board, boxes, onClose }: { board: DispatchBoard; boxe
               </label>
             ))
           ) : (
-            <div className="px-3 py-6 text-center text-meta text-muted">No box in stock matches. Change the number or the filters.</div>
+            <div className="px-3 py-6 text-center text-meta text-muted">Nothing in stock matches. Change the number or the filters.</div>
           )}
-          {shown.length > 400 ? <div className="px-3 py-2 text-meta text-muted">The first 400 of {nf(shown.length)} are shown — narrow by lot or box number.</div> : null}
+          {shown.length > 400 ? <div className="px-3 py-2 text-meta text-muted">The first 400 of {nf(shown.length)} are shown — narrow by lot or label number.</div> : null}
         </div>
       </DialogBody>
-      <DialogFooter left={busy ? `Adding ${busy.done + 1} of ${busy.of}…` : pickedPerLine.length ? pickedPerLine.map((x) => `${x.l.skuName} ${x.n}`).join(" · ") : "Each box is checked against the order as it is added, exactly as a scan."}>
+      <DialogFooter left={busy ? `Adding ${busy.done + 1} of ${busy.of}…` : pickedPerLine.length ? pickedPerLine.map((x) => `${x.l.skuName} ${x.n}`).join(" · ") : "Each one is checked against the order as it is added, exactly as a scan."}>
         <Button variant="secondary" disabled={!!busy} onClick={() => onClose(false)}>
           Cancel
         </Button>
         <Button variant="primary" disabled={!!busy || !picked.length} onClick={() => void add()}>
-          {busy ? "Adding…" : `Add ${nf(picked.length)} ${picked.length === 1 ? "box" : "boxes"}`}
+          {busy ? "Adding…" : `Add ${nf(picked.length)}`}
         </Button>
       </DialogFooter>
     </ErpDialog>
