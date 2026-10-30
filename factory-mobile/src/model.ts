@@ -246,6 +246,11 @@ export function mintKey(taskId: string): string {
   return "MOB-" + taskId.replace(/^T-/, "") + "-" + Date.now().toString(36) + r;
 }
 
+/** One loading scan's id: minted when the label is read, so the server never judges the same read twice. */
+export function scanId(): string {
+  return "SC-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 /* ------------------------------------------------------------ the network */
 
 let lastNet: Net = "online";

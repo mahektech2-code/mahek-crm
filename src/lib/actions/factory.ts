@@ -16,12 +16,14 @@ import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "@/lib/factory/head";
-import type { LorryBoard, LorryFind, LorryScan, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload } from "@/lib/factory/lorry";
+import { lorryScanBatch } from "@/lib/factory/scan-batch";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { readStoredLrs } from "@/lib/erp/lr-upload-read";
 import { after } from "next/server";
+import { headers } from "next/headers";
 import { findDrumLot, lotRefusal, recordEmptyDrum, type DrumLot } from "@/lib/erp/drums";
 import { DRUM_STATUS_LABEL, OWNERSHIP_LABEL, drumLabel } from "@/lib/erp/engines/drums";
 import { getConfig } from "@/lib/config/store";
@@ -373,6 +375,28 @@ export async function factoryLorryScan(key: string, code: string, taskId: string
   const fc = await factoryContext();
   if (!fc) return { ok: false, code: String(code ?? ""), ...SIGNED_OUT, board: null, task: null, override: null };
   return lorryScan(fc, key, code, taskId, half ?? null);
+}
+/**
+ * Every scan the phone has queued, judged in one round trip (`lib/factory/scan-batch.ts`).
+ * `held` is the half the phone holds before the first of them; `timings` how
+ * long the loader waited on the previous batch's, for the scan log.
+ */
+export async function factoryLorryScanBatch(key: string, taskId: string | null, held: string | null, scans: LorryScanIn[], timings?: { id: string; ms: number }[]): Promise<LorryBatch> {
+  const fc = await factoryContext();
+  const list = Array.isArray(scans) ? scans : [];
+  if (!fc) {
+    const [first, ...rest] = list;
+    return {
+      results: first ? [{ ok: false, id: String(first.id ?? ""), code: String(first.code ?? ""), ...SIGNED_OUT, task: null, override: null, half: null }] : [],
+      notJudged: rest.map((s) => String(s.id ?? "")),
+      board: null,
+      data: null,
+      task: null,
+      half: null,
+    };
+  }
+  const build = (await headers()).get("x-factory-client");
+  return lorryScanBatch(fc, key, taskId, held ?? null, list, timings ?? [], build ? build.slice(0, 40) : null);
 }
 export async function factoryLorryUnload(key: string, unitId: string): Promise<LorryScan> {
   const fc = await factoryContext();

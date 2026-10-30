@@ -368,6 +368,28 @@ export type LorryScan =
   | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null; stale?: boolean; half?: LorryHalf | null }
   | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null; repeat?: boolean; half?: LorryHalf | null };
 
+/** One label read on the lorry, as the phone queued it: its own id, so a resend is never judged twice. */
+export type LorryScanIn = { id: string; code: string; at?: string | null };
+/** A scan's answer inside a batch: the single scan's answer without the board, which comes once for the batch. */
+export type LorryBatchResult =
+  | (Omit<Extract<LorryScan, { ok: true }>, "board" | "data"> & { id: string })
+  | (Omit<Extract<LorryScan, { ok: false }>, "board"> & { id: string });
+/**
+ * Every queued scan judged in one round trip, in order. Judging stops at the
+ * first refusal, as one-at-a-time did: `notJudged` are the scans behind it,
+ * which the loader is told to scan again once they have seen why.
+ */
+export type LorryBatch = {
+  results: LorryBatchResult[];
+  notJudged: string[];
+  board: LorryBoard | null;
+  data: FactoryData | null;
+  /** The lorry's job once a scan has made it. */
+  task: string | null;
+  /** The half of a pair the phone holds after the last scan judged. */
+  half: LorryHalf | null;
+};
+
 /** A box scanned on Home: which lorries still need its item. */
 export type LorryFind =
   | { ok: true; code: string; name: string; lorries: { key: string; name: string | null; need: number }[] }
