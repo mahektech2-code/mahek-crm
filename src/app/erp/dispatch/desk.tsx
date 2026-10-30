@@ -49,7 +49,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
   const input = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState("");
   const [last, setLast] = useState<Last>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; text: string } | null>(null);
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(today);
   const [vehicle, setVehicle] = useState("");
@@ -63,7 +63,9 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
   const totalTarget = open.reduce((a, l) => a + l.target, 0);
   const totalScanned = open.reduce((a, l) => a + Math.min(l.scanned, l.target), 0);
   const gated = board.lines.filter((l) => l.gate && !l.dispatched);
-  const billedWaiting = board.lines.filter((l) => l.billed && !l.dispatched);
+  /* "Mark not verified" is an administrator's, and the line cannot be dispatched after it — so it is not waiting, and the panel says why. */
+  const markedNot = board.lines.filter((l) => l.billed && !l.dispatched && l.verification === "Not Verify");
+  const billedWaiting = board.lines.filter((l) => l.billed && !l.dispatched && l.verification !== "Not Verify");
   /* The invoice check is optional: a pending check holds nothing, a rejected invoice holds the order. */
   const invoiceWaiting = billedWaiting.filter((l) => l.invoiceCheck === "Rejected");
   const pendingOverrides = board.overrides.filter((o) => o.status === "Pending");
@@ -76,7 +78,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
     start(async () => {
       const res = await erpDispatchScan(board.orderNo, c);
       if (!res.ok) {
-        setError(res.error);
+        setError({ title: "Not scanned", text: res.error });
         beep(false);
       } else {
         setLast({ code: res.data.code, verdict: res.data.verdict });
@@ -92,7 +94,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
   const act = (fn: () => Promise<{ ok: boolean; error?: string; message?: string }>) =>
     start(async () => {
       const res = await fn();
-      if (!res.ok) setError(res.error ?? "That did not work.");
+      if (!res.ok) setError({ title: "Not done", text: res.error ?? "That did not work." });
       else setFlash(res.message ?? "Done");
       router.refresh();
     });
@@ -213,7 +215,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
             ))}
           </Card>
 
-          {error ? <Panel tone="bad" title="Not scanned" text={error} /> : null}
+          {error ? <Panel tone="bad" title={error.title} text={error.text} /> : null}
           {flash ? <Panel tone="ok" title="Done" text={flash} /> : null}
           {last ? (
             last.verdict.ok ? (
@@ -283,7 +285,9 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
         <div className="flex flex-col gap-5">
           <Card className="px-4 py-3">
             <SubTitle className="mb-0">Confirm dispatch</SubTitle>
-            {!billedWaiting.length ? (
+            {!billedWaiting.length && markedNot.length ? (
+              <div className="mt-1 text-meta text-warn-ink">An administrator marked this order not verified on Orders → Billing &amp; dispatch, so it cannot be confirmed here. Ask an ERP administrator.</div>
+            ) : !billedWaiting.length ? (
               <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the order on Orders → Ready to bill.</div>
             ) : invoiceWaiting.length ? (
               <div className="mt-1 text-meta text-warn-ink">

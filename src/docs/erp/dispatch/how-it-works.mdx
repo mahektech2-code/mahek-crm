@@ -81,7 +81,7 @@ An order is dispatched once its Tally invoice is entered. The invoice check on [
 </Rule>
 
 <Rule title="The scan gate">
-A line must have every box scanned before it can be dispatched **if any lot allocated to it has box ids**. The order leaves whole, so one line still to scan holds every line of it. A line whose lots have none — stock packed before box ids existed — is not held back, because there is nothing to scan. The whole gate is switched by <Setting k="erp.dispatch.requireScan" />.
+A line must have every box scanned before it can be dispatched **if any lot allocated to it has box ids**. The order leaves whole, so one line still to scan holds every line of it. A line whose lots have none — stock packed before box ids existed — is not held back, because there is nothing to scan. A line with **no lot allocated at all** is not that case and is held like any other: nothing yet says what is going on the lorry, and scanning its boxes is what allocates their lot. The whole gate is switched by <Setting k="erp.dispatch.requireScan" />.
 </Rule>
 
 <Callout kind="why" title="Why old stock is let through">

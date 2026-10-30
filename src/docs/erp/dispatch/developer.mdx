@@ -82,7 +82,7 @@ The action re-checks the power before `decideOverride` does: `requireErpWrite("d
 
 <Code file="src/lib/erp/dispatch.ts" symbol="markDispatched" />
 
-`erpDispatchVerify(orderNo, { date, vehicle, driver, remark })` selects the order's billed lines still `Pending` and runs `screenModule("orderDetails").bulk.verify` with `requireErpWrite("orderDetails")`, so Billing & dispatch's rules hold from the desk too.
+`erpDispatchVerify(orderNo, { date, vehicle, driver, remark })` selects the order's billed lines still blank or `Pending` — the handler's own rule — and runs `screenModule("orderDetails").bulk.verify` with `requireErpWrite("orderDetails")`, so Billing & dispatch's rules hold from the desk too. Where none are, it says why: not billed, already dispatched, or marked *Not Verify* by an administrator.
 
 ## Tables
 

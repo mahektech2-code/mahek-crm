@@ -27,7 +27,7 @@ import { screenModule } from "@/lib/erp/screens";
 import { decideOverride, dispatchBoard, dispatchQueue, pickableBoxes, requestOverride, scanOntoOrder, unscanUnit } from "@/lib/erp/dispatch";
 import { traceCode, traceDashboard } from "@/lib/erp/traceability";
 import { boxLabels, unlabelledStock } from "@/lib/erp/label-data";
-import { erpGiveIds } from "@/lib/actions/erp-trace";
+import { erpDispatchVerify, erpGiveIds } from "@/lib/actions/erp-trace";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
 
@@ -406,5 +406,28 @@ describe("a loose order at the dispatch desk", () => {
 
     const scanned = await scanOntoOrder(await as(clerk), Number(o.no), offered[0].id);
     assert.ok(scanned.ok && scanned.data.verdict.ok, JSON.stringify(scanned));
+  });
+});
+
+describe("confirming dispatch from the desk", () => {
+  test("a lot-less line waits for its scans, and a refusal says what the line is rather than 'bill it first'", async () => {
+    /* Order 10058 left with no lot code — the gate read "no lot" as "packed before box ids" — and once an
+       administrator marked it not verified, the desk still offered Confirm and refused with "Bill it first". */
+    const a = await as(admin);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "1", rate: "100" }])).ok);
+    const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    const no = Number(o.no);
+    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
+    assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
+    const billed = await mod("orders").actions!.bill(a, o.id, { invoiceNo: `MMI/T/${tag}`, invoiceDate: TODAY });
+    assert.ok(billed.ok, msg(billed));
+
+    const board = await dispatchBoard(no);
+    assert.equal(board?.lines.find((l) => l.id === o.id)?.gate, "1 of 1 still to scan", "no lot is not 'packed before box ids'");
+
+    await db.execute(sql`update erp_order_details set verification = 'Not Verify' where order_id = ${o.id}`);
+    assert.match(msg(await erpDispatchVerify(no, { date: TODAY })), /marked order \d+ not verified/);
+    await db.execute(sql`update erp_order_details set verification = 'Verified' where order_id = ${o.id}`);
+    assert.match(msg(await erpDispatchVerify(no, { date: TODAY })), /has already been dispatched/);
   });
 });

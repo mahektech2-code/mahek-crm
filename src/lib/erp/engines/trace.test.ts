@@ -127,10 +127,13 @@ test("a loose unit never stands in for a box", () => {
 });
 
 test("scanning gates dispatch only where the lots carry units", () => {
-  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: false, target: 5, scanned: 0 }), null);
-  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: true, target: 5, scanned: 2 }), "3 of 5 still to scan");
-  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: true, target: 5, scanned: 5 }), null);
-  assert.equal(scanGate({ requireScan: false, lotsHaveUnits: true, target: 5, scanned: 0 }), null);
+  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: false, lotAllocated: true, target: 5, scanned: 0 }), null);
+  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: true, lotAllocated: true, target: 5, scanned: 2 }), "3 of 5 still to scan");
+  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: true, lotAllocated: true, target: 5, scanned: 5 }), null);
+  assert.equal(scanGate({ requireScan: false, lotsHaveUnits: true, lotAllocated: true, target: 5, scanned: 0 }), null);
+  /* No lot at all is not "packed before box ids": nothing says what went on the lorry (order 10058). */
+  assert.equal(scanGate({ requireScan: true, lotsHaveUnits: false, lotAllocated: false, target: 10, scanned: 0 }), "10 of 10 still to scan");
+  assert.equal(scanGate({ requireScan: false, lotsHaveUnits: false, lotAllocated: false, target: 10, scanned: 0 }), null);
 });
 
 test("only an Approved SFG lot may be filled; no QC row is Pending", () => {
