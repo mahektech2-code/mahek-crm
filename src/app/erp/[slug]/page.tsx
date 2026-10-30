@@ -75,7 +75,6 @@ export default async function ErpScreenPage({
       server={{ ...page, query }}
       openRow={openRow}
       label={screen.label}
-      sub={screen.sub}
       tabs={tabs}
       sections={sections}
       toggle={toggle}

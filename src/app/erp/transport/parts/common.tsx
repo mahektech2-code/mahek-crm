@@ -259,3 +259,10 @@ export function ReasonDialog({
     </ErpDialog>
   );
 }
+
+/** A driver's mobile, read out of the name-and-number dispatch typed ("Ramesh 98200 11001"). */
+export function driverPhone(driver: string | null): string | null {
+  const digits = (driver ?? "").replace(/\D/g, "");
+  const m = digits.match(/[6-9]\d{9}$/);
+  return m ? m[0] : null;
+}

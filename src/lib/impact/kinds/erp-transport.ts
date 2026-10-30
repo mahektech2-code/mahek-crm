@@ -51,7 +51,7 @@ export const lrVoidImpact: ImpactSource = {
     const items: ImpactItem[] = [
       {
         app: "ERP",
-        label: `${lrUploadName(lr.lrNo)} leaves the LR desk, marked void with your reason`,
+        label: `${lrUploadName(lr.lrNo)} leaves the Documents desk, marked void with your reason`,
         effect: "changed",
         count: 1,
         note: [lr.transporter, lr.lrDate ? `dated ${shortDay(lr.lrDate)}` : null, lr.destination ? `to ${lr.destination}` : null].filter(Boolean).join(" · ") || undefined,

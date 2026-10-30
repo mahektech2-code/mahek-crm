@@ -68,7 +68,7 @@ If you resolve an alert whose condition is still true, the next hourly run raise
 | **Negative or thin margin** | A dispatched order line lost money, or made less than the minimum margin | Orders → Billing & dispatch |
 | **Slow fulfilment** | An order line took more than the allowed days from order to dispatch | Orders → Billing & dispatch |
 | **Ready but not billed** | A line has been Ready and fully allocated for hours with no Tally bill number | Orders |
-| **LR missing** | A bill left days ago with no LR number | Logistics → LR desk |
+| **LR missing** | A bill left days ago with no LR number | Logistics → Documents desk |
 | **Credit note not issued** | A credit-note request was accepted days ago and not issued | Complaints & credit notes |
 | **Duplicate-looking expense** | The same amount was paid to the same payee for the same category twice within a few days | Petty Cash → Expenses |
 | **Cash account below zero** | Cash in Hand or Petty Cash shows more paid out than was ever put in — a transfer into it, or a receipt, is missing | Petty Cash → Cash & Bank → Accounts |
@@ -89,7 +89,7 @@ Every helper follows the same rules: it **reads**, you **check**, and nothing is
 |---|---|---|---|---|
 | **Read a supplier bill** | Purchases → Register (for people who can see purchase money) | A photo or PDF of the supplier's bill | Supplier and GSTIN, which register row each line is, quantities and rates, a bill number already used | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
 | **Draft an order from a message** | Orders → WhatsApp inbox | A pasted or spoken message, or WhatsApp replies | The customer, each SKU and its quantity in cans | [Orders](/docs/erp/orders) |
-| **Read an LR photo** | Logistics → Upload LRs (also on the Dispatch desk, and the Factory app's LR upload) | A lorry receipt | The LR number, date, transporter, destination, boxes and freight filled in for you; a number not shaped like that transporter's is marked *check* | [Logistics and LRs](/docs/erp/transport) |
+| **Read an LR photo** | Logistics → Upload (also on the Dispatch desk, and the Factory app's Upload LR or signed copy) | A lorry receipt | The LR number, date, transporter, destination, boxes and freight filled in for you; a number not shaped like that transporter's is marked *check* | [Logistics and LRs](/docs/erp/transport) |
 | **Read test photos** | Lot testing | The density meter, pH and test photos | Density and pH; a density far from the master is flagged. It never sets the verification. | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
 | **Suggest a summary** | Complaints & credit notes | The complaint's description | A one-line summary | [Complaints and credit notes](/docs/erp/complaints-and-credit-notes) |
 | **Level planner review** | Raw-material levels | The nightly plan worked out from history, against the season ahead | The planned minimum and maximum, and the reason given for any change; a level a person set is never moved | [Minimum levels and reordering](/docs/erp/stock-levels) |

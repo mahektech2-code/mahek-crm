@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
-import { Badge, Button, cx, SectionLabel } from "@/components/ui/primitives";
+import { Button, cx, SectionLabel } from "@/components/ui/primitives";
 import { eyebrowClass, insetClass } from "./look";
 import { FlagBadge, flagsBesideStatus, StatusBadge } from "./badge";
 import { useKit } from "./kit";
@@ -18,9 +18,8 @@ import "./panels/index";
  * its own (the purchase flow, a trace, test evidence) is the first tab and is
  * named for what it is; Details is every column the person may see and the
  * record's extra fields, calculated ones marked, three to a row. The actions
- * stay in the foot on every tab — available ones as buttons, unavailable ones
- * disabled with the reason said above them — so changing tab never hides what
- * can be done.
+ * stay in the foot on every tab. One that cannot be taken yet is drawn with a
+ * lock; pressing it says why in one line, rather than a tab of reasons.
  * ------------------------------------------------------------------------- */
 
 /** More actions than this and the rest go under "More". */
@@ -76,7 +75,6 @@ export function RecordDialog({
     ...extra.filter((f) => !screen.cols.some((c) => c.t !== "f" && c.k !== titleCol?.k && !covered.has(c.k) && c.l.toLowerCase() === f.l.toLowerCase())),
   ];
   const acts = row.actions ?? [];
-  const blocked = acts.filter((a) => a.why);
   const hiddenCount = screen.hidden.length + (row.hiddenFields ?? 0);
   /* The record's status is said once, in the heading, where it is read first —
      only a column CALLED Status or Stage: a badge column like "Material type"
@@ -88,8 +86,9 @@ export function RecordDialog({
   const tabs: DialogTab[] = [
     ...(panel ? [{ key: "panel", label: PANEL_TAB[row.panel!.kind] ?? "Overview" }] : []),
     { key: "details", label: "Details", count: shown.length },
-    ...(blocked.length ? [{ key: "blocked", label: "Not available yet", count: blocked.length }] : []),
   ];
+  /* Why the held-back action just pressed cannot be taken — a tablet has no hover for a title. */
+  const [why, setWhy] = useState<{ l: string; why: string } | null>(null);
   const [tab, setTab] = useState(tabs[0].key);
   const active = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
 
@@ -128,7 +127,7 @@ export function RecordDialog({
       </DialogHeader>
       {tabs.length > 1 ? <TabBar tabs={tabs} active={active} onChange={setTab} /> : null}
       <DialogBody>
-        {stages && active !== "blocked" ? <StageBar values={stages.values} at={String(row.v[stages.key] ?? "")} tones={tones} /> : null}
+        {stages ? <StageBar values={stages.values} at={String(row.v[stages.key] ?? "")} tones={tones} /> : null}
         {active === "panel" ? panel : null}
         {active === "details" ? (
           <>
@@ -138,9 +137,10 @@ export function RecordDialog({
                   <dt className={cx(eyebrowClass, "flex items-center gap-1.5 text-faint")}>
                     {f.l}
                     {f.der ? (
-                      <Badge tone="neutral" className="tracking-normal normal-case">
-                        Calculated
-                      </Badge>
+                      <span title="Worked out for you" className="flex">
+                        <Icon n="calc" s={12} />
+                        <span className="sr-only">Worked out for you</span>
+                      </span>
                     ) : null}
                   </dt>
                   <dd className="mt-1">
@@ -154,24 +154,21 @@ export function RecordDialog({
               ))}
             </dl>
             {hiddenCount ? (
-              <div className="flex items-center gap-1.5 text-meta text-muted">
+              <div className="flex items-center gap-1.5 text-meta text-muted" title="Not shown on your account">
                 <Icon n="lock" s={14} />
-                {hiddenCount} field{hiddenCount > 1 ? "s are" : " is"} not shown on your account.
+                {hiddenCount} hidden
               </div>
-            ) : null}
-            {!acts.length && screen.readOnly ? (
-              <div className="text-meta text-muted">Read-only. These entries are written by their source records, never by hand.</div>
             ) : null}
           </>
         ) : null}
-        {active === "blocked" ? (
-          <div className={insetClass}>
-            <SectionLabel className="mb-1">Not available yet</SectionLabel>
-            {blocked.map((b) => (
-              <div key={b.id} className="py-1 text-sm text-body">
-                <span className="font-medium text-ink">{b.l}</span> — {b.why}
-              </div>
-            ))}
+        {why ? (
+          <div role="status" className={cx(insetClass, "flex items-start gap-2 text-sm text-body")}>
+            <span className="mt-0.5 flex text-muted">
+              <Icon n="lock" s={14} />
+            </span>
+            <span>
+              <span className="font-medium text-ink">{why.l}</span> · {why.why}
+            </span>
           </div>
         ) : null}
       </DialogBody>
@@ -197,7 +194,7 @@ export function RecordDialog({
                     disabled: !!a.why,
                     why: a.why,
                     danger: DANGER.test(a.l),
-                    onSelect: () => (a.why ? setTab("blocked") : ui.act(screen.screen, a, row.id)),
+                    onSelect: () => (a.why ? setWhy({ l: a.l, why: a.why }) : ui.act(screen.screen, a, row.id)),
                   }))}
                 />
                 {shown.map((a) => {
@@ -206,12 +203,12 @@ export function RecordDialog({
               <Button
                 key={a.id}
                 variant={a.primary && okA ? "primary" : "secondary"}
-                onClick={() => (okA ? ui.act(screen.screen, a, row.id) : setTab("blocked"))}
+                onClick={() => (okA ? ui.act(screen.screen, a, row.id) : setWhy({ l: a.l, why: a.why! }))}
                 title={a.why || a.l}
                 aria-disabled={!okA}
                 className={cx(a.ai && okA && !a.primary && "border-brand text-brand-hover", !okA && "cursor-help opacity-50")}
               >
-                {a.ai ? <Icon n="spark" /> : null}
+                {!okA ? <Icon n="lock" s={14} /> : a.ai ? <Icon n="spark" /> : null}
                 {a.l}
               </Button>
             );

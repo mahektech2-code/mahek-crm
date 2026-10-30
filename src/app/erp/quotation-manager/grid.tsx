@@ -106,7 +106,6 @@ function csvCell(v: string): string {
 
 export function QuoteGrid({
   title,
-  sub,
   sheet,
   choices,
   today,
@@ -118,7 +117,6 @@ export function QuoteGrid({
   me,
 }: {
   title: string;
-  sub: string;
   sheet: QuoteSheet;
   /** What Purchase it offers: godowns, units, and the requirements waiting for a PO. */
   choices: PurchaseChoices;
@@ -709,7 +707,6 @@ export function QuoteGrid({
     <>
       <PageHeader
         title={title}
-        subtitle={sub}
         actions={
           <>
             <Button onClick={exportCsv}>Export CSV</Button>

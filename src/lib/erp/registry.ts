@@ -211,7 +211,7 @@ export const ERP_GROUPS: ErpGroup[] = [
       s("transport", "transport", "Logistics", "From the factory gate to the party's door.", true, [
         v("transport", "Today"),
         v("toTransport", "To transporter"),
-        v("pendingLr", "LR desk"),
+        v("pendingLr", "Documents desk"),
         v("trackLr", "On the road"),
         v("delivered", "Delivered"),
         v("lrMessages", "Customer messages"),

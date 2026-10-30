@@ -107,6 +107,9 @@ export type FieldSpec = {
   /** Options that depend on other fields' values: `{ by: "type", map: { Chemical: [...] } }`; a list of fields keys the map by their values joined with "|". */
   optsBy?: { by: string | string[]; map: Record<string, string[]> };
   hint?: string;
+  /** Keep the hint written under the box instead of behind the i — only for a
+   *  hint that changes what is typed (a format, a limit). Short, one line. */
+  hintShown?: boolean;
   /** Default value on open. */
   def?: string;
   /**

@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { Button, Card, checkboxClass, controlClass, cx } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { gridHeadClass, LinkButton, SubTitle } from "../../_ui/look";
-import { erpLogisticsAtTransport, erpLogisticsDue, erpLogisticsPackages } from "@/lib/actions/erp-logistics";
-import { addDays, shortDay } from "@/lib/erp/engines/logistics";
+import { erpLogisticsAtTransport, erpLogisticsDeliveredBy, erpLogisticsDue, erpLogisticsPackages } from "@/lib/actions/erp-logistics";
+import { addDays, MAHEK_VEHICLE, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
 import { BillRef, CallLink, DuePill, Empty, plural, sumLitres, sumPackages, useAct, useTicks, vehicleWords } from "./common";
 import { cleanWhole } from "@/lib/format";
@@ -56,6 +56,9 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
           <span className="mx-1 h-5 w-px bg-line" />
           <Button size="sm" variant="primary" disabled={!sel.length || pending} onClick={() => reached(sel)}>
             Reached transporter
+          </Button>
+          <Button size="sm" variant="ghost" disabled={!sel.length || pending} onClick={() => run(() => erpLogisticsDeliveredBy(sel, MAHEK_VEHICLE), (r) => r.ok && clear())} title="These go in our own vehicle instead — no LR; the customer-signed copy closes them">
+            Send in a Mahek Vehicle
           </Button>
           {sel.length ? (
             <LinkButton tone="muted" className="ml-auto text-meta" onClick={clear}>

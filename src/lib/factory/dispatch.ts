@@ -199,11 +199,15 @@ export async function saveLr(fc: FactoryCtx, input: LrFields & { fileId: string 
  * Safe to send twice: a photo already on an LR answers as already stored. A
  * file that is not this person's own fresh upload is refused, not stored.
  */
-export async function saveLrPhotos(fc: FactoryCtx, fileIds: string[]): Promise<LrBatchSave & { newIds?: string[] }> {
+export async function saveLrPhotos(fc: FactoryCtx, fileIds: string[], kindIn?: unknown): Promise<LrBatchSave & { newIds?: string[] }> {
   if (!fc.dispatch) return { ok: false, ...NOT_YOURS };
+  /* An older phone sends no kind: everything it uploads is an LR, as it always was. */
+  const kind = kindIn === "signed_copy" ? "signed_copy" : "lr";
+  const one = kind === "lr" ? "LR" : "signed copy";
+  const many = kind === "lr" ? "LRs" : "signed copies";
   const ids = [...new Set((Array.isArray(fileIds) ? fileIds : []).map((x) => String(x ?? "").trim()).filter(Boolean))];
   if (!ids.length) return { ok: false, title: "Add the LR photos", text: "No photo came with this upload.", fix: "Add the photos, then upload." };
-  if (ids.length > LR_BATCH_MAX) return { ok: false, title: "Too many at once", text: `Upload up to ${LR_BATCH_MAX} LRs at a time.`, fix: `Send the first ${LR_BATCH_MAX}, then the rest.` };
+  if (ids.length > LR_BATCH_MAX) return { ok: false, title: "Too many at once", text: `Upload up to ${LR_BATCH_MAX} ${many} at a time.`, fix: `Send the first ${LR_BATCH_MAX}, then the rest.` };
   const list = sql.join(ids.map((i) => sql`${i}`), sql`, `);
   const had = (await db.execute(sql`select file_id as "fileId", id from erp_lrs where status <> 'void' and file_id in (${list})`)) as unknown as { fileId: string; id: string }[];
   const already = new Set(had.map((h) => h.fileId));
@@ -212,28 +216,32 @@ export async function saveLrPhotos(fc: FactoryCtx, fileIds: string[]): Promise<L
   const fresh = ids.filter((i) => !already.has(i) && mine.some((m) => m.id === i));
   const refused = ids.length - already.size - fresh.length;
   let newIds: string[] = [];
+  let sameBytes: string[] = [];
   if (fresh.length) {
-    const res = await uploadLrs(ctxFor(fc), fresh.map((fileId) => ({ fileId })));
+    const res = await uploadLrs(ctxFor(fc), fresh.map((fileId) => ({ fileId, kind })));
     if (!res.ok) return { ok: false, title: "Not uploaded", text: res.error, fix: "Try again. The photos are kept on this phone." };
     newIds = res.data.ids;
-    await factoryAudit(fc, "factory.dispatch.lrBatch", null, `Uploaded ${newIds.length} LR photo${newIds.length === 1 ? "" : "s"}`, { lrs: newIds });
+    sameBytes = res.data.already;
+    if (newIds.length) await factoryAudit(fc, "factory.dispatch.lrBatch", null, `Uploaded ${newIds.length} ${newIds.length === 1 ? one : many}`, { lrs: newIds, kind });
   }
   const reading = newIds.length > 0 && (await lrReadingOn());
   const stored = newIds.length;
+  /* A photo already on the desk — sent again, or the same bytes from another phone — is stored once. */
+  const twice = already.size + (fresh.length - stored);
   const parts = [
-    stored ? `${stored} LR${stored === 1 ? "" : "s"} uploaded` : "",
-    already.size ? `${already.size} already uploaded` : "",
+    stored ? `${stored} ${stored === 1 ? one : many} sent` : "",
+    twice ? `${twice} already sent` : "",
     refused ? `${refused} could not be used — take ${refused === 1 ? "it" : "them"} again` : "",
   ].filter(Boolean);
   return {
     ok: true,
-    ids: [...had.map((h) => h.id), ...newIds],
+    ids: [...had.map((h) => h.id), ...sameBytes, ...newIds],
     newIds,
     stored,
-    already: already.size,
+    already: twice,
     refused,
     reading,
-    msg: parts.join(" · ") + (stored ? (reading ? ". The numbers are being read from the photos; logistics will attach them to the bills." : ". Logistics will read them and attach them to the bills.") : "."),
+    msg: parts.join(" · ") + (stored ? ". The office checks them." : "."),
     recent: recentOf(await uploadedLrs({ status: "all" })),
   };
 }

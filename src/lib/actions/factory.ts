@@ -431,10 +431,10 @@ export async function factoryUploadTrouble(reports: unknown): Promise<{ ok: true
   return { ok: true };
 }
 
-export async function factorySaveLrPhotos(fileIds: string[]): Promise<LrBatchSave> {
+export async function factorySaveLrPhotos(fileIds: string[], kind?: "lr" | "signed_copy"): Promise<LrBatchSave> {
   const fc = await factoryContext();
   if (!fc) return { ok: false, ...SIGNED_OUT };
-  const r = await saveLrPhotos(fc, fileIds);
+  const r = await saveLrPhotos(fc, fileIds, kind);
   if (!r.ok) return r;
   const { newIds, ...answer } = r;
   if (newIds?.length) {

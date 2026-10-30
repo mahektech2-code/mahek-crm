@@ -180,7 +180,7 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(msg(await L.voidLr(ctx, nine.id, "duplicate photo")), "Check what this affects and confirm it first.");
     const voiding = await confirmed("erp-lr-void", nine.id);
     assert.equal(voiding.report.confirmWord, "LR-9");
-    assert.ok(voiding.report.items.some((i) => i.effect === "changed" && /leaves the LR desk/.test(i.label)), JSON.stringify(voiding.report.items));
+    assert.ok(voiding.report.items.some((i) => i.effect === "changed" && /leaves the Documents desk/.test(i.label)), JSON.stringify(voiding.report.items));
     assert.ok((await L.voidLr(ctx, nine.id, "duplicate photo", voiding.confirmation)).ok);
     /* A name that is not on the list is refused — on an upload and on an edit — and the list does not grow. */
     const listed = (await db.select().from(erpTransporters)).length;
@@ -831,5 +831,161 @@ describe("help videos", () => {
     assert.equal((await db.select().from(erpVideos).where(eq(erpVideos.id, v.id))).length, 0);
     const [f] = await db.select({ status: attachments.status }).from(attachments).where(eq(attachments.id, file));
     assert.equal(f.status, "removed");
+  });
+});
+
+describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Vehicle (0301)", () => {
+  async function dispatchOwn(date: string, qty: number, bill: string, dispatched: string, verify: Record<string, string>) {
+    const ctx = await as(admin);
+    const made = await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", deliveredBy: "Mahek Vehicle" }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+    assert.ok(made.ok, msg(made));
+    const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date} and ${erpOrders.qtyCans} = ${qty}`);
+    assert.equal(o.transporter, "Mahek Vehicle", "Delivered by: Mahek Vehicle is the order's transporter");
+    await db.execute(sql`update erp_orders set order_check = 'Verified' where order_no = ${o.orderNo}`);
+    await mod("orders").actions!.ready(ctx, o.id, {});
+    assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG2BH", qty: String(qty) }, [], o.id)).ok);
+    const ed = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", deliveredBy: "Mahek Vehicle", qty: String(qty), rate: "300", transport: "0" }, [], o.id);
+    assert.ok(ed.ok, msg(ed));
+    const billed = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: dispatched });
+    assert.ok(billed.ok, msg(billed));
+    await db.execute(sql`update erp_order_details set invoice_check = 'Approved' where order_id in (select id from erp_orders where order_no = ${o.orderNo})`);
+    return { o, verify: () => mod("orderDetails").actions!.verify(ctx, o.id, { date: dispatched, ...verify }) };
+  }
+
+  before(async () => {
+    await db.insert(erpTransporters).values({ id: id("etr"), name: "Mahek Vehicle" }).onConflictDoNothing();
+    const [p] = await db.select().from(products).where(eq(products.name, SKU));
+    await db.insert(erpFgEntries).values({ id: id("fge"), sourceType: "fill", sourceId: "fin_y", entryDate: "2026-08-01", finishedGoodId: p.finishedGoodId!, lotCode: "FG2BH", godownId: "erpg_bhiwandi", quantity: 60, packingType: "Can", skuId: p.id });
+  });
+
+  let ownId = "";
+
+  test("a Mahek Vehicle cannot leave unnamed: the vehicle and the driver are asked", async () => {
+    const { verify } = await dispatchOwn("2026-10-01", 3, "MP/26-27/9901", "2026-10-02", {});
+    assert.match(msg(await verify()), /vehicle number/);
+    const { verify: v2 } = await dispatchOwn("2026-10-03", 4, "MP/26-27/9902", "2026-10-04", { vehicle: "mh04 kl 2231" });
+    assert.match(msg(await v2()), /driver/);
+    const { o, verify: v3 } = await dispatchOwn("2026-10-05", 5, "MP/26-27/9903", "2026-10-06", { vehicle: "MH04 KL 2231", driver: "Driver One 9820011099" });
+    const r = await v3();
+    assert.ok(r.ok, msg(r));
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.orderNo, o.orderNo));
+    ownId = t.id;
+    const [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.ownVehicle, true);
+    assert.equal(c.phase, "onRoad", "no transporter's godown and no LR to wait for");
+    assert.equal(c.nextCallOn, "2026-10-06", "the driver is rung from the day it leaves");
+    assert.match(c.driver ?? "", /9820011099/);
+  });
+
+  test("the driver's update moves it on the road with no LR; an LR cannot be put on it", async () => {
+    const ctx = await as(admin);
+    const up = await L.updateConsignment(ctx, [ownId], { stage: "Out for Delivery", note: "Driver says near the shop", notify: false });
+    assert.ok(up.ok, msg(up));
+    const lr = await L.uploadLrs(ctx, [{ lrNo: "OWN-1", transporter: "VRL" }]);
+    assert.ok(lr.ok);
+    assert.match(msg(await L.attachLr(ctx, lr.ok ? lr.data.ids[0] : "", [ownId], { notify: false })), /Mahek Vehicle/);
+  });
+
+  test("it closes only with the customer-signed copy, and who signed it", async () => {
+    const ctx = await as(admin);
+    assert.match(msg(await L.markDelivered(ctx, [ownId], { date: "2026-10-07", notify: false })), /signed copy/);
+    const up = await L.uploadLrs(ctx, [{ kind: "signed_copy", billHint: "9903", lrNo: "IGNORED", transporter: "Gati" }]);
+    assert.ok(up.ok, msg(up));
+    const copy = up.ok ? up.data.ids[0] : "";
+    const [row] = await db.execute(sql`select kind, lr_no as "lrNo", transporter from erp_lrs where id = ${copy}`) as unknown as { kind: string; lrNo: string | null; transporter: string | null }[];
+    assert.deepEqual(row, { kind: "signed_copy", lrNo: null, transporter: null }, "a signed copy carries no LR number or transporter");
+    assert.match(msg(await L.attachLr(ctx, copy, [ownId], { notify: false })), /signed copy/, "a signed copy is never attached as an LR");
+    assert.match(msg(await L.markDelivered(ctx, [ownId], { date: "2026-10-07", signedCopyId: copy, notify: false })), /who signed/);
+    const done = await L.markDelivered(ctx, [ownId], { date: "2026-10-07", signedCopyId: copy, receivedBy: "Contact Two", notify: false });
+    assert.ok(done.ok, msg(done));
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.id, ownId));
+    assert.equal(t.materialStage, "Close - Received to Party");
+    assert.equal(t.signedCopyId, copy);
+    assert.equal(t.receivedBy, "Contact Two");
+    const [l] = await db.execute(sql`select status, received_by as "receivedBy" from erp_lrs where id = ${copy}`) as unknown as { status: string; receivedBy: string }[];
+    assert.deepEqual(l, { status: "assigned", receivedBy: "Contact Two" });
+  });
+
+  test("the same photo twice is stored once", async () => {
+    const ctx = await as(admin);
+    const a = id("att");
+    const b = id("att");
+    for (const f of [a, b]) await db.insert(attachments).values({ id: f, filename: "lr.jpg", storedRef: `test/${f}`, contentType: "image/jpeg", sizeBytes: 10, status: "available", uploadedById: admin.id, contentHash: `hash-${tag}` } as never);
+    const first = await L.uploadLrs(ctx, [{ fileId: a }, { fileId: b }]);
+    assert.ok(first.ok, msg(first));
+    assert.equal(first.ok && first.data.ids.length, 1, "one photo, sent twice in one upload, is one LR");
+    const again = await L.uploadLrs(ctx, [{ fileId: b }]);
+    assert.ok(again.ok);
+    assert.deepEqual(again.ok && again.data, { ids: [], already: first.ok ? first.data.ids : [] }, "and sent again later it answers with the first");
+  });
+
+  test("a second photo of one LR is flagged beside the first, and discarding it keeps the first", async () => {
+    const ctx = await as(admin);
+    const { duplicateFlags } = await import("@/lib/erp/engines/delivery-proof");
+    const one = await L.uploadLrs(ctx, [{ lrNo: "LR-5001", transporter: "VRL", packages: 4 }]);
+    const two = await L.uploadLrs(ctx, [{ transporter: "VRL", note: "photo only" }]);
+    assert.ok(one.ok && two.ok);
+    const second = two.ok ? two.data.ids[0] : "";
+    /* What the AI read off the second photo, kept beside the empty number box. */
+    await db.execute(sql`update erp_lrs set read_lr_no = 'LR5001', read_at = now() where id = ${second}`);
+    const desk = await L.uploadedLrs({ status: "all", recentDays: 120 });
+    const flag = duplicateFlags(desk).get(second);
+    assert.equal(flag?.kind, "duplicate");
+    assert.equal(flag?.ofId, one.ok ? one.data.ids[0] : "");
+    const r = await L.discardDuplicate(ctx, second);
+    assert.ok(r.ok, msg(r));
+    const [l] = await db.execute(sql`select status, void_reason as why from erp_lrs where id = ${second}`) as unknown as { status: string; why: string }[];
+    assert.equal(l.status, "void");
+    assert.match(l.why, /Duplicate of LR LR-5001/);
+    assert.match(msg(await L.discardDuplicate(ctx, one.ok ? one.data.ids[0] : "")), /does not look like a copy/, "the first one is never the duplicate");
+  });
+
+  test("a near number is a question; keeping both stops it being asked again", async () => {
+    const ctx = await as(admin);
+    const { duplicateFlags } = await import("@/lib/erp/engines/delivery-proof");
+    const one = await L.uploadLrs(ctx, [{ lrNo: "33120", transporter: "Gati", packages: 20, lrDate: "2026-09-01" }]);
+    const two = await L.uploadLrs(ctx, [{ lrNo: "3312", transporter: "Gati", packages: 20, lrDate: "2026-09-01" }]);
+    assert.ok(one.ok && two.ok);
+    const second = two.ok ? two.data.ids[0] : "";
+    assert.equal(duplicateFlags(await L.uploadedLrs({ status: "all", recentDays: 120 })).get(second)?.kind, "check");
+    assert.ok((await L.clearDuplicate(ctx, second)).ok);
+    assert.equal(duplicateFlags(await L.uploadedLrs({ status: "all", recentDays: 120 })).get(second), undefined);
+  });
+
+  test("who delivers a bill changes until it is delivered, never under an LR", async () => {
+    const ctx = await as(admin);
+    const o = await dispatch("2026-10-10", 7, "MP/26-27/9910", "2026-10-11");
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.orderNo, o.orderNo));
+    const r = await L.setDeliveredBy(ctx, [t.id], "Mahek Vehicle");
+    assert.ok(r.ok, msg(r));
+    const [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.ownVehicle, true);
+    assert.equal(c.phase, "onRoad");
+    const [line] = await db.select({ transporter: erpOrders.transporter }).from(erpOrders).where(eq(erpOrders.orderNo, o.orderNo));
+    assert.equal(line.transporter, "Mahek Vehicle", "the order's own lines move with it");
+    assert.ok((await L.setDeliveredBy(ctx, [t.id], "gati")).ok, "and back, to a listed transporter");
+    const lr = await L.uploadLrs(ctx, [{ lrNo: "LR-9910", transporter: "Gati" }]);
+    assert.ok(lr.ok && (await L.attachLr(ctx, lr.data.ids[0], [t.id], { notify: false })).ok);
+    assert.match(msg(await L.setDeliveredBy(ctx, [t.id], "Mahek Vehicle")), /Take it off the LR/);
+    assert.match(msg(await L.setDeliveredBy(ctx, [ownId], "VRL")), /already delivered/);
+  });
+
+  test("our own vehicle keeps its name and stays on the list", async () => {
+    const ctx = await as(admin);
+    const [mv] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, "Mahek Vehicle"));
+    assert.match(msg(await L.saveTransporter(ctx, { id: mv.id, name: "Own Truck" })), /keeps its name/);
+    assert.match(msg(await L.saveTransporter(ctx, { id: mv.id, name: "Mahek Vehicle", active: false })), /cannot be switched off/);
+    const [vrl] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, "VRL"));
+    assert.match(msg(await L.mergeTransporter(ctx, vrl.id, mv.id)), /cannot be merged/);
+  });
+
+  test("an upload is moved between LRs and signed copies only while it is on the desk", async () => {
+    const ctx = await as(admin);
+    const up = await L.uploadLrs(ctx, [{ lrNo: "LR-7777", transporter: "VRL" }]);
+    assert.ok(up.ok);
+    const lid = up.ok ? up.data.ids[0] : "";
+    assert.ok((await L.setLrKind(ctx, lid, "signed_copy")).ok);
+    const [l] = await db.execute(sql`select kind, lr_no as "lrNo" from erp_lrs where id = ${lid}`) as unknown as { kind: string; lrNo: string | null }[];
+    assert.deepEqual(l, { kind: "signed_copy", lrNo: null });
   });
 });

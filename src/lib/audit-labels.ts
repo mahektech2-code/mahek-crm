@@ -980,6 +980,13 @@ export const VERBS: Record<string, string> = {
   lrEdit: "edited an LR on {}",
   lrUpload: "uploaded LRs for {}",
   lrVoid: "voided an LR on {}",
+  /* Delivery proof on the Documents desk (0301). */
+  deliveredBy: "changed who delivers {}",
+  dupCleared: "kept a copy flagged as a possible duplicate on {}",
+  dupDiscarded: "discarded a duplicate copy on {}",
+  lrKind: "moved an upload between LRs and signed copies on {}",
+  lrPhoto: "cropped or rotated the photo on {}",
+  signedCopyEdit: "edited a signed copy on {}",
   messageSent: "marked a customer message about {} sent",
   messageSkipped: "decided not to send a customer message about {}",
   packages: "corrected the boxes on {}",

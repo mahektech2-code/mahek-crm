@@ -2077,8 +2077,15 @@
     {
       "idx": 296,
       "version": "7",
-      "when": 1793607500000,
-      "tag": "0301_price_books",
+      "when": 1793607260000,
+      "tag": "0301_delivery_proof",
+      "breakpoints": true
+    },
+    {
+      "idx": 297,
+      "version": "7",
+      "when": 1793607600000,
+      "tag": "0302_price_books",
       "breakpoints": true
     }
   ]

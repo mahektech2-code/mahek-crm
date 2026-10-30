@@ -29,6 +29,7 @@ import { stamp } from "@/lib/format";
 import { activeScopesAndLists, chainedRate, geographyOf, resolveOptions, rowsForLists } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
 import { listedTransporterName, transporterChoices } from "../transporter-rename";
+import { isMahekVehicle, MAHEK_VEHICLE } from "../engines/logistics";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
 import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
@@ -642,6 +643,9 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       si: standingInstructions({ instructions: p.p?.standingInstructions ?? null, deliveryType: p.deliveryType, paymentType: p.freightTerm, weightType: p.p?.weightType ?? null }),
       t: p.p?.transporter ?? "",
     };
+  /* A party whose own transporter is our vehicle opens on it. */
+  const ownDefault: Record<string, string> = {};
+  for (const [name, v] of Object.entries(party)) if (isMahekVehicle(v.t)) ownDefault[name] = MAHEK_VEHICLE;
   const skuList = [...skus.values()].sort((a, b) => a.name.localeCompare(b.name));
   const cpb: Record<string, number> = {};
   const loose: Record<string, boolean> = {};
@@ -663,8 +667,8 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
     submit: "Save order",
     lineLabel: "SKU",
     init: fixed
-      ? { orderFixed: String(fixed.orderNo), date: fixed.date, godown: fixed.godown, billing: fixed.billing, delivery: fixed.delivery, transporter: fixed.transporter, source: fixed.source }
-      : { date: today(), godown: ctx.workingGodown?.name ?? "" },
+      ? { orderFixed: String(fixed.orderNo), date: fixed.date, godown: fixed.godown, billing: fixed.billing, delivery: fixed.delivery, transporter: isMahekVehicle(fixed.transporter) ? "" : fixed.transporter, deliveredBy: isMahekVehicle(fixed.transporter) ? MAHEK_VEHICLE : "Transporter", source: fixed.source }
+      : { date: today(), godown: ctx.workingGodown?.name ?? "", deliveredBy: "Transporter" },
     data: { party, cpb, loose },
     header: [
       { k: "orderNo", l: "Order number", t: "derived", calc: "order.no" },
@@ -675,7 +679,16 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       { k: "delivery", l: "Delivery party", t: "select", opts: deliveryNames, hint: "Blank delivers to the billing party. Third-party shops are listed too.", readOnly: !!fixed },
       { k: "area", l: "Area", t: "derived", calc: "order.area" },
       { k: "si", l: "Standing instructions", t: "derived", calc: "order.si" },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
+      {
+        k: "deliveredBy",
+        l: "Delivered by",
+        t: "select",
+        req: true,
+        opts: [...DELIVERED_BY],
+        hint: "A Mahek Vehicle carries no LR — the customer-signed copy closes the delivery.",
+        fillBy: { by: ["delivery"], map: ownDefault },
+      },
+      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "The day it should leave — the requested date, if the customer gave one. The lists say today, tomorrow or late from it." },
       ...(pricing ? ([{ k: "priceList", l: "Price list", t: "text", readOnly: true, untagged: true, fillBy: { by: ["billing"], map: pricing.list, otherwise: "" } }] as FieldSpec[]) : []),
       ...(pricing && seeAmounts
@@ -773,7 +786,8 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       status: ORDER_STATUSES.includes(l.o.status) ? l.o.status : "Under Process",
       dispatchOn: l.o.dispatchOn ?? "",
       delivery: l.delivery.name,
-      transporter: l.o.transporter ?? "",
+      transporter: isMahekVehicle(l.o.transporter) ? "" : (l.o.transporter ?? ""),
+      deliveredBy: isMahekVehicle(l.o.transporter) ? MAHEK_VEHICLE : "Transporter",
       qty: String(l.o.qtyCans),
       rate: rupeesField(l.o.ratePaise),
       discount: l.o.discountBp == null ? "" : String(l.o.discountBp / 100),
@@ -784,7 +798,8 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       { k: "status", l: "Status", t: "select", req: true, opts: ORDER_STATUSES, sec: "Order", hint: "Under Process and Ready are production's; Hold From Office and Cancel are the order's." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "Blank: not planned yet." },
       { k: "delivery", l: "Delivery party", t: "select", req: true, opts: names, readOnly: l.inDetails },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "From the transporter list. A new one is added under Transporters first." },
+      { k: "deliveredBy", l: "Delivered by", t: "select", req: true, opts: [...DELIVERED_BY] },
+      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "From the transporter list. A new one is added under Transporters first." },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails, sec: "Quantity and price" },
       ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0 }] as FieldSpec[]) : []),
       ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100, hint: DISCOUNT_HINT }] as FieldSpec[]) : []),
@@ -837,8 +852,8 @@ async function editOrderForm(ctx: ErpContext, id: string): Promise<FormSpec | nu
       .filter(Boolean)
       .join(" "),
     submit: "Save order",
-    init: { ...base.init, dispatchOn: first.o.dispatchOn ?? "", delivery: first.delivery.name, transporter: first.o.transporter ?? "" },
-    header: base.header.map((f) => (f.k === "delivery" ? { ...f, readOnly: billed } : f.k === "dispatchOn" || f.k === "transporter" ? { ...f, readOnly: false } : f)),
+    init: { ...base.init, dispatchOn: first.o.dispatchOn ?? "", delivery: first.delivery.name, transporter: isMahekVehicle(first.o.transporter) ? "" : (first.o.transporter ?? ""), deliveredBy: isMahekVehicle(first.o.transporter) ? MAHEK_VEHICLE : "Transporter" },
+    header: base.header.map((f) => (f.k === "delivery" ? { ...f, readOnly: billed } : f.k === "dispatchOn" || f.k === "transporter" || f.k === "deliveredBy" ? { ...f, readOnly: false } : f)),
     initLines: all.map((l) => ({
       lineId: l.o.id,
       sku: l.sku.name,
@@ -911,7 +926,7 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
         godown: head.godown,
         billing: head.billing.name,
         delivery: text(h.delivery) ?? head.delivery.name,
-        transporter: h.transporter ?? "",
+        transporter: carrierOf(h),
         dispatchOn: h.dispatchOn ?? "",
         source: head.o.orderSource ?? "",
       },
@@ -930,7 +945,7 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
         status: l.o.status,
         dispatchOn: h.dispatchOn ?? "",
         delivery: text(h.delivery) ?? l.delivery.name,
-        transporter: h.transporter ?? "",
+        transporter: carrierOf(h),
         qty: v.qty ?? "",
         rate: v.rate ?? rupeesField(l.o.ratePaise),
         discount: v.discount ?? (l.o.discountBp == null ? "" : String(l.o.discountBp / 100)),
@@ -2383,7 +2398,7 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   }
   /* Picked from the list; the party's own transporter, or the order's when adding to one, stands as it is spelled. */
   const sameOrder = fixed != null ? (await orderLines({ orderNos: [fixed] }))[0]?.o.transporter : null;
-  const typedCarrier = text(h.transporter);
+  const typedCarrier = text(carrierOf(h));
   const carrier = await listedTransporterName(db, typedCarrier, sameOrder && sameOrder.trim().toLowerCase() === (typedCarrier ?? "").trim().toLowerCase() ? sameOrder : delivery.p?.transporter);
   if (!carrier.ok) return fieldErr("transporter", carrier.error);
   let no = 0;
@@ -2450,7 +2465,7 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
   const named = await deliveryByName(text(h.delivery), l.delivery);
   if (!named.ok) return named;
   const delivery = named.data;
-  const transporter = await listedTransporterName(db, text(h.transporter), l.o.transporter);
+  const transporter = await listedTransporterName(db, text(carrierOf(h)), l.o.transporter);
   if (!transporter.ok) return fieldErr("transporter", transporter.error);
   const values: Partial<typeof erpOrders.$inferInsert> = {
     status,
@@ -3001,6 +3016,19 @@ const orderDetails: ScreenModule = {
   },
 };
 
+/** Who takes the goods to the party: a transporter (proof: the LR) or our own vehicle (proof: the customer-signed copy). */
+export const DELIVERED_BY = ["Transporter", MAHEK_VEHICLE] as const;
+
+/**
+ * The transporter a form means. "Delivered by: Mahek Vehicle" IS the transporter;
+ * an older page that sends no `deliveredBy` keeps meaning what its transporter box says.
+ */
+export function carrierOf(h: Record<string, string>): string {
+  if ((h.deliveredBy ?? "").trim() === MAHEK_VEHICLE) return MAHEK_VEHICLE;
+  if ((h.deliveredBy ?? "").trim() === "Transporter" && isMahekVehicle(h.transporter)) return "";
+  return h.transporter ?? "";
+}
+
 /** What dispatch records as the goods leave (PRD step 9) — asked on the row, the bulk bar and the Dispatch desk alike. */
 export const DISPATCH_PROMPT = (sub: string): NonNullable<ActionSpec["prompt"]> => ({
   title: "Confirm dispatch",
@@ -3008,8 +3036,8 @@ export const DISPATCH_PROMPT = (sub: string): NonNullable<ActionSpec["prompt"]> 
   submit: "Dispatch",
   fields: [
     { k: "date", l: "Dispatch date", t: "date", req: true },
-    { k: "vehicle", l: "Vehicle / tempo / truck no.", t: "text", hint: "Bills on the same vehicle the same day travel as one trip in Logistics." },
-    { k: "driver", l: "Driver or transporter", t: "text" },
+    { k: "vehicle", l: "Vehicle / tempo / truck no.", t: "text", hint: "Needed for a Mahek Vehicle. Bills on the same vehicle the same day travel as one trip in Logistics." },
+    { k: "driver", l: "Driver or transporter", t: "text", hint: "For a Mahek Vehicle: the driver's name and mobile — Logistics rings them for updates." },
     { k: "remark", l: "Dispatch remark or exception", t: "area", mic: true },
   ],
   init: { date: today() },
@@ -3067,6 +3095,10 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
   }
   const leaving = go.filter((l) => !held.has(l.o.orderNo));
   if (!leaving.length) return err(`Not dispatched: ${refused.join("; ")}.`, "rule_violation");
+  /* OUR OWN VEHICLE IS RUNG FOR UPDATES, so it cannot leave unnamed: which vehicle, and who is driving it. */
+  const own = leaving.find((l) => isMahekVehicle(l.o.transporter ?? l.delivery.p?.transporter));
+  if (own && !vehicle) return fieldErr("vehicle", `Order ${own.o.orderNo} goes in a Mahek Vehicle — enter the vehicle number`);
+  if (own && !driver) return fieldErr("driver", `Order ${own.o.orderNo} goes in a Mahek Vehicle — enter the driver's name and mobile`);
   await db.transaction(async (tx) => {
     await tx
       .update(erpOrderDetails)
@@ -3147,6 +3179,8 @@ export async function openTransports(
         billingCustomerId: first.o.billingCustomerId,
         billNo: first.o.tallyBillNo,
         transporter: first.o.transporter ?? first.delivery.p?.transporter ?? null,
+        /* Our own vehicle is on the road the moment it leaves, and the driver is rung from today. */
+        ...(isMahekVehicle(first.o.transporter ?? first.delivery.p?.transporter) ? { trackStatus: "Track", reminderDate: date } : {}),
         area: first.delivery.area,
         paymentType: first.billing.freightTerm,
         extraExpensePaise: expense,

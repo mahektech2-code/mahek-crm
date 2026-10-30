@@ -47,21 +47,19 @@ export function ColumnsMenu({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        title={folded ? `${folded} more column${folded > 1 ? "s" : ""} in each record — open a row to see them, or choose which to show` : "Choose which columns to show"}
-        className={toolbarToggleClass(!!chosen)}
+        aria-label={`Columns, ${fit.shown.length} of ${cols.length} shown`}
+        title={`Columns · ${fit.shown.length} of ${cols.length}`}
+        className={cx(toolbarToggleClass(!!chosen), "px-2")}
       >
-        Columns
-        <span className={cx("tabular-nums", chosen ? undefined : "text-muted")}>
-          {fit.shown.length} of {cols.length}
-        </span>
-        <Icon n="down" s={14} />
+        <Icon n="columns" s={15} />
+        {folded ? <span className={cx("text-meta tabular-nums", chosen ? undefined : "text-muted")}>{fit.shown.length}/{cols.length}</span> : null}
       </button>
       {open ? (
         <>
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
           <div className={cx("animate-fade-in absolute top-10 right-0 z-50 w-[300px] max-w-[90vw] overflow-hidden", popoverClass)}>
             <div className="border-b border-divider px-3 py-2.5 text-xs leading-[1.45] text-muted">
-              The list shows what fits your screen. Every column is in the record a row opens.
+              Hidden columns are in the record a row opens.
               {fit.dropped ? (
                 <span className="mt-1 block text-warn-ink">
                   {fit.dropped} of your columns {fit.dropped > 1 ? "do" : "does"} not fit this width.

@@ -2,6 +2,11 @@
    1.7 stroke, round caps. One component so no screen carries its own copy. */
 
 const PATHS: Record<string, string> = {
+  info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 7.5v.01",
+  calc: "M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 7h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01M8 18h.01M12 18h4",
+  filter: "M3 5h18l-7 8v6l-4 2v-8z",
+  columns: "M4 4h16v16H4zM9.3 4v16M14.7 4v16",
+  group: "M4 6h16M8 12h12M8 18h12M4 12h.01M4 18h.01",
   spark: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
   mic: "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3",
   home: "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
@@ -37,6 +42,17 @@ const PATHS: Record<string, string> = {
   camera: "M4 8a1 1 0 0 1 1-1h3l1.5-2h5L16 7h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7",
   video: "M3 7a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM16 10.5l5-3v9l-5-3",
   x: "M6 6l12 12M18 6L6 18",
+  check: "M5 12l5 5 9-10",
+  warn: "M12 3l10 18H2zM12 10v5M12 18h.01",
+  copy: "M8 8h12v12H8zM4 16V5a1 1 0 0 1 1-1h11",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 7v5l3 2",
+  crop: "M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2",
+  rotate: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5",
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  bin: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
+  back: "M15 6l-6 6 6 6",
+  zoom: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4M11 8v6M8 11h6",
+  upload: "M12 16V4M6 10l6-6 6 6M4 20h16",
 };
 
 export function Icon({ n, s = 16 }: { n: string; s?: number }) {

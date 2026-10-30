@@ -91,7 +91,12 @@ export type TransportFacts = {
   deliveredAt: string | null;
   /** Shared events, oldest first: when each stage was first reached. */
   events: { kind: string; stage: string | null; at: string }[];
+  /** Delivered in our own vehicle (0301): there is no transporter to hand it to, so that step never applies. */
+  ownVehicle?: boolean;
 };
+
+/** The steps a delivery in our own vehicle never passes through. */
+export const OWN_VEHICLE_SKIPS: ReadonlySet<Step> = new Set<Step>(["at_transport", "lr", "at_destination"]);
 
 export type OrderFacts = { lines: LineFacts[]; transports: TransportFacts[] };
 
@@ -186,7 +191,9 @@ export function deriveSteps(f: OrderFacts): Map<Step, string | null> {
   if (ts.length && anyDispatched) {
     /* The transporter having the goods, and the goods moving, are implied by
        anything later — they cannot be skipped, only unreported. */
+    const own = ts.every((t) => t.ownVehicle);
     for (const s of ["at_transport", "in_transit"] as Step[]) {
+      if (own && OWN_VEHICLE_SKIPS.has(s)) continue;
       const at = reached(s);
       if (at !== undefined) out.set(s, at);
       else if (furthest >= rank(s)) out.set(s, reachedOrLater(s));
@@ -244,7 +251,7 @@ export function holdTitle(kind: "hold" | "delay"): string {
  * resolutions among them by time, the current step marked, and what is still
  * to come as pending. Nothing is ticked that was not recorded.
  */
-export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLabel: (code: string) => string = (c) => c): TrackingView {
+export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLabel: (code: string) => string = (c) => c, opts: { ownVehicle?: boolean } = {}): TrackingView {
   const byStep = new Map<Step, Recorded>();
   for (const r of recorded) if (!byStep.has(r.step) || byStep.get(r.step)!.at > r.at) byStep.set(r.step, r);
   const reachedStages = STAGES.filter((s) => byStep.has(s));
@@ -276,6 +283,7 @@ export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLa
   if (!delivered) {
     for (const s of STAGES) {
       if (byStep.has(s) || STAGES.indexOf(s) <= curRank || s === ALTERNATIVE) continue;
+      if (opts.ownVehicle && OWN_VEHICLE_SKIPS.has(s)) continue;
       if (!dispatched && STAGES.indexOf(s) > STAGES.indexOf("dispatched")) {
         folded = true;
         continue;
@@ -290,7 +298,7 @@ export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLa
     currentLabel: current ? STEP_LABEL[current] : "Order received — being checked",
     lastUpdated: times.at(-1) ?? null,
     openHold: open,
-    unreported: delivered ? STAGES.filter((s) => OPTIONAL.has(s) && !byStep.has(s) && s !== ALTERNATIVE && !(s === "out_for_delivery" && byStep.has(ALTERNATIVE))) : [],
+    unreported: delivered ? STAGES.filter((s) => OPTIONAL.has(s) && !byStep.has(s) && s !== ALTERNATIVE && !(s === "out_for_delivery" && byStep.has(ALTERNATIVE)) && !(opts.ownVehicle && OWN_VEHICLE_SKIPS.has(s))) : [],
     entries: [...timed, ...pending],
     folded,
   };

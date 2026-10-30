@@ -129,7 +129,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
                 </>
               ) : (
                 <>
-                  At the transporter, waiting for its LR. <NavLink href={erpLink("pendingLr")} className={linkClass()}>Attach it on the LR desk →</NavLink>
+                  At the transporter, waiting for its LR. <NavLink href={erpLink("pendingLr")} className={linkClass()}>Attach it on the Documents desk →</NavLink>
                 </>
               )}
             </Card>

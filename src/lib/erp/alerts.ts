@@ -125,8 +125,9 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
             from erp_tests t join erp_raw_materials m on m.id = t.raw_material_id where t.decided_at is null`),
     detailRows({ window: { scope: recentScope, on: "dispatch" } }),
     orderLines({ openWork: true }),
-    q(sql`select t.id, t.bill_no as "billNo", c.name as party, t.bill_date::text as "billDate", t.lr_no as lr
-            from erp_transports t join customers c on c.id = t.billing_customer_id where coalesce(t.lr_no, '') = ''`),
+    q(sql`select t.id, t.bill_no as "billNo", c.name as party, t.bill_date::text as "billDate", t.lr_no as lr, t.transporter, t.material_stage as stage, t.signed_copy_id as "signedCopyId"
+            from erp_transports t join customers c on c.id = t.billing_customer_id
+           where coalesce(t.lr_no, '') = '' and t.signed_copy_id is null`),
     /* Accepted = the complaint moved to in_progress; when is its status history. */
     q(sql`select r.id, c.name as party,
                  (select min(h.at) from complaint_status_history h where h.complaint_id = r.id and h.to_status = 'in_progress') as "approvedAt",
@@ -183,7 +184,7 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     ...slowFulfilment(details.rows.map((r) => ({ id: r.l.o.id, orderNo: r.l.o.orderNo, party: r.l.billing.name, orderDate: r.l.o.orderDate, dispatchDate: r.d.dispatchDate, amountPaise: r.amount, marginPaise: r.margin })), t),
     /* "Ready since" is the line's last change: the ERP does not stamp the move to Ready on its own. */
     ...readyUnbilled(lines.map((l) => ({ id: l.o.id, orderNo: l.o.orderNo, party: l.billing.name, readySince: l.o.updatedAt, allocatedInFull: l.allocation === "Done", billed: !!l.o.tallyBillNo, ready: l.o.status === "Ready" && !l.inDetails })), now, t),
-    ...lrsMissing(transports.map((x) => ({ id: String(x.id), billNo: (x.billNo as string) ?? null, party: String(x.party), billDate: (x.billDate as string) ?? null, lr: (x.lr as string) ?? null })), day, t),
+    ...lrsMissing(transports.map((x) => ({ id: String(x.id), billNo: (x.billNo as string) ?? null, party: String(x.party), billDate: (x.billDate as string) ?? null, lr: (x.lr as string) ?? null, transporter: (x.transporter as string) ?? null, stage: (x.stage as string) ?? null, signedCopyId: (x.signedCopyId as string) ?? null })), day, t),
     ...cnsNotIssued(reqs.map((r) => ({ id: String(r.id), party: String(r.party), approvedAt: r.approvedAt ? asDate(r.approvedAt) : null, issued: Boolean(r.issued), accepted: Boolean(r.accepted), cn: Boolean(r.cn) })), now, t),
     ...duplicateExpenses(expenses.filter((e) => String(e.by)).map((e) => ({ id: String(e.id), by: String(e.by), amountPaise: Number(e.amount), particular: (e.particular as string) ?? null, date: String(e.date) })), t),
     ...cashNegative(moneyAccts.filter((a) => a.kind !== "bank").map((a) => ({ id: String(a.id), name: String(a.name), balancePaise: Number(a.balance) }))),
