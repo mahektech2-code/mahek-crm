@@ -53,6 +53,12 @@ export type ScopeRow = {
   validTo: string | null;
   /** As shown to a person, where somebody typed one; the note falls back to the key. */
   scopeLabel?: string | null;
+  /**
+   * A row that LEAVES OUT the shops it names: its list does not price them,
+   * whatever else on the list names them. Absent is false — every row written
+   * before exclusions existed.
+   */
+  excluded?: boolean;
 };
 
 export type ListMeta = {
@@ -65,6 +71,10 @@ export type ListMeta = {
   version: number;
   /** The list's own validity in days; null takes the configured default. */
   validityDays?: number | null;
+  /** The book (lineage) the version belongs to; absent reads as the list itself. */
+  bookId?: string | null;
+  /** `standard` or `agreed` (one shop's own prices). Absent reads as standard. */
+  kind?: string | null;
 };
 
 /**
@@ -213,12 +223,31 @@ function scopeNames(scope: ScopeRow, geo: CustomerGeo): boolean {
   }
 }
 
+/**
+ * The lists that LEAVE THIS SHOP OUT on the day: a list with an excluded row
+ * in force that names the shop does not price it, however else it names it.
+ * Read before any kind is walked, so a city list that leaves one shop out
+ * hands that shop to whatever list is next — a wider one, or Standard.
+ */
+export function leftOutLists(geo: CustomerGeo, scopes: readonly ScopeRow[], today: string): Set<string> {
+  const out = new Set<string>();
+  for (const s of scopes) {
+    if (s.excluded && scopeInForce(s, today) && scopeNames(s, geo)) out.add(s.priceListId);
+  }
+  return out;
+}
+
+/** Whether one row names this shop, dates and the left-out flag aside — what a rule's count is read from. */
+export function scopeReaches(scope: ScopeRow, geo: CustomerGeo): boolean {
+  return scopeNames(scope, geo);
+}
+
 /** An empty parent is "this place wherever it is" — every row written before parents existed. */
 function parentAgrees(parentKey: string, candidates: string[]): boolean {
   return parentKey === "" || candidates.includes(parentKey);
 }
 
-function freightAgrees(scope: ScopeRow, list: ListMeta, geo: CustomerGeo): boolean {
+export function freightAgrees(scope: ScopeRow, list: ListMeta, geo: CustomerGeo): boolean {
   const wanted = scope.freightTermMatch === "any" ? list.freightTerm : scope.freightTermMatch;
   if (wanted === "not_stated" || wanted === ("any" as string)) return true;
   if (geo.freightTerm == null) return true;
@@ -259,6 +288,7 @@ export function resolvePriceList(
   opts?: ResolveOptions,
 ): Resolution | null {
   const listsById = new Map(lists.map((l) => [l.id, l]));
+  const left = leftOutLists(geo, scopes, today);
   const chain: ResolutionStep[] = [];
   const candidates: ResolutionCandidate[] = [];
   const seen = new Set<string>();
@@ -266,6 +296,7 @@ export function resolvePriceList(
 
   for (const kind of SCOPE_SPECIFICITY) {
     const found = scopes
+      .filter((s) => !s.excluded && !left.has(s.priceListId))
       .filter((s) => s.scopeKind === kind && scopeInForce(s, today) && scopeNames(s, geo))
       .map((s) => ({ scope: s, list: listsById.get(s.priceListId) }))
       .filter((c): c is { scope: ScopeRow; list: ListMeta } => !!c.list && inForce(c.list, today, opts))

@@ -181,8 +181,20 @@ beforeEach(async () => {
   setTestUser(manager);
 });
 
+
+/**
+ * The one-list rule (`pricing.oneListPerShop`) refuses a shop on two lists.
+ * These cases put it on two ON PURPOSE, to prove which one prices it — the
+ * resolution every shop doubled before the rule still goes through.
+ */
+async function allowTwoLists() {
+  await db.execute(sql`update app_settings set value = 'false'::jsonb where key = 'pricing.oneListPerShop'`);
+  invalidateConfig();
+}
+
 describe("a shop's prices fall through, product by product (B1)", () => {
   test("a one-rate agreed list keeps every other product's price from the list beneath it", async () => {
+    await allowTwoLists();
     const shop = await makeCustomer({ name: "Bharat Hardware" });
     const state = await publishList({
       name: "Pan Maharashtra",
@@ -361,6 +373,7 @@ describe("a salesman list names the sales seat, never the importer (B18)", () =>
 
 describe("“changed since their last order” follows the lineage (B19)", () => {
   test("a routine new version of the same list does not warn; a different list does", async () => {
+    await allowTwoLists();
     const shop = await makeCustomer();
     const v1 = await publishList({
       name: "Maharashtra",

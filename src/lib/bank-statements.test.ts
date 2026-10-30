@@ -77,11 +77,13 @@ const lineOf = async (narration: string) => {
 };
 
 before(async () => {
-  await db.execute(sql`truncate users, erp_bank_matches, erp_bank_lines, bank_statement_uploads, payments, payment_receipts, bills, vendor_payouts, erp_money_txns, audit_log restart identity cascade`);
+  await db.execute(sql`truncate users, erp_bank_matches, erp_bank_lines, bank_statement_uploads, payments, payment_receipts, bills, vendor_payouts, erp_money_txns, erp_money_accounts, audit_log restart identity cascade`);
   await db.execute(sql`delete from customers where id like 'cus_bank_%'`);
   /* The four accounts the migration seeds. Another suite (crm-accounts-impact) truncates
      erp_money_accounts, and which suites share a database depends on how the list is
-     sharded — so this suite puts them back rather than trusting what ran before it. */
+     sharded — so this suite puts them back rather than trusting what ran before it. It
+     truncates them first: account names are unique, and that suite leaves its own
+     "Kotak Bank", which made the insert below skip macc_kotak. */
   await db.execute(sql`insert into erp_money_accounts (id, name, kind, sort) values ('macc_kotak', 'Kotak Bank', 'bank', 1), ('macc_icici', 'ICICI Bank', 'bank', 2), ('macc_cash', 'Cash in Hand', 'cash', 3), ('macc_petty', 'Petty Cash', 'petty', 4) on conflict do nothing`);
   await db.execute(sql`update erp_money_accounts set last4 = '4471', bank_name = 'Kotak Mahindra', active = true where id = 'macc_kotak'`);
   await db.execute(sql`update erp_money_accounts set last4 = '0932', bank_name = 'ICICI Bank', active = true where id = 'macc_icici'`);

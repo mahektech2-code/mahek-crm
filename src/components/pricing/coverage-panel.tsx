@@ -34,6 +34,7 @@ import {
 import { LIST_STATUS_LABEL } from "@/lib/price-list-labels";
 import type { CoverageReport, PricingOptions } from "@/lib/price-list-views";
 import { AssignCustomerListModal } from "./modals/assign-customer-list-modal";
+import { DoubleListedCard } from "./one-list/double-listed-card";
 
 export function CoveragePanel({
   basePath,
@@ -122,6 +123,8 @@ export function CoveragePanel({
             </div>
           ) : null}
         </Card>
+
+        <DoubleListedCard basePath={basePath} canManage={canManage} />
 
         <Card className="overflow-hidden">
           <CardHeader

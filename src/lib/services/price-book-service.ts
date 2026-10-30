@@ -6,7 +6,7 @@ import { getConfig } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { userIdsInScope } from "@/lib/access-control";
-import { resolvePriceList, type Resolution } from "@/lib/engines/price-resolution";
+import { resolvePriceList, scopeReaches, type Resolution } from "@/lib/engines/price-resolution";
 import {
   countChanges,
   diffRates,
@@ -757,18 +757,23 @@ export async function bookCoverage(listId: string, day: string): Promise<BookCov
         kind: sc.scopeKind,
         label: sc.scopeKind === "everybody" ? "Everybody" : (sc.scopeLabel ?? sc.scopeValue),
         freight: sc.freightTermMatch,
+        excluded: !!sc.excluded,
         reach: 0,
         win: 0,
         lose: 0,
       },
     ]),
   );
+  const leaving = own.filter((sc) => sc.excluded);
   const lost: BookCoverage["lost"] = [];
   let won = 0;
   let wonWithoutFreight = 0;
   let wonWithoutPlace = 0;
   for (const row of rows) {
-    const r = resolvePriceList(toGeo(row), scopes, lists, day, opts);
+    const geo = toGeo(row);
+    /* A leave-out row's count is the shops it names: they are off this book whatever else reaches them. */
+    for (const sc of leaving) if (scopeReaches(sc, geo)) rules.get(sc.id)!.reach++;
+    const r = resolvePriceList(geo, scopes, lists, day, opts);
     if (!r) continue;
     const mine = r.candidates.find((c) => c.listId === listId);
     if (!mine) continue;
@@ -794,7 +799,7 @@ export async function bookCoverage(listId: string, day: string): Promise<BookCov
   }
   return {
     listId,
-    rules: [...rules.values()].sort((a, b) => b.reach - a.reach),
+    rules: [...rules.values()].sort((a, b) => Number(a.excluded) - Number(b.excluded) || b.reach - a.reach),
     lost: lost.sort((a, b) => a.name.localeCompare(b.name)),
     won,
     wonWithoutFreight,

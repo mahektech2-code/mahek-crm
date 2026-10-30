@@ -56,7 +56,24 @@ export type ListSheet = {
   scopes: ScopeView[];
   /** Keyed by product id — what each SKU costs on this list, printed basis, for "moved by" hints. */
   baseline: Record<string, number>;
+  /** Shops a draft has been told to take off the list they are on when it is published. */
+  moves: Array<{ customerId: string; fromBookId: string; name: string; fromName: string }>;
 };
+
+async function pendingMovesOf(listId: string): Promise<ListSheet["moves"]> {
+  const rows = (await db.execute(sql`
+    select m."customerId" as customer_id, m."fromBookId" as from_book_id,
+           coalesce(c.name, 'A shop') as name,
+           coalesce((select pl.name from price_lists pl where pl.book_id = m."fromBookId"
+                      order by pl.version desc limit 1), 'another list') as from_name
+      from price_lists l
+      cross join lateral jsonb_to_recordset(coalesce(l.pending_moves, '[]'::jsonb))
+        as m("customerId" text, "fromBookId" text)
+      left join customers c on c.id = m."customerId"
+     where l.id = ${listId}
+  `)) as unknown as Array<{ customer_id: string; from_book_id: string; name: string; from_name: string }>;
+  return rows.map((r) => ({ customerId: r.customer_id, fromBookId: r.from_book_id, name: r.name, fromName: r.from_name }));
+}
 
 export async function sheetForList(id: string): Promise<ListSheet | null> {
   const detail = await priceListDetail(id);
@@ -119,6 +136,7 @@ export async function sheetForList(id: string): Promise<ListSheet | null> {
     derivation: l.derivation,
     scopes: detail.scopes,
     baseline,
+    moves: l.status === "draft" ? await pendingMovesOf(l.id) : [],
   };
 }
 
