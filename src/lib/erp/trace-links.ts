@@ -40,3 +40,13 @@ export function erpPoHref(id: string): string {
 export function erpBillRoadHref(transportId: string): string {
   return `/erp/transport/${encodeURIComponent(transportId)}`;
 }
+
+/** Under Process: the list, or one plan open. */
+export function erpPlanHref(planId?: string): string {
+  return planId ? `/erp/under-process?plan=${encodeURIComponent(planId)}` : "/erp/under-process";
+}
+
+/** The A5 sheet of one print of a plan. */
+export function erpPlanPrintHref(planId: string, printNo: number): string {
+  return `/erp/under-process/${encodeURIComponent(planId)}/print?n=${printNo}`;
+}
