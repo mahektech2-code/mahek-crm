@@ -65,6 +65,7 @@ import { stageLabel, type LeadSalesType } from "@/lib/lead-labels";
 import { reopenTarget } from "@/lib/engines/lead-reopen";
 import { advanceLeadStage, setLeadNextAction } from "@/lib/actions/leads";
 import { closeRemindersOnEvidence } from "@/lib/services/worklist-services";
+import { syncLeadFollowUp } from "@/lib/services/lead-followup-service";
 import { litresSchema } from "../decimal-schemas";
 
 /** The module the desk's screens and writes are granted under — see `lib/modules.ts`. */
@@ -548,6 +549,25 @@ export async function logQualificationCall(
         .update(customers)
         .set({ ...set, ...next, leadLastActivityDate: day, updatedAt: now })
         .where(eq(customers.id, p.customerId));
+
+      /* THE FOLLOW-UP IS A REMINDER, but only for a date somebody CHOSE: the
+         +2 days written above when no date was picked is a default on the lead's
+         next action, not a promise to anybody. Owned by the lead's CURRENT
+         owner, read inside this transaction under the row lock. */
+      if (disposition.kind === "next" && p.next?.date && nextDate && nextText) {
+        const [own] = await tx
+          .select({ ownerId: customers.ownerId })
+          .from(customers)
+          .where(eq(customers.id, p.customerId));
+        await syncLeadFollowUp(tx, {
+          customerId: p.customerId,
+          ownerId: own?.ownerId ?? null,
+          actorId: ctx.user.id,
+          date: nextDate,
+          text: nextText,
+          callId,
+        });
+      }
 
       await writeTimelineEvent(tx, {
         customerId: p.customerId,
@@ -1514,7 +1534,19 @@ export async function setDeskNextAction(input: z.input<typeof nextSchema>): Prom
       ownerId: ctx.user.id,
       outcome: p.outcome || undefined,
     });
-    if (result.ok) refresh(p.customerId);
+    if (result.ok) {
+      await db.transaction(async (tx) => {
+        const [own] = await tx.select({ ownerId: customers.ownerId }).from(customers).where(eq(customers.id, p.customerId));
+        await syncLeadFollowUp(tx, {
+          customerId: p.customerId,
+          ownerId: own?.ownerId ?? null,
+          actorId: ctx.user.id,
+          date: p.date,
+          text: nextActionText(p.kind, upcoming, p.text),
+        });
+      });
+      refresh(p.customerId);
+    }
     return result;
   } catch (e) {
     return fromThrown(e);
