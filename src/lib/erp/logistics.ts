@@ -32,6 +32,7 @@ import {
   phaseOf,
   rankForLr,
   ROAD_STAGES,
+  shortDay,
   stageStep,
   watiParams,
   type MessageFacts,
@@ -341,7 +342,7 @@ export type UploadedLr = {
  * or, with `all`, the latest attached ones too, which the duplicate check
  * compares against. `kind` narrows to one kind.
  */
-export async function uploadedLrs(opts: { status?: "unassigned" | "all"; kind?: ProofKind; recentDays?: number } = {}): Promise<UploadedLr[]> {
+export async function uploadedLrs(opts: { status?: "unassigned" | "all"; kind?: ProofKind; recentDays?: number; id?: string } = {}): Promise<UploadedLr[]> {
   const rows = (await db.execute(sql`
     select l.id, l.lr_no as "lrNo", l.lr_date::text as "lrDate", l.transporter, l.destination, l.packages,
            l.freight_paise as "freightPaise", l.freight_term as "freightTerm", l.file_id as "fileId", l.note, l.status,
@@ -356,6 +357,7 @@ export async function uploadedLrs(opts: { status?: "unassigned" | "all"; kind?: 
       left join attachments a on a.id = l.file_id
      where ${opts.status === "all" ? sql`l.status <> 'void'` : sql`l.status = 'unassigned'`}
        ${opts.kind ? sql`and l.kind = ${opts.kind}` : sql``}
+       ${opts.id ? sql`and l.id = ${opts.id}` : sql``}
        ${opts.recentDays ? sql`and (l.status = 'unassigned' or l.uploaded_at >= now() - make_interval(days => ${opts.recentDays}::int))` : sql``}
      order by l.uploaded_at desc
      limit ${opts.recentDays ? 1500 : 300}
@@ -387,6 +389,11 @@ export async function uploadedLrs(opts: { status?: "unassigned" | "all"; kind?: 
     dupClearedAt: r.dupClearedAt ? new Date(String(r.dupClearedAt)).toISOString() : null,
     fromPhone: r.fromPhone === true,
   }));
+}
+
+/** One LR as the desk reads it, attached or not — what the On the road card's Edit opens. */
+export async function lrForEdit(id: string): Promise<UploadedLr | null> {
+  return (await uploadedLrs({ status: "all", id }))[0] ?? null;
 }
 
 /** For an LR on the desk, the waiting bills it most likely carries, best first. */
@@ -807,7 +814,13 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
   return ok({ ids, already: [...new Set(already)], repeats }, `${ids.length} ${word} uploaded${already.length ? ` · ${already.length} not sent again, uploaded before` : ""} — the office checks ${ids.length === 1 ? "it" : "them"} on the Documents desk`);
 }
 
-export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Promise<Result<unknown>> {
+/**
+ * An LR's own fields, on the desk or on the road. Once it is attached the
+ * party has usually been told its number, so a correction there is recorded
+ * on every open bill under it and — when the person says so — told to the
+ * party as a correction rather than left for them to find on the paper.
+ */
+export async function editLr(ctx: ErpContext, lrId: string, input: LrInput, opts: { notify?: boolean } = {}): Promise<Result<unknown>> {
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
   if (lr.kind === "signed_copy") return editSignedCopy(ctx, lr, input);
@@ -832,14 +845,29 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Pro
     note: (input.note ?? "").trim() || null,
     ...(input.fileId ? { fileId: input.fileId } : {}),
   };
+  /* What the party was told and is now different: the number, the transporter, the date on the paper. */
+  const told = [
+    lr.lrNo !== lrNo ? `LR number ${lr.lrNo ?? "—"} → ${lrNo}` : null,
+    (lr.transporter ?? "") !== (transporter ?? "") ? `transporter ${lr.transporter ?? "—"} → ${transporter ?? "—"}` : null,
+    lr.lrDate !== after.lrDate ? `LR date ${lr.lrDate ? shortDay(lr.lrDate) : "—"} → ${after.lrDate ? shortDay(after.lrDate) : "—"}` : null,
+  ].filter((x): x is string => !!x);
+  const open = lr.status === "assigned" && told.length ? (await db.select().from(erpTransports).where(eq(erpTransports.lrId, lrId))).filter((t) => t.materialStage !== CLOSED) : [];
+  let eventId: string | null = null;
   await db.transaction(async (tx) => {
     await tx.update(erpLrs).set(after).where(eq(erpLrs.id, lrId));
     if (input.fileId) await bindErpFiles(tx as unknown as typeof db, [input.fileId], "erp_lr", lrId, ctx.actor.id);
     /* The bills under it carry its number as text — every reader of erp_transports reads that. */
     await tx.update(erpTransports).set({ lrNo, ...(transporter ? { transporter } : {}), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.lrId, lrId));
+    if (open.length) eventId = await addEvent(tx as unknown as typeof db, ctx, open.map((t) => t.id), "lr_edit", open[0].materialStage, `LR corrected: ${told.join(", ")}`, false);
   });
   await erpAudit(ctx, "erp.logistics.lrEdit", "erp_lr", lrId, lr, after);
-  return okVoid(lrNo ? `LR ${lrNo} saved` : "LR saved");
+  if (open.length) await syncBookOrders([...new Set(open.map((t) => t.orderNo))]);
+  const saved = lrNo ? `LR ${lrNo} saved` : "LR saved";
+  if (!open.length || !opts.notify) return ok(undefined, saved);
+  const notified = await notifyCustomers(ctx, "stage", open.map((t) => t.id), eventId, {
+    note: `Correction: the ${told.length === 1 && told[0].startsWith("LR number") ? "LR number we sent earlier was" : "LR details we sent earlier were"} wrong — please use LR ${lrNo}${transporter ? ` with ${transporter}` : ""}.`,
+  });
+  return ok({ notified }, `${saved}${notifyWords(notified)}`);
 }
 
 /** A signed copy's own fields: who signed, the day on it, and what it says it is for. */
@@ -867,18 +895,38 @@ async function editSignedCopy(ctx: ErpContext, lr: typeof erpLrs.$inferSelect, i
 
 /**
  * Uploaded under the wrong kind — an LR sent as a signed copy, or the other
- * way. Only while it is on the desk: an attached copy is part of a delivery.
+ * way. A signed copy closing a delivery is part of it and stays put. A signed
+ * copy that was ATTACHED AS AN LR is the one case that may move while
+ * attached: the bills it was put on were never under an LR at all, so they
+ * come off it and go back to waiting for their real one — unless one is
+ * already delivered, which keeps it until reopened.
  */
 export async function setLrKind(ctx: ErpContext, lrId: string, kind: ProofKind): Promise<Result<unknown>> {
   if (!isProofKind(kind)) return err("An upload is an LR or a signed copy.", "validation");
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That upload is not on the desk.", "not_found");
-  if (lr.status !== "unassigned") return err("It is attached already. Take it off its bills first.", "rule_violation");
   if (lr.kind === kind) return okVoid("No change");
-  /* A signed copy carries no LR number, so a number typed on it would sit in the unique index for nothing. */
-  await db.update(erpLrs).set({ kind, ...(kind === "signed_copy" ? { lrNo: null } : {}) }).where(eq(erpLrs.id, lrId));
-  await erpAudit(ctx, "erp.logistics.lrKind", "erp_lr", lrId, { kind: lr.kind }, { kind });
-  return okVoid(kind === "lr" ? "Moved to LRs" : "Moved to signed copies");
+  const carrying = lr.status === "unassigned" ? [] : await db.select().from(erpTransports).where(eq(erpTransports.lrId, lrId));
+  if (lr.status !== "unassigned" && !(lr.kind === "lr" && kind === "signed_copy")) return err("It is attached already. Take it off its bills first.", "rule_violation");
+  if (carrying.some((t) => t.materialStage === CLOSED)) return err("A delivered bill keeps its LR. Reopen it first.", "rule_violation");
+  await db.transaction(async (tx) => {
+    if (carrying.length) {
+      await tx
+        .update(erpTransports)
+        .set({ lrId: null, lrNo: null, trackStatus: "Don't Track", materialStage: "At transport", updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(inArray(erpTransports.id, carrying.map((t) => t.id)));
+      await addEvent(tx as unknown as typeof db, ctx, carrying.map((t) => t.id), "lr_removed", "At transport", `${lr.lrNo ? `LR ${lr.lrNo}` : "The upload"} was a signed copy, not an LR`, false);
+    }
+    /* A signed copy carries no LR number, so a number typed on it would sit in the unique index for nothing. */
+    await tx
+      .update(erpLrs)
+      .set({ kind, ...(kind === "signed_copy" ? { lrNo: null } : {}), ...(lr.status !== "unassigned" ? { status: "unassigned", assignedById: null, assignedAt: null } : {}) })
+      .where(eq(erpLrs.id, lrId));
+  });
+  await erpAudit(ctx, "erp.logistics.lrKind", "erp_lr", lrId, { kind: lr.kind, status: lr.status }, { kind, bills: carrying.map((t) => t.orderNo) });
+  if (carrying.length) await syncBookOrders([...new Set(carrying.map((t) => t.orderNo))]);
+  const back = carrying.length ? ` · ${carrying.length === 1 ? "its bill is" : `its ${carrying.length} bills are`} back waiting for an LR` : "";
+  return okVoid(kind === "lr" ? "Moved to LRs" : `Moved to signed copies${back}`);
 }
 
 /**
@@ -930,21 +978,35 @@ export async function discardDuplicate(ctx: ErpContext, lrId: string): Promise<R
 }
 
 /**
- * A wrong upload is voided with its reason, never deleted — and only while it
- * carries nothing. The person saw what voiding it touches (`erp-lr-void`).
+ * A wrong LR is voided with its reason, never deleted. Bills still on the road
+ * under it come off in the same breath and go back to waiting for their LR —
+ * that is the whole point when the wrong paper was attached — but a DELIVERED
+ * bill keeps its LR, and a signed copy closing a delivery is part of it, so
+ * either refuses. The person saw all of that first (`erp-lr-void`).
  */
 export async function voidLr(ctx: ErpContext, lrId: string, reason: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
   const why = reason.trim();
   if (why.length < 3) return fieldErr("reason", "Say why this LR is being voided");
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
-  const [carrying] = await db.select({ id: erpTransports.id }).from(erpTransports).where(sql`${erpTransports.lrId} = ${lrId} or ${erpTransports.signedCopyId} = ${lrId}`).limit(1);
-  if (carrying) return err("This LR is attached to bills. Take them off it first.", "rule_violation");
+  const carrying = await db.select().from(erpTransports).where(sql`${erpTransports.lrId} = ${lrId} or ${erpTransports.signedCopyId} = ${lrId}`);
+  if (carrying.some((t) => t.signedCopyId === lrId)) return err("This signed copy closes a delivery. Reopen the delivery first.", "rule_violation");
+  if (carrying.some((t) => t.materialStage === CLOSED)) return err("A delivered bill keeps its LR. Reopen it first.", "rule_violation");
   const refusal = await confirmImpact("erp-lr-void", lrId, confirmation);
   if (refusal) return refusal;
-  await db.update(erpLrs).set({ status: "void", voidReason: why }).where(eq(erpLrs.id, lrId));
-  await erpAudit(ctx, "erp.logistics.lrVoid", "erp_lr", lrId, { status: lr.status }, { status: "void", reason: why });
-  return okVoid(`${lrUploadName(lr.lrNo)} voided`);
+  await db.transaction(async (tx) => {
+    if (carrying.length) {
+      await tx
+        .update(erpTransports)
+        .set({ lrId: null, lrNo: null, trackStatus: "Don't Track", materialStage: "At transport", updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(inArray(erpTransports.id, carrying.map((t) => t.id)));
+      await addEvent(tx as unknown as typeof db, ctx, carrying.map((t) => t.id), "lr_removed", "At transport", `${lr.lrNo ? `LR ${lr.lrNo}` : "The LR"} voided: ${why}`, false);
+    }
+    await tx.update(erpLrs).set({ status: "void", voidReason: why }).where(eq(erpLrs.id, lrId));
+  });
+  await erpAudit(ctx, "erp.logistics.lrVoid", "erp_lr", lrId, { status: lr.status }, { status: "void", reason: why, bills: carrying.map((t) => t.orderNo) });
+  if (carrying.length) await syncBookOrders([...new Set(carrying.map((t) => t.orderNo))]);
+  return okVoid(`${lrUploadName(lr.lrNo)} voided${carrying.length ? ` · ${carrying.length === 1 ? "its bill is" : `its ${carrying.length} bills are`} back waiting for an LR` : ""}`);
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { err, fromThrown, type Result } from "@/lib/result";
+import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
 import * as T from "@/lib/erp/trips";
@@ -97,8 +97,20 @@ export async function erpLogisticsReadLr(fileId: string) {
   }
 }
 
-export async function erpLogisticsEditLr(lrId: string, input: L.LrInput) {
-  return run((ctx) => L.editLr(ctx, lrId, input));
+export async function erpLogisticsEditLr(lrId: string, input: L.LrInput, opts?: { notify?: boolean }) {
+  return run((ctx) => L.editLr(ctx, lrId, input, { notify: opts?.notify === true }));
+}
+
+/** The LR behind an On the road card, for its Edit dialog. A read, so nothing is revalidated. */
+export async function erpLogisticsLrForEdit(lrId: string): Promise<Result<L.UploadedLr>> {
+  try {
+    await requireErpWrite("transport");
+    if (typeof lrId !== "string" || !lrId) return err("No LR named.", "validation");
+    const lr = await L.lrForEdit(lrId);
+    return lr ? ok(lr) : err("That LR is not on the desk.", "not_found");
+  } catch (e) {
+    return refused(e);
+  }
 }
 
 export async function erpLogisticsVoidLr(lrId: string, reason: string, confirmation?: ImpactConfirmation) {

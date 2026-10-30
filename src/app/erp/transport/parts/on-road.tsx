@@ -14,6 +14,7 @@ import { shrinkImage } from "@/lib/shrink-image";
 import { addDays, callDue, daysBetween, ISSUES, MAHEK_VEHICLE, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
 import { delayReasonForIssue, reasonsFor } from "@/lib/erp/engines/order-tracking";
 import type { Consignment, RouteSuggestions, UploadedLr } from "@/lib/erp/logistics";
+import { EditLrDialog } from "./edit-lr";
 import { UpdateLrDialog } from "./update-lr";
 import { BillRef, byLr, CallLink, DeliveryStatusBadge, driverPhone, DuePill, Empty, LrThumb, NotifyToggle, plural, RouteTrail, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
 
@@ -25,7 +26,7 @@ import { BillRef, byLr, CallLink, DeliveryStatusBadge, driverPhone, DuePill, Emp
  * the party has the goods.
  */
 type Filter = "all" | "calls" | "late" | "issue";
-type Dialog = { kind: "update" | "issue" | "delivered" | "deliveredBy"; group: Consignment[] } | null;
+type Dialog = { kind: "update" | "issue" | "delivered" | "deliveredBy" | "editLr"; group: Consignment[] } | null;
 
 export function OnRoad({
   rows,
@@ -203,6 +204,11 @@ export function OnRoad({
                     Report a problem
                   </Button>
                 )}
+                {c.lrId ? (
+                  <Button size="sm" variant="ghost" disabled={pending} onClick={() => setDialog({ kind: "editLr", group: bills })} title="Fix the LR number, transporter, date or photo — take a bill off it, or delete the LR">
+                    Edit LR
+                  </Button>
+                ) : null}
                 {!c.lrId ? (
                   <Button size="sm" variant="ghost" className="ml-auto" disabled={pending} onClick={() => setDialog({ kind: "deliveredBy", group: bills })} title="Who takes it to the party — a transporter or a Mahek Vehicle">
                     Delivered by…
@@ -217,7 +223,9 @@ export function OnRoad({
         );
       })}
 
-      {dialog?.kind === "update" ? (
+      {dialog?.kind === "editLr" ? (
+        <EditLrDialog key={`e${dialog.group[0].id}`} group={dialog.group} today={today} transporters={transporters} notifyOn={notifyOn} onClose={() => setDialog(null)} />
+      ) : dialog?.kind === "update" ? (
         <UpdateLrDialog key={`u${dialog.group[0].id}`} group={dialog.group} today={today} callEveryDays={callEveryDays} notifyOn={notifyOn} suggestions={suggestions ?? null} onClose={() => setDialog(null)} />
       ) : dialog?.kind === "deliveredBy" ? (
         <DeliveredByDialog key={`by${dialog.group[0].id}`} group={dialog.group} transporters={transporters} onClose={() => setDialog(null)} />

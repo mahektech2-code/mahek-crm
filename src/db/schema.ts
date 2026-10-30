@@ -13053,7 +13053,7 @@ export const erpTransportEvents = pgTable(
     transportId: text("transport_id")
       .notNull()
       .references(() => erpTransports.id, { onDelete: "cascade" }),
-    /** opened | due | at_transport | lr | lr_removed | call | stage | dispatched | checkpoint | issue | issue_cleared | delivered | reopened | note | packages. */
+    /** opened | due | at_transport | lr | lr_removed | lr_edit | call | stage | dispatched | checkpoint | issue | issue_cleared | delivered | reopened | note | packages. */
     kind: text("kind").notNull(),
     /** The stage the consignment was at after this event. */
     stage: text("stage"),

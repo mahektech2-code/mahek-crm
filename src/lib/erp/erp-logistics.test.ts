@@ -991,4 +991,55 @@ describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Veh
     const [l] = await db.execute(sql`select kind, lr_no as "lrNo" from erp_lrs where id = ${lid}`) as unknown as { kind: string; lrNo: string | null }[];
     assert.deepEqual(l, { kind: "signed_copy", lrNo: null });
   });
+
+  test("an LR already on the road is corrected, the party told; deleting it puts its bills back on the desk", async () => {
+    const ctx = await as(admin);
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.lrNo, "LR-9910"));
+    const lrId = t.lrId!;
+    const before = (await roadMessages()).length;
+
+    /* Typed wrong: the bill follows the LR, the timeline says what changed, and the party is told it was a correction. */
+    const fixed = await L.editLr(ctx, lrId, { lrNo: "lr-9911", transporter: "Gati" }, { notify: true });
+    assert.ok(fixed.ok, msg(fixed));
+    let [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.lrNo, "LR-9911");
+    const out = await roadMessages();
+    assert.equal(out.length, before + 1, "one correction per party");
+    assert.match(out[0].body, /Correction: the LR number we sent earlier was wrong/);
+    assert.match(out[0].body, /LR-9911/);
+    const [ev] = (await db.execute(sql`select note from erp_transport_events where transport_id = ${t.id} and kind = 'lr_edit'`)) as unknown as { note: string }[];
+    assert.match(ev?.note ?? "", /LR number LR-9910 → LR-9911/);
+
+    /* Nothing the party was told changed: saved, told nobody. */
+    assert.ok((await L.editLr(ctx, lrId, { lrNo: "LR-9911", transporter: "Gati", packages: 3 }, { notify: true })).ok);
+    assert.equal((await roadMessages()).length, before + 1);
+
+    /* The whole LR was wrong: voided with a reason, and the bill on it goes back to waiting for its LR. */
+    assert.equal(msg(await L.voidLr(ctx, lrId, "wrong LR uploaded")), "Check what this affects and confirm it first.");
+    const voiding = await confirmed("erp-lr-void", lrId);
+    assert.deepEqual(voiding.report.blockers, []);
+    assert.ok(voiding.report.items.some((i) => /bills taken off this LR/.test(i.label) && i.count === 1), JSON.stringify(voiding.report.items));
+    assert.ok((await L.voidLr(ctx, lrId, "wrong LR uploaded", voiding.confirmation)).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "lrPending");
+    assert.equal(c.lrNo, null);
+    assert.equal((await roadMessages()).length, before + 1, "taking it off tells nobody — attaching the right LR does");
+  });
+
+  test("a signed copy attached as an LR moves to signed copies, and its bill goes back to waiting for its LR", async () => {
+    const ctx = await as(admin);
+    const [t] = await db.select().from(erpTransports).where(sql`${erpTransports.lrId} is null and ${erpTransports.materialStage} = 'At transport'`).limit(1);
+    assert.ok(t, "the bill the previous test put back on the desk");
+    const up = await L.uploadLrs(ctx, [{ lrNo: "SC-1", transporter: "Gati" }]);
+    assert.ok(up.ok);
+    const id = up.ok ? up.data.ids[0] : "";
+    assert.ok((await L.attachLr(ctx, id, [t.id], { notify: false })).ok);
+    const moved = await L.setLrKind(ctx, id, "signed_copy");
+    assert.ok(moved.ok, msg(moved));
+    const [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "lrPending");
+    const [l] = (await db.execute(sql`select kind, status, lr_no as "lrNo" from erp_lrs where id = ${id}`)) as unknown as { kind: string; status: string; lrNo: string | null }[];
+    assert.deepEqual(l, { kind: "signed_copy", status: "unassigned", lrNo: null }, "on the desk under Signed copies");
+    assert.equal(msg(await L.setLrKind(ctx, id, "lr")), "ok", "and back, while it is on the desk");
+  });
 });
