@@ -5,7 +5,8 @@ import { monthName } from "@/components/ui/month";
 import { money, rupeesFromPaise } from "@/lib/format";
 import { activitySub, collectionSub } from "@/lib/performance-labels";
 import { today } from "@/lib/recompute";
-import { BP, focusLines } from "@/lib/engines/performance";
+import { BP, focusLines, ratingEnd } from "@/lib/engines/performance";
+import { getConfig } from "@/lib/config/store";
 import { readingsForPeriod } from "@/lib/services/performance-service";
 import {
   Callout,
@@ -16,6 +17,7 @@ import {
   Progress,
   SectionLabel,
 } from "@/components/ui/primitives";
+import { scoreText } from "@/lib/score-format";
 
 export const metadata = { title: "My performance - MahekOne CRM" };
 
@@ -46,7 +48,10 @@ export default async function Page({
     ? params.period!
     : now.slice(0, 7);
 
-  const [reading] = await readingsForPeriod(period, now, { userIds: [user.id] });
+  const [[reading], config] = await Promise.all([
+    readingsForPeriod(period, now, { userIds: [user.id] }),
+    getConfig(),
+  ]);
 
   if (!reading) {
     return (
@@ -98,7 +103,7 @@ export default async function Page({
                     (c.pointsBp / 100).toFixed(1),
                   ];
                 }),
-                ["Total score", "", "", "", (reading.score.totalBp / 100).toFixed(1)],
+                ["Total score", "", "", "", scoreText(reading.score.totalBp)],
                 ["Rating", reading.rating, "", "", ""],
               ]}
             />
@@ -123,14 +128,13 @@ export default async function Page({
           metrics={[
             {
               label: "Overall",
-              value: `${(reading.score.totalBp / 100).toFixed(1)} / 100`,
+              value: `${scoreText(reading.score.totalBp)} / 100`,
               sub: reading.rating,
-              tone:
-                reading.score.totalBp >= 8000
-                  ? "success"
-                  : reading.score.totalBp < 6000
-                    ? "danger"
-                    : "ink",
+              tone: {
+                top: "success" as const,
+                bottom: "danger" as const,
+                middle: "ink" as const,
+              }[ratingEnd(reading.score.totalBp, config)],
             },
             {
               label: "Revenue excl. GST",
@@ -289,7 +293,7 @@ export default async function Page({
                       : c.effectiveWeight.toFixed(0)}
                   </td>
                   <td className="py-1.5 text-right text-ink tabular-nums">
-                    {c.achievementBp === null ? "—" : (c.pointsBp / 100).toFixed(2)}
+                    {c.achievementBp === null ? "—" : scoreText(c.pointsBp)}
                   </td>
                 </tr>
               ))}
@@ -298,7 +302,7 @@ export default async function Page({
                 <td />
                 <td />
                 <td className="py-1.5 text-right text-ink tabular-nums">
-                  {(reading.score.totalBp / 100).toFixed(2)}
+                  {scoreText(reading.score.totalBp)}
                 </td>
               </tr>
             </tbody>
@@ -312,6 +316,16 @@ export default async function Page({
               , so {reading.score.untargeted.length === 1 ? "it is" : "they are"} left
               out and the weight is shared among the rest. The score is still out of
               100.
+            </p>
+          ) : null}
+          {reading.score.unmeasured.length ? (
+            <p className="mt-3 text-[12px] text-muted">
+              Your target includes{" "}
+              {reading.score.unmeasured
+                .map((k) => COMPONENT_LABELS[k].toLowerCase())
+                .join(", ")}
+              , but there is nothing to measure it against yet this month, so it is
+              left out until there is.
             </p>
           ) : null}
           {revenue?.achievementBp !== null &&

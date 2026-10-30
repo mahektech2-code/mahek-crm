@@ -1,5 +1,5 @@
 import { one } from '../db';
-import { isoDate } from '../lib/format';
+import { todayIst } from '../lib/format';
 
 /**
  * His own numbers, read straight off what is already on the phone.
@@ -26,18 +26,28 @@ export type MonthReport = {
   collectedCount: number;
 };
 
+/*
+ * The month is the OFFICE'S month: which month "now" is falls out of today in
+ * Asia/Kolkata, and its two ends are IST midnights, so a phone set to another
+ * zone counts the same visits and orders the office does. Plain integer
+ * arithmetic on year and month — no Date in the device's zone is built.
+ */
+function monthStart(year: number, month0: number): string {
+  const y = year + Math.floor(month0 / 12);
+  const m = ((month0 % 12) + 12) % 12;
+  return `${y}-${String(m + 1).padStart(2, '0')}-01`;
+}
+
 async function monthWindow(monthsAgo: number): Promise<{ from: string; to: string }> {
-  const now = new Date();
-  const first = new Date(now.getFullYear(), now.getMonth() - monthsAgo, 1);
-  const nextFirst = new Date(now.getFullYear(), now.getMonth() - monthsAgo + 1, 1);
-  return { from: isoDate(first), to: isoDate(nextFirst) };
+  const [y, m] = todayIst().split('-').map(Number);
+  return { from: monthStart(y, m - 1 - monthsAgo), to: monthStart(y, m - monthsAgo) };
 }
 
 /** `monthsAgo = 0` is the current month, `1` is last month, and so on. */
 export async function monthReport(userId: string, monthsAgo = 0): Promise<MonthReport> {
   const { from, to } = await monthWindow(monthsAgo);
-  const fromMs = Date.parse(from + 'T00:00:00');
-  const toMs = Date.parse(to + 'T00:00:00');
+  const fromMs = Date.parse(from + 'T00:00:00+05:30');
+  const toMs = Date.parse(to + 'T00:00:00+05:30');
 
   const visits = await one<{ n: number }>(
     'SELECT COUNT(*) AS n FROM visits WHERE userId = ? AND checkInAt >= ? AND checkInAt < ?',

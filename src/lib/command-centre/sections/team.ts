@@ -40,6 +40,7 @@ import type {
   TablePage,
   Tone,
 } from "../types";
+import { scoreText } from "@/lib/score-format";
 
 /* ---------------------------------------------------------------------------
  * TARGETS & TEAM PERFORMANCE (PRD §10).
@@ -231,7 +232,7 @@ function revenueTargetSum(t: Team): number {
 function metricsOf(t: Team, ctx: Ctx): Metric[] {
   const s = scored(t);
   const good = goodBand(t.config);
-  const avg = s.length ? Math.round(s.reduce((a, r) => a + r.score.totalBp, 0) / s.length / 100) : null;
+  const avg = s.length ? scoreText(s.reduce((a, r) => a + r.score.totalBp, 0) / s.length) : null;
   const atGood = good ? s.filter((r) => r.score.totalBp / 100 >= good.min).length : 0;
   const revenue = t.ranked.reduce((a, r) => a + r.actuals.revenuePaise, 0);
   const target = revenueTargetSum(t);
@@ -242,7 +243,7 @@ function metricsOf(t: Team, ctx: Ctx): Metric[] {
     {
       key: "score",
       label: "Team score",
-      value: avg === null ? "None yet" : String(avg),
+      value: avg ?? "None yet",
       sub: s.length
         ? good
           ? `${num(atGood)} of ${num(s.length)} at ${good.label} or above`
@@ -443,15 +444,15 @@ function peopleRows(t: Team, list: RankedReading[]): Row[] {
     const f = t.facts.get(r.userId);
     const rev = r.score.components.find((c) => c.key === "revenue");
     const prev = t.prevScore.get(r.userId);
-    const scoreNow = Math.round(r.score.totalBp / 100);
-    const diff = prev === undefined ? null : scoreNow - Math.round(prev / 100);
+    const scoreNow = scoreText(r.score.totalBp);
+    const diff = prev === undefined ? null : Number((Number(scoreNow) - Number(scoreText(prev))).toFixed(1));
     const draft = t.monthTargets.get(r.userId)?.status === "draft";
     return {
       id: r.userId,
       cells: [
         { t: r.userName, sub: f?.sub || undefined },
         { t: f?.role ?? "—" },
-        { t: r.hasTarget ? String(scoreNow) : "—" },
+        { t: r.hasTarget ? scoreNow : "—" },
         { t: !r.hasTarget || diff === null ? "" : diff === 0 ? "No change" : `${diff > 0 ? "▲" : "▼"} ${Math.abs(diff)}` },
         { t: crore(r.actuals.revenuePaise) },
         { t: rev?.achievementBp == null ? "—" : `${Math.round(rev.achievementBp / 100)}%` },

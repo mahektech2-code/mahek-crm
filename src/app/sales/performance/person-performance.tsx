@@ -19,6 +19,7 @@ import {
 } from "@/lib/performance-range";
 import { ratingTone } from "./rating-tone";
 import type { PersonPerformance } from "@/lib/services/performance-service";
+import { scoreText } from "@/lib/score-format";
 
 /* ---------------------------------------------------------------------------
  * ONE PERSON'S PERFORMANCE, IN DETAIL — opened from their name on the
@@ -167,7 +168,7 @@ function PersonPerformanceModal({
                 <div className="text-right">
                   <div className="flex items-baseline justify-end gap-1.5">
                     <span className={cx("text-[28px] leading-8 font-semibold tabular-nums", scoreInk(reading.totalScoreBp))}>
-                      {(reading.totalScoreBp / 100).toFixed(1)}
+                      {scoreText(reading.totalScoreBp)}
                     </span>
                     <span className="text-[13px] text-muted">/ 100</span>
                   </div>
@@ -274,6 +275,9 @@ function Detail({ reading: r }: { reading: PersonPerformance }) {
   if (r.hasTarget && r.untargeted.length) {
     notes.push(`Not targeted: ${r.untargeted.map((k) => (COMPONENT_LABEL[k] ?? k).toLowerCase()).join(", ")}`);
   }
+  if (r.hasTarget && r.unmeasured?.length) {
+    notes.push(`Nothing to measure yet: ${r.unmeasured.map((k) => (COMPONENT_LABEL[k] ?? k).toLowerCase()).join(", ")}`);
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -354,7 +358,7 @@ function Detail({ reading: r }: { reading: PersonPerformance }) {
                   Score out of 100
                 </td>
                 <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">
-                  {r.hasTarget && r.totalScoreBp !== null ? (r.totalScoreBp / 100).toFixed(1) : "—"}
+                  {r.hasTarget && r.totalScoreBp !== null ? scoreText(r.totalScoreBp) : "—"}
                 </td>
               </tr>
             </tbody>
@@ -647,7 +651,7 @@ function MonthTable({ months }: { months: PersonPerformance["months"] }) {
           <span className="flex items-center justify-end gap-2">
             {m.hasTarget && m.totalScoreBp !== null ? (
               <>
-                <span className="tabular-nums font-medium text-ink">{(m.totalScoreBp / 100).toFixed(1)}</span>
+                <span className="tabular-nums font-medium text-ink">{scoreText(m.totalScoreBp)}</span>
                 {m.rating ? <Pill tone={ratingTone(m.totalScoreBp)}>{m.rating}</Pill> : null}
               </>
             ) : (

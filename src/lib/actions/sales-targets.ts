@@ -17,6 +17,8 @@ import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { money } from "@/lib/format";
 import { revisionsFor } from "@/lib/services/sales-target-service";
+import { recomputeSalesPerformance } from "@/lib/services/performance-service";
+import { today } from "@/lib/recompute";
 import { err, fieldErr, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { notifyUsers } from "../notify";
 
@@ -282,11 +284,38 @@ export async function saveSalesTarget(
       );
     }
 
+    // A draft is scored by nothing but the Accounts scorecard, which reads
+    // live; a published one is on every phone through the cache.
+    if (existing?.status === "published") await refreshScore(data.userId, data.period);
+
     revalidatePath("/sales/targets");
     revalidatePath("/sales/performance");
     return { ok: true, data: { targetId } };
   } catch (e) {
     return fromThrown(e);
+  }
+}
+
+/**
+ * Rebuild one person's cached score for one month, now.
+ *
+ * Every web screen scores live, and the handset's Home card and its offline
+ * Performance view read `sales_performance` — which only the hourly job (this
+ * month) and the nightly one (this month and last) used to rebuild. So a
+ * target published at 10:05 was on the web at 10:05 and on the phone at the
+ * next :22 at best, and a correction to a month two back never reached the
+ * cache at all. "Published. They can see it now." has to be true on the phone
+ * as well.
+ *
+ * A courtesy on a completed write, like the notification beside it: the
+ * target is saved and audited before this runs, and a failure leaves the
+ * hourly job to catch up rather than failing the save.
+ */
+async function refreshScore(userId: string, period: string): Promise<void> {
+  try {
+    await recomputeSalesPerformance(period, await today(), [userId]);
+  } catch (e) {
+    console.error("Score refresh after a target change failed:", e instanceof Error ? e.message : e);
   }
 }
 
@@ -421,6 +450,8 @@ export async function publishSalesTarget(
       `Your target for ${target.period} is set`,
       "Open Performance to see what you are working towards this month.",
     );
+
+    await refreshScore(target.userId, target.period);
 
     revalidatePath("/sales/targets");
     revalidatePath("/sales/performance");
