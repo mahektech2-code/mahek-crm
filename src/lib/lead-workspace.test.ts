@@ -410,12 +410,15 @@ describe("the Sales Manager screens are workspace-aware", () => {
     }
   });
 
-  it("the CRM pages draw the Sales Manager desk, and the record is handed the CRM workspace", () => {
+  it("the CRM pages draw the Sales Manager desk, and the record redirects to the unified lead page", () => {
     const at = (page: string) => readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8");
     assert.match(at("page.tsx"), /pipelineDesk/);
     assert.match(at("page.tsx"), /<Dashboard/);
-    assert.match(at("[id]/page.tsx"), /SalesManagerRecordScreen/);
-    assert.match(at("[id]/page.tsx"), /workspace="crm"/, "the record must be handed the CRM workspace");
+    /* The record is the unified lead page now: this route keeps only the seat-scope
+       read (an out-of-book lead is a 404) and then redirects into `/crm/leads/[id]`. */
+    assert.match(at("[id]/page.tsx"), /pipelineLead\(/, "the seat-scope read must still run first");
+    assert.match(at("[id]/page.tsx"), /notFound\(\)/, "an out-of-book lead must stay a 404");
+    assert.match(at("[id]/page.tsx"), /redirect\(`\/crm\/leads\/\$\{encodeURIComponent\(id\)\}`\)/, "the record must redirect into the unified lead page");
     /* The old separate views are redirects into the desk, never a second screen. */
     for (const view of ["list", "mine", "today", "overdue", "distributors", "pipeline"]) {
       assert.match(at(`${view}/page.tsx`), /redirect\("\/crm\/leads\/sales-manager/,`${view} must redirect into the desk`);

@@ -24,5 +24,5 @@ export default async function Page({
   const links = pipelineLinks("crm");
   const data = await pipelineDesk(await today());
   const q = Array.isArray(sp.q) ? sp.q[0] : sp.q;
-  return <Dashboard data={data} initialView={parseDeskView(raw)} initialQuery={q ?? ""} base={links.base} intakeHref={links.intake} />;
+  return <Dashboard data={data} initialView={parseDeskView(raw)} initialQuery={q ?? ""} base="/crm/leads" intakeHref={links.intake} />;
 }

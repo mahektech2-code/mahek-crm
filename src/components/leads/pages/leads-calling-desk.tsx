@@ -60,6 +60,7 @@ export async function Body({
       initialView={view}
       greeting={`Good ${part}, ${first}`}
       base={leadHref(workspace, "leads/calling-desk")}
+      recordBase={leadHref(workspace, "leads")}
       intakeHref={leadHref(workspace, "leads/intake")}
       canAssign={await canLead(user, "lead.verify")}
       nurtureHref={leadHref(workspace, "leads/actions/nurture")}

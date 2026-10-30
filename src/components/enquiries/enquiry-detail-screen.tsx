@@ -162,7 +162,7 @@ export function EnquiryDetailScreen({
           <StageCard enquiry={enquiry} onAfter={after} />
           <CreateLeadCard
             enquiry={enquiry}
-            deskHref={deskAccess && enquiry.customerId ? `/crm/leads/calling-desk/${enquiry.customerId}` : null}
+            deskHref={deskAccess && enquiry.customerId ? `/crm/leads/${enquiry.customerId}` : null}
           />
           {!enquiry.customerId ? <CustomerMatchCard enquiry={enquiry} phone={displayPhone} onAfter={after} /> : (
             <Card className="p-5">

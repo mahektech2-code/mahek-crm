@@ -1,4 +1,6 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { canOpenModule } from "@/lib/access";
+import { requireUser } from "@/lib/auth";
 import { LeadRecordScreen } from "@/components/sales-lead-pipeline/lead-record-screen";
 import { LeadModals } from "@/components/sales-lead-pipeline/modals";
 import { LeadPipelineProvider } from "@/components/sales-lead-pipeline/provider";
@@ -28,6 +30,7 @@ export default async function Page({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+
   const sp = await searchParams;
   const day = await today();
   const cursor = cursorFrom(single(sp.tl));
@@ -36,6 +39,13 @@ export default async function Page({
   /* Null covers both "no such lead" and "not in this manager's territory", and
      the two are deliberately the same answer. */
   if (!found) notFound();
+
+  /* THE SALES DASHBOARD'S LEAD IS THE UNIFIED LEAD RECORD NOW — see
+     `/sales/leads/[id]`. Redirected only AFTER the scope read above, so an
+     out-of-scope lead stays a 404. Somebody granted only this workspace keeps
+     the screen they had. */
+  const user = await requireUser();
+  if (await canOpenModule(user.id, "sales.leads")) redirect(`/sales/leads/${encodeURIComponent(id)}`);
 
   const refs = await pipelineRefs();
   const base = `/sales-lead-pipeline/${id}`;

@@ -58,12 +58,41 @@ export function setTestWorkspace(workspace: string | null) {
 export async function inCrmSalesManagerWorkspace(): Promise<boolean> {
   if (testWorkspace !== null) return testWorkspace === CRM_SALES_MANAGER_WORKSPACE;
   try {
-    return (await headers()).get(WORKSPACE_HEADER) === CRM_SALES_MANAGER_WORKSPACE;
+    if ((await headers()).get(WORKSPACE_HEADER) === CRM_SALES_MANAGER_WORKSPACE) return true;
   } catch {
     /* No request — a job or a test. Not this workspace. */
     return false;
   }
+  return holdsSeatWithoutAllLeads();
 }
+
+/**
+ * A CRM SALES MANAGER WHO WAS NEVER GIVEN ALL LEADS, anywhere in the CRM.
+ *
+ * The unified lead record lives at `/crm/leads/[id]`, behind `crm.leads`
+ * and wider than their book. Somebody granted only `crm.sales-manager` is let
+ * onto that one record (its layout asks any of the lead modules) but must stay
+ * narrowed to their seat there exactly as they are under
+ * `/crm/leads/sales-manager` — so that request is treated as being IN the
+ * workspace, for reads and for writes alike, and the seat scope follows them.
+ * It asks the CRM only: the Sales Dashboard keeps the scope it always had.
+ * An administrator is never narrowed, and anybody holding `crm.leads` keeps
+ * the scope that module has always carried.
+ */
+const holdsSeatWithoutAllLeads = cache(async (): Promise<boolean> => {
+  try {
+    const { requestAppId } = await import("../access-control");
+    if ((await requestAppId()) !== "crm") return false;
+    const [{ requireUser }, { canOpenModule }] = await Promise.all([import("../auth"), import("../access")]);
+    const user = await requireUser();
+    if (isAdminUser(user)) return false;
+    return (
+      (await canOpenModule(user.id, "crm.sales-manager")) && !(await canOpenModule(user.id, "crm.leads"))
+    );
+  } catch {
+    return false;
+  }
+});
 
 /** An administrator is not narrowed by a seat: they run the system. */
 export function isAdminUser(user: { role: string }): boolean {
