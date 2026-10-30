@@ -429,11 +429,6 @@ function Detail({
         <Icon n={l.fromPhone ? "phone" : "file"} s={14} />
         <span>{[l.uploadedBy, stamp(l.uploadedAt)].filter(Boolean).join(" · ")}</span>
         <span className="flex-1" />
-        {canWrite && !row.wrong ? (
-          <LinkButton onClick={() => run(() => erpLogisticsSetKind(l.id, lr ? "signed_copy" : "lr"))} disabled={pending}>
-            {lr ? "It's a signed copy" : "It's an LR"}
-          </LinkButton>
-        ) : null}
         {row.missing.length ? <Badge label={`Needs ${row.missing.join(", ")}`} tone="warn" /> : row.state === "ready" ? <Badge label="Ready" tone="success" /> : null}
       </div>
 
