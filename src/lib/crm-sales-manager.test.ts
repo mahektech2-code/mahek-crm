@@ -920,3 +920,31 @@ describe("E — the Sales Manager's Edit: six fields, inside the book, and nothi
     assert.equal(after.ownerId, salesman.id, "the owner did not move");
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════ T — the team */
+
+describe("T — a Sales Manager's book includes the leads their own salesmen own", () => {
+  test("a salesman who reports to the manager: his lead with NO seat is listed, opens and can be worked", async () => {
+    await db.update(users).set({ reportsToId: smA.id }).where(eq(users.id, salesman.id));
+    const stranger = await makeLead({ name: "Stranger", ownerId: salesman2.id, salesManagerId: null });
+
+    assert.ok((await listIds()).includes(ownerOnly.id), "his lead is in the manager's list");
+    assert.ok(await pipelineLead(ownerOnly.id, DAY), "and its record opens");
+    const r = await setLeadNextAction(ownerOnly.id, { action: "Follow up", date: NEXT_WEEK, ownerId: salesman.id });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    // Somebody who is not on the team stays outside, seat or no seat.
+    assert.ok(!(await listIds()).includes(stranger.id));
+    assert.equal(await pipelineLead(stranger.id, DAY), null);
+    const refused = await setLeadNextAction(stranger.id, { action: "No", date: NEXT_WEEK, ownerId: salesman2.id });
+    assert.equal(refused.ok, false);
+  });
+
+  test("another Sales Manager does not gain the team, and a lead on another's seat is not pulled in", async () => {
+    await db.update(users).set({ reportsToId: smA.id }).where(eq(users.id, salesman.id));
+    setTestUser(smB);
+    assert.ok(!(await listIds()).includes(ownerOnly.id));
+    assert.equal(await pipelineLead(ownerOnly.id, DAY), null);
+    assert.deepEqual(await listIds(), [mineB.id]);
+  });
+});

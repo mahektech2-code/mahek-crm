@@ -6,7 +6,7 @@ import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appIdEnum, auditLog, users, type User } from "@/db/schema";
 import { APP_HEADER } from "@/proxy";
-import { inCrmSalesManagerWorkspace, leadInSalesManagersBook } from "@/lib/services/crm-sales-manager-scope";
+import { inCrmSalesManagerWorkspace, leadInSalesManagersBook, teamOwnerIdsFor } from "@/lib/services/crm-sales-manager-scope";
 import { type AppId } from "@/lib/apps";
 import { requireUser } from "./auth";
 import { getScope as getScopePreference } from "./scope";
@@ -714,7 +714,7 @@ export async function assertCustomerInScope(
      lets the person act on, whatever level their CRM hat happens to be. */
   if (await inCrmSalesManagerWorkspace()) {
     const { user } = await resolveScope();
-    if (leadInSalesManagersBook(customer, user)) return;
+    if (leadInSalesManagersBook(customer, user, await teamOwnerIdsFor(user.id, user.name))) return;
     throw new NotPermittedError("customer.read");
   }
 

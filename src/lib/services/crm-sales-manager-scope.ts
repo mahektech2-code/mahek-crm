@@ -1,5 +1,10 @@
+import { cache } from "react";
 import { headers } from "next/headers";
-import { sql, type SQL } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
+
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { managerNameByEmployeeName } from "./org-service";
 
 import { CRM_SALES_MANAGER_WORKSPACE, WORKSPACE_HEADER } from "@/proxy";
 import type { ManagerScope } from "./sales-service";
@@ -85,14 +90,61 @@ export function crmSalesManagerScopeFor(user: { id: string; role: string }): Man
 }
 
 /**
- * `and <alias>.sales_manager_id = <them>` for queries that join `customers`
- * but were narrowed by SALESMAN rather than by lead (the sample desk, the
- * nurture schedule). Empty for every other scope, so those queries are
- * unchanged everywhere else.
+ * THE PEOPLE WHO ANSWER TO THIS SALES MANAGER, plus the manager themself.
+ *
+ * The seat (`sales_manager_id`) is filled by a nightly name match, so a new
+ * lead, a reassigned one, or a salesman whose name is spelt differently on the
+ * HR sheet sat outside the manager's book — and a manager who holds salesmen
+ * could not see, filter or work their leads. A lead owned by anybody on this
+ * list is therefore in the manager's book as well as one carrying their seat.
+ *
+ * "Under" is read the way the rest of the product reads it: the account's
+ * `reports_to_id`, the org chart, or the employee sheet's own "reports to"
+ * column. It can only ADD leads, and only ones owned by their own people.
+ */
+export const teamOwnerIdsFor = cache(async function teamOwnerIdsFor(
+  userId: string,
+  userName: string,
+): Promise<string[]> {
+  const mine = userName.trim().toLowerCase();
+  const [managerNameOf, accounts, sheet] = await Promise.all([
+    managerNameByEmployeeName(),
+    db
+      .select({ id: users.id, name: users.name, reportsToId: users.reportsToId })
+      .from(users)
+      .where(eq(users.active, true)),
+    db.execute<{ name: string }>(sql`
+      select name from employees where status = 'active' and lower(trim(reports_to)) = ${mine}
+    `) as unknown as Promise<{ name: string }[]>,
+  ]);
+  const sheetNames = new Set(sheet.map((r) => r.name.trim().toLowerCase()));
+  const ids = new Set<string>([userId]);
+  for (const a of accounts) {
+    const n = a.name.trim().toLowerCase();
+    if (
+      a.reportsToId === userId ||
+      managerNameOf.get(n)?.trim().toLowerCase() === mine ||
+      sheetNames.has(n)
+    ) {
+      ids.add(a.id);
+    }
+  }
+  return [...ids];
+});
+
+/**
+ * `and (<alias>.sales_manager_id = <them> or <alias>.owner_id in <their team>)`
+ * for queries that join `customers` but were narrowed by SALESMAN rather than
+ * by lead (the sample desk, the nurture schedule). Empty for every other scope,
+ * so those queries are unchanged everywhere else.
  */
 export function inSalesManagersBook(scope: ManagerScope, alias = "c"): SQL {
   if (!scope.salesManagerId) return sql``;
-  return sql`and ${sql.raw(alias)}.sales_manager_id = ${scope.salesManagerId}`;
+  const seat = sql`${sql.raw(alias)}.sales_manager_id = ${scope.salesManagerId}`;
+  const team = scope.teamOwnerIds ?? [];
+  if (!team.length) return sql`and ${seat}`;
+  const owners = sql.join(team.map((i) => sql`${i}`), sql`, `);
+  return sql`and (${seat} or ${sql.raw(alias)}.owner_id in (${owners}))`;
 }
 
 /**
@@ -102,9 +154,12 @@ export function inSalesManagersBook(scope: ManagerScope, alias = "c"): SQL {
  * the seat cannot prove the lead is theirs.
  */
 export function leadInSalesManagersBook(
-  customer: { salesManagerId?: string | null } | null,
+  customer: { salesManagerId?: string | null; ownerId?: string | null } | null,
   user: { id: string; role: string },
+  teamOwnerIds: readonly string[] = [],
 ): boolean {
   if (isAdminUser(user)) return true;
-  return !!customer && !!customer.salesManagerId && customer.salesManagerId === user.id;
+  if (!customer) return false;
+  if (customer.salesManagerId && customer.salesManagerId === user.id) return true;
+  return !!customer.ownerId && teamOwnerIds.includes(customer.ownerId);
 }
