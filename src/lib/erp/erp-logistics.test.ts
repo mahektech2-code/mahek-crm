@@ -916,7 +916,10 @@ describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Veh
     assert.equal(first.ok && first.data.ids.length, 1, "one photo, sent twice in one upload, is one LR");
     const again = await L.uploadLrs(ctx, [{ fileId: b }]);
     assert.ok(again.ok);
-    assert.deepEqual(again.ok && again.data, { ids: [], already: first.ok ? first.data.ids : [] }, "and sent again later it answers with the first");
+    assert.deepEqual(again.ok && { ids: again.data.ids, already: again.data.already }, { ids: [], already: first.ok ? first.data.ids : [] }, "and sent again later it answers with the first");
+    /* And it says which copy that is, so "nothing new" is never read as a failure and sent again. */
+    assert.deepEqual(again.ok && again.data.repeats, [{ fileId: b, lrId: first.ok ? first.data.ids[0] : "", what: "already uploaded as an LR not read yet, waiting on the Documents desk" }]);
+    assert.match((again.ok && again.message) || "", /^Nothing new sent — this photo is already uploaded as an LR not read yet/);
   });
 
   test("a second photo of one LR is flagged beside the first, and discarding it keeps the first", async () => {

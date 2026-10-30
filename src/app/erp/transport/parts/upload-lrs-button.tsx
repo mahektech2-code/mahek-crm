@@ -17,7 +17,8 @@ import { useAct } from "./common";
  * copies, and send them. Nothing is typed here — the Documents desk reads
  * each one, flags duplicates and is where it is checked and attached. Each
  * file goes up the moment it is picked, so Send only files what is already in.
- * The same photo sent twice is stored once.
+ * The same photo sent twice is stored once, and the dialog then names the copy
+ * it already is, so nobody reads "nothing new" as a failure and sends it again.
  * ------------------------------------------------------------------------- */
 
 type Tile = { key: string; name: string; preview: string | null; fileId: string | null; state: "up" | "done" | "failed"; error: string; file: File };
@@ -61,6 +62,8 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
   const [tiles, setTiles] = useState<Tile[]>([]);
   const [drag, setDrag] = useState(false);
   const [note, setNote] = useState("");
+  /* Photos the desk already had, by file name, with where that copy went. Kept until the next upload. */
+  const [repeats, setRepeats] = useState<{ name: string; what: string }[]>([]);
   const input = useRef<HTMLInputElement>(null);
 
   const patch = (key: string, p: Partial<Tile>) => setTiles((ts) => ts.map((t) => (t.key === key ? { ...t, ...p } : t)));
@@ -80,6 +83,7 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
   };
   const add = (files: FileList | null) => {
     if (!files?.length) return;
+    setRepeats([]);
     const room = UPLOAD_MAX - tiles.length;
     const picked = [...files].slice(0, Math.max(0, room));
     setNote(files.length > room ? `Only ${UPLOAD_MAX} fit in one upload. Send these, then add the rest.` : "");
@@ -99,6 +103,8 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
       () => erpLogisticsUploadLrs(done.map((t) => ({ fileId: t.fileId, kind }))),
       (r) => {
         if (r.ok) {
+          const nameOf = new Map(done.map((t) => [t.fileId, t.name]));
+          setRepeats(r.data.repeats.map((x) => ({ name: nameOf.get(x.fileId) ?? "A photo", what: x.what })));
           setTiles((ts) => ts.filter((t) => !t.fileId));
           setNote("");
         }
@@ -183,6 +189,16 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
         {note ? <p className="text-meta text-warn-ink">{note}</p> : null}
+        {repeats.length ? (
+          <div className="flex flex-col gap-1 rounded-control border border-line bg-canvas p-3 text-meta" role="status">
+            <span className="font-semibold text-ink">Not sent again — the desk already has {repeats.length === 1 ? "this photo" : "these photos"}</span>
+            {repeats.map((x, i) => (
+              <span key={i} className="text-muted">
+                <span className="text-ink">{x.name}</span> — {x.what}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </DialogBody>
       <DialogFooter>
         <Button onClick={onClose}>Close</Button>

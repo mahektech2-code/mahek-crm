@@ -675,7 +675,36 @@ export const FREIGHT_TERMS = ["Paid", "To pay", "TBB"];
  * is skipped. Nothing is attached here: which bills an LR carries is
  * logistics' decision, and that is where the number becomes required.
  */
-export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Result<{ ids: string[]; already: string[] }>> {
+/** A photo sent again: which file, the copy already holding those bytes, and that copy said in words. */
+export type RepeatedUpload = { fileId: string; lrId: string; what: string };
+
+/**
+ * "Already on the desk" with nothing after it reads as a failure, and the
+ * person sends the same photo again — six times in a row on 2026-10-30. So a
+ * repeat says WHICH copy it already is and where that copy went: its number,
+ * and the order and customer it is attached to, or that it is waiting on the
+ * Documents desk.
+ */
+async function describeRepeats(dupFile: Map<string, string>): Promise<RepeatedUpload[]> {
+  if (!dupFile.size) return [];
+  const lrIds = [...new Set(dupFile.values())];
+  const rows = (await db.execute(sql`
+    select l.id, l.lr_no as "lrNo", l.kind, l.transporter,
+           (select string_agg(t.order_no::text || coalesce(' · ' || c.name, ''), ', ' order by t.order_no)
+              from erp_transports t left join customers c on c.id = t.billing_customer_id
+             where t.lr_id = l.id or t.signed_copy_id = l.id) as "attachedTo"
+      from erp_lrs l
+     where l.id in ${lrIds}`)) as unknown as { id: string; lrNo: string | null; kind: string; transporter: string | null; attachedTo: string | null }[];
+  const said = new Map(
+    rows.map((r) => {
+      const copy = r.kind === "signed_copy" ? "a signed copy" : r.lrNo ? `LR ${r.lrNo}${r.transporter ? ` of ${r.transporter}` : ""}` : "an LR not read yet";
+      return [r.id, `already uploaded as ${copy}, ${r.attachedTo ? `attached to order ${r.attachedTo}` : "waiting on the Documents desk"}`];
+    }),
+  );
+  return [...dupFile].map(([fileId, lrId]) => ({ fileId, lrId, what: said.get(lrId) ?? "already uploaded" }));
+}
+
+export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Result<{ ids: string[]; already: string[]; repeats: RepeatedUpload[] }>> {
   if (items.length > 50) return err("Upload up to 50 LRs at a time.", "validation");
   const bad0 = items.find((i) => i.kind != null && !isProofKind(i.kind));
   if (bad0) return err("Upload an LR or a signed copy.", "validation");
@@ -686,6 +715,7 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
      answers with that copy and writes nothing. Two photos of one paper differ in their bytes and
      reach the desk, which flags them for a person. */
   const already: string[] = [];
+  let repeats: RepeatedUpload[] = [];
   const files = clean.map((i) => i.fileId).filter((f): f is string => !!f);
   if (files.length) {
     const hits = (await db.execute(sql`
@@ -708,7 +738,9 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
       const h = hashes.find((x) => x.id === i.fileId)?.h;
       return !h || firstOf.get(h) === i.fileId;
     });
-    if (!clean.length && already.length) return ok({ ids: [], already: [...new Set(already)] }, `Already uploaded — ${already.length === 1 ? "this photo is" : "these photos are"} on the desk`);
+    repeats = await describeRepeats(dupFile);
+    if (!clean.length && already.length)
+      return ok({ ids: [], already: [...new Set(already)], repeats }, repeats.length === 1 ? `Nothing new sent — this photo is ${repeats[0].what}` : `Nothing new sent — all ${repeats.length} photos were uploaded before`);
   }
   if (!clean.length) return err("Fill in at least one LR — a photo is enough.", "validation");
   const bad = clean.find((i) => i.lrDate && !day(i.lrDate));
@@ -772,7 +804,7 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
   await settleLrReadings(ctx, readings).catch((e) => console.error("LR upload: settling photo readings failed:", e instanceof Error ? e.message : e));
   await erpAudit(ctx, "erp.logistics.lrUpload", "erp_lr", ids.join(","), null, { lrs: clean.map((i) => i.lrNo || null), kinds: clean.map((i) => i.kind), already });
   const word = clean.every((i) => i.kind === "signed_copy") ? (ids.length === 1 ? "signed copy" : "signed copies") : clean.every((i) => i.kind === "lr") ? (ids.length === 1 ? "LR" : "LRs") : ids.length === 1 ? "copy" : "copies";
-  return ok({ ids, already: [...new Set(already)] }, `${ids.length} ${word} uploaded${already.length ? ` · ${already.length} already on the desk` : ""} — the office checks ${ids.length === 1 ? "it" : "them"} on the Documents desk`);
+  return ok({ ids, already: [...new Set(already)], repeats }, `${ids.length} ${word} uploaded${already.length ? ` · ${already.length} not sent again, uploaded before` : ""} — the office checks ${ids.length === 1 ? "it" : "them"} on the Documents desk`);
 }
 
 export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Promise<Result<unknown>> {
