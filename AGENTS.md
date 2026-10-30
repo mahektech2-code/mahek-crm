@@ -1937,7 +1937,8 @@ title and puts the sentence behind the ⓘ. Each does this through classes the
 sheet reads (`ui-field-label`, `ui-hint`, `ui-hint-tip`), so the apps without
 the marker are unchanged. A list with many filters puts them behind one
 `FilterPanelButton` (`components/ui/filter-panel.tsx`) with the chips of what is
-on left on the bar — Customers' nine are there. Never write "· required" or
+on left on the bar — Customers' nine are there, and Payment follow-up's stage,
+slow payers and month-end view. Never write "· required" or
 "(optional)" into a CRM label; the test refuses it. The Tele CRM canvas
 (claude.ai artifact "Tele CRM — ERP design system and less text") is the
 board-by-board plan, and it lists, per screen, everything that was kept.

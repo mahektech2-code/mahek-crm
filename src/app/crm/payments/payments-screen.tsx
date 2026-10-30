@@ -39,6 +39,7 @@ import type {
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import { Pager } from "@/components/ui/pager";
+import { FilterPanelButton } from "@/components/ui/filter-panel";
 import type { ReminderDay, ReminderSummary, TrackerRow } from "@/lib/services/whatsapp-tracker-service";
 import { previewOf, statusView, wentAt, whenLabel } from "@/lib/whatsapp-status";
 
@@ -240,6 +241,24 @@ export function PaymentsScreen({
   const visible = rows;
   const stageFilter = tab.startsWith("stage") ? tab.slice(5) : "";
   const filtered = Boolean(query || slowOnly || monthEnd || stageFilter);
+  const STAGE_NAME: Record<string, string> = { "1": "Nudge", "2": "Call", "3": "Urgent" };
+  const chips: { label: string; clear: () => void }[] = [];
+  if (stageFilter)
+    chips.push({
+      label: `Stage ${stageFilter} · ${STAGE_NAME[stageFilter] ?? ""}`,
+      clear: () => navigate({ tab: "all" }),
+    });
+  if (slowOnly) chips.push({ label: "Slow payers", clear: () => navigate({ slow: undefined }) });
+  if (monthEnd) chips.push({ label: "Month-end view", clear: () => navigate({ sort: undefined }) });
+  function clearAll() {
+    setDraft("");
+    navigate({
+      q: undefined,
+      slow: undefined,
+      sort: undefined,
+      tab: stageFilter ? "all" : undefined,
+    });
+  }
 
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
@@ -394,52 +413,62 @@ export function PaymentsScreen({
               className="h-8"
             />
           </div>
-          <div className="w-[190px] flex-none">
-            <Select
-              value={stageFilter}
-              onChange={(e) =>
-                navigate({ tab: e.target.value ? `stage${e.target.value}` : "all" })
-              }
-              className="h-8"
-              aria-label="Stage"
-            >
-              <option value="">All stages</option>
-              <option value="1">Stage 1 · Nudge ({counts.stage1})</option>
-              <option value="2">Stage 2 · Call ({counts.stage2})</option>
-              <option value="3">Stage 3 · Urgent ({counts.stage3})</option>
-            </Select>
-          </div>
-          <Checkbox
-            label="Slow payers"
-            checked={slowOnly}
-            onChange={(e) => navigate({ slow: e.target.checked ? "1" : undefined })}
-          />
-          <button
-            onClick={() => navigate({ sort: monthEnd ? undefined : "value" })}
-            title="Sort by amount, biggest first"
-            className={cx(
-              "h-8 flex-none cursor-pointer rounded-[4px] border px-2.5 text-[13px] whitespace-nowrap",
-              monthEnd
-                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                : "border-line bg-surface text-body hover:bg-canvas",
-            )}
+          {/* Stage, slow payers and the month-end view live behind one
+              button; what is on stays on the bar as a chip with its ×. */}
+          <FilterPanelButton
+            count={chips.length}
+            onClear={clearAll}
+            width={460}
+            summary={
+              matched === listTotal
+                ? plural(matched, "customer")
+                : `${matched.toLocaleString("en-IN")} of ${listTotal.toLocaleString("en-IN")}`
+            }
           >
-            Month-end view
-          </button>
+            <Field label="Stage">
+              <Select
+                value={stageFilter}
+                onChange={(e) =>
+                  navigate({ tab: e.target.value ? `stage${e.target.value}` : "all" })
+                }
+                className="w-full"
+              >
+                <option value="">All stages</option>
+                <option value="1">Stage 1 · Nudge ({counts.stage1})</option>
+                <option value="2">Stage 2 · Call ({counts.stage2})</option>
+                <option value="3">Stage 3 · Urgent ({counts.stage3})</option>
+              </Select>
+            </Field>
+            <Field label="Show" group>
+              <div className="flex flex-col gap-2 pt-1">
+                <Checkbox
+                  label="Slow payers only"
+                  checked={slowOnly}
+                  onChange={(e) => navigate({ slow: e.target.checked ? "1" : undefined })}
+                />
+                <Checkbox
+                  label="Month-end view (biggest first)"
+                  checked={monthEnd}
+                  onChange={(e) => navigate({ sort: e.target.checked ? "value" : undefined })}
+                />
+              </div>
+            </Field>
+          </FilterPanelButton>
+          {chips.map((c) => (
+            <button
+              key={c.label}
+              onClick={c.clear}
+              className="inline-flex h-6 flex-none cursor-pointer items-center gap-1.5 rounded-[4px] border border-line bg-canvas px-2 text-[13px] text-body"
+            >
+              {c.label} <span className="text-muted">×</span>
+            </button>
+          ))}
           {filtered ? (
             <button
-              onClick={() => {
-                setDraft("");
-                navigate({
-                  q: undefined,
-                  slow: undefined,
-                  sort: undefined,
-                  tab: stageFilter ? "all" : undefined,
-                });
-              }}
+              onClick={clearAll}
               className="h-8 flex-none cursor-pointer border-none bg-transparent px-1.5 text-[13px] whitespace-nowrap text-brand"
             >
-              Clear
+              Clear all
             </button>
           ) : null}
           <span className="flex-1" />
