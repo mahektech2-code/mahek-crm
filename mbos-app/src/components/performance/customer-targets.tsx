@@ -215,7 +215,12 @@ export function CustomerTargetsCard({
         <ListCard style={{ marginTop: 10 }}>
           {visible.slice(0, shown).map((r, i) => (
             <Stagger key={r.customerId} index={i}>
-              <TargetRow row={r} first={i === 0} today={today} onPress={() => onOpen(r.customerId)} />
+              <TargetRow
+                row={r}
+                first={i === 0}
+                today={today}
+                onPress={r.onPhone === false ? undefined : () => onOpen(r.customerId)}
+              />
             </Stagger>
           ))}
         </ListCard>
@@ -253,7 +258,8 @@ function TargetRow({
   row: CustomerTargetRow;
   first: boolean;
   today: string;
-  onPress: () => void;
+  /** Absent for a shop whose record is not on this phone — there is nothing to open. */
+  onPress?: () => void;
 }) {
   const state = stateOf(row);
   const gap = gapPaise(row);
@@ -308,12 +314,25 @@ function TargetRow({
         {row.unsentPaise ? (
           <T s="micro">{inrFromPaise(row.unsentPaise)} of it is still on this phone, not yet sent.</T>
         ) : null}
-        <T s="micro" style={{ marginTop: 2 }}>
-          {lastOrderWords(row.lastOrderDate, today)}
-        </T>
+        {/* Its last order is read off the customer row, which is not here — so
+            for a shop off the phone this would say "never ordered" about a shop
+            with sales against it. Said nothing rather than said wrong. */}
+        {row.onPhone === false ? null : (
+          <T s="micro" style={{ marginTop: 2 }}>
+            {lastOrderWords(row.lastOrderDate, today)}
+          </T>
+        )}
 
-        {row.carriedForward || (row.isDefault && row.targetPaise > 0) ? (
+        {row.onPhone === false ? (
+          <T s="micro" style={{ marginTop: 2 }}>
+            Its record is not on this phone because it is outside the area you are set to work. Ask your
+            manager if it should be added.
+          </T>
+        ) : null}
+
+        {row.onPhone === false || row.carriedForward || (row.isDefault && row.targetPaise > 0) ? (
           <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+            {row.onPhone === false ? <Badge tone="neutral">Outside your area</Badge> : null}
             {row.carriedForward ? <Badge tone="neutral">Last month&apos;s figure</Badge> : null}
             {row.isDefault && !row.carriedForward && row.targetPaise > 0 ? (
               <Badge tone="neutral">Default</Badge>

@@ -25,6 +25,9 @@ export async function listCustomerTargets(period: string): Promise<CustomerTarge
     customerId: string;
     name: string | null;
     city: string | null;
+    customerName: string | null;
+    customerCity: string | null;
+    onPhone: number;
     lastOrderDate: string | null;
     targetPaise: number;
     achievedPaise: number;
@@ -34,7 +37,8 @@ export async function listCustomerTargets(period: string): Promise<CustomerTarge
     billTarget: number | null;
     billsAchieved: number | null;
   }>(
-    `SELECT t.customerId, c.name, c.city, c.lastOrderDate,
+    `SELECT t.customerId, c.name, c.city, t.customerName, t.customerCity,
+            (c.id IS NOT NULL) AS onPhone, c.lastOrderDate,
             t.targetPaise, t.achievedPaise, t.pendingPaise, t.isDefault, t.carriedForward,
             t.billTarget, t.billsAchieved
        FROM customer_targets t
@@ -47,11 +51,14 @@ export async function listCustomerTargets(period: string): Promise<CustomerTarge
 
   return rows.map((r) => ({
     customerId: r.customerId,
-    /* A shop the book has let go of since the last pull keeps its row until
-       the next one replaces the table; it still has a target, so it is shown,
-       under the only name there is. */
-    name: r.name ?? 'A shop no longer on this phone',
-    city: r.city,
+    /* A shop credited to him outside the area he is allocated has a target
+       and no customer row here. The office sends its name with the target,
+       so it is shown by that name and marked as outside his area rather than
+       as something the phone lost. "A shop" is only for a row pulled before
+       the office started sending the name. */
+    name: r.name ?? r.customerName ?? 'A shop',
+    city: r.city ?? r.customerCity,
+    onPhone: Boolean(r.onPhone),
     targetPaise: r.targetPaise ?? 0,
     achievedPaise: r.achievedPaise ?? 0,
     pendingPaise: r.pendingPaise ?? 0,
