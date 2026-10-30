@@ -370,7 +370,10 @@ export type PickableBox = { id: string; lineId: string; sku: string; lotCode: st
  * exactly as if its QR had been read.
  */
 export async function pickableBoxes(board: DispatchBoard): Promise<PickableBox[]> {
-  const open = board.lines.filter((l) => !l.cancelled && !l.dispatched && l.boxed);
+  /* Loose lines too: a labelled loose can is picked exactly as a box is, and
+     the scan's own check is what says whether it may go on the line. Leaving
+     them out made the list empty for every loose order. */
+  const open = board.lines.filter((l) => !l.cancelled && !l.dispatched);
   if (!open.length) return [];
   const want = open.map((l) => sql`(${l.skuId}, ${l.godownId})`);
   const rows = await q<Row>(db, sql`

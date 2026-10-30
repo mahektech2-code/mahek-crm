@@ -387,3 +387,24 @@ describe("a box released from hold", () => {
     assert.equal((await unitsStatus(box.id)), "available");
   });
 });
+
+describe("a loose order at the dispatch desk", () => {
+  test("its pick list offers the labelled loose cans, and picking one scans it on", async () => {
+    /* The list used to be built from boxed lines only, so a loose order's was
+       always empty and its cans could only be scanned one by one. */
+    const a = await as(admin);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "2", rate: "100" }])).ok);
+    const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
+    assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
+
+    const board = await dispatchBoard(Number(o.no));
+    assert.ok(board);
+    const offered = await pickableBoxes(board);
+    assert.ok(offered.length > 0, "the loose cans in stock are offered");
+    assert.ok(offered.every((u) => u.id.startsWith("LU-") && u.sku === LOOSE1 && u.lineId === o.id), JSON.stringify(offered.slice(0, 3)));
+
+    const scanned = await scanOntoOrder(await as(clerk), Number(o.no), offered[0].id);
+    assert.ok(scanned.ok && scanned.data.verdict.ok, JSON.stringify(scanned));
+  });
+});
