@@ -24,6 +24,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { updateSetting } from "@/lib/config/store";
 import { captureLead } from "@/lib/actions/lead-intake";
 import { analyseIntakeAction } from "@/lib/actions/intake-intel";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -37,7 +38,7 @@ async function makeUser(name: string, modules: string[]) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),

@@ -11,6 +11,7 @@
  * migrations. Never point them at a database anybody is using — the harness
  * truncates everything between tests.
  */
+import { testPhone } from "@/lib/test-phone";
 import { after, before, beforeEach, describe, test } from "node:test";
 import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import assert from "node:assert/strict";
@@ -240,17 +241,8 @@ let priya: typeof users.$inferSelect;
 let rakesh: typeof users.$inferSelect;
 let deepa: typeof users.$inferSelect;
 
-/*
- * A fixture's work number is UNIQUE BY CONSTRUCTION, not by luck.
- *
- * It was a fresh random draw from a million per user, and `users.phone` is
- * unique — so every so often two users in one test drew the same number and
- * the whole test failed in its setup with `users_phone_key`, on a change that
- * had nothing to do with users. A counter from a random start cannot repeat
- * inside a run, and the start still keeps two processes from lining up.
- */
-let phoneSeq = Math.floor(Math.random() * 900_000);
-const nextPhone = () => String(9820000000 + (phoneSeq++ % 1_000_000));
+/* A fixture's work number is unique by construction — see `testPhone`. */
+const nextPhone = testPhone;
 
 async function makeUser(
   name: string,
@@ -311,7 +303,7 @@ async function makeCustomer(
       id: id("cus"),
       name: over.name ?? `Customer ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact Person",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai",
       ownerId,
       // Scope resolves through the sales account manager on a customer, so the
@@ -11310,7 +11302,7 @@ describe("An order has a billing party and a delivery party", () => {
 describe("screen 5 — raising a lead, its \"Under\" and its priority", () => {
   const base = () => ({
     name: `Shop ${randomUUID().slice(0, 6)}`,
-    phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+    phone: testPhone(),
     city: "Nagpur",
     source: "telecalling",
   });

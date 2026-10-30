@@ -25,6 +25,7 @@ import { rmItemStockAt } from "@/lib/erp/stock";
 import { controlWork, missingRecords, planCycleCounts } from "@/lib/erp/stock-check";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-10-11";
@@ -33,7 +34,7 @@ const BHW = "erpg_bhiwandi";
 async function makeUser(name: string, level: "associate" | "manager" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@stock.test`, phone: String(9821000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@stock.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;

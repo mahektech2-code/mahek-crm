@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { appAccess, appModuleAccess, customers, employeeReporting, employees, users } from "@/db/schema";
 import { associateTeamBook } from "@/lib/services/crm-sales-manager-scope";
 import { leadsVisible, type ManagerScope } from "@/lib/services/sales-service";
+import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
  * AN ASSOCIATE WHO HOLDS THE SALES MANAGER MODULE sees her own book PLUS her
@@ -27,7 +28,7 @@ const sfx = randomUUID().slice(0, 6);
 async function user(name: string, role: "associate" | "manager", modules: string[] = []) {
   const [u] = await db.insert(users).values({
     id: id("usr"), name, email: `${name.replace(/\W+/g, "").toLowerCase()}-${randomUUID().slice(0, 4)}@test.local`,
-    phone: String(9830000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role, initials: name.slice(0, 2).toUpperCase(),
+    phone: testPhone(), passwordHash: "x", role, initials: name.slice(0, 2).toUpperCase(),
   }).returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "crm", role });
   for (const m of modules) await db.insert(appModuleAccess).values({ id: id("ama"), userId: u.id, app: "crm", module: m });
@@ -36,7 +37,7 @@ async function user(name: string, role: "associate" | "manager", modules: string
 async function mk(key: string, owner: string | null, seat: string | null, stage: "new" | "suspect" | "lost" = "new") {
   const [c] = await db.insert(customers).values({
     id: id("cus"), name: `${key} ${randomUUID().slice(0, 4)}`, kind: "lead", leadStage: stage, leadSalesType: "direct",
-    leadSource: "manual", city: "Nashik", contactPerson: "T", ownerId: owner, salesManagerId: seat, phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+    leadSource: "manual", city: "Nashik", contactPerson: "T", ownerId: owner, salesManagerId: seat, phone: testPhone(),
   }).returning();
   lead[key] = c.id;
 }

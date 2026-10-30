@@ -16,6 +16,7 @@ import {
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { moveOnReadiness } from "@/lib/services/lead-readiness-move-service";
 import type { LeadMoveActor } from "@/lib/services/lead-service";
+import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
  * A verifying call's readiness answer asks the stage engine for a move, and the
@@ -47,7 +48,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -66,7 +67,7 @@ const lead = async (over: Partial<typeof customers.$inferInsert> = {}) =>
         id: id("cus"),
         name: `Lead ${randomUUID().slice(0, 6)}`,
         contactPerson: "Ganesh",
-        phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+        phone: testPhone(),
         city: "Nashik",
         kind: "lead",
         leadStage: "qualification",

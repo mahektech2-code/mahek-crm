@@ -24,6 +24,7 @@ import { appAccess, customerAmChanges, customers, mbosUserTerritories, users } f
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { previewAreaHandover, setSalesmanTerritories } from "@/lib/actions/sales";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 type Level = "associate" | "manager" | "admin";
@@ -53,7 +54,7 @@ async function makeUser(name: string, level: Level, apps: [string, Level][]) {
 async function shop(over: Partial<typeof customers.$inferInsert>) {
   const [r] = await db
     .insert(customers)
-    .values({ id: id("cus"), name: `Shop ${randomUUID().slice(0, 6)}`, phone: String(9000000000 + Math.floor(Math.random() * 999999999)), city: "Pune", territoryRegion: "Maharashtra", kind: "customer", salesAmId: holder.id, ownerId: holder.id, ...over })
+    .values({ id: id("cus"), name: `Shop ${randomUUID().slice(0, 6)}`, phone: testPhone(), city: "Pune", territoryRegion: "Maharashtra", kind: "customer", salesAmId: holder.id, ownerId: holder.id, ...over })
     .returning();
   return r;
 }

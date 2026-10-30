@@ -52,6 +52,7 @@ import seedJson from "@/lib/website-cms/seed/cms-seed.bundle.json";
 import { GET as readContent } from "@/app/api/public/website/content/route";
 import { GET as readMediaRoute } from "@/app/api/public/website/media/[id]/route";
 import { impactReport } from "@/lib/impact/registry";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -73,7 +74,7 @@ async function makeUser(name: string, grants: { website?: "associate" | "admin";
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s+/g, ".")}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: grants.website === "admin" ? "manager" : "associate",
       initials: name.slice(0, 2).toUpperCase(),

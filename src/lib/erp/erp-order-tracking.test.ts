@@ -41,6 +41,7 @@ import { today } from "@/lib/erp/screens/common";
 import { addDays } from "@/lib/erp/engines/logistics";
 import * as L from "@/lib/erp/logistics";
 import * as T from "@/lib/erp/order-tracking";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const tag = randomUUID().slice(0, 6).toUpperCase();
@@ -50,7 +51,7 @@ const TODAY = today();
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@track.test`, phone: String(9830000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@track.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;

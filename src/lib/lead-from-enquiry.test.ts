@@ -48,6 +48,7 @@ import { modulesForApp } from "@/lib/modules";
 import { createEnquiryFromWebsite } from "@/lib/services/enquiry-service";
 import { callingDesk, deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { DESK_MODULE, deskAssigners, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+import { testPhone } from "@/lib/test-phone";
 
 /* Every call needs a remark now; the tests that are not about that supply one. */
 const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
@@ -73,7 +74,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),

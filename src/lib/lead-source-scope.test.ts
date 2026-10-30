@@ -10,6 +10,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { defaultConfig } from "@/lib/config/registry";
 import { captureLead } from "@/lib/actions/lead-intake";
 import { sourcesFor } from "@/lib/lead-source-scope";
+import { testPhone } from "@/lib/test-phone";
 
 /* Google Maps is a lead source ONLY the Sales Manager intake offers. */
 
@@ -26,7 +27,7 @@ const mkUser = async (name: string) => {
       id: id("usr"),
       name,
       email: `${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: "XX",
@@ -38,7 +39,7 @@ const mkUser = async (name: string) => {
 const CAPTURE = (over: Record<string, unknown> = {}) =>
   ({
     name: `Shop ${randomUUID().slice(0, 6)}`,
-    phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+    phone: testPhone(),
     city: "Nagpur",
     source: "google_maps",
     ...over,

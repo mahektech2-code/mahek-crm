@@ -23,6 +23,7 @@ import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { analyseVerifyCallAction } from "@/lib/actions/verify-intel";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 type Level = "associate" | "manager" | "admin";
@@ -43,7 +44,7 @@ async function makeUser(name: string, level: Level) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),
@@ -63,7 +64,7 @@ async function makeProspect(over: Partial<typeof customers.$inferInsert>) {
       id: id("cus"),
       name: `Prospect ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ramesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       customerType: "retailer",

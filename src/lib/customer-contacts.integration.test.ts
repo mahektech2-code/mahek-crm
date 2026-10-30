@@ -37,6 +37,7 @@ import { customerIdForNumber } from "@/lib/services/whatsapp-service";
 import { impactReport } from "@/lib/impact/registry";
 import { foldName } from "@/lib/customer-rename";
 import { seedErpCustomerProfiles } from "@/lib/erp/profile-seed";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -49,7 +50,7 @@ async function makeUser(name: string, role: Level, apps: { app: "crm" | "account
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),

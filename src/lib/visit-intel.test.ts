@@ -32,6 +32,7 @@ import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { mbosConfigPayload, type MbosPrincipal } from "@/lib/services/mbos-service";
 import { analyseVisit } from "@/lib/services/visit-intel-service";
 import type { SyncItem } from "@/lib/mbos/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -48,7 +49,7 @@ async function makeUser(name: string) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),
@@ -63,7 +64,7 @@ async function shop(name: string, ownerId: string) {
   await db.insert(customers).values({
     id: cid,
     name,
-    phone: String(9822200000 + Math.floor(Math.random() * 99999)),
+    phone: testPhone(),
     city: "Nagpur",
     kind: "customer",
     ownerId,

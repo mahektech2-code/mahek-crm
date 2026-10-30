@@ -31,6 +31,7 @@ import { partyStatus, loadCustomers } from "@/lib/erp/screens/masters";
 import { impactReport } from "@/lib/impact/registry";
 import { accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -41,7 +42,7 @@ async function makeUser(name: string, level: "associate" | "manager" | "admin", 
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),

@@ -20,6 +20,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, users } from "@/db/schema";
 import { employeeLateral } from "@/lib/employee-link";
+import { testPhone } from "@/lib/test-phone";
 
 before(() => {
   assert.match(
@@ -48,7 +49,7 @@ test("sum, count and bigint arrive as numbers, so adding them adds", async () =>
 
 test("an account matching two payroll rows is ONE row, preferring the email match", async () => {
   const uid = `usr_${randomUUID().slice(0, 12)}`;
-  const phone = `98${Math.floor(Math.random() * 1e8).toString().padStart(8, "0")}`;
+  const phone = testPhone();
   const email = `bharat-${randomUUID().slice(0, 6)}@test.local`;
   await db.insert(users).values({
     id: uid,

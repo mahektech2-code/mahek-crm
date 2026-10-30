@@ -31,6 +31,7 @@ import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { verificationQueue } from "@/lib/services/lead-console-service";
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAY = "2026-10-05";
@@ -49,7 +50,7 @@ async function makeUser(name: string, level: Level, apps: [string, Level][], mod
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),
@@ -85,7 +86,7 @@ async function makeProspect(over: Partial<typeof customers.$inferInsert>) {
     .values({
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "prospect",

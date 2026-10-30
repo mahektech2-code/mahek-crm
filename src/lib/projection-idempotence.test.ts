@@ -42,6 +42,7 @@ import {
   projectCustomers,
   projectOrders,
 } from "@/lib/services/sheet-projection-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -148,7 +149,7 @@ beforeEach(async () => {
       id: id("usr"),
       name: "Manager",
       email: `manager-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "manager",
       initials: "MG",

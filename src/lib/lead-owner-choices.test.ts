@@ -11,6 +11,7 @@ import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-ass
 import { deskHolders, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { leadsPage } from "@/lib/services/sales-service";
 import { UNASSIGNED, firstChoosable, ownerIdFor } from "@/components/leads/owner-options";
+import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
  * THE CHANGE OWNER / REASSIGN LIST SHOWS EVERYBODY, AND THE SERVER ACCEPTS THEM.
@@ -42,7 +43,7 @@ async function makeUser(name: string, role: "associate" | "manager", apps: Array
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -59,7 +60,7 @@ const lead = async (over: Partial<typeof customers.$inferInsert> = {}) => {
   const [l] = await db
     .insert(customers)
     .values({
-      id: id("cus"), name: `Lead ${randomUUID().slice(0, 5)}`, phone: String(9000000000 + Math.floor(Math.random() * 99999999)),
+      id: id("cus"), name: `Lead ${randomUUID().slice(0, 5)}`, phone: testPhone(),
       city: "Pune", kind: "lead", leadStage: "suspect", leadSalesType: "direct", ownerId: ravi.id, ...over,
     })
     .returning();

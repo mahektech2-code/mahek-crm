@@ -21,6 +21,7 @@ import { setTestUser } from "@/lib/auth";
 import { assertCustomerInScope } from "@/lib/access-control";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { assertLeadInScope } from "@/lib/services/lead-scope";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -40,7 +41,7 @@ async function leadOwnedBy(owner: User) {
       id: id("cus"),
       name: "India Pharmaceutical",
       city: "Mumbai",
-      phone: String(9800000000 + Math.floor(Math.random() * 99_999_999)),
+      phone: testPhone(),
       kind: "lead",
       ownerId: owner.id,
       leadStage: "new",

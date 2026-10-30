@@ -33,6 +33,7 @@ import { callingDesk } from "@/lib/services/lead-calling-desk-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
 import { leadsPage } from "@/lib/services/sales-service";
 import { pipelineList } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAY = "2026-10-05";
@@ -46,7 +47,7 @@ async function makeUser(name: string, level: Level, modules: string[] = []) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),
@@ -68,7 +69,7 @@ const raise = (over: Record<string, unknown> = {}) =>
   captureLead({
     salesType: "direct",
     name: NAME,
-    phone: String(9800000000 + Math.floor(Math.random() * 99999999)),
+    phone: testPhone(),
     city: "Nashik",
     source: "telecalling",
     ...over,

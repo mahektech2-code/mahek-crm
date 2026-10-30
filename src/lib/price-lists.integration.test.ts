@@ -74,6 +74,7 @@ import {
   resolveForCustomer,
   varianceReport,
 } from "@/lib/services/price-list-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -97,7 +98,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -145,7 +146,7 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Thane",
       region: "Maharashtra",
       kind: "customer",

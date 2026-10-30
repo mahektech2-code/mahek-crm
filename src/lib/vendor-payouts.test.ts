@@ -42,6 +42,7 @@ import {
   reschedulePayout,
   syncPurchasePayouts,
 } from "@/lib/services/vendor-payout-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAYS = paymentWeekdays(["Tuesday", "Friday"]);
@@ -64,7 +65,7 @@ async function makeUser(name: string, app: "accounts" | "crm", level: "associate
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s/g, ".")}@payouts.test`,
-      phone: String(9830000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),

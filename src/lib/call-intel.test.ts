@@ -44,6 +44,7 @@ import {
 } from "@/lib/services/call-intel-service";
 import { addDays, today } from "@/lib/format";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -58,7 +59,7 @@ async function makeUser(name: string) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),

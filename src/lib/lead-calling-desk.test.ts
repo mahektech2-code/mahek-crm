@@ -55,6 +55,7 @@ import {
 } from "@/lib/services/lead-calling-desk-service";
 import { verificationQueue } from "@/lib/services/lead-console-service";
 import { questionsForCall } from "@/lib/engines/lead-calling-desk";
+import { testPhone } from "@/lib/test-phone";
 
 /* Every call needs a remark now; the tests that are not about that supply one. */
 const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
@@ -77,7 +78,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -94,7 +95,7 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "suspect",
