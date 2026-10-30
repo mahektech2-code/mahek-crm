@@ -58,7 +58,7 @@ export const lrVoidImpact: ImpactSource = {
       },
       {
         app: "ERP",
-        label: `${lrUploadName(lr.lrNo)} is marked void with your reason — nothing is erased`,
+        label: `${lrUploadName(lr.lrNo)} ${lr.status === "unassigned" ? "leaves the Documents desk, marked void" : "is marked void"} with your reason — nothing is erased`,
         effect: "changed",
         count: 1,
         note: [lr.transporter, lr.lrDate ? `dated ${shortDay(lr.lrDate)}` : null, lr.destination ? `to ${lr.destination}` : null].filter(Boolean).join(" · ") || undefined,
