@@ -32,6 +32,7 @@ const KIND: Record<string, string> = {
   at_transport: "Reached the transporter",
   lr: "LR attached",
   lr_removed: "Taken off an LR",
+  lr_edit: "LR corrected",
   call: "Called the transporter",
   stage: "Status updated",
   issue: "Problem reported",

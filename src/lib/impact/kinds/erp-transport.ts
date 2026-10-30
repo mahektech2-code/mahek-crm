@@ -35,23 +35,30 @@ export const lrVoidImpact: ImpactSource = {
   async report(id) {
     const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, id));
     if (!lr || lr.status === "void") return null;
-    /* What `voidLr` refuses on: an LR still carrying bills is the consignment, not a stray photo. */
+    /* What `voidLr` refuses on — a delivered bill, or a signed copy closing one — and what it takes
+       off in passing: the bills still on the road, which go back to waiting for their LR. */
     const carrying = (await db.execute(sql`
-      select order_no as "orderNo" from erp_transports where lr_id = ${id} order by order_no limit 6
-    `)) as unknown as { orderNo: number }[];
-    const [{ n: carried }] = carrying.length
-      ? ((await db.execute(sql`select count(*)::int as n from erp_transports where lr_id = ${id}`)) as unknown as { n: number }[])
-      : [{ n: 0 }];
+      select order_no as "orderNo", material_stage = ${CLOSED} as delivered, signed_copy_id is not distinct from ${id} as "closes"
+        from erp_transports where lr_id = ${id} or signed_copy_id = ${id} order by order_no
+    `)) as unknown as { orderNo: number; delivered: boolean; closes: boolean }[];
+    const delivered = carrying.filter((c) => c.delivered || c.closes);
+    const open = carrying.filter((c) => !c.delivered && !c.closes);
+    const orderList = (cs: { orderNo: number }[]) => `order ${cs.slice(0, 5).map((c) => c.orderNo).join(", ")}${cs.length > 5 ? "…" : ""}`;
     const blockers: string[] = [];
-    if (Number(carried)) {
-      blockers.push(
-        `This LR is attached to ${nf(carried)} ${many(Number(carried), "bill")} (order ${carrying.slice(0, 5).map((c) => c.orderNo).join(", ")}). Take them off it first.`,
-      );
+    if (delivered.length) {
+      blockers.push(`This LR is attached to ${nf(delivered.length)} ${many(delivered.length, "bill")} already delivered (${orderList(delivered)}). A delivered bill keeps its LR — reopen it first.`);
     }
     const items: ImpactItem[] = [
       {
         app: "ERP",
-        label: `${lrUploadName(lr.lrNo)} leaves the Documents desk, marked void with your reason`,
+        label: "bills taken off this LR — they leave On the road and wait for their LR on the Documents desk",
+        effect: "changed",
+        count: open.length,
+        note: open.length ? `${orderList(open)}. The party is not messaged; attaching the right LR tells them.` : undefined,
+      },
+      {
+        app: "ERP",
+        label: `${lrUploadName(lr.lrNo)} is marked void with your reason — nothing is erased`,
         effect: "changed",
         count: 1,
         note: [lr.transporter, lr.lrDate ? `dated ${shortDay(lr.lrDate)}` : null, lr.destination ? `to ${lr.destination}` : null].filter(Boolean).join(" · ") || undefined,
