@@ -1,5 +1,5 @@
 import { Card } from "@/components/leads/record/record-chrome";
-import { shortDate, stamp } from "@/lib/format";
+import { shortDate } from "@/lib/format";
 import type { LeadCallEntry, UpcomingFollowUp } from "@/lib/services/lead-followup-service";
 
 const OUTCOME_WORDS: Record<string, string> = {
@@ -50,37 +50,25 @@ export function UpcomingFollowUpCard({ followUps, day }: { followUps: UpcomingFo
   );
 }
 
-/** Every recorded call at this lead, newest first. Read-only; the rows are the `calls` table's own. */
-export function CallHistoryCard({ calls }: { calls: LeadCallEntry[] }) {
+/**
+ * The saved call behind a Timeline entry: its number, outcome, remarks and
+ * next follow-up. Drawn UNDER the existing entry — the entry is not duplicated.
+ */
+export function CallDetail({ call: c }: { call: LeadCallEntry }) {
   return (
-    <Card title="Call history">
-      {calls.length === 0 ? (
-        <div className="text-[13px] text-muted">No call has been recorded on this lead yet.</div>
-      ) : (
-        <ol className="flex flex-col divide-y divide-divider">
-          {calls.map((c) => (
-            <li key={c.id} className="py-3 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div className="text-sm font-semibold text-ink">
-                  {c.callNumber ? `Call ${c.callNumber} · ` : ""}
-                  {outcomeWords(c)}
-                </div>
-                <div className="font-mono text-[11px] text-muted">
-                  {stamp(c.at)} · {c.byName}
-                </div>
-              </div>
-              {c.notes ? <div className="mt-1 text-[13.5px] whitespace-pre-wrap text-body">{c.notes}</div> : null}
-              {c.nextDate || c.nextAction ? (
-                <div className="mt-1 text-[13px]">
-                  <span className="text-muted">Next follow-up: </span>
-                  {c.nextAction ? <span className="font-medium text-ink">{c.nextAction}</span> : null}
-                  {c.nextDate ? <span className="text-muted"> · {shortDate(c.nextDate)}</span> : null}
-                </div>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      )}
-    </Card>
+    <div className="mt-1 rounded-[4px] bg-canvas px-2.5 py-1.5 text-[12.5px] text-body">
+      <div className="font-medium text-ink">
+        {c.callNumber ? `Call ${c.callNumber} · ` : ""}
+        {outcomeWords(c)}
+      </div>
+      {c.notes ? <div className="whitespace-pre-wrap">{c.notes}</div> : null}
+      {c.nextDate || c.nextAction ? (
+        <div>
+          <span className="text-muted">Next follow-up: </span>
+          {c.nextAction ? <span className="font-medium text-ink">{c.nextAction}</span> : null}
+          {c.nextDate ? <span className="text-muted"> · {shortDate(c.nextDate)}</span> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
