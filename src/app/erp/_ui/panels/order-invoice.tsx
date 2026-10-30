@@ -22,7 +22,14 @@ import { insetClass } from "../look";
 type Line = { sku: string; qty: number; rate: number | null; discount: number | null };
 type Data = { orderNo: number; transporter?: string | null; lines?: Line[] };
 
-const tool = "inline-flex h-9 items-center gap-1.5 rounded-control border border-line bg-surface px-3 text-meta font-medium text-body no-underline hover:bg-canvas cursor-pointer";
+const base = "inline-flex h-9 items-center gap-1.5 rounded-control border px-3 text-meta font-medium no-underline cursor-pointer";
+/* Two separate looks, never one class string with overrides on top: `cx` only joins, so
+   bg-surface and bg-brand together let the stylesheet's order decide, and white text
+   landed on a white button. */
+const tool = `${base} border-line bg-surface text-body hover:bg-canvas`;
+const primary = `${base} border-brand bg-brand text-white hover:bg-brand-hover`;
+/* Chrome's own viewer, opened on the page at full width: no thumbnail strip eating half of it. */
+const VIEW = "#view=FitH&navpanes=0";
 
 function Body({ data, row, screen }: PanelProps & { data: Data }) {
   const ui = useErpUi();
@@ -63,7 +70,7 @@ function Body({ data, row, screen }: PanelProps & { data: Data }) {
         <span className="ml-auto flex flex-wrap gap-2">
           {f ? (
             <>
-              <a className={cx(tool, "border-brand bg-brand text-white hover:bg-brand-hover")} href={erpInvoicePrintHref([view.orderNo])} target="_blank" rel="noreferrer">
+              <a className={primary} href={erpInvoicePrintHref([view.orderNo])} target="_blank" rel="noreferrer">
                 <Icon n="print" s={15} /> Print
               </a>
               <a className={tool} href={erpInvoicesPdfHref([view.orderNo], { download: true })} title="Download" aria-label="Download">
@@ -75,7 +82,7 @@ function Body({ data, row, screen }: PanelProps & { data: Data }) {
             </>
           ) : null}
           {replace ? (
-            <button type="button" className={cx(tool, !f && "border-danger/40 bg-danger-soft font-semibold text-danger")} onClick={doReplace}>
+            <button type="button" className={f ? tool : `${base} border-danger/40 bg-danger-soft font-semibold text-danger`} onClick={doReplace}>
               <Icon n="upload" s={15} /> {f ? "Replace" : "Add PDF"}
             </button>
           ) : null}
@@ -88,7 +95,7 @@ function Body({ data, row, screen }: PanelProps & { data: Data }) {
             // eslint-disable-next-line @next/next/no-img-element
             <img src={`/api/attachments/${f.id}`} alt={`Invoice · order ${view.orderNo}`} className="max-h-[70vh] w-full rounded-card border border-line object-contain" />
           ) : (
-            <iframe title={`Invoice · order ${view.orderNo}`} src={`/api/attachments/${f.id}#view=FitH`} className="h-[70vh] w-full rounded-card border border-line bg-canvas" />
+            <iframe title={`Invoice · order ${view.orderNo}`} src={`/api/attachments/${f.id}${VIEW}`} className="h-[70vh] w-full rounded-card border border-line bg-canvas" />
           )
         ) : (
           <div className="grid h-64 place-items-center rounded-card border border-dashed border-danger/40 bg-danger-soft text-danger">
