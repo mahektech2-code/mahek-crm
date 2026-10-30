@@ -91,6 +91,9 @@ import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
 import { PrimaryGateAction } from "./move-forward";
 import { ActivityMenuItems } from "@/components/leads/activity/lead-activity";
 import { CheckVisitsButton } from "@/components/leads/activity/check-visits";
+import type { ReopenOffer } from "@/components/leads/lost/reopen-lost-dialog";
+import { EditDetails } from "./edit-details";
+import { ReopenLead } from "./reopen-lead";
 import { ConvertButton, ConvertProvider } from "./convert-to-prospect";
 import type { VantageViewer } from "@/lib/lead-vantage";
 
@@ -329,6 +332,8 @@ export function LeadRecordScreen({
   photoIds = [],
   requireNextAction,
   desk = null,
+  reopen = null,
+  canEditBasics = false,
   defaultNextDate = null,
   openCall = false,
   prospectReasons = [],
@@ -501,6 +506,10 @@ export function LeadRecordScreen({
    * everybody else, who are shown no Call button.
    */
   desk?: DeskLeadRecord | null;
+  /** Where a lost lead may be reversed from, and why — null for a reader who holds neither door. */
+  reopen?: ReopenOffer | null;
+  /** Holds the Sales Manager workspace, whose six-field edit form this opens. */
+  canEditBasics?: boolean;
   /** The call dialog's default next-call day, worked out on the server. */
   defaultNextDate?: string | null;
   /** `?call=1` — open the call dialog on arrival, from My day's Call. */
@@ -618,6 +627,16 @@ export function LeadRecordScreen({
               </Button>
             ) : null}
             <CheckVisitsButton customerId={record.customerId} leadName={record.name} />
+            {record.stage === "lost" && reopen ? (
+              <ReopenLead
+                customerId={record.customerId}
+                name={record.name}
+                salesType={record.salesType}
+                lostReason={record.lostReason}
+                fromStage={(transitions.find((t) => t.toStage === "lost")?.fromStage as LeadStage | null) ?? null}
+                offer={reopen}
+              />
+            ) : null}
             <Link
               href={`${base}?tab=communication`}
               className="inline-flex h-9 items-center rounded-[6px] border border-line bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:text-ink hover:no-underline"
@@ -642,6 +661,7 @@ export function LeadRecordScreen({
                 viaSalesManager={canReassignSalesman}
               />
               <ActivityMenuItems customerId={record.customerId} leadName={record.name} canWork={canWork} />
+              {canEditBasics ? <EditDetails href={`/crm/leads/sales-manager/${record.customerId}/edit`} /> : null}
               {/* §2 — not on a distributor (`MigrateDistributor` is that path)
                   and not on a closed lead, which has no ladder left to climb. */}
               {distributor || closed ? null : (

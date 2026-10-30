@@ -414,6 +414,18 @@ export async function Body({
       nowMs={nowMs()}
       requireNextAction={config["leads.requireNextAction"]}
       desk={desk}
+      /* The two doors the central Lost list offers, asked the same way — see
+         `app/crm/leads/lost/page.tsx`. The actions ask again. */
+      reopen={
+        (await canLead(user, "lead.verify")) ||
+        ((await canOpenModule(user.id, DESK_MODULE)) && (await canLead(user, "lead.work")))
+          ? {
+              seat: (await canLead(user, "lead.verify")) ? "sales_manager" : "calling_desk",
+              reasons: config["leads.reopenReasons"].map((r) => ({ code: r.code, label: r.label })),
+            }
+          : null
+      }
+      canEditBasics={workspace === "crm" && (await canOpenModule(user.id, "crm.sales-manager"))}
       followUpDocs={followUpDocs}
       defaultNextDate={onOrAfterWorkingDay(addDays(day as BusinessDate, 2), {
         timezone: config["workingDay.timezone"],

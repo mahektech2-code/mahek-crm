@@ -243,6 +243,7 @@ export function Dashboard({
   initialView,
   greeting,
   base,
+  recordBase,
   intakeHref,
   canAssign,
   nurtureDue = null,
@@ -257,6 +258,8 @@ export function Dashboard({
   greeting: string;
   /** `/crm/leads/calling-desk`, so no link here need spell it. */
   base: string;
+  /** Where a row's lead opens: the unified record, `/crm/leads`. */
+  recordBase: string;
   intakeHref: string;
   /** Whether this person may hand a lead to somebody, so the banner says how. */
   canAssign: boolean;
@@ -516,7 +519,7 @@ export function Dashboard({
             }
           />
         ) : (
-          rows.map((r) => <LeadRow key={r.id} r={r} base={base} day={day} />)
+          rows.map((r) => <LeadRow key={r.id} r={r} base={recordBase} day={day} />)
         )}
       </PCard>
       {shownTotal > rows.length ? (
