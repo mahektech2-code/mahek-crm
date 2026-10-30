@@ -81,8 +81,9 @@ export function Header({
       )}
     >
       {/* The switcher, the collapse and the wordmark are `HeaderLead`'s, as in
-          every app. The fixed width keeps the search box where it was. */}
-      <div className="flex w-[216px] flex-none items-center">
+          every app. The fixed width keeps the search box where it was. In v4
+          the wordmark is the Mahek mark atop the sidebar, as in the ERP. */}
+      <div className={cx("flex flex-none items-center", !v4 && "w-[216px]")}>
         <HeaderLead
           apps={apps}
           current="crm"
@@ -90,6 +91,14 @@ export function Header({
           onToggleSidebar={onToggleSidebar}
           href="/crm/dashboard"
           label="MAHEK CRM"
+          wordmark={!v4}
+          toggleIcon={
+            v4 ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 5h16v14H4zM9 5v14" />
+              </svg>
+            ) : undefined
+          }
         />
       </div>
 

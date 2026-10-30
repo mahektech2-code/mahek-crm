@@ -54,6 +54,9 @@ export function AppShell({
           now — see `app-frame.tsx` for why eight apps could not be left to
           state them for themselves. */}
       <AppFrame
+        /* v4 is the ERP's layout too: the sidebar runs the full height and
+           carries the Mahek mark, with the header beside it. */
+        sidebarFirst={look === "v4"}
         header={
           <Header
             user={user}
@@ -75,6 +78,7 @@ export function AppShell({
             badges={badges}
             groups={nav}
             pinned={pinnedNav}
+            brand={look === "v4" ? { href: "/crm/dashboard", app: "CRM" } : undefined}
           />
         }
       >
