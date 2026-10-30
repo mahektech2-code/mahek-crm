@@ -18,7 +18,7 @@ import {
   users,
   type PriceDiscountKind,
 } from "@/db/schema";
-import { err, fieldErr, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { resolvePriceList, type CustomerGeo, type Resolution } from "@/lib/engines/price-resolution";
 import { discountTermSentence } from "@/lib/price-list-labels";
 import { weightFor } from "@/lib/catalogue";
@@ -32,7 +32,7 @@ import { listedTransporterName, transporterChoices } from "../transporter-rename
 import { isMahekVehicle, MAHEK_VEHICLE } from "../engines/logistics";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
-import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
+import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow, ToolResult } from "../ui";
 import { fd, inr, nf, withFills } from "../ui";
 import {
   addDaysIso,
@@ -61,7 +61,7 @@ import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
-import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
+import { erpDispatchHref, erpInvoicePrintHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
 import { notifyUsers } from "@/lib/notify";
 import {
   billingOf,
@@ -80,7 +80,7 @@ import {
   type InvoiceSnapshot,
 } from "../engines/order-flow";
 import { assignTripsAtDispatch } from "../trips";
-import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, openHolds, recordHold, sendWords, syncOrderTracking, tellHold, type OpenHold } from "../order-tracking";
+import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, invoiceFilesFor, openHolds, recordHold, sendWords, syncOrderTracking, tellHold, type OpenHold } from "../order-tracking";
 import { reasonByLabel } from "../engines/order-tracking";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -1230,7 +1230,7 @@ function orderList(scope: Scope): ScreenModule {
       const all: Col[] = labels
         ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "weight", "bill", "invoiceDate", "type", "labels", "transporter", "area", "godown", "f"], { billing: { t: "t" }, delivery: { t: "b" } })
         : checking
-          ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "weight", "rate", "discount", "bill", "invoiceDate", "billingStatus", "godown", "f"])
+          ? orderCols(["orderNo", "date", "billing", "delivery", "transporter", "sku", "qty", "weight", "rate", "discount", "bill", "invoiceDate", "billingStatus", "godown", "f"])
           : orderCols([
               "orderNo",
               "date",
@@ -1263,9 +1263,11 @@ function orderList(scope: Scope): ScreenModule {
       const checker = ctx.powers.has("checkInvoices");
       const holdKit = await holdSentences("hold");
       const bulk: BulkSpec[] =
-        labels || checking
+        labels
           ? []
-          : [
+          : checking
+            ? [{ id: "printInvoices", l: "Print invoices" }]
+            : [
               ...(verifier && (scope === "verifyOrders" || scope === "orders") ? [{ id: "verifyOrder", l: "Verify order" }] : []),
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
               { id: "ready", l: "Ready" },
@@ -1289,6 +1291,7 @@ function orderList(scope: Scope): ScreenModule {
                     },
                   ]
                 : []),
+              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices" }] : []),
             ];
       const byNo = new Map<number, OrderLine[]>();
       /* An order is billed, checked and dispatched WHOLE, so its blockers are read off every line of it — not only the ones this tab draws. */
@@ -1300,12 +1303,13 @@ function orderList(scope: Scope): ScreenModule {
         const rows = (await db.execute(sql`select distinct order_no as n, linked_from_order_no as f from erp_orders where linked_from_order_no in ${orderNos}`)) as unknown as { n: number; f: number }[];
         for (const r of rows) continued.set(Number(r.f), [...(continued.get(Number(r.f)) ?? []), Number(r.n)]);
       }
-      const [prices, reviews, gates, holdsOpen] = await Promise.all([
+      const [prices, reviews, gates, holdsOpen, invoiceFiles] = await Promise.all([
         /* Read for the lines drawn, not inside orderLines: the badges and the dashboard count lines and never price them. */
         priceBook(shown.map((l) => l.billing.id)),
         reviewsFor(orderNos),
         scanGateFor(db, shown.filter((l) => l.inDetails && !l.dispatched).map((l) => l.o.id)),
         openHolds(orderNos),
+        invoiceFilesFor(orderNos),
       ]);
       return {
         spec: {
@@ -1325,6 +1329,7 @@ function orderList(scope: Scope): ScreenModule {
             { k: "weight", l: "kg", missing: "without a weight" },
           ],
           godownKey: "godown",
+          groupInvoice: labels ? undefined : "invoice",
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
           ...(labels || checking ? {} : await newFormIn(s, () => orderForm(ctx))),
@@ -1340,6 +1345,7 @@ function orderList(scope: Scope): ScreenModule {
           const blockers = billBlockersFor(order);
           const d = lineDomains(l, gates.get(l.o.id) ?? null);
           const ownBill = live.some((x) => x.inDetails && x.billedById === ctx.user.id);
+          const hasPdf = invoiceFiles.has(l.o.orderNo);
           const printable = isStickerLine(l);
           const actions: ActionSpec[] = labels
             ? [
@@ -1362,7 +1368,7 @@ function orderList(scope: Scope): ScreenModule {
                 ...(billed
                   ? [
                       { id: "unbill", l: "Undo billing", why: dispatched ? "It has been dispatch-verified" : "", impact: { kind: "erp-order-unbill", id: l.o.id } } as ActionSpec,
-                      { id: "invoiceFile", l: "Invoice PDF", prompt: INVOICE_FILE_PROMPT(l.o.orderNo, false) } as ActionSpec,
+                      { id: "invoiceFile", l: hasPdf ? "Replace invoice PDF" : "Add invoice PDF", primary: checking && !hasPdf, prompt: INVOICE_FILE_PROMPT(l.o.orderNo, hasPdf) } as ActionSpec,
                       {
                         id: "changeInvoice",
                         l: "Change invoice",
@@ -1390,7 +1396,7 @@ function orderList(scope: Scope): ScreenModule {
                         id: "approveInvoice",
                         l: "Approve invoice",
                         primary: checking && l.invoiceCheck !== "Approved",
-                        why: l.invoiceCheck === "Approved" ? "Already approved" : ownBill && !ctx.administrator ? "You entered this bill; somebody else checks it" : "",
+                        why: l.invoiceCheck === "Approved" ? "Already approved" : !hasPdf ? "Add the invoice PDF first" : ownBill && !ctx.administrator ? "You entered this bill; somebody else checks it" : "",
                         confirm: `Approve invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
                       } as ActionSpec,
                       {
@@ -1461,6 +1467,7 @@ function orderList(scope: Scope): ScreenModule {
                 bill: l.o.tallyBillNo,
                 invoiceDate: l.o.invoiceDate,
                 transporter: l.o.transporter ?? l.delivery.p?.transporter ?? "—",
+                invoice: billed ? `${hasPdf ? "y" : "n"}:${l.o.orderNo}` : null,
                 labels: l.labels,
                 type: l.type,
                 remark: l.o.remark,
@@ -1516,7 +1523,15 @@ function orderList(scope: Scope): ScreenModule {
             ],
             actions,
             /* The customer's view of the whole order — read when the tab opens, not for every row of the list. */
-            ...(labels ? {} : { panel: { kind: "orderTracking", data: { orderNo: l.o.orderNo, hold: holdsOpen.get(l.o.orderNo)?.reason ?? null } } }),
+            ...(labels
+              ? {}
+              : (() => {
+                  const tracking = { kind: "orderTracking", data: { orderNo: l.o.orderNo, hold: holdsOpen.get(l.o.orderNo)?.reason ?? null } };
+                  if (!billed) return { panel: tracking };
+                  const invoice = { kind: "orderInvoice", data: invoicePanelData(l.o.orderNo, live, ctx, l.o.transporter ?? l.delivery.p?.transporter ?? null) };
+                  /* On the checker's tab the invoice is what is opened for; elsewhere it is a tab beside tracking. */
+                  return checking ? { panel: invoice, panels: [tracking] } : { panel: tracking, panels: [invoice] };
+                })()),
             by: stampLine(l.by, l.o.createdAt),
           };
         }),
@@ -2078,6 +2093,7 @@ async function doApproveInvoice(ctx: ErpContext, id: string) {
   const got = await invoiceForCheck(ctx, id);
   if ("ok" in got) return got;
   if (got.billed.every((l) => l.invoiceCheck === "Approved")) return err("That invoice is already approved.", "rule_violation");
+  if (!(await invoiceFileFor(got.no))) return err("Add the invoice PDF first — an invoice is checked against its PDF.", "rule_violation");
   await db.transaction(async (tx) => {
     await tx
       .update(erpOrderDetails)
@@ -2171,6 +2187,24 @@ async function doMoveOut(ctx: ErpContext, id: string, values: Record<string, str
   return okVoid(`${nf(split.moves)} cans of ${l.sku.name} moved to order ${newNo}, linked to order ${l.o.orderNo}`);
 }
 
+/** What the Invoice tab is handed with the row: the order's lines (rates only where the person may see them) and its transporter. */
+function invoicePanelData(orderNo: number, live: OrderLine[], ctx: ErpContext, transporter: string | null) {
+  const rate = ctx.powers.has("viewSalesRate");
+  const disc = ctx.powers.has("viewSalesAmounts");
+  return {
+    orderNo,
+    transporter: transporter && transporter !== "—" ? transporter : null,
+    lines: live.map((x) => ({ sku: x.sku.name, qty: x.o.qtyCans, rate: rate ? x.o.ratePaise : null, discount: disc && x.o.discountBp != null ? x.o.discountBp / 100 : null })),
+  };
+}
+
+/** Print invoices over a selection: the print sheet for the orders the lines belong to. */
+async function printInvoicesOf(ids: string[]): Promise<Result<unknown>> {
+  const nos = await orderNosOf(ids);
+  if (!nos.length) return err("Nothing selected.");
+  return ok<ToolResult>({ navigate: erpInvoicePrintHref(nos) }, `Opening ${nos.length} invoice${nos.length === 1 ? "" : "s"}`);
+}
+
 function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "forms" | "formLoaders"> {
   return {
     bulk: {
@@ -2190,6 +2224,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       approve: (ctx, ids) => doApprove(ctx, ids),
       stickers: (ctx, ids) => doStickers(ctx, ids),
       bill: (ctx, ids, values) => doBill(ctx, ids, values),
+      printInvoices: (_ctx, ids) => printInvoicesOf(ids),
     },
     actions: {
       verifyOrder: (ctx, id) => doVerifyOrder(ctx, [id]),
@@ -2829,6 +2864,7 @@ const orderDetails: ScreenModule = {
     const byNo = new Map<number, string[]>();
     rows.forEach((r) => byNo.set(r.l.o.orderNo, [...(byNo.get(r.l.o.orderNo) ?? []), r.l.o.id]));
     const gates = await scanGateFor(db, rows.filter((r) => r.d.verification !== "Verified").map((r) => r.l.o.id));
+    const invoiceFiles = await invoiceFilesFor([...byNo.keys()]);
     const all: Col[] = [
       ...orderCols(["date", "orderNo", "billing", "sku", "qty"]),
       { k: "amount", l: "Amount", t: "m", pw: "viewSalesAmounts" },
@@ -2862,10 +2898,12 @@ const orderDetails: ScreenModule = {
         hidden,
         groups: ["orderNo"],
         groupHead: ["date", "billing", "billTotal", "dispatchDate", "bill", "transporter", "area", "godown"],
+        groupInvoice: "invoice",
         godownKey: "godown",
         bulk: [
           { id: "verify", l: "Confirm dispatch", prompt: DISPATCH_PROMPT("Every selected order leaves whole: each needs its invoice approved and every box scanned.") },
           { id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT },
+          { id: "printInvoices", l: "Print invoices" },
         ],
         noDataLine: "Nothing billed yet. An order arrives here once it is billed; it is dispatched after its invoice is approved.",
       },
@@ -2939,6 +2977,7 @@ const orderDetails: ScreenModule = {
                 transport: l.o.transportCostPaise,
                 extra: d.extraExpensesPaise,
                 bill: l.o.tallyBillNo,
+                invoice: `${invoiceFiles.has(l.o.orderNo) ? "y" : "n"}:${l.o.orderNo}`,
                 payment: l.billing.freightTerm,
                 margin: r.margin,
                 monthId: r.monthId,
@@ -2976,6 +3015,7 @@ const orderDetails: ScreenModule = {
               ...(d.verification === "Verified" ? [{ l: "Vehicle", v: d.vehicleNo ?? "Not recorded" }, { l: "Driver / transporter", v: d.driver ?? "—" }, { l: "Dispatch remark", v: d.dispatchRemark ?? "—" }] : []),
             ],
             actions,
+            panel: { kind: "orderInvoice", data: invoicePanelData(l.o.orderNo, [l], ctx, l.o.transporter ?? l.delivery.p?.transporter ?? null) },
             by: stampLine(null, d.createdAt).replace(/^Created/, "Added to order details"),
           };
         }),
@@ -2985,6 +3025,7 @@ const orderDetails: ScreenModule = {
     verify: (ctx, ids, values) => verify(ctx, ids, values),
     extra: (ctx, ids, values) => setExtraExpenses(ctx, ids, values),
     stickers: (ctx, ids) => doStickers(ctx, ids),
+    printInvoices: (_ctx, ids) => printInvoicesOf(ids),
   },
   actions: {
     verify: (ctx, id, values) => verify(ctx, [id], values),

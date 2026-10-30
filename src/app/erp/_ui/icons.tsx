@@ -53,6 +53,8 @@ const PATHS: Record<string, string> = {
   back: "M15 6l-6 6 6 6",
   zoom: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4M11 8v6M8 11h6",
   upload: "M12 16V4M6 10l6-6 6 6M4 20h16",
+  print: "M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z",
+  ext: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
 };
 
 export function Icon({ n, s = 16 }: { n: string; s?: number }) {

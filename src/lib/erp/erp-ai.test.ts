@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
 import { db } from "@/db";
 import { allPassValues } from "@/lib/erp/engines/sfg-tests";
 import { refValues } from "@/lib/erp/refs";
@@ -126,6 +127,7 @@ before(async () => {
     await ok(mod("orders").actions!.ready(a, o.id, {}));
     await ok(mod("orders").forms!.allocate(a, { lot: "FG1BH", qty: String(qty) }, [], o.id));
     await ok(mod("orders").actions!.bill(a, o.id, { invoiceNo: `MMI/${qty}`, invoiceDate: ago(8 - i) }));
+    await attachInvoicePdf(o.id, a.user.id);
     await ok(mod("orders").actions!.approveInvoice(a, o.id, {}));
     await ok(mod("orderDetails").actions!.verify(a, o.id, { date: ago(8 - i) }));
   }

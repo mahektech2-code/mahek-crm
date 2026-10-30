@@ -19,6 +19,7 @@ import { PeriodPicker } from "./period-picker";
 import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
 import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
+import { InvoiceButtons } from "./invoice-buttons";
 import { useErpUi } from "./erp-ui";
 import { RecordDialog } from "./record-dialog";
 import { useKit } from "./kit";
@@ -1060,6 +1061,7 @@ export function ListScreen({
                                     return <GroupFact key={c.k} c={c} v={grp.head[c.k]} strong={spec.groupHeadStrong?.includes(c.k)} />;
                                   })}
                                   <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
+                                  {spec.groupInvoice ? <InvoiceButtons v={grp.head[spec.groupInvoice]} row={r} screen={spec.screen} /> : null}
                                   {spec.groupSel && selectOn ? (
                                     <LinkButton
                                       onClick={() => {

@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
 import { db } from "@/db";
 import {
   appAccess,
@@ -396,6 +397,14 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     await db.update(erpOrderDetails).set({ createdById: clerk.id }).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "You entered this bill, so somebody else checks it.");
     await db.update(erpOrderDetails).set({ createdById: admin.id }).where(eq(erpOrderDetails.orderId, loose.id));
+    assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "Add the invoice PDF first — an invoice is checked against its PDF.");
+    const noPdf = (await mod("invoiceCheck").load(ctx)).rows.find((r) => r.id === loose.id);
+    assert.equal(noPdf?.actions?.find((x) => x.id === "approveInvoice")?.why, "Add the invoice PDF first", "the button says why before it is pressed");
+    assert.match(String(noPdf?.v.invoice), /^n:\d+$/, "the order heading shows Add PDF");
+    await attachInvoicePdf(loose.id, admin.id);
+    const withPdf = (await mod("invoiceCheck").load(ctx)).rows.find((r) => r.id === loose.id);
+    assert.match(String(withPdf?.v.invoice), /^y:\d+$/, "and view and print once it is attached");
+    assert.equal(withPdf?.panel?.kind, "orderInvoice", "the checker opens the invoice first");
     assert.match(say(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), /approved · order \d+ can be dispatched/);
     const [d0] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d0.invoiceCheck, "Approved");
@@ -467,6 +476,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "3", rate: "410", transport: "0" }, [], line.id)).ok);
     const det = async () => (await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id)))[0];
     assert.equal((await det()).invoiceCheck, "Pending", "the corrected invoice is back with the checker");
+    await attachInvoicePdf(line.id, admin.id);
     assert.ok((await a.approveInvoice(ctx, line.id, {})).ok);
     assert.ok((await a.changeInvoice(ctx, line.id, { invoiceNo: "MMI/26-27/910", invoiceDate: TODAY })).ok);
     assert.equal((await det()).invoiceCheck, "Pending", "a changed invoice number after approval goes back too");
