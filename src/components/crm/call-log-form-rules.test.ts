@@ -62,7 +62,7 @@ test("the assistant card carries no note box of its own", () => {
 test("the Notes box sits directly under the assistant, before the form's steps", () => {
   const assistantAt = panel.indexOf("<CallAssistant");
   const notesAt = panel.indexOf('label="Notes"');
-  const stepsAt = panel.indexOf("How did this interaction happen?");
+  const stepsAt = panel.indexOf('label="How did this happen?"');
   const anchorAt = panel.indexOf('id="call-log-form-start"');
   assert.ok(assistantAt >= 0 && notesAt > assistantAt, "under the assistant");
   assert.ok(stepsAt > notesAt, "above the questions, not after an outcome is picked");
@@ -122,10 +122,11 @@ test("every other VoiceTextarea keeps its microphone by default", () => {
 /* --------------------------------------------------- stale next actions */
 
 test("every way of changing the outcome drops a Next Action it no longer offers", () => {
-  /* The three buttons that set or clear the outcome all go through it — and
-     the fourth caller is the reason button, which pre-sets Complaint (and
-     takes it back off) so a complaint reason opens the complaint form. */
-  assert.equal(count(panel, "pickOutcome("), 5, "the definition and four handlers");
+  /* The outcome grid sets it, a change of direction clears one the new
+     direction does not offer, and the reason button pre-sets Complaint (and
+     takes it back off) so a complaint reason opens the complaint form. Back
+     is a step now, not a button that clears the outcome. */
+  assert.equal(count(panel, "pickOutcome("), 4, "the definition and three handlers");
   const outside = panel
     .replace(bodyOf(panel, "pickOutcome"), "")
     .replace(bodyOf(panel, "reset"), "")

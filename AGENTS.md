@@ -4700,6 +4700,22 @@ ceiling in one place rather than at twenty call sites that would each get one
 of them slightly wrong — `maxLength` stops typing but not a programmatic set,
 so the box would otherwise accept more than the field will save.
 
+**THE CALL FORM IS FIVE STEPS, AND THE OUTCOME DECIDES WHICH (Oct 2026).** The
+call panel's Call log tab was one long scroll with Save at its foot, so a
+refusal landed under a field half a screen away. It is now the ERP's paged
+form: What happened (the assistant, notes, how it happened, the script, and on
+an inbound call who rang, why, and their bills, delivery or stock) → Outcome
+(the grid and what the chosen one asks) → Order (only where the call takes
+products; an order received has no Outcome step) → Next step (quick notes,
+next action and its day, the opportunity — skipped where none applies) →
+Review (every answer said back, each with Change). `lib/call-form-steps.ts` is
+the rule, pure: which steps a call asks, which step a field error belongs to,
+and where somebody standing on a step that left the list goes (back, never
+on). Next checks the step it leaves (`stepProblems`); Save checks every step in
+order and opens the first with a problem, and a server field error opens its
+step too. Steps are drawn hidden, never unmounted, so the assistant and the
+pickers keep what they hold. Nothing sent to `saveInteractionAction` changed.
+
 **THE CALL ASSISTANT PROPOSES THE FORM, AND NEVER WRITES A RECORD.** The
 telecaller presses one button on the call panel and says what happened, in
 any language, or types it. `lib/services/call-intel-service.ts` reads it and
