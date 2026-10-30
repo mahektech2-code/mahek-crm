@@ -10977,6 +10977,12 @@ export const priceLists = pgTable(
      * change of `supersedes_id`, so no write path has to remember it.
      */
     bookId: text("book_id"),
+    /**
+     * Shops this DRAFT takes from other books when it is published — "move
+     * here" answered before publishing. `[{ customerId, fromBookId }]`,
+     * applied and cleared by `publishDraftIn`.
+     */
+    pendingMoves: jsonb("pending_moves").$type<Array<{ customerId: string; fromBookId: string }>>(),
     termsText: text("terms_text"),
     signatory: text("signatory"),
     notes: text("notes"),
@@ -11069,6 +11075,12 @@ export const priceListScopes = pgTable(
     priority: integer("priority").notNull().default(0),
     validFrom: date("valid_from"),
     validTo: date("valid_to"),
+    /**
+     * A row that LEAVES SHOPS OUT of its list rather than putting them on.
+     * Only a shop, a salesman, a beat, an area, a city or a district can be
+     * left out (a check constraint holds it).
+     */
+    excluded: boolean("excluded").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
   },

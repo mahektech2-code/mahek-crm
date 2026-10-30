@@ -107,6 +107,14 @@ The level passed to `discountAuthority` is the person's level **in the CRM** (`l
 
 <DbTable name="price_changes" note={{ draft_list_id: "The change's draft version of the book; approving publishes it.", checked_hash: "The rates the last check read; a different hash means the check is stale." }} />
 
+## One list per shop
+
+- Engine (pure): `engines/price-one-list.ts` — `booksOnShop`, `doubleListed`, `introducedClashes`, `listReach`. Leave-out rows are `price_list_scopes.excluded`, read by `leftOutLists` in `engines/price-resolution.ts`.
+- Service: `services/price-one-list-service.ts` — `previewClashes`, `newClashRefusal` (checked inside `publishDraftIn`, `addScope`, `updateScope`, `removeScope`), `leaveShopOutOfBook`, `doubleListedShops`.
+- Actions: `actions/price-one-list.ts` — `previewListRules` (the Applies-to step), `shopsOnTwoLists`, `settleDoubleListed`, `settleAllToTodaysList`. A draft's "move here" answers wait in `price_lists.pending_moves` until it is published.
+
+<Code file="src/lib/engines/price-one-list.ts" symbol="introducedClashes" collapsed />
+
 ## Access
 
 - **Module:** <ModuleRef k="crm.price-lists" />. Reading is every CRM user's; no CRM screen draws a write control.
@@ -120,6 +128,8 @@ The level passed to `discountAuthority` is the person's level **in the CRM** (`l
 | `npm run test` | `src/lib/price-desk-grant.test.ts` | Which hats carry `pricelist.manage`; the CRM door is never a desk |
 | `npm run test` | `src/lib/price-list-parse.test.ts` | Reading Mahek's PDF layout into rows |
 | `npm run test:integration` | `src/lib/price-lists.integration.test.ts` | Publishing, superseding, special price requests, order-line pricing |
+| `npm run test` | `src/lib/engines/price-one-list.test.ts` | Leave-out rows, one list per shop, what counts and what does not |
+| `npm run test:integration` | `src/lib/price-one-list.integration.test.ts` | Refusing a second list, keep / move answers, settling old doubles |
 
 ## Changing it safely
 

@@ -42,7 +42,12 @@ export type EditorScope = {
   priority?: number;
   validFrom?: string | null;
   validTo?: string | null;
+  /** Leaves the shops it names OUT of the list rather than putting them on. */
+  excluded?: boolean;
 };
+
+/** A shop answered "move here": it leaves the list it is on when this one is published. */
+export type EditorMove = { customerId: string; fromBookId: string; name: string; fromName: string };
 
 export type StartSource = "blank" | "catalogue" | "copy" | "derive" | "csv";
 

@@ -26,6 +26,7 @@ import { removeDraftList, requirePriceDesk } from "@/lib/services/price-desk";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 import { placeKey } from "@/lib/engines/price-resolution";
+import { isExcludable } from "@/lib/engines/price-one-list";
 import { publishPriceList } from "@/lib/actions/price-lists";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { joinSignatory, verifySheet } from "@/lib/services/price-sheet-service";
@@ -155,7 +156,9 @@ const scopeSchema = z.object({
   priority: z.number().int().min(-1000).max(1000).default(0),
   validFrom: z.string().regex(ISO_DATE, "That is not a date.").nullish(),
   validTo: z.string().regex(ISO_DATE, "That is not a date.").nullish(),
-});
+  /** A row that leaves the shops it names OUT of the list. Only a shop, a salesman, a beat, an area, a city or a district. */
+  excluded: z.boolean().default(false),
+}).refine((s) => !s.excluded || isExcludable(s.kind), { message: "Everybody and a customer type cannot be left out.", path: ["kind"] });
 
 export type SheetScopeInput = z.input<typeof scopeSchema>;
 
@@ -179,6 +182,12 @@ export type SaveSheetInput = {
   derivation?: PriceDerivation | null;
   /** Set to put the list into force as it saves. */
   publish?: { supersedesId?: string | null } | null;
+  /**
+   * Shops answered "move here" on the Applies-to step: taken off the book they
+   * are on when this list is published. Kept on the draft until then.
+   * Undefined leaves what the draft already holds.
+   */
+  moves?: Array<{ customerId: string; fromBookId: string }> | null;
 };
 
 export type SaveSheetResult = {
@@ -355,6 +364,7 @@ export async function savePriceSheet(input: SaveSheetInput): Promise<Result<Save
               priority: s.priority,
               validFrom: s.validFrom,
               validTo: s.validTo,
+              excluded: s.excluded,
               raw: true,
             }))
           : null);
@@ -375,9 +385,15 @@ export async function savePriceSheet(input: SaveSheetInput): Promise<Result<Save
             priority: s.priority ?? 0,
             validFrom: s.validFrom ?? null,
             validTo: s.validTo ?? null,
+            excluded: !!s.excluded && isExcludable(s.kind),
             createdById: ctx.user.id,
           });
         }
+      }
+
+      if (input.moves !== undefined) {
+        const moves = (input.moves ?? []).filter((m) => m.customerId && m.fromBookId);
+        await tx.update(priceLists).set({ pendingMoves: moves.length ? moves : null }).where(eq(priceLists.id, listId));
       }
 
       await audit(tx, ctx, {
@@ -619,6 +635,7 @@ export async function duplicatePriceList(
               priority: s.priority,
               validFrom: s.validFrom,
               validTo: s.validTo,
+              excluded: s.excluded,
               createdById: ctx.user.id,
             })),
           );

@@ -545,6 +545,8 @@ const DESCRIBE: Record<string, Describer> = {
   "pricebook.change.move": (c) => ({ says: ["moved a price change's go-live date", ...(str(c.a.goLive) ? [`to ${str(c.a.goLive)}`] : [])], changes: false }),
   "pricebook.change.import": () => ({ says: ["started a price change from an uploaded PDF"], changes: false }),
   "pricebook.coverage.carry": () => ({ says: ["carried who a price book covers onto its later revisions"], changes: false }),
+  "pricelist.scope.exclude": (c) => ({ says: ["left somebody out of a price list", ...(str(c.a.list) ? [`(${str(c.a.list)})`] : [])], changes: false }),
+  "pricelist.oneList.settle": (c) => ({ says: [`settled ${typeof c.a.settled === "number" ? c.a.settled : "some"} shops onto one price list each`], changes: false }),
   "pricebook.finding.dismiss": () => ({ says: ["dismissed a morning-check finding on a price book"], changes: false }),
   "pricelist.request.decide": (c) => [c.a.status === "approved" ? "approved" : "decided", "a special-price request for", c.subject()],
   "pricelist.override.create": () => ({ says: ["gave a shop a special price with dates"], changes: false }),

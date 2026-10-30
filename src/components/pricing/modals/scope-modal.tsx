@@ -28,8 +28,18 @@ import { useToast } from "@/components/ui/toast";
 import { Button, Field, Input, Radio, Select, cx } from "@/components/ui/primitives";
 import type { PriceScopeKind } from "@/db/schema";
 import type { CustomerHit, PlaceOption, PricingOptions, ScopeView } from "@/lib/price-list-views";
-import { FREIGHT_TERM_HINT, SCOPE_KIND_HINT, SCOPE_KIND_LABEL, SCOPE_KIND_ORDER } from "@/lib/price-list-labels";
-import { addScope, updateScope } from "@/lib/actions/price-lists";
+import {
+  EXCLUDE_KIND_HINT,
+  EXCLUDE_KIND_ORDER,
+  FREIGHT_TERM_HINT,
+  SCOPE_KIND_HINT,
+  SCOPE_KIND_LABEL,
+  SCOPE_KIND_ORDER,
+} from "@/lib/price-list-labels";
+import { addScope, updateScope, type ClashAnswer } from "@/lib/actions/price-lists";
+import { previewListRules, type RulesPreview } from "@/lib/actions/price-one-list";
+import { ClashBox } from "@/components/pricing/one-list/clash-box";
+import type { ClashView } from "@/lib/services/price-one-list-service";
 
 const DATE_CLASS =
   "h-8.5 rounded-[4px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand";
@@ -47,9 +57,11 @@ export function ScopeModal(props: {
   priceListId: string;
   scope: ScopeView | null;
   options: PricingOptions;
+  /** Open on "Leave out" rather than "Include". */
+  leaving?: boolean;
 }) {
   if (!props.open) return null;
-  return <ScopeBody key={props.scope?.id ?? "new"} {...props} />;
+  return <ScopeBody key={`${props.scope?.id ?? "new"}:${props.leaving ? "out" : "in"}`} {...props} />;
 }
 
 function ScopeBody({
@@ -57,11 +69,13 @@ function ScopeBody({
   priceListId,
   scope,
   options,
+  leaving: startLeaving,
 }: {
   onClose: () => void;
   priceListId: string;
   scope: ScopeView | null;
   options: PricingOptions;
+  leaving?: boolean;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -78,10 +92,58 @@ function ScopeBody({
   const [validFrom, setValidFrom] = React.useState(scope?.validFrom ?? "");
   const [validTo, setValidTo] = React.useState(scope?.validTo ?? "");
   const [placeQuery, setPlaceQuery] = React.useState("");
+  const [leaving, setLeaving] = React.useState(scope ? scope.excluded : !!startLeaving);
+  const [answers, setAnswers] = React.useState<Record<string, ClashAnswer[]>>({});
+
+  /* What saving this row would do: the list's other rows plus this one. */
+  const question = JSON.stringify({ kind, value, parentKey, freightTermMatch, validFrom, validTo, leaving });
+  const [preview, setPreview] = React.useState<{ q: string; data: RulesPreview } | null>(null);
+  React.useEffect(() => {
+    if (leaving || (kind !== "everybody" && !value)) return;
+    let live = true;
+    const timer = setTimeout(async () => {
+      const r = await previewListRules({
+        listId: priceListId,
+        withSavedRows: true,
+        replaceScopeId: scope?.id ?? null,
+        rows: [
+          {
+            scopeKind: kind,
+            scopeValue: kind === "everybody" ? "" : value,
+            scopeLabel: label || null,
+            parentKey,
+            freightTermMatch,
+            priority: Number(priority) || 0,
+            validFrom: validFrom || null,
+            validTo: validTo || null,
+            excluded: false,
+          },
+        ],
+      });
+      if (live && r.ok) setPreview({ q: question, data: r.data });
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+    // `question` is what the preview depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question]);
+  const clashes = !leaving && preview && preview.q === question ? preview.data.clashes : [];
+  const unanswered = clashes.filter((c) => !answers[c.customerId]);
+
+  function answer(shops: ClashView[], kindOfAnswer: "keep" | "move") {
+    setAnswers((a) => {
+      const next = { ...a };
+      for (const c of shops) next[c.customerId] = c.others.map((o) => ({ customerId: c.customerId, answer: kindOfAnswer, otherBookId: o.bookId }));
+      return next;
+    });
+  }
 
   /** Picking a different kind throws the old answer away — it named a different thing. */
   function pickKind(next: PriceScopeKind) {
     setKind(next);
+    setAnswers({});
     setValue("");
     setLabel("");
     setParentKey("");
@@ -114,7 +176,7 @@ function ScopeBody({
 
   async function save() {
     const next: Record<string, string> = {};
-    if (kind !== "everybody" && !value.trim()) next.scopeValue = "Say which one this list applies to.";
+    if (kind !== "everybody" && !value.trim()) next.scopeValue = leaving ? "Say who this list leaves out." : "Say which one this list applies to.";
     setErrors(next);
     if (Object.keys(next).length) return;
 
@@ -124,17 +186,19 @@ function ScopeBody({
       scopeLabel: label.trim() || null,
       parentKey,
       parentLabel: parentLabel || null,
-      freightTermMatch,
-      priority: Number(priority) || 0,
+      freightTermMatch: leaving ? ("any" as const) : freightTermMatch,
+      priority: leaving ? 0 : Number(priority) || 0,
       validFrom: validFrom || null,
       validTo: validTo || null,
+      excluded: leaving,
     };
+    const given = clashes.flatMap((c) => answers[c.customerId] ?? []);
 
     setBusy(true);
     try {
       const r = scope
-        ? await run(updateScope(scope.id, fields))
-        : await run(addScope({ priceListId, ...fields }));
+        ? await run(updateScope(scope.id, fields, given))
+        : await run(addScope({ priceListId, ...fields }, given));
       if (r.ok) {
         onClose();
         router.refresh();
@@ -151,35 +215,69 @@ function ScopeBody({
       open
       onClose={onClose}
       width={600}
-      title={scope ? "Who this list applies to" : "Add who this list applies to"}
+      title={scope ? (leaving ? "Who this list leaves out" : "Who this list applies to") : leaving ? "Leave somebody out" : "Add who this list applies to"}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={save} title={busy ? "Saving…" : undefined}>
+          <Button
+            variant={leaving ? "danger" : "primary"}
+            disabled={busy || (preview?.data.enforced !== false && unanswered.length > 0)}
+            onClick={save}
+            title={busy ? "Saving…" : unanswered.length ? "Answer every shop already on another list first." : undefined}
+          >
             {busy ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
       <div className="space-y-3.5">
+        {scope ? null : (
+          <div className="grid grid-cols-2 overflow-hidden rounded-[6px] border border-line text-[13px] font-semibold">
+            <button
+              type="button"
+              className={leaving ? "cursor-pointer bg-surface py-1.5 text-body" : "cursor-pointer bg-brand py-1.5 text-white"}
+              onClick={() => {
+                setLeaving(false);
+                pickKind("state");
+              }}
+            >
+              Include
+            </button>
+            <button
+              type="button"
+              className={leaving ? "cursor-pointer bg-danger py-1.5 text-white" : "cursor-pointer bg-surface py-1.5 text-body"}
+              onClick={() => {
+                setLeaving(true);
+                pickKind("customer");
+              }}
+            >
+              Leave out
+            </button>
+          </div>
+        )}
+        {leaving ? (
+          <p className="text-[13px] text-muted">
+            The shops picked here are taken off this list. They go to Standard unless another list names them.
+          </p>
+        ) : null}
         <div>
           <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
             Named by
           </span>
           <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
-            {SCOPE_KIND_ORDER.map((k) => (
+            {(leaving ? EXCLUDE_KIND_ORDER : SCOPE_KIND_ORDER).map((k) => (
               <Radio
                 key={k}
                 name="scope-kind"
                 checked={kind === k}
                 onChange={() => pickKind(k)}
-                label={SCOPE_KIND_LABEL[k]}
+                label={k === "customer" ? "Shop" : SCOPE_KIND_LABEL[k]}
               />
             ))}
           </div>
-          <p className="mt-1.5 text-[13px] text-muted">{SCOPE_KIND_HINT[kind]}</p>
+          <p className="mt-1.5 text-[13px] text-muted">{leaving ? EXCLUDE_KIND_HINT[kind] : SCOPE_KIND_HINT[kind]}</p>
         </div>
 
         {parents ? (
@@ -322,7 +420,7 @@ function ScopeBody({
           />
         ) : null}
 
-        <div>
+        {leaving ? null : (<div>
           <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
             Who pays the transport
           </span>
@@ -351,12 +449,14 @@ function ScopeBody({
               ? "The list's own freight term decides, which is the usual answer."
               : FREIGHT_TERM_HINT[freightTermMatch]}
           </p>
-        </div>
+        </div>)}
 
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Priority" hint="Higher wins a tie inside one kind.">
-            <Input value={priority} inputMode="numeric" onChange={(e) => setPriority(e.target.value)} />
-          </Field>
+          {leaving ? <div /> : (
+            <Field label="Priority" hint="Higher wins a tie inside one kind.">
+              <Input value={priority} inputMode="numeric" onChange={(e) => setPriority(e.target.value)} />
+            </Field>
+          )}
           <Field label="Valid from" hint="Blank is straight away.">
             <input type="date" className={DATE_CLASS} value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
           </Field>
@@ -364,6 +464,29 @@ function ScopeBody({
             <input type="date" className={DATE_CLASS} value={validTo} onChange={(e) => setValidTo(e.target.value)} />
           </Field>
         </div>
+
+        {clashes.length > unanswered.length ? (
+          <div className="flex items-center gap-2 rounded-[6px] border border-line bg-canvas px-3 py-2 text-[13px]">
+            <span className="flex-1 text-body">
+              {(() => {
+                const done = clashes.filter((c) => answers[c.customerId]);
+                const moving = done.filter((c) => answers[c.customerId]?.[0]?.answer === "move").length;
+                return `${done.length} answered — ${moving} move here, ${done.length - moving} stay where they are.`;
+              })()}
+            </span>
+            <button type="button" className="cursor-pointer text-danger hover:underline" onClick={() => setAnswers({})}>
+              Undo answers
+            </button>
+          </div>
+        ) : null}
+        {unanswered.length ? (
+          <ClashBox
+            clashes={unanswered}
+            enforced={preview?.data.enforced ?? true}
+            onKeep={(shops) => answer(shops, "keep")}
+            onMove={(shops) => answer(shops, "move")}
+          />
+        ) : null}
       </div>
     </Modal>
   );

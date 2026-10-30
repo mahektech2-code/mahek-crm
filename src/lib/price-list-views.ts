@@ -135,6 +135,8 @@ export type ScopeView = {
   validTo: string | null;
   /** How many customers this row names today. Approximate, computed by the service. */
   customersMatched: number;
+  /** A row that leaves the shops it names OUT of the list. */
+  excluded: boolean;
 };
 
 export type DiscountTermView = {

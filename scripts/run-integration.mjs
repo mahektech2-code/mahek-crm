@@ -195,6 +195,8 @@ const files = [
   // Price books: a change edited, checked, approved by somebody else and put
   // live on its date — maker-checker, the second approver, the instruction.
   "src/lib/price-books.integration.test.ts",
+  // One price list per shop, and leaving shops out of a list.
+  "src/lib/price-one-list.integration.test.ts",
   "src/lib/price-today.integration.test.ts",
   // Watch: every order line against the book revision live on its own date.
   "src/lib/price-watch.integration.test.ts",

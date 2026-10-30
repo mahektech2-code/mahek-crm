@@ -1725,6 +1725,15 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "pricing.oneListPerShop",
+    type: "boolean",
+    category: "pricing",
+    label: "A shop is on one price list only",
+    description:
+      "On, an edit that would put a shop on a second price list is refused: adding who a list applies to, publishing a list or a change, or giving a shop its own list. The screen asks which list keeps the shop instead. Standard (the list for everybody) and a shop's special prices never count as a second list. Shops already on two lists keep pricing as before and are listed on Coverage to settle. Off, two lists may name one shop and the narrower one prices it.",
+    default: true,
+  },
+  {
     key: "pricing.changes.makerChecker",
     type: "boolean",
     category: "pricing",
@@ -6714,6 +6723,7 @@ export type Config = {
   "pricing.parseConfidenceFloor": number;
   "pricing.derivationTolerancePaise": number;
   "pricing.useListForOrderValue": boolean;
+  "pricing.oneListPerShop": boolean;
   "pricing.changes.makerChecker": boolean;
   "pricing.changes.secondApproverAbovePaise": number;
   "pricing.changes.secondApproverDropPercent": number;

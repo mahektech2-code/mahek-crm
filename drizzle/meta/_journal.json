@@ -2091,8 +2091,15 @@
     {
       "idx": 298,
       "version": "7",
-      "when": 1793611200000,
-      "tag": "0303_factory_scan_events",
+      "when": 1793608000000,
+      "tag": "0303_price_list_exclusions",
+      "breakpoints": true
+    },
+    {
+      "idx": 299,
+      "version": "7",
+      "when": 1793611600000,
+      "tag": "0304_factory_scan_events",
       "breakpoints": true
     }
   ]
