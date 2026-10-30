@@ -110,6 +110,7 @@ export const WEIGHTS = {
   "src/lib/lead-from-enquiry.test.ts": 7,
   "src/lib/lead-owner-choices.test.ts": 5,
   "src/lib/lead-calling-desk.test.ts": 18,
+  "src/lib/lead-call-followup.test.ts": 6,
   "src/lib/lead-call-intel.test.ts": 3,
   "src/lib/intake-intel.test.ts": 3,
   "src/lib/verify-intel.test.ts": 5,

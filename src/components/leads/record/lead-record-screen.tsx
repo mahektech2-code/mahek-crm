@@ -8,6 +8,8 @@ import { DeleteLead } from "./delete-lead";
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
+import { CallHistoryCard, UpcomingFollowUpCard } from "@/components/leads/record/followup-and-calls";
+import type { LeadCallEntry, UpcomingFollowUp } from "@/lib/services/lead-followup-service";
 import { cx } from "@/components/ui/primitives";
 import {
   FEEDBACK_FIELDS,
@@ -338,6 +340,8 @@ export function LeadRecordScreen({
   openCall = false,
   prospectReasons = [],
   directPromotion = true,
+  followUps = [],
+  callHistory = [],
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -347,6 +351,10 @@ export function LeadRecordScreen({
   prospectReasons?: { code: string; label: string }[];
   /** `leads.callingDeskDirectPromotion`: whether converting promotes now or asks the Sales Manager. */
   directPromotion?: boolean;
+  /** Pending reminders on this lead (the existing reminders rows). */
+  followUps?: UpcomingFollowUp[];
+  /** Every recorded call, from the existing calls rows. */
+  callHistory?: LeadCallEntry[];
   record: LeadRecord;
   /** Raw off the URL. Resolved below, because a URL is not a promise. */
   tab: string | null;
@@ -829,6 +837,8 @@ export function LeadRecordScreen({
                 requireNextAction={requireNextAction}
                 canWork={canWork}
               />
+              <UpcomingFollowUpCard followUps={followUps} day={day} />
+              <CallHistoryCard calls={callHistory} />
               <GateCard
                 record={record}
                 base={base}

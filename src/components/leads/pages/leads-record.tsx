@@ -1,3 +1,4 @@
+import { leadCallHistory, leadUpcomingFollowUps } from "@/lib/services/lead-followup-service";
 import { canVerifyLeadById, gstValidatorRefusalById } from "@/lib/services/lead-verifier";
 import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
 import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
@@ -145,6 +146,8 @@ export async function Body({
     config,
     leadManagers,
     photoIds,
+    followUps,
+    callHistory,
   ] = await Promise.all([
     leadTransitions(id),
     managerCalls(id),
@@ -170,6 +173,8 @@ export async function Body({
     getConfig(),
     leadManagerCandidatesFor(id),
     leadPhotoIds(id),
+    leadUpcomingFollowUps(id),
+    leadCallHistory(id),
   ]);
 
   /*
@@ -303,6 +308,8 @@ export async function Body({
     <LeadRecordScreen workspace={workspace}
       record={record}
       photoIds={photoIds}
+      followUps={followUps}
+      callHistory={callHistory}
       tab={single(query.tab)}
       ladder={ladder}
       /* -1 for a lead standing off its own ladder, which is what a parked one

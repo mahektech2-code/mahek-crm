@@ -1,5 +1,6 @@
 "use server";
 
+import { moveLeadFollowUpsTo } from "@/lib/services/lead-followup-service";
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
@@ -139,6 +140,8 @@ async function assignOne(
         updatedAt: new Date(),
       })
       .where(eq(customers.id, lead.id));
+    /* Its open follow-up reminder goes with it; finished ones stay where they were. */
+    await moveLeadFollowUpsTo(tx, lead.id, target?.id ?? null, ctx.user.id);
     /* A lead given to or taken off a Salesman has a different verifier now, so
        the Sales Manager seat, the verification next action and the open call
        follow it IN THIS COMMIT: if they cannot, the owner does not move either.
