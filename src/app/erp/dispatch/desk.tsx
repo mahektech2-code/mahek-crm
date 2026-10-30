@@ -3,7 +3,7 @@
 import { NavLink } from "@/components/shell/nav-link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
-import type { DispatchBoard } from "@/lib/erp/dispatch";
+import type { DispatchBoard, PickableBox } from "@/lib/erp/dispatch";
 import type { ScanVerdict } from "@/lib/erp/engines/trace";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpDispatchDecideOverride, erpDispatchRequestOverride, erpDispatchScan, erpDispatchUnscan, erpDispatchVerify } from "@/lib/actions/erp-trace";
@@ -12,6 +12,7 @@ import { fd } from "@/lib/erp/ui";
 import { useErpUi } from "../_ui/erp-ui";
 import { Badge } from "../_ui/badge";
 import { LinkButton, linkClass, SubTitle } from "../_ui/look";
+import { PickBoxesButton } from "./pick-boxes";
 
 /**
  * The scanning desk. A hand scanner types the code and an Enter into the box,
@@ -42,7 +43,7 @@ function beep(ok: boolean) {
   }
 }
 
-export function DispatchDesk({ board, me, canDecide, administrator, canVerify, canAllocate, today }: { board: DispatchBoard; me: string; canDecide: boolean; administrator: boolean; canVerify: boolean; canAllocate: boolean; today: string }) {
+export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVerify, canAllocate, today }: { board: DispatchBoard; boxes: PickableBox[]; me: string; canDecide: boolean; administrator: boolean; canVerify: boolean; canAllocate: boolean; today: string }) {
   const router = useRouter();
   const ui = useErpUi();
   const input = useRef<HTMLInputElement>(null);
@@ -135,12 +136,23 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 onChange={(e) => setCode(e.target.value)}
                 autoFocus
                 disabled={!open.length}
-                placeholder={open.length ? "Scan a box or lot QR, or type its code and press Enter" : "Nothing on this order is Ready to dispatch"}
+                placeholder={open.length ? "Scan a box or lot QR, type its code, or pick boxes from the list" : "Nothing on this order is Ready to dispatch"}
                 className="h-12 flex-1 rounded-lg border-2 border-brand bg-surface px-3.5 font-mono text-lg text-ink outline-none placeholder:text-faint"
               />
               <Button variant="primary" disabled={pending || !code.trim()} className="h-12">
                 Scan
               </Button>
+              {open.length ? (
+                <PickBoxesButton
+                  board={board}
+                  boxes={boxes}
+                  onDone={() => {
+                    setLast(null);
+                    setError(null);
+                    router.refresh();
+                  }}
+                />
+              ) : null}
             </form>
             <div className="mt-3.5 flex items-center gap-3">
               <span className="h-2 flex-1 overflow-hidden rounded-full bg-divider">

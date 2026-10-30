@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { getConfig } from "@/lib/config/store";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import type { ErpContext } from "./access";
 import { erpAudit, erpId } from "./server";
 import { allocationTarget, boxQuantity } from "./engines/sales";
@@ -304,26 +305,88 @@ export async function loadingLines(ex: Ex, godownId: string, keep?: (transporter
   });
 }
 
+export type DispatchQueueRow = {
+  orderNo: number;
+  delivery: string;
+  /** Who it is billed to, where that is not who it goes to — searched as well. */
+  billing: string;
+  area: string | null;
+  transporter: string | null;
+  dispatchOn: string | null;
+  lines: number;
+  target: number;
+  scanned: number;
+  billed: number;
+  godown: string;
+  /** The SKUs on its waiting lines, for finding an order by what is in it. */
+  products: string[];
+};
+
 /** Orders waiting at the desk: a line Ready or billed and not yet dispatch-verified. */
-export async function dispatchQueue(): Promise<{ orderNo: number; delivery: string; dispatchOn: string | null; lines: number; target: number; scanned: number; billed: number; godown: string }[]> {
+export async function dispatchQueue(): Promise<DispatchQueueRow[]> {
   const rows = await q<Row>(db, sql`
     with open as (
-      select o.id, o.order_no, o.qty_cans, p.cans_per_box as cpb, coalesce(pk.empty_boxes_required, 0) as empty, o.dispatch_on, o.delivery_customer_id, o.billing_customer_id, o.godown_id,
-             d.order_id is not null as billed
+      select o.id, o.order_no, o.qty_cans, p.name as sku, p.cans_per_box as cpb, coalesce(pk.empty_boxes_required, 0) as empty, o.dispatch_on, o.delivery_customer_id, o.billing_customer_id, o.godown_id,
+             o.transporter, d.order_id is not null as billed
         from erp_orders o join products p on p.id = o.sku_id left join erp_product_packing pk on pk.product_id = p.id
         left join erp_order_details d on d.order_id = o.id
        where o.status = 'Ready' and coalesce(d.verification, '') <> 'Verified'
     )
-    select x.order_no as "orderNo", coalesce(dc.name, bc.name) as delivery, min(x.dispatch_on)::text as "dispatchOn", count(*)::int as lines,
+    select x.order_no as "orderNo", coalesce(dc.name, bc.name) as delivery, min(bc.name) as billing, min(coalesce(dc.area, dc.city, bc.area, bc.city)) as area,
+           min(x.transporter) as transporter, min(x.dispatch_on)::text as "dispatchOn", count(*)::int as lines,
            sum(case when x.empty > 0 and x.cpb > 1 then x.qty_cans::float8 / x.cpb when x.empty > 0 then 0 else x.qty_cans end)::float8 as target,
            (select count(*)::int from erp_units u where u.order_id in (select id from open y where y.order_no = x.order_no) and u.status = 'scanned') as scanned,
-           sum(case when x.billed then 1 else 0 end)::int as billed, min(g.name) as godown
+           sum(case when x.billed then 1 else 0 end)::int as billed, min(g.name) as godown,
+           array_agg(distinct x.sku order by x.sku) as products
       from open x join customers bc on bc.id = x.billing_customer_id left join customers dc on dc.id = x.delivery_customer_id
       join erp_godowns g on g.id = x.godown_id
      group by x.order_no, coalesce(dc.name, bc.name)
      order by min(x.dispatch_on) nulls last, x.order_no
   `);
-  return rows.map((r) => ({ orderNo: Number(r.orderNo), delivery: String(r.delivery), dispatchOn: r.dispatchOn == null ? null : String(r.dispatchOn), lines: Number(r.lines), target: Number(r.target), scanned: Number(r.scanned), billed: Number(r.billed), godown: String(r.godown) }));
+  return rows.map((r) => ({
+    orderNo: Number(r.orderNo),
+    delivery: String(r.delivery),
+    billing: String(r.billing ?? r.delivery),
+    area: r.area == null ? null : String(r.area),
+    transporter: r.transporter == null || String(r.transporter).trim() === "" ? null : String(r.transporter),
+    dispatchOn: r.dispatchOn == null ? null : String(r.dispatchOn),
+    lines: Number(r.lines),
+    target: Number(r.target),
+    scanned: Number(r.scanned),
+    billed: Number(r.billed),
+    godown: String(r.godown),
+    products: Array.isArray(r.products) ? (r.products as unknown[]).map(String) : [],
+  }));
+}
+
+export type PickableBox = { id: string; lineId: string; sku: string; lotCode: string; allocated: boolean; madeOn: string | null };
+
+/**
+ * THE BOXES THAT COULD GO ON THIS ORDER, for picking off a list rather than
+ * typing their ids: in stock, of a SKU a waiting line asks for, at that line's
+ * godown. Lots already allocated to the line come first, oldest box first, so
+ * the top of the list is what a scan would have matched anyway. Picking one
+ * is not a way past the desk: each is put on through `scanOntoOrder`, judged
+ * exactly as if its QR had been read.
+ */
+export async function pickableBoxes(board: DispatchBoard): Promise<PickableBox[]> {
+  const open = board.lines.filter((l) => !l.cancelled && !l.dispatched && l.boxed);
+  if (!open.length) return [];
+  const want = open.map((l) => sql`(${l.skuId}, ${l.godownId})`);
+  const rows = await q<Row>(db, sql`
+    select u.id, u.sku_id as "skuId", u.godown_id as "godownId", p.name as sku, u.lot_code as "lotCode", (u.created_at at time zone ${APP_TIMEZONE})::date::text as "madeOn"
+      from erp_units u join products p on p.id = u.sku_id
+     where u.status = 'available' and (u.sku_id, u.godown_id) in (${sql.join(want, sql`, `)})
+     order by u.created_at, u.id
+     limit 1500
+  `);
+  const out: PickableBox[] = [];
+  for (const r of rows) {
+    const line = open.find((l) => l.skuId === r.skuId && l.godownId === r.godownId);
+    if (!line) continue;
+    out.push({ id: String(r.id), lineId: line.id, sku: String(r.sku), lotCode: String(r.lotCode), allocated: line.alloc.some((a) => a.lotCode === r.lotCode), madeOn: r.madeOn == null ? null : String(r.madeOn) });
+  }
+  return out.sort((a, b) => Number(b.allocated) - Number(a.allocated));
 }
 
 /* ================================================================= scan */
