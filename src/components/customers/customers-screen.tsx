@@ -43,6 +43,7 @@ import {
   loadCustomerEditor,
   type CustomerEditorData,
 } from "@/lib/actions/customer-contacts";
+import { FilterPanelButton } from "@/components/ui/filter-panel";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { PlaceCell, PlaceFilterSelects } from "@/components/ui/place-filter-selects";
 import {
@@ -829,71 +830,85 @@ export function CustomersScreen({
             </button>
           ) : null}
         </div>
-        <MultiSelect
-          label="Status"
-          placeholder="All statuses"
-          options={statusOptions}
-          selected={asList(status)}
-          onChange={(next) => navigate({ status: next.join(",") || undefined })}
-        />
-        <MultiSelect
-          label="Type"
-          placeholder="All types"
-          options={accountTypeOptions}
-          selected={asList(accountTypeFilter)}
-          onChange={(next) => navigate({ party: next.join(",") || undefined })}
-          title="A direct customer bills with us. A third-party customer is a shop we deliver to and a distributor bills."
-        />
-        {/*
-          Two filters, because an account has two managers and "owner" was
-          neither of them. The old one tested `owner_id`'s name while the
-          column showed the sales manager — different people on most rows, so
-          picking a name filtered a column nobody could see and the list came
-          back looking wrong or empty.
+        {/* The nine narrowings live behind one button; what is on stays on
+            the bar as chips below, each with its ×. */}
+        <FilterPanelButton
+          count={chips.length}
+          onClear={clearAll}
+          summary={`${total.toLocaleString("en-IN")} of ${bookTotal.toLocaleString("en-IN")}`}
+        >
+          <MultiSelect
+            className="w-full"
+            label="Status"
+            placeholder="All statuses"
+            options={statusOptions}
+            selected={asList(status)}
+            onChange={(next) => navigate({ status: next.join(",") || undefined })}
+          />
+          <MultiSelect
+            className="w-full"
+            label="Type"
+            placeholder="All types"
+            options={accountTypeOptions}
+            selected={asList(accountTypeFilter)}
+            onChange={(next) => navigate({ party: next.join(",") || undefined })}
+            title="A direct customer bills with us. A third-party customer is a shop we deliver to and a distributor bills."
+          />
+          {/*
+            Two filters, because an account has two managers and "owner" was
+            neither of them. The old one tested `owner_id`'s name while the
+            column showed the sales manager — different people on most rows, so
+            picking a name filtered a column nobody could see and the list came
+            back looking wrong or empty.
 
-          The options are the names the COLUMN shows, not the staff list. Most
-          of these people have no MahekOne account — the customer master names
-          "Back Office Calling", "Marathwada", "Company Own" — and a dropdown
-          built from `users` cannot reach a single one of those rows.
-        */}
-        <MultiSelect
-          label="Sales AM"
-          placeholder="All sales people"
-          options={salesAmOptions}
-          selected={asList(salesAm)}
-          onChange={(next) => navigate({ sales: next.join(",") || undefined })}
-        />
-        {/*
-          The sales MANAGER, which is the filter a regional review starts from
-          and the filter a handover starts from. Built from the same expression
-          the column shows, like the two beside it — a dropdown built from
-          `users` could not offer the people running a line who have never
-          signed in, and this seat is full of them.
-        */}
-        <MultiSelect
-          label="Sales manager"
-          placeholder="All sales managers"
-          options={salesManagerOptions}
-          selected={asList(salesManager)}
-          onChange={(next) => navigate({ salesmanager: next.join(",") || undefined })}
-        />
-        <MultiSelect
-          label="Back office"
-          placeholder="All back office"
-          options={backOfficeOptions}
-          selected={asList(backOfficeAm)}
-          onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
-        />
-        {/*
-          WHERE THE SHOP IS — state, district, city and area off the reviewed
-          location tree. Last in the bar because they are the widest lists;
-          each narrows the ones after it.
-        */}
-        <PlaceFilterSelects
-          options={placeOptions}
-          values={places}
-          onChange={(patch) => navigate(patch)}
-        />
+            The options are the names the COLUMN shows, not the staff list. Most
+            of these people have no MahekOne account — the customer master names
+            "Back Office Calling", "Marathwada", "Company Own" — and a dropdown
+            built from `users` cannot reach a single one of those rows.
+          */}
+          <MultiSelect
+            className="w-full"
+            label="Sales AM"
+            placeholder="All sales people"
+            options={salesAmOptions}
+            selected={asList(salesAm)}
+            onChange={(next) => navigate({ sales: next.join(",") || undefined })}
+          />
+          {/*
+            The sales MANAGER, which is the filter a regional review starts from
+            and the filter a handover starts from. Built from the same expression
+            the column shows, like the two beside it — a dropdown built from
+            `users` could not offer the people running a line who have never
+            signed in, and this seat is full of them.
+          */}
+          <MultiSelect
+            className="w-full"
+            label="Sales manager"
+            placeholder="All sales managers"
+            options={salesManagerOptions}
+            selected={asList(salesManager)}
+            onChange={(next) => navigate({ salesmanager: next.join(",") || undefined })}
+          />
+          <MultiSelect
+            className="w-full"
+            label="Back office"
+            placeholder="All back office"
+            options={backOfficeOptions}
+            selected={asList(backOfficeAm)}
+            onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
+          />
+          {/*
+            WHERE THE SHOP IS — state, district, city and area off the reviewed
+            location tree. Last in the bar because they are the widest lists;
+            each narrows the ones after it.
+          */}
+          <PlaceFilterSelects
+            options={placeOptions}
+            values={places}
+            onChange={(patch) => navigate(patch)}
+            className="w-full"
+          />
+        </FilterPanelButton>
         {chips.length ? (
           <button
             onClick={clearAll}
@@ -2546,7 +2561,7 @@ function CustomerFormBody({
       {/* One height for every tab, so the dialog does not jump as you move. */}
       <div className="min-h-[440px]">
       <div className="grid grid-cols-2 gap-3" style={tab === "details" ? undefined : HIDDEN}>
-        <Field label="Business name · required" className="col-span-2">
+        <Field label="Business name" required className="col-span-2">
           <Input
             value={values.name ?? ""}
             onChange={set("name")}
@@ -2685,7 +2700,7 @@ function CustomerFormBody({
           />
         ) : (
           // The rest of the record could not be read: the city can still be corrected as text.
-          <Field label="City · required">
+          <Field label="City" required>
             <Input value={values.city ?? ""} onChange={set("city")} />
           </Field>
         )}
@@ -2777,7 +2792,7 @@ function CustomerFormBody({
                 onChange={(e) => setFlag("creditBlocked")(e.target.checked)}
               />
               {detail.creditBlocked ? (
-                <Field label="Why · required" className="mt-2">
+                <Field label="Why" required className="mt-2">
                   <Input
                     value={detail.creditBlockReason}
                     onChange={setD("creditBlockReason")}
@@ -3024,7 +3039,7 @@ function CustomerFormBody({
         */}
         {amChanged || salesManagerChanged ? (
           <Field
-            label="Why is the account manager changing · required"
+            label="Why is the account manager changing" required
             className="col-span-2"
           >
             <Select value={values.amReasonCode ?? ""} onChange={set("amReasonCode")}>
@@ -3088,7 +3103,7 @@ function BulkReminderModal({
       }
     >
       <div className="grid gap-3">
-        <Field label="Due date · required">
+        <Field label="Due date" required>
           <Input
             type="date"
             value={dueDate}
@@ -3097,7 +3112,7 @@ function BulkReminderModal({
           />
         </Field>
         <Field
-          label="What is the reminder for · required"
+          label="What is the reminder for" required
           hint="Every selected customer gets this same note - write it so it still makes sense in a week."
         >
           <VoiceTextarea

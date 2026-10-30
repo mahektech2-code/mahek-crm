@@ -461,7 +461,7 @@ function ContactDialog({
             ))}
           </Select>
         </Field>
-        <Field label="Phone · required" hint={v.phone && !mobile ? "Read as a landline — it can be rung, not sent WhatsApp." : "10-digit mobile, or a landline with STD code"}>
+        <Field label="Phone" required hintShown={Boolean(v.phone && !mobile)} hint={v.phone && !mobile ? "Read as a landline — it can be rung, not sent WhatsApp." : "10-digit mobile, or a landline with STD code"}>
           <Input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} inputMode="tel" maxLength={16} />
         </Field>
         <Field label="Email">

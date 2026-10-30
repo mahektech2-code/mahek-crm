@@ -17,6 +17,7 @@ import {
 import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
+import { HintTip } from "@/components/ui/hint-tip";
 import type { DiscountAuthorityInput } from "@/lib/price-list-views";
 import { CallPanel } from "@/components/crm/call-panel-lazy";
 import {
@@ -461,16 +462,17 @@ export function QueueScreen({
           ]}
         />
         <span className="flex-1" />
-        <span className="text-[13px] text-muted">
-          j / k to move · Enter to open the call panel
-        </span>
+        {/* The keys are said once, behind the ⓘ — a line read every visit
+            stops being read on the second. */}
+        <HintTip text="j / k to move · Enter to open the call panel" />
       </div>
 
       {suppressed.length ? (
         <Card className="mb-3">
+          <div className="flex items-center gap-2 pr-4">
           <button
             onClick={() => setHeldOpen((o) => !o)}
-            className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-left"
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-4 py-2.5 text-left"
           >
             <Icon
               name="chevron"
@@ -484,11 +486,9 @@ export function QueueScreen({
               {suppressed.length} customer{suppressed.length === 1 ? "" : "s"}{" "}
               held back today
             </span>
-            <span className="flex-1" />
-            <span className="text-[13px] text-muted">
-              Nothing disappears silently - open this if somebody is missing
-            </span>
           </button>
+          <HintTip text="Nothing disappears silently — open this if somebody is missing." />
+          </div>
           {heldOpen ? (
             <div className="border-t border-divider py-1 pr-4 pl-10">
               {suppressed.map((h) => (

@@ -39,7 +39,7 @@ export function CustomerPlacePicker({
 
   return (
     <>
-      <Field label="State · required" error={err("state")}>
+      <Field label="State" required error={err("state")}>
         <Select
           value={stateValue}
           onChange={(e) => {
@@ -90,7 +90,7 @@ function DistrictField({
   const typing = !!above && (!above.id || (!!rung && !rung.id));
   if (typing)
     return (
-      <Field label="District · required" error={error} hint={`New — added under ${rungName(above, byId) ?? "the state"} when you save.`}>
+      <Field label="District" required error={error} hintShown hint={`New — added under ${rungName(above, byId) ?? "the state"} when you save.`}>
         <span className="flex gap-1.5">
           <Input
             value={rung?.name ?? ""}
@@ -112,7 +112,7 @@ function DistrictField({
     );
   const opts = placeChoices(tree, "district", pick);
   return (
-    <Field label="District · required" error={error}>
+    <Field label="District" required error={error}>
       <Select
         value={rung?.id ?? ""}
         disabled={!above}
@@ -161,12 +161,14 @@ function SearchAddField({
   const listId = React.useId();
   const shown = rung?.id ? (byId.get(rung.id)?.name ?? "") : (rung?.name ?? "");
   const isNew = !!rung && !rung.id && !!(rung.name ?? "").trim();
-  const label = `${LABEL[kind]}${required ? " · required" : ""}`;
-
   return (
     <Field
-      label={label}
+      label={LABEL[kind]}
+      required={required}
+      optional={!required}
       error={error}
+      /* "New — added" says what Save will do, so it stays written. */
+      hintShown={isNew}
       hint={
         !above
           ? undefined

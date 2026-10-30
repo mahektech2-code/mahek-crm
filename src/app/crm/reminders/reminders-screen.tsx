@@ -711,7 +711,7 @@ function NewReminderModal({
             autoFocus
           />
         </Field>
-        <Field label="Due date · required">
+        <Field label="Due date" required>
           <Input
             type="date"
             value={dueDate}
@@ -720,7 +720,7 @@ function NewReminderModal({
           />
         </Field>
         <Field
-          label="What was promised · required"
+          label="What was promised" required
           hint="This note is what you will see in the reminders list - write it for your future self."
         >
           <VoiceTextarea
@@ -781,7 +781,7 @@ function RescheduleModalBody({ reminder, onClose, onSubmit }: RescheduleProps) {
     >
       <div className="mb-3 text-sm text-muted">{reminder?.customerName}</div>
       <div className="grid gap-3">
-        <Field label="New due date · required">
+        <Field label="New due date" required>
           <Input
             type="date"
             value={dueDate}

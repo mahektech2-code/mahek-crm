@@ -272,7 +272,12 @@ export function SalesManagerDialog({
               ))}
             </Select>
             <label className="mt-2 mb-1.5 block text-[11px] tracking-wide text-muted uppercase">
-              Note {needsNote ? "(required)" : "(optional)"}
+              Note{" "}
+              {needsNote ? (
+                <span aria-label="required" className="text-danger">*</span>
+              ) : (
+                <span className="tracking-normal text-faint normal-case">optional</span>
+              )}
             </label>
             <textarea
               value={note}

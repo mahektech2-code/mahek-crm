@@ -405,7 +405,12 @@ function SeatReason({
         ))}
       </Select>
       <label className="mt-2 mb-1.5 block text-[11px] tracking-wide text-muted uppercase">
-        Note {required ? "(required)" : "(optional)"}
+        Note{" "}
+              {required ? (
+                <span aria-label="required" className="text-danger">*</span>
+              ) : (
+                <span className="tracking-normal text-faint normal-case">optional</span>
+              )}
       </label>
       <textarea
         value={note}

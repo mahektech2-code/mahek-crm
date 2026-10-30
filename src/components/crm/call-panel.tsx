@@ -2454,11 +2454,11 @@ function CallPanelForm({
                             one and the form opens filled in.
                           </p>
                         ) : (
-                          <p className="mt-1 mb-3.5 text-[13px] text-muted">
-                            Pick one to start. Everything after this depends on it.
-                          </p>
+                          /* The three cards say it; "pick one to start" said
+                             it again. */
+                          <div className="mb-3" />
                         )}
-                        <div className="flex flex-col gap-2">
+                        <div className="grid grid-cols-3 gap-2">
                           {TYPES.map((t) => (
                             <button
                               key={t.key}
@@ -2594,7 +2594,7 @@ function CallPanelForm({
                               <Input
                                 value={callerName}
                                 onChange={(e) => setCallerName(e.target.value)}
-                                placeholder="Their name, if you caught it (optional)"
+                                placeholder="Their name, if you caught it"
                               />
                             </div>
                             {target.contactPerson ? (
@@ -2698,7 +2698,9 @@ function CallPanelForm({
                             call was about; this is how it ended.
                           </p>
                         ) : null}
-                        <div className="mt-3 flex flex-col gap-2">
+                        {/* A grid of three: nine outcomes read in one look
+                            rather than scrolled past one per line. */}
+                        <div className="mt-3 grid grid-cols-3 gap-2">
                           {OUTCOMES[
                             type as Exclude<InteractionType, "order_received">
                           ].map((o) => (
@@ -3586,7 +3588,7 @@ function CallPanelForm({
                                     placeholder="What they might buy"
                                   />
                                 </Field>
-                                <Field label="Estimated quantity (optional)">
+                                <Field label="Estimated quantity" optional>
                                   <Input
                                     value={oppQuantity}
                                     onChange={(e) => setOppQuantity(e.target.value)}
@@ -3599,7 +3601,7 @@ function CallPanelForm({
                                     invention. Blank is a real answer and is not
                                     zero: nobody put a number on it. */}
                                 <Field
-                                  label="Estimated value (optional)"
+                                  label="Estimated value" optional
                                   hint="Rupees, as they described it. Leave blank if nobody put a figure on it."
                                   error={errors["opportunity.estimatedValueRupees"] ?? null}
                                 >
@@ -3611,7 +3613,7 @@ function CallPanelForm({
                                   />
                                 </Field>
                                 <Field
-                                  label="Expected order date (optional)"
+                                  label="Expected order date" optional
                                   error={errors["opportunity.expectedOrderDate"] ?? null}
                                 >
                                   <Input

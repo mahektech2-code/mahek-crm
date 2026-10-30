@@ -11,7 +11,7 @@ import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
 import { listNotifications } from "@/lib/queries";
 import { ErpShell, type NavGroup } from "./_ui/erp-shell";
-import "./erp-theme.css";
+import "@/styles/v4-theme.css";
 
 /**
  * The ERP's shell.

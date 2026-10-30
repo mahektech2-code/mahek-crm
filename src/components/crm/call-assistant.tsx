@@ -1,5 +1,6 @@
 "use client";
 
+import { HintTip } from "@/components/ui/hint-tip";
 import * as React from "react";
 import { Badge, Button, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
@@ -495,14 +496,12 @@ export function CallAssistant({
   if (phase.kind === "idle" || phase.kind === "failed") {
     return (
       <section className="mb-4 rounded-[6px] border border-brand-softer bg-brand-soft p-4">
-        <div className="text-[15px] font-semibold text-ink">
-          Just say what happened
+        {/* The title and the ⓘ; the sentence about what the assistant does
+            is behind it, read once rather than on every call. */}
+        <div className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-ink">
+          <span>Just say what happened</span>
+          <HintTip text="Speak in any language. The assistant picks the outcome and the next action, works out the dates and fills the form — you check it and save. It never saves anything itself." />
         </div>
-        <p className="mt-0.5 mb-3 text-[13px] text-body">
-          Speak in any language. The assistant picks the outcome, the next
-          action, works out the dates and fills the form — you check it and
-          save. It never saves anything itself.
-        </p>
         {starter}
         {phase.kind === "failed" ? (
           <p className="mt-2 text-[13px] text-danger">{phase.message}</p>

@@ -34,6 +34,7 @@ export function Header({
   apps,
   collapsed,
   onToggleSidebar,
+  v4 = false,
 }: {
   user: User;
   /** Who this person is in THIS app — see `lib/hat-labels.ts`. */
@@ -46,6 +47,9 @@ export function Header({
   /** Whether the sidebar is the narrow rail — the collapse control says which. */
   collapsed: boolean;
   onToggleSidebar: () => void;
+  /** The v4 look (`styles/v4-theme.css`): a lavender header. The CRM asks
+   *  for it; Accounts, which shares this header, does not. */
+  v4?: boolean;
 }) {
   const router = useRouter();
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
@@ -69,7 +73,13 @@ export function Header({
 
 
   return (
-    <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
+    <header
+      data-v4-header={v4 ? "" : undefined}
+      className={cx(
+        "z-30 flex h-14 flex-none items-center gap-5 border-b px-4",
+        v4 ? "border-brand-softer bg-brand-soft" : "border-line bg-surface",
+      )}
+    >
       {/* The switcher, the collapse and the wordmark are `HeaderLead`'s, as in
           every app. The fixed width keeps the search box where it was. */}
       <div className="flex w-[216px] flex-none items-center">
@@ -96,10 +106,20 @@ export function Header({
 
       <div className="flex items-center gap-2">
         {isManager ? (
-          <div className="flex h-7.5 items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong pr-1 pl-2">
-            <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-              Viewing
-            </span>
+          <div
+            role="group"
+            aria-label="Viewing"
+            className={cx(
+              "flex h-7.5 items-center gap-1.5 rounded-[4px] border pr-1",
+              v4 ? "border-brand-softer pl-1" : "border-dashed border-line-strong pl-2",
+            )}
+          >
+            {/* v4 says it in two words, not three: the pair is the label. */}
+            {v4 ? null : (
+              <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+                Viewing
+              </span>
+            )}
             {(["mine", "team"] as const).map((s) => (
               <button
                 key={s}
@@ -113,7 +133,9 @@ export function Header({
                 className={cx(
                   "h-6 cursor-pointer rounded-[3px] px-2 text-[13px]",
                   scope === s
-                    ? "bg-brand-soft font-medium text-[#5223E0]"
+                    ? v4
+                      ? "bg-surface font-semibold text-[#1e1446]"
+                      : "bg-brand-soft font-medium text-[#5223E0]"
                     : "text-muted hover:text-body",
                 )}
               >
@@ -130,6 +152,7 @@ export function Header({
         <button
           onClick={() => setShortcutsOpen(true)}
           title="Keyboard shortcuts"
+          aria-label="Keyboard shortcuts"
           className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
         >
           ?
@@ -137,7 +160,7 @@ export function Header({
 
         <NotificationBell notifications={notifications} />
 
-        <span className="mx-1 h-6 w-px bg-divider" />
+        {v4 ? null : <span className="mx-1 h-6 w-px bg-divider" />}
 
         {/*
           The same chip the sidebar draws on its floor, and it has to be the
