@@ -8,8 +8,9 @@ import { erpDispatchHref } from "@/lib/erp/trace-links";
 import { fd, nf } from "@/lib/erp/ui";
 import { Card, cx, EmptyState, Input } from "@/components/ui/primitives";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { FilterPanelButton } from "@/components/ui/filter-panel";
 import { Icon } from "../_ui/icons";
-import { fieldLabelClass, LinkButton, toggleClass } from "../_ui/look";
+import { fieldLabelClass, LinkButton } from "../_ui/look";
 
 /* ---------------------------------------------------------------------------
  * THE QUEUE, FOUND BY WHAT SOMEBODY KNOWS. A loader knows the shop, the
@@ -47,7 +48,6 @@ function optionsOf(rows: DispatchQueueRow[], pick: (o: DispatchQueueRow) => stri
 export function DispatchQueue({ queue, current, today }: { queue: DispatchQueueRow[]; current: number | null; today: string }) {
   const router = useRouter();
   const [term, setTerm] = useState("");
-  const [open, setOpen] = useState(false);
   const [f, setF] = useState<Facets>(NONE);
 
   const pickers: { k: keyof Facets; l: string; of: (o: DispatchQueueRow) => string[]; order?: string[] }[] = [
@@ -100,27 +100,49 @@ export function DispatchQueue({ queue, current, today }: { queue: DispatchQueueR
             className="h-9 w-full pl-9"
           />
         </span>
-        <button type="button" onClick={() => setOpen((x) => !x)} aria-expanded={open} className={toggleClass(on > 0, "h-9")}>
-          <Icon n="filter" s={14} />
-          Filter
-          {on ? <span className="rounded-full bg-brand px-1.5 text-2xs font-semibold text-white tabular-nums">{on}</span> : null}
-        </button>
+        {/* The seven narrowings live behind one button, in a popover —
+            drawn inline they pushed the queue below the fold. */}
+        <FilterPanelButton
+          count={on}
+          onClear={() => setF(NONE)}
+          size="md"
+          width={520}
+          summary={`${nf(shown.length)} of ${nf(queue.length)} orders`}
+        >
+          {pickers.map((p) => (
+            <div key={p.k} className="flex min-w-0 flex-col gap-1">
+              <span className={fieldLabelClass}>{p.l}</span>
+              <MultiSelect
+                label={p.l}
+                options={options[p.k]}
+                selected={f[p.k]}
+                onChange={(next) => setF({ ...f, [p.k]: next })}
+                className={cx("w-full justify-between", f[p.k].length > 0 && "border-brand bg-brand-soft")}
+              />
+            </div>
+          ))}
+        </FilterPanelButton>
       </div>
 
-      {open ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3">
-          {pickers.map((p) => (
-            <label key={p.k} className="flex flex-col gap-1">
-              <span className={fieldLabelClass}>{p.l}</span>
-              <MultiSelect label={p.l} options={options[p.k]} selected={f[p.k]} onChange={(next) => setF({ ...f, [p.k]: next })} className={cx(f[p.k].length > 0 && "border-brand bg-brand-soft")} />
-            </label>
-          ))}
-          {on ? (
-            <LinkButton onClick={() => setF(NONE)} className="self-start">
-              Clear filters
-            </LinkButton>
-          ) : null}
-        </Card>
+      {/* What is on stays on the bar, each with its ×. */}
+      {on ? (
+        <div className="flex flex-wrap gap-1.5">
+          {pickers
+            .filter((p) => f[p.k].length)
+            .map((p) => (
+              <button
+                key={p.k}
+                type="button"
+                onClick={() => setF({ ...f, [p.k]: [] })}
+                className="inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-control border border-line bg-surface px-2 text-meta text-body"
+              >
+                <span className="max-w-[220px] truncate">
+                  {p.l}: {f[p.k].length === 1 ? f[p.k][0] : `${f[p.k].length} picked`}
+                </span>
+                <span className="text-muted">×</span>
+              </button>
+            ))}
+        </div>
       ) : null}
 
       {on || words.length ? (
