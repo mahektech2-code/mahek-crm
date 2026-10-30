@@ -55,7 +55,7 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_PICK_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LorryHalf, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_PICK_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBatch, type LorryBatchResult, type LorryBoard, type LorryHalf, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
@@ -81,7 +81,7 @@ function photoProblem(r: Extract<PhotoSend, { ok: false }>, again: string): { ti
 }
 import { promptDue, snoozeUntil } from "./update";
 import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
-import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type LorryUi, LORRY0, type TilesSheet, type Feed, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey } from "./model";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type LorryUi, LORRY0, type TilesSheet, type Feed, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey, scanId } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -135,13 +135,20 @@ const HELP: [string, string, string, string, string[]][] = [
 
 /** A lorry opened before its first scan: the job is made on the server by that scan. */
 const NEW_LORRY = "new-lorry:";
+/** At most this many queued loading scans go in one call; the server takes up to 50. */
+const LORRY_BATCH = 25;
 
 export class FactoryApp extends Component<Props, State> {
   private ivs: ReturnType<typeof setInterval>[] = [];
   private tt: ReturnType<typeof setTimeout> | undefined;
   /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
-  private scanQ: string[] = [];
+  /** Loading scans in the order they were made, with when each label was read. */
+  private scanQ: { code: string; at: number }[] = [];
   private scanRunning = false;
+  /** How long the loader waited on each scan of the last batch — sent with the next, for the server's scan log. */
+  private waits: { id: string; ms: number }[] = [];
+  /** The server has no batch op (a build older than the phone): one at a time, as before. */
+  private noBatch = false;
   /* The half of a box-and-sticker pair the next scan is sent with. Held here as well as in state: queued scans are sent back to back, before a render. */
   private held: LorryHalf | null = null;
   private staleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -792,8 +799,10 @@ export class FactoryApp extends Component<Props, State> {
 
   /**
    * Every scan arrives here — the camera, a scanning gun, a tapped test label.
-   * LOADING TAKES THEM IN A LINE and checks them one at a time, in the order
-   * they were made; anything else is read as it always was.
+   * LOADING TAKES THEM IN A LINE, in the order they were made. On a lorry the
+   * whole line goes to the server as one call and is judged there in order, so
+   * a loader faster than the Wi-Fi is never waiting on one label at a time;
+   * anything else is read as it always was.
    */
   intake(code: string) {
     const sc = this.state.scan;
@@ -805,7 +814,7 @@ export class FactoryApp extends Component<Props, State> {
       beep("bad");
       return this.toast("Not counted. Tap the card first, then scan it again.", "warn");
     }
-    this.scanQ.push(code);
+    this.scanQ.push({ code, at: Date.now() });
     void this.pumpScans();
   }
 
@@ -826,11 +835,15 @@ export class FactoryApp extends Component<Props, State> {
     this.scanRunning = true;
     try {
       while (this.scanQ.length && this.state.scan?.purpose === "load" && !this.halted()) {
-        await this.doScan(this.scanQ.shift()!);
+        const f = this.state.flow;
+        /* On a lorry: everything queued so far, in one round trip. The server stops at a refusal and hands back the rest. */
+        let behind = 0;
+        if (f && isLorryTask(f.task) && !this.noBatch) behind = await this.lorrySend(this.scanQ.splice(0, LORRY_BATCH));
+        else await this.doScan(this.scanQ.shift()!.code);
         await new Promise<void>((done) => this.setState({}, done));
         if (!this.halted()) continue;
         /* What came in behind it is not counted: the loader is told how many, to scan them again. */
-        const dropped = this.scanQ.length;
+        const dropped = behind + this.scanQ.length;
         this.scanQ = [];
         this.alarm(dropped);
       }
@@ -1441,6 +1454,81 @@ export class FactoryApp extends Component<Props, State> {
 
   /** A box or lot label on the lorry: the server picks the order and the desk judges it. */
   async lorryScanCode(code: string) {
+    if (this.noBatch) return this.lorryScanOne(code);
+    /* Into the same line as every other loading scan: only the pump sends, so nothing is sent twice at once. */
+    this.scanQ.push({ code, at: Date.now() });
+    void this.pumpScans();
+  }
+
+  /**
+   * Labels read on the lorry, judged by the server in one call and in the
+   * order they were read; each answer is then shown, sounded and buzzed in
+   * turn, exactly as if it had come back on its own. Returns how many were
+   * left unjudged behind a refusal, for the loader to scan again.
+   */
+  async lorrySend(items: { code: string; at: number }[]): Promise<number> {
+    const st = this.state, f = st.flow;
+    if (!f || !isLorryTask(f.task) || !items.length) return 0;
+    const key = f.task.item!;
+    const scans = items.map((x) => ({ id: scanId(), code: x.code, at: new Date(x.at).toISOString() }));
+    const readAt = new Map(scans.map((x, i) => [x.id, items[i].at]));
+    const waits = this.waits;
+    this.waits = [];
+    this.setLorry({ busy: true });
+    let r: LorryBatch;
+    try {
+      r = await call("lorryScanBatch", key, f.task.id.startsWith(NEW_LORRY) ? null : f.task.id, this.held?.code ?? null, scans, waits);
+    } catch (e) {
+      this.setLorry({ busy: false });
+      if (!(e instanceof NotReceived)) throw e;
+      this.waits = waits.concat(this.waits).slice(-100);
+      if (e.message === "unknown-op") {
+        /* A server from before batches: the same labels, one at a time. */
+        this.noBatch = true;
+        for (const x of items) {
+          if (this.halted()) return items.length - items.indexOf(x);
+          await this.doScan(x.code);
+        }
+        return 0;
+      }
+      const n = items.length;
+      this.setLorry({ res: { tone: "bad", code: items[0].code, title: "No network", text: n > 1 ? `These ${n} labels are not counted yet.` : "This label is not counted yet.", fix: "Check the Wi-Fi, then scan the same " + (n > 1 ? "labels" : "label") + " again. Nothing will be counted twice." } });
+      beep("bad");
+      return 0;
+    }
+    this.applyLorry(key, r.board, r.data);
+    this.setLorry({ busy: false });
+    const answered = Date.now();
+    for (const x of r.results) {
+      const before = this.scanMoment();
+      this.lorryAnswer(x, r.data);
+      await new Promise<void>((done) => this.setState({}, done));
+      const tone = scanTone(before, this.scanMoment());
+      if (tone) beep(tone);
+      this.waits.push({ id: x.id, ms: answered - (readAt.get(x.id) ?? answered) });
+    }
+    this.setHalf(r.half);
+    return r.notJudged.length;
+  }
+
+  /** One scan's answer on the lorry: the job adopted, the half held, and a band, a buzz or the red card. */
+  lorryAnswer(r: LorryBatchResult, data: FactoryData | null) {
+    if (r.task) this.adoptLorryJob(r.task, r.ok ? data : null);
+    /* The server says which half, if any, the next scan goes with. */
+    this.setHalf(r.half ?? null);
+    /* What went on is a band and a buzz; only a refusal stops the loader. */
+    if (r.ok && r.stale) this.refreshSoon();
+    if (r.ok && r.half) {
+      buzz("ok");
+      const sc = this.state.scan;
+      if (sc) this.setState({ scan: { ...sc, res: null, typed: sc.typed != null ? "" : sc.typed, feed: undefined } });
+    } else if (r.ok) this.fed(r.tone, r.code, r.title, r.message);
+    else if (r.repeat) this.fed("warn", r.code, "Already on — not counted again", r.text);
+    else this.setLorry({ res: { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
+  }
+
+  /** One label, one round trip — for a server that has no batch op yet. */
+  async lorryScanOne(code: string) {
     const st = this.state, f = st.flow;
     if (!f || !isLorryTask(f.task) || st.lorry.busy) return;
     const key = f.task.item!;

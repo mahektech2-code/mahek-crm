@@ -39,6 +39,7 @@ const OPS = {
   boxInfo: A.factoryBoxInfo,
   lorryBoard: A.factoryLorryBoard,
   lorryScan: A.factoryLorryScan,
+  lorryScanBatch: A.factoryLorryScanBatch,
   lorryUnload: A.factoryLorryUnload,
   lorryOverride: A.factoryLorryOverride,
   lorryDecide: A.factoryLorryDecide,

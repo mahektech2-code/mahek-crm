@@ -18,12 +18,13 @@ import { appAccess, users, type User } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
-import { bootstrap, contextFor, type FactoryCtx } from "./server";
+import { bootstrap, contextFor, inList, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "./head";
 import { isLorryTask, lorryKeyOf, stepsOf, boxCode, stickerCode, emptyBoxShort, fillFromLot, mixDeviation, packBatchPlan, packFromLot, packNeeds, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, stepCheck, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload, lorryWords } from "./lorry";
+import { lorryScanBatch } from "./scan-batch";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
 import { shelfFacts } from "@/lib/erp/stock-check";
 import { ensureStickers, stickerPlaces } from "@/lib/erp/dispatch-stickers";
@@ -692,6 +693,80 @@ describe("dispatch", () => {
     assert.equal((await lorryUnload(fc, key, box1)).ok, true);
     const [st2] = await q<{ unit: string | null }>(sql`select unit_id as unit from erp_dispatch_stickers where id = ${s1}`);
     assert.equal(st2.unit, null);
+    await lorryUnload(fc, key, box2);
+
+    /* Queued together, a box and its sticker pair inside one batch: what the first leaves held is what the second is judged with. */
+    const chain = await lorryScanBatch(fc, key, null, null, [{ id: "SC-pair-" + randomUUID(), code: box1 }, { id: "SC-pair-" + randomUUID(), code: s1 }]);
+    const [c1, c2] = chain.results;
+    assert.ok(c1?.ok && c1.half?.kind === "box", JSON.stringify(chain.results));
+    assert.ok(c2?.ok && !c2.half && c2.title === "On the lorry", JSON.stringify(chain.results));
+    assert.equal(chain.half, null, "the pair is in: nothing held after it");
+    await lorryUnload(fc, key, box1);
+  });
+
+  test("queued scans are judged in one call and in order: a refusal stops the batch, and a resend is answered from the scan log", async () => {
+    const { fc } = await as("imran");
+    const [ln] = await q<{ id: string; no: number; sku: string; boxed: boolean; cpb: number; from: string; lot: string; godown: string; fg: string | null }>(sql`
+      select o.id, o.order_no as no, o.sku_id as sku, coalesce(pk.empty_boxes_required, 0) > 0 as boxed, coalesce(p.cans_per_box, 1) as cpb,
+             b.lot_from as "from", b.lot_code as lot, b.godown_id as godown, b.finished_good_id as fg
+        from erp_orders o join erp_batch_codes b on b.order_id = o.id join products p on p.id = o.sku_id
+        left join erp_product_packing pk on pk.product_id = p.id
+       where o.status = 'Ready' and o.godown_id = ${fc.godown.id} limit 1`);
+    assert.ok(ln, "the seed has a Ready line with a lot given");
+    await db.execute(sql`update erp_orders set transporter = case when id = ${ln.id} then 'Batch Lorry' else 'Other Transport' end where godown_id = ${fc.godown.id}`);
+    await db.execute(sql`update erp_orders set qty_cans = ${ln.boxed ? ln.cpb * 2 : 2} where id = ${ln.id}`);
+    await db.execute(sql`update erp_units set status = 'available', order_id = null where order_id = ${ln.id}`);
+    /* The sticker test above printed stickers for this same line: cancelled, it loads by box alone. */
+    await db.execute(sql`update erp_dispatch_stickers set status = 'cancelled', unit_id = null where order_id = ${ln.id}`);
+    await db.execute(sql`delete from erp_batch_codes where order_id = ${ln.id} and id <> (select id from erp_batch_codes where order_id = ${ln.id} order by created_at limit 1)`);
+    await db.execute(sql`update erp_batch_codes set quantity = 2 where order_id = ${ln.id}`);
+    const key = lorryKeyOf("batch lorry");
+    const unit = async (prefix: string, sku = ln.sku, lot = ln.lot) => {
+      const id = (ln.from === "pack" ? "BX" : "LU") + "-" + prefix + "-" + String(Date.now() % 1e6).padStart(6, "0");
+      await db.execute(sql`
+        insert into erp_units (id, kind, sku_id, lot_from, lot_code, finished_good_id, seq, cans, godown_id, status)
+        values (${id}, ${ln.from === "pack" ? "box" : "loose"}, ${sku}, ${ln.from}, ${lot}, ${sku === ln.sku ? ln.fg : null},
+                (select coalesce(max(seq), 0) + 1 from erp_units where lot_from = ${ln.from} and lot_code = ${lot}), ${ln.from === "pack" ? ln.cpb : 1}, ${ln.godown}, 'available')`);
+      return id;
+    };
+    const box1 = await unit("991201"), box2 = await unit("991202");
+    const [other] = await q<{ id: string }>(sql`select id from products where id <> ${ln.sku} limit 1`);
+    const wrong = await unit("991203", other.id, "TESTLOT-B");
+    const ids = [0, 1, 2, 3, 4].map(() => "SC-test-" + randomUUID());
+    const at = new Date().toISOString();
+    /* On, on again, wrong stock, and one more behind it. */
+    const scans = [box1, box1, wrong, box2].map((code, i) => ({ id: ids[i], code, at }));
+
+    const r = await lorryScanBatch(fc, key, null, null, scans);
+    assert.deepEqual(r.results.map((x) => [x.id, x.ok, !x.ok && !!x.repeat]), [[ids[0], true, false], [ids[1], false, true], [ids[2], false, false]], JSON.stringify(r.results));
+    assert.deepEqual(r.notJudged, [ids[3]], "the scan behind the refusal is handed back, not judged");
+    assert.ok(r.task && /^T-/.test(r.task), "the first box on made the lorry's job");
+    assert.ok(r.board, "one board for the whole batch");
+    const statusOf = async () => Object.fromEntries((await q<{ id: string; status: string }>(sql`select id, status from factory_scan_events where id in ${inList(ids)}`)).map((x) => [x.id, x.status]));
+    assert.deepEqual(await statusOf(), { [ids[0]]: "accepted", [ids[1]]: "repeat", [ids[2]]: "refused", [ids[3]]: "not_judged" }, "every scan received is on record, judged or not");
+    const [u2] = await q<{ status: string }>(sql`select status from erp_units where id = ${box2}`);
+    assert.equal(u2.status, "available", "nothing behind a refusal is written");
+
+    /* The answer lost on the way back: the phone sends the same ids, and gets the same answers with nothing written twice. */
+    const again = await lorryScanBatch(fc, key, r.task, null, scans.slice(0, 3), [{ id: ids[0], ms: 840 }]);
+    assert.deepEqual(again.results, r.results, "a resend is answered from the log");
+    assert.ok(again.board, "the board still comes, though nothing was judged");
+    const [n] = await q<{ n: number }>(sql`select count(*)::int as n from erp_units where order_id = ${ln.id} and status = 'scanned'`);
+    assert.equal(n.n, 1, "one box on, however many times it was sent");
+    const [w] = await q<{ ms: number | null }>(sql`select wait_ms as ms from factory_scan_events where id = ${ids[0]}`);
+    assert.equal(w.ms, 840, "how long the loader waited is kept against the scan");
+
+    /* Scanned again after the refusal was read: a new id, judged, on the same job. */
+    const last = await lorryScanBatch(fc, key, r.task, null, [{ id: ids[4], code: box2 }]);
+    assert.ok(last.results[0]?.ok && last.task === r.task, JSON.stringify(last));
+
+    /* An id this phone did not mint is not answered from somebody else's record. */
+    const { fc: anil } = await as("anil");
+    const theirs = await lorryScanBatch(anil, key, null, null, [{ id: ids[0], code: box1 }]);
+    assert.ok(!theirs.results[0]?.ok && theirs.results[0]?.title === "Not counted", JSON.stringify(theirs.results));
+
+    await as("imran");
+    await lorryUnload(fc, key, box1);
     await lorryUnload(fc, key, box2);
   });
 
