@@ -22,6 +22,7 @@ export function FilterPanelButton({
   summary,
   children,
   width = 560,
+  size = "sm",
 }: {
   /** How many values are on — drawn on the button. */
   count: number;
@@ -31,6 +32,9 @@ export function FilterPanelButton({
   /** The controls. */
   children: React.ReactNode;
   width?: number;
+  /** The button's height: `sm` (32px) beside a CRM toolbar, `md` (36px)
+      beside the ERP's taller search box. */
+  size?: "sm" | "md";
 }) {
   const [at, setAt] = React.useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
@@ -96,7 +100,8 @@ export function FilterPanelButton({
         aria-expanded={open}
         aria-haspopup="dialog"
         className={
-          "ui-btn flex h-8 cursor-pointer items-center gap-1.5 rounded-[4px] border px-2.5 text-[13px] " +
+          "ui-btn flex flex-none cursor-pointer items-center gap-1.5 rounded-[4px] border px-2.5 text-[13px] " +
+          (size === "md" ? "h-9 " : "h-8 ") +
           (count
             ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
             : open
