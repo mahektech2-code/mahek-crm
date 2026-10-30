@@ -18,7 +18,7 @@ import {
   users,
   type PriceDiscountKind,
 } from "@/db/schema";
-import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import { resolvePriceList, type CustomerGeo, type Resolution } from "@/lib/engines/price-resolution";
 import { discountTermSentence } from "@/lib/price-list-labels";
 import { weightFor } from "@/lib/catalogue";
@@ -32,7 +32,7 @@ import { listedTransporterName, transporterChoices } from "../transporter-rename
 import { isMahekVehicle, MAHEK_VEHICLE } from "../engines/logistics";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
-import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow, ToolResult } from "../ui";
+import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr, nf, withFills } from "../ui";
 import {
   addDaysIso,
@@ -61,7 +61,7 @@ import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
-import { erpDispatchHref, erpInvoicePrintHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
+import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
 import { notifyUsers } from "@/lib/notify";
 import {
   billingOf,
@@ -1266,7 +1266,7 @@ function orderList(scope: Scope): ScreenModule {
         labels
           ? []
           : checking
-            ? [{ id: "printInvoices", l: "Print invoices" }]
+            ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const }]
             : [
               ...(verifier && (scope === "verifyOrders" || scope === "orders") ? [{ id: "verifyOrder", l: "Verify order" }] : []),
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
@@ -1291,7 +1291,7 @@ function orderList(scope: Scope): ScreenModule {
                     },
                   ]
                 : []),
-              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices" }] : []),
+              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const }] : []),
             ];
       const byNo = new Map<number, OrderLine[]>();
       /* An order is billed, checked and dispatched WHOLE, so its blockers are read off every line of it — not only the ones this tab draws. */
@@ -2198,13 +2198,6 @@ function invoicePanelData(orderNo: number, live: OrderLine[], ctx: ErpContext, t
   };
 }
 
-/** Print invoices over a selection: the print sheet for the orders the lines belong to. */
-async function printInvoicesOf(ids: string[]): Promise<Result<unknown>> {
-  const nos = await orderNosOf(ids);
-  if (!nos.length) return err("Nothing selected.");
-  return ok<ToolResult>({ navigate: erpInvoicePrintHref(nos) }, `Opening ${nos.length} invoice${nos.length === 1 ? "" : "s"}`);
-}
-
 function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "forms" | "formLoaders"> {
   return {
     bulk: {
@@ -2224,7 +2217,6 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       approve: (ctx, ids) => doApprove(ctx, ids),
       stickers: (ctx, ids) => doStickers(ctx, ids),
       bill: (ctx, ids, values) => doBill(ctx, ids, values),
-      printInvoices: (_ctx, ids) => printInvoicesOf(ids),
     },
     actions: {
       verifyOrder: (ctx, id) => doVerifyOrder(ctx, [id]),
@@ -2903,7 +2895,7 @@ const orderDetails: ScreenModule = {
         bulk: [
           { id: "verify", l: "Confirm dispatch", prompt: DISPATCH_PROMPT("Every selected order leaves whole: each needs its invoice approved and every box scanned.") },
           { id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT },
-          { id: "printInvoices", l: "Print invoices" },
+          { id: "printInvoices", l: "Print invoices", client: "printInvoices" },
         ],
         noDataLine: "Nothing billed yet. An order arrives here once it is billed; it is dispatched after its invoice is approved.",
       },
@@ -3025,7 +3017,6 @@ const orderDetails: ScreenModule = {
     verify: (ctx, ids, values) => verify(ctx, ids, values),
     extra: (ctx, ids, values) => setExtraExpenses(ctx, ids, values),
     stickers: (ctx, ids) => doStickers(ctx, ids),
-    printInvoices: (_ctx, ids) => printInvoicesOf(ids),
   },
   actions: {
     verify: (ctx, id, values) => verify(ctx, [id], values),

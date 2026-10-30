@@ -347,6 +347,8 @@ export type ToolResult = {
 export type BulkSpec = {
   id: string;
   l: string;
+  /** Handled on the page rather than by the server: "printInvoices" opens the Print invoices pop-up over the selection. */
+  client?: "printInvoices";
   confirm?: string;
   /** Values to collect once for the whole selection. */
   prompt?: PromptSpec;

@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { invoiceFileFor } from "./order-tracking";
+import { invoiceFileFor, invoiceFilesFor } from "./order-tracking";
 
 /* The order record's Invoice tab: the PDF it opens, every upload, and the check. */
 
@@ -48,4 +48,27 @@ export async function invoicePanel(orderNo: number): Promise<InvoicePanel> {
 async function contentTypeOf(id: string): Promise<string | null> {
   const [r] = (await db.execute(sql`select content_type from attachments where id = ${id}`)) as unknown as Row[];
   return str(r?.content_type);
+}
+
+/** One order of a selection, for the Print invoices pop-up. */
+export type InvoicePrintItem = { orderNo: number; party: string; invoiceNo: string | null; hasPdf: boolean; fileId: string | null };
+
+/** The orders a selection of order lines belongs to, in order, each with whether its invoice PDF is there. */
+export async function invoicePrintList(lineIds: string[]): Promise<InvoicePrintItem[]> {
+  const ids = [...new Set(lineIds)].slice(0, 2000);
+  if (!ids.length) return [];
+  const rows = (await db.execute(sql`
+    select o.order_no as no, min(c.name) as party, min(o.tally_bill_no) as inv, min(o.order_date) as d
+      from erp_orders o left join customers c on c.id = o.billing_customer_id
+     where o.order_no in (select order_no from erp_orders where id in ${ids})
+       and o.status <> 'Cancel'
+     group by o.order_no
+     order by min(o.order_date) desc, o.order_no desc
+  `)) as unknown as Row[];
+  const nos = rows.map((r) => Number(r.no));
+  const files = await invoiceFilesFor(nos);
+  return rows.map((r) => {
+    const f = files.get(Number(r.no));
+    return { orderNo: Number(r.no), party: str(r.party) ?? "—", invoiceNo: str(r.inv), hasPdf: !!f, fileId: f?.id ?? null };
+  });
 }

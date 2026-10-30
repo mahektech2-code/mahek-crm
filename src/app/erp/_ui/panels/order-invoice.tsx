@@ -6,7 +6,10 @@ import { stamp } from "@/lib/format";
 import { inr, nf } from "@/lib/erp/ui";
 import { erpInvoicePanel } from "@/lib/actions/erp-tracking";
 import type { InvoicePanel } from "@/lib/erp/invoice-panel";
-import { erpInvoicePrintHref, erpInvoicesPdfHref } from "@/lib/erp/trace-links";
+import { erpInvoicesPdfHref } from "@/lib/erp/trace-links";
+import { PdfViewer } from "../pdf-viewer";
+import type { PdfDoc } from "../pdf-render";
+import { Copies, PrintButton, usePrinter } from "../invoice-modals";
 import { registerPanel, type PanelProps } from "../panels";
 import { resultError } from "../use-act";
 import { useErpUi } from "../erp-ui";
@@ -14,28 +17,26 @@ import { Icon } from "../icons";
 import { insetClass } from "../look";
 
 /* ---------------------------------------------------------------------------
- * The order record's Invoice tab: the uploaded Tally PDF itself, beside the
- * order's lines so a checker reads one against the other, with print,
- * download, open and replace as buttons. Read when the tab opens.
+ * The order record's Invoice tab: the uploaded Tally PDF in our own viewer,
+ * beside the order's lines so a checker reads one against the other, with
+ * copies, Print and Replace. Nothing downloads and nothing opens a tab.
  * ------------------------------------------------------------------------- */
 
 type Line = { sku: string; qty: number; rate: number | null; discount: number | null };
 type Data = { orderNo: number; transporter?: string | null; lines?: Line[] };
 
 const base = "inline-flex h-9 items-center gap-1.5 rounded-control border px-3 text-meta font-medium no-underline cursor-pointer";
-/* Two separate looks, never one class string with overrides on top: `cx` only joins, so
-   bg-surface and bg-brand together let the stylesheet's order decide, and white text
-   landed on a white button. */
+/* Each look is its own class string: `cx` only joins, so two backgrounds in one string let the stylesheet's order decide. */
 const tool = `${base} border-line bg-surface text-body hover:bg-canvas`;
-const primary = `${base} border-brand bg-brand text-white hover:bg-brand-hover`;
-/* Chrome's own viewer, opened on the page at full width: no thumbnail strip eating half of it. */
-const VIEW = "#view=FitH&navpanes=0";
 
 function Body({ data, row, screen }: PanelProps & { data: Data }) {
   const ui = useErpUi();
   const [view, setView] = useState<InvoicePanel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [n, setN] = useState(0);
+  const [doc, setDoc] = useState<PdfDoc | null>(null);
+  const [copies, setCopies] = useState(1);
+  const { print, busy, error: printError } = usePrinter();
   useEffect(() => {
     let live = true;
     void erpInvoicePanel(data.orderNo).then((r) => {
@@ -67,18 +68,11 @@ function Body({ data, row, screen }: PanelProps & { data: Data }) {
           <Icon n="truck" s={14} />
           {data.transporter ?? <span className="text-danger">No transporter</span>}
         </span>
-        <span className="ml-auto flex flex-wrap gap-2">
+        <span className="ml-auto flex flex-wrap items-center gap-2.5">
           {f ? (
             <>
-              <a className={primary} href={erpInvoicePrintHref([view.orderNo])} target="_blank" rel="noreferrer">
-                <Icon n="print" s={15} /> Print
-              </a>
-              <a className={tool} href={erpInvoicesPdfHref([view.orderNo], { download: true })} title="Download" aria-label="Download">
-                <Icon n="dl" s={15} />
-              </a>
-              <a className={tool} href={erpInvoicesPdfHref([view.orderNo])} target="_blank" rel="noreferrer" title="Open in a new tab" aria-label="Open in a new tab">
-                <Icon n="ext" s={15} />
-              </a>
+              <Copies value={copies} onChange={setCopies} />
+              <PrintButton busy={busy} disabled={!doc} onClick={() => doc && void print([doc], copies)} />
             </>
           ) : null}
           {replace ? (
@@ -91,12 +85,8 @@ function Body({ data, row, screen }: PanelProps & { data: Data }) {
 
       <div className={cx("grid gap-3.5", lines.length > 0 && "lg:grid-cols-[1.6fr_1fr]")}>
         {f ? (
-          f.contentType.startsWith("image/") ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={`/api/attachments/${f.id}`} alt={`Invoice · order ${view.orderNo}`} className="max-h-[70vh] w-full rounded-card border border-line object-contain" />
-          ) : (
-            <iframe title={`Invoice · order ${view.orderNo}`} src={`/api/attachments/${f.id}${VIEW}`} className="h-[70vh] w-full rounded-card border border-line bg-canvas" />
-          )
+          /* Our own viewer: a photographed invoice arrives as a page of the same PDF. */
+          <PdfViewer key={f.id} url={erpInvoicesPdfHref([view.orderNo])} onDoc={setDoc} className="h-[70vh]" />
         ) : (
           <div className="grid h-64 place-items-center rounded-card border border-dashed border-danger/40 bg-danger-soft text-danger">
             <span className="grid justify-items-center gap-2">
@@ -121,18 +111,19 @@ function Body({ data, row, screen }: PanelProps & { data: Data }) {
         ) : null}
       </div>
 
+      {printError ? <Callout tone="danger">{printError}</Callout> : null}
       {view.uploads.length ? (
         <div className="grid gap-1">
           <SectionLabel>Uploads</SectionLabel>
           {view.uploads.map((u) => (
-            <a key={u.id} href={`/api/attachments/${u.id}`} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-meta text-body no-underline hover:text-brand-hover">
+            <div key={u.id} className="flex items-center gap-2 text-meta text-body">
               <Icon n="file" s={13} />
               <span className={cx("truncate", u.current && "font-semibold text-ink")}>{u.filename}</span>
               <span className="text-muted">
                 {stamp(u.at)}
                 {u.by ? ` · ${u.by}` : ""}
               </span>
-            </a>
+            </div>
           ))}
         </div>
       ) : null}

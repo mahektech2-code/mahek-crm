@@ -9384,10 +9384,25 @@ On Invoice check it is the first tab. `approveInvoice` is refused — and drawn
 locked — until a PDF is attached (`invoiceFileFor`); tests attach one with
 `invoice-fixture.ts`. `/api/erp/invoices?orders=` joins the orders' files
 into ONE PDF (pdf-lib; a photographed invoice becomes an A4 page; an invoice
-shared by several orders prints once), each read through `canRead`;
-`/erp/print-invoices` is the print sheet, ONE copy each unless the person
-changes it (`invoiceCopies`, up to `INVOICE_COPIES_MAX`). "Print invoices" over
-a selection opens it. The transporter is a column of Invoice check.
+shared by several orders prints once), each read through `canRead`.
+
+**THE INVOICE IS SHOWN AND PRINTED BY OUR OWN VIEWER, IN A POP-UP — never
+Chrome's, never a new tab.** `_ui/pdf-render.ts` reads the PDF with the pdf.js
+copy unpdf ships and paints each page on a canvas we own; `_ui/pdf-viewer.tsx`
+is the viewer (thumbnails, page, zoom, fit). The order heading's view and print
+buttons open `InvoiceModal` (print prints once the pages are read); "Print
+invoices" on a selection is a `BulkSpec` with `client: "printInvoices"`, which
+the list opens as `PrintInvoicesModal` instead of calling the server; the
+Invoice tab embeds the same viewer. Printing renders every page to an image
+and prints those from a hidden frame, `copies` times (1 unless changed, up to
+`INVOICE_COPIES_MAX`). There is no download or open-in-tab control anywhere;
+the browser's own print dialog still offers "Save as PDF", which no page can
+remove. The PDF's own addresses (`/api/erp/invoices`, and `/api/attachments`
+for an `erp_invoice`) answer a fetch from our pages and refuse one typed into
+the address bar or loaded as a frame (`isOpenedDirectly` in
+`lib/fetch-only.ts`, read off the browser's Fetch Metadata headers; a request
+with none is let through). `/erp/print-invoices` only redirects to Billing & dispatch now.
+The transporter is a column of Invoice check.
 
 **"OUT FOR DELIVERY" IS A LOGISTICS STAGE** (0292 widened the stage check). The
 order flow reads it as Delivery Pending Confirmation, like the destination office.
