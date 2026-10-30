@@ -7,7 +7,6 @@ import {
   dueTodayWindow,
   overdueWindow,
   convertedOff,
-  lostOff,
   notConverted,
   STILL_WORKING,
   unworkedWindow,
@@ -304,12 +303,10 @@ export async function leadTileCounts(
    */
   const predicate = async (id: LeadTileId): Promise<SQL> => {
     const tile = LEAD_TILES.find((t) => t.id === id)!;
-    /* Lost leads are not in the main list, so no tile counts them — except the
-       one whose whole job is what closed this month. See `lostOff`. */
     if (tile.params.view) {
-      return sql`(${await leadViewClause(tile.params.view as LeadView, day)}) ${lostOff(tile.params.view as string)}`;
+      return leadViewClause(tile.params.view as LeadView, day);
     }
-    return sql`true ${leadFilterClause({ stage: tile.params.stage }, day, health)} ${lostOff(undefined)}`;
+    return sql`true ${leadFilterClause({ stage: tile.params.stage }, day, health)}`;
   };
 
   const ids = LEAD_TILES.map((t) => t.id);
