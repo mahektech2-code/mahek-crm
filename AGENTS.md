@@ -9369,6 +9369,25 @@ invoice step is recorded, only on the billing party's link, and only while
 invoice back to the checker. Documents are served by `/t/<token>/doc/<kind>`,
 never `/api/attachments`.
 
+**AND THE TEAM SEES AND PRINTS IT, AND THE CHECKER CANNOT APPROVE WITHOUT IT.**
+Before this nothing showed an uploaded invoice to staff — `erp_invoice` was not
+an ERP attachment parent, so `/api/attachments` refused it to everybody.
+It is read under the Orders screen now: everybody who holds Orders. Every
+billed order's heading on Invoice check, All lines and Billing & dispatch
+carries a view and a print button, or a red Add PDF where none is attached
+(`ListSpec.groupInvoice`, `y:`/`n:<order>` on the row, drawn by
+`_ui/invoice-buttons.tsx`). The record has an Invoice tab (`orderInvoice`
+panel, `ListRow.panels` for a second panel tab): the PDF beside the order's
+lines and its transporter, Print, Download, Open and Replace, and every upload.
+On Invoice check it is the first tab. `approveInvoice` is refused — and drawn
+locked — until a PDF is attached (`invoiceFileFor`); tests attach one with
+`invoice-fixture.ts`. `/api/erp/invoices?orders=` joins the orders' files
+into ONE PDF (pdf-lib; a photographed invoice becomes an A4 page; an invoice
+shared by several orders prints once), each read through `canRead`;
+`/erp/print-invoices` is the print sheet, ONE copy each unless the person
+changes it (`invoiceCopies`, up to `INVOICE_COPIES_MAX`). "Print invoices" over
+a selection opens it. The transporter is a column of Invoice check.
+
 **"OUT FOR DELIVERY" IS A LOGISTICS STAGE** (0292 widened the stage check). The
 order flow reads it as Delivery Pending Confirmation, like the destination office.
 No expected delivery is shown before dispatch, and nothing implies live GPS.

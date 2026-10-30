@@ -9,3 +9,4 @@ import "./returns";
 import "./can-photos";
 import "./money";
 import "./order-tracking";
+import "./order-invoice";

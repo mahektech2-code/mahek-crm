@@ -63,3 +63,16 @@ export async function erpTrackingMessage(messageId: string, act: "sent" | "skip"
     return refused(e);
   }
 }
+
+/** The order record's Invoice tab: needs the Orders screen, like the file itself. */
+export async function erpInvoicePanel(no: number) {
+  try {
+    await requireErpForm("orders");
+    const n = orderNo(no);
+    if (!n) return err("That is not an order number.", "validation");
+    const { invoicePanel } = await import("@/lib/erp/invoice-panel");
+    return ok(await invoicePanel(n));
+  } catch (e) {
+    return refused(e);
+  }
+}

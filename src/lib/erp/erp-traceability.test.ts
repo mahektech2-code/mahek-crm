@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
 import { db } from "@/db";
 import { allPassValues } from "@/lib/erp/engines/sfg-tests";
 import { refValues } from "@/lib/erp/refs";
@@ -159,6 +160,7 @@ describe("the dispatch desk", () => {
     assert.ok((await mod("orders").actions!.ready(a, lineId, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(a, { lot: "FP1BH", qty: "3" }, [], lineId)).ok);
     assert.ok((await mod("orders").actions!.bill(a, lineId, { invoiceNo: "INV-261008-00456", invoiceDate: TODAY })).ok);
+    await attachInvoicePdf(lineId, a.user.id);
     assert.ok((await mod("orders").actions!.approveInvoice(a, lineId, {})).ok);
   });
 
