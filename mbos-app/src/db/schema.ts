@@ -2167,6 +2167,17 @@ export const MIGRATIONS: string[][] = [
    */
   [`ALTER TABLE performance ADD COLUMN hasTarget INTEGER;`],
 
+  /*
+   * A TARGET NAMES ITS SHOP, because the shop may not be on this phone. The
+   * office credits him with shops outside the area he is allocated, and the
+   * book is narrowed to that area — so those targets arrived with no customer
+   * row to read a name off. Read only where the customer row is missing.
+   */
+  [
+    `ALTER TABLE customer_targets ADD COLUMN customerName TEXT;`,
+    `ALTER TABLE customer_targets ADD COLUMN customerCity TEXT;`,
+  ],
+
 ];
 
 /**

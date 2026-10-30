@@ -17,6 +17,12 @@ export type CustomerTargetRow = {
   customerId: string;
   name: string;
   city: string | null;
+  /**
+   * Whether the shop's own record is on this phone. False for a shop credited
+   * to him outside the area he is allocated: it has a target and nothing to
+   * open. Optional so a row built without it reads as on the phone.
+   */
+  onPhone?: boolean;
   targetPaise: number;
   achievedPaise: number;
   /** Taken this month and waiting for accounts. Never part of achieved. */

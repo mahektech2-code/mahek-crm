@@ -3176,6 +3176,8 @@ async function customerTargetsFor(userId: string): Promise<Record<string, unknow
     read[i].map((r) => ({
       period: period,
       customerId: r.customerId,
+      customerName: r.name,
+      customerCity: r.city,
       targetPaise: r.target,
       achievedPaise: r.achieved,
       pendingPaise: r.pending,
