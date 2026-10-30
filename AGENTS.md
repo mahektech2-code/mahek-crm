@@ -9397,7 +9397,11 @@ Invoice tab embeds the same viewer. Printing renders every page to an image
 and prints those from a hidden frame, `copies` times (1 unless changed, up to
 `INVOICE_COPIES_MAX`). There is no download or open-in-tab control anywhere;
 the browser's own print dialog still offers "Save as PDF", which no page can
-remove. `/erp/print-invoices` only redirects to Billing & dispatch now.
+remove. The PDF's own addresses (`/api/erp/invoices`, and `/api/attachments`
+for an `erp_invoice`) answer a fetch from our pages and refuse one typed into
+the address bar or loaded as a frame (`isOpenedDirectly` in
+`lib/fetch-only.ts`, read off the browser's Fetch Metadata headers; a request
+with none is let through). `/erp/print-invoices` only redirects to Billing & dispatch now.
 The transporter is a column of Invoice check.
 
 **"OUT FOR DELIVERY" IS A LOGISTICS STAGE** (0292 widened the stage check). The

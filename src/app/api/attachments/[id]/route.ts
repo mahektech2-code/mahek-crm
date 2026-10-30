@@ -5,6 +5,7 @@ import { attachments } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import { canRead } from "@/lib/services/attachment-service";
 import { fileStorage } from "@/lib/storage";
+import { isOpenedDirectly, OPENED_DIRECTLY_MESSAGE } from "@/lib/fetch-only";
 
 /**
  * §4.2 — the only way to read an attachment's bytes.
@@ -15,7 +16,7 @@ import { fileStorage } from "@/lib/storage";
  * rather than being a rule attachments keep for themselves.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -34,6 +35,12 @@ export async function GET(
     .from(attachments)
     .where(eq(attachments.id, id));
   if (!row) return new NextResponse("Not found", { status: 404 });
+
+  /* A Tally invoice is shown by the ERP's own viewer and never opened as a
+     page: its address typed into the browser is refused (`isOpenedDirectly`). */
+  if (row.parentType === "erp_invoice" && isOpenedDirectly(request.headers)) {
+    return new NextResponse(OPENED_DIRECTLY_MESSAGE, { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  }
 
   /* A file whose bytes retention has already taken. Without this the read
      reaches storage, finds nothing and answers 502 — which reads as a broken
