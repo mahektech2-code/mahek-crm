@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Icon } from "./icons";
 import { CollapsibleNav, type NavRowItem } from "./collapsible-nav";
 import { NAV, PINNED, type NavGroup, type NavItem } from "./nav";
@@ -59,6 +60,7 @@ export function Sidebar({
   /** What this person may open. The layout resolved it; undefined means all. */
   groups = NAV,
   pinned = PINNED,
+  brand,
 }: {
   collapsed: boolean;
   user: User;
@@ -67,6 +69,8 @@ export function Sidebar({
   badges: SidebarBadges;
   groups?: NavGroup[];
   pinned?: NavItem[];
+  /** The v4 look carries the Mahek mark atop the sidebar, exactly as the ERP's does. */
+  brand?: { href: string; app: string };
 }) {
   /*
    * The CRM names its badges rather than keying them by href, because the
@@ -95,6 +99,21 @@ export function Sidebar({
         collapsed ? "w-14" : "w-[216px]",
       )}
     >
+      {brand ? (
+        <Link
+          href={brand.href}
+          title={`MahekOne ${brand.app}`}
+          className={cx("flex h-14 flex-none items-center gap-2.5 no-underline hover:no-underline", collapsed ? "justify-center" : "px-4")}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+          <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
+          {collapsed ? null : (
+            <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
+              MahekOne <span className="font-medium text-faint">{brand.app}</span>
+            </span>
+          )}
+        </Link>
+      ) : null}
       <CollapsibleNav
         storageKey="crm.nav.open"
         ariaLabel="CRM sections"
