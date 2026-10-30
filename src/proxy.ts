@@ -160,5 +160,5 @@ export const config = {
    * routes and server-action POSTs too, not only on page renders, or a write
    * would resolve its scope differently from the screen that offered it.
    */
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png).*)"],
 };
