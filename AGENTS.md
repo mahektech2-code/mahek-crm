@@ -9082,6 +9082,24 @@ never re-raising one dismissed that day. A PDF that matches a book
 (`documentToChange`); cancelling that change hands the document back. A cell
 two models and the text layer disagree on holds "Approve all ready".
 
+**A SHOP IS ON ONE PRICE LIST, AND A LIST CAN LEAVE SHOPS OUT.**
+`price_list_scopes.excluded` (`0303`) is a leave-out row — a shop, a
+salesman, a beat, an area, a city or a district (a check constraint) — and
+`leftOutLists` drops its list for the shops it names before narrowest-wins
+runs; it never puts anybody on a list. `engines/price-one-list.ts` is the
+rule: books are counted by `book_id`, Standard ("everybody" rows) and agreed
+prices do not count, ended rules and lists do not count, scheduled ones do,
+and `freightAgrees` keeps a Paid and a To Pay list apart except for a shop with
+no freight term. `pricing.oneListPerShop` (on) refuses only an edit that ADDS
+a second list (`introducedClashes`, before against after, inside
+`publishDraftIn`, `addScope`, `updateScope` and `removeScope`), so shops
+doubled before the rule keep pricing and are listed on Coverage, where
+`settleAllToTodaysList` leaves each on the list that prices it today. An
+answer is "keep" (a leave-out row on this list) or "move"
+(`leaveShopOutOfBook` on the other book's every live, scheduled and draft
+version); a draft holds its moves in `price_lists.pending_moves` until it is
+published. `assignCustomerList` takes the shop off every other book.
+
 ## Material returns
 
 **FINANCIAL DOCUMENTS ADJUST THE LEDGER; PHYSICAL TRANSACTIONS ADJUST STOCK.**

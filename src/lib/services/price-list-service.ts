@@ -410,7 +410,7 @@ export async function priceListDetail(id: string): Promise<PriceListDetail | nul
              sc.scope_label as "scopeLabel", sc.parent_key as "parentKey",
              null::text as "parentLabel",
              sc.freight_term_match as "freightTermMatch", sc.priority,
-             sc.valid_from::text as "validFrom", sc.valid_to::text as "validTo"
+             sc.valid_from::text as "validFrom", sc.valid_to::text as "validTo", sc.excluded
         from price_list_scopes sc
        where sc.price_list_id = ${id}
        order by sc.priority desc, sc.scope_kind asc, sc.id asc
@@ -490,6 +490,8 @@ async function withCustomerCounts(rows: Array<Omit<ScopeView, "customersMatched"
     validFrom: r.validFrom,
     validTo: r.validTo,
     scopeLabel: r.scopeLabel,
+    /* A leave-out row is counted by the shops it names: "leaves out 3". */
+    excluded: false,
   }));
   const counts = new Map<string, number>();
   for (const geo of book) {
@@ -616,7 +618,8 @@ const SCOPE_COLUMNS = sql`
   sc.id, sc.price_list_id as "priceListId", sc.scope_kind as "scopeKind",
   sc.scope_value as "scopeValue", sc.scope_label as "scopeLabel",
   sc.parent_key as "parentKey", sc.freight_term_match as "freightTermMatch",
-  sc.priority, sc.valid_from::text as "validFrom", sc.valid_to::text as "validTo"
+  sc.priority, sc.valid_from::text as "validFrom", sc.valid_to::text as "validTo",
+  sc.excluded
 `;
 
 /**
@@ -868,7 +871,8 @@ export async function pricingShiftWithout(
     freightTerm: targets[0].listFreightTerm,
     version: 1,
   };
-  const probeScopes = targets.map((t) => ({ ...t, priceListId: probe.id }));
+  /* A leave-out row "names" the shops it leaves out: taking it away moves them back. */
+  const probeScopes = targets.map((t) => ({ ...t, priceListId: probe.id, excluded: false }));
 
   const [{ scopes, lists }, rows, opts] = await Promise.all([
     activeScopesAndLists(),

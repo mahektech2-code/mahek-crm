@@ -34,8 +34,16 @@ import { notifyUsers } from "@/lib/notify";
 import { deriveRate, exFromIncl, inclFromEx, listInclFromEx, roundToRupee } from "@/lib/engines/price-math";
 import { money } from "@/lib/format";
 import { placeKey } from "@/lib/engines/price-resolution";
+import { isExcludable } from "@/lib/engines/price-one-list";
+import {
+  leaveShopOutOfBook,
+  loadWorld,
+  newClashRefusal,
+  takeShopBackOnBook,
+} from "@/lib/services/price-one-list-service";
 import { canReread, isReading, pickDocumentRates, restage, stagedFigures, type TaxBasis } from "@/lib/engines/price-document";
-import { ratesForCustomer, resolveForCustomer } from "@/lib/services/price-list-service";
+import { GEO_SELECT, ratesForCustomer, resolveForCustomer, toGeo, type GeoRow } from "@/lib/services/price-list-service";
+import { booksOnShop } from "@/lib/engines/price-one-list";
 import {
   draftOnlyRefusal,
   scopeDatesProblem,
@@ -544,7 +552,83 @@ const scopeInput = z.object({
   priority: z.number().int().optional(),
   validFrom: z.string().regex(ISO_DATE).nullish(),
   validTo: z.string().regex(ISO_DATE).nullish(),
+  /** Leaves the shops it names OUT of the list. Only a shop, salesman, beat, area, city or district. */
+  excluded: z.boolean().optional(),
 });
+
+/**
+ * What to do with a shop the new rule would put on a second list. `keep`
+ * leaves it where it is — this list leaves it out. `move` takes it off the
+ * book it is on (`otherBookId`) and this list prices it.
+ */
+export type ClashAnswer = { customerId: string; answer: "keep" | "move"; otherBookId: string };
+
+const answerSchema = z.array(
+  z.object({ customerId: z.string().min(1), answer: z.enum(["keep", "move"]), otherBookId: z.string().min(1) }),
+);
+
+/**
+ * THE ANSWERS, WRITTEN, inside the caller's transaction. On a published list
+ * a move takes effect straight away; on a draft it waits on the draft
+ * (`pending_moves`) for the publish, because a draft prices nobody yet.
+ */
+async function applyClashAnswers(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  list: { id: string; status: string; bookId: string | null; effectiveFrom: string },
+  answers: ClashAnswer[],
+  userId: string,
+  day: string,
+): Promise<void> {
+  const bookId = list.bookId ?? list.id;
+  const pending: Array<{ customerId: string; fromBookId: string }> = [];
+  for (const a of answers) {
+    const [shop] = await tx.execute<{ name: string }>(sql`select name from customers where id = ${a.customerId}`);
+    if (!shop) continue;
+    if (a.answer === "keep") {
+      await leaveShopOutOfBook(tx, { bookId, customerId: a.customerId, label: shop.name, userId, day });
+    } else if (list.status === "draft") {
+      pending.push({ customerId: a.customerId, fromBookId: a.otherBookId });
+    } else if (a.otherBookId !== bookId) {
+      await takeShopBackOnBook(tx, { bookId, customerId: a.customerId });
+      await leaveShopOutOfBook(tx, {
+        bookId: a.otherBookId,
+        customerId: a.customerId,
+        label: shop.name,
+        validFrom: list.effectiveFrom > day ? list.effectiveFrom : null,
+        userId,
+        day,
+      });
+    }
+  }
+  if (pending.length) {
+    await tx.execute(sql`
+      update price_lists
+         set pending_moves = coalesce(pending_moves, '[]'::jsonb) || ${JSON.stringify(pending)}::jsonb
+       where id = ${list.id}
+    `);
+  }
+}
+
+/** One list per shop, read before an edit to a PUBLISHED list and checked after it. Null where the rule does not apply. */
+async function oneListBefore(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  list: { status: string; kind: string },
+) {
+  if (list.status !== "published" || list.kind === "agreed") return null;
+  const config = await getConfig();
+  return config["pricing.oneListPerShop"] ? loadWorld(tx) : null;
+}
+
+async function oneListAfter(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  before: Awaited<ReturnType<typeof loadWorld>> | null,
+  list: { id: string; bookId: string | null },
+  day: string,
+) {
+  if (!before) return;
+  const refusal = await newClashRefusal(tx, before, list.bookId ?? list.id, day);
+  if (refusal) throw new Refused(err(refusal, "rule_violation"));
+}
 
 /** Geography is stored FOLDED, so two spellings of one place are one scope. */
 const GEOGRAPHY = new Set(["state", "district", "city", "area", "beat"]);
@@ -553,23 +637,34 @@ function storedScopeValue(kind: string, value: string): string {
   return GEOGRAPHY.has(kind) ? placeKey(value) : value.trim();
 }
 
-export async function addScope(input: z.input<typeof scopeInput>): Promise<Result<{ id: string }>> {
+export async function addScope(
+  input: z.input<typeof scopeInput>,
+  answers?: ClashAnswer[],
+): Promise<Result<{ id: string }>> {
   try {
     const ctx = await requirePriceDesk();
     const parsed = scopeInput.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
+    const answered = answerSchema.safeParse(answers ?? []);
+    if (!answered.success) return zodErr(answered.error);
     const list = await listRow(parsed.data.priceListId);
     if (!list) return err("That price list does not exist.", "not_found");
+    const excluded = !!parsed.data.excluded;
+    if (excluded && !isExcludable(parsed.data.scopeKind)) {
+      return fieldErr("scopeKind", "Only a shop, a salesman, a beat, an area, a city or a district can be left out.");
+    }
 
     const value = storedScopeValue(parsed.data.scopeKind, parsed.data.scopeValue);
     if (parsed.data.scopeKind !== "everybody" && !value) {
-      return fieldErr("scopeValue", "Say which one this list applies to.");
+      return fieldErr("scopeValue", excluded ? "Say who this list leaves out." : "Say which one this list applies to.");
     }
     const dates = scopeDatesProblem(parsed.data.validFrom, parsed.data.validTo);
     if (dates) return fieldErr("validTo", dates);
 
     const id = gen("pls");
+    const day = await today();
     await db.transaction(async (tx) => {
+      const before = await oneListBefore(tx, list);
       await tx.insert(priceListScopes).values({
         id,
         priceListId: parsed.data.priceListId,
@@ -581,19 +676,28 @@ export async function addScope(input: z.input<typeof scopeInput>): Promise<Resul
         priority: parsed.data.priority ?? 0,
         validFrom: parsed.data.validFrom ?? null,
         validTo: parsed.data.validTo ?? null,
+        excluded,
         createdById: ctx.user.id,
       });
+      await applyClashAnswers(tx, list, answered.data, ctx.user.id, day);
       await audit(tx, ctx, {
-        action: "pricelist.scope.add",
+        action: excluded ? "pricelist.scope.exclude" : "pricelist.scope.add",
         entityType: "price_list_scope",
         entityId: id,
-        after: { list: list.name, kind: parsed.data.scopeKind, value },
+        after: {
+          list: list.name,
+          kind: parsed.data.scopeKind,
+          value,
+          ...(answered.data.length ? { answers: answered.data } : {}),
+        },
       });
+      await oneListAfter(tx, before, list, day);
     });
 
     refresh();
-    return ok({ id }, "Saved. This list now applies to them.");
+    return ok({ id }, excluded ? "Saved. This list leaves them out." : "Saved. This list now applies to them.");
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -601,9 +705,12 @@ export async function addScope(input: z.input<typeof scopeInput>): Promise<Resul
 export async function updateScope(
   id: string,
   input: Partial<Omit<z.input<typeof scopeInput>, "priceListId">>,
+  answers?: ClashAnswer[],
 ): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
+    const answered = answerSchema.safeParse(answers ?? []);
+    if (!answered.success) return zodErr(answered.error);
     const [row] = await db.select().from(priceListScopes).where(eq(priceListScopes.id, id));
     if (!row) return err("That scope does not exist.", "not_found");
     for (const d of [input.validFrom, input.validTo]) {
@@ -616,7 +723,14 @@ export async function updateScope(
     if (dates) return fieldErr("validTo", dates);
 
     const kind = input.scopeKind ?? row.scopeKind;
+    const list = await listRow(row.priceListId);
+    if (!list) return err("That price list does not exist.", "not_found");
+    if (row.excluded && !isExcludable(kind)) {
+      return fieldErr("scopeKind", "Only a shop, a salesman, a beat, an area, a city or a district can be left out.");
+    }
+    const day = await today();
     await db.transaction(async (tx) => {
+      const before = await oneListBefore(tx, list);
       await tx
         .update(priceListScopes)
         .set({
@@ -632,6 +746,7 @@ export async function updateScope(
           ...(input.validTo !== undefined ? { validTo: input.validTo ?? null } : {}),
         })
         .where(eq(priceListScopes.id, id));
+      await applyClashAnswers(tx, list, answered.data, ctx.user.id, day);
       await audit(tx, ctx, {
         action: "pricelist.scope.update",
         entityType: "price_list_scope",
@@ -639,11 +754,13 @@ export async function updateScope(
         before: { kind: row.scopeKind, value: row.scopeValue },
         after: input,
       });
+      await oneListAfter(tx, before, list, day);
     });
 
     refresh();
     return okVoid("Saved.");
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -656,18 +773,25 @@ export async function removeScope(id: string, confirmation?: ImpactConfirmation)
     /* Which shops stop being priced from this list, and where each lands. */
     const refusal = await confirmImpact("price-list-scope", id, confirmation);
     if (refusal) return refusal;
+    const list = await listRow(row.priceListId);
+    const day = await today();
     await db.transaction(async (tx) => {
+      /* Taking a leave-out away puts its shops back on the list — which may
+         put them on a second one. */
+      const before = list && row.excluded ? await oneListBefore(tx, list) : null;
       await audit(tx, ctx, {
         action: "pricelist.scope.remove",
         entityType: "price_list_scope",
         entityId: id,
-        before: { kind: row.scopeKind, value: row.scopeValue },
+        before: { kind: row.scopeKind, value: row.scopeValue, excluded: row.excluded },
       });
       await tx.delete(priceListScopes).where(eq(priceListScopes.id, id));
+      if (list) await oneListAfter(tx, before, list, day);
     });
     refresh();
-    return okVoid("Removed. This list no longer applies to them.");
+    return okVoid(row.excluded ? "Removed. This list prices them again." : "Removed. This list no longer applies to them.");
   } catch (e) {
+    if (e instanceof Refused) return e.result;
     return fromThrown(e);
   }
 }
@@ -1881,6 +2005,7 @@ export async function assignCustomerList(input: {
            and l.status in ('draft', 'published')
       `);
 
+      let targetBook: string | null = null;
       if (input.priceListId) {
         await tx.insert(priceListScopes).values({
           id: gen("pls"),
@@ -1892,6 +2017,26 @@ export async function assignCustomerList(input: {
           priority: 0,
           createdById: ctx.user.id,
         });
+        const [target] = await tx.execute<{ bookId: string | null }>(sql`
+          select book_id as "bookId" from price_lists where id = ${input.priceListId}
+        `);
+        targetBook = target?.bookId ?? input.priceListId;
+        await takeShopBackOnBook(tx, { bookId: targetBook, customerId: input.customerId });
+      }
+
+      /* ONE LIST PER SHOP: whatever else still names this shop leaves it out,
+         so the list just chosen — or Standard, where none was — is the only
+         one it is on. */
+      const day = await today();
+      const [world, geoRows] = await Promise.all([
+        loadWorld(tx),
+        tx.execute<GeoRow>(sql`${GEO_SELECT} where c.id = ${input.customerId}`),
+      ]);
+      if (geoRows[0]) {
+        for (const b of booksOnShop(toGeo(geoRows[0]), world.scopes, world.lists, day)) {
+          if (b.bookId === targetBook) continue;
+          await leaveShopOutOfBook(tx, { bookId: b.bookId, customerId: input.customerId, label: customer.name, userId: ctx.user.id, day });
+        }
       }
 
       if (input.freightTerm !== undefined) {
@@ -1910,7 +2055,11 @@ export async function assignCustomerList(input: {
     });
 
     refresh(input.customerId);
-    return okVoid(input.priceListId ? "Saved. This shop is priced from that list." : "Removed. They fall back to whichever list their area is on.");
+    return okVoid(
+      input.priceListId
+        ? "Saved. This shop is priced from that list, and no other list names it."
+        : "Saved. This shop is on no list now, so it is priced from Standard.",
+    );
   } catch (e) {
     return fromThrown(e);
   }

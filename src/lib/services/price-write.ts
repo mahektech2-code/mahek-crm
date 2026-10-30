@@ -9,6 +9,7 @@ import { deriveRate } from "@/lib/engines/price-math";
 import { publishedSuccessor, supersedePredecessor } from "@/lib/services/price-supersede";
 import { newVersionRefusal } from "@/lib/engines/price-supersede";
 import { err, fieldErr, type Err } from "@/lib/result";
+import { leaveShopOutOfBook, loadWorld, newClashRefusal } from "@/lib/services/price-one-list-service";
 
 /* ---------------------------------------------------------------------------
  * THE TWO WRITES A NEW REVISION IS MADE OF, shared by the old list screens and
@@ -127,9 +128,9 @@ export async function draftVersionIn(
   `);
   await tx.execute(sql`
     insert into price_list_scopes (id, price_list_id, scope_kind, scope_value, scope_label, parent_key,
-                                   freight_term_match, priority, valid_from, valid_to, created_by_id)
+                                   freight_term_match, priority, valid_from, valid_to, excluded, created_by_id)
     select ${sql.raw("'pls_' || substr(md5(random()::text), 1, 12)")}, ${newId}, s.scope_kind, s.scope_value,
-           s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, ${ctx.user.id}
+           s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, s.excluded, ${ctx.user.id}
       from price_list_scopes s where s.price_list_id = ${id}
   `);
 
@@ -164,6 +165,12 @@ export async function publishDraftIn(
   if (!row) throw new Refused(err("That price list does not exist.", "not_found"));
   if (row.status !== "draft") throw new Refused(err(`This list is already ${row.status}.`, "rule_violation"));
   name = row.name;
+  /* One list per shop: the picture BEFORE this publish, read on the same
+     transaction, so the check at the end can tell a shop this list newly puts
+     on a second book from one that was on both already. A shop's own agreed
+     prices are not an allocation and are not checked. */
+  const oneList = config["pricing.oneListPerShop"] && row.kind !== "agreed";
+  const before = oneList ? await loadWorld(tx) : null;
 
   const [{ rates }] = await tx.execute<{ rates: number }>(sql`
     select count(*)::int as rates from price_list_rates where price_list_id = ${id}
@@ -252,6 +259,7 @@ export async function publishDraftIn(
             priority: s.priority,
             validFrom: s.validFrom,
             validTo: s.validTo,
+            excluded: s.excluded,
             createdById: ctx.user.id,
           })),
         );
@@ -276,6 +284,35 @@ export async function publishDraftIn(
     .where(and(eq(priceLists.id, id), eq(priceLists.status, "draft")))
     .returning({ id: priceLists.id });
   if (!published.length) throw new Refused(err("This list has just been published by somebody else.", "conflict"));
+
+  /* "Move here" answered while this was a draft: each shop leaves the book it
+     was on, from the day this list starts, so the old book goes on pricing it
+     until then. */
+  const moves = (row.pendingMoves ?? []).filter((m) => m && m.customerId && m.fromBookId);
+  if (moves.length) {
+    const [mine] = await tx.execute<{ bookId: string | null }>(sql`select book_id as "bookId" from price_lists where id = ${id}`);
+    for (const m of moves) {
+      if (m.fromBookId === (mine?.bookId ?? id)) continue;
+      const [shop] = await tx.execute<{ name: string }>(sql`select name from customers where id = ${m.customerId}`);
+      if (!shop) continue;
+      await leaveShopOutOfBook(tx, {
+        bookId: m.fromBookId,
+        customerId: m.customerId,
+        label: shop.name,
+        validFrom: effectiveFrom > day ? effectiveFrom : null,
+        userId: ctx.user.id,
+        day,
+      });
+    }
+    await tx.update(priceLists).set({ pendingMoves: null }).where(eq(priceLists.id, id));
+    warnings.push(`Moved ${moves.length} shop${moves.length === 1 ? "" : "s"} onto this list from the list${moves.length === 1 ? "" : "s"} they were on.`);
+  }
+
+  if (before) {
+    const [mine] = await tx.execute<{ bookId: string | null }>(sql`select book_id as "bookId" from price_lists where id = ${id}`);
+    const refusal = await newClashRefusal(tx, before, mine?.bookId ?? id, day);
+    if (refusal) throw new Refused(err(refusal, "rule_violation"));
+  }
 
   await audit(tx, ctx, {
     action: "pricelist.publish",

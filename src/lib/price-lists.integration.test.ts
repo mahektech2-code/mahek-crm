@@ -244,6 +244,17 @@ beforeEach(async () => {
   setTestUser(manager);
 });
 
+
+/**
+ * The one-list rule (`pricing.oneListPerShop`) refuses a shop on two lists.
+ * These cases put it on two ON PURPOSE, to prove which one prices it — the
+ * resolution every shop doubled before the rule still goes through.
+ */
+async function allowTwoLists() {
+  await db.execute(sql`update app_settings set value = 'false'::jsonb where key = 'pricing.oneListPerShop'`);
+  invalidateConfig();
+}
+
 describe("publishing a price list", () => {
   test("a list with no rates in it is refused, because a list with no prices is not a list", async () => {
     const created = await createPriceList({ name: "Empty", effectiveFrom: TODAY });
@@ -444,6 +455,7 @@ describe("publishing a price list", () => {
 
 describe("which list applies", () => {
   test("a customer's own list beats their city, which beats their state, which beats everybody", async () => {
+    await allowTwoLists();
     const shop = await makeCustomer({ name: "Sharda Traders", city: "Thane", region: "Maharashtra" });
     setTestUser(manager);
 

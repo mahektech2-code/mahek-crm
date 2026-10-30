@@ -62,6 +62,22 @@ The book's city and state columns hold whatever the order sheet typed; the place
 
 One region often has two lists — one where the shop pays the transporter (**To Pay**) and one where transport is built into the price (**Paid**). The shop's own freight term picks between them. A shop whose freight term was never recorded is not left with nothing: a list of either term may name it, and the exact match only wins a tie.
 
+## One list per shop, and leaving shops out
+
+<Rule title="A shop is on one price list">
+A shop may be allocated to **one** price list. A shop no list names is priced from **Standard** (the list that names *everybody*), which is the default and does not count as a list. A shop's **agreed prices** (special prices on a product or two) sit on top of its list and do not count either.
+
+When <Setting k="pricing.oneListPerShop" /> is on, an edit that would put a shop on a second list is refused until somebody answers, for each such shop, **Keep where it is** (this list leaves it out) or **Move here** (it leaves its old list when this one starts).
+</Rule>
+
+- Every revision of one book is one list: next month's version and this month's do not clash.
+- A Paid list and a To Pay list over the same place do not clash — the shop's freight term picks one. A shop with **no freight term** is on both, so it is asked about.
+- Only an edit that **adds** a second list is refused. Shops that were on two lists before the rule are listed on **Coverage → On two lists**; *Keep all on today's list* leaves each one on the list that prices it today, so no price moves.
+
+### Leaving shops out
+
+A list's rules can **include** shops (a place, a salesman, a customer type, a shop, everybody) and **leave some out**: a shop by name, a salesman's shops, an area, a city, a district or a beat. A left-out shop is not priced from that list whatever else on it names the shop; it goes to the next list that names it, or to Standard. A leave-out row never puts anybody on a list.
+
 ## Lists in force, versions and validity
 
 <Rule title="A published list is never edited — it is superseded">
@@ -201,6 +217,7 @@ Every morning the live books are checked for pack-ladder breaks, likely typos ag
   "pricing.parseConfidenceFloor",
   "pricing.derivationTolerancePaise",
   "pricing.useListForOrderValue",
+  "pricing.oneListPerShop",
 ]} />
 
 ## Where the code and the intent disagree today
