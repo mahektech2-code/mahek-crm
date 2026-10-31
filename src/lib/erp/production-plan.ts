@@ -6,7 +6,9 @@ import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "./access";
 import { erpAudit, erpId, nextNumber } from "./server";
 import { fgLots, packLots, sfgLots } from "./stock";
-import { categorySpec, changedSince, lineProblems, lineState, sizeName, type LineInput, type LineState, type PlanCategory } from "./engines/production-plan";
+import { categorySpec, changedSince, lineProblems, lineState, orderDemand, sizeName, type LineInput, type LineState, type PlanCategory, type UnderProcessLine } from "./engines/production-plan";
+import { calendarDate } from "@/lib/business-date";
+import { nowMs } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * UNDER PROCESS — reads and writes of the daily production plan. The rules
@@ -79,6 +81,8 @@ export async function listPlans(opts: { date?: string | null; limit?: number } =
 
 export type PlanLineView = PlanSnapshotLine & {
   itemId: string | null;
+  /** `order` where the line is an Under Process order line, written by the sync and not editable here. */
+  source: "manual" | "order";
   state: LineState;
   /** The quantity on the last print, where an edit moved it. */
   was: number | null;
@@ -103,7 +107,18 @@ export type PlanView = {
 };
 
 function snap(l: typeof erpProductionPlanLines.$inferSelect): PlanSnapshotLine {
-  return { id: l.id, category: l.category, productName: l.productName, productCode: l.productCode, size: l.size, quantity: l.quantity, unit: l.unit, remarks: l.remarks };
+  return {
+    id: l.id,
+    category: l.category,
+    productName: l.productName,
+    productCode: l.productCode,
+    size: l.size,
+    quantity: l.quantity,
+    unit: l.unit,
+    remarks: l.remarks,
+    /* Only on an order line, so a plan of typed lines snapshots as it always did. */
+    ...(l.source === "order" ? { orderRefs: l.orderRefs } : {}),
+  };
 }
 
 export async function planView(id: string): Promise<PlanView | null> {
@@ -133,6 +148,7 @@ export async function planView(id: string): Promise<PlanView | null> {
     view.push({
       ...snap(l),
       itemId: l.itemId,
+      source: l.source === "order" ? "order" : "manual",
       state,
       was: state === "edited" && printed && printed.quantity !== l.quantity ? printed.quantity : null,
       available: l.itemId ? (avail[`${l.category}:${l.itemId}`] ?? 0) : null,
@@ -189,6 +205,7 @@ export async function openPlanFor(ctx: ErpContext, date: string): Promise<Result
     return again ? ok({ id: again.id, created: false }) : err("Could not make the plan. Try again.");
   }
   await erpAudit(ctx, "erp.plan.create", "erp_production_plan", res.id, null, { planNo: res.planNo, date });
+  await syncPlanFromOrders(res.id);
   return ok({ id: res.id, created: true }, `PLAN-${res.planNo} made for ${date}`);
 }
 
@@ -217,6 +234,7 @@ export async function savePlanLine(ctx: ErpContext, planId: string, input: LineI
   const id = lineId ?? erpId("eplnl");
   const before = lineId ? (await db.select().from(erpProductionPlanLines).where(and(eq(erpProductionPlanLines.id, lineId), eq(erpProductionPlanLines.planId, planId), isNull(erpProductionPlanLines.deletedAt))))[0] : null;
   if (lineId && !before) return err("That line was deleted. Reopen the plan.", "not_found");
+  if (before?.source === "order") return err(FROM_ORDERS);
   await db.transaction(async (tx) => {
     if (before) await tx.update(erpProductionPlanLines).set(values).where(eq(erpProductionPlanLines.id, id));
     else {
@@ -232,6 +250,7 @@ export async function savePlanLine(ctx: ErpContext, planId: string, input: LineI
 export async function deletePlanLine(ctx: ErpContext, lineId: string): Promise<Result<undefined>> {
   const [line] = await db.select().from(erpProductionPlanLines).where(and(eq(erpProductionPlanLines.id, lineId), isNull(erpProductionPlanLines.deletedAt)));
   if (!line) return err("That line is already deleted.", "not_found");
+  if (line.source === "order") return err(FROM_ORDERS);
   await db.transaction(async (tx) => {
     await tx.update(erpProductionPlanLines).set({ deletedAt: new Date(), deletedById: ctx.user.id }).where(eq(erpProductionPlanLines.id, lineId));
     await tx.update(erpProductionPlans).set({ updatedById: ctx.user.id, updatedAt: new Date() }).where(eq(erpProductionPlans.id, line.planId));
@@ -245,6 +264,8 @@ export async function deletePlanLine(ctx: ErpContext, lineId: string): Promise<R
  * nothing changed answers with the last print instead of a second copy of it.
  */
 export async function recordPlanPrint(ctx: ErpContext, planId: string): Promise<Result<{ printNo: number }>> {
+  /* The sheet carries the orders as they stand at the moment it is printed. */
+  await syncPlanFromOrders(planId);
   const lines = await db
     .select()
     .from(erpProductionPlanLines)
@@ -258,4 +279,68 @@ export async function recordPlanPrint(ctx: ErpContext, planId: string): Promise<
   await db.insert(erpProductionPlanPrints).values({ id: erpId("eplnp"), planId, printNo, printedById: ctx.user.id, lines: snapshot });
   await erpAudit(ctx, "erp.plan.print", "erp_production_plan", planId, null, { printNo, lines: snapshot.length });
   return ok({ printNo });
+}
+
+/* ---------------------------------------------------------------------------
+ * THE ORDERS COME IN BY THEMSELVES. Every order line whose status is "Under
+ * Process" (Orders → Production) is one plan line per product, kept in step
+ * with the orders whenever the plan is opened, made or printed. A product
+ * whose orders all leave Under Process (Ready, held, cancelled) is marked
+ * deleted, so a sheet that already carried it lists it as removed. Only a plan
+ * for today or later is touched: a past day's plan is the record of that day.
+ * The plan's godown narrows the orders to its own, where it names one.
+ * ------------------------------------------------------------------------- */
+
+const FROM_ORDERS = "This line comes from the orders under process. Change the order on Orders → Production, and the plan follows.";
+
+/** Exactly what Orders → Production lists as Under Process (`isWorkingLine`), less empty drums, which nobody makes. */
+export async function underProcessLines(godownId: string | null): Promise<UnderProcessLine[]> {
+  return (await db.execute(sql`
+    select o.order_no as "orderNo", p.id as "skuId", p.name as "skuName", p.external_code as "skuCode",
+           p.cans_per_box as "cansPerBox", coalesce(p.millilitres_per_can, fg.millilitres) as millilitres,
+           fg.id as "finishedGoodId", fg.name as "finishedGoodName", o.qty_cans as "qtyCans"
+      from erp_orders o
+      join products p on p.id = o.sku_id
+      left join finished_goods fg on fg.id = p.finished_good_id
+     where o.status = 'Under Process' and o.entry_status <> 'Done' and p.name <> 'Empty Drum'
+       and ${godownId ? sql`o.godown_id = ${godownId}` : sql`true`}
+  `)) as unknown as UnderProcessLine[];
+}
+
+/** Brings the plan's order lines in step with the orders. Answers how many lines moved. */
+export async function syncPlanFromOrders(planId: string): Promise<number> {
+  const [plan] = await db.select().from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
+  if (!plan || plan.planDate < calendarDate(new Date(nowMs()))) return 0;
+  const demand = orderDemand(await underProcessLines(plan.godownId));
+  return db.transaction(async (tx) => {
+    /* One sync per plan at a time: two tabs opening the plan must not both insert a line. */
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`erp:plan:${planId}`}))`);
+    const have = await tx
+      .select()
+      .from(erpProductionPlanLines)
+      .where(and(eq(erpProductionPlanLines.planId, planId), eq(erpProductionPlanLines.source, "order")));
+    const byKey = new Map(have.map((l) => [l.sourceKey!, l]));
+    const now = new Date();
+    let moved = 0;
+    let [{ n: sort }] = (await tx.execute(sql`select coalesce(max(sort), 0)::int as n from erp_production_plan_lines where plan_id = ${planId}`)) as unknown as { n: number }[];
+    for (const d of demand) {
+      const l = byKey.get(d.key);
+      byKey.delete(d.key);
+      const values = { category: d.category, itemId: d.itemId, productName: d.productName, productCode: d.productCode, size: d.size, quantity: d.quantity, unit: d.unit, orderRefs: d.orderRefs };
+      if (!l) {
+        await tx.insert(erpProductionPlanLines).values({ id: erpId("eplnl"), planId, source: "order", sourceKey: d.key, sort: ++sort, ...values });
+        moved++;
+      } else if (l.deletedAt || l.quantity !== d.quantity || l.unit !== d.unit || l.orderRefs !== d.orderRefs || l.productName !== d.productName || l.size !== d.size) {
+        await tx.update(erpProductionPlanLines).set({ ...values, deletedAt: null, deletedById: null, updatedAt: now, updatedById: null }).where(eq(erpProductionPlanLines.id, l.id));
+        moved++;
+      }
+    }
+    for (const l of byKey.values()) {
+      if (l.deletedAt) continue;
+      await tx.update(erpProductionPlanLines).set({ deletedAt: now, deletedById: null }).where(eq(erpProductionPlanLines.id, l.id));
+      moved++;
+    }
+    if (moved) await tx.update(erpProductionPlans).set({ updatedAt: now }).where(eq(erpProductionPlans.id, planId));
+    return moved;
+  });
 }

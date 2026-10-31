@@ -2094,6 +2094,13 @@
       "when": 1793611200000,
       "tag": "0303_erp_production_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 299,
+      "version": "7",
+      "when": 1793614800000,
+      "tag": "0304_erp_plan_order_lines",
+      "breakpoints": true
     }
   ]
 }

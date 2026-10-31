@@ -74,3 +74,25 @@ test("sizes read as the floor names them", () => {
   assert.equal(sizeName(500), "500 ml");
   assert.equal(sizeName(null), null);
 });
+
+test("Under Process order lines become one plan line per product", async () => {
+  const { orderDemand } = await import("./production-plan");
+  const base = { skuCode: null, millilitres: 20000, finishedGoodId: "fg20", finishedGoodName: "Nano Thinner 20 L" };
+  const d = orderDemand([
+    { ...base, orderNo: 4031, skuId: "loose20", skuName: "NANO20 (Loose)", cansPerBox: 1, qtyCans: 6 },
+    { ...base, orderNo: 4027, skuId: "loose20", skuName: "NANO20 (Loose)", cansPerBox: 1, qtyCans: 4 },
+    { ...base, orderNo: 4023, skuId: "nc5", skuName: "NC5 (4 Can/Box)", cansPerBox: 4, millilitres: 5000, qtyCans: 60 },
+    { ...base, orderNo: 4040, skuId: "nc1", skuName: "NC1 (12 Can/Box)", cansPerBox: 12, millilitres: 1000, qtyCans: 30 },
+    { ...base, orderNo: 4041, skuId: "nc1", skuName: "NC1 (12 Can/Box)", cansPerBox: 12, millilitres: 1000, qtyCans: 0 },
+  ]);
+  const by = new Map(d.map((x) => [x.key, x]));
+  /* Two loose orders of one finished good add up, named by the finished good. */
+  assert.deepEqual(
+    { q: by.get("loose:fg20")!.quantity, u: by.get("loose:fg20")!.unit, n: by.get("loose:fg20")!.productName, r: by.get("loose:fg20")!.orderRefs },
+    { q: 10, u: "Cans", n: "Nano Thinner 20 L", r: "4027, 4031" },
+  );
+  /* Boxed: whole boxes in boxes, a part box in cans — never rounded. */
+  assert.deepEqual([by.get("packing:nc5")!.quantity, by.get("packing:nc5")!.unit, by.get("packing:nc5")!.size], [15, "Boxes", "5 L"]);
+  assert.deepEqual([by.get("packing:nc1")!.quantity, by.get("packing:nc1")!.unit], [30, "Cans"]);
+  assert.equal(d[0].category, "loose");
+});

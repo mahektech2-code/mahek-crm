@@ -16759,6 +16759,12 @@ export const erpProductionPlanLines = pgTable(
     quantity: doublePrecision("quantity").notNull(),
     unit: text("unit").notNull(),
     remarks: text("remarks"),
+    /** `manual` (typed by the Production Head) or `order` (an Under Process order line, written by the sync). */
+    source: text("source").notNull().default("manual"),
+    /** For an order line: `category:item`, what the sync finds it by. */
+    sourceKey: text("source_key"),
+    /** For an order line: the order numbers behind it, "4023, 4027". */
+    orderRefs: text("order_refs"),
     sort: integer("sort").notNull().default(0),
     createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -16772,6 +16778,7 @@ export const erpProductionPlanLines = pgTable(
     index("erp_production_plan_lines_plan_idx").on(t.planId),
     check("erp_production_plan_lines_category_check", sql`${t.category} in ('sfg', 'loose', 'packing')`),
     check("erp_production_plan_lines_quantity_check", sql`${t.quantity} > 0`),
+    uniqueIndex("erp_production_plan_lines_order_key").on(t.planId, t.sourceKey).where(sql`${t.source} = 'order'`),
   ],
 );
 
@@ -16800,4 +16807,6 @@ export type PlanSnapshotLine = {
   quantity: number;
   unit: string;
   remarks: string | null;
+  /** The order numbers behind a line the orders put there; absent on a typed one. */
+  orderRefs?: string | null;
 };

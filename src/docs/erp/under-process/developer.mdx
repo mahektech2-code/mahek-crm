@@ -21,3 +21,12 @@ The marking rule is pure:
 Migration `0303_erp_production_plans` creates them, adds the `plan` number series, and gives the module to the Production Head designation and its holders.
 
 Tests: `src/lib/erp/engines/production-plan.test.ts`.
+
+
+## Order lines
+
+<Code file="src/lib/erp/engines/production-plan.ts" symbol="orderDemand" />
+
+<Code file="src/lib/erp/production-plan.ts" symbol="syncPlanFromOrders" collapsed />
+
+Migration `0304_erp_plan_order_lines` adds `source`, `source_key` and `order_refs`, with a partial unique index on (`plan_id`, `source_key`) where `source = 'order'`.

@@ -2322,7 +2322,18 @@ against the last one: given, new, edited or removed — the screen's colours and
 the reprint's underline, "was" and "Removed since last print" box are that one
 rule. Current available is read at the plan's godown from `sfgLots`, `fgLots`
 and `packLots`. The work itself is still recorded on SFG batches, FG filling and
-Packing batches. The order status "Under Process" is a different thing.
+Packing batches. **And the orders under process come in by themselves.**
+Every order line Orders → Production lists as Under Process (`isWorkingLine`'s
+rule, less empty drums) is one plan line per product (`orderDemand`, pure): a
+loose SKU as loose cans of its finished good, a boxed SKU as packing — in boxes,
+or in cans where the orders do not make whole boxes, never rounded. Those lines
+are `source = 'order'`, keyed `category:item` (`source_key`, a partial unique
+index), carry their order numbers (`order_refs`), and are written only by
+`syncPlanFromOrders` — on opening, creating and printing a plan dated today or
+later; a past plan is the record of its day. A product whose orders all leave
+Under Process is marked deleted, so a sheet that carried it says Removed. They
+cannot be edited or deleted on the plan: the order is where they change. SFG is
+not derived; the Production Head types it.
 
 **A recipe is expected, never a gate.** `erp_recipes` holds what one batch of an
 SFG product takes. "Start a batch" opens the SFG form with the recipe's lines, and so does picking the product on a blank New SFG batch (`linesFrom` on the form: lines nobody has touched are replaced at once, typed-into ones only after a confirm),

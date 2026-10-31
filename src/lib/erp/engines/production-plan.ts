@@ -128,3 +128,81 @@ export function sizeName(millilitres: number | null | undefined): string | null 
   const l = millilitres / 1000;
   return `${Number.isInteger(l) ? l : Number(l.toFixed(2))} L`;
 }
+
+/* ---------------------------------------------------------------------------
+ * WHAT THE ORDERS ASK FOR. Every order line whose status is "Under Process"
+ * (Orders → Production) comes into the day's plan by itself, one plan line per
+ * product: a loose SKU (one can a box) as loose-can preparation of its
+ * finished good, in cans; a boxed SKU as packing, in boxes — or in cans where
+ * the orders do not add up to whole boxes, because a rounded box is a figure
+ * nobody ordered. SFG is not derived: how much liquid a day needs is the
+ * Production Head's judgement, typed as before.
+ * ------------------------------------------------------------------------- */
+
+export type UnderProcessLine = {
+  orderNo: number;
+  skuId: string;
+  skuName: string;
+  skuCode: string | null;
+  cansPerBox: number;
+  millilitres: number | null;
+  finishedGoodId: string | null;
+  finishedGoodName: string | null;
+  qtyCans: number;
+};
+
+export type OrderDemand = {
+  key: string;
+  category: PlanCategory;
+  itemId: string | null;
+  productName: string;
+  productCode: string | null;
+  size: string | null;
+  quantity: number;
+  unit: string;
+  orderRefs: string;
+};
+
+export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
+  type Acc = { d: Omit<OrderDemand, "quantity" | "unit" | "orderRefs">; cans: number; cpb: number; orders: Set<number> };
+  const by = new Map<string, Acc>();
+  for (const l of lines) {
+    if (!(l.qtyCans > 0)) continue;
+    const loose = (l.cansPerBox || 1) <= 1;
+    const category: PlanCategory = loose ? "loose" : "packing";
+    const itemId = loose ? (l.finishedGoodId ?? l.skuId) : l.skuId;
+    const key = `${category}:${itemId}`;
+    let a = by.get(key);
+    if (!a) {
+      a = {
+        d: {
+          key,
+          category,
+          itemId: loose && !l.finishedGoodId ? null : itemId,
+          productName: loose ? (l.finishedGoodName ?? l.skuName) : l.skuName,
+          productCode: l.skuCode,
+          size: sizeName(l.millilitres),
+        },
+        cans: 0,
+        cpb: Math.max(1, l.cansPerBox || 1),
+        orders: new Set(),
+      };
+      by.set(key, a);
+    }
+    a.cans += l.qtyCans;
+    a.orders.add(l.orderNo);
+  }
+  const order = new Map(PLAN_CATEGORIES.map((c, i) => [c.key as string, i]));
+  return [...by.values()]
+    .map(({ d, cans, cpb, orders }): OrderDemand => {
+      const boxes = cans / cpb;
+      const inBoxes = d.category === "packing" && Number.isInteger(boxes);
+      return {
+        ...d,
+        quantity: d.category === "packing" && inBoxes ? boxes : cans,
+        unit: d.category === "loose" ? "Cans" : inBoxes ? "Boxes" : "Cans",
+        orderRefs: [...orders].sort((x, y) => x - y).join(", "),
+      };
+    })
+    .sort((a, b) => (order.get(a.category)! - order.get(b.category)!) || a.productName.localeCompare(b.productName));
+}

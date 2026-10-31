@@ -12,3 +12,10 @@
 
 - **Product code** is the product's legacy Product ID where one exists. SFG bases carry no code, and some products have none, so those show a dash.
 - **Unit** is offered from a short list per category (Litre or Kg, Cans, Boxes or Cans). A unit other than those is refused.
+
+
+## The orders come in by themselves
+
+The plan reads the same lines Orders → Production lists as Under Process (status Under Process, entry not Done), leaving out empty drums. They are added up per product: a loose SKU as loose cans of its finished good, a boxed SKU as packing in boxes, or in cans where the orders do not make whole boxes, because a rounded box is a figure nobody ordered.
+
+They are brought in step whenever a plan dated today or later is opened, created or printed, so the sheet always carries the orders as they stood at the moment it was printed. A past day's plan is never touched. A product whose orders all leave Under Process is marked deleted, which the next print lists as removed. Only orders at the plan's godown come in, where the plan names one.

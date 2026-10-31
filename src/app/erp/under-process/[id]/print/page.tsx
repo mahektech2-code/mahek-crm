@@ -125,7 +125,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                         <U>{r.unit}</U>
                       </Td>
                       <Td className="px-1 py-1 whitespace-normal">
-                        <U>{[r.remarks, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ")}</U>
+                        <U>{[r.remarks, r.orderRefs ? `Orders ${r.orderRefs}` : null, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ")}</U>
                       </Td>
                     </tr>
                   );

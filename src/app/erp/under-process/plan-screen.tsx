@@ -9,6 +9,7 @@ import { RowMenu } from "@/components/ui/overlays";
 import { stamp } from "@/lib/format";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { erpPlanHref, erpPlanPrintHref } from "@/lib/erp/trace-links";
+import { erpLink } from "@/lib/erp/registry";
 import { categorySpec, PLAN_CATEGORIES, type LineState, type PlanCategory } from "@/lib/erp/engines/production-plan";
 import type { PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
 import { erpPlanDeleteLine, erpPlanOpen, erpPlanPrint, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
@@ -45,6 +46,7 @@ export function PlanList({
   date,
   readOnly,
   missing,
+  underProcess,
 }: {
   today: string;
   todays: PlanSummary | null;
@@ -52,11 +54,22 @@ export function PlanList({
   date: string | null;
   readOnly: boolean;
   missing: boolean;
+  /** The order lines whose status is Under Process now — they come into the plan by themselves. */
+  underProcess: { lines: number; orders: number; godown: string | null };
 }) {
   const [creating, setCreating] = useState(false);
   return (
     <div className="grid gap-5">
       {missing ? <Callout tone="danger">That plan no longer exists.</Callout> : null}
+      {underProcess.lines ? (
+        <Callout tone="info">
+          <span>
+            {underProcess.lines} order {underProcess.lines === 1 ? "line is" : "lines are"} Under Process on Orders → Production ({underProcess.orders}{" "}
+            {underProcess.orders === 1 ? "order" : "orders"}
+            {underProcess.godown ? ` at ${underProcess.godown}` : ""}). {todays ? "They are in today's plan." : "They come into today's plan the moment it is created."}
+          </span>
+        </Callout>
+      ) : null}
       <Card>
         <CardHeader
           title={`Today · ${fdLong(today)}`}
@@ -265,6 +278,18 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
         </Callout>
       ) : null}
 
+      {plan.lines.some((l) => l.source === "order" && l.state !== "removed") ? (
+        <Callout tone="info">
+          <span>
+            Lines marked <b>From orders</b>{" "}are the order lines Under Process on Orders → Production, added by themselves. They change when an order&apos;s status
+            changes, and leave the plan when it is Ready.{" "}
+            <NavLink href={erpLink("readyOrders")} className={linkClass()}>
+              Open Production
+            </NavLink>
+          </span>
+        </Callout>
+      ) : null}
+
       <div className="mb-3 flex flex-wrap gap-4 text-meta text-muted">
         <Key className="bg-success" label="Given — on the last sheet the floor has" />
         <Key className="bg-warn" label="New or edited — not printed yet" />
@@ -319,7 +344,11 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
                               l.state === "removed" && "shadow-[inset_3px_0_0_var(--color-danger)]",
                             )}
                           >
-                            {l.productName}
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              {l.productName}
+                              {l.source === "order" ? <Badge tone="brand">From orders</Badge> : null}
+                            </span>
+                            {l.orderRefs ? <span className="block text-meta font-normal text-muted">Orders {l.orderRefs}</span> : null}
                           </Td>
                           <Td className="font-mono text-meta">{l.productCode ?? "—"}</Td>
                           {c.sizeLabel ? <Td>{l.size ?? "—"}</Td> : null}
@@ -336,7 +365,11 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
                             <Badge tone={STATE[l.state].tone}>{STATE[l.state].label}</Badge>
                           </Td>
                           <Td align="right">
-                            {readOnly || l.state === "removed" ? null : (
+                            {readOnly || l.state === "removed" ? null : l.source === "order" ? (
+                              <NavLink href={erpLink("readyOrders")} className={linkClass("brand", "text-meta")} title="This line follows the orders. Change it on Orders → Production.">
+                                Orders
+                              </NavLink>
+                            ) : (
                               <RowMenu
                                 items={[
                                   { label: "Edit", onSelect: () => setEditing({ category: c.key, line: l }) },
@@ -515,7 +548,7 @@ function LineDialog({
           </Field>
           {already.length ? (
             <Callout tone="info" className="mb-0">
-              Already on this plan: {already.map((l) => `${nf(l.quantity)} ${UNIT_SHORT[l.unit] ?? l.unit}${l.state === "given" ? " (given)" : ""}`).join(", ")}. {editingLine ? "" : "This adds a separate line, so the floor sees it as new."}
+              Already on this plan: {already.map((l) => `${nf(l.quantity)} ${UNIT_SHORT[l.unit] ?? l.unit}${l.source === "order" ? " from orders" : ""}${l.state === "given" ? " (given)" : ""}`).join(", ")}. {editingLine ? "" : "This adds a separate line, so the floor sees it as new."}
             </Callout>
           ) : null}
         </div>
