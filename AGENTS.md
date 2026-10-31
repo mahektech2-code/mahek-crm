@@ -1937,7 +1937,8 @@ title and puts the sentence behind the ⓘ. Each does this through classes the
 sheet reads (`ui-field-label`, `ui-hint`, `ui-hint-tip`), so the apps without
 the marker are unchanged. A list with many filters puts them behind one
 `FilterPanelButton` (`components/ui/filter-panel.tsx`) with the chips of what is
-on left on the bar — Customers' nine are there. Never write "· required" or
+on left on the bar — Customers' nine are there, and Payment follow-up's stage,
+slow payers and month-end view. Never write "· required" or
 "(optional)" into a CRM label; the test refuses it. The Tele CRM canvas
 (claude.ai artifact "Tele CRM — ERP design system and less text") is the
 board-by-board plan, and it lists, per screen, everything that was kept.
@@ -9105,6 +9106,24 @@ never re-raising one dismissed that day. A PDF that matches a book
 (`documentToChange`); cancelling that change hands the document back. A cell
 two models and the text layer disagree on holds "Approve all ready".
 
+**A SHOP IS ON ONE PRICE LIST, AND A LIST CAN LEAVE SHOPS OUT.**
+`price_list_scopes.excluded` (`0303`) is a leave-out row — a shop, a
+salesman, a beat, an area, a city or a district (a check constraint) — and
+`leftOutLists` drops its list for the shops it names before narrowest-wins
+runs; it never puts anybody on a list. `engines/price-one-list.ts` is the
+rule: books are counted by `book_id`, Standard ("everybody" rows) and agreed
+prices do not count, ended rules and lists do not count, scheduled ones do,
+and `freightAgrees` keeps a Paid and a To Pay list apart except for a shop with
+no freight term. `pricing.oneListPerShop` (on) refuses only an edit that ADDS
+a second list (`introducedClashes`, before against after, inside
+`publishDraftIn`, `addScope`, `updateScope` and `removeScope`), so shops
+doubled before the rule keep pricing and are listed on Coverage, where
+`settleAllToTodaysList` leaves each on the list that prices it today. An
+answer is "keep" (a leave-out row on this list) or "move"
+(`leaveShopOutOfBook` on the other book's every live, scheduled and draft
+version); a draft holds its moves in `price_lists.pending_moves` until it is
+published. `assignCustomerList` takes the shop off every other book.
+
 ## Material returns
 
 **FINANCIAL DOCUMENTS ADJUST THE LEDGER; PHYSICAL TRANSACTIONS ADJUST STOCK.**
@@ -9392,6 +9411,40 @@ invoice step is recorded, only on the billing party's link, and only while
 `erp.tracking.showInvoice` is on. Replacing it on an approved invoice sends the
 invoice back to the checker. Documents are served by `/t/<token>/doc/<kind>`,
 never `/api/attachments`.
+
+**AND THE TEAM SEES AND PRINTS IT, AND THE CHECKER CANNOT APPROVE WITHOUT IT.**
+Before this nothing showed an uploaded invoice to staff — `erp_invoice` was not
+an ERP attachment parent, so `/api/attachments` refused it to everybody.
+It is read under the Orders screen now: everybody who holds Orders. Every
+billed order's heading on Invoice check, All lines and Billing & dispatch
+carries a view and a print button, or a red Add PDF where none is attached
+(`ListSpec.groupInvoice`, `y:`/`n:<order>` on the row, drawn by
+`_ui/invoice-buttons.tsx`). The record has an Invoice tab (`orderInvoice`
+panel, `ListRow.panels` for a second panel tab): the PDF beside the order's
+lines and its transporter, Print, Download, Open and Replace, and every upload.
+On Invoice check it is the first tab. `approveInvoice` is refused — and drawn
+locked — until a PDF is attached (`invoiceFileFor`); tests attach one with
+`invoice-fixture.ts`. `/api/erp/invoices?orders=` joins the orders' files
+into ONE PDF (pdf-lib; a photographed invoice becomes an A4 page; an invoice
+shared by several orders prints once), each read through `canRead`.
+
+**THE INVOICE IS SHOWN AND PRINTED BY OUR OWN VIEWER, IN A POP-UP — never
+Chrome's, never a new tab.** `_ui/pdf-render.ts` reads the PDF with the pdf.js
+copy unpdf ships and paints each page on a canvas we own; `_ui/pdf-viewer.tsx`
+is the viewer (thumbnails, page, zoom, fit). The order heading's view and print
+buttons open `InvoiceModal` (print prints once the pages are read); "Print
+invoices" on a selection is a `BulkSpec` with `client: "printInvoices"`, which
+the list opens as `PrintInvoicesModal` instead of calling the server; the
+Invoice tab embeds the same viewer. Printing renders every page to an image
+and prints those from a hidden frame, `copies` times (1 unless changed, up to
+`INVOICE_COPIES_MAX`). There is no download or open-in-tab control anywhere;
+the browser's own print dialog still offers "Save as PDF", which no page can
+remove. The PDF's own addresses (`/api/erp/invoices`, and `/api/attachments`
+for an `erp_invoice`) answer a fetch from our pages and refuse one typed into
+the address bar or loaded as a frame (`isOpenedDirectly` in
+`lib/fetch-only.ts`, read off the browser's Fetch Metadata headers; a request
+with none is let through). `/erp/print-invoices` only redirects to Billing & dispatch now.
+The transporter is a column of Invoice check.
 
 **"OUT FOR DELIVERY" IS A LOGISTICS STAGE** (0292 widened the stage check). The
 order flow reads it as Delivery Pending Confirmation, like the destination office.

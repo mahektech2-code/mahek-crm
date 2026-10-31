@@ -18,6 +18,7 @@ import { canCheckVisits, reportingSalesmen } from "@/lib/services/visit-oversigh
 import { canLogQualificationCall } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { afterCall, nextCallNumber, phaseOf } from "@/lib/engines/lead-calling-desk";
+import { testPhone } from "@/lib/test-phone";
 
 /* Every call carries a remark; the tests that are not about that use this. */
 const logQualificationCall = (i: Parameters<typeof realLog>[0]) => realLog({ notes: "Spoke to the contact.", ...i });
@@ -31,7 +32,7 @@ async function makeUser(name: string, role: "associate" | "manager" | "admin", a
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -105,7 +106,7 @@ beforeEach(async () => {
   const r = await captureLead({
     salesType: "direct",
     name: "Some Lead",
-    phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+    phone: testPhone(),
     city: "Nashik",
     source: "telecalling",
   });

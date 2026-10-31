@@ -50,6 +50,7 @@ import { QUAL_NEXT, sampleEligibility } from "@/lib/services/lead-qualification-
 import { qualificationComplete, qualificationReadyForReview, gateTo } from "@/lib/engines/lead-gates";
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
+import { testPhone } from "@/lib/test-phone";
 
 /* Every call needs a remark now; the tests that are not about that supply one. */
 const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
@@ -89,7 +90,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -124,7 +125,7 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "suspect",
@@ -197,7 +198,7 @@ const row = async (leadId: string) => (await db.select().from(customers).where(e
 
 const CAPTURE = () => ({
   name: `Shop ${randomUUID().slice(0, 6)}`,
-  phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+  phone: testPhone(),
   city: "Nagpur",
   source: "telecalling",
 });

@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, like, sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
 import { db } from "@/db";
 import {
   appAccess,
@@ -44,6 +45,7 @@ import { customerProducts } from "@/lib/services/product-service";
 import { varianceReport } from "@/lib/services/price-list-service";
 import { runJob } from "@/lib/jobs";
 import { ORDER_TABS_RETIRED, PARTY_TAB_RETIRED } from "@/lib/engines/sheet-retirement";
+import { testPhone } from "@/lib/test-phone";
 
 const tag = randomUUID().slice(0, 6);
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -52,7 +54,7 @@ const SKU = `ERPB Primer 1 L ${tag} (Loose)`;
 async function makeUser(name: string, level: "associate" | "manager" | "admin", app: "erp" | "accounts" = "erp") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app, role: level });
   return u;
@@ -95,6 +97,7 @@ async function send(o: typeof erpOrders.$inferSelect, bill: string, date: string
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(o.qtyCans) }, [], o.id)).ok);
   const billed = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: date });
   assert.ok(billed.ok, JSON.stringify(billed));
+  await attachInvoicePdf(o.id, ctx.user.id);
   assert.ok((await mod("orders").actions!.approveInvoice(ctx, o.id, {})).ok);
   const sent = await mod("orderDetails").actions!.verify(ctx, o.id, { date });
   assert.ok(sent.ok, JSON.stringify(sent));
@@ -251,6 +254,7 @@ describe("one Tally invoice over several orders", () => {
     for (const o of [a, b, c]) assert.equal(await billNo(o), "MMI/26-27/901");
 
     for (const o of [a, b]) {
+      await attachInvoicePdf(o.id, ctx.user.id);
       assert.ok((await mod("orders").actions!.approveInvoice(ctx, o.id, {})).ok);
       const sent = await mod("orderDetails").actions!.verify(ctx, o.id, { date: "2026-09-14" });
       assert.ok(sent.ok, JSON.stringify(sent));

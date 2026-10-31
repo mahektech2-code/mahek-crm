@@ -79,11 +79,18 @@ export async function erpDispatchDecideOverride(id: string, approve: boolean, no
 export async function erpDispatchVerify(orderNo: number, input: { date: string; vehicle?: string; driver?: string; remark?: string }): Promise<Result<unknown>> {
   try {
     const ctx = await requireErpWrite("orderDetails");
-    const ids = ((await db.execute(sql`
-      select o.id from erp_orders o join erp_order_details d on d.order_id = o.id
-       where o.order_no = ${orderNo} and coalesce(d.verification, 'Pending') = 'Pending'
-    `)) as unknown as { id: string }[]).map((r) => r.id);
-    if (!ids.length) return err("Nothing on this order is billed and waiting to be dispatched. Bill it first, on Orders → Ready to bill.", "rule_violation");
+    /* "Still to dispatch" is the handler's own rule — blank or Pending — so the desk cannot offer a line the handler then refuses. Anything else gets the reason it is, not "bill it first". */
+    const lines = (await db.execute(sql`
+      select o.id, d.verification from erp_orders o join erp_order_details d on d.order_id = o.id
+       where o.order_no = ${orderNo} and o.status <> 'Cancel'
+    `)) as unknown as { id: string; verification: string | null }[];
+    const ids = lines.filter((l) => !l.verification || l.verification === "Pending").map((l) => l.id);
+    if (!ids.length) {
+      if (!lines.length) return err("Nothing on this order is billed yet. Bill it first, on Orders → Ready to bill.", "rule_violation");
+      if (lines.some((l) => l.verification === "Not Verify"))
+        return err(`An administrator marked order ${orderNo} not verified on Orders → Billing & dispatch, and a line marked so cannot be dispatched again. Ask an ERP administrator.`, "rule_violation");
+      return err(`Order ${orderNo} has already been dispatched.`, "rule_violation");
+    }
     const verify = screenModule("orderDetails")?.bulk?.verify;
     if (!verify) return err("Dispatch verification is not available.", "not_found");
     const res = await verify(ctx, ids, { date: input?.date ?? "", vehicle: input?.vehicle ?? "", driver: input?.driver ?? "", remark: input?.remark ?? "" });

@@ -38,6 +38,7 @@ import { cancelChange, startChange } from "@/lib/actions/price-books";
 import { documentToChange } from "@/lib/actions/price-imports";
 import { bookMatchesForDocument, crossReadFor, documentChangePreview } from "@/lib/services/price-import-service";
 import { CROSS_READ_FEATURE } from "@/lib/price-ai/pdf-read";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -55,7 +56,7 @@ async function makeUser(name: string) {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: name.slice(0, 2).toUpperCase(),

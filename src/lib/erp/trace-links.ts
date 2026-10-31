@@ -41,6 +41,20 @@ export function erpBillRoadHref(transportId: string): string {
   return `/erp/transport/${encodeURIComponent(transportId)}`;
 }
 
+/** The most copies of one invoice a print asks for at once. */
+export const INVOICE_COPIES_MAX = 10;
+
+/** One number of copies, held to 1..INVOICE_COPIES_MAX; anything unreadable is 1, the default. */
+export function invoiceCopies(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, INVOICE_COPIES_MAX) : 1;
+}
+
+/** The orders' Tally invoices as one PDF — what our own viewer reads. Copies are added when printing, not here. */
+export function erpInvoicesPdfHref(orderNos: (number | string)[]): string {
+  return `/api/erp/invoices?${new URLSearchParams({ orders: orderNos.join(",") }).toString()}`;
+}
+
 /** Under Process: the list, or one plan open. */
 export function erpPlanHref(planId?: string): string {
   return planId ? `/erp/under-process?plan=${encodeURIComponent(planId)}` : "/erp/under-process";

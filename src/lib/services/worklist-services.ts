@@ -1317,6 +1317,14 @@ function targetMonth(key: string) {
  * customers' targets" is asking; the sales manager seat that widens the
  * office screen drives no target and is deliberately absent.
  *
+ * THE SHOP'S NAME AND TOWN TRAVEL WITH IT, because the credited seat and the
+ * handset's book are two different answers. The book is narrowed to the area
+ * he is allocated and this is not — a shop credited to him in a town he is
+ * not allocated has a target here and no customer row on the phone, and with
+ * nothing else to call it the phone printed "A shop no longer on this phone"
+ * against a real account with real money on it. Narrowing this list to the
+ * book instead would hide that money, which is worse.
+ *
  * `pendingPaise` IS NOT ACHIEVEMENT and is never added to it. It is what he
  * took this month that accounts have not decided yet — the one figure that
  * explains why a shop he sold to this morning still reads short. Counted on
@@ -1329,6 +1337,8 @@ export async function customerTargetsCreditedTo(userId: string, key: string) {
   const rows = await db
     .select({
       customerId: customers.id,
+      name: customers.name,
+      city: customers.city,
       target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
       isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
       carriedForward: sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`,
@@ -1353,6 +1363,8 @@ export async function customerTargetsCreditedTo(userId: string, key: string) {
       const achieved = Number(r.achieved ?? 0);
       return {
         customerId: r.customerId,
+        name: r.name,
+        city: r.city,
         target,
         achieved,
         pending: Number(r.pending ?? 0),

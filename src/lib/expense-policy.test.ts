@@ -77,6 +77,7 @@ import { expenseStateSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { duplicateWarnings } from "@/lib/services/expense-service";
 import { simulatePolicy } from "@/lib/services/expense-simulator-service";
 import { expenseTrend, snapshotExpenseMonth } from "@/lib/services/expense-roi-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const hhmm = (h: number, m = 0) => h * 60 + m;
@@ -91,7 +92,7 @@ async function makeUser(name: string, role: "associate" | "manager" | "admin", a
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),

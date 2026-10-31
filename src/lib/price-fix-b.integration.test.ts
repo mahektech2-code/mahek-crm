@@ -45,6 +45,7 @@ import {
   varianceReport,
 } from "@/lib/services/price-list-service";
 import { GET as ratesRoute } from "@/app/api/price-lists/customers/[id]/rates/route";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -63,7 +64,7 @@ async function makeUser(name: string, role: "associate" | "manager", app: "crm" 
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -95,7 +96,7 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Thane",
       region: "Maharashtra",
       kind: "customer",
@@ -180,8 +181,20 @@ beforeEach(async () => {
   setTestUser(manager);
 });
 
+
+/**
+ * The one-list rule (`pricing.oneListPerShop`) refuses a shop on two lists.
+ * These cases put it on two ON PURPOSE, to prove which one prices it — the
+ * resolution every shop doubled before the rule still goes through.
+ */
+async function allowTwoLists() {
+  await db.execute(sql`update app_settings set value = 'false'::jsonb where key = 'pricing.oneListPerShop'`);
+  invalidateConfig();
+}
+
 describe("a shop's prices fall through, product by product (B1)", () => {
   test("a one-rate agreed list keeps every other product's price from the list beneath it", async () => {
+    await allowTwoLists();
     const shop = await makeCustomer({ name: "Bharat Hardware" });
     const state = await publishList({
       name: "Pan Maharashtra",
@@ -360,6 +373,7 @@ describe("a salesman list names the sales seat, never the importer (B18)", () =>
 
 describe("“changed since their last order” follows the lineage (B19)", () => {
   test("a routine new version of the same list does not warn; a different list does", async () => {
+    await allowTwoLists();
     const shop = await makeCustomer();
     const v1 = await publishList({
       name: "Maharashtra",

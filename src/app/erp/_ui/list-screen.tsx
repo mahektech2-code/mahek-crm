@@ -19,6 +19,8 @@ import { PeriodPicker } from "./period-picker";
 import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
 import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
+import { InvoiceButtons } from "./invoice-buttons";
+import { PrintInvoicesModal } from "./invoice-modals";
 import { useErpUi } from "./erp-ui";
 import { RecordDialog } from "./record-dialog";
 import { useKit } from "./kit";
@@ -544,6 +546,7 @@ export function ListScreen({
      see past its page, and the server refuses an id that no longer exists. */
   const inView = useMemo(() => (server ? null : new Set(rows.map((r) => r.id))), [server, rows]);
   const chosen = Object.keys(sel).filter((id) => sel[id] && (!inView || inView.has(id)));
+  const [printing, setPrinting] = useState<string[] | null>(null);
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => sel[r.id]);
   const bulkOn = !!spec.bulk?.length;
   /* A row carries a checkbox where something can be done with a selection —
@@ -1060,6 +1063,7 @@ export function ListScreen({
                                     return <GroupFact key={c.k} c={c} v={grp.head[c.k]} strong={spec.groupHeadStrong?.includes(c.k)} />;
                                   })}
                                   <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
+                                  {spec.groupInvoice ? <InvoiceButtons v={grp.head[spec.groupInvoice]} row={r} screen={spec.screen} /> : null}
                                   {spec.groupSel && selectOn ? (
                                     <LinkButton
                                       onClick={() => {
@@ -1180,13 +1184,14 @@ export function ListScreen({
             </button>
           ) : null}
           {(spec.bulk ?? []).map((b) => (
-            <Button key={b.id} variant="dark" size="sm" onClick={() => ui.bulk(spec.screen, b, chosen, () => setSel({}))}>
+            <Button key={b.id} variant="dark" size="sm" onClick={() => (b.client === "printInvoices" ? setPrinting(chosen) : ui.bulk(spec.screen, b, chosen, () => setSel({})))}>
               {b.l}
             </Button>
           ))}
         </SelectionBar>
       ) : null}
 
+      {printing ? <PrintInvoicesModal lineIds={printing} onClose={() => setPrinting(null)} /> : null}
       {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} /> : null}
     </Frame>
   );

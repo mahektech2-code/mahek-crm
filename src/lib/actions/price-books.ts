@@ -1059,9 +1059,9 @@ export async function propagateBookCoverage(bookId: string): Promise<Result<{ up
         await tx.execute(sql`delete from price_list_scopes where price_list_id = ${t.id}`);
         await tx.execute(sql`
           insert into price_list_scopes (id, price_list_id, scope_kind, scope_value, scope_label, parent_key,
-                                         freight_term_match, priority, valid_from, valid_to, created_by_id)
+                                         freight_term_match, priority, valid_from, valid_to, excluded, created_by_id)
           select ${sql.raw("'pls_' || substr(md5(random()::text), 1, 12)")}, ${t.id}, s.scope_kind, s.scope_value,
-                 s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, ${ctx.user.id}
+                 s.scope_label, s.parent_key, s.freight_term_match, s.priority, s.valid_from, s.valid_to, s.excluded, ${ctx.user.id}
             from price_list_scopes s where s.price_list_id = ${source.id}
         `);
       }

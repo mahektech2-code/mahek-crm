@@ -99,3 +99,15 @@ test("the Customers list keeps every filter, behind one Filter button", () => {
   }
   assert.match(inside, /<PlaceFilterSelects/, "state, district, city and area are still offered");
 });
+
+test("Payment follow-up keeps its stage, slow payers and month-end filters, behind one Filter button", () => {
+  const src = read("src/app/crm/payments/payments-screen.tsx");
+  const open = src.indexOf("<FilterPanelButton");
+  const close = src.indexOf("</FilterPanelButton>");
+  assert.ok(open > 0 && close > open, "the filters sit inside the Filter button");
+  const inside = src.slice(open, close);
+  assert.match(inside, /value=\{stageFilter\}/, "the stage is still offered");
+  assert.match(inside, /Slow payers/, "slow payers is still offered");
+  assert.match(inside, /Month-end view/, "the month-end view is still offered");
+  assert.ok(src.slice(close).includes("chips.map"), "what is on stays on the bar as chips");
+});

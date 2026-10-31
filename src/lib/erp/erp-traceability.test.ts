@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
 import { db } from "@/db";
 import { allPassValues } from "@/lib/erp/engines/sfg-tests";
 import { refValues } from "@/lib/erp/refs";
@@ -23,12 +24,13 @@ import { setTestUser } from "@/lib/auth";
 import { calendarDate } from "@/lib/business-date";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
-import { decideOverride, requestOverride, scanOntoOrder, unscanUnit } from "@/lib/erp/dispatch";
+import { decideOverride, dispatchBoard, dispatchQueue, pickableBoxes, requestOverride, scanOntoOrder, unscanUnit } from "@/lib/erp/dispatch";
 import { traceCode, traceDashboard } from "@/lib/erp/traceability";
 import { boxLabels, unlabelledStock } from "@/lib/erp/label-data";
-import { erpGiveIds } from "@/lib/actions/erp-trace";
+import { erpDispatchVerify, erpGiveIds } from "@/lib/actions/erp-trace";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 /* The dashboard counts the real today, so the documents are dated it too. */
@@ -44,7 +46,7 @@ const BOX5 = `ERPX Nano ${tag} - 500 ml (4 Can/Box)`;
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;
@@ -159,6 +161,7 @@ describe("the dispatch desk", () => {
     assert.ok((await mod("orders").actions!.ready(a, lineId, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(a, { lot: "FP1BH", qty: "3" }, [], lineId)).ok);
     assert.ok((await mod("orders").actions!.bill(a, lineId, { invoiceNo: "INV-261008-00456", invoiceDate: TODAY })).ok);
+    await attachInvoicePdf(lineId, a.user.id);
     assert.ok((await mod("orders").actions!.approveInvoice(a, lineId, {})).ok);
   });
 
@@ -166,6 +169,22 @@ describe("the dispatch desk", () => {
     const a = await as(admin);
     const r = await mod("orderDetails").bulk!.verify(a, [lineId], { date: TODAY });
     assert.match(msg(r), /still to scan at the Dispatch desk/);
+  });
+
+  test("the queue carries what it is found by, and the box list offers only boxes this order could take", async () => {
+    const q = (await dispatchQueue()).find((o) => o.orderNo === orderNo);
+    assert.ok(q, "the order is on the queue");
+    assert.equal(q.billing, "ABC Paints");
+    assert.deepEqual(q.products, [BOX1]);
+    const board = await dispatchBoard(orderNo);
+    assert.ok(board);
+    const boxes = await pickableBoxes(board);
+    const lots = new Set(boxes.map((b) => b.lotCode));
+    assert.ok(lots.has("FP1BH") && lots.has("FP2BH"), `both 1 L lots are offered: ${[...lots]}`);
+    assert.ok(!lots.has("FP3BH"), "a 500 ml box is never offered for a 1 L line");
+    assert.ok(boxes.every((b) => b.sku === BOX1 && b.lineId === lineId));
+    assert.equal(boxes[0].lotCode, "FP1BH", "the allocated lot comes first");
+    assert.ok(boxes.findIndex((b) => !b.allocated) > boxes.findLastIndex((b) => b.allocated), "allocated before the rest");
   });
 
   test("a matching box counts; the same box again, an unknown code and a box of the wrong pack size are stopped", async () => {
@@ -367,5 +386,49 @@ describe("a box released from hold", () => {
     const done = await mod("units").actions!.release(ctx, box.id, { [IMPACT_FIELD]: JSON.stringify({ typed: box.id, fingerprint: report.data.fingerprint }) });
     assert.ok(done.ok, msg(done));
     assert.equal((await unitsStatus(box.id)), "available");
+  });
+});
+
+describe("a loose order at the dispatch desk", () => {
+  test("its pick list offers the labelled loose cans, and picking one scans it on", async () => {
+    /* The list used to be built from boxed lines only, so a loose order's was
+       always empty and its cans could only be scanned one by one. */
+    const a = await as(admin);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "2", rate: "100" }])).ok);
+    const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
+    assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
+
+    const board = await dispatchBoard(Number(o.no));
+    assert.ok(board);
+    const offered = await pickableBoxes(board);
+    assert.ok(offered.length > 0, "the loose cans in stock are offered");
+    assert.ok(offered.every((u) => u.id.startsWith("LU-") && u.sku === LOOSE1 && u.lineId === o.id), JSON.stringify(offered.slice(0, 3)));
+
+    const scanned = await scanOntoOrder(await as(clerk), Number(o.no), offered[0].id);
+    assert.ok(scanned.ok && scanned.data.verdict.ok, JSON.stringify(scanned));
+  });
+});
+
+describe("confirming dispatch from the desk", () => {
+  test("a lot-less line waits for its scans, and a refusal says what the line is rather than 'bill it first'", async () => {
+    /* Order 10058 left with no lot code — the gate read "no lot" as "packed before box ids" — and once an
+       administrator marked it not verified, the desk still offered Confirm and refused with "Bill it first". */
+    const a = await as(admin);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "1", rate: "100" }])).ok);
+    const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    const no = Number(o.no);
+    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
+    assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
+    const billed = await mod("orders").actions!.bill(a, o.id, { invoiceNo: `MMI/T/${tag}`, invoiceDate: TODAY });
+    assert.ok(billed.ok, msg(billed));
+
+    const board = await dispatchBoard(no);
+    assert.equal(board?.lines.find((l) => l.id === o.id)?.gate, "1 of 1 still to scan", "no lot is not 'packed before box ids'");
+
+    await db.execute(sql`update erp_order_details set verification = 'Not Verify' where order_id = ${o.id}`);
+    assert.match(msg(await erpDispatchVerify(no, { date: TODAY })), /marked order \d+ not verified/);
+    await db.execute(sql`update erp_order_details set verification = 'Verified' where order_id = ${o.id}`);
+    assert.match(msg(await erpDispatchVerify(no, { date: TODAY })), /has already been dispatched/);
   });
 });

@@ -36,14 +36,15 @@ export async function GET(request: Request) {
      Clamping cut this month's target to the days already gone and scored the
      phone several times higher than the Performance screen. */
   const url = new URL(request.url);
-  const checked = checkRange(url.searchParams.get("from"), url.searchParams.get("to"), await today());
+  const now = await today();
+  const checked = checkRange(url.searchParams.get("from"), url.searchParams.get("to"), now);
   if (!checked.ok) {
     return NextResponse.json({ ok: false, error: checked.error }, { status: 400 });
   }
   const { from, to } = checked.range;
 
   try {
-    const reading = await handsetReadingForRange(auth.principal.user.id, from, to);
+    const reading = await handsetReadingForRange(auth.principal.user.id, from, to, now);
     return NextResponse.json({ ok: true, reading });
   } catch (e) {
     console.error("Performance range failed:", e instanceof Error ? e.message : e);

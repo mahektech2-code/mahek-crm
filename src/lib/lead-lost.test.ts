@@ -42,6 +42,7 @@ import { NURTURE_SOURCE_TYPE } from "@/lib/engines/lead-nurture";
 import { lostLeadsPage, lostLeadOwnerOptions, lostLeadTiles } from "@/lib/services/lead-lost-service";
 import { ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { applyLeadStageMove, evaluateLeadStageMove, leadGateInput, leadRow } from "@/lib/services/lead-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-29";
@@ -55,7 +56,7 @@ async function makeUser(name: string, role: "associate" | "manager" | "admin") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -72,7 +73,7 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nagpur",
       kind: "lead",
       leadStage: "qualified",

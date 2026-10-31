@@ -242,6 +242,13 @@ export type ComponentInput = {
   target: number;
   /** Supplied where the component computes its own achievement, as the mix does. */
   achievementBp?: Bp | null;
+  /**
+   * True where something WAS asked even though there is no achievement to
+   * score yet — a mix set on a month with nothing sold. Such a component still
+   * drops out of the sum, but it is not "untargeted", and naming it so told a
+   * salesman nobody had asked for a mix that was plainly on his target.
+   */
+  asked?: boolean;
 };
 
 export type ComponentScore = {
@@ -270,6 +277,8 @@ export type ScoreResult = {
    * quietly computed out of 65.
    */
   untargeted: ComponentKey[];
+  /** Asked for, but nothing yet to measure it against — left out for now. */
+  unmeasured: ComponentKey[];
 };
 
 /**
@@ -324,7 +333,12 @@ export function weightedScore(
   return {
     components,
     totalBp: components.reduce((sum, c) => sum + c.pointsBp, 0),
-    untargeted: raw.filter((r) => r.achievement === null).map((r) => r.input.key),
+    untargeted: raw
+      .filter((r) => r.achievement === null && !r.input.asked)
+      .map((r) => r.input.key),
+    unmeasured: raw
+      .filter((r) => r.achievement === null && r.input.asked)
+      .map((r) => r.input.key),
   };
 }
 
@@ -348,6 +362,24 @@ export function ratingFor(totalBp: Bp, config: PerformanceConfig): string {
   return bands[bands.length - 1]?.label ?? "Unrated";
 }
 
+/**
+ * Which end of the configured bands a score sits at — the top band, the
+ * bottom one, or between. A screen colours from THIS rather than from numbers
+ * of its own: the CRM drew green at 80 and red under 60 while the word beside
+ * it came from the configured bands, so the colour and the word could
+ * disagree about the same score.
+ */
+export function ratingEnd(totalBp: Bp, config: PerformanceConfig): "top" | "bottom" | "middle" {
+  const bands = [...(config["performance.ratingBands"] as RatingBand[])].sort(
+    (a, b) => b.min - a.min,
+  );
+  if (bands.length < 2) return "middle";
+  const score = totalBp / 100;
+  if (score >= bands[0].min) return "top";
+  if (score < bands[bands.length - 2].min) return "bottom";
+  return "middle";
+}
+
 /* ---------------------------------------------------------------- forecast */
 
 export type ForecastInput = {
@@ -355,6 +387,13 @@ export type ForecastInput = {
   target: number;
   workingDaysElapsed: number;
   workingDaysTotal: number;
+  /**
+   * The part of `actual` sold TODAY. Today is not an elapsed day, so its sales
+   * cannot be in the run rate either — dividing the whole month-to-date by the
+   * completed days alone credits this morning's orders to every remaining day
+   * and lifts the projection. Zero for a closed month or where unknown.
+   */
+  actualToday?: number;
 };
 
 export type Forecast = {
@@ -393,8 +432,12 @@ export function forecast(input: ForecastInput): Forecast {
     };
   }
 
-  const projected = Math.round(
-    (input.actual / input.workingDaysElapsed) * input.workingDaysTotal,
+  const completed = Math.max(0, input.actual - (input.actualToday ?? 0));
+  // Never below what is already sold: the projection is of the month, and the
+  // month already holds `actual`.
+  const projected = Math.max(
+    input.actual,
+    Math.round((completed / input.workingDaysElapsed) * input.workingDaysTotal),
   );
   const shortfall = input.target > input.actual ? input.target - input.actual : null;
 
@@ -427,6 +470,12 @@ export type Alert = {
 
 export type AlertInput = {
   revenueBp: Bp | null;
+  /**
+   * Revenue achievement over the COMPLETED working days only, for the pace
+   * check — which measures against completed days and must not count today's
+   * sales against them. Falls back to `revenueBp` where not given.
+   */
+  revenueCompletedBp?: Bp | null;
   volumeBp: Bp | null;
   collectionBp: Bp | null;
   activityBp: Bp | null;
@@ -474,11 +523,12 @@ export function alertsFor(input: AlertInput, config: PerformanceConfig): Alert[]
     const expected = Math.round(
       (elapsedBp * config["performance.paceWarningPercent"]) / 100,
     );
-    if (input.workingDaysElapsed > 0 && input.revenueBp < expected) {
+    const pace = input.revenueCompletedBp ?? input.revenueBp;
+    if (input.workingDaysElapsed > 0 && pace < expected) {
       alerts.push({
         key: "behind-pace",
         severity: "high",
-        message: `Revenue is at ${pct(input.revenueBp)} with ${pct(elapsedBp)} of the working month gone.`,
+        message: `Revenue is at ${pct(pace)} with ${pct(elapsedBp)} of the working month gone.`,
       });
     }
   }

@@ -8,7 +8,7 @@ import { DeleteLead } from "./delete-lead";
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
-import { CallHistoryCard, UpcomingFollowUpCard } from "@/components/leads/record/followup-and-calls";
+import { CallDetail, UpcomingFollowUpCard } from "@/components/leads/record/followup-and-calls";
 import type { LeadCallEntry, UpcomingFollowUp } from "@/lib/services/lead-followup-service";
 import { cx } from "@/components/ui/primitives";
 import {
@@ -837,8 +837,6 @@ export function LeadRecordScreen({
                 requireNextAction={requireNextAction}
                 canWork={canWork}
               />
-              <UpcomingFollowUpCard followUps={followUps} day={day} />
-              <CallHistoryCard calls={callHistory} />
               <GateCard
                 record={record}
                 base={base}
@@ -976,14 +974,19 @@ export function LeadRecordScreen({
             />
           ) : null}
 
-          {here === "nurture" ? <NurturePanel workspace={workspace} nurture={nurture} total={counts.tasks} /> : null}
+          {here === "nurture" ? (
+            <>
+              <UpcomingFollowUpCard followUps={followUps} day={day} />
+              <NurturePanel workspace={workspace} nurture={nurture} total={counts.tasks} />
+            </>
+          ) : null}
 
           {here === "transitions" ? (
             <HistoryPanel transitions={transitions} total={counts.transitions} base={base} />
           ) : null}
 
           {here === "timeline" ? (
-            <TimelinePanel page={timeline} kind={timelineKind} base={base} />
+            <TimelinePanel page={timeline} kind={timelineKind} base={base} callHistory={callHistory} />
           ) : null}
         </div>
 
@@ -2768,10 +2771,12 @@ function TimelinePanel({
   page,
   kind,
   base,
+  callHistory = [],
 }: {
   page: TimelinePage;
   kind: string | null;
   base: string;
+  callHistory?: LeadCallEntry[];
 }) {
   const href = (params: Record<string, string | null>) => {
     const q = new URLSearchParams({ tab: "timeline" });
@@ -2825,6 +2830,7 @@ function TimelinePanel({
             {page.rows.map((e) => {
               const who = timelineActor(e);
               const mark = ACTOR_MARK[who.kind];
+              const call = callHistory.find((c) => c.id === e.sourceRecordId);
               return (
                 <li
                   key={e.id}
@@ -2841,6 +2847,7 @@ function TimelinePanel({
                     {stamp(e.occurredAt)} · <span className={mark.name}>{who.name}</span> ·{" "}
                     {who.what}
                   </span>
+                  {call ? <CallDetail call={call} /> : null}
                 </li>
               );
             })}

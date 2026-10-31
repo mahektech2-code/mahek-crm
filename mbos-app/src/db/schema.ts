@@ -2155,6 +2155,29 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE samples ADD COLUMN sendingMode TEXT;`,
   ],
 
+  /*
+   * WHETHER A TARGET WAS SET, said by the office rather than guessed here.
+   *
+   * The phone read it off the figures — any component above zero — and the
+   * figures cannot answer it: the office writes a score row for anybody who
+   * sold something and stores an unasked component as zero. `hasTarget` is
+   * `target_id is not null` on that row. NULLABLE, because a row pulled before
+   * the office sent it has no answer, and the screen falls back to the old
+   * reading for exactly those.
+   */
+  [`ALTER TABLE performance ADD COLUMN hasTarget INTEGER;`],
+
+  /*
+   * A TARGET NAMES ITS SHOP, because the shop may not be on this phone. The
+   * office credits him with shops outside the area he is allocated, and the
+   * book is narrowed to that area — so those targets arrived with no customer
+   * row to read a name off. Read only where the customer row is missing.
+   */
+  [
+    `ALTER TABLE customer_targets ADD COLUMN customerName TEXT;`,
+    `ALTER TABLE customer_targets ADD COLUMN customerCity TEXT;`,
+  ],
+
 ];
 
 /**

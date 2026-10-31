@@ -27,6 +27,7 @@ import {
   applyOutstanding,
   OUTSTANDING_SOURCE,
 } from "@/lib/services/outstanding-import-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -145,7 +146,7 @@ beforeEach(async () => {
     .insert(users)
     .values({
       id: id("usr"), name: "Priya", email: "priya@test.local",
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x", role: "associate", initials: "PR",
     })
     .returning();
@@ -157,7 +158,7 @@ beforeEach(async () => {
     .insert(customers)
     .values({
       id: id("cus"), name: "A TO Z ENTERPRISES", contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai", ownerId: priya.id, salesAmId: priya.id,
       customerSince: addDays(TODAY, -400),
     })

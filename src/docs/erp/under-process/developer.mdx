@@ -18,7 +18,7 @@ The marking rule is pure:
 
 <DbTable name="erp_production_plan_prints" />
 
-Migration `0303_erp_production_plans` creates them, adds the `plan` number series, and gives the module to the Production Head designation and its holders.
+Migration `0305_erp_production_plans` creates them, adds the `plan` number series, and gives the module to the Production Head designation and its holders.
 
 Tests: `src/lib/erp/engines/production-plan.test.ts`.
 
@@ -29,4 +29,4 @@ Tests: `src/lib/erp/engines/production-plan.test.ts`.
 
 <Code file="src/lib/erp/production-plan.ts" symbol="syncPlanFromOrders" collapsed />
 
-Migration `0304_erp_plan_order_lines` adds `source`, `source_key` and `order_refs`, with a partial unique index on (`plan_id`, `source_key`) where `source = 'order'`.
+Migration `0306_erp_plan_order_lines` adds `source`, `source_key` and `order_refs`, with a partial unique index on (`plan_id`, `source_key`) where `source = 'order'`.

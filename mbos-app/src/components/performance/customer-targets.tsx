@@ -63,6 +63,21 @@ export function useCustomerTargets(period: string | null, visit: number): Custom
   return period && read?.key.startsWith(`${period}#`) ? read.value : null;
 }
 
+/**
+ * The card's title, the same in every state. It sits directly under his own
+ * revenue target and draws a rupee figure "of" a rupee figure, so it has to
+ * say on its face that this is the SUM of his shops' targets — read as
+ * "Your customers' targets" it was taken for a second copy of his own.
+ */
+function CardTitle() {
+  return (
+    <>
+      <T s="label">Shop targets</T>
+      <T s="micro">Sum of each shop&apos;s monthly target</T>
+    </>
+  );
+}
+
 /** Rows drawn before "Show more" — a book can carry hundreds of shops. */
 const PAGE = 20;
 
@@ -86,7 +101,7 @@ export function CustomerTargetsCard({
   if (!period) {
     return (
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <T s="small" style={{ color: C.body, marginTop: 6 }}>
           Each shop&apos;s target is set month by month. Pick This month or Last month to see
           them shop by shop.
@@ -98,7 +113,7 @@ export function CustomerTargetsCard({
   if (!data) {
     return (
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <T s="small" style={{ color: C.muted, marginTop: 6 }}>
           Loading…
         </T>
@@ -109,7 +124,7 @@ export function CustomerTargetsCard({
   if (!data.rows.length) {
     return (
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <T s="small" style={{ color: C.body, marginTop: 6 }}>
           {data.computedAt
             ? `None of your customers carries a target for ${monthWords}, and none has bought or has an order waiting.`
@@ -126,7 +141,7 @@ export function CustomerTargetsCard({
   return (
     <>
       <Card style={{ marginTop: 12 }}>
-        <T s="label">Your customers&apos; targets</T>
+        <CardTitle />
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
           <CountUp
             value={summary.achievedPaise}
@@ -134,7 +149,7 @@ export function CustomerTargetsCard({
             style={[typeScale.body, { fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
           />
           <T s="small" style={{ color: C.muted }}>
-            {summary.targetPaise ? `of ${inrFromPaise(summary.targetPaise)}` : 'no targets set'}
+            {summary.targetPaise ? `billed of ${inrFromPaise(summary.targetPaise)}` : 'billed · no targets set'}
           </T>
         </View>
         {summary.targetPaise ? (
@@ -162,13 +177,12 @@ export function CustomerTargetsCard({
             the office approves it.
           </T>
         ) : null}
-        {/* The two targets are different grains, and the screen must not
-            suggest one adds up to the other: a customer target is what one
-            account is expected to buy, and his own target is what he is
-            appraised on. */}
+        {/* The two targets are different grains AND different measures: a
+            shop's target is met by what was BILLED to it, his own revenue
+            target by orders the office accepted. Said once, plainly, so the
+            two rupee figures are never read as one number twice. */}
         <T s="micro" style={{ marginTop: 8 }}>
-          Each shop&apos;s own monthly target, set by the office. It is a separate figure from your
-          revenue target above — the two are not meant to add up.
+          Measured on bills, not orders — this is not your own target above.
         </T>
       </Card>
 
@@ -201,7 +215,12 @@ export function CustomerTargetsCard({
         <ListCard style={{ marginTop: 10 }}>
           {visible.slice(0, shown).map((r, i) => (
             <Stagger key={r.customerId} index={i}>
-              <TargetRow row={r} first={i === 0} today={today} onPress={() => onOpen(r.customerId)} />
+              <TargetRow
+                row={r}
+                first={i === 0}
+                today={today}
+                onPress={r.onPhone === false ? undefined : () => onOpen(r.customerId)}
+              />
             </Stagger>
           ))}
         </ListCard>
@@ -239,7 +258,8 @@ function TargetRow({
   row: CustomerTargetRow;
   first: boolean;
   today: string;
-  onPress: () => void;
+  /** Absent for a shop whose record is not on this phone — there is nothing to open. */
+  onPress?: () => void;
 }) {
   const state = stateOf(row);
   const gap = gapPaise(row);
@@ -294,12 +314,25 @@ function TargetRow({
         {row.unsentPaise ? (
           <T s="micro">{inrFromPaise(row.unsentPaise)} of it is still on this phone, not yet sent.</T>
         ) : null}
-        <T s="micro" style={{ marginTop: 2 }}>
-          {lastOrderWords(row.lastOrderDate, today)}
-        </T>
+        {/* Its last order is read off the customer row, which is not here — so
+            for a shop off the phone this would say "never ordered" about a shop
+            with sales against it. Said nothing rather than said wrong. */}
+        {row.onPhone === false ? null : (
+          <T s="micro" style={{ marginTop: 2 }}>
+            {lastOrderWords(row.lastOrderDate, today)}
+          </T>
+        )}
 
-        {row.carriedForward || (row.isDefault && row.targetPaise > 0) ? (
+        {row.onPhone === false ? (
+          <T s="micro" style={{ marginTop: 2 }}>
+            Its record is not on this phone because it is outside the area you are set to work. Ask your
+            manager if it should be added.
+          </T>
+        ) : null}
+
+        {row.onPhone === false || row.carriedForward || (row.isDefault && row.targetPaise > 0) ? (
           <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+            {row.onPhone === false ? <Badge tone="neutral">Outside your area</Badge> : null}
             {row.carriedForward ? <Badge tone="neutral">Last month&apos;s figure</Badge> : null}
             {row.isDefault && !row.carriedForward && row.targetPaise > 0 ? (
               <Badge tone="neutral">Default</Badge>

@@ -288,9 +288,15 @@ function statusWord(s: UnitStatus): string {
  * allocated to it has units — every packing batch from today mints its boxes
  * — and no where none does: stock packed before box ids existed has no label
  * to scan, and refusing it would stop dispatch on the day this shipped.
+ *
+ * A line with NO lot allocated is not that exemption. Nothing says what is in
+ * the lorry, so it is asked for scans like any other: scanning a box is what
+ * allocates its lot. Reading "no lot" as "packed before box ids" let order
+ * 10058 leave with no lot code at all.
  */
-export function scanGate(p: { requireScan: boolean; lotsHaveUnits: boolean; target: number; scanned: number }): string | null {
-  if (!p.requireScan || !p.lotsHaveUnits) return null;
+export function scanGate(p: { requireScan: boolean; lotsHaveUnits: boolean; lotAllocated: boolean; target: number; scanned: number }): string | null {
+  if (!p.requireScan) return null;
+  if (!p.lotsHaveUnits && p.lotAllocated) return null;
   if (p.scanned < p.target) return `${p.target - p.scanned} of ${p.target} still to scan`;
   return null;
 }

@@ -29,6 +29,7 @@ import { appAccess, customerAmChanges, customers, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -43,7 +44,7 @@ async function makeUser(name: string, role: "admin" | "manager" | "associate") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -60,7 +61,7 @@ async function makeCustomer(overrides: Partial<typeof customers.$inferInsert> = 
       id: id("cus"),
       name: `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Berhampur",
       status: "active",
       kind: "customer",

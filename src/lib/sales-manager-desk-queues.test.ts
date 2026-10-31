@@ -19,6 +19,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { pipelineDesk } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
+import { testPhone } from "@/lib/test-phone";
 
 const DAY = "2026-09-24";
 const id = (p: string) => `${p}_${randomUUID().slice(0, 8)}`;
@@ -33,7 +34,7 @@ async function lead(name: string) {
       id: id("cus"),
       name,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "sample_trial",
@@ -94,7 +95,7 @@ beforeEach(async () => {
         id: id("usr"),
         name,
         email: `${randomUUID().slice(0, 6)}@test.local`,
-        phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+        phone: testPhone(),
         passwordHash: "x",
         role: "associate",
         initials: "XX",

@@ -34,6 +34,7 @@ import {
   salesFigures,
   snapshotCustomerHealth,
 } from "@/lib/services/owner-dashboard-service";
+import { testPhone } from "@/lib/test-phone";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -62,7 +63,7 @@ async function makeUser(name: string, role: "associate" | "admin") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -97,7 +98,7 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai",
       region: "Maharashtra",
       ownerId: rahul.id,

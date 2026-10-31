@@ -23,6 +23,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
 import { convertLeadToProspect, requestProspect } from "@/lib/actions/lead-calling-desk";
 import { advanceLeadStage } from "@/lib/actions/leads";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const FUTURE = "2026-12-01";
@@ -38,7 +39,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -55,7 +56,7 @@ async function bareLead(over: Partial<typeof customers.$inferInsert> = {}) {
     .values({
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "suspect",

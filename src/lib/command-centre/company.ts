@@ -15,6 +15,7 @@ import { employeeMaster } from "@/lib/services/employee-service";
 import { change, crore, fmtDate, initials, monthLong, monthShort, num, plural, signedChange, span } from "./format";
 import { stampIST } from "./provider";
 import type { Bar, CompanyPayload, FigureDrawer, PeriodCard, PeriodState } from "./types";
+import { scoreText } from "@/lib/score-format";
 
 /* ---------------------------------------------------------------------------
  * THE COMPANY SECTION — the headline, read off the services the owning apps
@@ -352,7 +353,7 @@ export async function companyPayload(p: PeriodState): Promise<CompanyPayload> {
     : `${num(ret.counts.active)} Healthy · ${num(ret.counts["at-risk"])} Slowing · no month-end snapshot to compare with yet`;
   const lastSync = r.people.lastSync?.at ?? null;
   const hrAgeDays = lastSync ? Math.floor((Date.now() - new Date(lastSync).getTime()) / 86_400_000) : null;
-  const avgScore = scored.length ? Math.round(scored.reduce((s, x) => s + x.score.totalBp, 0) / scored.length / 100) : null;
+  const avgScore = scored.length ? scoreText(scored.reduce((s, x) => s + x.score.totalBp, 0) / scored.length) : null;
   const goodPlus = scored.filter((x) => x.score.totalBp >= 7000).length;
 
   const now: CompanyPayload["now"] = [
@@ -380,7 +381,7 @@ export async function companyPayload(p: PeriodState): Promise<CompanyPayload> {
     {
       key: "ts",
       label: `Team score, ${monthName}`,
-      value: avgScore == null ? "—" : String(avgScore),
+      value: avgScore ?? "—",
       sub: scored.length ? `Month · ${num(goodPlus)} of ${num(scored.length)} at Good or above` : "Month · nobody holds a published target yet",
     },
   ];
@@ -395,7 +396,7 @@ export async function companyPayload(p: PeriodState): Promise<CompanyPayload> {
     rank: `#${t.rank}`,
     name: t.userName,
     role: roles.get(t.userId) ?? "Staff",
-    score: String(Math.round(t.totalBp / 100)),
+    score: scoreText(t.totalBp),
     initials: initials(t.userName),
   }));
 
@@ -653,7 +654,7 @@ async function recordsBehind(p: PeriodState, key: string): Promise<{ label: stri
   if (key === "ts") {
     const readings = await readingsForPeriod(p.monthKey, p.today as BusinessDate, {});
     const ranked = rankPerformance(readings.map((x) => ({ ...x, totalBp: x.score.totalBp, revenuePaise: x.actuals.revenuePaise }))).filter((x) => x.rank !== null);
-    return { label: "Everyone scored", rows: ranked.slice(0, 8).map((x) => ({ a: x.userName, b: x.rating, c: String(Math.round(x.totalBp / 100)) })) };
+    return { label: "Everyone scored", rows: ranked.slice(0, 8).map((x) => ({ a: x.userName, b: x.rating, c: scoreText(x.totalBp) })) };
   }
   return { label: "Records behind it", rows: [] };
 }

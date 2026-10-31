@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
 import { db } from "@/db";
 import { allPassValues } from "@/lib/erp/engines/sfg-tests";
 import { refValues } from "@/lib/erp/refs";
@@ -40,6 +41,7 @@ import { addDaysIso } from "@/lib/erp/engines/sales";
 import { screenModule } from "@/lib/erp/screens";
 import { approvedPoLine } from "@/lib/erp/po-fixture";
 import { today } from "@/lib/erp/screens/common";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const tag = randomUUID().slice(0, 6);
@@ -52,7 +54,7 @@ const ago = (n: number) => addDaysIso(T, -n);
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;
@@ -126,6 +128,7 @@ before(async () => {
     await ok(mod("orders").actions!.ready(a, o.id, {}));
     await ok(mod("orders").forms!.allocate(a, { lot: "FG1BH", qty: String(qty) }, [], o.id));
     await ok(mod("orders").actions!.bill(a, o.id, { invoiceNo: `MMI/${qty}`, invoiceDate: ago(8 - i) }));
+    await attachInvoicePdf(o.id, a.user.id);
     await ok(mod("orders").actions!.approveInvoice(a, o.id, {}));
     await ok(mod("orderDetails").actions!.verify(a, o.id, { date: ago(8 - i) }));
   }

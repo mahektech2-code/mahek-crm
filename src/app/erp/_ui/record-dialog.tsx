@@ -41,6 +41,7 @@ export const PANEL_TAB: Record<string, string> = {
   canGroup: "Group",
   money: "Summary",
   orderTracking: "Customer tracking",
+  orderInvoice: "Invoice",
 };
 
 export function RecordDialog({
@@ -83,9 +84,11 @@ export function RecordDialog({
   const shown = fields.filter((f) => f !== status);
 
   const panel = row.panel ? renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen }) : null;
+  const more = (row.panels ?? []).map((p, i) => ({ key: `panel${i + 1}`, label: PANEL_TAB[p.kind] ?? "More", node: renderPanel(p.kind, { data: p.data, row, screen: screen.screen }) }));
   const tabs: DialogTab[] = [
     ...(panel ? [{ key: "panel", label: PANEL_TAB[row.panel!.kind] ?? "Overview" }] : []),
     { key: "details", label: "Details", count: shown.length },
+    ...more.map((m) => ({ key: m.key, label: m.label })),
   ];
   /* Why the held-back action just pressed cannot be taken — a tablet has no hover for a title. */
   const [why, setWhy] = useState<{ l: string; why: string } | null>(null);
@@ -97,7 +100,7 @@ export function RecordDialog({
      the action removes from the list (deleted, filtered out) closes on its
      own, because the list no longer holds a row to draw. */
   return (
-    <ErpDialog onClose={onClose} label={title} size={panel ? "lg" : "md"} tall={tabs.length > 1}>
+    <ErpDialog onClose={onClose} label={title} size={panel || more.length ? "lg" : "md"} tall={tabs.length > 1}>
       <DialogHeader onClose={onClose} aside={status ? <StatusBadge value={status.v} /> : null}>
         <SectionLabel>{kind}</SectionLabel>
         <DialogTitle className="mt-0.5">{title}</DialogTitle>
@@ -129,6 +132,7 @@ export function RecordDialog({
       <DialogBody>
         {stages ? <StageBar values={stages.values} at={String(row.v[stages.key] ?? "")} tones={tones} /> : null}
         {active === "panel" ? panel : null}
+        {more.map((m) => (active === m.key ? <div key={m.key}>{m.node}</div> : null))}
         {active === "details" ? (
           <>
             <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-2.5">

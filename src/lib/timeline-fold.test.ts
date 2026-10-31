@@ -21,6 +21,7 @@ import { calls, customers, reminders, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { customerTimeline, customerTimelineCounts } from "@/lib/queries";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -54,7 +55,7 @@ beforeEach(async () => {
       id: id("usr"),
       name: "Priya",
       email: `priya_${randomUUID().slice(0, 6)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: "associate",
       initials: "PR",
@@ -66,7 +67,7 @@ beforeEach(async () => {
     id: customerId,
     name: "Nakoda Paints",
     contactPerson: "Karna",
-    phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+    phone: testPhone(),
     city: "Jaipur",
     ownerId: priya.id,
     salesAmId: priya.id,

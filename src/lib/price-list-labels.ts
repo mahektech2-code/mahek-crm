@@ -117,6 +117,19 @@ export const SCOPE_KIND_HINT: Record<PriceScopeKind, string> = {
   customer: "One shop by name. This beats every other scope.",
 };
 
+/** What leaving one of each kind out does — the hint under the Leave out picker. */
+export const EXCLUDE_KIND_HINT: Partial<Record<PriceScopeKind, string>> = {
+  customer: "One shop, by name. It goes to Standard unless another list names it.",
+  salesman: "Every shop in one salesman's book that this list would reach.",
+  beat: "Every shop on the beat that this list would reach.",
+  area: "Every shop in the area that this list would reach.",
+  city: "Every shop in the city that this list would reach — a city taken out of a state list.",
+  district: "Every shop in the district that this list would reach.",
+};
+
+/** The kinds the Leave out picker offers, in the order it offers them. */
+export const EXCLUDE_KIND_ORDER: readonly PriceScopeKind[] = ["customer", "salesman", "area", "city", "district", "beat"];
+
 export const DOCUMENT_STATUS_LABEL: Record<PriceDocumentStatus, string> = {
   queued: "Waiting",
   extracting: "Reading the file",

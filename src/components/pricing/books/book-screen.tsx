@@ -66,7 +66,7 @@ export function BookScreen({
   const [newDate, setNewDate] = React.useState("");
   const [cancelling, setCancelling] = React.useState<string | null>(null);
   const [reason, setReason] = React.useState("");
-  const [addingScope, setAddingScope] = React.useState(false);
+  const [addingScope, setAddingScope] = React.useState<false | "in" | "out">(false);
   const [removing, setRemoving] = React.useState<ScopeView | null>(null);
   const [sharing, setSharing] = React.useState(false);
 
@@ -329,9 +329,14 @@ export function BookScreen({
               hint="Rules are kept through every revision. A shop named by a narrower book (a city inside this state, a named shop) is priced from that one."
               action={
                 canManage && list && book.live ? (
-                  <Button size="sm" variant="primary" onClick={() => setAddingScope(true)}>
-                    Add who it covers
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => setAddingScope("out")}>
+                      Leave somebody out
+                    </Button>
+                    <Button size="sm" variant="primary" onClick={() => setAddingScope("in")}>
+                      Add who it covers
+                    </Button>
+                  </div>
                 ) : null
               }
             />
@@ -360,17 +365,22 @@ export function BookScreen({
                 <tbody>
                   {coverage.rules.map((r) => (
                     <Tr key={r.scopeId}>
-                      <Td>{SCOPE_KIND_LABEL[r.kind as keyof typeof SCOPE_KIND_LABEL] ?? r.kind}</Td>
+                      <Td>
+                        {r.excluded ? <span className="mr-1.5 text-[11px] font-semibold text-danger uppercase">Except</span> : null}
+                        {SCOPE_KIND_LABEL[r.kind as keyof typeof SCOPE_KIND_LABEL] ?? r.kind}
+                      </Td>
                       <Td className="truncate" title={r.label}>
                         {r.label}
                       </Td>
-                      <Td>{r.freight === "any" ? "Any" : r.freight === "paid" ? "Paid" : "To Pay"}</Td>
-                      <Td align="right">{r.reach.toLocaleString("en-IN")}</Td>
+                      <Td>{r.excluded ? "—" : r.freight === "any" ? "Any" : r.freight === "paid" ? "Paid" : "To Pay"}</Td>
+                      <Td align="right" className={r.excluded ? "text-danger" : undefined} title={r.excluded ? "Shops this row takes off the book" : undefined}>
+                        {r.excluded ? `−${r.reach.toLocaleString("en-IN")}` : r.reach.toLocaleString("en-IN")}
+                      </Td>
                       <Td align="right" className="font-medium text-ink">
-                        {r.win.toLocaleString("en-IN")}
+                        {r.excluded ? "—" : r.win.toLocaleString("en-IN")}
                       </Td>
                       <Td align="right" className={cx(r.lose ? "text-warn-ink" : "text-muted")}>
-                        {r.lose.toLocaleString("en-IN")}
+                        {r.excluded ? "—" : r.lose.toLocaleString("en-IN")}
                       </Td>
                       <Td align="right">
                         {canManage ? (
@@ -406,7 +416,10 @@ export function BookScreen({
             </Callout>
           ) : null}
           <Card>
-            <CardHeader title="Shops another book wins" hint="This book names them, and a narrower or higher-ranked book prices them instead." />
+            <CardHeader
+              title="Shops also on another list"
+              hint="This book names them, and another list prices them instead. A shop should be on one list: settle them on Coverage, or leave them out here."
+            />
             {coverage?.lost.length ? (
               <div className="max-h-[420px] overflow-auto">
                 <table className="w-full table-fixed">
@@ -665,7 +678,8 @@ export function BookScreen({
 
       {list ? (
         <ScopeModal
-          open={addingScope}
+          open={!!addingScope}
+          leaving={addingScope === "out"}
           onClose={async () => {
             setAddingScope(false);
             await propagateBookCoverage(book.id);

@@ -24,6 +24,7 @@ import { leadActivityHistoryAction, logLeadCall, logLeadVisit, visitSalesmenActi
 import { logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { workableLeadIds } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
+import { testPhone } from "@/lib/test-phone";
 
 /* Every call needs a remark now; the tests that are not about that supply one. */
 const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
@@ -53,7 +54,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -70,7 +71,7 @@ async function raise(name: string, over: Partial<Parameters<typeof captureLead>[
   const r = await captureLead({
     salesType: "direct",
     name,
-    phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+    phone: testPhone(),
     city: "Nashik",
     source: "telecalling",
     ...over,

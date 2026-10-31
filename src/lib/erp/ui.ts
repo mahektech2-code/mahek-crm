@@ -347,6 +347,8 @@ export type ToolResult = {
 export type BulkSpec = {
   id: string;
   l: string;
+  /** Handled on the page rather than by the server: "printInvoices" opens the Print invoices pop-up over the selection. */
+  client?: "printInvoices";
   confirm?: string;
   /** Values to collect once for the whole selection. */
   prompt?: PromptSpec;
@@ -379,6 +381,8 @@ export type ListRow = {
   /** Free-form panels a screen draws in the record (allocation, evidence…). */
   /** `covers`: column keys the panel already draws, left out of the record's field list. */
   panel?: { kind: string; data: unknown; covers?: string[] };
+  /** More screen-drawn panels, each a tab after `panel` (an order's Invoice beside its Customer tracking). */
+  panels?: { kind: string; data: unknown }[];
   /**
    * The rows FOLDED under this one (`ListSpec.fold`): a can's lots under its
    * item total. Each is a whole row, with every column, so the list's
@@ -400,6 +404,12 @@ export type SelectSum = { k: string; l: string; one?: string; kind?: "sum" | "di
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
+  /**
+   * The row value each group's heading draws as invoice buttons: "y:<order>"
+   * (a PDF is attached — view and print), "n:<order>" (billed, no PDF — a red
+   * Add PDF), absent (not billed). Read off the group's first row.
+   */
+  groupInvoice?: string;
   /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
   rowMenu?: string[];
   /**

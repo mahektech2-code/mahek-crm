@@ -56,6 +56,7 @@ import {
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 import { QUALIFICATION_ANSWERS, qualificationColumns } from "@/lib/qualification-fixtures";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 type Level = "associate" | "manager";
@@ -73,7 +74,7 @@ async function makeUser(name: string, level: Level, apps: [string, Level][], mod
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),
@@ -119,7 +120,7 @@ async function makeProspect(ownerId: string | null, over: Partial<typeof custome
     .values({
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "prospect",

@@ -58,6 +58,7 @@ import { hrmsScreenModule } from "@/lib/hrms/screens";
 import { today } from "@/lib/hrms/server";
 import { addDaysISO, monthOf, weekdayOf } from "@/lib/hrms/time";
 import { HELP } from "@/lib/hrms/values";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const mod = (k: string) => {
@@ -95,7 +96,7 @@ async function account(name: string, emp: { id: string } | null, level: "associa
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s/g, ".")}.${randomUUID().slice(0, 4)}@impact.test`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),

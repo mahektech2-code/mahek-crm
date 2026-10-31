@@ -124,6 +124,8 @@ export type BookCoverage = {
     kind: string;
     label: string;
     freight: string;
+    /** A leave-out row: `reach` is then the shops it takes off this book, and win/lose are 0. */
+    excluded: boolean;
     /** Shops this rule names. */
     reach: number;
     /** Of those, the shops this book actually prices. */

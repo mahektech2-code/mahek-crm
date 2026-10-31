@@ -25,6 +25,7 @@ import { screenModule } from "@/lib/erp/screens";
 import { fgLots, rmLots } from "@/lib/erp/stock";
 import { stockInquiry } from "@/lib/erp/stock-inquiry";
 import { unscoped } from "@/lib/erp/window";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const BHW = "erpg_bhiwandi";
@@ -33,7 +34,7 @@ const tag = randomUUID().slice(0, 6);
 async function makeUser(name: string, level: "associate" | "manager" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@adjust.test`, phone: String(9824000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@adjust.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;

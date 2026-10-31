@@ -21,6 +21,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig } from "@/lib/config/store";
 import { checkBalances, checkRows, type ReadRow } from "@/lib/engines/bank-statements";
 import * as S from "@/lib/services/bank-statement-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const msg = (r: { ok: boolean; error?: string; fieldErrors?: { message: string }[] }) => (r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?"));
@@ -34,7 +35,7 @@ let clerk: typeof users.$inferSelect;
 async function makeUser(name: string, level: "associate" | "manager") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@bank.test`, phone: String(9830000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@bank.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "accounts", role: level });
   return u;
@@ -76,11 +77,13 @@ const lineOf = async (narration: string) => {
 };
 
 before(async () => {
-  await db.execute(sql`truncate users, erp_bank_matches, erp_bank_lines, bank_statement_uploads, payments, payment_receipts, bills, vendor_payouts, erp_money_txns, audit_log restart identity cascade`);
+  await db.execute(sql`truncate users, erp_bank_matches, erp_bank_lines, bank_statement_uploads, payments, payment_receipts, bills, vendor_payouts, erp_money_txns, erp_money_accounts, audit_log restart identity cascade`);
   await db.execute(sql`delete from customers where id like 'cus_bank_%'`);
   /* The four accounts the migration seeds. Another suite (crm-accounts-impact) truncates
      erp_money_accounts, and which suites share a database depends on how the list is
-     sharded — so this suite puts them back rather than trusting what ran before it. */
+     sharded — so this suite puts them back rather than trusting what ran before it. It
+     truncates them first: account names are unique, and that suite leaves its own
+     "Kotak Bank", which made the insert below skip macc_kotak. */
   await db.execute(sql`insert into erp_money_accounts (id, name, kind, sort) values ('macc_kotak', 'Kotak Bank', 'bank', 1), ('macc_icici', 'ICICI Bank', 'bank', 2), ('macc_cash', 'Cash in Hand', 'cash', 3), ('macc_petty', 'Petty Cash', 'petty', 4) on conflict do nothing`);
   await db.execute(sql`update erp_money_accounts set last4 = '4471', bank_name = 'Kotak Mahindra', active = true where id = 'macc_kotak'`);
   await db.execute(sql`update erp_money_accounts set last4 = '0932', bank_name = 'ICICI Bank', active = true where id = 'macc_icici'`);

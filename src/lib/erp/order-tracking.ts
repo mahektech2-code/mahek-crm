@@ -599,26 +599,38 @@ export async function regenerateTracking(ctx: ErpContext, orderNo: number): Prom
  * PDF is attached once. Never another party's: an invoice is one party's.
  */
 async function invoiceFile(orderNo: number): Promise<{ id: string; filename: string } | null> {
-  const rows = (await db.execute(sql`
-    select a.id, a.filename
-      from attachments a
-     where a.parent_type = 'erp_invoice' and a.status = 'available'
-       and (a.parent_id = ${String(orderNo)}
-            or a.parent_id in (
-              select distinct o2.order_no::text
-                from erp_orders o
-                join erp_orders o2 on o2.billing_customer_id = o.billing_customer_id
-                  and o2.status <> 'Cancel'
-                  and upper(regexp_replace(coalesce(o2.tally_bill_no, ''), '\s', '', 'g')) = upper(regexp_replace(o.tally_bill_no, '\s', '', 'g'))
-               where o.order_no = ${orderNo} and o.status <> 'Cancel' and coalesce(o.tally_bill_no, '') <> ''))
-     order by (a.parent_id = ${String(orderNo)}) desc, a.created_at desc
-     limit 1
-  `)) as unknown as { id: string; filename: string }[];
-  return rows[0] ? { id: String(rows[0].id), filename: String(rows[0].filename) } : null;
+  return (await invoiceFilesFor([orderNo])).get(orderNo) ?? null;
 }
 
 export async function invoiceFileFor(orderNo: number) {
   return invoiceFile(orderNo);
+}
+
+/** `invoiceFile` for many orders in one read — the order lists draw a view and print button on every order. */
+export async function invoiceFilesFor(orderNos: number[]): Promise<Map<number, { id: string; filename: string; contentType: string }>> {
+  const nos = [...new Set(orderNos.filter((n) => Number.isInteger(n)))];
+  const out = new Map<number, { id: string; filename: string; contentType: string }>();
+  if (!nos.length) return out;
+  const rows = (await db.execute(sql`
+    select b.order_no as n, f.id, f.filename, f.content_type
+      from (select distinct order_no from erp_orders where order_no in ${nos}) b
+      cross join lateral (
+        select a.id, a.filename, a.content_type
+          from attachments a
+         where a.parent_type = 'erp_invoice' and a.status = 'available'
+           and (a.parent_id = b.order_no::text
+                or a.parent_id in (
+                  select distinct o2.order_no::text
+                    from erp_orders o
+                    join erp_orders o2 on o2.billing_customer_id = o.billing_customer_id
+                      and o2.status <> 'Cancel'
+                      and upper(regexp_replace(coalesce(o2.tally_bill_no, ''), '\s', '', 'g')) = upper(regexp_replace(o.tally_bill_no, '\s', '', 'g'))
+                   where o.order_no = b.order_no and o.status <> 'Cancel' and coalesce(o.tally_bill_no, '') <> ''))
+         order by (a.parent_id = b.order_no::text) desc, a.created_at desc
+         limit 1) f
+  `)) as unknown as { n: number; id: string; filename: string; content_type: string }[];
+  for (const r of rows) out.set(Number(r.n), { id: String(r.id), filename: String(r.filename), contentType: String(r.content_type) });
+  return out;
 }
 
 /* ============================================================ the reads */

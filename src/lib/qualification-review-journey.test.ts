@@ -16,6 +16,7 @@ import { QUALIFICATION_ANSWERS } from "@/lib/qualification-fixtures";
 import { REVIEW_EDIT_ACTION } from "@/lib/qualification-review";
 import { DESK_FIELDS } from "@/lib/engines/lead-calling-desk";
 import { PROSPECT_CONDITIONS, QUALIFICATION_CONDITIONS } from "@/lib/engines/lead-gates";
+import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
  * The Qualification Review, end to end against the real services.
@@ -45,7 +46,7 @@ async function makeUser(name: string, role: "associate" | "manager" | "admin") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\W+/g, "")}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -63,7 +64,7 @@ async function answeredLead(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: `Lead ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ganesh",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Nashik",
       kind: "lead",
       leadStage: "qualification",

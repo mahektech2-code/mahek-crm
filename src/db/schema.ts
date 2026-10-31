@@ -10977,6 +10977,12 @@ export const priceLists = pgTable(
      * change of `supersedes_id`, so no write path has to remember it.
      */
     bookId: text("book_id"),
+    /**
+     * Shops this DRAFT takes from other books when it is published — "move
+     * here" answered before publishing. `[{ customerId, fromBookId }]`,
+     * applied and cleared by `publishDraftIn`.
+     */
+    pendingMoves: jsonb("pending_moves").$type<Array<{ customerId: string; fromBookId: string }>>(),
     termsText: text("terms_text"),
     signatory: text("signatory"),
     notes: text("notes"),
@@ -11069,6 +11075,12 @@ export const priceListScopes = pgTable(
     priority: integer("priority").notNull().default(0),
     validFrom: date("valid_from"),
     validTo: date("valid_to"),
+    /**
+     * A row that LEAVES SHOPS OUT of its list rather than putting them on.
+     * Only a shop, a salesman, a beat, an area, a city or a district can be
+     * left out (a check constraint holds it).
+     */
+    excluded: boolean("excluded").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
   },
@@ -16002,6 +16014,47 @@ export const factoryRequirementSends = pgTable("factory_requirement_sends", {
   result: jsonb("result"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Every loading scan the server received from a phone, kept BEFORE it is
+ * judged (`lib/factory/scan-batch.ts`). The id is the phone's own, so a resend
+ * is answered from `result` instead of being judged twice, and a scan that
+ * reached prod stays on record even when judging it threw. A log, never a
+ * ledger: the box on the lorry is still the ERP's scan row.
+ *
+ * received → accepted | repeat | refused | error; `not_judged` is a scan that
+ * came in behind a refusal, which the phone tells the loader to scan again.
+ */
+export const factoryScanEvents = pgTable(
+  "factory_scan_events",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    lorryKey: text("lorry_key").notNull(),
+    taskId: text("task_id"),
+    code: text("code").notNull(),
+    /** The half of a box-and-sticker pair this scan was judged with. */
+    held: text("held"),
+    /** The phone's clock when the label was read — what it said, not what is true. */
+    scannedAt: timestamp("scanned_at", { withTimezone: true }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }),
+    status: text("status").notNull().default("received"),
+    result: jsonb("result"),
+    error: text("error"),
+    /** How long the server took to judge it. */
+    judgeMs: integer("judge_ms"),
+    /** How long the loader waited, label read to answer shown — the phone's measure, sent with its next batch. */
+    waitMs: integer("wait_ms"),
+    appBuild: text("app_build"),
+  },
+  (t) => [
+    index("factory_scan_events_lorry_idx").on(t.godownId, t.lorryKey, t.receivedAt),
+    index("factory_scan_events_open_idx").on(t.receivedAt).where(sql`${t.status} in ('received', 'error')`),
+    check("factory_scan_events_status_check", sql`${t.status} in ('received', 'accepted', 'repeat', 'refused', 'not_judged', 'error')`),
+  ],
+);
 
 /**
  * What the app could not accept on its own: output outside the limit, a lot

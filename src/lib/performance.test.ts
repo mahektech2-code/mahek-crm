@@ -33,7 +33,8 @@ import {
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
+import { copyForwardSalesTargets, today } from "@/lib/recompute";
+import { publishSalesTarget } from "@/lib/actions/sales-targets";
 import { creditedTo } from "@/lib/sales-attribution";
 import { baselineFor } from "@/lib/services/sales-target-service";
 import { addMonths, endOfMonth } from "@/lib/business-date";
@@ -47,6 +48,7 @@ import {
 } from "@/lib/services/performance-service";
 import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
 import { checkRange, presetRange } from "@/lib/performance-range";
+import { testPhone } from "@/lib/test-phone";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -78,7 +80,7 @@ async function makeUser(name: string, role: "associate" | "manager") {
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -113,7 +115,7 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Mumbai",
       ownerId: manager.id,
       ...over,
@@ -270,7 +272,7 @@ beforeEach(async () => {
   await db.execute(sql`
     truncate table
       sales_performance_categories, sales_performance, sales_target_revisions,
-      sales_target_categories, sales_targets,
+      sales_target_categories, sales_targets, mbos_tasks,
       audit_log, job_runs, notifications, payments, payment_receipts, bills,
       interaction_product_lines, orders, calls, app_access, sessions, customers,
       product_aliases, products, finished_goods, product_brands,
@@ -1153,5 +1155,136 @@ describe("a range picked on the handset", () => {
     assert.equal(range.totalScoreBp, null);
     assert.equal(range.revenueTargetPaise, null);
     assert.ok(range.revenueActualPaise > 0, "what he did is still shown");
+  });
+});
+
+/* ====================================== the fixes from the October audit */
+
+describe("carrying a target into the next month", () => {
+  test("activity and a formulation mix both survive the copy", async () => {
+    /*
+     * The copy used to carry the retired `activity_target` and never
+     * `activity_target_bp`, so activity dropped out of every carried-forward
+     * target — and it copied only `category_id`, so a formulation band was
+     * written with neither key and the check constraint threw, leaving
+     * everybody after that person in the loop with no target at all.
+     */
+    const prior = addMonths(PERIOD, -1);
+    const priorId = id("stg");
+    await db.execute(sql`
+      insert into sales_targets (id, user_id, period, revenue_target_paise,
+        activity_target_bp, status, published_at)
+      values (${priorId}, ${rahul.id}, ${prior}, 100_000_00, 9000, 'published', now())
+    `);
+    await db.execute(sql`
+      insert into sales_target_categories (id, target_id, formulation_id,
+        minimum_bp, target_bp, stretch_bp)
+      values (${id("stc")}, ${priorId}, ${formulationId.get("m5x4")!}, 1000, 2000, 2500)
+    `);
+    // A second person after him, to show one copy cannot cost another.
+    await db.execute(sql`
+      insert into sales_targets (id, user_id, period, revenue_target_paise, status, published_at)
+      values (${id("stg")}, ${poonam.id}, ${prior}, 50_000_00, 'published', now())
+    `);
+
+    const { created, failed } = await copyForwardSalesTargets(PERIOD);
+    assert.equal(created, 2);
+    assert.deepEqual(failed, []);
+
+    const rows = await db.execute<{ activity_target_bp: number | null; formulation_id: string | null }>(sql`
+      select t.activity_target_bp, c.formulation_id
+        from sales_targets t
+        left join sales_target_categories c on c.target_id = t.id
+       where t.user_id = ${rahul.id} and t.period = ${PERIOD}
+    `);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].activity_target_bp, 9000);
+    assert.equal(rows[0].formulation_id, formulationId.get("m5x4"));
+  });
+});
+
+describe("the cached score", () => {
+  test("somebody with no target is cached with no target and no rating, not a zero", async () => {
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 2, amountPaise: 10_000_00 }]);
+    await recomputeSalesPerformance(PERIOD, TODAY as never);
+
+    const [row] = await db.execute<{
+      revenue_target_paise: string | null;
+      rating: string | null;
+      revenue_actual_paise: string;
+    }>(sql`
+      select revenue_target_paise, rating, revenue_actual_paise
+        from sales_performance where user_id = ${rahul.id} and period = ${PERIOD}
+    `);
+    assert.equal(row.revenue_target_paise, null);
+    assert.equal(row.rating, null);
+    assert.equal(Number(row.revenue_actual_paise), 10_000_00);
+  });
+
+  test("a row for somebody who has dropped off both lists is rewritten, not left standing", async () => {
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 2, amountPaise: 10_000_00 }]);
+    await recomputeSalesPerformance(PERIOD, TODAY as never);
+
+    // The shop moves to Poonam: Rahul now has no target and no sales.
+    await db.execute(sql`update customers set sales_am_id = ${poonam.id} where id = ${c.id}`);
+    await recomputeSalesPerformance(PERIOD, TODAY as never);
+
+    const [row] = await db.execute<{ revenue_actual_paise: string }>(sql`
+      select revenue_actual_paise from sales_performance
+       where user_id = ${rahul.id} and period = ${PERIOD}
+    `);
+    assert.equal(Number(row.revenue_actual_paise), 0, "his old figures are gone from the cache");
+  });
+
+  test("publishing a target rebuilds the cache there and then", async () => {
+    const targetId = id("stg");
+    await db.execute(sql`
+      insert into sales_targets (id, user_id, period, revenue_target_paise, status)
+      values (${targetId}, ${rahul.id}, ${PERIOD}, 100_000_00, 'draft')
+    `);
+    // The action ends in `revalidatePath`, which has no Next request to run in
+    // here and reports that as a failure — after the cache has been rebuilt,
+    // which is the part this asserts.
+    await publishSalesTarget(targetId);
+
+    const [row] = await db.execute<{ target_id: string | null; revenue_target_paise: string | null }>(sql`
+      select target_id, revenue_target_paise from sales_performance
+       where user_id = ${rahul.id} and period = ${PERIOD}
+    `);
+    assert.ok(row, "a cached row exists without waiting for the hourly job");
+    assert.equal(row.target_id, targetId);
+    assert.equal(Number(row.revenue_target_paise), 100_000_00);
+  });
+});
+
+describe("activity counts what has fallen due", () => {
+  test("a task due later this month is not counted as missed yet", async () => {
+    const day = Number(TODAY.slice(8, 10));
+    const last = Number(endOfMonth(PERIOD).slice(8, 10));
+    const task = (due: string, status: "open" | "done") => sql`
+      insert into mbos_tasks (id, title, assigned_to_user_id, due_date, status)
+      values (${id("tsk")}, 'Visit', ${rahul.id}, ${due}::date, ${status})
+    `;
+    if (day > 1) await db.execute(task(dayIn(day - 1), "done"));
+    await db.execute(task(TODAY, "done")); // done today: counts
+    await db.execute(task(TODAY, "open")); // due this evening: not yet missed
+    if (day < last) await db.execute(task(dayIn(day + 1), "open")); // not yet due
+
+    const a = (await actualsForPeriod(PERIOD, TODAY)).get(rahul.id)!;
+    assert.equal(a.activityAssigned, day > 1 ? 2 : 1);
+    assert.equal(a.activity, a.activityAssigned, "everything that has fallen due is done");
+  });
+});
+
+describe("what is unattributed is in the same unit as what is attributed", () => {
+  test("it is summed net of GST, like the team's revenue", async () => {
+    const c = await makeCustomer({ salesAmId: null, backOfficeAmId: null });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 2, amountPaise: 118_00 }], {
+      netAmountPaise: 100_00,
+    });
+    const u = await unattributedForPeriod(PERIOD);
+    assert.equal(u.revenuePaise, 100_00);
   });
 });

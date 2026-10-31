@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
+import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
+import { invoicePrintList } from "@/lib/erp/invoice-panel";
 import { db } from "@/db";
 import {
   appAccess,
@@ -46,6 +48,7 @@ import { dispatchLabels } from "@/lib/erp/label-data";
 import { withFills, type FieldSpec } from "@/lib/erp/ui";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -68,7 +71,7 @@ const SHEET_TAG = "Pan Maharashtra";
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: String(9820000000 + Math.floor(Math.random() * 999999)), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}@erp.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase() })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: level });
   return u;
@@ -396,6 +399,16 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     await db.update(erpOrderDetails).set({ createdById: clerk.id }).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "You entered this bill, so somebody else checks it.");
     await db.update(erpOrderDetails).set({ createdById: admin.id }).where(eq(erpOrderDetails.orderId, loose.id));
+    assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "Add the invoice PDF first — an invoice is checked against its PDF.");
+    const noPdf = (await mod("invoiceCheck").load(ctx)).rows.find((r) => r.id === loose.id);
+    assert.equal(noPdf?.actions?.find((x) => x.id === "approveInvoice")?.why, "Add the invoice PDF first", "the button says why before it is pressed");
+    assert.match(String(noPdf?.v.invoice), /^n:\d+$/, "the order heading shows Add PDF");
+    await attachInvoicePdf(loose.id, admin.id);
+    const withPdf = (await mod("invoiceCheck").load(ctx)).rows.find((r) => r.id === loose.id);
+    assert.match(String(withPdf?.v.invoice), /^y:\d+$/, "and view and print once it is attached");
+    assert.equal(withPdf?.panel?.kind, "orderInvoice", "the checker opens the invoice first");
+    const [listed] = await invoicePrintList([loose.id, loose.id]);
+    assert.equal(listed?.hasPdf, true, "Print invoices offers the order once, with its PDF");
     assert.match(say(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), /approved · order \d+ can be dispatched/);
     const [d0] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d0.invoiceCheck, "Approved");
@@ -467,6 +480,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "3", rate: "410", transport: "0" }, [], line.id)).ok);
     const det = async () => (await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id)))[0];
     assert.equal((await det()).invoiceCheck, "Pending", "the corrected invoice is back with the checker");
+    await attachInvoicePdf(line.id, admin.id);
     assert.ok((await a.approveInvoice(ctx, line.id, {})).ok);
     assert.ok((await a.changeInvoice(ctx, line.id, { invoiceNo: "MMI/26-27/910", invoiceDate: TODAY })).ok);
     assert.equal((await det()).invoiceCheck, "Pending", "a changed invoice number after approval goes back too");
@@ -479,8 +493,10 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok((await mod("labels").load(ctx)).rows.some((r) => r.id === line.id), "a billed line not yet gone is on Dispatch stickers");
     assert.ok((await a.stickers(ctx, line.id, {})).ok);
     assert.ok((await det()).stickersAt, "the stickers are recorded");
-    assert.match(say(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /no vehicle recorded/, "a lot-less line leaves without lots");
+    /* A line with no lot is not "packed before box ids": nothing says what is on the lorry, so it waits for its boxes to be scanned (order 10058 left with no lot code at all). */
+    assert.match(msg(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /3 of 3 still to scan/, "a lot-less line is held for its scans");
     assert.equal((await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, line.id))).length, 0, "and took no stock");
+    assert.notEqual((await det()).verification, "Verified", "and has not left");
   });
 
   test("the bill: 20 × ₹400, 5% off, 18% GST, and the month's sale against the target", async () => {

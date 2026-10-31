@@ -9,6 +9,7 @@ import { companyPayload } from "./company";
 import { inboxFor } from "./inbox";
 import { crore, monthLong, num, plural, span } from "./format";
 import type { PeriodState, SectionKey } from "./types";
+import { scoreText } from "@/lib/score-format";
 
 /* ---------------------------------------------------------------------------
  * ASK THE COMPANY — "Answers are read from the figures on this dashboard".
@@ -69,7 +70,7 @@ export async function ask(p: PeriodState, userId: string, question: string): Pro
     const left = worst.workingDaysTotal - worst.workingDaysElapsed;
     const alert = worst.alerts[0]?.message;
     return {
-      text: `${worst.userName} has the lowest score for ${monthLong(p.monthKey)}: ${Math.round(worst.score.totalBp / 100)} out of 100${rev && rev.achievementBp != null ? `, at ${Math.round(rev.achievementBp / 100)}% of the revenue target` : ""}, with ${plural(left, "working day")} left.${alert ? ` ${alert}` : ""}`,
+      text: `${worst.userName} has the lowest score for ${monthLong(p.monthKey)}: ${scoreText(worst.score.totalBp)} out of 100${rev && rev.achievementBp != null ? `, at ${Math.round(rev.achievementBp / 100)}% of the revenue target` : ""}, with ${plural(left, "working day")} left.${alert ? ` ${alert}` : ""}`,
       go: "team",
       goLabel: "Open Targets & performance",
     };

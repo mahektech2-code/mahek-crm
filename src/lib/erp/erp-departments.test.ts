@@ -26,6 +26,7 @@ import { erpNavCounts } from "@/lib/erp/counts";
 import type { FieldSpec } from "@/lib/erp/ui";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-10-07";
@@ -37,7 +38,7 @@ async function makeUser(name: string, level: "associate" | "manager" | "admin", 
       id: id("usr"),
       name,
       email: `${name.toLowerCase().replace(/\s/g, ".")}@dept.test`,
-      phone: String(9830000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: level,
       initials: name.slice(0, 2).toUpperCase(),

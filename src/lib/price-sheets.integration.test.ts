@@ -44,6 +44,7 @@ import {
 } from "@/lib/actions/price-sheets";
 import { sheetForList } from "@/lib/services/price-sheet-service";
 import { impactReport } from "@/lib/impact/registry";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -59,7 +60,7 @@ async function makeUser(name: string, grants: Array<{ app: "sales" | "accounts" 
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role: grants.some((g) => g.role === "manager") ? "manager" : "associate",
       initials: name.slice(0, 2).toUpperCase(),

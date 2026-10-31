@@ -35,6 +35,7 @@ import {
 } from "@/lib/actions/sales-targets";
 import type { Baseline, TargetRow } from "@/lib/services/sales-target-service";
 import type { PerformanceReading } from "@/lib/services/performance-service";
+import { scoreText } from "@/lib/score-format";
 
 /** A row for somebody added by hand, before they have ever been saved. */
 function blankRow(person: Person): TargetRow {
@@ -931,13 +932,19 @@ function Scorecard({ readings }: { readings: PerformanceReading[] }) {
                   {!r.hasTarget ? (
                     <span className="text-[12px] text-muted">no target</span>
                   ) : (
-                    <Badge tone="neutral">this month</Badge>
+                    r.targetStatus === "draft" ? (
+                      <Badge tone="warn" title="Scored against a draft. Nobody else sees a score until it is published.">
+                        Draft
+                      </Badge>
+                    ) : (
+                      <Badge tone="neutral">this month</Badge>
+                    )
                   )}
                 </Td>
                 <Td align="right">
                   {r.hasTarget ? (
                     <span className="font-medium text-ink tabular-nums">
-                      {(r.score.totalBp / 100).toFixed(0)}
+                      {scoreText(r.score.totalBp)}
                     </span>
                   ) : (
                     <span className="text-muted">—</span>

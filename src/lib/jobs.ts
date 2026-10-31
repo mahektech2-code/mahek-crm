@@ -465,6 +465,26 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  // On the first, last month's published targets are carried into the new
+  // month BEFORE it is scored — the other way round, the cache spent the
+  // first hours of every month saying nobody had a target. Same idempotence
+  // as ever: only a person with no target at all for the new period gets one.
+  // One person who cannot be copied is named in the detail, never thrown:
+  // `run` re-throws, and a throw here would stop every job after it.
+  if (day.endsWith("-01")) {
+    results.push(
+      await run("copy-forward-sales-targets", async () => {
+        const { created, failed } = await copyForwardSalesTargets();
+        return {
+          recordsAffected: created,
+          detail: failed.length
+            ? `${created} sales targets carried forward; ${failed.length} failed (${failed.join(", ")})`
+            : `${created} sales targets carried forward`,
+        };
+      }, triggeredById),
+    );
+  }
+
   /*
    * The salesman score, AFTER the money recomputes above.
    *
@@ -495,15 +515,6 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
       await run("seed-targets", async () => {
         const n = await seedMonthlyTargets();
         return { recordsAffected: n, detail: `${n} default targets seeded` };
-      }, triggeredById),
-    );
-
-    // Same idempotence: only a person with no target at all for the new
-    // period gets one, copied from last month's published figures.
-    results.push(
-      await run("copy-forward-sales-targets", async () => {
-        const n = await copyForwardSalesTargets();
-        return { recordsAffected: n, detail: `${n} sales targets carried forward` };
       }, triggeredById),
     );
   }

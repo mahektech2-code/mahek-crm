@@ -37,6 +37,7 @@ import {
   deriveSheet,
   sheetFromProductCells,
   sheetStats,
+  type EditorMove,
   type EditorScope,
   type StartSource,
 } from "@/components/pricing/editor/editor-state";
@@ -63,6 +64,7 @@ type ListSheet = {
   derivation: PriceDerivation | null;
   scopes: ScopeView[];
   baseline: Record<string, number>;
+  moves?: EditorMove[];
 };
 
 const OUTLIER_BP = 2500;
@@ -89,6 +91,7 @@ function toEditorScopes(scopes: ScopeView[]): EditorScope[] {
     priority: s.priority,
     validFrom: s.validFrom,
     validTo: s.validTo,
+    excluded: s.excluded || undefined,
   }));
 }
 
@@ -142,6 +145,7 @@ function EditorBody({
   const [sourceName, setSourceName] = React.useState<string | null>(null);
   const [notes, setNotes] = React.useState("");
   const [scopes, setScopes] = React.useState<EditorScope[]>([]);
+  const [moves, setMoves] = React.useState<EditorMove[]>([]);
   const [parentListId, setParentListId] = React.useState<string | null>(null);
   const [derivation, setDerivation] = React.useState<PriceDerivation | null>(null);
   const [baseline, setBaseline] = React.useState<Record<string, number> | null>(null);
@@ -257,6 +261,7 @@ function EditorBody({
         setSourceName(`${found.sheet.name} (v${found.version})`);
         setNotes(found.notes ?? "");
         setScopes(toEditorScopes(found.scopes));
+        setMoves(found.moves ?? []);
         setParentListId(found.parentListId);
         setDerivation(found.derivation);
         setBaseline(found.baseline);
@@ -325,7 +330,9 @@ function EditorBody({
             priority: s.priority ?? 0,
             validFrom: s.validFrom ?? null,
             validTo: s.validTo ?? null,
+            excluded: !!s.excluded,
           })),
+          moves: moves.map((m) => ({ customerId: m.customerId, fromBookId: m.fromBookId })),
           parentListId,
           derivation,
           publish: publish ? { supersedesId: supersedesId || null } : null,
@@ -483,7 +490,15 @@ function EditorBody({
             setDirty(true);
           }}
           options={options}
-          mode={mode}
+          mode={mode === "update" && supersedesId ? "version" : mode}
+          listId={listId}
+          supersedesId={supersedesId || null}
+          freightTerm={sheet.freightTerm}
+          moves={moves}
+          onMoves={(m) => {
+            setMoves(m);
+            setDirty(true);
+          }}
         />
       ) : step === "review" ? (
         <ReviewPanel sheet={sheet} checks={checks} scopes={scopes} baseline={baseline} baselineName={baselineName} products={products} mode={mode} onGo={setStep} />

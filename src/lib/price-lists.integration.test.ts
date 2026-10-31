@@ -74,6 +74,7 @@ import {
   resolveForCustomer,
   varianceReport,
 } from "@/lib/services/price-list-service";
+import { testPhone } from "@/lib/test-phone";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -97,7 +98,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: testPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -145,7 +146,7 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
       id: id("cus"),
       name: over.name ?? `Shop ${randomUUID().slice(0, 6)}`,
       contactPerson: "Contact",
-      phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
+      phone: testPhone(),
       city: "Thane",
       region: "Maharashtra",
       kind: "customer",
@@ -242,6 +243,17 @@ beforeEach(async () => {
   nano5 = await makeProduct("Nano Thinner - 5 Liter (6 Can/Box)", 5000, 6, "6 Can/Box");
   setTestUser(manager);
 });
+
+
+/**
+ * The one-list rule (`pricing.oneListPerShop`) refuses a shop on two lists.
+ * These cases put it on two ON PURPOSE, to prove which one prices it — the
+ * resolution every shop doubled before the rule still goes through.
+ */
+async function allowTwoLists() {
+  await db.execute(sql`update app_settings set value = 'false'::jsonb where key = 'pricing.oneListPerShop'`);
+  invalidateConfig();
+}
 
 describe("publishing a price list", () => {
   test("a list with no rates in it is refused, because a list with no prices is not a list", async () => {
@@ -443,6 +455,7 @@ describe("publishing a price list", () => {
 
 describe("which list applies", () => {
   test("a customer's own list beats their city, which beats their state, which beats everybody", async () => {
+    await allowTwoLists();
     const shop = await makeCustomer({ name: "Sharda Traders", city: "Thane", region: "Maharashtra" });
     setTestUser(manager);
 
