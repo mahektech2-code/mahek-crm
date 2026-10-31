@@ -2312,7 +2312,7 @@ stands — subtracting again would count every can twice — and a packing batch
 refused on its first line when its empty boxes are not at the godown.
 
 **UNDER PROCESS IS THE DAY'S PLAN ON PAPER, AND IT MOVES NO STOCK.**
-Production → Under Process (`erp.underProcess`, carried by the Production Head
+Sales → Under Process (`erp.underProcess`, beside Orders and the Dispatch desk; carried by the Production Head
 designation) is one plan per day (`erp_production_plans.plan_date` is unique)
 of SFG manufacturing, loose cans and packing, printed on A5 for the floor, who
 never log in. Each line saves on its own; a deleted line is marked, never

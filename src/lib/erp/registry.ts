@@ -132,7 +132,6 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Production",
     icon: "beaker",
     screens: [
-      s("underProcess", "under-process", "Under Process", "The day's production plan — mixing, loose cans and packing — printed for the floor.", true),
       s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots.", true),
       s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
       s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes.", true),
@@ -190,6 +189,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("orders", "All lines"),
         v("orderInbox", "WhatsApp inbox"),
       ]),
+      s("underProcess", "under-process", "Under Process", "The day's production plan — mixing, loose cans and packing — printed for the floor.", true),
       s("dispatch", "dispatch", "Dispatch desk", "Pick an order and scan every box onto it before the lorry leaves.", true),
       s("dispatchRegister", "dispatch-register", "Dispatch register", "Every order still to go out — who it is for, what is in it, what it weighs and who carries it.", true),
     ],
