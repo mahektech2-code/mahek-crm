@@ -54,3 +54,13 @@ export function invoiceCopies(raw: unknown): number {
 export function erpInvoicesPdfHref(orderNos: (number | string)[]): string {
   return `/api/erp/invoices?${new URLSearchParams({ orders: orderNos.join(",") }).toString()}`;
 }
+
+/** Under Process: the list, or one plan open. */
+export function erpPlanHref(planId?: string): string {
+  return planId ? `/erp/under-process?plan=${encodeURIComponent(planId)}` : "/erp/under-process";
+}
+
+/** The A5 sheet of one print of a plan. */
+export function erpPlanPrintHref(planId: string, printNo: number): string {
+  return `/erp/under-process/${encodeURIComponent(planId)}/print?n=${printNo}`;
+}

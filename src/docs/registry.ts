@@ -868,6 +868,14 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "under-process",
+        title: "Under Process: the daily production plan",
+        summary: "The Production Head's plan for the day — SFG manufacturing, loose cans and packing — added to through the day and printed on A5 for the floor.",
+        group: "Sell and ship",
+        modules: ["erp.underProcess"],
+        written: ALL,
+      },
+      {
         slug: "dispatch",
         title: "The dispatch desk",
         summary: "Scanning every box onto its order before the lorry leaves, and the override when one is wrong.",

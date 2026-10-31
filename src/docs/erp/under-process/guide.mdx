@@ -1,0 +1,68 @@
+**Under Process** is the day's production plan. Every morning the Production Head writes down the mixing, loose-can and packing work for the day, prints it on A5, and hands the sheet to the floor. When more work comes in during the day, they add it to the same plan and print again. The floor works only from the printed sheet.
+
+<Flow caption="A day on Under Process" chart={`
+flowchart TD
+  A["Open Sales, then Under Process"] --> B{"A plan for today?"}
+  B -- "No" --> C["Create daily plan"]
+  B -- "Yes" --> D["Open plan"]
+  C --> E["Add lines: SFG, loose cans, packing"]
+  D --> E
+  E --> F["Print plan, Print 1"]
+  F --> G["Hand the A5 sheet to the floor"]
+  G --> H{"More work comes in?"}
+  H -- "Yes" --> I["Add more, edit or delete a line"]
+  I --> J["Print again, changes underlined"]
+  J --> G
+`} />
+
+## Making the day's plan
+
+1. Open **Sales → Under Process** (beside Orders and the Dispatch desk) and press **Create daily plan**. The date starts at today. There is one plan per day: if the day already has one, it opens.
+2. Press **Add more** (or **Add line** on a section). Pick the **work category**, the **product**, and type the **quantity**. The size, code and current stock are filled in from the product.
+3. Press **Add**, or **Add and add another** to keep going. Every line is saved the moment you add it.
+
+| Category | You pick | Size | Unit |
+|---|---|---|---|
+| SFG manufacturing | the SFG base | none | Litre or Kg |
+| Loose can preparation | product and can size | from the product | Cans |
+| Packing | the boxed SKU | from the SKU | Boxes or Cans |
+
+**Current available** is the stock at the godown the plan was made at. It is read from the stock screens and is never typed. The plan does not move any stock.
+
+## Adding more during the day
+
+Open the plan and use **Add more** again. Nothing already on the plan changes. If the product is already on the plan, the dialog says so, and the new quantity goes on its own line so the floor sees it as new.
+
+Each line is marked against the last sheet that was printed:
+
+- **Given** (green): on the last sheet, unchanged.
+- **New** or **Edited** (amber): not printed yet. An edited quantity shows the old figure struck through.
+- **Removed** (red): deleted after the floor had it. The next print tells them.
+
+A banner says how many lines changed since the last print.
+
+## Printing
+
+Press **Print plan**. The A5 sheet opens; use **Print or save as PDF**. From the second print of the day:
+
+- new and edited lines are **underlined** and starred;
+- an edited quantity says what it **was**;
+- deleted lines are listed once in a **Removed since last print** box.
+
+Every print is kept. **Last print** on the list, or **Print** against a previous plan, opens the sheet exactly as it was handed out.
+
+## Previous plans
+
+The list shows every earlier plan, newest first. Pick a date and press **Search** to find one.
+
+
+## Orders under process come in by themselves
+
+Every order line whose Production status is **Under Process** on Orders → Production comes into today's plan without anybody typing it, one line per product, marked **From orders** with its order numbers under the name.
+
+- A loose product goes under **Loose can preparation**, in cans.
+- A boxed product goes under **Packing**, in boxes — or in cans where the orders do not add up to whole boxes.
+- When an order line is marked Ready, held or cancelled, its line leaves the plan: it shows as **Removed**, and the next print tells the floor.
+- These lines cannot be edited or deleted on the plan. Change the order, and the plan follows.
+
+SFG manufacturing is still typed by the Production Head: how much liquid the day needs is a judgement, not a sum.

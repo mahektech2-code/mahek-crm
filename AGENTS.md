@@ -2312,6 +2312,30 @@ the newest lot as a visible negative. `rmLevelAvailable` reads that stock as it
 stands — subtracting again would count every can twice — and a packing batch is
 refused on its first line when its empty boxes are not at the godown.
 
+**UNDER PROCESS IS THE DAY'S PLAN ON PAPER, AND IT MOVES NO STOCK.**
+Sales → Under Process (`erp.underProcess`, beside Orders and the Dispatch desk; carried by the Production Head
+designation) is one plan per day (`erp_production_plans.plan_date` is unique)
+of SFG manufacturing, loose cans and packing, printed on A5 for the floor, who
+never log in. Each line saves on its own; a deleted line is marked, never
+removed. Every print is a row with the lines as printed
+(`erp_production_plan_prints`), and `engines/production-plan.ts` reads each line
+against the last one: given, new, edited or removed — the screen's colours and
+the reprint's underline, "was" and "Removed since last print" box are that one
+rule. Current available is read at the plan's godown from `sfgLots`, `fgLots`
+and `packLots`. The work itself is still recorded on SFG batches, FG filling and
+Packing batches. **And the orders under process come in by themselves.**
+Every order line Orders → Production lists as Under Process (`isWorkingLine`'s
+rule, less empty drums) is one plan line per product (`orderDemand`, pure): a
+loose SKU as loose cans of its finished good, a boxed SKU as packing — in boxes,
+or in cans where the orders do not make whole boxes, never rounded. Those lines
+are `source = 'order'`, keyed `category:item` (`source_key`, a partial unique
+index), carry their order numbers (`order_refs`), and are written only by
+`syncPlanFromOrders` — on opening, creating and printing a plan dated today or
+later; a past plan is the record of its day. A product whose orders all leave
+Under Process is marked deleted, so a sheet that carried it says Removed. They
+cannot be edited or deleted on the plan: the order is where they change. SFG is
+not derived; the Production Head types it.
+
 **A recipe is expected, never a gate.** `erp_recipes` holds what one batch of an
 SFG product takes. "Start a batch" opens the SFG form with the recipe's lines, and so does picking the product on a blank New SFG batch (`linesFrom` on the form: lines nobody has touched are replaced at once, typed-into ones only after a confirm),
 and a batch line that used more than `erp.production.recipeTolerancePercent`

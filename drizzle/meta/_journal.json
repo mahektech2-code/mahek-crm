@@ -2101,6 +2101,20 @@
       "when": 1793611600000,
       "tag": "0304_factory_scan_events",
       "breakpoints": true
+    },
+    {
+      "idx": 300,
+      "version": "7",
+      "when": 1793615200000,
+      "tag": "0305_erp_production_plans",
+      "breakpoints": true
+    },
+    {
+      "idx": 301,
+      "version": "7",
+      "when": 1793618800000,
+      "tag": "0306_erp_plan_order_lines",
+      "breakpoints": true
     }
   ]
 }

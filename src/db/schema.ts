@@ -16768,3 +16768,98 @@ export const erpQuoteCells = pgTable(
 
 export type ErpQuoteColumn = typeof erpQuoteColumns.$inferSelect;
 export type ErpQuoteRow = typeof erpQuoteRows.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * UNDER PROCESS — the Production Head's daily production plan.
+ *
+ * One plan per day (`plan_date` is unique); its lines are what the floor is
+ * asked to make, fill and pack; every print is kept with a snapshot of the
+ * lines as printed, which is how the next print knows what to underline. The
+ * product's name and code are COPIED onto the line, so a past plan prints as
+ * it was after a rename. Nothing here moves stock — SFG batches, FG filling
+ * and packing batches remain where work is recorded.
+ * ------------------------------------------------------------------------- */
+export const erpProductionPlans = pgTable(
+  "erp_production_plans",
+  {
+    id: text("id").primaryKey(),
+    planNo: integer("plan_no").notNull(),
+    planDate: date("plan_date").notNull(),
+    /** Whose stock "current available" is read at: the creator's working godown. */
+    godownId: text("godown_id").references(() => erpGodowns.id, { onDelete: "set null" }),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("erp_production_plans_no_key").on(t.planNo), uniqueIndex("erp_production_plans_date_key").on(t.planDate)],
+);
+
+export const erpProductionPlanLines = pgTable(
+  "erp_production_plan_lines",
+  {
+    id: text("id").primaryKey(),
+    planId: text("plan_id")
+      .notNull()
+      .references(() => erpProductionPlans.id, { onDelete: "cascade" }),
+    /** `sfg` (a formulation), `loose` (a finished good), `packing` (a boxed SKU). */
+    category: text("category").notNull(),
+    /** The formulation, finished good or SKU id — null only where the product has since gone. */
+    itemId: text("item_id"),
+    productName: text("product_name").notNull(),
+    productCode: text("product_code"),
+    size: text("size"),
+    quantity: doublePrecision("quantity").notNull(),
+    unit: text("unit").notNull(),
+    remarks: text("remarks"),
+    /** `manual` (typed by the Production Head) or `order` (an Under Process order line, written by the sync). */
+    source: text("source").notNull().default("manual"),
+    /** For an order line: `category:item`, what the sync finds it by. */
+    sourceKey: text("source_key"),
+    /** For an order line: the order numbers behind it, "4023, 4027". */
+    orderRefs: text("order_refs"),
+    sort: integer("sort").notNull().default(0),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Deleted, never removed: a deleted line already handed out is listed once on the next print. */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedById: text("deleted_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("erp_production_plan_lines_plan_idx").on(t.planId),
+    check("erp_production_plan_lines_category_check", sql`${t.category} in ('sfg', 'loose', 'packing')`),
+    check("erp_production_plan_lines_quantity_check", sql`${t.quantity} > 0`),
+    uniqueIndex("erp_production_plan_lines_order_key").on(t.planId, t.sourceKey).where(sql`${t.source} = 'order'`),
+  ],
+);
+
+/** One row per print: which print of the day, and the lines exactly as printed. */
+export const erpProductionPlanPrints = pgTable(
+  "erp_production_plan_prints",
+  {
+    id: text("id").primaryKey(),
+    planId: text("plan_id")
+      .notNull()
+      .references(() => erpProductionPlans.id, { onDelete: "cascade" }),
+    printNo: integer("print_no").notNull(),
+    printedById: text("printed_by_id").references(() => users.id, { onDelete: "set null" }),
+    printedAt: timestamp("printed_at", { withTimezone: true }).notNull().defaultNow(),
+    lines: jsonb("lines").$type<PlanSnapshotLine[]>().notNull(),
+  },
+  (t) => [uniqueIndex("erp_production_plan_prints_no_key").on(t.planId, t.printNo)],
+);
+
+export type PlanSnapshotLine = {
+  id: string;
+  category: string;
+  productName: string;
+  productCode: string | null;
+  size: string | null;
+  quantity: number;
+  unit: string;
+  remarks: string | null;
+  /** The order numbers behind a line the orders put there; absent on a typed one. */
+  orderRefs?: string | null;
+};

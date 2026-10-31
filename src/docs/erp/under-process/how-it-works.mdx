@@ -1,0 +1,21 @@
+**One plan per day.** The date is unique, so pressing Create daily plan for a day that has one opens it. Add More always writes into the same plan.
+
+**Each line is saved on its own.** There is no separate Save step that could lose a morning's typing. Deleting a line marks it deleted; it is never removed, because a line the floor already had must be named on the next print.
+
+**Every print is remembered.** A print stores the lines exactly as they were. The colours on screen and the underline on paper both answer one question: was this line on the last print, exactly as it is now? Printing again with nothing changed opens the last print rather than making a second copy.
+
+**Stock is read, never moved.** Current available is the semi-finished stock for an SFG base, the finished-goods (loose can) stock for a product and can size, and the packed stock for a boxed SKU, all at the plan's godown. The plan's godown is the creator's working location when the plan was made. Recording the actual work still happens on SFG batches, FG filling and Packing batches.
+
+**Who can use it.** The screen is the `erp.underProcess` module on the Access screen. The Production Head designation carries it.
+
+## Where the code and the intent disagree today
+
+- **Product code** is the product's legacy Product ID where one exists. SFG bases carry no code, and some products have none, so those show a dash.
+- **Unit** is offered from a short list per category (Litre or Kg, Cans, Boxes or Cans). A unit other than those is refused.
+
+
+## The orders come in by themselves
+
+The plan reads the same lines Orders → Production lists as Under Process (status Under Process, entry not Done), leaving out empty drums. They are added up per product: a loose SKU as loose cans of its finished good, a boxed SKU as packing in boxes, or in cans where the orders do not make whole boxes, because a rounded box is a figure nobody ordered.
+
+They are brought in step whenever a plan dated today or later is opened, created or printed, so the sheet always carries the orders as they stood at the moment it was printed. A past day's plan is never touched. A product whose orders all leave Under Process is marked deleted, which the next print lists as removed. Only orders at the plan's godown come in, where the plan names one.

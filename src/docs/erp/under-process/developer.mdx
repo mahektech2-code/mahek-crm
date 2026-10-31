@@ -1,0 +1,32 @@
+The screen is `src/app/erp/under-process/` (`page.tsx` and `plan-screen.tsx`). The A5 sheet is `[id]/print/page.tsx`. Reads and writes are in `src/lib/erp/production-plan.ts`; the actions are `src/lib/actions/erp-production-plan.ts`, each re-checking the screen with `requireErpWrite("underProcess")`.
+
+The marking rule is pure:
+
+<Code file="src/lib/erp/engines/production-plan.ts" symbol="lineState" />
+
+<Code file="src/lib/erp/engines/production-plan.ts" symbol="printMarks" />
+
+<Code file="src/lib/erp/engines/production-plan.ts" symbol="lineProblems" collapsed />
+
+<Code file="src/lib/erp/production-plan.ts" symbol="recordPlanPrint" collapsed />
+
+## Tables
+
+<DbTable name="erp_production_plans" />
+
+<DbTable name="erp_production_plan_lines" />
+
+<DbTable name="erp_production_plan_prints" />
+
+Migration `0305_erp_production_plans` creates them, adds the `plan` number series, and gives the module to the Production Head designation and its holders.
+
+Tests: `src/lib/erp/engines/production-plan.test.ts`.
+
+
+## Order lines
+
+<Code file="src/lib/erp/engines/production-plan.ts" symbol="orderDemand" />
+
+<Code file="src/lib/erp/production-plan.ts" symbol="syncPlanFromOrders" collapsed />
+
+Migration `0306_erp_plan_order_lines` adds `source`, `source_key` and `order_refs`, with a partial unique index on (`plan_id`, `source_key`) where `source = 'order'`.
