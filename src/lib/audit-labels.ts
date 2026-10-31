@@ -346,6 +346,11 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.order.invoiceFile": () => ["attached an order's invoice PDF"],
   "erp.tracking.delay": () => ["told a customer their delivery is delayed"],
   "erp.tracking.regenerate": () => ["made a new tracking link for an order"],
+  "erp.plan.create": () => ["created a daily production plan"],
+  "erp.plan.lineAdd": () => ["added a line to a daily production plan"],
+  "erp.plan.lineEdit": () => ["changed a line on a daily production plan"],
+  "erp.plan.lineDelete": () => ["took a line off a daily production plan"],
+  "erp.plan.print": () => ["printed a daily production plan"],
   /* ---- stock checks */
   "erp.floorCheck.record": () => ["recorded a stock check"],
   "erp.stock.adjust": () => ["adjusted stock by hand"],
