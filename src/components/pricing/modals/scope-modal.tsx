@@ -82,7 +82,7 @@ function ScopeBody({
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
-  const [kind, setKind] = React.useState<PriceScopeKind>(scope?.scopeKind ?? "state");
+  const [kind, setKind] = React.useState<PriceScopeKind>(scope?.scopeKind ?? (startLeaving ? "customer" : "state"));
   const [value, setValue] = React.useState(scope?.scopeValue ?? "");
   const [label, setLabel] = React.useState(scope?.scopeLabel ?? "");
   const [parentKey, setParentKey] = React.useState(scope?.parentKey ?? "");

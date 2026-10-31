@@ -93,28 +93,28 @@ export function DoubleListedCard({ basePath, canManage }: { basePath: string; ca
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full table-fixed">
             <colgroup>
-              <col style={{ width: 260 }} />
               <col />
-              <col style={{ width: 260 }} />
+              <col style={{ width: 230 }} />
             </colgroup>
             <thead>
               <tr>
-                <Th>Shop</Th>
-                <Th>On</Th>
+                <Th>Shop, and the lists it is on</Th>
                 <Th>Keep it on</Th>
               </tr>
             </thead>
             <tbody>
               {rows.slice(0, 300).map((s) => (
                 <Tr key={s.customerId}>
-                  <Td className="truncate" title={s.name}>
-                    <Link href={`${basePath}/shops/${s.customerId}`} className="text-ink hover:text-brand">
-                      {s.name}
-                    </Link>
-                    {s.city ? <span className="text-muted"> · {s.city}</span> : null}
-                  </Td>
-                  <Td className="truncate" title={s.books.map((b) => b.listName).join(", ")}>
-                    {s.books.map((b) => b.listName).join(", ")}
+                  <Td>
+                    <div className="truncate" title={s.name}>
+                      <Link href={`${basePath}/shops/${s.customerId}`} className="text-ink hover:text-brand">
+                        {s.name}
+                      </Link>
+                      {s.city ? <span className="text-muted"> · {s.city}</span> : null}
+                    </div>
+                    <div className="truncate text-[12px] text-muted" title={s.books.map((b) => b.listName).join(" and ")}>
+                      On {s.books.map((b) => b.listName).join(" and ")}
+                    </div>
                   </Td>
                   <Td>
                     {canManage ? (
@@ -123,7 +123,7 @@ export function DoubleListedCard({ basePath, canManage }: { basePath: string; ca
                         onChange={(e) => setPicks((p) => ({ ...p, [s.customerId]: e.target.value }))}
                         className="w-full"
                       >
-                        <option value="">{s.pricedFromName ? `Today: ${s.pricedFromName}` : "Choose…"}</option>
+                        <option value="">{s.pricedFromName ? `${s.pricedFromName} (prices it today)` : "Choose…"}</option>
                         {s.books.map((b) => (
                           <option key={b.bookId} value={b.bookId}>
                             {b.listName}
