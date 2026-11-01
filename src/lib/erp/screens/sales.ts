@@ -688,7 +688,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
         hint: "A Mahek Vehicle carries no LR — the customer-signed copy closes the delivery.",
         fillBy: { by: ["delivery"], map: ownDefault },
       },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
+      { k: "transporter", l: "Transporter", t: "select", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "The day it should leave — the requested date, if the customer gave one. The lists say today, tomorrow or late from it." },
       ...(pricing ? ([{ k: "priceList", l: "Price list", t: "text", readOnly: true, untagged: true, fillBy: { by: ["billing"], map: pricing.list, otherwise: "" } }] as FieldSpec[]) : []),
       ...(pricing && seeAmounts
@@ -799,7 +799,7 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "Blank: not planned yet." },
       { k: "delivery", l: "Delivery party", t: "select", req: true, opts: names, readOnly: l.inDetails },
       { k: "deliveredBy", l: "Delivered by", t: "select", req: true, opts: [...DELIVERED_BY] },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "From the transporter list. A new one is added under Transporters first." },
+      { k: "transporter", l: "Transporter", t: "select", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "From the transporter list. A new one is added under Transporters first." },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails, sec: "Quantity and price" },
       ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0 }] as FieldSpec[]) : []),
       ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100, hint: DISCOUNT_HINT }] as FieldSpec[]) : []),
