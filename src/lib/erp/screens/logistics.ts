@@ -15,6 +15,7 @@ import { readConfirmation } from "@/lib/impact/types";
 import { tooWide, unscoped, windowWhere } from "../window";
 import { syncBookOrders } from "../book";
 import { CLOSED, freightWord, isPaidFreight, STAGES } from "../engines/logistics";
+import { REGISTER_DEFAULT } from "../period";
 
 /* ---------------------------------------------------------------------------
  * Logistics, customer requests and credit notes, order follow-up and help
@@ -47,7 +48,7 @@ type TransportScope = "transport" | "pendingLr" | "trackLr";
  * tile, an alert or the AI LR reading that names them still resolves.
  */
 /** The bills register is read by bill date; the LR and tracking lists are open work, read by state. */
-const BILLS_WINDOW = { label: "Bill date", default: "month" } as const;
+const BILLS_WINDOW = { label: "Bill date", default: REGISTER_DEFAULT } as const;
 
 function transportList(scope: TransportScope, key: string = scope): ScreenModule {
   const register = key === "allBills";
@@ -220,7 +221,7 @@ function transportList(scope: TransportScope, key: string = scope): ScreenModule
  * "Transportation Paid"), by dispatch date. A window, because the history
  * copied in from the sheet never had this step and must not read as a backlog.
  */
-const FREIGHT_WINDOW = { label: "Dispatch date", default: "month" } as const;
+const FREIGHT_WINDOW = { label: "Dispatch date", default: REGISTER_DEFAULT } as const;
 
 const paidFreight: ScreenModule = {
   key: "paidFreight",

@@ -33,6 +33,7 @@ import { moveUnitsForTransfer, trimLooseUnits } from "../units";
 import type { LevelSuggestion } from "../engines/production";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
+import { REGISTER_DEFAULT } from "../period";
 
 /* ---------------------------------------------------------------------------
  * Item transfer (spec §10.1) and re-order levels (§10.2–§10.3).
@@ -155,7 +156,7 @@ export async function postWriteOff(
 }
 
 /* Transfers are a register: read by transfer date, never the whole history (`window.ts`). */
-const TRANSFER_WINDOW = { label: "Transfer date", default: "month" } as const;
+const TRANSFER_WINDOW = { label: "Transfer date", default: REGISTER_DEFAULT } as const;
 
 const transfers: ScreenModule = {
   key: "transfers",

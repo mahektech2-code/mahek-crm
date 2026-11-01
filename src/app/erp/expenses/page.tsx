@@ -355,7 +355,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
 function PeriodLinks({ period, href }: { period: string; href: (p: string) => string }) {
   return (
     <span className="flex items-center gap-1">
-      {PERIODS.slice(0, 4).map((p) => (
+      {PERIODS.slice(0, 5).map((p) => (
         <NavLink key={p.v} href={href(p.v)} className={cx("rounded-control px-2.5 py-1 text-sm", p.v === period ? "bg-brand-soft font-semibold text-brand-hover" : "text-muted hover:text-body")}>
           {p.l}
         </NavLink>
