@@ -55,10 +55,11 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_PICK_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBatch, type LorryBatchResult, type LorryBoard, type LorryHalf, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_PICK_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBatch, type LorryBatchResult, type LorryBoard, type LorryHalf, type LorryLocal, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
+import { applyLocal, judgeLorryScan, type LoadingPack } from "@/lib/factory/lorry-judge";
 import { APP_BUILD, call, dropSession, NotReceived, sendPhoto, uploadPhoto, type PhotoSend } from "./api";
 import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
@@ -143,7 +144,7 @@ export class FactoryApp extends Component<Props, State> {
   private tt: ReturnType<typeof setTimeout> | undefined;
   /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
   /** Loading scans in the order they were made, with when each label was read. */
-  private scanQ: { code: string; at: number }[] = [];
+  private scanQ: { code: string; at: number; local?: LorryLocal }[] = [];
   private scanRunning = false;
   /** How long the loader waited on each scan of the last batch — sent with the next, for the server's scan log. */
   private waits: { id: string; ms: number }[] = [];
@@ -151,6 +152,20 @@ export class FactoryApp extends Component<Props, State> {
   private noBatch = false;
   /* The half of a box-and-sticker pair the next scan is sent with. Held here as well as in state: queued scans are sent back to back, before a render. */
   private held: LorryHalf | null = null;
+  /*
+   * SHADOW MODE (lib/factory/lorry-judge.ts). The phone judges every lorry scan
+   * itself against a loading pack and sends that answer beside the scan; the
+   * server still decides, and stores whether the two agreed. Nothing the loader
+   * sees or hears comes from here, and nothing here may stop a scan: every
+   * step is guarded, and a server without the op turns it off.
+   */
+  private pack: LoadingPack | null = null;
+  /** The half the pack's own chain holds — ahead of the server's while a burst is queued. */
+  private packHeld: string | null = null;
+  /** Bumped by every local judgement: a pack read before it is already behind, and is dropped. */
+  private packSeq = 0;
+  private noPack = false;
+  private packTimer: ReturnType<typeof setTimeout> | undefined;
   private staleTimer: ReturnType<typeof setTimeout> | undefined;
   private ot: ReturnType<typeof setInterval> | undefined;
   private subs: { remove: () => void }[] = [];
@@ -1397,11 +1412,13 @@ export class FactoryApp extends Component<Props, State> {
   /** The box or sticker now waiting for its other half — or none. */
   setHalf(h: LorryHalf | null) {
     this.held = h;
+    if (!this.scanRunning && !this.scanQ.length) this.packHeld = h?.code ?? null;
     this.setLorry({ half: h });
   }
 
   /** A board from the server: drawn, and the lorry's counts put back into the floor data the steps check. */
   applyLorry(key: string, board: LorryBoard | null, data?: FactoryData | null) {
+    this.packSoon(key);
     this.setState((st) => {
       const base = data ?? st.db;
       if (!base) return null;
@@ -1420,6 +1437,8 @@ export class FactoryApp extends Component<Props, State> {
     if (l.sent) return this.toast("Loaded and sent. The office verifies it now.");
     const running = l.task ? this.task(l.task) : undefined;
     this.held = null;
+    if (this.pack?.key !== key) this.pack = null;
+    this.packHeld = null;
     this.setState({ lorry: { ...LORRY0 } });
     if (running) this.startTask(running.id);
     else {
@@ -1456,8 +1475,47 @@ export class FactoryApp extends Component<Props, State> {
   async lorryScanCode(code: string) {
     if (this.noBatch) return this.lorryScanOne(code);
     /* Into the same line as every other loading scan: only the pump sends, so nothing is sent twice at once. */
-    this.scanQ.push({ code, at: Date.now() });
+    this.scanQ.push({ code, at: Date.now(), local: this.shadowJudge(code) });
     void this.pumpScans();
+  }
+
+  /** The lorry's loading pack, read again a moment after the lorry last changed — never mid-burst. */
+  packSoon(key: string) {
+    if (this.noPack) return;
+    clearTimeout(this.packTimer);
+    this.packTimer = setTimeout(() => void this.loadPack(key), 1500);
+  }
+
+  async loadPack(key: string) {
+    if (this.state.flow?.task.item !== key) return;
+    if (this.noPack || this.scanRunning || this.scanQ.length) return this.packSoon(key);
+    const seq = this.packSeq;
+    try {
+      const p = await call("lorryPack", key);
+      /* A scan was judged while this was on its way: the pack it judged against is newer than this one. */
+      if (seq !== this.packSeq || this.state.flow?.task.item !== key) return;
+      this.pack = p;
+      this.packHeld = this.held?.code ?? null;
+    } catch (e) {
+      if (e instanceof NotReceived && e.message === "unknown-op") this.noPack = true;
+    }
+  }
+
+  /** The phone's own answer to a lorry scan, for the server to compare with its own. Never throws, never shown. */
+  shadowJudge(code: string): LorryLocal | undefined {
+    const pack = this.pack;
+    if (!pack || pack.key !== this.state.flow?.task.item) return undefined;
+    try {
+      const t0 = performance.now();
+      const j = judgeLorryScan(pack, code, this.packHeld);
+      this.pack = applyLocal(pack, j);
+      const us = Math.round((performance.now() - t0) * 1000);
+      this.packHeld = j.held;
+      this.packSeq++;
+      return { result: j.result, line: j.line, why: j.why, us, packAt: pack.at };
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -1466,11 +1524,11 @@ export class FactoryApp extends Component<Props, State> {
    * turn, exactly as if it had come back on its own. Returns how many were
    * left unjudged behind a refusal, for the loader to scan again.
    */
-  async lorrySend(items: { code: string; at: number }[]): Promise<number> {
+  async lorrySend(items: { code: string; at: number; local?: LorryLocal }[]): Promise<number> {
     const st = this.state, f = st.flow;
     if (!f || !isLorryTask(f.task) || !items.length) return 0;
     const key = f.task.item!;
-    const scans = items.map((x) => ({ id: scanId(), code: x.code, at: new Date(x.at).toISOString() }));
+    const scans = items.map((x) => ({ id: scanId(), code: x.code, at: new Date(x.at).toISOString(), local: x.local ?? null }));
     const readAt = new Map(scans.map((x, i) => [x.id, items[i].at]));
     const waits = this.waits;
     this.waits = [];

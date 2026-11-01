@@ -369,7 +369,9 @@ export type LorryScan =
   | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null; repeat?: boolean; half?: LorryHalf | null };
 
 /** One label read on the lorry, as the phone queued it: its own id, so a resend is never judged twice. */
-export type LorryScanIn = { id: string; code: string; at?: string | null };
+export type LorryScanIn = { id: string; code: string; at?: string | null; local?: LorryLocal | null };
+/** What the phone's own judgement said of a scan (`lorry-judge.ts`), sent beside it while the server still decides — shadow mode. */
+export type LorryLocal = { result: string; line: string | null; why: string; us: number; packAt: string };
 /** A scan's answer inside a batch: the single scan's answer without the board, which comes once for the batch. */
 export type LorryBatchResult =
   | (Omit<Extract<LorryScan, { ok: true }>, "board" | "data"> & { id: string })
