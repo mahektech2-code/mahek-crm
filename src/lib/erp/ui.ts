@@ -483,6 +483,11 @@ export type ListSpec = {
   groupHeadUnlessSame?: Record<string, string>;
   chips?: string;
   /**
+   * The figure cards above the list (`StatSpec`), worked out on the server over
+   * every row the filters reach. Absent: a Total card and one per `agg`.
+   */
+  stats?: StatSpec[];
+  /**
    * Columns offered as filters on the toolbar: one "All …" select each, its
    * choices the values the column draws, counted. A key not among `cols` (a
    * column withheld by a power) is simply not offered.
@@ -534,6 +539,26 @@ export type ListSpec = {
    * what is folded; `note` is said under the toolbar while totals are shown.
    */
   fold?: { l: string; whole: string; parts: string; note?: string };
+};
+
+/**
+ * ONE FIGURE CARD above a list. `kind` says what is worked out — rows counted
+ * (the default), distinct values of `k`, or the sum or average of `k` — over
+ * the rows the filters reach, narrowed by `where` to the rows whose column
+ * shows one of those values or that carry a flag. A card naming a column the
+ * person's powers withhold is not drawn at all. Money is read off the
+ * column's own type, so a card can never print paise as rupees.
+ */
+export type StatSpec = {
+  l: string;
+  kind?: "count" | "distinct" | "sum" | "avg";
+  k?: string;
+  where?: { k: string; in: string[] } | { flag: string };
+  /** Unit after a number ("kg", "L", "cans"). */
+  u?: string;
+  /** Words for rows with no value — "without a weight". Counted and said, never added as zero. */
+  missing?: string;
+  tone?: Tone;
 };
 
 /* ------------------------------------------------------------------ tones */

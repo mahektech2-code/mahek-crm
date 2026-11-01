@@ -8,17 +8,17 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal } from "@/lib/erp/list-query";
-import { ColumnFilter } from "./column-filter";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { eyebrowClass, IconButton, LinkButton, linkClass } from "./look";
-import { FilterMenu } from "./filter-menu";
+import { FilterPanel } from "./filter-panel";
+import { StatRow } from "./stat-row";
 import { RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { PeriodPicker } from "./period-picker";
 import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
-import { GodownPicker, type PickItem } from "./godown-picker";
+import type { PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { InvoiceButtons } from "./invoice-buttons";
 import { PrintInvoicesModal } from "./invoice-modals";
@@ -29,7 +29,6 @@ import { CHECK_COL, fitColumns } from "./fit-columns";
 import { ColumnsMenu, toolbarToggleClass } from "./columns-menu";
 import { useColumnChoice } from "./use-column-choice";
 import { NewMenu } from "./new-menu";
-import { CardGrid } from "@/components/ui/card-grid";
 
 /* ---------------------------------------------------------------------------
  * The generic ERP list, drawn the way the CRM draws a list: the page header
@@ -53,8 +52,6 @@ import { CardGrid } from "@/components/ui/card-grid";
 
 /** More status values than this and they are a dropdown, not a row of tabs. */
 const MAX_TABS = 7;
-/** v4: up to six chips are figure cards; the seventh turns them into a row of round chips. */
-const MAX_STATS = 6;
 
 /** A tab of a screen with several lists (`views` in the registry): a link, because each tab is its own server read. */
 export type ListTab = {
@@ -146,102 +143,6 @@ export function FigureStrip({ items }: { items: NonNullable<ListSpec["strip"]> }
   );
 }
 
-/** The coloured edge a flagged row carries, in the CRM's tokens. */
-/** The dot and the bar of a figure card, by the tone its value is drawn in. */
-const STAT_FILL: Record<Tone, string> = {
-  success: "bg-success",
-  danger: "bg-danger",
-  warn: "bg-warn",
-  info: "bg-info",
-  brand: "bg-brand",
-  neutral: "bg-faint",
-  muted: "bg-faint",
-};
-
-/**
- * THE CHIPS, AS FIGURE CARDS — the v4 list head. The same choice the chip tabs
- * offer, one card per value with its count and its share of the whole, the
- * total first and the rest largest first. Picking a card is picking the chip.
- */
-export function StatCards({
-  total,
-  chips,
-  value,
-  tones,
-  onPick,
-}: {
-  total: number;
-  chips: { v: string; n: number }[];
-  value: string;
-  tones: Record<string, Tone>;
-  onPick: (v: string) => void;
-}) {
-  const cards = [
-    { v: "", l: "Total", n: total, fill: "bg-ink", share: "All records", pct: 100 },
-    ...[...chips]
-      .sort((a, b) => b.n - a.n)
-      .map((c) => {
-        const pct = total ? Math.round((c.n / total) * 100) : 0;
-        return { v: c.v, l: c.v, n: c.n, fill: STAT_FILL[tones[c.v] ?? "neutral"], share: `${pct}% of total`, pct: Math.max(2, pct) };
-      }),
-  ];
-  return (
-    <CardGrid min={150} gap="gap-3" className="mb-3">
-      {cards.map((c) => {
-        const on = c.v === value;
-        return (
-          <button
-            key={c.v || "all"}
-            type="button"
-            title={c.l}
-            aria-pressed={on}
-            onClick={() => onPick(c.v)}
-            className={cx(
-              "flex min-w-0 cursor-pointer flex-col gap-1.5 rounded-[10px] border bg-surface px-4 pt-3.5 pb-3 text-left",
-              on ? "border-brand ring-3 ring-brand-soft" : "border-line hover:border-line-strong",
-            )}
-          >
-            <span className="flex min-w-0 items-center gap-2 text-meta font-semibold text-muted">
-              <span className={cx("h-1.75 w-1.75 flex-none rounded-full", c.fill)} />
-              <span className="truncate">{c.l}</span>
-            </span>
-            <span className="text-2xl leading-7.5 font-bold tracking-tight text-ink tabular-nums">{nf(c.n)}</span>
-            <span className="block h-1 overflow-hidden rounded-full bg-divider">
-              <span className={cx("block h-full rounded-full", c.fill)} style={{ width: `${c.pct}%` }} />
-            </span>
-            <span className="text-xs text-faint">{c.share}</span>
-          </button>
-        );
-      })}
-    </CardGrid>
-  );
-}
-
-/** v4: a list's chips as round pills — navy when picked, the count beside each. */
-function ChipRow({ total, chips, value, onPick }: { total: number; chips: { v: string; n: number }[]; value: string; onPick: (v: string) => void }) {
-  return (
-    <div className="mb-3 flex flex-wrap gap-1.5">
-      {[{ v: "", n: total, l: "All" }, ...chips.map((c) => ({ ...c, l: c.v }))].map((c) => {
-        const on = c.v === value;
-        return (
-          <button
-            key={c.v || "all"}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onPick(c.v)}
-            className={cx(
-              "flex h-7.5 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-meta",
-              on ? "border-ink bg-ink font-semibold text-white" : "border-line bg-surface font-medium text-body hover:border-line-strong",
-            )}
-          >
-            {c.l}
-            <span className="opacity-60 tabular-nums">{nf(c.n)}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 const EMPTY_TILE = {
   brand: "bg-brand-soft text-brand",
@@ -431,7 +332,7 @@ export function ListScreen({
   bare?: boolean;
 }) {
   const ui = useErpUi();
-  const { flags: FLAG, place, exportList, listIds, listTotals, loadForm, tones, look } = useKit();
+  const { flags: FLAG, place, exportList, listIds, listCount, listTotals, loadForm, tones, look } = useKit();
   const v4 = look === "v4";
   const [asTable, setAsTable] = useState(false);
   const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
@@ -578,7 +479,7 @@ export function ListScreen({
   /* A row's ⋯ menu takes a narrow column of its own at the end. */
   const menuIds = spec.rowMenu ?? [];
   const menuOn = menuIds.length > 0;
-  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: spec.colFilters ? 26 : 0 });
+  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: 0 });
   const shownCols = fit.shown;
 
   const exportCsv = async () => {
@@ -666,9 +567,9 @@ export function ListScreen({
   };
   const clearAll = () => {
     setQInput("");
-    if (server) go({ ...server.query, q: "", chip: "", gf: "", fx: {}, cf: {}, page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
+    if (server) go({ ...server.query, q: "", chip: "", gf: "", fx: {}, cf: {}, flag: "", page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
     else {
-      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", fx: {}, cf: {}, page: 1 }));
+      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", fx: {}, cf: {}, flag: "", page: 1 }));
       if (filter) router.replace(home);
     }
   };
@@ -683,37 +584,45 @@ export function ListScreen({
     else delete cf[k];
     setQuery({ cf, page: 1 });
   };
-  /* What each Excel filter says, as a chip: the first value ticked and how many more, or the range. */
-  const cfChips = spec.colFilters
-    ? Object.entries(query.cf ?? {}).map(([k, f]) => {
-        const c = colOf(k);
-        const blank = (v: string) => (v === "—" || v === "" ? "(Blanks)" : v);
-        const u = c.u ?? "";
-        const text = f.in
-          ? f.in.length === 0
-            ? "nothing"
-            : `${blank(f.in[0])}${f.in.length > 1 ? ` + ${nf(f.in.length - 1)}` : ""}`
-          : f.min != null && f.max != null
-            ? `${nf(f.min)}–${nf(f.max)}${u}`
-            : f.min != null
-              ? `${nf(f.min)}${u} or more`
-              : `up to ${nf(f.max ?? 0)}${u}`;
-        return { k, l: c.l, text };
-      })
-    : [];
-  const cfRow = cfChips.length ? (
-    <div className={cx("flex flex-wrap items-center gap-2", v4 ? "mb-3" : "border-b border-divider px-4 py-2.5")}>
-      <span className="text-xs font-medium text-muted">Filtered by</span>
-      {cfChips.map((c) => (
-        <span key={c.k} className="inline-flex h-7 items-center gap-1.5 rounded-full bg-ink pr-1 pl-3 text-xs text-white">
-          <span className="opacity-70">{c.l}:</span>
-          <span className="max-w-[220px] truncate font-semibold">{c.text}</span>
-          <button type="button" onClick={() => pickCf(c.k, null)} aria-label={`Remove the ${c.l} filter`} className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full hover:bg-body">
+  /* WHAT IS ON, IN SIGHT: a chip per filter the pop-up applied, the godown
+     and a figure card tapped — each with its ×, and one Clear all. A narrowing
+     hidden inside a pop-up is one somebody forgets they set. */
+  const godownLabel = (v: string) => godowns.find((g) => g.v === v)?.l ?? v;
+  const cfText = (k: string, f: ColFilter) => {
+    const c = colOf(k);
+    const blank = (v: string) => (v === "—" || v === "" ? "(Blank)" : v);
+    const num = (v: number) => (c.t === "m" ? inr(v) : `${nf(v)}${c.u ? ` ${c.u}` : ""}`);
+    return f.in
+      ? f.in.length === 0
+        ? "nothing"
+        : `${blank(f.in[0])}${f.in.length > 1 ? ` + ${nf(f.in.length - 1)}` : ""}`
+      : f.min != null && f.max != null
+        ? `${num(f.min)} – ${num(f.max)}`
+        : f.min != null
+          ? `${num(f.min)} or more`
+          : `up to ${num(f.max ?? 0)}`;
+  };
+  const statOf = (flag: string) => (lp.stats ?? []).find((x) => x.pick && "flag" in x.pick && x.pick.flag === flag)?.l;
+  const onChips: { key: string; l: string; text: string; off: () => void }[] = [
+    ...(gf ? [{ key: "gf", l: place.one.replace(/^./, (x) => x.toUpperCase()), text: godownLabel(gf), off: () => setQuery({ gf: "", page: 1 }) }] : []),
+    ...Object.entries(query.fx)
+      .filter(([k]) => !query.cf?.[k])
+      .map(([k, v]) => ({ key: `fx:${k}`, l: colOf(k).l, text: v, off: () => pickFx(k, "") })),
+    ...Object.entries(query.cf ?? {}).map(([k, f]) => ({ key: `cf:${k}`, l: colOf(k).l, text: cfText(k, f), off: () => pickCf(k, null) })),
+    ...(query.flag ? [{ key: "flag", l: "Only", text: statOf(query.flag) ?? FLAG[query.flag]?.[0] ?? query.flag, off: () => setQuery({ flag: "", page: 1 }) }] : []),
+  ];
+  const cfRow = onChips.length ? (
+    <div className={cx("flex flex-wrap items-center gap-1.5", v4 ? "mb-3" : "border-b border-divider px-4 py-2.5")}>
+      {onChips.map((c) => (
+        <span key={c.key} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-brand-softer bg-brand-soft pr-1 pl-3 text-xs text-brand-deep">
+          <span className="text-brand-hover">{c.l}</span>
+          <span className="max-w-[240px] truncate font-semibold">{c.text}</span>
+          <button type="button" onClick={c.off} aria-label={`Remove the ${c.l} filter`} className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full text-brand-hover hover:bg-brand-softer">
             <ShellIcon name="close" size={12} />
           </button>
         </span>
       ))}
-      <LinkButton onClick={() => setQuery({ cf: {}, page: 1 })}>Clear all filters</LinkButton>
+      <LinkButton onClick={() => setQuery({ cf: {}, fx: {}, gf: "", flag: "", page: 1 })}>Clear all</LinkButton>
     </div>
   ) : null;
   const pickFx = (k: string, v: string) => {
@@ -722,6 +631,25 @@ export function ListScreen({
     else delete fx[k];
     setQuery({ fx, page: 1 });
   };
+  /* A figure card tapped is the filter it stands for; tapped again, it lets go. */
+  const pickStat = (p: StatPick) => {
+    if ("chip" in p) return pickChip(query.chip === p.chip ? "" : p.chip);
+    if ("flag" in p) return setQuery({ flag: query.flag === p.flag ? "" : p.flag, page: 1 });
+    const cur = query.cf?.[p.k]?.in;
+    pickCf(p.k, cur && cur.length === 1 && cur[0] === p.v ? null : { in: [p.v] });
+  };
+  /* What a draft in the pop-up would leave, before Apply: the server's count for a paged list, this one's for a whole one. */
+  const queryNow = JSON.stringify(query);
+  const countDraft = useCallback(
+    async (cf: Record<string, ColFilter>, g: string) => {
+      const next: ListQuery = { ...(JSON.parse(queryNow) as ListQuery), cf, fx: {}, gf: g, page: 1 };
+      if (!server) return { n: queryRows(spec, rows, next, FLAG).list.length, of: rows.length };
+      if (!listCount) return null;
+      const res = await listCount(spec.screen, listQueryParamsWithIds(next));
+      return res.ok ? res.data : null;
+    },
+    [queryNow, server, spec, rows, FLAG, listCount],
+  );
   const pickChip = (v: string) => setQuery({ chip: v, page: 1 });
 
   const sortBy = (k: string) => {
@@ -761,19 +689,17 @@ export function ListScreen({
               ))}
             </Select>
           ) : null}
-          {(() => {
-            const facets = (lp.facets ?? []).filter((f) => f.opts.length > 1 || query.fx[f.k]);
-            return facets.length ? <FilterMenu facets={facets} value={query.fx} onPick={pickFx} onClear={() => setQuery({ fx: {}, page: 1 })} /> : null;
-          })()}
-          {spec.godownKey ? (
-            <GodownPicker
-              value={gf}
-              label={gf || `All ${place.many}`}
-              align="left"
-              items={[{ v: "", l: `All ${place.many}`, sub: `${godowns.length} ${place.many}` }, ...godowns]}
-              onPick={(v) => setQuery({ gf: v, page: 1 })}
-            />
-          ) : null}
+          <FilterPanel
+            sections={lp.panel ?? []}
+            cf={query.cf ?? {}}
+            fx={query.fx}
+            gf={gf}
+            godowns={spec.godownKey ? godowns : null}
+            placeOne={place.one}
+            placeMany={place.many}
+            count={countDraft}
+            onApply={(cf, g) => setQuery({ cf, fx: {}, gf: g, page: 1 })}
+          />
           {spec.fold ? (
             <span role="group" aria-label={spec.fold.l} className="inline-flex h-8 items-center overflow-hidden rounded-control border border-line text-meta">
               <span className="px-2.5 text-muted">{spec.fold.l}</span>
@@ -892,11 +818,15 @@ export function ListScreen({
 
       {/* v4: the chips are figure cards, and the search and filters stand on
           the page above the table rather than inside its card. */}
-      {v4 && chips.length >= 2 && chips.length <= MAX_STATS ? (
-        <StatCards total={lp.beforeChip} chips={chips} value={chip} tones={tones} onPick={pickChip} />
-      ) : v4 && chips.length > MAX_STATS && chips.length <= MAX_TABS ? (
-        <ChipRow total={lp.beforeChip} chips={chips} value={chip} onPick={pickChip} />
-      ) : null}
+      {/* The figure cards: the server's, over every row the filters reach, and
+          the status values — where there are a handful — as one Breakdown card. */}
+      {(() => {
+        const stats = lp.stats ?? [];
+        const breakdown = v4 && chips.length >= 2 && chips.length <= MAX_TABS ? { total: lp.beforeChip, chips, value: chip, tones, onPick: pickChip } : null;
+        /* A lone Total is the pager's number again, not a figure worth a card. */
+        const worth = stats.length > 1 || (stats.length === 1 && !!breakdown) || stats.some((x) => x.l !== "Total");
+        return lp.all > 0 && worth ? <StatRow stats={stats} filtered={!!lp.filtered} breakdown={breakdown} onPick={pickStat} /> : null;
+      })()}
       {v4 ? toolbar : null}
       {v4 ? cfRow : null}
 
@@ -1030,11 +960,6 @@ export function ListScreen({
                           active={on}
                           direction={on && view.srt!.d < 0 ? "desc" : "asc"}
                           onSort={() => sortBy(c.k)}
-                          after={
-                            spec.colFilters && c.t !== "f" ? (
-                              <ColumnFilter col={c} facet={lp.colFacets?.[c.k]} value={query.cf?.[c.k]} onApply={(f) => pickCf(c.k, f)} onSort={(d) => setQuery({ sort: { k: c.k, d } })} />
-                            ) : undefined
-                          }
                         >
                           {/* A heading wraps onto a second line rather than widening its column. */}
                           <span className={cx("whitespace-normal leading-[1.3]", c.t === "n" || c.t === "m" ? "text-right" : "text-left")}>{c.l}</span>

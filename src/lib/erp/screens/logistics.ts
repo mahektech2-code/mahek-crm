@@ -121,6 +121,15 @@ function transportList(scope: TransportScope, key: string = scope): ScreenModule
           cols,
           hidden,
           groups: scope === "transport" ? ["billDate"] : ["transporter"],
+          stats: [
+            { l: "Bills" },
+            { l: "Transporters", kind: "distinct", k: "transporter" },
+            { l: "On the road", where: { k: "track", in: ["Yes"] }, tone: "info" },
+            { l: "Delivered", where: { k: "stage", in: [CLOSED] }, tone: "success" },
+            { l: "Call due", where: { flag: "today" }, tone: "warn" },
+            { l: "Extra expense", kind: "sum", k: "extra" },
+          ],
+          filters: ["transporter", "stage", "payment", "track", "area", "salesMan", "extra", "tripCost"],
           readOnly: register,
           noDataLine:
             scope === "pendingLr" ? "Every dispatched bill has its LR number." : scope === "trackLr" ? "No consignment is being tracked." : "Nothing dispatched yet. A bill appears here once its first line is dispatch-verified.",
@@ -246,7 +255,16 @@ const paidFreight: ScreenModule = {
     );
     const bulk: BulkSpec[] = [{ id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT }];
     return {
-      spec: { screen: "paidFreight", cols, hidden, groups: ["transporter"], agg: { k: "extra", l: "extra expenses" }, bulk, noDataLine: "Every paid-freight line has its extra expense." },
+      spec: { screen: "paidFreight", cols, hidden, groups: ["transporter"],
+        agg: { k: "extra", l: "extra expenses" },
+        stats: [
+          { l: "Lines" },
+          { l: "Parties", kind: "distinct", k: "party" },
+          { l: "Transporters", kind: "distinct", k: "transporter" },
+          { l: "Litres", kind: "sum", k: "litres", u: "L" },
+        ],
+        filters: ["transporter", "party", "payment", "litres"],
+        bulk, noDataLine: "Every paid-freight line has its extra expense." },
       tooWide: wide,
       rows: shown.map((r) => ({
         id: r.l.o.id,

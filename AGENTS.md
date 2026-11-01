@@ -1919,6 +1919,28 @@ list is its `noDataLine`'s first sentence and the New button. Errors are the
 one thing still written out in full. `quiet-copy.test.ts` pins the rules and
 refuses a page that draws its registry line under the title.
 
+**EVERY ERP LIST HAS FIGURE CARDS AND ONE FILTERS BUTTON, AND BOTH ARE THE
+SERVER'S (Nov 2026).** A `ListSpec` names its cards in `stats` (`StatSpec`:
+count, distinct, sum or average of a column, narrowed by `where` to a value or a
+flag) and its pop-up sections in `filters`; `pageOf` works both out
+(`statsOf`, `panelSections` in `list-query.ts`) over every row the filters
+reach and, beside it, every row the list read, so a filtered card says "of ₹4.82
+L in all". A spec naming no cards gets Total and one per `agg`; naming no
+filters gets sections found from the data (a column with a handful of values,
+never a name per row, plus a from–to on what it adds up). A card on a column a
+power withholds is dropped, never drawn as zero; a row without the figure is
+counted and named. A card with a one-value `where` or a flag is a filter when
+tapped (`ListQuery.flag`, URL `flg`, for a flag). The pop-up
+(`_ui/filter-panel.tsx`) stages every choice until Apply, says what Apply would
+leave (`erpListCount`), and writes the ordinary `cf` reading, honoured on any
+drawn column — so export, Select all and the selection totals follow it. The
+godown moved inside it; the period kept its own button. The list's status
+values are one Breakdown card (`_ui/stat-row.tsx`). The Excel funnels on
+column headings are gone — the Dispatch register's columns are sections now.
+Hand-built pages (the dashboard, Logistics' desks, Petty Cash's transaction
+tables, the Dispatch desk, Under Process, the Quotation manager) do not use the
+generic list and have no cards from this.
+
 **THE CRM WEARS THE ERP'S LOOK AND ITS QUIET RULES (Oct 2026), and nothing on
 it was taken away.** The look is one sheet, `src/styles/v4-theme.css` (it was
 `app/erp/erp-theme.css`), answering to a `data-v4` marker on the shell: the

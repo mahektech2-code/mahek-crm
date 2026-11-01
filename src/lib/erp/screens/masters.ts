@@ -185,6 +185,13 @@ const rawMaterials: ScreenModule = {
         hidden,
         groups: ["type"],
         chips: "status",
+        stats: [
+          { l: "Items" },
+          { l: "Types", kind: "distinct", k: "type" },
+          { l: "Cans not grouped", where: { k: "group", in: ["Not grouped"] }, tone: "warn" },
+          { l: "Retired", where: { flag: "inactive" }, tone: "muted" },
+        ],
+        filters: ["type", "unit", "rule", "vendor", "group", "price"],
         newForm: form,
         newLabel: "New raw material",
       },
@@ -466,7 +473,21 @@ const suppliers: ScreenModule = {
       { k: "email", l: "Email", t: "em" },
     ];
     return {
-      spec: { screen: "suppliers", cols, hidden: [], groups: ["state"], newForm: form, newLabel: "New purchase party" },
+      spec: {
+        screen: "suppliers",
+        cols,
+        hidden: [],
+        groups: ["state"],
+        stats: [
+          { l: "Parties" },
+          { l: "States", kind: "distinct", k: "state" },
+          { l: "Brokers", kind: "distinct", k: "broker" },
+          { l: "Retired", where: { flag: "inactive" }, tone: "muted" },
+        ],
+        filters: ["state", "area", "grade", "broker", "credit"],
+        newForm: form,
+        newLabel: "New purchase party",
+      },
       rows: rows.map((r) => ({
         id: r.id,
         v: {
@@ -668,6 +689,13 @@ const productsScreen: ScreenModule = {
         hidden,
         groups: ["sfg"],
         chips: "kind",
+        stats: [
+          { l: "SKUs" },
+          { l: "FG products", kind: "distinct", k: "fg" },
+          { l: "Liquids", kind: "distinct", k: "sfg" },
+          { l: "No liquid set", where: { k: "sfg", in: ["Unclassified"] }, tone: "warn" },
+        ],
+        filters: ["sfg", "pack", "boxType", "lpc", "cpb"],
         noDataLine: "No products yet. The catalogue is kept in Admin Console → Catalogue.",
       },
       rows: rows.map((r) => {
@@ -966,7 +994,21 @@ const customersScreen: ScreenModule = {
     ];
     const why = canStatus ? "" : "Only an admin or the office changes a customer's status";
     return {
-      spec: { screen: "customers", cols, hidden: [], groups: ["status"], chips: "status", noDataLine: "No customers yet. Customers are added in Accounts → Customers → Add customer." },
+      spec: {
+        screen: "customers",
+        cols,
+        hidden: [],
+        groups: ["status"],
+        chips: "status",
+        stats: [
+          { l: "Customers" },
+          { l: "Cities", kind: "distinct", k: "city" },
+          { l: "Sales people", kind: "distinct", k: "sales" },
+          { l: "Pending", where: { flag: "pendingParty" }, tone: "warn" },
+        ],
+        filters: ["city", "area", "sales", "priceList", "grade", "credit"],
+        noDataLine: "No customers yet. Customers are added in Accounts → Customers → Add customer.",
+      },
       rows: rows.map((r) => {
         const st = partyStatus(r);
         const actions: ActionSpec[] = [];
@@ -1220,7 +1262,21 @@ const godowns: ScreenModule = {
       { k: "f", l: "Flags", t: "f" },
     ];
     return {
-      spec: { screen: "godowns", cols, hidden: [], groups: ["region"], chips: "state", newForm, newLabel: "Register godown" },
+      spec: {
+        screen: "godowns",
+        cols,
+        hidden: [],
+        groups: ["region"],
+        chips: "state",
+        stats: [
+          { l: "Godowns" },
+          { l: "Employees", kind: "sum", k: "emp", u: "people" },
+          { l: "Inactive", where: { k: "status", in: ["Inactive"] }, tone: "muted" },
+        ],
+        filters: ["region", "city", "status"],
+        newForm,
+        newLabel: "Register godown",
+      },
       rows: rows.map((g) => {
         const names = byGodown.get(g.id) ?? [];
         const actions: ActionSpec[] = g.reserved

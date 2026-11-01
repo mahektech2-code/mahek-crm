@@ -67,7 +67,7 @@ import { erpAudit, erpId, nextNumber, num, paise, stampLine, text, type ScreenMo
 import { newFormIn } from "../lazy-forms";
 import type { LoadScope } from "../window";
 import { fgLotStock, lockLot, packLotStock, rmLots } from "../stock";
-import type { ActionSpec, ColSpec, FieldSpec, ListRow, RowField } from "../ui";
+import type { ActionSpec, ColSpec, FieldSpec, ListRow, RowField, StatSpec } from "../ui";
 import { fd, impactPart, inr, nf } from "../ui";
 import { godownIdByName, godownOptions, inTx, refuse, today, type Tx } from "./common";
 
@@ -323,6 +323,15 @@ const vendorReturns: ScreenModule = {
         hidden: money ? [] : [{ l: "Debit value", power: "viewPurchaseMoney" }],
         groups: ["stage", "supplier"],
         chips: "stage",
+        stats: [
+          { l: "Returns" },
+          { l: "Vendors", kind: "distinct", k: "supplier" },
+          { l: "Debit value", kind: "sum", k: "total", missing: "without a rate" },
+          { l: "Awaiting approval", where: { k: "stage", in: ["Awaiting approval"] }, tone: "warn" },
+          { l: "To dispatch", where: { k: "stage", in: ["Debit note issued · to dispatch"] }, tone: "info" },
+          { l: "Owner approval", where: { flag: "ownerApproval" }, tone: "danger" },
+        ],
+        filters: ["supplier", "item", "reason", "qty", "total"],
         sortDefault: ["date", -1],
         ...(await newFormIn(s, () => vendorForm(ctx))),
         newLabel: "Raise purchase return",
@@ -605,6 +614,13 @@ const debitNotes: ScreenModule = {
         hidden: money ? [] : [{ l: "Amounts", power: "viewPurchaseMoney" }],
         groups: ["supplier", "status"],
         chips: "status",
+        stats: [
+          { l: "Debit notes", where: { k: "status", in: ["Issued"] } },
+          { l: "Vendors", kind: "distinct", k: "supplier" },
+          { l: "Total debited", kind: "sum", k: "total", where: { k: "status", in: ["Issued"] } },
+          { l: "Cancelled", where: { k: "status", in: ["Cancelled"] }, tone: "muted" },
+        ],
+        filters: ["supplier", "item", "qty", "total"],
         readOnly: true,
         sortDefault: ["date", -1],
         noDataLine: "No debit notes. One is issued when a purchase return is approved.",
@@ -678,6 +694,13 @@ const returnOutwards: ScreenModule = {
         groups: ["status", "supplier"],
         chips: "status",
         godownKey: "godown",
+        stats: [
+          { l: "Outwards" },
+          { l: "Vendors", kind: "distinct", k: "supplier" },
+          { l: "Not confirmed", where: { k: "status", in: ["Draft"] }, tone: "warn" },
+          { l: "Confirmed", where: { k: "status", in: ["Confirmed"] }, tone: "success" },
+        ],
+        filters: ["supplier", "item", "transporter", "qty"],
         sortDefault: ["date", -1],
         noDataLine: "No return outwards. Stock leaves only when one is confirmed.",
       },
@@ -1041,6 +1064,16 @@ async function customerScreen(ctx: ErpContext, key: "customerReturns" | "returnQ
       hidden: money ? [] : [{ l: "Credit value", power: "viewPurchaseMoney" }],
       groups: ["stage", "customer"],
       chips: "stage",
+      stats: <StatSpec[]>[
+        { l: "Returns" },
+        { l: "Customers", kind: "distinct", k: "customer" },
+        { l: "In quarantine", kind: "sum", k: "quarantine" },
+        { l: "Credit value", kind: "sum", k: "total", missing: "without a rate" },
+        ...(key === "customerReturns" ? [{ l: "Awaiting receipt", where: { k: "stage", in: ["Awaiting receipt"] }, tone: "warn" }] : []),
+        { l: "Credit not issued", where: { flag: "creditRaised" }, tone: "warn" },
+        { l: "Owner approval", where: { flag: "ownerApproval" }, tone: "danger" },
+      ],
+      filters: ["customer", "sku", "credit", "qty", "quarantine", "total"],
       sortDefault: ["date", -1] as [string, 1 | -1],
       ...(key === "customerReturns" ? { ...(await newFormIn(s, customerForm)), newLabel: "Record customer return" } : {}),
       noDataLine:
@@ -1365,6 +1398,15 @@ const reworkOrders: ScreenModule = {
         groups: ["status"],
         chips: "status",
         godownKey: "godown",
+        stats: [
+          { l: "Reworks" },
+          { l: "Input", kind: "sum", k: "input", u: "L" },
+          { l: "Recovered", kind: "sum", k: "output", u: "L", missing: "not completed" },
+          { l: "Process loss", kind: "sum", k: "loss", u: "L" },
+          { l: "In rework", where: { k: "status", in: ["In rework"] }, tone: "warn" },
+          { l: "SFG QC pending", where: { flag: "qcPending" }, tone: "warn" },
+        ],
+        filters: ["product", "input", "output", "loss"],
         noDataLine: "No rework. QC opens one when returned material can be recovered.",
       },
       rows: rows.map((r): ListRow => {
@@ -1480,6 +1522,13 @@ const wasteDisposals: ScreenModule = {
         hidden: [],
         groups: ["status"],
         chips: "status",
+        stats: [
+          { l: "Disposals" },
+          { l: "Quantity", kind: "sum", k: "litres", u: "L" },
+          { l: "Cost", kind: "sum", k: "cost", missing: "with no cost" },
+          { l: "To dispose", where: { k: "status", in: ["To dispose"] }, tone: "warn" },
+        ],
+        filters: ["sku", "method", "litres", "cost"],
         noDataLine: "No waste. Material that cannot be reused or sold is disposed of here.",
       },
       rows: rows.map((r): ListRow => ({

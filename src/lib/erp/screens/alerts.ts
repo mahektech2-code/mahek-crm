@@ -39,6 +39,13 @@ export const alertsScreen: ScreenModule = {
         hidden: [],
         groups: ["status"],
         chips: "kind",
+        stats: [
+          { l: "Alerts" },
+          { l: "Open", where: { k: "status", in: ["Open"] }, tone: "danger" },
+          { l: "Acknowledged", where: { k: "status", in: ["Acknowledged"] }, tone: "info" },
+          { l: "Resolved", where: { k: "status", in: ["Resolved"] }, tone: "success" },
+        ],
+        filters: ["status"],
         newForm: canRun(ctx) ? { screen: "alerts", id: "run", title: "Run the checks now", sub: "The checks also run every hour.", submit: "Run checks", header: [] } : undefined,
         newLabel: "Run checks now",
         noDataLine: "Nothing unusual. Alerts clear on their own once put right.",

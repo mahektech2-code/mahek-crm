@@ -192,6 +192,14 @@ const transfers: ScreenModule = {
         cols,
         hidden: [],
         groups: ["date", "from"],
+        filters: ["type", "item", "to", "qty"],
+        stats: [
+          { l: "Transfers" },
+          { l: "Items", kind: "distinct", k: "item" },
+          { l: "Lots", kind: "distinct", k: "lot" },
+          { l: "Today", where: { flag: "today" }, tone: "brand" },
+          { l: "Lost stock", where: { flag: "lost" }, tone: "danger" },
+        ],
         godownKey: "from",
         download: true,
         ...(await newFormIn(s, () => transferForm(ctx))),
@@ -464,6 +472,20 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
           cols,
           hidden: [],
           groups: ["godown", "type"],
+          filters: ["item", "type", "status", "managed", "days", "pct"],
+          stats: reorder
+            ? [
+                { l: "To re-order" },
+                { l: "Items", kind: "distinct", k: "item" },
+                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+              ]
+            : [
+                { l: "Levels" },
+                { l: "Items", kind: "distinct", k: "item" },
+                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+                { l: "Planner keeps", where: { flag: "autoLevel" }, tone: "brand" },
+                { l: "Not followed", where: { k: "status", in: ["UnFollow"] }, tone: "muted" },
+              ],
           godownKey: "godown",
           sortDefault: ["pct", 1],
           readOnly: reorder,
@@ -718,6 +740,19 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
           cols,
           hidden: [],
           groups: reorder ? ["godown", "kind"] : ["godown", "status", "kind"],
+          filters: ["sku", "kind", "status", "pct"],
+          stats: reorder
+            ? [
+                { l: "To re-order" },
+                { l: "Products", kind: "distinct", k: "sku" },
+                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+              ]
+            : [
+                { l: "Levels" },
+                { l: "Products", kind: "distinct", k: "sku" },
+                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+                { l: "Not followed", where: { k: "status", in: ["UnFollow"] }, tone: "muted" },
+              ],
           godownKey: "godown",
           sortDefault: reorder ? ["pct", -1] : ["sku", 1],
           readOnly: reorder,
