@@ -16,10 +16,11 @@ import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "@/lib/factory/head";
-import type { LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { FactoryDeviceReport, LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload } from "@/lib/factory/lorry";
 import { lorryScanBatch } from "@/lib/factory/scan-batch";
 import { lorryPack } from "@/lib/factory/lorry-pack";
+import { recordDevice } from "@/lib/factory/devices";
 import type { LoadingPack } from "@/lib/factory/lorry-judge";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
@@ -371,6 +372,11 @@ export async function factoryUnloadBox(order: string, unitId: string): Promise<B
 export async function factoryLorryBoard(key: string): Promise<LorryBoard | null> {
   const fc = await factoryContext();
   return fc ? lorryBoard(fc, key) : null;
+}
+/** A phone describing itself, for the Admin Console's Factory handsets page (`lib/factory/devices.ts`). Signed out, it is not kept. */
+export async function factoryDeviceReport(report: FactoryDeviceReport): Promise<{ ok: boolean }> {
+  const fc = await factoryContext();
+  return fc ? recordDevice(fc, report) : { ok: false };
 }
 /** What the phone judges a lorry's scans against in shadow mode (`lib/factory/lorry-pack.ts`). */
 export async function factoryLorryPack(key: string): Promise<LoadingPack | null> {

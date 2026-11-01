@@ -105,6 +105,7 @@ export const ADMIN = {
   deletedLeads: "/admin/deleted-leads",
   integrations: "/admin/integrations",
   handsets: "/admin/handsets",
+  factoryHandsets: "/admin/factory-handsets",
   jobs: "/admin/jobs",
   notifications: "/admin/notifications",
   audit: (tab?: TabsOf<"audit">) => withTab("/admin/audit", tab),
@@ -168,6 +169,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     items: [
       { href: ADMIN.integrations, label: "Integrations", icon: "grid", platform: true },
       { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true },
+      { href: ADMIN.factoryHandsets, label: "Factory handsets", icon: "phone", platform: true },
       { href: ADMIN.jobs, label: "Jobs", icon: "clock", platform: true },
       { href: ADMIN.notifications, label: "Notifications", icon: "bell", platform: true },
       { href: ADMIN.audit(), label: "Audit log", icon: "eye", platform: true },
