@@ -1,7 +1,7 @@
 "use client";
 
 import { Page } from "./page-head";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
@@ -519,16 +519,26 @@ export function ListScreen({
      it is in (`fit-columns.ts`), measured as the card resizes, and folds the
      rest into the record dialog. Before the first measurement it assumes a
      tablet-width card, so the page as the server sent it never overflows —
-     on a wider screen the extra columns arrive with the measurement. */
+     on a wider screen the extra columns arrive with the measurement.
+     A search that finds nothing takes the table out of the page, and the
+     table that comes back is a new element: watched through an effect, the
+     observer stayed on the removed one — whose last width was 0 — so every
+     list read one column wide until reloaded. A callback ref watches
+     whichever table is mounted, and a width of 0 (a table leaving the page,
+     a hidden tab) is never taken as the card's width. */
   const [avail, setAvail] = useState(760);
-  const tableBox = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = tableBox.current;
+  const tableObserver = useRef<ResizeObserver | null>(null);
+  const tableBox = useCallback((el: HTMLDivElement | null) => {
+    tableObserver.current?.disconnect();
+    tableObserver.current = null;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setAvail(Math.floor(e.contentRect.width)));
+    const ro = new ResizeObserver(([e]) => {
+      const w = Math.floor(e.contentRect.width);
+      if (w > 0) setAvail(w);
+    });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [showCards]);
+    tableObserver.current = ro;
+  }, []);
   const [chosenCols, setChosenCols] = useColumnChoice(`${path}|${spec.screen}`);
   /* A group key that is not a declared column still gets words, not its
      identifier: "monthLbl" reads "Month". */
