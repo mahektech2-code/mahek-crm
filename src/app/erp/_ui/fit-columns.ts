@@ -16,9 +16,14 @@ import type { ColSpec, ColType } from "@/lib/erp/ui";
  * Columns are chosen in the order the server declared them, which is the
  * order a screen's author put the important ones in, except that the first
  * column, the record's name, its first status and its flags are always kept: those
- * are what a person scans a list FOR. A person may pick their own set from
- * the Columns menu; a pick that does not fit the width they have now keeps
- * the ones it can, in their order, and says how many it could not.
+ * are what a person scans a list FOR.
+ *
+ * A PERSON'S OWN PICK IS DRAWN WHOLE. From the Columns menu somebody may tick
+ * every column there is; where their pick is wider than the screen, each
+ * column is drawn at its narrowest and the table scrolls sideways. Fitting the
+ * width is what the AUTOMATIC set does — the one a list opens on before
+ * anybody chooses — and a person who asked for twenty columns asked for them,
+ * not for the twelve that would have fitted.
  *
  * PURE: the list screen hands it the measured width.
  * ------------------------------------------------------------------------- */
@@ -90,10 +95,12 @@ export type ColumnFit = {
   widths: Record<string, number>;
   /** Not drawn — in the record dialog, the search and the export. */
   folded: ColSpec[];
-  /** Of a person's own pick, how many there was no room for at this width. */
+  /** Of a person's own pick, how many there was no room for. Always 0: a pick is drawn whole, scrolling sideways if it must. */
   dropped: number;
-  /** Whether one more of the folded columns would still fit. */
+  /** Whether a folded column may be ticked. Always: the menu has no cap. */
   roomFor: (k: string) => boolean;
+  /** The drawn columns' width in px, the checkbox included — wider than `avail` only for a person's own pick. */
+  total: number;
 };
 
 export function fitColumns({
@@ -133,7 +140,7 @@ export function fitColumns({
     const w = mw(byKey.get(k)!);
     /* The first column is drawn even on a screen too narrow for it: a list
        with no columns at all is not a narrower list, it is a broken one. */
-    if (used + w <= room || keep.size === 0) {
+    if (pick?.length || used + w <= room || keep.size === 0) {
       keep.add(k);
       used += w;
     } else if (!pick?.length) {
@@ -165,10 +172,8 @@ export function fitColumns({
     shown,
     widths,
     folded,
-    dropped: pick?.length ? pick.length - shown.length : 0,
-    roomFor: (k) => {
-      const c = byKey.get(k);
-      return !!c && used + mw(c) <= room;
-    },
+    dropped: 0,
+    roomFor: (k) => byKey.has(k),
+    total: shown.reduce((n, c) => n + widths[c.k], 0) + (check ? CHECK_COL : 0),
   };
 }

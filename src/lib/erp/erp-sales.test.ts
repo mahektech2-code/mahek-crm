@@ -386,7 +386,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(l.invoiceDate, TODAY);
     const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d.invoiceCheck, "Pending", "a new bill waits for the invoice check");
-    assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice check");
+    assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice print");
     assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), `Order ${l.orderNo} is billed. One order is one bill — take a new order for these goods.`);
   });
 

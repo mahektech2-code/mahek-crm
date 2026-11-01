@@ -653,8 +653,8 @@ export class FactoryApp extends Component<Props, State> {
     try {
       const r = await call("findPhone", p);
       if (!r.ok) return this.setState({ idErr: r.error === "notFound" || r.error === "phone" ? T.notFound : r.error === "inactive" ? T.inactive : r.error });
-      this.setState({ pinFor: r.who, pin: "", pinErr: "", signStep: r.who.hasPin ? "pin" : "otp" }, () => {
-        if (!r.who.hasPin) void this.sendCode(true);
+      this.setState({ pinFor: r.who, pin: "", pinErr: "", signStep: r.who.hasPin && !r.who.pinLocked ? "pin" : "otp" }, () => {
+        if (!r.who.hasPin || r.who.pinLocked) void this.sendCode(true);
       });
     } catch {
       this.setState({ idErr: "No network. Check the Wi-Fi and try again." });
@@ -673,7 +673,9 @@ export class FactoryApp extends Component<Props, State> {
       const r = await call("signInPin", who.key, q);
       if (!r.ok) {
         if (r.error === "noPin") return this.setState({ signStep: "otp" }, () => void this.sendCode(true));
-        return this.setState({ pin: "", pinErr: r.error === "wrongPin" ? T.wrongPin : r.error === "inactive" ? T.inactive : r.error });
+        /* The third wrong PIN shuts it: only the SMS code gets them in now. */
+        if (r.error === "pinLocked") return this.setState({ pin: "", pinErr: "", pinFor: { ...who, pinLocked: true }, signStep: "otp" }, () => void this.sendCode(true));
+        return this.setState({ pin: "", pinErr: r.error === "wrongPin" ? T.wrongPin + (r.left ? " " + r.left + " " + T.triesLeft + "." : "") : r.error === "inactive" ? T.inactive : r.error });
       }
       this.signedIn(r.me, r.data);
     } catch {
@@ -1001,8 +1003,8 @@ export class FactoryApp extends Component<Props, State> {
     if (r.kind === "box") return this.setState({ scan: P === "load" ? { ...sc, res: null } : null });
     if (r.kind === "emp") {
       const who = st.pinFor;
-      return this.setState({ scan: null, pin: "", pinErr: "", signStep: who?.hasPin ? "pin" : "otp", phone: who?.ph ?? "" }, () => {
-        if (who && !who.hasPin) void this.sendCode(true);
+      return this.setState({ scan: null, pin: "", pinErr: "", signStep: who?.hasPin && !who.pinLocked ? "pin" : "otp", phone: who?.ph ?? "" }, () => {
+        if (who && (!who.hasPin || who.pinLocked)) void this.sendCode(true);
       });
     }
     if (P === "home") {
@@ -3681,8 +3683,9 @@ export class FactoryApp extends Component<Props, State> {
 
         {step === "otp" && (
           <Div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "28px 24px 20px 24px", minHeight: 0 }}>
-            <Btn onClick={() => this.setState({ signStep: who?.hasPin ? "pin" : "id", otpErr: "" })} style={{ alignSelf: "flex-start", height: "40px", padding: "0 8px 0 0", border: "none", background: "transparent", color: "#5223E0", fontSize: "15px", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>{ic("back", 24)}{T.back}</Btn>
+            <Btn onClick={() => this.setState({ signStep: who?.hasPin && !who.pinLocked ? "pin" : "id", otpErr: "" })} style={{ alignSelf: "flex-start", height: "40px", padding: "0 8px 0 0", border: "none", background: "transparent", color: "#5223E0", fontSize: "15px", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>{ic("back", 24)}{T.back}</Btn>
             <Div style={{ fontSize: "26px", lineHeight: "32px", fontWeight: 700, marginTop: "20px" }}>{T.smsCode}</Div>
+            {who?.pinLocked && <Div style={{ fontSize: "15px", lineHeight: "21px", fontWeight: 600, color: "#B3261E", background: "#FCEEEE", borderRadius: "12px", padding: "10px 12px", marginTop: "10px" }}>{T.pinLocked}</Div>}
             <Div style={{ fontSize: "16px", lineHeight: "23px", color: "#6B7385", marginTop: "6px" }}>
               {(st.otpTo ? "We sent a 6-digit code to " + st.otpTo + "." : "We are sending a 6-digit code to your phone.") + (who?.hasPin ? " You will set a new PIN after this." : " You will choose your PIN after this.")}
             </Div>
