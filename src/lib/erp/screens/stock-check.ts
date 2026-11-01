@@ -949,6 +949,8 @@ const floorChecks: ScreenModule = {
     const items = gds.length ? await checkableItems(gds[0].id) : [];
     const byStage: Record<string, string[]> = {};
     for (const i of items) (byStage[STAGE_LABEL[i.stage]] ??= []).push(i.name);
+    /* Each item is counted in its own stock unit; the figure may be typed in any unit of that kind. */
+    const unitOf = Object.fromEntries(items.map((i) => [`${STAGE_LABEL[i.stage]}|${i.name}`, i.unit]));
     const cols: ColSpec[] = [
       { k: "item", l: "Item", t: "b" },
       { k: "result", l: "Result", t: "s" },
@@ -967,7 +969,7 @@ const floorChecks: ScreenModule = {
       { k: "kind", l: "Kind of stock", t: "select", req: true, opts: Object.values(STAGE_LABEL), def: STAGE_LABEL.rm },
       { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "kind", map: byStage } },
       godownField(gds, { def: ctx.workingGodown?.name }),
-      { k: "qty", l: "Counted", t: "num", req: true, min: 0, hint: "The book is shown only after you save." },
+      { k: "qty", l: "Counted", t: "num", req: true, min: 0, hint: "The book is shown only after you save.", qtyUnit: { by: ["kind", "item"], map: unitOf } },
       { k: "bin", l: "Where", t: "text", hint: "Bay, rack or bin." },
       { k: "reason", l: "If it differs, why (optional)", t: "area", mic: true },
     ];

@@ -11,6 +11,7 @@
  * ------------------------------------------------------------------------- */
 
 import { groupIndian, rupeesFromPaise } from "@/lib/format";
+import { measureOfBase } from "./engines/uom";
 
 /** Column types, from the design: bold, text, number, money, date, status, flags, phone, email, map, mono. */
 export type ColType = "b" | "t" | "n" | "m" | "d" | "s" | "f" | "ph" | "em" | "map" | "mono";
@@ -142,6 +143,19 @@ export type FieldSpec = {
    * Absent is `attachments.maxSizeMb`.
    */
   upload?: "material-photo";
+  /**
+   * THE UNIT A QUANTITY IS TYPED IN (`engines/uom.ts`). A number field whose
+   * figure is stored in a base unit — kg, litres, pieces — draws a unit
+   * dropdown beside it, offering every unit of the units master of that kind
+   * plus "Add a unit", and hands the form the figure already converted into
+   * the base. Found from the label's bracket ("Quantity (litres)") where
+   * nothing is said here. `base` names the base outright, `of` reads it from
+   * another field of the form (the item's unit), `by`/`map` look it up the way
+   * `fillBy` does. `false`: a number that is not a quantity of anything.
+   */
+  qtyUnit?: { base?: string; of?: string; by?: string[]; map?: Record<string, string> } | false;
+  /** The base unit `qtyUnit` resolved to for the values on the form now (`resolveField`). */
+  ub?: string;
 };
 
 export type FormSpec = {
@@ -768,7 +782,28 @@ export function withFills(spec: FormSpec): FormSpec {
 
 /** The field as it stands for these values: `reqWhen` folded into `req`. */
 export function resolveField(f: FieldSpec, values: Record<string, string>, data: Record<string, unknown> = {}): FieldSpec {
-  return f.reqWhen && !f.req && whenHolds(f.reqWhen, values, data) ? { ...f, req: true } : f;
+  const r = f.reqWhen && !f.req && whenHolds(f.reqWhen, values, data) ? { ...f, req: true } : f;
+  const ub = qtyUnitBase(f, values);
+  return ub === undefined ? r : { ...r, ub };
+}
+
+/**
+ * The base unit a quantity field holds, for the values on the form now: what
+ * `qtyUnit` says, else the unit in the label's brackets. `undefined` where the
+ * field is not a quantity at all; "" where it is one whose unit is not known
+ * yet (the item not picked).
+ */
+export function qtyUnitBase(f: FieldSpec, values: Record<string, string>): string | undefined {
+  if (f.t !== "num" || f.qtyUnit === false) return undefined;
+  const q = f.qtyUnit;
+  if (q) {
+    if (q.base) return q.base;
+    if (q.of) return values[q.of] ?? "";
+    if (q.by && q.map) return q.map[q.by.map((k) => values[k] ?? "").join("|")] ?? "";
+    return undefined;
+  }
+  const m = /\(([^()]{1,10})\)\s*$/.exec(f.l);
+  return m && measureOfBase(m[1]) ? m[1].trim() : undefined;
 }
 
 export function whenHolds(

@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState, Td, Th, Tr, controlClass, cx } from "@/components/ui/primitives";
 import type { FieldSpec, FormSpec } from "@/lib/erp/ui";
-import { nf, whenHolds } from "@/lib/erp/ui";
+import { nf, qtyUnitBase, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import { parsePastedLines } from "@/lib/erp/engines/purchase-flow";
 import { Icon } from "./icons";
 import { IconButton, popoverClass } from "./look";
 import { matchOptions, nearEnd, PAGE } from "./option-match";
+import { QtyField } from "./units";
 
 /* ---------------------------------------------------------------------------
  * A document's lines as ONE TABLE, for documents that run to hundreds of
@@ -190,7 +191,7 @@ export function LineTable({
               <colgroup>
                 <col style={{ width: 44 }} />
                 {fields.map((f) => (
-                  <col key={f.k} style={{ width: f.k === pickField.k ? undefined : f.t === "num" ? 120 : f.t === "derived" && f.k === "unit" ? 64 : 170 }} />
+                  <col key={f.k} style={{ width: f.k === pickField.k ? undefined : f.t === "num" ? (qtyUnitBase(f, {}) !== undefined || f.qtyUnit ? 180 : 120) : f.t === "derived" && f.k === "unit" ? 64 : 170 }} />
                 ))}
                 <col style={{ width: 40 }} />
               </colgroup>
@@ -237,7 +238,7 @@ export function LineTable({
                           </span>
                         );
                       } else if (f.t === "num") {
-                        content = (
+                        const plain = (
                           <input
                             ref={f.k === qtyKey ? (el) => void (qtyRefs.current[i] = el) : undefined}
                             type="number"
@@ -260,6 +261,35 @@ export function LineTable({
                             className={cell(!!err, "text-right tabular-nums")}
                           />
                         );
+                        /* A quantity kept in a base unit is typed in any unit of its kind (`units.tsx`). */
+                        const ub = qtyUnitBase(f, values);
+                        content =
+                          ub === undefined ? (
+                            plain
+                          ) : (
+                            <QtyField
+                              base={ub}
+                              value={l[f.k] ?? ""}
+                              onChange={(v) => set(i, f.k, v)}
+                              error={!!err}
+                              min={f.min}
+                              placeholder="0"
+                              inputRef={f.k === qtyKey ? (el) => void (qtyRefs.current[i] = el) : undefined}
+                              onKeyDown={(e) => {
+                                if (f.k !== qtyKey) return;
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  searchRef.current?.focus();
+                                } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  qtyRefs.current[i + (e.key === "ArrowDown" ? 1 : -1)]?.focus();
+                                }
+                              }}
+                              className={cx("rounded-control border", err ? "border-danger" : "border-line")}
+                              compact
+                              fallback={plain}
+                            />
+                          );
                       } else if (f.t === "select") {
                         const opts = options(f, values) ?? [];
                         content = (

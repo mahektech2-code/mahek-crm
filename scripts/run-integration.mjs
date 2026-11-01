@@ -70,6 +70,7 @@ const files = [
   // Can photos and look-alike can groups: grouping by name never moves a can
   // somebody placed, photos are capped and taken off without deleting.
   "src/lib/erp/erp-can-groups.test.ts",
+  "src/lib/erp/erp-uoms.test.ts",
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",
   "src/lib/erp/erp-production.test.ts",

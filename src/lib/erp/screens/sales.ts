@@ -994,7 +994,7 @@ async function allocateForm(ctx: ErpContext, id: string): Promise<FormSpec | nul
       { k: "from", l: "Lot code from", t: "derived", calc: "alloc.from" },
       { k: "lot", l: "Lot code", t: "scan", req: true, opts: lots.map((x) => x.code), hint: lots.length ? "Scan or type; the list shows lots with stock here." : "No lot of this SKU has stock at this godown." },
       { k: "avail", l: `Available ${unit.toLowerCase()} quantity`, t: "derived", calc: "alloc.avail" },
-      { k: "qty", l: "Quantity", t: "num", req: true, min: 1 },
+      { k: "qty", l: "Quantity", t: "num", req: true, min: 1, qtyUnit: { base: l.boxed ? "boxes" : "cans" } },
     ],
   };
 }
@@ -1420,7 +1420,7 @@ function orderList(scope: Scope): ScreenModule {
                           title: `Move to a new order · ${l.sku.name}`,
                           sub: `For goods that will go later. The cans moved get a new order number linked to order ${l.o.orderNo}.`,
                           submit: "Move",
-                          fields: [{ k: "qty", l: "Cans to move", t: "num", req: true, min: 1 }],
+                          fields: [{ k: "qty", l: "Cans to move", t: "num", req: true, min: 1, qtyUnit: { base: "cans" } }],
                           init: { qty: String(l.o.qtyCans) },
                         },
                       } as ActionSpec,
@@ -2637,7 +2637,7 @@ const batchCodes: ScreenModule = {
               id: "qty",
               l: "Change quantity",
               why: dispatched ? "The order has been dispatch-verified" : "",
-              prompt: { title: "Change the allocated quantity", sub: `${r.b.lotCode} · order ${r.o.orderNo}`, submit: "Save", fields: [{ k: "qty", l: "Quantity", t: "num", req: true, min: 1 }], init: { qty: String(r.b.quantity) } },
+              prompt: { title: "Change the allocated quantity", sub: `${r.b.lotCode} · order ${r.o.orderNo}`, submit: "Save", fields: [{ k: "qty", l: "Quantity", t: "num", req: true, min: 1, qtyUnit: { base: "Pcs" } }], init: { qty: String(r.b.quantity) } },
             },
             { id: "release", l: "Release", why: dispatched ? "The order has been dispatch-verified" : "", impact: { kind: "erp-batch-release", id: r.b.id } },
           ],

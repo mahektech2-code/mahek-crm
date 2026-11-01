@@ -11576,6 +11576,36 @@ export const erpRefValues = pgTable(
 );
 
 /**
+ * The units a quantity may be TYPED in (0310): Kg, Gram, Litre, Drum (200 L),
+ * Dozen… Each says what it measures and how many base units one of it is.
+ * Figures are still stored in the base unit of their measure — kg, litres,
+ * pieces — so the ledgers never add two units together; a quantity box
+ * converts as it is typed (`lib/erp/engines/uom.ts`). The three base units are
+ * built in. Retired, never deleted: a form left open may still name one.
+ */
+export const erpUoms = pgTable(
+  "erp_uoms",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    measure: text("measure").notNull(),
+    perBase: doublePrecision("per_base").notNull(),
+    builtIn: boolean("built_in").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_uoms_name_key").on(sql`lower(${t.name})`),
+    uniqueIndex("erp_uoms_base_key").on(t.measure).where(sql`${t.builtIn}`),
+    check("erp_uoms_measure_check", sql`${t.measure} in ('weight', 'volume', 'count')`),
+    check("erp_uoms_per_base_check", sql`${t.perBase} > 0`),
+    check("erp_uoms_base_check", sql`not ${t.builtIn} or (${t.perBase} = 1 and ${t.active})`),
+  ],
+);
+
+/**
  * Everything the business buys: chemicals, cans, drums, boxes, stationery.
  * A chemical carries a density (kg → litre) and the tests every lot must pass;
  * both are required for chemicals and meaningless otherwise (spec §4.1).

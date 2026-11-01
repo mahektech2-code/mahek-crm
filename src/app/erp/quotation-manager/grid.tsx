@@ -38,6 +38,7 @@ import { ErpImpactDialog } from "../_ui/impact-confirm";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog } from "../_ui/dialog";
 import { eyebrowClass, insetClass, LinkButton, popoverClass } from "../_ui/look";
+import { QtyField } from "../_ui/units";
 
 /**
  * The grid. It behaves like the sheet it replaces: click a cell and type,
@@ -1809,7 +1810,15 @@ function PurchaseDialog({
                 </Field>
               </div>
               <Field label={`Quantity${unit ? ` (${unit})` : ""}`}>
-                <Input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ""))} invalid={tried && qtyBad} placeholder="e.g. 800" />
+                {/* Kept in the item's own unit; typed in any unit of that kind (drums, tonnes). */}
+                <QtyField
+                  base={unit ?? ""}
+                  value={qty}
+                  onChange={setQty}
+                  error={tried && qtyBad}
+                  placeholder="e.g. 800"
+                  fallback={<Input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ""))} invalid={tried && qtyBad} placeholder="e.g. 800" />}
+                />
                 {tried && qtyBad ? <span className="text-meta text-danger">Enter the quantity bought.</span> : null}
               </Field>
               <Field label="Deliver to">

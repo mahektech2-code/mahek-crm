@@ -2136,6 +2136,13 @@
       "when": 1793629600000,
       "tag": "0309_factory_pin_lockout",
       "breakpoints": true
+    },
+    {
+      "idx": 305,
+      "version": "7",
+      "when": 1793633200000,
+      "tag": "0310_erp_units_of_measure",
+      "breakpoints": true
     }
   ]
 }
