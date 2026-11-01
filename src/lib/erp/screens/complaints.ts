@@ -150,7 +150,7 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
       { k: "cn", l: "Credit note required", t: "select", req: true, opts: ["Yes", "No"], sec: "Credit note" },
       { k: "bill", l: "Bill number", t: "select", req: true, optsBy: { by: "customer", map: choices.bills }, when: { k: "cn", eq: "Yes" } },
       { k: "billDate", l: "Bill date", t: "derived", calc: "request.billDate", when: { k: "cn", eq: "Yes" } },
-      { k: "goods", l: "Description of goods", t: "suggest", req: true, optsBy: { by: ["customer", "bill"], map: choices.goods }, when: { k: "cn", eq: "Yes" } },
+      { k: "goods", l: "Description of goods", t: "select", req: true, optsBy: { by: ["customer", "bill"], map: choices.goods }, when: { k: "cn", eq: "Yes" } },
     ],
   };
 }
