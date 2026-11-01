@@ -11,7 +11,7 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
     <WfButton primary>New order</WfButton>
     <Hotspot n={1} />
   </WfBar>
-  <WfTabs items={["To verify", "Production", "Ready to bill", "Invoice check", "Dispatch stickers", "Billing & dispatch", "On hold", "Batch codes", "All lines", "WhatsApp inbox"]} active="Production" />
+  <WfTabs items={["To verify", "Production", "Ready to bill", "Invoice print", "Dispatch stickers", "Billing & dispatch", "On hold", "Batch codes", "All lines", "WhatsApp inbox"]} active="Production" />
   <Hotspot n={2} />
   <WfBar><WfText muted>3 selected</WfText><WfButton>Ready</WfButton><WfButton>Under Process</WfButton><WfButton>Hold From Office</WfButton><WfButton>Cancel</WfButton><Hotspot n={3} /></WfBar>
   <WfTable
@@ -45,7 +45,7 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
 | **To verify** | Orders the back office has not verified yet, or sent back for correction. Holders of *Verify orders* verify them here. |
 | **Production** | Lines that are **Under Process** or **Ready** and not yet billed — the godown's working list. |
 | **Ready to bill** | Ready lines of verified orders, not yet billed. The back office makes the bill in Tally from here. |
-| **Invoice check** | Billed orders for the invoice checker — optional: a pending check holds nothing, only a rejected invoice holds dispatch. |
+| **Invoice print** | Billed orders for the invoice checker — optional: a pending check holds nothing, only a rejected invoice holds dispatch. |
 | **Dispatch stickers** | Every line under process or ready, billed or not, until its goods leave: print and apply their stickers. No invoice check needed. |
 | **Billing & dispatch** | Every billed line, with its invoice check, dispatch, vehicle and the bill's figures. Dispatch is confirmed here. |
 | **On hold** | Lines the office is holding — **Hold From Office** — that have not reached billing. |
@@ -123,7 +123,7 @@ One order is one bill. Once every line of the order is **Ready** and the bill is
 3. a **rate** on every line;
 4. approval, if the customer is Pending.
 
-If anything is missing, hovering the button names it: *Needs Astar 20 L to be Ready — or moved to a new order to go later*. One invoice can cover several orders for the same customer: tick them and press **Bill together** to enter the invoice once, or bill an order with a number already used on another order for the same customer and date. A number already on an order for a different customer, or with a different date, is refused: *Invoice MMI/26-27/1119 is already on order 1240, billed to Shree Paints.* The billed order moves to **Invoice check**, and the checker is told.
+If anything is missing, hovering the button names it: *Needs Astar 20 L to be Ready — or moved to a new order to go later*. One invoice can cover several orders for the same customer: tick them and press **Bill together** to enter the invoice once, or bill an order with a number already used on another order for the same customer and date. A number already on an order for a different customer, or with a different date, is refused: *Invoice MMI/26-27/1119 is already on order 1240, billed to Shree Paints.* The billed order moves to **Invoice print**, and the checker is told.
 
 **Goods that will go later.** Press **Move to a new order** on the line and say how many cans move — the whole line or part of it, in whole boxes. The cans get a new order number linked to this one, and this order can be billed without them. Release a line's batch codes before moving it.
 
@@ -131,12 +131,12 @@ If anything is missing, hovering the button names it: *Needs Astar 20 L to be Re
 
 ## The invoice check
 
-Somebody with the *Check invoices before dispatch* power opens **Invoice check** and compares each invoice with its order — customer, order number, goods, quantities, invoice number, rate and discount.
+Somebody with the *Check invoices before dispatch* power opens **Invoice print** and compares each invoice with its order — customer, order number, goods, quantities, invoice number, rate and discount.
 
-- **Approve invoice** — the order can be stickered and dispatched.
+- **Publish invoice** — the order can be stickered and dispatched.
 - **Reject invoice** — say why. Whoever billed it is told, and it shows *Invoice rejected* until somebody corrects it (Edit for the rate or discount, Change invoice for the number or date). The correction sends it back to the checker.
 
-You cannot check a bill you entered yourself: *You entered this bill, so somebody else checks it* (an ERP administrator may). If a rate, discount, GST, the invoice number or date changes after approval, the invoice goes back to **Invoice check** with what changed.
+You cannot check a bill you entered yourself: *You entered this bill, so somebody else checks it* (an ERP administrator may). If a rate, discount, GST, the invoice number or date changes after approval, the invoice goes back to **Invoice print** with what changed.
 
 ## Dispatch stickers
 
@@ -255,7 +255,7 @@ The back office has not verified the order yet. It is on **To verify**.
 <Faq q="Bill it is greyed out.">
 Hover it: it names everything still missing — the back office's verification, a line that is not Ready yet, a rate, or approval for a Pending customer. The whole order is billed together, so every line has to be Ready; move a line that will go later to a new order.
 </Faq>
-<Faq q="I cannot approve this invoice.">
+<Faq q="I cannot publish this invoice.">
 You entered the bill yourself, so somebody else checks it. You also need the *Check invoices before dispatch* power.
 </Faq>
 <Faq q="Print dispatch stickers is greyed out.">
@@ -268,7 +268,7 @@ At the Dispatch desk, by scanning each box onto the order. For old stock with no
 At least one lot on the order has box ids, so every box has to be scanned at the Dispatch desk before the order can leave — and the order leaves whole, so one line still to scan holds it.
 </Faq>
 <Faq q="Confirm dispatch says the invoice is waiting for the invoice check.">
-The checker has not approved it yet, or rejected it. It is on **Invoice check**.
+The checker has not approved it yet, or rejected it. It is on **Invoice print**.
 </Faq>
 <Faq q="An order disappeared from On hold but one of its lines is not billed.">
 On hold hides a whole order once any of its lines is billed, and hides any line that is Under Process or Ready. Those lines are on **Production** and **All lines**.

@@ -1394,10 +1394,10 @@ function orderList(scope: Scope): ScreenModule {
                   ? [
                       {
                         id: "approveInvoice",
-                        l: "Approve invoice",
+                        l: "Publish invoice",
                         primary: checking && l.invoiceCheck !== "Approved",
                         why: l.invoiceCheck === "Approved" ? "Already approved" : !hasPdf ? "Add the invoice PDF first" : ownBill && !ctx.administrator ? "You entered this bill; somebody else checks it" : "",
-                        confirm: `Approve invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
+                        confirm: `Publish invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
                       } as ActionSpec,
                       {
                         id: "rejectInvoice",
@@ -1493,7 +1493,7 @@ function orderList(scope: Scope): ScreenModule {
                 ? [
                     { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
                     {
-                      l: "Invoice check",
+                      l: "Invoice print",
                       v:
                         l.invoiceCheck === "Approved"
                           ? l.invoiceCheckedAt
@@ -2864,7 +2864,7 @@ const orderDetails: ScreenModule = {
       { k: "billTotal", l: "Bill total", t: "m", pw: "viewSalesAmounts" },
       orderCol("discount"),
       { k: "dispatchDate", l: "Dispatch date", t: "d" },
-      { k: "invoiceCheck", l: "Invoice check", t: "s" },
+      { k: "invoiceCheck", l: "Invoice print", t: "s" },
       { k: "verification", l: "Dispatch", t: "s" },
       { k: "vehicle", l: "Vehicle", t: "mono" },
       { k: "follow", l: "Transport follow-up", t: "t" },
@@ -3002,7 +3002,7 @@ const orderDetails: ScreenModule = {
               ...(amounts ? [{ l: "Monthly target", v: target == null ? "—" : inr(target), der: true }] : []),
               { l: "Dispatch status", v: d.dispatchStatus },
               { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
-              { l: "Invoice check", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
+              { l: "Invoice print", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
               { l: "Dispatch stickers", v: d.stickersAt ? `On · ${stamp(d.stickersAt)}` : "Not recorded" },
               ...(d.verification === "Verified" ? [{ l: "Vehicle", v: d.vehicleNo ?? "Not recorded" }, { l: "Driver / transporter", v: d.driver ?? "—" }, { l: "Dispatch remark", v: d.dispatchRemark ?? "—" }] : []),
             ],
