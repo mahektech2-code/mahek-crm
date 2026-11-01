@@ -153,7 +153,7 @@ async function navCounts(ctx: ErpContext, only: ReadonlySet<string> | null): Pro
         out.verifyOrders = new Set(c.toVerify.map((l) => l.o.orderNo)).size;
         out.toBill = new Set(c.toBill.map((l) => l.o.orderNo)).size;
         out.invoiceCheck = new Set(c.invoiceToCheck.map((l) => l.o.orderNo)).size;
-        out.labels = new Set(c.stickersDue.filter((l) => !l.stickersAt).map((l) => l.o.orderNo)).size;
+        out.labels = new Set(c.stickersDue.map((l) => l.o.orderNo)).size;
       }),
     );
   if (wants("orderDetails") && ctx.screens.has("orderDetails")) jobs.push(unverifiedIds().then((x) => void (out.orderDetails = x.length)));

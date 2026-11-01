@@ -300,7 +300,6 @@ export type OrderLine = {
   /** Who billed the line — the person the invoice checker must not be. */
   billedById: string | null;
   gstBp: number | null;
-  stickersAt: Date | null;
   vehicleNo: string | null;
   /** The bill's transport record, once the line has left. */
   transport: { stage: string | null; hasLr: boolean; issue: string | null } | null;
@@ -376,7 +375,6 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       invoiceCheckNote: erpOrderDetails.invoiceCheckNote,
       billedById: erpOrderDetails.createdById,
       gstBp: erpOrderDetails.gstBp,
-      stickersAt: sql<Date | null>`coalesce(${erpOrders.stickersAt}, ${erpOrderDetails.stickersAt})`,
       vehicleNo: erpOrderDetails.vehicleNo,
       /* The bill's transport record, for the logistics word — one row by primary key. */
       transport: sql<{ stage: string | null; hasLr: boolean; issue: string | null } | null>`(select json_build_object('stage', t.material_stage, 'hasLr', (t.lr_id is not null or coalesce(t.lr_no, '') <> ''), 'issue', t.issue) from erp_transports t where t.id = "erp_order_details"."transport_id")`,
@@ -430,7 +428,6 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       invoiceCheckNote: r.invoiceCheckNote ?? null,
       billedById: r.billedById ?? null,
       gstBp: r.gstBp == null ? null : Number(r.gstBp),
-      stickersAt: r.stickersAt ? new Date(r.stickersAt) : null,
       vehicleNo: r.vehicleNo ?? null,
       transport: r.transport ? { stage: r.transport.stage ?? null, hasLr: !!r.transport.hasLr, issue: r.transport.issue ?? null } : null,
       due: dueOf(r.o.dispatchOn, verified, r.o.status, now),
@@ -1353,7 +1350,6 @@ function orderList(scope: Scope): ScreenModule {
           const actions: ActionSpec[] = labels
             ? [
                 { id: "labels", l: `Print dispatch stickers · order ${l.o.orderNo}`, primary: true, href: erpLabelsHref({ order: l.o.orderNo }) },
-                { id: "stickers", l: "Stickers are on", why: l.stickersAt ? "Already recorded" : "" },
               ]
             : [
                 /* First, so it earns a footer button rather than a place under More: the whole order, in one modal. */
@@ -1506,7 +1502,6 @@ function orderList(scope: Scope): ScreenModule {
                             ? `Rejected — ${l.invoiceCheckNote ?? ""}`
                             : "Waiting for the checker",
                     },
-                    { l: "Dispatch stickers", v: l.stickersAt ? `On · ${stamp(l.stickersAt)}` : "Not recorded" },
                   ]
                 : []),
               ...(l.o.linkedFromOrderNo ? [{ l: "Moved out of", v: `Order ${l.o.linkedFromOrderNo}` }] : []),
@@ -2132,24 +2127,6 @@ async function doRejectInvoice(ctx: ErpContext, id: string, values: Record<strin
   return okVoid(`Invoice on order ${got.no} rejected and returned for correction`);
 }
 
-/* ---------------------------------------- step 7: the stickers are on */
-
-async function doStickers(ctx: ErpContext, ids: string[]) {
-  const ls = (await lines(ids)).filter((l) => isStickerLine(l) && !l.stickersAt);
-  if (!ls.length) return err("Only a line under process, ready or billed, and not yet dispatched, takes its stickers.", "rule_violation");
-  const ids2 = ls.map((l) => l.o.id);
-  const at = new Date();
-  /* On the LINE, because stickers now go on before billing and a line has no
-     order-details row until it is billed; mirrored onto the bill where there
-     is one, which the Billing & dispatch tab reads. */
-  await db.transaction(async (tx) => {
-    await tx.update(erpOrders).set({ stickersAt: at, stickersById: ctx.user.id, updatedAt: at, updatedById: ctx.user.id }).where(inArray(erpOrders.id, ids2));
-    await tx.update(erpOrderDetails).set({ stickersAt: at, stickersById: ctx.user.id, updatedAt: at, updatedById: ctx.user.id }).where(inArray(erpOrderDetails.orderId, ids2));
-  });
-  await erpAudit(ctx, "erp.detail.stickers", "erp_order_detail", ls.map((l) => l.o.id).join(","));
-  return okVoid(`Dispatch stickers recorded · ${plural(ls.length)}`);
-}
-
 /* ------------------------------------- rule 2: goods that go later, on a new order */
 
 async function doMoveOut(ctx: ErpContext, id: string, values: Record<string, string>) {
@@ -2218,7 +2195,6 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
         return refusal ?? doUnbill(ctx, ids);
       },
       approve: (ctx, ids) => doApprove(ctx, ids),
-      stickers: (ctx, ids) => doStickers(ctx, ids),
       bill: (ctx, ids, values) => doBill(ctx, ids, values),
     },
     actions: {
@@ -2242,7 +2218,6 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       changeInvoice: (ctx, id, values) => doChangeInvoice(ctx, id, values),
       approveInvoice: (ctx, id) => doApproveInvoice(ctx, id),
       rejectInvoice: (ctx, id, values) => doRejectInvoice(ctx, id, values),
-      stickers: (ctx, id) => doStickers(ctx, [id]),
       moveOut: (ctx, id, values) => doMoveOut(ctx, id, values),
       approve: (ctx, id) => doApprove(ctx, [id]),
       async delete(ctx, id, values) {
@@ -2916,7 +2891,6 @@ const orderDetails: ScreenModule = {
           const gate = gates.get(l.o.id) ?? null;
           if (gate) flags.push("toScan");
           if (d.verification !== "Verified") flags.push(d.invoiceCheck === "Approved" ? "invoiceApproved" : d.invoiceCheck === "Rejected" ? "invoiceRejected" : "invoiceToCheck");
-          if (d.stickersAt) flags.push("stickersOn");
           if (d.verification === "Verified" && !d.vehicleNo) flags.push("noVehicle");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
           const verifiable = !d.verification || d.verification === "Pending";
@@ -2930,7 +2904,6 @@ const orderDetails: ScreenModule = {
               why: d.verification === "Verified" ? "Already dispatched" : !approved ? "The invoice was rejected; correct it first" : gate ? `Boxes to scan: ${gate}` : "",
               prompt: DISPATCH_PROMPT(`Order ${l.o.orderNo} leaves whole — every billed line of it.`),
             },
-            { id: "stickers", l: "Stickers are on", why: d.verification === "Verified" ? "It has left" : d.stickersAt ? "Already recorded" : "" },
             ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", impact: { kind: "erp-dispatch-unverify", id: d.orderId } } as ActionSpec] : []),
             {
               id: "extra",
@@ -3007,7 +2980,6 @@ const orderDetails: ScreenModule = {
               { l: "Dispatch status", v: d.dispatchStatus },
               { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
               { l: "Invoice print", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
-              { l: "Dispatch stickers", v: d.stickersAt ? `On · ${stamp(d.stickersAt)}` : "Not recorded" },
               ...(d.verification === "Verified" ? [{ l: "Vehicle", v: d.vehicleNo ?? "Not recorded" }, { l: "Driver / transporter", v: d.driver ?? "—" }, { l: "Dispatch remark", v: d.dispatchRemark ?? "—" }] : []),
             ],
             actions,
@@ -3020,11 +2992,9 @@ const orderDetails: ScreenModule = {
   bulk: {
     verify: (ctx, ids, values) => verify(ctx, ids, values),
     extra: (ctx, ids, values) => setExtraExpenses(ctx, ids, values),
-    stickers: (ctx, ids) => doStickers(ctx, ids),
   },
   actions: {
     verify: (ctx, id, values) => verify(ctx, [id], values),
-    stickers: (ctx, id) => doStickers(ctx, [id]),
     extra: (ctx, id, values) => setExtraExpenses(ctx, [id], values),
     async notVerify(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator marks a line not verified.", "not_permitted");

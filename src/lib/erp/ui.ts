@@ -635,7 +635,6 @@ export const FLAG: Record<string, [string, Tone]> = {
   invoiceToCheck: ["Invoice to check", "warn"],
   invoiceRejected: ["Invoice rejected", "danger"],
   invoiceApproved: ["Invoice approved", "success"],
-  stickersOn: ["Dispatch stickers on", "success"],
   noVehicle: ["No vehicle recorded", "warn"],
   linkedOrder: ["Linked order", "info"],
   unitHold: ["Box on hold", "warn"],
