@@ -108,7 +108,10 @@ export const ERP_GROUPS: ErpGroup[] = [
       s("products", "products", "Products", "Finished goods: what each is made of and how it is packed.", true),
       s("customers", "customers", "Sales parties", "Customers. A Pending party must be activated before its orders move.", true),
       s("godowns", "godowns", "Godowns", "Godowns by region.", true),
-      s("refLists", "reference-lists", "Reference lists", "The value lists every form picks from.", true),
+      s("refLists", "reference-lists", "Reference lists", "The value lists every form picks from, and the units a quantity may be typed in.", true, [
+        v("refLists", "Value lists"),
+        v("uoms", "Units"),
+      ]),
     ],
   },
   {

@@ -37,6 +37,7 @@ export const WEIGHTS = {
   "src/lib/erp/erp-scrap.test.ts": 2,
   "src/lib/erp/erp-returns.test.ts": 3,
   "src/lib/erp/erp-can-groups.test.ts": 2,
+  "src/lib/erp/erp-uoms.test.ts": 2,
   "src/lib/erp/erp-departments.test.ts": 2,
   "src/lib/erp/erp-production.test.ts": 2,
   "src/lib/factory/factory.test.ts": 5,

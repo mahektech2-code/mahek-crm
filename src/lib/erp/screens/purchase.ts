@@ -435,15 +435,15 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       { k: "type", l: "Material type", t: "select", req: true, readOnly: true, opts: types, fillBy: { by: ["po", "poLine"], map: rx.typeOf }, when: { k: "poLine", notEmpty: true } },
       { k: "item", l: "Item", t: "select", req: true, readOnly: true, optsBy: { by: "type", map: itemMap }, fillBy: { by: ["po", "poLine"], map: rx.itemOf }, when: { k: "type", notEmpty: true } },
       { k: "pending", l: "Against the PO", t: "derived", calc: "inward.pending", when: { k: "poLine", notEmpty: true } },
-      { k: "drums", l: "Drums", t: "num", req: true, min: 0, when: { k: "type", eq: "Chemical" } },
+      { k: "drums", l: "Drums", t: "num", req: true, min: 0, when: { k: "type", eq: "Chemical" }, qtyUnit: { base: "drums" } },
       /* A kg item is weighed on the drum; a litre item is measured, so the gross weight is optional there. */
       { k: "weight", l: "Weight with drum (kg)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
-      { k: "emptyDrum", l: "Empty drum weight (kg, per drum)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
+      { k: "emptyDrum", l: "Empty drum weight (kg, per drum)", t: "num", qtyUnit: { base: "Kg" }, min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
       /* Whose the drums are decides where they go once emptied: our scrap, or back to the supplier. */
       { k: "drumOwner", l: "Drums belong to", t: "select", opts: DRUM_OWNER_OPTS, def: DRUM_OWNER_OPTS[0], when: { k: "type", eq: "Chemical" }, hint: "Returnable drums go back to the supplier once empty and are never sold as scrap." },
       /* A kg chemical's net is the scale's answer, never typed; anything measured or counted is typed. */
       { k: "net", l: "Weight without drum", t: "derived", calc: "inward.net", when: { k: "item", map: "qtyBy", has: "scale" } },
-      { k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, when: { k: "item", map: "qtyBy", has: "typed" }, fillBy: { by: ["po", "poLine"], map: rx.qtyOf }, hint: "Starts at what is pending on the PO — type what actually arrived." },
+      { k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, qtyUnit: { by: ["item"], map: unitOf }, when: { k: "item", map: "qtyBy", has: "typed" }, fillBy: { by: ["po", "poLine"], map: rx.qtyOf }, hint: "Starts at what is pending on the PO — type what actually arrived." },
       { k: "unit", l: "Unit", t: "derived", calc: "inward.unit" },
       { k: "testing", l: "Testing required", t: "derived", calc: "inward.testing" },
       { k: "remark", l: "Remark", t: "area", mic: true },
@@ -1356,14 +1356,14 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
           { k: "item", l: "Raw item", t: "select", req: true, readOnly: true, opts: mats.map((m) => m.name), fillBy: { by: ["po", "poLine"], map: rx.itemOf } },
         ] as FieldSpec[])),
     { k: "lot", l: "Raw-material lot no", t: "derived", calc: "register.lot" },
-    { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, sec: "Quantity", ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
-    { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Litre", "Pcs"], ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: unitOfLine } }) },
+    { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, sec: "Quantity", qtyUnit: { of: "unit" }, ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
+    { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Litre", "Pcs"], hint: "What the lot is kept in. The quantity can be typed in any unit of this kind — drums, grams, tonnes.", ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: unitOfLine } }) },
     /* A kilogram purchase is turned into litres by its density, and the save refuses one without it. */
     { k: "density", l: "Density", t: "num", min: 0, reqWhen: { k: "unit", eq: "Kg" } },
-    { k: "drums", l: "No. of drum", t: "num", min: 0 },
-    { k: "weight", l: "Weight with drum", t: "num", min: 0 },
+    { k: "drums", l: "No. of drum", t: "num", min: 0, qtyUnit: { base: "drums" } },
+    { k: "weight", l: "Weight with drum", t: "num", min: 0, qtyUnit: { base: "Kg" } },
     { k: "litres", l: "In litre", t: "derived", calc: "register.litres" },
-    { k: "feedLitre", l: "Feed-adjusted litre", t: "num", min: 0 },
+    { k: "feedLitre", l: "Feed-adjusted litre", t: "num", min: 0, qtyUnit: { base: "Litre" } },
     { k: "avail", l: "Available litres", t: "derived", calc: "register.available" },
     ...(money
       ? ([

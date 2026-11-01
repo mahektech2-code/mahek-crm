@@ -10,6 +10,7 @@ import { stamp } from "@/lib/format";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { erpPlanHref, erpPlanPrintHref } from "@/lib/erp/trace-links";
 import { erpLink } from "@/lib/erp/registry";
+import { QtyField } from "../_ui/units";
 import { categorySpec, PLAN_CATEGORIES, type LineState, type PlanCategory } from "@/lib/erp/engines/production-plan";
 import type { PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
 import { erpPlanDeleteLine, erpPlanOpen, erpPlanPrint, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
@@ -526,7 +527,15 @@ function LineDialog({
               </Field>
             )}
             <Field label={spec.qtyLabel} required error={errors.quantity}>
-              <Input inputMode={spec.whole ? "numeric" : "decimal"} value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="0" />
+              {/* Typed in any unit of the kind picked beside it (a drum of litres, a dozen cans), kept in that unit. */}
+              <QtyField
+                base={unit}
+                value={quantity}
+                onChange={setQuantity}
+                error={!!errors.quantity}
+                placeholder="0"
+                fallback={<Input inputMode={spec.whole ? "numeric" : "decimal"} value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="0" />}
+              />
             </Field>
             <Field label="Unit" required error={errors.unit}>
               <Select value={unit} onChange={(e) => setUnit(e.target.value)}>

@@ -384,3 +384,23 @@ export async function erpStopViewAs(): Promise<Result<undefined>> {
     return refused(e);
   }
 }
+
+/**
+ * A unit added from a quantity box's dropdown ("Add a unit"). Holding the ERP
+ * is enough: a unit is a name for a size, it changes no figure already saved,
+ * and it is audited. Not while previewing, like every write.
+ */
+export async function erpAddUom(draft: { name: string; measure: string; perBase: string }): Promise<Result<import("@/lib/erp/engines/uom").Uom>> {
+  try {
+    const ctx = await erpContext();
+    if (ctx.viewingAs) return err(previewRefusal(ctx.viewingAs), "not_permitted");
+    const apps = await listUserApps(ctx.actor.id);
+    if (!apps.includes("erp") || !ctx.level) return err("The ERP is not on your account.", "not_permitted");
+    const { addUom } = await import("@/lib/erp/uoms");
+    /* No revalidation: the box that asked adds it to the page's own list, and
+       every later page load reads the table afresh. */
+    return await addUom(ctx, draft);
+  } catch (e) {
+    return refused(e);
+  }
+}

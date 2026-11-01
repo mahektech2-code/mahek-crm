@@ -24,7 +24,7 @@ import { tooWide, unscoped, windowWhere } from "../window";
 import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/production";
-import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, type Ex } from "../stock";
+import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, stockUnit, type Ex } from "../stock";
 import { godownField, godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
 import { requisitionForm } from "./purchase-flow";
 import { departmentForCategory, requirementDepartmentsFor } from "../departments";
@@ -47,16 +47,16 @@ import { REGISTER_DEFAULT } from "../period";
 const TYPES = ["Purchase", "Semi Finished", "Finish Goods", "FG Packing"] as const;
 type ItemType = (typeof TYPES)[number];
 
-type Avail = { item: string; itemId: string; lot: string; godownId: string; godown: string; stock: number };
+type Avail = { item: string; itemId: string; lot: string; godownId: string; godown: string; stock: number; unit: string };
 
 /** Every lot with stock, by transfer type, in the shape the transfer form and its validation both read. */
 async function transferable(ex?: Ex): Promise<Record<ItemType, Avail[]>> {
   const [rm, sfg, fg, pack] = await Promise.all([rmLots(ex), sfgLots(ex), fgLots(ex), packLots(ex)]);
   return {
-    Purchase: rm.map((l) => ({ item: l.item, itemId: l.rawMaterialId, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock })),
-    "Semi Finished": sfg.map((l) => ({ item: l.product, itemId: l.formulationId, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock })),
-    "Finish Goods": fg.map((l) => ({ item: l.product, itemId: l.finishedGoodId, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock })),
-    "FG Packing": pack.map((l) => ({ item: l.sku, itemId: l.skuId, lot: l.batchNo, godownId: l.godownId, godown: l.godown, stock: l.stock })),
+    Purchase: rm.map((l) => ({ item: l.item, itemId: l.rawMaterialId, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit })),
+    "Semi Finished": sfg.map((l) => ({ item: l.product, itemId: l.formulationId, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "Litre" })),
+    "Finish Goods": fg.map((l) => ({ item: l.product, itemId: l.finishedGoodId, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "cans" })),
+    "FG Packing": pack.map((l) => ({ item: l.sku, itemId: l.skuId, lot: l.batchNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "boxes" })),
   };
 }
 
@@ -65,6 +65,8 @@ async function transferForm(ctx: ErpContext): Promise<FormSpec> {
   const items: Record<string, string[]> = {};
   const lots: Record<string, string[]> = {};
   const avail: Record<string, number> = {};
+  /* What each lot is counted in — litres, pieces, cans or boxes — so the quantity is typed in any unit of that kind. */
+  const unitOf: Record<string, string> = {};
   for (const t of TYPES)
     for (const l of stock[t]) {
       if (l.stock <= 0) continue;
@@ -72,6 +74,7 @@ async function transferForm(ctx: ErpContext): Promise<FormSpec> {
       if (!(items[ik] ??= []).includes(l.item)) items[ik].push(l.item);
       (lots[pair(t, l.godown, l.item)] ??= []).push(l.lot);
       avail[pair(t, l.godown, l.lot)] = l.stock;
+      unitOf[pair(t, l.godown, l.lot)] = l.unit;
     }
   const toOf: Record<string, string[]> = {};
   for (const f of froms) toOf[f.name] = tos.filter((g) => g.name !== f.name).map((g) => g.name);
@@ -92,7 +95,7 @@ async function transferForm(ctx: ErpContext): Promise<FormSpec> {
       { k: "item", l: "Item", t: "select", req: true, optsBy: { by: ["type", "from"], map: items }, when: { k: "from", notEmpty: true } },
       { k: "lot", l: "Lot", t: "select", req: true, optsBy: { by: ["type", "from", "item"], map: lots }, when: { k: "item", notEmpty: true } },
       { k: "avail", l: "Lot available", t: "derived", calc: "transfer.avail" },
-      { k: "qty", l: "Transfer quantity", t: "num", req: true, min: 0.001, when: { k: "lot", notEmpty: true } },
+      { k: "qty", l: "Transfer quantity", t: "num", req: true, min: 0.001, when: { k: "lot", notEmpty: true }, qtyUnit: { by: ["type", "from", "lot"], map: unitOf } },
       { k: "to", l: "Transfer to godown", t: "select", req: true, optsBy: { by: "from", map: toOf }, when: { k: "qty", notEmpty: true } },
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
@@ -268,6 +271,8 @@ async function rmLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
   const [gds, mats] = await Promise.all([godownOptions(ctx, { lost: false }), materials()]);
   const byType: Record<string, string[]> = {};
   mats.forEach((m) => (byType[m.materialType] ??= []).push(m.name));
+  /* A level is kept in the unit the item's stock is: litres, or pieces for a countable. */
+  const unitOf = Object.fromEntries(mats.map((m) => [m.name, stockUnit(m.unit)]));
   let init: Record<string, string> = { godown: ctx.workingGodown?.name ?? "", status: "Follow" };
   if (id) {
     const [l] = await db
@@ -291,8 +296,8 @@ async function rmLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
       godownField(gds, { readOnly: !!id }),
       { k: "type", l: "Material type", t: "select", req: true, opts: LEVEL_TYPES, readOnly: !!id },
       { k: "item", l: "Raw item", t: "select", req: true, optsBy: { by: "type", map: byType }, when: { k: "type", notEmpty: true }, readOnly: !!id },
-      { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0 },
-      { k: "max", l: "Maximum quantity", t: "num", req: true, min: 0 },
+      { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0, qtyUnit: { by: ["item"], map: unitOf } },
+      { k: "max", l: "Maximum quantity", t: "num", req: true, min: 0, qtyUnit: { by: ["item"], map: unitOf } },
       { k: "status", l: "Status", t: "select", req: true, opts: ["Follow", "UnFollow"] },
     ],
   };
@@ -613,7 +618,7 @@ async function fgLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
     header: [
       godownField(gds, { readOnly: !!id }),
       { k: "sku", l: "Product (SKU)", t: "select", req: true, opts: skus.map((s) => s.name), readOnly: !!id },
-      { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0 },
+      { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0, qtyUnit: { base: "Pcs" } },
       { k: "status", l: "Status", t: "select", req: true, opts: ["Follow", "UnFollow"] },
     ],
   };

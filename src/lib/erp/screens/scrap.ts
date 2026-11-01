@@ -334,7 +334,21 @@ async function saleForm(ctx: ErpContext): Promise<FormSpec> {
       { k: "buyer", l: "Scrap buyer", t: "select", req: true, opts: buyers.map((b) => b.name), hint: buyers.length ? undefined : "Add the buyer on Scrap buyers first." },
       { k: "category", l: "Scrap category", t: "select", req: true, opts: [DRUM_CATEGORY, ...cats] },
       { k: "godown", l: "From godown (optional)", t: "select", opts: gds.map((g) => g.name), hint: "Empty it to take drums or scrap from any godown." },
-      { k: "quantity", l: "Quantity sold", t: "num", req: true, min: 0.001 },
+      {
+        k: "quantity",
+        l: "Quantity sold",
+        t: "num",
+        req: true,
+        min: 0.001,
+        /* Drums are counted; other scrap is kept in the unit picked beside it. */
+        qtyUnit: {
+          by: ["category", "unit"],
+          map: Object.fromEntries([
+            ...["", "Kg", "Pcs"].map((u) => [`${DRUM_CATEGORY}|${u}`, "drums"]),
+            ...cats.flatMap((c) => [[`${c}|Kg`, "Kg"], [`${c}|Pcs`, "Pcs"]]),
+          ]),
+        },
+      },
       { k: "unit", l: "Unit", t: "select", opts: ["Kg", "Pcs"], when: { k: "category", in: cats } },
       { k: "rate", l: "Rate (₹ per drum, kg or piece)", t: "num", req: true, min: 0 },
       { k: "refKind", l: "Invoice / external reference", t: "select", req: true, sec: "Invoice and payment", opts: Object.values(REF_KIND), hint: "A sale with no external invoice is recorded by its own sale number. No invoice number is made up for it." },
@@ -610,7 +624,7 @@ const drumAdjustments: ScreenModule = {
         { k: "ownership", l: "Whose drums", t: "select", req: true, opts: [OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable] },
         { k: "supplier", l: "Supplier they belong to", t: "select", opts: sups.map((s) => s.name), when: { k: "ownership", eq: OWNERSHIP_LABEL.returnable }, reqWhen: { k: "ownership", eq: OWNERSHIP_LABEL.returnable } },
         { k: "godown", l: "Godown", t: "select", opts: gds.map((g) => g.name), reqWhen: { k: "kind", eq: ADJ_KIND.opening }, hint: "For a write-off, empty takes the oldest drums anywhere." },
-        { k: "quantity", l: "How many drums", t: "num", req: true, min: 1 },
+        { k: "quantity", l: "How many drums", t: "num", req: true, min: 1, qtyUnit: { base: "drums" } },
         reasonField("Why"),
       ],
     };
@@ -718,7 +732,7 @@ async function returnForm(ctx: ErpContext, supplier?: string): Promise<FormSpec>
     header: [
       { k: "supplier", l: "Supplier", t: "select", req: true, opts: pend.map((s) => s.name), hint: pend.length ? pend.map((s) => `${s.name}: ${s.pending} waiting`).join(" · ") : "No supplier has drums waiting to be returned." },
       { k: "date", l: "Return date", t: "date", req: true },
-      { k: "quantity", l: "Drums returned", t: "num", req: true, min: 1 },
+      { k: "quantity", l: "Drums returned", t: "num", req: true, min: 1, qtyUnit: { base: "drums" } },
       { k: "challan", l: "Challan / return reference no.", t: "text" },
       { k: "remark", l: "Remarks", t: "area", mic: true },
     ],
@@ -1069,8 +1083,8 @@ const scrapStockScreen: ScreenModule = {
             { k: "date", l: "Date", t: "date", req: true },
             { k: "category", l: "Category", t: "select", req: true, opts: cats },
             godownField(gOpts),
-            { k: "quantity", l: "Quantity", t: "num", req: true, min: 0.001 },
-            { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Pcs"] },
+            { k: "quantity", l: "Quantity", t: "num", req: true, min: 0.001, qtyUnit: { of: "unit" } },
+            { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Pcs"], hint: "What it is kept in. The quantity can be typed in any unit of this kind." },
             { k: "note", l: "Note", t: "area", mic: true },
           ],
         },

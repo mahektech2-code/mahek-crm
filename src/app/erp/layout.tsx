@@ -11,6 +11,8 @@ import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
 import { listNotifications } from "@/lib/queries";
 import { ErpShell, type NavGroup } from "./_ui/erp-shell";
+import { UnitsProvider } from "./_ui/units";
+import { listUoms } from "@/lib/erp/uoms";
 import "@/styles/v4-theme.css";
 
 /**
@@ -32,13 +34,15 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
      counted. They travel as a promise and fill in when it lands, the way the
      CRM dashboard paints its header before its figures. */
   const counts: Promise<Record<string, number>> = withReadMemo(() => erpNavCounts(ctx)).catch(() => ({}));
-  const [apps, ownHat, config, askState, notifications, canPreview] = await Promise.all([
+  const [apps, ownHat, config, askState, notifications, canPreview, units] = await Promise.all([
     listUserApps(ctx.actor.id),
     hatForHeader(ctx.actor, "erp"),
     getConfig(),
     featureState("ask", true),
     listNotifications(ctx.actor.id),
     ctx.viewingAs ? Promise.resolve(true) : isErpAdministrator(ctx.actor),
+    /* The units every quantity box offers (Masters → Reference lists → Units). */
+    listUoms().catch(() => []),
   ]);
   /* THE DESIGNATION IS THE JOB, so it is what the header says under the name —
      "Owner / CEO", as the design draws it — wherever somebody holds one. */
@@ -72,6 +76,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
         the head, once, however many ERP pages ask for it. */}
     {/* eslint-disable-next-line @next/next/no-page-custom-font */}
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
+    <UnitsProvider units={units} canAdd={!ctx.viewingAs}>
     <ErpShell
       nav={nav}
       badges={badges}
@@ -92,6 +97,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
     >
       {children}
     </ErpShell>
+    </UnitsProvider>
     </>
   );
 }

@@ -1232,6 +1232,7 @@ export const NOUNS: Record<string, string> = {
   myCustomer: "customer",
   godown: "godown",
   ref: "reference list value",
+  uom: "unit of measure",
   refList: "reference list value",
   transfer: "stock transfer",
   rmLevel: "raw-material stock level",

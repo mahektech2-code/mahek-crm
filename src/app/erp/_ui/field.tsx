@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useId, useState } from "react";
-import type { FieldSpec } from "@/lib/erp/ui";
+import { qtyUnitBase, type FieldSpec } from "@/lib/erp/ui";
 import { Button, controlClass, cx } from "@/components/ui/primitives";
 import { nf } from "@/lib/erp/ui";
 import { fieldLabelClass, popoverClass } from "./look";
@@ -13,6 +13,7 @@ import { useKit } from "./kit";
 import { PinField } from "./pin-field";
 import { matchOptions, nearEnd, PAGE } from "./option-match";
 import { shrinkImage } from "@/lib/shrink-image";
+import { QtyField } from "./units";
 
 /* ---------------------------------------------------------------------------
  * One form field. The label says what to type and nothing else: a red * when
@@ -70,7 +71,8 @@ export function Field({
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
-  const grouped = f.t === "multi" || f.t === "pick" || f.t === "photo" || f.t === "video" || f.t === "suggest" || f.t === "pin";
+  const grouped =
+    f.t === "multi" || f.t === "pick" || f.t === "photo" || f.t === "video" || f.t === "suggest" || f.t === "pin" || (f.t === "num" && !f.readOnly && (f.ub ?? qtyUnitBase(f, {})) !== undefined);
   const Wrap = grouped ? "div" : "label";
   return (
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
@@ -327,8 +329,9 @@ function Control({
       className={control(error, cx(f.readOnly && "bg-canvas text-muted", unit.unit && (unit.unitBefore ? "pl-6" : "pr-12")))}
     />
   );
-  if (!unit.unit) return input;
-  return (
+  const withUnit = !unit.unit ? (
+    input
+  ) : (
     <span className="relative block">
       {input}
       <span aria-hidden="true" className={cx("pointer-events-none absolute top-0 bottom-0 flex items-center text-sm text-faint", unit.unitBefore ? "left-2.5" : "right-2.5")}>
@@ -336,6 +339,13 @@ function Control({
       </span>
     </span>
   );
+  /* A quantity kept in a base unit takes its unit from a dropdown instead
+     (`units.tsx`); where there is none to offer it is the box above. */
+  const ub = f.t === "num" ? (f.ub ?? qtyUnitBase(f, {})) : undefined;
+  if (ub !== undefined && !f.readOnly) {
+    return <QtyField base={ub} value={value} onChange={onChange} error={error} min={f.min} max={f.max} fallback={withUnit} />;
+  }
+  return withUnit;
 }
 
 /** A select with more than twelve options becomes a search box. */

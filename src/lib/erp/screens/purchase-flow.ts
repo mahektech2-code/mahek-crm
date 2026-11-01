@@ -439,7 +439,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
         { k: "item", l: "Item", t: "select", req: true, opts: [label], readOnly: true, sec: "Item" },
         { k: "rule", l: "Purchase rule", t: "derived", calc: "requisitions.rule" },
         { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand" },
-        { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
+        { k: "required", l: "Quantity", t: "num", req: true, min: 0.001, qtyUnit: { by: ["item"], map: unitOf } },
         { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
         { k: "priority", l: "Priority", t: "select", req: true, opts: ["Urgent", "Medium", "For Stock"] },
         { k: "remarks", l: "Remarks", t: "area", mic: true },
@@ -477,7 +477,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     line: [
       { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "department", map: itemsBy } },
       { k: "stock", l: "In stock", t: "derived", calc: "requisitions.stockShort" },
-      { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
+      { k: "required", l: "Quantity", t: "num", req: true, min: 0.001, qtyUnit: { by: ["item"], map: unitOf } },
       { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
       { k: "rule", l: "Goes to", t: "derived", calc: "requisitions.ruleShort" },
     ],
@@ -1227,7 +1227,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
     line: [
       { k: "requirement", l: "Requirement", t: "select", req: true, optsBy: { by: "vendor", map: byVendor } },
       { k: "item", l: "Item", t: "derived", calc: "purchaseOrders.item" },
-      { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, fillBy: { by: ["requirement"], map: qtyOf } },
+      { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, fillBy: { by: ["requirement"], map: qtyOf }, qtyUnit: { by: ["requirement"], map: unitOf } },
       { k: "unit", l: "Unit", t: "derived", calc: "purchaseOrders.unit" },
       { k: "rate", l: "Rate per unit (₹)", t: "num", req: true, min: 0.01, fillBy: { by: ["requirement"], map: rateOf } },
       { k: "gst", l: "GST %", t: "num", req: true, min: 0, max: 100, def: "18", fillBy: { by: ["requirement"], map: gstOf } },
