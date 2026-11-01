@@ -1,3 +1,5 @@
+import { roundBill } from "@/lib/bill-round";
+
 /* ---------------------------------------------------------------------------
  * MATERIAL RETURNS, the rules — PURE, no I/O.
  *
@@ -96,6 +98,8 @@ export type ReturnValue = {
   discountPaise: number;
   taxablePaise: number;
   taxPaise: number;
+  /** What rounding the note's total to the rupee added (`lib/bill-round.ts`). */
+  roundOffPaise: number;
   totalPaise: number;
 };
 
@@ -110,7 +114,8 @@ export function returnValue(p: { qty: number; ratePaise: number | null; gstBp: n
   const discountPaise = Math.round((amountPaise * (p.discountBp ?? 0)) / 10000);
   const taxablePaise = amountPaise - discountPaise;
   const taxPaise = Math.round((taxablePaise * (p.gstBp || 0)) / 10000);
-  return { amountPaise, discountPaise, taxablePaise, taxPaise, totalPaise: taxablePaise + taxPaise };
+  const { totalPaise, roundOffPaise } = roundBill(taxablePaise + taxPaise);
+  return { amountPaise, discountPaise, taxablePaise, taxPaise, roundOffPaise, totalPaise };
 }
 
 /* ------------------------------------------------------------- quantities */

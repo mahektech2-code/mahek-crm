@@ -64,6 +64,7 @@ const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek,
 import { sortPoLines, type GrnItem, type GrnPoLine } from "../engines/grn-pick";
 import { poOption, purchaseOrderViews, receivedByLine, refreshPurchaseOrder, type PoView } from "./purchase-flow";
 import { REGISTER_DEFAULT } from "../period";
+import { roundedTotal } from "@/lib/bill-round";
 
 /* ---------------------------------------------------------------------------
  * Purchase (spec §5): goods inward (the GRN), testing, the purchase register
@@ -1562,7 +1563,7 @@ const register: ScreenModule = {
               { l: "Amount + GST", v: f.amountWithGstPaise == null ? "—" : inr(f.amountWithGstPaise), der: true },
               ...landingFields(f.subTotalPaise, landings.get(p.lotNo), costed.has(p.prNumber)),
               { l: "Feed-adjusted amount", v: inr(p.feedAdjustedAmountPaise) },
-              { l: "This bill final amount", v: byPr.has(p.prNumber) ? inr(byPr.get(p.prNumber)!) : "—", der: true },
+              { l: "This bill final amount", v: byPr.has(p.prNumber) ? inr(roundedTotal(byPr.get(p.prNumber)!)) : "—", der: true },
               { l: "PO rate", v: p.poLineId && poRate.has(p.poLineId) ? inr(poRate.get(p.poLineId)!) : "—" },
               { l: "Company", v: p.company },
               { l: "Status", v: p.status },

@@ -167,6 +167,7 @@ export async function renderPoPdf(po: PoPdfInput): Promise<Uint8Array> {
   sumRow("Amount", rs(t.amountPaise));
   sumRow("GST", rs(t.gstPaise));
   if (t.freightPaise) sumRow("Freight", rs(t.freightPaise));
+  if (t.roundOffPaise) sumRow("Round off", rs(t.roundOffPaise));
   page.drawLine({ start: { x: W - M - 190, y: y + 10 }, end: { x: W - M, y: y + 10 }, thickness: 1, color: INK });
   y -= 2;
   sumRow("Total", rs(t.totalPaise), true);

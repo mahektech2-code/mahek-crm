@@ -3090,6 +3090,14 @@ to update the row.
 **Money is paise.** Integers everywhere; formatted only in `lib/format.ts` on
 the way to the screen. Never store rupees.
 
+**A bill's final amount is a round figure.** A sales bill, a purchase bill, a
+purchase order and a debit or credit note all total to the nearest rupee,
+fifty paise up — what Tally's "Round off" line does to the invoice the
+customer holds. `lib/bill-round.ts` is the one place it happens; line amounts
+stay exact, and where a bill's breakdown is shown the round off is a line of
+its own so the parts still add up. Without it Accounts carried balances like
+₹0.38 that no exact payment could ever clear.
+
 **A number somebody types may have a point in it, and four things used to
 lose it.** A handler stripping everything but digits — so "30.5" saved as
 ₹305, multiplied by ten rather than refused; `type="number"` with the browser's

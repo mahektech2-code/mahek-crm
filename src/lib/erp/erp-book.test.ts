@@ -189,6 +189,23 @@ describe("an ERP order in the book", () => {
     assert.equal(Number(c.outstanding), Number(bs[0].amount), "it is on the ledger at once");
   });
 
+  test("an order and its bill are round figures, the lines kept exact", async () => {
+    const ctx = await as(admin);
+    /* A party of its own, so its odd rate is in nobody else's figures. */
+    await db.insert(customers).values({ id: "cus_round", name: "Round Figure Traders", city: "Pune", phone: "9876500009", kind: "customer" });
+    await db.insert(erpCustomerProfiles).values({ customerId: "cus_round" });
+    /* 17 cans at ₹299.37 with 18% GST is ₹6,005.36 exactly; the invoice says ₹6,005. */
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Round Figure Traders" }, [{ sku: SKU, qty: "17", rate: "299.37" }]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = 17`);
+    const b = await book(o.orderNo);
+    assert.equal(Number(b.totalAmount), 600500, "the order is worth its round bill");
+    assert.equal((b.lineItems as { amount: number }[])[0].amount, 600536, "its line keeps the exact amount");
+    await send(o, "MMI/26-27/517", "2026-09-12");
+    const [bill] = await db.select().from(bills).where(eq(bills.externalRef, `ERPBILL-${o.orderNo}`));
+    assert.equal(Number(bill.amount), 600500, "the bill on Accounts is the round figure the Tally invoice carries");
+  });
+
   test("the consignment's stage moves the order: on the road, then delivered", async () => {
     const [o] = await db.select().from(erpOrders).where(eq(erpOrders.qtyCans, 10));
     const ctx = await as(admin);

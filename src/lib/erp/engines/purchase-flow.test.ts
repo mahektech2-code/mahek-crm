@@ -73,7 +73,11 @@ test("receipt tolerance is a share of what was ordered", () => {
 
 test("PO totals add GST per line and freight once", () => {
   const t = poTotals([{ quantity: 10, ratePaise: 10000, gstBp: 1800 }, { quantity: 2, ratePaise: 5000, gstBp: 1200 }], 50000);
-  assert.deepEqual(t, { amountPaise: 110000, gstPaise: 19200, freightPaise: 50000, totalPaise: 179200 });
+  assert.deepEqual(t, { amountPaise: 110000, gstPaise: 19200, freightPaise: 50000, roundOffPaise: 0, totalPaise: 179200 });
+  /* ₹1,234.56 of goods at 18% is ₹1,456.78: the PO says ₹1,457, with 22 paise of round off. */
+  const r = poTotals([{ quantity: 1, ratePaise: 123456, gstBp: 1800 }], 0);
+  assert.deepEqual([r.totalPaise, r.roundOffPaise], [145700, 22]);
+  assert.equal(r.amountPaise + r.gstPaise + r.roundOffPaise, r.totalPaise, "the parts still add up to the total");
 });
 
 test("an item is bought in its own unit: boxes and units are pieces", () => {

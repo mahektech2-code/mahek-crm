@@ -8,6 +8,7 @@ import { getConfig } from "@/lib/config/store";
 import { recomputeBuyingCycle, recomputeFollowUpState, recomputeOutstanding } from "@/lib/recompute";
 import { convertIfNowQualified } from "@/lib/services/lead-conversion-service";
 import { billFigures, orderType } from "./engines/sales";
+import { roundedTotal } from "@/lib/bill-round";
 
 /* ---------------------------------------------------------------------------
  * THE ERP'S ORDERS IN MAHEKONE'S ORDER BOOK.
@@ -199,7 +200,8 @@ async function syncOne(orderNo: number, lines: LineRow[]): Promise<string[]> {
     externalRef: ref,
     orderNo: ref,
     orderedAt: sql`(${head.orderDate}::date + time '10:00') at time zone ${APP_TIMEZONE}`,
-    totalAmount: items.reduce((n, i) => n + i.amount, 0),
+    /* The order is worth what its bill will say: a round figure (`lib/bill-round.ts`). Its lines keep their exact amounts. */
+    totalAmount: roundedTotal(items.reduce((n, i) => n + i.amount, 0)),
     netAmountPaise: items.reduce((n, i) => n + (i.netAmount ?? 0), 0),
     lineItems: items,
     creditDays: party?.creditDays ?? null,
@@ -223,7 +225,7 @@ async function syncOne(orderNo: number, lines: LineRow[]): Promise<string[]> {
   if (sent.length) {
     const billNo = await freeBillNo(sent[0].tallyBillNo, orderNo, bill?.id ?? null);
     const billDate = sent.map((l) => l.dispatchDate ?? l.orderDate).sort()[0];
-    const amount = sent.reduce((n, l) => n + lineValue(l).gross, 0);
+    const amount = roundedTotal(sent.reduce((n, l) => n + lineValue(l).gross, 0));
     if (bill) await db.update(bills).set({ customerId: head.billing, billNo, orderId, billDate, amount, updatedAt: new Date() }).where(eq(bills.id, bill.id));
     else
       await db.insert(bills).values({
