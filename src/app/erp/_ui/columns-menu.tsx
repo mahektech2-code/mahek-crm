@@ -9,10 +9,9 @@ import { Icon } from "./icons";
 
 /* ---------------------------------------------------------------------------
  * The list's Columns control: how many of the list's columns are drawn, and
- * a menu to choose which. The list never scrolls sideways, so a column that
- * has no room is not offered as a tick that would push the table wider — it
- * says there is no room, and hiding another column makes room for it.
- * Every column, drawn or not, is in the record a row opens.
+ * a menu to choose which. Any column may be ticked, every one of them if
+ * somebody wants: a pick wider than the screen scrolls sideways. Every
+ * column, drawn or not, is in the record a row opens.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -59,34 +58,15 @@ export function ColumnsMenu({
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
           <div className={cx("animate-fade-in absolute top-10 right-0 z-50 w-[300px] max-w-[90vw] overflow-hidden", popoverClass)}>
             <div className="border-b border-divider px-3 py-2.5 text-xs leading-[1.45] text-muted">
-              Hidden columns are in the record a row opens.
-              {fit.dropped ? (
-                <span className="mt-1 block text-warn-ink">
-                  {fit.dropped} of your columns {fit.dropped > 1 ? "do" : "does"} not fit this width.
-                </span>
-              ) : null}
+              Hidden columns are in the record a row opens. Tick as many as you like — a wide list scrolls sideways.
             </div>
             <div className="max-h-[320px] overflow-y-auto py-1">
               {cols.map((c) => {
                 const on = shown.has(c.k);
-                const room = on || fit.roomFor(c.k);
                 return (
-                  <label
-                    key={c.k}
-                    title={room ? undefined : "No room at this width — hide another column first"}
-                    className={cx(
-                      "flex min-h-8 items-center gap-2.5 px-3 py-1 text-meta",
-                      room ? "cursor-pointer text-ink hover:bg-canvas" : "cursor-not-allowed text-muted",
-                    )}
-                  >
-                    <input
-                      type="checkbox" className={checkboxClass}
-                      checked={on}
-                      disabled={!room}
-                      onChange={() => toggle(c.k)}
-                    />
+                  <label key={c.k} className="flex min-h-8 cursor-pointer items-center gap-2.5 px-3 py-1 text-meta text-ink hover:bg-canvas">
+                    <input type="checkbox" className={checkboxClass} checked={on} onChange={() => toggle(c.k)} />
                     <span className="min-w-0 flex-1 truncate">{c.l}</span>
-                    {!room ? <span className="flex-none text-2xs">No room</span> : null}
                   </label>
                 );
               })}
