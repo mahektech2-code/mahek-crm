@@ -16,9 +16,10 @@ import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "@/lib/factory/head";
-import type { FactoryDeviceReport, LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { FactoryDeviceReport, HistoryDay, LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload } from "@/lib/factory/lorry";
 import { lorryScanBatch } from "@/lib/factory/scan-batch";
+import { historyFor } from "@/lib/factory/history";
 import { lorryPack } from "@/lib/factory/lorry-pack";
 import { recordDevice } from "@/lib/factory/devices";
 import type { LoadingPack } from "@/lib/factory/lorry-judge";
@@ -215,6 +216,13 @@ export async function factorySetLang(lang: string): Promise<void> {
   const fc = await factoryContext();
   if (!fc || !["en", "hi", "mr"].includes(lang)) return;
   await db.execute(sql`update factory_staff set lang = ${lang}, updated_at = now() where user_id = ${fc.user.id}`);
+}
+
+/** One day of the signed-in person's own work, newest first. `day` is "YYYY-MM-DD"; empty is today. */
+export async function factoryHistory(day?: string | null): Promise<HistoryDay> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, error: "Sign in again to see your history." };
+  return historyFor(fc, day);
 }
 
 export async function factorySignOut(): Promise<void> {

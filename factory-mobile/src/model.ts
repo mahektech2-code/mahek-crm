@@ -1,3 +1,4 @@
+import type { HistoryDay } from "@/lib/factory/types";
 /* ---------------------------------------------------------------------------
  * The phone's own state: what is on screen, what is half-done, and what is
  * waiting to send — the web app's model (src/app/factory/_ui/model.ts) with
@@ -150,6 +151,8 @@ export type State = {
   qc: QcEntry | null;
   /** Purchase requirement: the department's items and requirements, and the one being raised. */
   req: ReqEntry | null;
+  /** My history: the day being shown and what the server said about it. */
+  hist: HistEntry | null;
   /** The order being loaded: its boxes as the ERP holds them. */
   board: LoadBoard | null;
   /** Upload LR: the photo, what was read off it, and what the server answered. */
@@ -420,3 +423,5 @@ export type QcEntry = {
 export function mintCheckKey(): string {
   return "CHK-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }
+
+export type HistEntry = { day: string | null; loading: boolean; err: string | null; got: HistoryDay | null };

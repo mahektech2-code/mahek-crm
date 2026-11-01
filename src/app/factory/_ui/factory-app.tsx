@@ -52,8 +52,9 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LorryHalf, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
-import { clock12, hhmm } from "@/lib/factory/time";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LorryHalf, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, HISTORY_DAYS, type HistoryKind, type Task, type Team } from "@/lib/factory/types";
+import { clock12, clockText, dayLine, hhmm } from "@/lib/factory/time";
+import { addDays } from "@/lib/business-date";
 import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
@@ -158,6 +159,7 @@ export class FactoryApp extends Component<Props, State> {
       stock: null,
       qc: null,
       req: null,
+      hist: null,
       newBuild: false,
     };
   }
@@ -2966,6 +2968,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && R === "stock" && this.renderStock()}
           {shell && R === "qc" && this.renderQc()}
           {shell && R === "req" && this.renderReq()}
+          {shell && R === "history" && this.renderHistory()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
@@ -3133,7 +3136,7 @@ export class FactoryApp extends Component<Props, State> {
     const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["more", "chart", T.more]];
     const pendN = st.queue.filter((q) => q.status === "pending").length;
     /* A page reached from More or Settings keeps its tab lit. */
-    const tabOf: Record<string, string> = { help: "settings", stock: "more", qc: "more", req: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
+    const tabOf: Record<string, string> = { help: "settings", history: "more", stock: "more", qc: "more", req: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
     return (
       <div style={{ flex: "none", height: "78px", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 6px 8px 6px" }}>
         {(head ? navH : navW).map(([k, icn, l]) => {
@@ -4161,6 +4164,72 @@ export class FactoryApp extends Component<Props, State> {
     return <div style={{ fontSize: "13px", lineHeight: "18px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "6px" }}>{l}</div>;
   }
 
+  /* ---------------------------------------------------------------- my history */
+
+  async openHistory(day: string | null = null) {
+    this.setState({ route: "history", hist: { day, loading: true, err: null, got: this.state.hist?.got ?? null } });
+    try {
+      const r = await call("history", day);
+      if (this.state.route !== "history") return;
+      this.setState({ hist: r.ok ? { day: r.day, loading: false, err: null, got: r } : { day, loading: false, err: r.error, got: this.state.hist?.got ?? null } });
+    } catch {
+      this.setState({ hist: { day, loading: false, err: "No network. Your history needs the network — check the Wi-Fi and try again.", got: this.state.hist?.got ?? null } });
+    }
+  }
+
+  renderHistory(): ReactNode {
+    const st = this.state, T = this.T(), h = st.hist;
+    const got = h?.got && h.got.ok ? h.got : null;
+    const today = got?.today ?? null;
+    const day = got?.day ?? h?.day ?? today;
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    const ICON: Record<HistoryKind, string> = { in: "badge", job: "check", work: "list", load: "truck", stock: "chart", buy: "cart", problem: "alert" };
+    const items = got?.items ?? [];
+    const count = (k: HistoryKind) => items.filter((i) => i.kind === k).length;
+    const sums = ([["job", "job sent", "jobs sent"], ["load", "loaded or unloaded", "loaded or unloaded"], ["stock", "count", "counts"], ["buy", "requirement", "requirements"], ["problem", "problem reported", "problems reported"]] as const)
+      .map(([k, one, many]) => [count(k), one, many] as const).filter(([n]) => n > 0).map(([n, one, many]) => n + " " + (n === 1 ? one : many));
+    const oldest = today ? addDays(today, -HISTORY_DAYS) : null;
+    const canBack = !!day && !!oldest && day > oldest && !h?.loading;
+    const canFwd = !!day && !!today && day < today && !h?.loading;
+    const words = (d: string) => (d === today ? T.today : today && d === addDays(today, -1) ? "Yesterday" : dayLine(new Date(d + "T12:00:00Z")));
+    const step = (n: number) => day && void this.openHistory(addDays(day, n));
+    const round = { width: "48px", height: "48px", borderRadius: "24px", border: "none", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" as const };
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead("My history", "Everything you did in the app", () => this.setState({ route: "more", hist: null }))}
+        <div style={{ ...card, padding: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+          <button onClick={() => canBack && step(-1)} aria-label="Day before" style={{ ...round, background: canBack ? "#F1ECFF" : "#F3F4F6", cursor: canBack ? "pointer" : "default" }}>{ic("back", 22, canBack ? "#5223E0" : "#C2C8D2")}</button>
+          <span style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+            <span style={{ display: "block", fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>{day ? words(day) : T.today}</span>
+            {!!day && day !== today && <span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#6B7385" }}>{dayLine(new Date(day + "T12:00:00Z"))}</span>}
+          </span>
+          <button onClick={() => canFwd && step(1)} aria-label="Next day" style={{ ...round, background: canFwd ? "#F1ECFF" : "#F3F4F6", cursor: canFwd ? "pointer" : "default" }}>{ic("chev", 22, canFwd ? "#5223E0" : "#C2C8D2")}</button>
+        </div>
+        {!!day && !!today && day !== today && <button onClick={() => void this.openHistory(null)} style={{ alignSelf: "center", height: "40px", border: "none", background: "transparent", color: "#5223E0", fontSize: "15px", fontWeight: 700, cursor: "pointer" }}>Back to today</button>}
+        {day === today && pendN > 0 && (
+          <button onClick={() => this.setState({ route: "sync" })} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", background: "#FFF8E6", border: "1px solid #F3D9A4", textAlign: "left", cursor: "pointer", width: "100%" }}>
+            {ic("sync", 22, "#8A5A00")}
+            <span style={{ flex: 1, fontSize: "15px", lineHeight: "21px", fontWeight: 600, color: "#6B4500" }}>{pendN + (pendN === 1 ? " job is" : " jobs are") + " still on this phone. They show here once sent."}</span>
+          </button>
+        )}
+        {h?.err && <div style={{ fontSize: "15px", lineHeight: "21px", fontWeight: 600, color: "#B3261E" }}>{h.err}</div>}
+        {h?.loading && !items.length && <div style={{ ...card, padding: "20px", fontSize: "15px", color: "#6B7385", textAlign: "center" }}>Loading…</div>}
+        {got && !h?.loading && !items.length && <div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{day === today ? "Nothing yet today." : "You did nothing in the app on this day."}</div>}
+        {!!sums.length && <div style={{ fontSize: "15px", lineHeight: "21px", fontWeight: 600, color: "#3D14A8", padding: "2px 4px" }}>{sums.join(" · ")}</div>}
+        {items.map((it, i) => (
+          <div key={it.at + i} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "flex-start", gap: "12px", opacity: h?.loading ? 0.5 : 1 }}>
+            <span style={{ width: "40px", height: "40px", borderRadius: "12px", background: it.kind === "problem" ? "#FCECEC" : "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(ICON[it.kind], 20, it.kind === "problem" ? "#B3261E" : "#5223E0")}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: "13px", lineHeight: "18px", fontWeight: 700, color: "#6B7385" }}>{clock12(hhmm(new Date(it.at)))}</span>
+              <span style={{ display: "block", fontSize: "16px", lineHeight: "22px", color: "#1A1E28", marginTop: "2px" }}>{clockText(it.text)}</span>
+            </span>
+          </div>
+        ))}
+        {got?.more && <div style={{ fontSize: "13px", lineHeight: "18px", color: "#6B7385", textAlign: "center" }}>{"Showing the latest " + items.length + ". Earlier ones from this day are not shown."}</div>}
+      </div>
+    );
+  }
+
   renderMore(): ReactNode {
     const st = this.state, T = this.T(), me = st.me!;
     const pendN = st.queue.filter((q) => q.status === "pending").length;
@@ -4178,6 +4247,8 @@ export class FactoryApp extends Component<Props, State> {
         {tools.length ? tools : <div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>Nothing else to do here. Your tasks are on Home.</div>}
         {me.head && this.menuRow(T.machines, "Machines and stoppages on the floor", "wrench", () => this.setState({ route: "machines" }))}
         {me.head && this.menuRow(T.sync, pendN ? pendN + " waiting to send" : "Everything is sent", "sync", () => this.setState({ route: "sync" }), undefined, pendN)}
+        {this.sectionLabel("Me")}
+        {this.menuRow("My history", "What you did today, and on earlier days", "clock", () => this.openHistory())}
         {me.head && this.sectionLabel(T.settings)}
         {me.head && this.menuRow(T.settings, "Language, PIN, help and sign out", "badge", () => this.setState({ route: "settings" }))}
       </div>

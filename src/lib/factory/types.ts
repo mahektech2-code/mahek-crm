@@ -684,3 +684,33 @@ export type FactoryDeviceReport = {
   fontScale?: number | null;
   lang?: string | null;
 };
+
+/* ------------------------------------------------------------ my history */
+
+/** What kind of thing a history line is — it picks the icon and feeds the day's counts. */
+export type HistoryKind = "in" | "job" | "work" | "load" | "stock" | "buy" | "problem";
+/** One thing the person did, as the audit trail recorded it. `at` is an ISO instant. */
+export type HistoryItem = { at: string; kind: HistoryKind; text: string };
+/**
+ * One day of somebody's own work, newest first. `today` is the floor's date
+ * (Asia/Kolkata), so the phone steps back and forward from the server's day
+ * rather than its own clock. `more` means the day was cut at the cap.
+ */
+export type HistoryDay =
+  | { ok: true; day: string; today: string; items: HistoryItem[]; more: boolean }
+  | { ok: false; error: string };
+
+/** How far back the history screen reaches. */
+export const HISTORY_DAYS = 30;
+
+/** The audit action -> the kind of line it is. Anything unnamed is ordinary work. */
+export function historyKind(action: string): HistoryKind {
+  const a = action.replace(/^factory\./, "");
+  if (a === "sign-in" || a === "sign-out" || a === "pin" || a === "pin-locked") return "in";
+  if (a.endsWith(".save")) return "job";
+  if (a.startsWith("dispatch.")) return "load";
+  if (a === "stockCheck" || a === "stockCount" || a === "drum.empty") return "stock";
+  if (a.startsWith("requirement.")) return "buy";
+  if (a === "issue" || a === "downtime" || a === "held" || a === "correction.ask") return "problem";
+  return "work";
+}
