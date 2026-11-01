@@ -17,7 +17,7 @@ import { File } from "expo-file-system";
 import { Platform } from "react-native";
 import { fitForUpload, photoBytes } from "./photo-fit";
 import type { LoadingPack } from "@/lib/factory/lorry-judge";
-import type { LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { FactoryDeviceReport, LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumLookup, StockCheckInput, StockKit, StockSave, DrumSave, FactoryData, LoadBoard, LrBatchSave, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import { kvGet, kvSet } from "./model";
@@ -54,6 +54,7 @@ type Ops = {
   boxInfo: (code: string) => BoxInfo;
   lorryBoard: (key: string) => LorryBoard | null;
   lorryPack: (key: string) => LoadingPack | null;
+  deviceReport: (report: FactoryDeviceReport) => { ok: boolean };
   lorryScan: (key: string, code: string, taskId: string | null, half: string | null) => LorryScan;
   lorryScanBatch: (key: string, taskId: string | null, held: string | null, scans: LorryScanIn[], timings: { id: string; ms: number }[]) => LorryBatch;
   lorryUnload: (key: string, unitId: string) => LorryScan;
