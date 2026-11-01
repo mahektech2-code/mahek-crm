@@ -15858,6 +15858,11 @@ export const factoryStaff = pgTable(
     roleLabel: text("role_label"),
     badgeCode: text("badge_code").unique(),
     pinHash: text("pin_hash"),
+    /**
+     * Wrong PINs in a row. At `FACTORY_PIN_TRIES` the PIN stops working and
+     * only an SMS code gets the person in; setting a new PIN clears it.
+     */
+    pinFailures: integer("pin_failures").notNull().default(0),
     /** en | hi | mr */
     lang: text("lang").notNull().default("en"),
     /** False until HR has confirmed the name and role (PRD §5.1). */

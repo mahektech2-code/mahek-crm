@@ -2122,6 +2122,13 @@
       "when": 1793622400000,
       "tag": "0307_factory_scan_shadow",
       "breakpoints": true
+    },
+    {
+      "idx": 304,
+      "version": "7",
+      "when": 1793629600000,
+      "tag": "0309_factory_pin_lockout",
+      "breakpoints": true
     }
   ]
 }

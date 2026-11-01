@@ -25,6 +25,7 @@ import { isLorryTask, lorryKeyOf, stepsOf, boxCode, stickerCode, emptyBoxShort, 
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload, lorryWords } from "./lorry";
 import { lorryScanBatch } from "./scan-batch";
+import { factoryFindPhone, factorySetPin, factorySignInPin } from "@/lib/actions/factory";
 import { lorryPack } from "./lorry-pack";
 import { applyLocal, judgeLorryScan } from "./lorry-judge";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
@@ -1310,5 +1311,28 @@ describe("purchase requirements from the floor", () => {
     assert.equal(twice.ok, false);
     const { fc: other } = await as("sunita");
     assert.equal((await cancelFromFloor(other, kit.reqs[0].lines[1].id, "Not mine")).ok, false, "another department's item is not theirs to cancel");
+  });
+});
+
+describe("signing in", () => {
+  test("three wrong PINs shut the PIN, even the right one, until a new PIN is chosen", async () => {
+    const u = floor.users["sunita"];
+    const first = await factorySignInPin(u.id, "0000");
+    assert.deepEqual(first, { ok: false, error: "wrongPin", left: 2 });
+    assert.deepEqual(await factorySignInPin(u.id, "0001"), { ok: false, error: "wrongPin", left: 1 });
+    assert.deepEqual(await factorySignInPin(u.id, "0002"), { ok: false, error: "pinLocked" });
+    /* Shut before the digits are read, so the right PIN says nothing either. */
+    assert.deepEqual(await factorySignInPin(u.id, floor.pin), { ok: false, error: "pinLocked" });
+    const who = await factoryFindPhone(String(u.phone));
+    assert.ok(who.ok && who.who.pinLocked, "the phone is told to go straight to the SMS code");
+
+    /* The SMS code signs them in and leads here; a new PIN opens the PIN again. */
+    setTestUser(u);
+    assert.deepEqual(await factorySetPin("4826"), { ok: true });
+    setTestUser(null);
+    const again = await factoryFindPhone(String(u.phone));
+    assert.ok(again.ok && !again.who.pinLocked);
+    assert.deepEqual(await factorySignInPin(u.id, "0000"), { ok: false, error: "wrongPin", left: 2 }, "the count starts again from three");
+    await db.execute(sql`update factory_staff set pin_failures = 0 where user_id = ${u.id}`);
   });
 });

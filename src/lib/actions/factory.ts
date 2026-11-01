@@ -41,7 +41,17 @@ import { initialsOf } from "@/lib/format";
  * forgotten PIN is an SMS code to the HRMS personal mobile (the same codes
  * the web sign-in sends), and then a new PIN. A badge only fills in WHO; the
  * PIN is still asked, so a badge found on the floor opens nothing.
+ *
+ * THREE WRONG PINS SHUT THE PIN. After the third miss in a row the PIN is
+ * refused whatever is typed — checked before the digits are, so a shut PIN
+ * says nothing about whether the guess was right — and the only way in is
+ * the SMS code, which goes to the person's own mobile and leads to choosing
+ * a new PIN. Choosing it is what opens the PIN again; signing in by code
+ * alone does not, because the old PIN is the one somebody was guessing at.
  * ------------------------------------------------------------------------- */
+
+/** Wrong PINs in a row before the PIN is shut and only an SMS code works. */
+export const FACTORY_PIN_TRIES = 3;
 
 export type Me = {
   key: string;
@@ -71,8 +81,17 @@ export type Me = {
   /** The departments they raise purchase requirements for — in charge, a supervisor over it, or the Production Head. Absent or empty: none is offered. */
   reqs?: FactoryCtx["reqDepts"];
 };
-export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
-type Fail = { ok: false; error: string };
+export type Who = {
+  key: string;
+  n: string;
+  ini: string;
+  ph: string;
+  hasPin: boolean;
+  /** Three wrong PINs: go straight to the SMS code. Absent on an older server. */
+  pinLocked?: boolean;
+};
+/** `left` rides on a wrong PIN: how many tries remain before it is shut. */
+type Fail = { ok: false; error: string; left?: number };
 type SignedIn = { ok: true; me: Me; data: FactoryData; needPin: boolean };
 
 const NOT_FOUND = "notFound";
@@ -85,9 +104,11 @@ function meOf(fc: FactoryCtx): Me {
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
   if (!user.active) return { ok: false, error: INACTIVE };
   if (!(await listUserApps(user.id)).includes("factory")) return { ok: false, error: INACTIVE };
-  const [s] = (await db.execute(sql`select pin_hash is not null as "hasPin" from factory_staff where user_id = ${user.id}`)) as unknown as { hasPin: boolean }[];
+  const [s] = (await db.execute(sql`
+    select pin_hash is not null as "hasPin", pin_failures >= ${FACTORY_PIN_TRIES} as "pinLocked"
+      from factory_staff where user_id = ${user.id}`)) as unknown as { hasPin: boolean; pinLocked: boolean }[];
   const digits = (typed.replace(/\D/g, "") || (user.phone ?? "").replace(/\D/g, "")).slice(-10);
-  return { ok: true, who: { key: user.id, n: user.name, ini: initialsOf(user.name), ph: digits, hasPin: !!s?.hasPin } };
+  return { ok: true, who: { key: user.id, n: user.name, ini: initialsOf(user.name), ph: digits, hasPin: !!s?.hasPin, pinLocked: !!s?.hasPin && !!s?.pinLocked } };
 }
 
 /** Step one: whose number is this. Answers with the name and photo-initials so the person can say "that is me". */
@@ -137,13 +158,24 @@ export async function factorySignInPin(userId: string, pin: string): Promise<Sig
   const address = await clientAddress();
   const refused = await signInRefusal(account, address);
   if (refused) return { ok: false, error: refused };
-  const [s] = (await db.execute(sql`select pin_hash as "pinHash" from factory_staff where user_id = ${user.id}`)) as unknown as { pinHash: string | null }[];
+  const [s] = (await db.execute(sql`select pin_hash as "pinHash", pin_failures as "pinFailures" from factory_staff where user_id = ${user.id}`)) as unknown as { pinHash: string | null; pinFailures: number }[];
   if (!s?.pinHash) return { ok: false, error: "noPin" };
+  if (Number(s.pinFailures) >= FACTORY_PIN_TRIES) return { ok: false, error: "pinLocked" };
   if (!/^\d{4}$/.test(String(pin)) || !(await verifyPassword(String(pin), s.pinHash))) {
     await recordSignInFailure(account, address);
-    return { ok: false, error: "wrongPin" };
+    const [n] = (await db.execute(sql`
+      update factory_staff set pin_failures = pin_failures + 1, updated_at = now()
+       where user_id = ${user.id} returning pin_failures as "pinFailures"`)) as unknown as { pinFailures: number }[];
+    const left = FACTORY_PIN_TRIES - Number(n?.pinFailures ?? FACTORY_PIN_TRIES);
+    if (left <= 0) {
+      const fc = await contextFor(user);
+      if (fc) await factoryAudit(fc, "factory.pin-locked", null, `${FACTORY_PIN_TRIES} wrong PINs — PIN shut until a new one is set`);
+      return { ok: false, error: "pinLocked" };
+    }
+    return { ok: false, error: "wrongPin", left };
   }
   await clearSignInFailures(account);
+  await db.execute(sql`update factory_staff set pin_failures = 0 where user_id = ${user.id} and pin_failures <> 0`);
   return enter(user, "PIN");
 }
 
@@ -173,7 +205,7 @@ export async function factorySetPin(pin: string): Promise<{ ok: true } | Fail> {
   const hash = await hashPassword(pin);
   await db.execute(sql`
     insert into factory_staff (user_id, area, areas, pin_hash) values (${fc.user.id}, ${fc.head ? "head" : fc.area}, ${textArray([fc.head ? "head" : fc.area])}, ${hash})
-    on conflict (user_id) do update set pin_hash = excluded.pin_hash, updated_at = now()`);
+    on conflict (user_id) do update set pin_hash = excluded.pin_hash, pin_failures = 0, updated_at = now()`);
   await factoryAudit(fc, "factory.pin", null, "Set a new PIN");
   return { ok: true };
 }
