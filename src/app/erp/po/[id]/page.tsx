@@ -133,6 +133,12 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
                 <span>{inr(t.freightPaise)}</span>
               </div>
             ) : null}
+            {t.roundOffPaise ? (
+              <div className="flex justify-between">
+                <span className="text-body">Round off</span>
+                <span>{inr(t.roundOffPaise)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between border-t border-ink pt-1 text-base font-semibold">
               <span>Total</span>
               <span>{inr(t.totalPaise)}</span>

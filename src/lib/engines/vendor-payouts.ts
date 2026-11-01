@@ -17,6 +17,7 @@
  * ------------------------------------------------------------------------- */
 
 import { purchaseFigures, type PurchaseInput } from "@/lib/erp/engines/purchase";
+import { roundedTotal } from "@/lib/bill-round";
 
 /** ISO weekday order: Monday is 1, Sunday 7. */
 export const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
@@ -234,7 +235,8 @@ export function groupPurchaseLots(lots: RegisterLot[]): PurchaseGroup[] {
     const ref = l.billNumber?.trim();
     if (ref && !g.refs.includes(ref)) g.refs.push(ref);
   }
-  return [...groups.values()].map(({ refs, ...g }) => ({ ...g, reference: refs.length ? refs.join(", ") : null }));
+  /* A PR is one purchase bill, and a bill's final amount is a round figure (`lib/bill-round.ts`). */
+  return [...groups.values()].map(({ refs, ...g }) => ({ ...g, amountPaise: roundedTotal(g.amountPaise), reference: refs.length ? refs.join(", ") : null }));
 }
 
 /* -------------------------------------------------------------- calendar */

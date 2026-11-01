@@ -71,6 +71,13 @@ import type { ActionSpec, ColSpec, FieldSpec, ListRow, RowField } from "../ui";
 import { fd, impactPart, inr, nf } from "../ui";
 import { godownIdByName, godownOptions, inTx, refuse, today, type Tx } from "./common";
 
+/** "+ round off ₹0.38", where a note's total was rounded to the rupee (`lib/bill-round.ts`) — so the sum on the screen adds up. */
+function roundOffWords(amount: unknown, tax: unknown, total: unknown): string {
+  const off = Number(total) - Number(amount) - Number(tax);
+  if (!Number.isFinite(off) || off === 0) return "";
+  return off > 0 ? ` + round off ${inr(off)}` : ` − round off ${inr(-off)}`;
+}
+
 /* ---------------------------------------------------------------------------
  * MATERIAL RETURNS — two screens, seven tabs.
  *
@@ -331,7 +338,7 @@ const vendorReturns: ScreenModule = {
           { l: "Return quantity", v: `${nf(r.qty)} ${r.unit} (${nf(r.stockQty)} ${r.unit === "Pcs" ? "Pcs" : "L"} of stock)` },
           { l: "Reason", v: reasonLabel(r.reason, "vendor") },
           ...(r.remarks ? [{ l: "Remarks", v: r.remarks }] : []),
-          ...(money && r.total != null ? [{ l: "Value", v: `${inr(r.amount)} + GST ${inr(r.tax)} = ${inr(r.total)}`, der: true }] : []),
+          ...(money && r.total != null ? [{ l: "Value", v: `${inr(r.amount)} + GST ${inr(r.tax)}${roundOffWords(r.amount, r.tax, r.total)} = ${inr(r.total)}`, der: true }] : []),
           { l: "Approval", v: r.approvedAt ? `${r.approver ?? "—"} · ${stampLine(null, r.approvedAt).replace(/^Created /, "")}${r.needsOwner ? (r.ownerApprovedAt ? ` · owner ${r.ownerApprover}` : " · owner approval still needed") : ""}` : r.status === "pending" ? "Waiting" : "—" },
           { l: "Debit note", v: r.dnNo ? `${debitNoteLabel(r.dnNo)} · ${inr(r.dnTotal)} · moves no stock` : "Not issued" },
           { l: "Goods return outward", v: r.outNo ? `${returnOutwardLabel(r.outNo)} · ${r.outStatus === "confirmed" ? `confirmed, left ${r.outGodown} on ${fd(r.outDate)} — stock reduced` : `prepared at ${r.outGodown}, not confirmed — stock unchanged`}` : "Not prepared" },
@@ -619,7 +626,7 @@ const debitNotes: ScreenModule = {
             ? [
                 { l: "Rate", v: `${inr(Number(r.rate))} / ${r.unit}` },
                 { l: "Tax", v: `${Number(r.gstBp) / 100}% · ${inr(Number(r.tax))}` },
-                { l: "Total debit amount", v: `${inr(Number(r.amount))} + ${inr(Number(r.tax))} = ${inr(Number(r.total))}`, der: true },
+                { l: "Total debit amount", v: `${inr(Number(r.amount))} + ${inr(Number(r.tax))}${roundOffWords(r.amount, r.tax, r.total)} = ${inr(Number(r.total))}`, der: true },
               ]
             : []),
           { l: "Return reason", v: reasonLabel(String(r.reason), "vendor") },

@@ -86,6 +86,7 @@ import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 import { confirmImpact } from "@/lib/impact/registry";
 import { impactBatchKey } from "@/lib/impact/batch-key";
 import { readConfirmation } from "@/lib/impact/types";
+import { roundedTotal } from "@/lib/bill-round";
 
 /* ---------------------------------------------------------------------------
  * Sales orders (spec §11): the taken-order line, its lot allocations, the
@@ -2788,6 +2789,8 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
     const bk = `${r.l.o.orderNo}|${r.l.o.billingCustomerId}`;
     billTotal.set(bk, (billTotal.get(bk) ?? 0) + (r.final ?? 0));
   }
+  /* The bill is a round figure, as the Tally invoice is; each line keeps its exact amount. */
+  for (const [k, v] of billTotal) billTotal.set(k, roundedTotal(v));
   return { rows, billTotal, monthly: await monthlySalesFor(rows.map((r) => r.d.dispatchDate)) };
 }
 

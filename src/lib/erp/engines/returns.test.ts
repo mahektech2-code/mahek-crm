@@ -28,8 +28,12 @@ describe("material returns — money", () => {
       discountPaise: 0,
       taxablePaise: 1_500_000,
       taxPaise: 270_000,
+      roundOffPaise: 0,
       totalPaise: 1_770_000,
     });
+    /* A note's total is a round figure, with what that took said: ₹100.37 at 18% is ₹118.44, so ₹118. */
+    const odd = returnValue({ qty: 1, ratePaise: 10037, gstBp: 1800 })!;
+    assert.deepEqual([odd.taxPaise, odd.roundOffPaise, odd.totalPaise], [1807, -44, 11800]);
     const d = returnValue({ qty: 10, ratePaise: 10000, gstBp: 1800, discountBp: 1000 })!;
     assert.equal(d.discountPaise, 10_000);
     assert.equal(d.taxablePaise, 90_000);

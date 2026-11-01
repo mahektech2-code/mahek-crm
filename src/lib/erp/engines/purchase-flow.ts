@@ -1,3 +1,5 @@
+import { roundBill } from "@/lib/bill-round";
+
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW, as rules (PURE, client-safe):
  *
@@ -221,7 +223,9 @@ export function poTotals(lines: PoLineIn[], freightPaise: number) {
     amount += f.amountPaise;
     gst += f.gstPaise;
   }
-  return { amountPaise: amount, gstPaise: gst, freightPaise: freightPaise || 0, totalPaise: amount + gst + (freightPaise || 0) };
+  /* A purchase order's total is a round figure, with its round off said (`lib/bill-round.ts`). */
+  const { totalPaise, roundOffPaise } = roundBill(amount + gst + (freightPaise || 0));
+  return { amountPaise: amount, gstPaise: gst, freightPaise: freightPaise || 0, roundOffPaise, totalPaise };
 }
 
 /**
