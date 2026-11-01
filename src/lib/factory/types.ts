@@ -650,6 +650,41 @@ export type ReqSave =
     }
   | { ok: false; title: string; text: string; fix: string; line?: number };
 
+/**
+ * What a factory phone says about itself every few minutes (`deviceReport`):
+ * read by the Admin Console's Factory handsets page. Every field is the
+ * phone's own reading and any may be missing — an older build, a permission
+ * not asked yet — so each is optional and a missing one is stored as unknown.
+ */
+export type FactoryDeviceReport = {
+  /** Minted once per install. */
+  deviceId: string;
+  /** The phone's clock when it sent this, for the clock skew. */
+  sentAt?: string | null;
+  appVersion?: string | null;
+  appBuild?: string | null;
+  updateId?: string | null;
+  updateCreatedAt?: string | null;
+  runtime?: string | null;
+  channel?: string | null;
+  embedded?: boolean | null;
+  os?: string | null;
+  osVersion?: string | null;
+  apiLevel?: number | null;
+  brand?: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  network?: string | null;
+  internet?: boolean | null;
+  queuePending?: number | null;
+  queueHeld?: number | null;
+  queueOldestAt?: string | null;
+  camera?: string | null;
+  screen?: string | null;
+  fontScale?: number | null;
+  lang?: string | null;
+};
+
 /* ------------------------------------------------------------ my history */
 
 /** What kind of thing a history line is — it picks the icon and feeds the day's counts. */

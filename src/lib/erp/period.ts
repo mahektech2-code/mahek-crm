@@ -30,6 +30,17 @@ export const PERIODS = [
 
 export type PeriodPreset = (typeof PERIODS)[number]["k"];
 
+/**
+ * What every ERP register opens on: the last seven days. A register is read
+ * for what just happened — today's orders, this week's batches — and a month
+ * of rows opened by default was a slower page full of what nobody came for.
+ * The picker still reaches every other window. Screens that are not a list of
+ * recent records keep their own: stock opens on all time (stock on hand must
+ * never be hidden by a date), the monthly money reports on the year, and the
+ * old records archive on its financial year.
+ */
+export const REGISTER_DEFAULT: PeriodPreset = "7d";
+
 /** A window: both ends inclusive, as `YYYY-MM-DD`. Null ends mean unbounded. */
 export type DateWindow = { from: string | null; to: string | null };
 

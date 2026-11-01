@@ -16,6 +16,7 @@ import { translate } from "@/lib/audit-labels";
 import { today } from "./common";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
+import { REGISTER_DEFAULT } from "../period";
 import {
   FROM_CUSTOMER_CASH,
   FROM_WITHDRAWAL,
@@ -85,7 +86,7 @@ export type MoneyPanel = {
 const actorOf = (ctx: ErpContext): Actor => ({ id: ctx.actor.id, name: ctx.actor.name, administrator: ctx.administrator, approver: ctx.powers.has("approveMoney") });
 const approverWhy = (ctx: ErpContext) => (ctx.powers.has("approveMoney") ? "" : "Only the accountant for Petty Cash");
 
-const WIN: ScreenWindow = { label: "Date", default: "month" };
+const WIN: ScreenWindow = { label: "Date", default: REGISTER_DEFAULT };
 
 /** "+ New ▾" on every Petty Cash tab: each kind of record, opening its form on its own tab. */
 export function newMenu(): { l: string; sub: string; href: string }[] {
@@ -708,9 +709,9 @@ const moneyTransfers = txnList("moneyTransfers", {
 
 const advances: ScreenModule = {
   key: "advances",
-  window: { label: "Given on", default: "90d" },
+  window: { label: "Given on", default: REGISTER_DEFAULT },
   async load(ctx, scope) {
-    const s = scope ?? scopeFor({ label: "Given on", default: "90d" }, { pd: "", ids: null }, null);
+    const s = scope ?? scopeFor({ label: "Given on", default: REGISTER_DEFAULT }, { pd: "", ids: null }, null);
     /* Open advances always show, whatever the period: they are work, not history. */
     const rows = await advanceRows(sql`(a.status = 'open' or ${windowWhere(sql`a.issued_on`, sql`a.id`, s)})`);
     const day = today();
@@ -971,9 +972,9 @@ const moneyReports: ScreenModule = {
 /** Overview › Audit trail: every write to Petty Cash, who and when, in words. Nothing here is ever deleted. */
 const moneyAudit: ScreenModule = {
   key: "moneyAudit",
-  window: { label: "When", default: "30d" },
+  window: { label: "When", default: REGISTER_DEFAULT },
   async load(ctx, scope) {
-    const s = scope ?? scopeFor({ label: "When", default: "30d" }, { pd: "", ids: null }, null);
+    const s = scope ?? scopeFor({ label: "When", default: REGISTER_DEFAULT }, { pd: "", ids: null }, null);
     const rows = (await db.execute(sql`
       select l.id, l.action, l.entity_id as "entityId", (l.at at time zone 'Asia/Kolkata')::date::text as day, l.at::text as at, u.name as who,
              t.txn_no as no, t.txn_date::text as "txnDate"
@@ -1010,9 +1011,9 @@ function lineLabel(c: { t: TxnRow; score: string; left: number }): string {
 
 const bankLines: ScreenModule = {
   key: "bankLines",
-  window: { label: "Statement date", default: "month" },
+  window: { label: "Statement date", default: REGISTER_DEFAULT },
   async load(ctx, scope) {
-    const s = scope ?? scopeFor({ label: "Statement date", default: "month" }, { pd: "", ids: null }, null);
+    const s = scope ?? scopeFor({ label: "Statement date", default: REGISTER_DEFAULT }, { pd: "", ids: null }, null);
     const cfg = await getConfig();
     const lines = await bankLineRows(windowWhere(sql`l.line_date`, sql`l.id`, s));
     const open = lines.filter((l) => l.status === "open" && l.matchedPaise === 0);

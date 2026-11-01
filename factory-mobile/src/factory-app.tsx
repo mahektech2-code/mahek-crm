@@ -60,6 +60,7 @@ import { clock12, clockText, dayLine, hhmm } from "@/lib/factory/time";
 import { addDays, calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
 import { applyLocal, judgeLorryScan, type LoadingPack } from "@/lib/factory/lorry-judge";
+import { deviceReport } from "./device";
 import { APP_BUILD, call, dropSession, NotReceived, sendPhoto, uploadPhoto, type PhotoSend } from "./api";
 import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
@@ -165,6 +166,9 @@ export class FactoryApp extends Component<Props, State> {
   /** Bumped by every local judgement: a pack read before it is already behind, and is dropped. */
   private packSeq = 0;
   private noPack = false;
+  /** When this phone last described itself to the server — every few minutes at most. */
+  private reportedAt = 0;
+  private noReport = false;
   private packTimer: ReturnType<typeof setTimeout> | undefined;
   private staleTimer: ReturnType<typeof setTimeout> | undefined;
   private ot: ReturnType<typeof setInterval> | undefined;
@@ -357,10 +361,24 @@ export class FactoryApp extends Component<Props, State> {
     if (st.queue.some((x) => x.status === "pending")) return void this.flushQueue();
     try {
       const r = await call("bootstrap");
-      if (r.ok) this.setState((cur) => this.refreshed(cur, r.me, r.data));
+      if (r.ok) {
+        this.setState((cur) => this.refreshed(cur, r.me, r.data));
+        void this.reportDevice();
+      }
       else if (r.error === "signedOut") this.setState({ me: null, db: null, signStep: "id" });
     } catch {
       this.setNet("offline");
+    }
+  }
+
+  /** The phone describes itself for the Admin Console's Factory handsets page. A courtesy: it never fails anything. */
+  private async reportDevice() {
+    if (this.noReport || Date.now() - this.reportedAt < 5 * 60_000) return;
+    this.reportedAt = Date.now();
+    try {
+      await call("deviceReport", await deviceReport(this.state.queue, this.state.lang ?? null));
+    } catch (e) {
+      if (e instanceof NotReceived && e.message === "unknown-op") this.noReport = true;
     }
   }
 

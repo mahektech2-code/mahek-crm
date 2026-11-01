@@ -28,6 +28,8 @@ import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatc
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload, lorryWords } from "./lorry";
 import { lorryScanBatch } from "./scan-batch";
 import { lorryPack } from "./lorry-pack";
+import { recordDevice } from "./devices";
+import { listFactoryHandsets } from "@/lib/services/factory-handset-service";
 import { applyLocal, judgeLorryScan } from "./lorry-judge";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
 import { shelfFacts } from "@/lib/erp/stock-check";
@@ -848,6 +850,38 @@ describe("dispatch", () => {
 
     await lorryUnload(fc, key, box1);
     await lorryUnload(fc, key, box2);
+  });
+
+  test("a phone describes itself, the console lists it with whoever was on it last, and workers with no phone are listed too", async () => {
+    const { fc } = await as("imran");
+    const now = Date.parse("2026-11-01T10:00:00Z");
+    const id = "FD-test-" + randomUUID().slice(0, 8);
+    assert.deepEqual(await recordDevice(fc, { deviceId: "x" }), { ok: false }, "an id that is not one is not kept");
+    const ok = await recordDevice(fc, {
+      deviceId: id, sentAt: "2026-11-01T10:03:00Z", appVersion: "2.4.0", updateId: "ea6ec37d-bbd9", updateCreatedAt: "2026-11-01T05:00:00Z",
+      embedded: false, os: "android", osVersion: "13", apiLevel: 33, manufacturer: "samsung", model: "SM-A145F", network: "wifi", internet: true,
+      queuePending: 2, queueHeld: 0, queueOldestAt: "2026-11-01T09:00:00Z", camera: "granted", screen: "360x780", fontScale: 1.3,
+      lang: "hi", apiLevelJunk: "x",
+    } as never, now);
+    assert.deepEqual(ok, { ok: true });
+    const [row] = await q<{ user: string; godown: string; skew: number; font: number; model: string; camera: string }>(sql`
+      select user_id as user, godown_id as godown, clock_skew_ms as skew, font_scale_pct as font, model, camera from factory_devices where id = ${id}`);
+    assert.deepEqual([row.user, row.godown, row.skew, row.font, row.model], [fc.user.id, fc.godown.id, 180_000, 130, "SM-A145F"], "the person and godown are the session's; the clock is 3 min fast");
+
+    /* The same phone, handed to somebody else, with the camera taken away and junk in a field. */
+    const { fc: anil } = await as("anil");
+    await recordDevice(anil, { deviceId: id, appVersion: "2.4.0", camera: "denied", apiLevel: 99999, sentAt: "not a date" }, now);
+    const [again] = await q<{ user: string; camera: string; api: number | null; skew: number | null; model: string | null }>(sql`
+      select user_id as user, camera, api_level as api, clock_skew_ms as skew, model from factory_devices where id = ${id}`);
+    assert.deepEqual([again.user, again.camera, again.api, again.skew, again.model], [anil.user.id, "denied", null, null, null], "the row is what the phone said last; nonsense is unknown");
+
+    const list = await listFactoryHandsets();
+    const phone = list.rows.find((r) => r.deviceId === id);
+    assert.ok(phone && phone.name === anil.user.name, "a shared phone shows whoever was on it last");
+    assert.equal(phone.appVersion, "2.4.0");
+    const imran = list.rows.find((r) => r.userId === fc.user.id);
+    assert.ok(imran && imran.deviceId === null, "somebody no phone reports for still has a row: no phone yet");
+    assert.equal(list.newest.version, "2.4.0");
   });
 
   test("an LR uploaded from the phone lands in the register the LR desk reads, and only dispatch may upload one", async () => {

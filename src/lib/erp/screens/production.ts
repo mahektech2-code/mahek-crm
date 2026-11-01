@@ -61,6 +61,7 @@ import { boxHeadroom, cancelBatchBoxes, ensureBatchBoxes, labelBatchBoxes, loose
 import { erpLabelsHref, erpTraceHref } from "../trace-links";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
+import { REGISTER_DEFAULT } from "../period";
 
 /* ---------------------------------------------------------------------------
  * Production (spec §7–§9): semi-finished batches from raw-material lots, FG
@@ -201,8 +202,8 @@ async function sfgEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null
  * by its FIRST line's date — a line added to it a day later must not split it
  * across two periods, half a batch on each.
  */
-const SFG_WINDOW = { label: "Batch date", default: "month" } as const;
-const PACK_WINDOW = { label: "Pack date", default: "month" } as const;
+const SFG_WINDOW = { label: "Batch date", default: REGISTER_DEFAULT } as const;
+const PACK_WINDOW = { label: "Pack date", default: REGISTER_DEFAULT } as const;
 
 /**
  * A grouped register's window, a whole group at a time: the group is in when
@@ -792,7 +793,7 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
   };
 }
 
-const FILL_WINDOW = { label: "Fill date", default: "month" } as const;
+const FILL_WINDOW = { label: "Fill date", default: REGISTER_DEFAULT } as const;
 
 const fgFill: ScreenModule = {
   key: "fgFill",
@@ -1612,7 +1613,7 @@ const packStock: ScreenModule = {
 };
 
 /* A stock log is the ledger itself, the fastest-growing table there is: read by entry date. */
-const LOG_WINDOW = { label: "Entry date", default: "month" } as const;
+const LOG_WINDOW = { label: "Entry date", default: REGISTER_DEFAULT } as const;
 
 function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
   return {

@@ -374,6 +374,8 @@ describe("the screens", () => {
     const b = await V.bankView(null, "all", null, 7);
     assert.ok(b && b.counts.all >= 0);
     assert.deepEqual(V.periodRange("last", "2026-03-15"), { from: "2026-02-01", to: "2026-02-28" });
+    assert.deepEqual(V.periodRange("7d", "2026-03-03"), { from: "2026-02-25", to: "2026-03-03" });
+    assert.equal(V.periodOf(undefined), "7d", "petty cash opens on the last seven days, like every register");
     assert.deepEqual(V.periodRange("fy", "2026-03-15"), { from: "2025-04-01", to: "2026-03-15" });
     void ctx;
   });
