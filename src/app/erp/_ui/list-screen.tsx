@@ -2,6 +2,7 @@
 
 import { Page } from "./page-head";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { bulkOffers } from "@/lib/erp/bulk-fit";
 import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
@@ -621,6 +622,8 @@ export function ListScreen({
   const chosenKey = chosen.slice().sort().join(",");
   const heldRows = server ? pageRows : rows;
   const heldIds = new Set(heldRows.flatMap((r) => [r.id, ...(r.sub ?? []).map((x) => x.id)]));
+  /* Only what the ticked rows can take: a row's own actions say what applies to it. */
+  const offers = bulkOffers(spec.bulk ?? [], heldRows, chosen);
   const allHeld = chosen.every((id) => heldIds.has(id));
   const localSum = sumOn && chosen.length > 0 && allHeld ? selectionTotals(spec, heldRows, chosen) : null;
   const needRemote = sumOn && chosen.length > 0 && !allHeld && !!server && !!listTotals;
@@ -993,7 +996,8 @@ export function ListScreen({
               </div>
             ) : (
             <div ref={tableBox} className="overflow-x-auto">
-              <table className="w-full table-fixed">
+              {/* A person's own pick may be wider than the card: drawn whole, it scrolls sideways (`fit-columns.ts`). */}
+              <table className="w-full table-fixed" style={{ minWidth: fit.total + (menuOn ? MENU_COL : 0) }}>
                 <colgroup>
                   {selectOn ? <col style={{ width: CHECK_COL }} /> : null}
                   {shownCols.map((c) => (
@@ -1074,6 +1078,20 @@ export function ListScreen({
                                   })}
                                   <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
                                   {spec.groupInvoice ? <InvoiceButtons v={grp.head[spec.groupInvoice]} row={r} screen={spec.screen} /> : null}
+                                  {spec.groupPrint && grp.print ? (
+                                    <NavLink
+                                      href={grp.print}
+                                      title={`${spec.groupPrint.l} · ${g || "—"}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={cx(
+                                        "inline-flex h-8 items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-2.5 text-meta font-medium text-body hover:bg-canvas",
+                                        headShown.length === 0 && "ml-auto",
+                                      )}
+                                    >
+                                      <Icon n="print" s={15} />
+                                      {spec.groupPrint.l}
+                                    </NavLink>
+                                  ) : null}
                                   {spec.groupSel && selectOn ? (
                                     <LinkButton
                                       onClick={() => {
@@ -1193,11 +1211,14 @@ export function ListScreen({
               Select all {nf(total)}
             </button>
           ) : null}
-          {(spec.bulk ?? []).map((b) => (
+          {offers.map(({ b, label }) => (
             <Button key={b.id} variant="dark" size="sm" onClick={() => (b.client === "printInvoices" ? setPrinting(chosen) : ui.bulk(spec.screen, b, chosen, () => setSel({})))}>
-              {b.l}
+              {label}
             </Button>
           ))}
+          {bulkOn && chosen.length > 0 && !offers.length ? (
+            <span className="text-meta whitespace-nowrap text-line-strong">Nothing can be done to {chosen.length === 1 ? "this row" : "these rows"} from here — open one to see why</span>
+          ) : null}
         </SelectionBar>
       ) : null}
 

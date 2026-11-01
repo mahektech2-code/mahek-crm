@@ -688,7 +688,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
         hint: "A Mahek Vehicle carries no LR — the customer-signed copy closes the delivery.",
         fillBy: { by: ["delivery"], map: ownDefault },
       },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
+      { k: "transporter", l: "Transporter", t: "select", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "Blank uses the delivery party's transporter. From the transporter list — a new one is added under Transporters first." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "The day it should leave — the requested date, if the customer gave one. The lists say today, tomorrow or late from it." },
       ...(pricing ? ([{ k: "priceList", l: "Price list", t: "text", readOnly: true, untagged: true, fillBy: { by: ["billing"], map: pricing.list, otherwise: "" } }] as FieldSpec[]) : []),
       ...(pricing && seeAmounts
@@ -799,7 +799,7 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "Blank: not planned yet." },
       { k: "delivery", l: "Delivery party", t: "select", req: true, opts: names, readOnly: l.inDetails },
       { k: "deliveredBy", l: "Delivered by", t: "select", req: true, opts: [...DELIVERED_BY] },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "From the transporter list. A new one is added under Transporters first." },
+      { k: "transporter", l: "Transporter", t: "select", opts: carriers.filter((c) => !isMahekVehicle(c)), when: { k: "deliveredBy", eq: "Transporter" }, hint: "From the transporter list. A new one is added under Transporters first." },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails, sec: "Quantity and price" },
       ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0 }] as FieldSpec[]) : []),
       ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100, hint: DISCOUNT_HINT }] as FieldSpec[]) : []),
@@ -1266,7 +1266,7 @@ function orderList(scope: Scope): ScreenModule {
         labels
           ? []
           : checking
-            ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const }]
+            ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const, fits: false as const }]
             : [
               ...(verifier && (scope === "verifyOrders" || scope === "orders") ? [{ id: "verifyOrder", l: "Verify order" }] : []),
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
@@ -1291,7 +1291,8 @@ function orderList(scope: Scope): ScreenModule {
                     },
                   ]
                 : []),
-              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const }] : []),
+              /* Every billed line carries the invoice PDF action, and only a billed line has an invoice to print. */
+              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const, fits: "invoiceFile" }] : []),
             ];
       const byNo = new Map<number, OrderLine[]>();
       /* An order is billed, checked and dispatched WHOLE, so its blockers are read off every line of it — not only the ones this tab draws. */
@@ -1330,6 +1331,8 @@ function orderList(scope: Scope): ScreenModule {
           ],
           godownKey: "godown",
           groupInvoice: labels ? undefined : "invoice",
+          /* Stickers go on by the lorry: one print for every order a transporter takes. */
+          groupPrint: labels ? { k: "orderNo", l: "Print stickers", href: erpLabelsHref({ orders: [] }) } : undefined,
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
           ...(labels || checking ? {} : await newFormIn(s, () => orderForm(ctx))),
@@ -1394,10 +1397,10 @@ function orderList(scope: Scope): ScreenModule {
                   ? [
                       {
                         id: "approveInvoice",
-                        l: "Approve invoice",
+                        l: "Publish invoice",
                         primary: checking && l.invoiceCheck !== "Approved",
                         why: l.invoiceCheck === "Approved" ? "Already approved" : !hasPdf ? "Add the invoice PDF first" : ownBill && !ctx.administrator ? "You entered this bill; somebody else checks it" : "",
-                        confirm: `Approve invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
+                        confirm: `Publish invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
                       } as ActionSpec,
                       {
                         id: "rejectInvoice",
@@ -1493,7 +1496,7 @@ function orderList(scope: Scope): ScreenModule {
                 ? [
                     { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
                     {
-                      l: "Invoice check",
+                      l: "Invoice print",
                       v:
                         l.invoiceCheck === "Approved"
                           ? l.invoiceCheckedAt
@@ -2864,7 +2867,7 @@ const orderDetails: ScreenModule = {
       { k: "billTotal", l: "Bill total", t: "m", pw: "viewSalesAmounts" },
       orderCol("discount"),
       { k: "dispatchDate", l: "Dispatch date", t: "d" },
-      { k: "invoiceCheck", l: "Invoice check", t: "s" },
+      { k: "invoiceCheck", l: "Invoice print", t: "s" },
       { k: "verification", l: "Dispatch", t: "s" },
       { k: "vehicle", l: "Vehicle", t: "mono" },
       { k: "follow", l: "Transport follow-up", t: "t" },
@@ -2895,7 +2898,8 @@ const orderDetails: ScreenModule = {
         bulk: [
           { id: "verify", l: "Confirm dispatch", prompt: DISPATCH_PROMPT("Every selected order leaves whole: each needs its invoice approved and every box scanned.") },
           { id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT },
-          { id: "printInvoices", l: "Print invoices", client: "printInvoices" },
+          /* Every line here is billed, so every one has an invoice. */
+          { id: "printInvoices", l: "Print invoices", client: "printInvoices", fits: false },
         ],
         noDataLine: "Nothing billed yet. An order arrives here once it is billed; it is dispatched after its invoice is approved.",
       },
@@ -3002,7 +3006,7 @@ const orderDetails: ScreenModule = {
               ...(amounts ? [{ l: "Monthly target", v: target == null ? "—" : inr(target), der: true }] : []),
               { l: "Dispatch status", v: d.dispatchStatus },
               { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
-              { l: "Invoice check", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
+              { l: "Invoice print", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
               { l: "Dispatch stickers", v: d.stickersAt ? `On · ${stamp(d.stickersAt)}` : "Not recorded" },
               ...(d.verification === "Verified" ? [{ l: "Vehicle", v: d.vehicleNo ?? "Not recorded" }, { l: "Driver / transporter", v: d.driver ?? "—" }, { l: "Dispatch remark", v: d.dispatchRemark ?? "—" }] : []),
             ],

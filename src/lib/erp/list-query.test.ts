@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import type { ListRow, ListSpec, Tone } from "./ui";
-import { groupHeadValues, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, selectionTotalText, selectionTotals, type ListQuery } from "./list-query";
+import { groupHeadValues, groupPrintHref, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, selectionTotalText, selectionTotals, type ListQuery } from "./list-query";
 
 const FLAGS: Record<string, [string, Tone]> = { late: ["Running late", "danger"] };
 const spec: ListSpec = {
@@ -237,4 +237,18 @@ describe("what the ticked rows add up to", () => {
 test("a figure no ticked row carries reads as unknown, never as zero", () => {
   const r = selectionTotals({ selectSum: [{ k: "qty", l: "kg", missing: "without a weight" }] }, [{ id: "x", v: { qty: null }, flags: [] }, { id: "y", v: { qty: "" }, flags: [] }], ["x", "y"]);
   assert.equal(selectionTotalText(r.totals[0]), "— kg (all 2 without a weight)");
+});
+
+test("a group's print link carries every distinct value in the whole group, not just its page", () => {
+  const spec = { screen: "t", cols: [{ k: "orderNo", l: "Order", t: "mono" }, { k: "tr", l: "Transporter", t: "t" }], groups: ["tr"], groupPrint: { k: "orderNo", l: "Print", href: "/erp/print-labels?orders=" } } as unknown as ListSpec;
+  const rows = [
+    { id: "a", v: { orderNo: "10089", tr: "Jignesh" } },
+    { id: "b", v: { orderNo: "10089", tr: "Jignesh" } },
+    { id: "c", v: { orderNo: "10102", tr: "MK" } },
+    { id: "d", v: { orderNo: "10090", tr: "Jignesh" } },
+  ] as ListRow[];
+  const p = pageOf(spec, rows, Q({ grp: true, size: 1, page: 1 }), {});
+  const g = Object.values(p.groups)[0];
+  assert.equal(g.print, `/erp/print-labels?orders=${encodeURIComponent("10089,10090")}`);
+  assert.equal(groupPrintHref({ ...spec, groupPrint: undefined }, rows), undefined);
 });

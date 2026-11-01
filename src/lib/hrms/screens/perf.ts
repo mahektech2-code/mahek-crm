@@ -305,7 +305,7 @@ async function kpiForm(ctx: HrmsContext, people: Person[], rec?: Kpi): Promise<F
     rec
       ? { k: "emp", l: "Salesman", t: "text", readOnly: true }
       : { k: "emp", l: "Salesman", t: "select", req: true, opts: pick.map(personOption), hint: kpiWide(ctx) ? "Active sales staff." : undefined },
-    areas.length ? { k: "area", l: "Area visited", t: "suggest", req: true, opts: areas } : { k: "area", l: "Area visited", t: "text", req: true },
+    areas.length ? { k: "area", l: "Area visited", t: "select", req: true, opts: areas } : { k: "area", l: "Area visited", t: "text", req: true },
     { k: "visits", l: "Visits", t: "num", req: true, min: 0, hint: mbos ? `Filled in from ${mbos} field-app check-in${mbos > 1 ? "s" : ""} today` : undefined },
     { k: "productive", l: "Productive counters", t: "num", req: true, min: 0 },
     { k: "litres", l: "Litre sales", t: "num", req: true, min: 0 },
