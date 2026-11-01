@@ -52,7 +52,7 @@ import { initialsOf } from "@/lib/format";
  * ------------------------------------------------------------------------- */
 
 /** Wrong PINs in a row before the PIN is shut and only an SMS code works. */
-export const FACTORY_PIN_TRIES = 3;
+const FACTORY_PIN_TRIES = 3;
 
 export type Me = {
   key: string;
