@@ -1362,8 +1362,8 @@ describe("my history", () => {
     assert.deepEqual(mine.map((i) => [i.kind, i.text]), [["load", "B-HIST loaded on Lorry 2"], ["job", "Filled 40 cans of HIST-A"]]);
     assert.equal(day.day, calendarDate(new Date()));
 
-    const yesterday = await historyFor(me, addDays(calendarDate(new Date()), -1));
+    const yesterday = await historyFor(me, addDays(String(calendarDate(new Date())), -1));
     assert.ok(yesterday.ok && !yesterday.items.some((i) => i.text.includes("HIST")), "today's work is not on yesterday");
-    assert.equal((await historyFor(me, addDays(calendarDate(new Date()), 1))).ok, false, "tomorrow has not happened");
+    assert.equal((await historyFor(me, addDays(String(calendarDate(new Date())), 1))).ok, false, "tomorrow has not happened");
   });
 });
