@@ -2284,19 +2284,17 @@ function BulkBar({
         <BulkButton onClick={() => onAct("restore")}>Restore them</BulkButton>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => onAct("reassign")}
-            disabled={!canReassign}
-            title={
-              canReassign
-                ? undefined
-                : "Handing leads to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it."
-            }
-            className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Change owner
-          </button>
+          {/* Left out, not greyed, for somebody who cannot hand leads over: a
+              selection bar offers what can be done to the ticked rows. */}
+          {canReassign ? (
+            <button
+              type="button"
+              onClick={() => onAct("reassign")}
+              className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90"
+            >
+              Change owner
+            </button>
+          ) : null}
           <RowMenu
             label="More actions"
             title={`What else can be done to these ${count === 1 ? "lead" : "leads"}`}
@@ -2304,13 +2302,7 @@ function BulkBar({
               { label: "Change stage", run: () => onAct("stage") },
               { label: "Chase the owners", run: () => onAct("chase") },
               { label: "Archive them", run: () => onAct("archive"), danger: true },
-              {
-                label: "Delete them — move to trash",
-                run: () => onAct("trash"),
-                danger: true,
-                disabled: !canTrash,
-                title: canTrash ? undefined : "Deleting leads is a manager's. Yours is not one of the hats that carries it.",
-              },
+              ...(canTrash ? [{ label: "Delete them — move to trash", run: () => onAct("trash"), danger: true }] : []),
             ]}
           />
         </>

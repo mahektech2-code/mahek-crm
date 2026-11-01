@@ -56,6 +56,8 @@ export function ContactsControl({ data, q, filter }: { data: Data; q: string; fi
   };
 
   const chosen = data.rows.filter((r) => sel[r.id]);
+  const onDnd = chosen.filter((r) => r.dnd);
+  const offDnd = chosen.filter((r) => !r.dnd);
   const allOnPage = data.rows.length > 0 && data.rows.every((r) => sel[r.id]);
   const pages = Math.max(1, Math.ceil(data.matched / PAGE));
 
@@ -259,12 +261,17 @@ export function ContactsControl({ data, q, filter }: { data: Data; q: string; fi
       </Card>
 
       <SelectionBar count={chosen.length} onClear={() => setSel({})}>
-        <Button variant="dark" size="sm" onClick={() => setAsk({ ids: chosen.map((r) => r.id), names: chosen.map((r) => r.name), dnd: true })}>
-          Put on DND
-        </Button>
-        <Button variant="dark" size="sm" onClick={() => setAsk({ ids: chosen.map((r) => r.id), names: chosen.map((r) => r.name), dnd: false })}>
-          Take off DND
-        </Button>
+        {/* Only the way round that changes something: ticked contacts already on DND are not offered DND again. */}
+        {offDnd.length ? (
+          <Button variant="dark" size="sm" onClick={() => setAsk({ ids: offDnd.map((r) => r.id), names: offDnd.map((r) => r.name), dnd: true })}>
+            Put {offDnd.length === chosen.length ? "" : `${offDnd.length} `}on DND
+          </Button>
+        ) : null}
+        {onDnd.length ? (
+          <Button variant="dark" size="sm" onClick={() => setAsk({ ids: onDnd.map((r) => r.id), names: onDnd.map((r) => r.name), dnd: false })}>
+            Take {onDnd.length === chosen.length ? "" : `${onDnd.length} `}off DND
+          </Button>
+        ) : null}
       </SelectionBar>
 
       {ask ? (

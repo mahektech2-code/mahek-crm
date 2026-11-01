@@ -349,6 +349,14 @@ export type BulkSpec = {
   l: string;
   /** Handled on the page rather than by the server: "printInvoices" opens the Print invoices pop-up over the selection. */
   client?: "printInvoices";
+  /**
+   * Which row action says whether a ticked row can take this — by default the
+   * row action with this bulk action's own id. The selection bar offers the
+   * bulk action only when at least one ticked row carries that action with
+   * nothing in its `why`, and says how many when it is not all of them.
+   * `false`: every row can, so it is always offered.
+   */
+  fits?: string | false;
   confirm?: string;
   /** Values to collect once for the whole selection. */
   prompt?: PromptSpec;
