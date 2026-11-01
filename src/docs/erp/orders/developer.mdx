@@ -4,7 +4,7 @@ The Orders screen is ten tabs, each its own server module: nine built in `screen
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | The `orders` screen and its views, in flow order: `verifyOrders` (To verify), `readyOrders` (Production), `toBill` (Ready to bill), `invoiceCheck` (Invoice check), `labels` (Dispatch stickers), `orderDetails` (Billing & dispatch), `pendingOrders` (On hold), `batchCodes`, `orders` (All lines), `orderInbox` |
+| Registry | `src/lib/erp/registry.ts` | The `orders` screen and its views, in flow order: `verifyOrders` (To verify), `readyOrders` (Production), `toBill` (Ready to bill), `invoiceCheck` (Invoice print), `labels` (Dispatch stickers), `orderDetails` (Billing & dispatch), `pendingOrders` (On hold), `batchCodes`, `orders` (All lines), `orderInbox` |
 | Page | `src/app/erp/[slug]/page.tsx` | Generic list page; `?view=` picks the tab |
 | Lines | `src/lib/erp/screens/sales.ts` | `orderLines`, `priceBook`, `orderForm`, `editForm`, `allocateForm`, `orderList`, `inScope`, `lineHandlers`, `statusActions`, `doStatus`, `doReady`, `tellReadyToBill`, `doApprove`, `saveOrder`, `saveEdit`, `saveAllocation`, `stockShortfalls`, `billBlockersFor`, `lineDomains` |
 | The order's checks | `src/lib/erp/screens/sales.ts` | `doVerifyOrder`, `doCorrectOrder`, `reopenOrderCheck` (back office); `doBill`, `doUnbill`, `doChangeInvoice`, `invoiceHolders` (the bill; `invoiceShareRefusal` in `engines/order-flow.ts` is the sharing rule); `doApproveInvoice`, `doRejectInvoice`, `invoiceForCheck`, `reopenInvoiceCheck`, `invoiceSnapshot` (the invoice check); `addReview`, `reviewsFor`, `reviewLine`; `holdersOf`, `tell` (notifications); `doStickers`, `doMoveOut` |

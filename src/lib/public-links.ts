@@ -21,8 +21,12 @@ export function isPublicPath(pathname: string | null | undefined): boolean {
   return !!pathname && PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
-/** What the public host may also serve: the page's own scripts, styles and the Mahek logo as its icon. */
-export const ICON_PATHS = ["/favicon.ico", "/icon.png", "/apple-icon.png"] as const;
+/**
+ * What the public host may also serve: the page's own scripts, styles, the
+ * Mahek logo as its icon, and the logo the tracking page draws in its header.
+ * One named file, not `/brand/` — the public host is not a second door.
+ */
+export const ICON_PATHS = ["/favicon.ico", "/icon.png", "/apple-icon.png", "/brand/mahek-logo.png"] as const;
 
 export function isPublicAsset(pathname: string): boolean {
   return pathname.startsWith("/_next/") || (ICON_PATHS as readonly string[]).includes(pathname) || pathname === "/robots.txt";

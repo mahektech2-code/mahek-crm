@@ -1547,57 +1547,46 @@ export function CustomersScreen({
             <Button variant="dark" size="sm" onClick={() => setBulkRemind(true)}>
               Set reminder
             </Button>
-            <Button
-              variant="dark"
-              size="sm"
-              onClick={() => {
-                const first = [...selected][0];
-                router.push(`/crm/whatsapp?customer=${first}`);
-              }}
-            >
-              Send WhatsApp
-            </Button>
+            {/* It opens one customer's conversation, so it is offered for one. */}
+            {selected.size === 1 ? (
+              <Button
+                variant="dark"
+                size="sm"
+                onClick={() => {
+                  const first = [...selected][0];
+                  router.push(`/crm/whatsapp?customer=${first}`);
+                }}
+              >
+                Send WhatsApp
+              </Button>
+            ) : null}
           </>
         ) : null}
-        <Button
-          variant="dark"
-          size="sm"
-          disabled={!isManager}
-          title={isManager ? undefined : "Export is a manager action"}
-          onClick={() => exportCsv(visible.filter((r) => selected.has(r.id)))}
-        >
-          Export
-        </Button>
-        <Button
-          variant="dark"
-          size="sm"
-          disabled={!canReassign}
-          title={
-            canReassign
-              ? undefined
-              : "Changing an account manager is an accounts or admin action"
-          }
-          onClick={() => setChangingAm(true)}
-        >
-          Update account manager
-        </Button>
+        {/* A selection bar offers only what this person can do to these rows:
+            a control they do not hold is left out, not drawn greyed. */}
+        {isManager ? (
+          <Button
+            variant="dark"
+            size="sm"
+            onClick={() => exportCsv(visible.filter((r) => selected.has(r.id)))}
+          >
+            Export
+          </Button>
+        ) : null}
+        {canReassign ? (
+          <Button variant="dark" size="sm" onClick={() => setChangingAm(true)}>
+            Update account manager
+          </Button>
+        ) : null}
         {/* A separate button because it is a separate permission — a manager
             holds this one and not the one above it. Folding the seat into that
             dialog would have hidden a control behind a dialog its holder
             cannot open. */}
-        <Button
-          variant="dark"
-          size="sm"
-          disabled={!canAssignSalesManager}
-          title={
-            canAssignSalesManager
-              ? undefined
-              : "Setting the sales manager is a manager or admin action"
-          }
-          onClick={() => setSmScope("selection")}
-        >
-          Set sales manager
-        </Button>
+        {canAssignSalesManager ? (
+          <Button variant="dark" size="sm" onClick={() => setSmScope("selection")}>
+            Set sales manager
+          </Button>
+        ) : null}
         {/*
           Converting a batch asks for the distributors ONCE and records them
           against every shop in it — which is the ordinary case, because a row

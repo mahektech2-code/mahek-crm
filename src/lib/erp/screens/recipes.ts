@@ -1,11 +1,11 @@
 import "server-only";
 import { isErpManager } from "./common";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { erpRawMaterials, erpRecipes, productFormulations, users } from "@/db/schema";
-import { err, fieldErr, okVoid } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
-import type { ColSpec, ListRow } from "../ui";
+import type { ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { sfgForm } from "./production";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -65,14 +65,85 @@ export async function recipeLinesByProduct(): Promise<Record<string, Record<stri
 
 const mayWrite = isErpManager;
 
+/* What a recipe's lines are picked from: active raw materials that are not cans or boxes. */
+async function recipeChoices() {
+  const [forms, mats] = await Promise.all([
+    db.select({ name: productFormulations.name }).from(productFormulations).where(eq(productFormulations.active, true)).orderBy(asc(productFormulations.name)),
+    db.select({ name: erpRawMaterials.name, type: erpRawMaterials.materialType }).from(erpRawMaterials).where(eq(erpRawMaterials.active, true)).orderBy(asc(erpRawMaterials.name)),
+  ]);
+  return { products: forms.map((f) => f.name), items: mats.filter((m) => m.type !== "Can" && m.type !== "Box").map((m) => m.name) };
+}
+
+function recipeLine(items: string[]): FieldSpec[] {
+  return [
+    { k: "item", l: "Raw material", t: "select", req: true, hint: "Quantities on a recipe are always litres.", opts: items },
+    { k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 },
+    { k: "note", l: "Note", t: "text" },
+  ];
+}
+
+/**
+ * THE WHOLE RECIPE, IN ONE FORM. Changing one used to be a line at a time —
+ * Change quantity, Remove from recipe, or Set a recipe again to add one —
+ * with nowhere showing the recipe being edited as a whole. This form opens
+ * with every line in it: change a quantity, add a material, take one out,
+ * and Save writes exactly what the form shows.
+ */
+async function editForm(id: string): Promise<FormSpec | null> {
+  const [x] = await db
+    .select({ formulationId: erpRecipes.formulationId, product: productFormulations.name })
+    .from(erpRecipes)
+    .innerJoin(productFormulations, eq(productFormulations.id, erpRecipes.formulationId))
+    .where(eq(erpRecipes.id, id));
+  if (!x) return null;
+  const [lines, { items }] = await Promise.all([
+    db
+      .select({ item: erpRawMaterials.name, qty: erpRecipes.qtyPerBatch, note: erpRecipes.note })
+      .from(erpRecipes)
+      .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpRecipes.rawMaterialId))
+      .where(eq(erpRecipes.formulationId, x.formulationId))
+      .orderBy(asc(erpRecipes.createdAt), asc(erpRawMaterials.name)),
+    recipeChoices(),
+  ]);
+  /* A line on a material since made inactive still opens with its name, or the form would drop it unseen. */
+  const opts = [...new Set([...items, ...lines.map((l) => l.item)])];
+  return {
+    screen: "recipes",
+    id: "edit",
+    recordId: id,
+    title: `Edit recipe · ${x.product}`,
+    sub: "Every raw material one batch takes, in litres. Change, add or remove lines — Save writes the recipe exactly as shown here, and the batch sheet on the Factory phones follows it.",
+    submit: "Save recipe",
+    lineLabel: "Raw material (litres)",
+    header: [{ k: "product", l: "SFG product", t: "select", opts: [x.product], readOnly: true }],
+    line: recipeLine(opts),
+    init: { product: x.product },
+    initLines: lines.map((l) => ({ item: l.item, qty: String(Number(l.qty)), note: l.note ?? "" })),
+  };
+}
+
+type Parsed = { id: string; name: string; qty: number; note: string | null };
+
+/** A recipe's lines as typed: each a known raw material, once, with litres above zero. */
+async function parseLines(ls: Record<string, string>[]): Promise<Result<Parsed[]>> {
+  if (!ls.length) return err("Add at least one raw material.");
+  const mats = await db.select({ id: erpRawMaterials.id, name: erpRawMaterials.name }).from(erpRawMaterials);
+  const out: Parsed[] = [];
+  for (let i = 0; i < ls.length; i++) {
+    const m = mats.find((x) => x.name === ls[i].item);
+    if (!m) return fieldErr(`l${i}.item`, "Pick a raw material");
+    if (out.some((p) => p.id === m.id)) return fieldErr(`l${i}.item`, `${m.name} is already on this recipe — one line per raw material`);
+    const qty = num(ls[i].qty);
+    if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Quantity per batch, in litres, is required");
+    out.push({ id: m.id, name: m.name, qty, note: text(ls[i].note) });
+  }
+  return ok(out);
+}
+
 export const recipesScreen: ScreenModule = {
   key: "recipes",
   async load(ctx) {
-    const [rows, forms, mats] = await Promise.all([
-      recipeRows(),
-      db.select({ name: productFormulations.name }).from(productFormulations).where(eq(productFormulations.active, true)).orderBy(asc(productFormulations.name)),
-      db.select({ name: erpRawMaterials.name, type: erpRawMaterials.materialType }).from(erpRawMaterials).where(eq(erpRawMaterials.active, true)).orderBy(asc(erpRawMaterials.name)),
-    ]);
+    const [rows, choices] = await Promise.all([recipeRows(), recipeChoices()]);
     const writer = mayWrite(ctx);
     const why = writer ? "" : "A manager sets a recipe";
     const cols: ColSpec[] = [
@@ -99,12 +170,8 @@ export const recipesScreen: ScreenModule = {
               sub: "What one batch takes, in litres, for every raw material.",
               submit: "Save recipe",
               lineLabel: "Raw material (litres)",
-              header: [{ k: "product", l: "SFG product", t: "select", req: true, opts: forms.map((f) => f.name) }],
-              line: [
-                { k: "item", l: "Raw material", t: "select", req: true, hint: "Quantities on a recipe are always litres.", opts: mats.filter((m) => m.type !== "Can" && m.type !== "Box").map((m) => m.name) },
-                { k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 },
-                { k: "note", l: "Note", t: "text" },
-              ],
+              header: [{ k: "product", l: "SFG product", t: "select", req: true, opts: choices.products }],
+              line: recipeLine(choices.items),
             }
           : undefined,
         newLabel: "Set a recipe",
@@ -119,6 +186,7 @@ export const recipesScreen: ScreenModule = {
           header: `${nf(Number(x.r.qtyPerBatch))} Ltr per batch`,
           actions: [
             { id: "start", l: "Start a batch", primary: true, loadsForm: true },
+            { id: "edit", l: "Edit recipe", why, loadsForm: true },
             {
               id: "qty",
               l: "Change quantity",
@@ -134,6 +202,7 @@ export const recipesScreen: ScreenModule = {
     };
   },
   formLoaders: {
+    edit: async (ctx, id) => (mayWrite(ctx) ? editForm(id) : null),
     /* The SFG batch form, with the product and the recipe's lines in it. */
     async start(ctx, id) {
       const [x] = (await recipeRows()).filter((r) => r.r.id === id);
@@ -154,16 +223,9 @@ export const recipesScreen: ScreenModule = {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
       const [f] = await db.select({ id: productFormulations.id }).from(productFormulations).where(eq(productFormulations.name, text(h.product) ?? ""));
       if (!f) return fieldErr("product", "Pick the SFG product");
-      if (!ls.length) return err("Add at least one raw material.");
-      const mats = await db.select({ id: erpRawMaterials.id, name: erpRawMaterials.name }).from(erpRawMaterials);
-      const parsed: { id: string; qty: number; note: string | null }[] = [];
-      for (let i = 0; i < ls.length; i++) {
-        const m = mats.find((x) => x.name === ls[i].item);
-        if (!m) return fieldErr(`l${i}.item`, "Pick a raw material");
-        const qty = num(ls[i].qty);
-        if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Quantity per batch, in litres, is required");
-        parsed.push({ id: m.id, qty, note: text(ls[i].note) });
-      }
+      const lines = await parseLines(ls);
+      if (!lines.ok) return lines;
+      const parsed = lines.data;
       await db.transaction(async (tx) => {
         for (const p of parsed)
           await tx
@@ -173,6 +235,52 @@ export const recipesScreen: ScreenModule = {
       });
       await erpAudit(ctx, "erp.recipe.set", "erp_recipe", f.id, null, { product: h.product, lines: parsed.length });
       return okVoid(`Recipe for ${h.product} saved in litres · ${parsed.length} raw material${parsed.length === 1 ? "" : "s"}`);
+    },
+    /* The whole recipe as the form shows it: lines kept or changed, lines added, and the lines no longer in the form taken out. */
+    async edit(ctx, _h, ls, id) {
+      if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
+      if (!id) return err("That recipe no longer exists.", "not_found");
+      const [anchor] = await db
+        .select({ formulationId: erpRecipes.formulationId, product: productFormulations.name })
+        .from(erpRecipes)
+        .innerJoin(productFormulations, eq(productFormulations.id, erpRecipes.formulationId))
+        .where(eq(erpRecipes.id, id));
+      if (!anchor) return err("That recipe line was removed while the form was open. Close it and open the recipe again.", "not_found");
+      const lines = await parseLines(ls);
+      if (!lines.ok) return lines;
+      const parsed = lines.data;
+      const before = await db
+        .select({ id: erpRecipes.id, rawMaterialId: erpRecipes.rawMaterialId, item: erpRawMaterials.name, qty: erpRecipes.qtyPerBatch, note: erpRecipes.note })
+        .from(erpRecipes)
+        .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpRecipes.rawMaterialId))
+        .where(eq(erpRecipes.formulationId, anchor.formulationId));
+      const keep = parsed.map((p) => p.id);
+      const removed = before.filter((b) => !keep.includes(b.rawMaterialId));
+      const added = parsed.filter((p) => !before.some((b) => b.rawMaterialId === p.id));
+      const changed = parsed.filter((p) => before.some((b) => b.rawMaterialId === p.id && (Number(b.qty) !== p.qty || (b.note ?? null) !== p.note)));
+      if (!removed.length && !added.length && !changed.length) return okVoid("Nothing changed");
+      await db.transaction(async (tx) => {
+        if (removed.length) await tx.delete(erpRecipes).where(and(eq(erpRecipes.formulationId, anchor.formulationId), inArray(erpRecipes.id, removed.map((r) => r.id)), notInArray(erpRecipes.rawMaterialId, keep)));
+        for (const p of parsed)
+          await tx
+            .insert(erpRecipes)
+            .values({ id: erpId("rcp"), formulationId: anchor.formulationId, rawMaterialId: p.id, qtyPerBatch: p.qty, note: p.note, createdById: ctx.user.id, updatedById: ctx.user.id })
+            .onConflictDoUpdate({ target: [erpRecipes.formulationId, erpRecipes.rawMaterialId], set: { qtyPerBatch: p.qty, note: p.note, updatedAt: new Date(), updatedById: ctx.user.id } });
+      });
+      await erpAudit(
+        ctx,
+        "erp.recipe.edit",
+        "erp_recipe",
+        anchor.formulationId,
+        { product: anchor.product, lines: before.map((b) => ({ item: b.item, qty: Number(b.qty), note: b.note })) },
+        { product: anchor.product, lines: parsed.map((p) => ({ item: p.name, qty: p.qty, note: p.note })) },
+      );
+      const said = [
+        changed.length ? `${changed.length} changed` : "",
+        added.length ? `${added.map((a) => a.name).join(", ")} added` : "",
+        removed.length ? `${removed.map((r) => r.item).join(", ")} taken out` : "",
+      ].filter(Boolean);
+      return okVoid(`Recipe for ${anchor.product} saved · ${said.join(" · ")}`);
     },
   },
   actions: {

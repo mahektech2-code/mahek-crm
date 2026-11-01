@@ -247,7 +247,7 @@ function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[], ca
         fields: [
           { k: "godown", l: "From godown", t: "select", req: true, opts: stockGodowns },
           { k: "date", l: "Dispatch date", t: "date", req: true },
-          { k: "transporter", l: "Transporter", t: "suggest", opts: carriers, hint: "From ERP → Logistics → Transporters." },
+          { k: "transporter", l: "Transporter", t: "select", opts: carriers, hint: "From ERP → Logistics → Transporters." },
           { k: "vehicle", l: "Vehicle number", t: "text" },
           { k: "lr", l: "LR / transport details", t: "text" },
           { k: "packing", l: "Packing details", t: "text", hint: "Drums, cans, bags…" },
@@ -877,7 +877,7 @@ async function customerForm() {
       { k: "qty", l: "Return quantity", t: "num", req: true, min: 1, hint: "Whole cans, or whole boxes on a boxed line." },
       { k: "reason", l: "Return reason", t: "select", req: true, opts: CUSTOMER_REASON_LABELS },
       { k: "remarks", l: "Customer remarks", t: "area", mic: true, wide: true },
-      { k: "transporter", l: "Transporter", t: "suggest", opts: await transporterChoices(), sec: "Transport", hint: "From ERP → Logistics → Transporters." },
+      { k: "transporter", l: "Transporter", t: "select", opts: await transporterChoices(), sec: "Transport", hint: "From ERP → Logistics → Transporters." },
       { k: "vehicle", l: "Vehicle number", t: "text" },
       { k: "lr", l: "LR / transport details", t: "text" },
       { k: "photo", l: "Photo / document", t: "photo" },

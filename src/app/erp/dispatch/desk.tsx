@@ -291,7 +291,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
               <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the order on Orders → Ready to bill.</div>
             ) : invoiceWaiting.length ? (
               <div className="mt-1 text-meta text-warn-ink">
-                Invoice {board.invoiceNo ?? ""} was rejected by the checker — it is corrected on Orders → Invoice check.
+                Invoice {board.invoiceNo ?? ""} was rejected by the checker — it is corrected on Orders → Invoice print.
               </div>
             ) : gated.length ? (
               <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Dispatch waits for every box.</div>

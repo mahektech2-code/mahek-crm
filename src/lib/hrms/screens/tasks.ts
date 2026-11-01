@@ -522,7 +522,7 @@ const checklist: HrmsScreenModule = {
         chips: "bucket",
         sortDefault: ["date", -1],
         godownKey: "office",
-        bulk: [{ id: "clDone", l: "Mark done" }],
+        bulk: [{ id: "clDone", l: "Mark done", fits: "done" }],
         tools: [takeTaskTool(ctx), eodTool(ctx)],
         noDataLine: "No checklist items in this window. Take my task copies today’s tasks from your templates.",
         hrms: {

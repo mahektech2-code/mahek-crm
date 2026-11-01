@@ -26,7 +26,7 @@ export const SITE: string = (process.env.EXPO_PUBLIC_SITE as string | undefined)
 /** What this phone is, so the server's audit can say which build sent a job. */
 export const APP_BUILD = "native-" + (Constants.expoConfig?.version ?? "dev");
 
-type Fail = { ok: false; error: string };
+type Fail = { ok: false; error: string; left?: number };
 type SignedIn = { ok: true; me: Me; data: FactoryData; needPin: boolean };
 type Done = { ok: true; data: FactoryData; msg: string } | Fail;
 

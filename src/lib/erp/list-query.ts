@@ -160,6 +160,8 @@ export type ListGroup = {
   ids: string[];
   /** The group's first row's values, for the facts drawn in its header. */
   head: ListRow["v"];
+  /** `groupPrint`'s link for the whole group, where the spec asks for one. */
+  print?: string;
 };
 
 export type ListPage = {
@@ -416,6 +418,19 @@ export function groupHeadValues(rs: ListRow[], keys: string[]): ListRow["v"] {
   return head;
 }
 
+/** `groupPrint`'s link for a group: its href with the group's distinct values of the key, in the rows' order. */
+export function groupPrintHref(spec: ListSpec, rs: ListRow[]): string | undefined {
+  const gp = spec.groupPrint;
+  if (!gp) return undefined;
+  const vals: string[] = [];
+  for (const r of rs) {
+    const v = r.v[gp.k];
+    const t = v == null ? "" : String(v).trim();
+    if (t && !vals.includes(t)) vals.push(t);
+  }
+  return vals.length ? `${gp.href}${encodeURIComponent(vals.join(","))}` : undefined;
+}
+
 /** One page of a list, with everything the toolbar, the group headers and the pager need about the rest. */
 export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): ListPage {
   const r = queryRows(spec, rows, query, flagWords);
@@ -437,7 +452,8 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
         const missing = a.missing ? rs.filter((x) => x.v[a.k] == null || x.v[a.k] === "").length : 0;
         return { v: a.t === "avg" ? s / (rs.length || 1) : s, missing };
       });
-      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []) };
+      const print = groupPrintHref(spec, rs);
+      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []), ...(print ? { print } : {}) };
     }
   }
   return {
