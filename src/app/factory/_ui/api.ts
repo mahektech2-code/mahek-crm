@@ -28,6 +28,7 @@ type Ops = {
   drumLookup: typeof Actions.factoryDrumLookup;
   emptyDrum: typeof Actions.factoryEmptyDrum;
   stockKit: typeof Actions.factoryStockKit;
+  history: typeof Actions.factoryHistory;
   stockCheck: typeof Actions.factoryStockCheck;
   countSave: typeof Actions.factoryCountSave;
   checkReason: typeof Actions.factoryCheckReason;

@@ -18,7 +18,9 @@ import { appAccess, users, type User } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
-import { bootstrap, contextFor, inList, type FactoryCtx } from "./server";
+import { bootstrap, contextFor, factoryAudit, inList, type FactoryCtx } from "./server";
+import { historyFor } from "./history";
+import { addDays, calendarDate } from "@/lib/business-date";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "./head";
 import { isLorryTask, lorryKeyOf, stepsOf, boxCode, stickerCode, emptyBoxShort, fillFromLot, mixDeviation, packBatchPlan, packFromLot, packNeeds, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, stepCheck, taskCode, typedCode } from "./rules";
@@ -1310,5 +1312,24 @@ describe("purchase requirements from the floor", () => {
     assert.equal(twice.ok, false);
     const { fc: other } = await as("sunita");
     assert.equal((await cancelFromFloor(other, kit.reqs[0].lines[1].id, "Not mine")).ok, false, "another department's item is not theirs to cancel");
+  });
+});
+
+describe("my history", () => {
+  test("a person sees their own day, newest first, and nobody else's", async () => {
+    const { fc: me } = await as("sunita");
+    const other = (await contextFor(floor.users["ganesh"]))!;
+    await factoryAudit(me, "factory.filling.save", null, "Filled 40 cans of HIST-A");
+    await factoryAudit(me, "factory.dispatch.box", null, "B-HIST loaded on Lorry 2");
+    await factoryAudit(other, "factory.filling.save", null, "Somebody else's HIST-B");
+    const day = await historyFor(me, null);
+    assert.ok(day.ok);
+    const mine = day.items.filter((i) => i.text.includes("HIST"));
+    assert.deepEqual(mine.map((i) => [i.kind, i.text]), [["load", "B-HIST loaded on Lorry 2"], ["job", "Filled 40 cans of HIST-A"]]);
+    assert.equal(day.day, calendarDate(new Date()));
+
+    const yesterday = await historyFor(me, addDays(calendarDate(new Date()), -1));
+    assert.ok(yesterday.ok && !yesterday.items.some((i) => i.text.includes("HIST")), "today's work is not on yesterday");
+    assert.equal((await historyFor(me, addDays(calendarDate(new Date()), 1))).ok, false, "tomorrow has not happened");
   });
 });

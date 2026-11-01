@@ -1,3 +1,4 @@
+import type { HistoryDay } from "@/lib/factory/types";
 /* ---------------------------------------------------------------------------
  * The phone's own state: what is on screen, what is half-done, and what is
  * waiting to send. PURE and client-safe.
@@ -139,6 +140,8 @@ export type State = {
   qc: QcEntry | null;
   /** Purchase requirement: the department's items and requirements, and the one being raised. */
   req: ReqEntry | null;
+  /** My history: the day being shown and what the server said about it. */
+  hist: HistEntry | null;
   /** A newer build is live; the page reloads itself once nothing is in hand. */
   newBuild: boolean;
   /** Loading a lorry. */
@@ -352,3 +355,5 @@ export type QcEntry = {
 export function mintCheckKey(): string {
   return "CHK-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }
+
+export type HistEntry = { day: string | null; loading: boolean; err: string | null; got: HistoryDay | null };

@@ -17,7 +17,7 @@ import { File } from "expo-file-system";
 import { Platform } from "react-native";
 import { fitForUpload, photoBytes } from "./photo-fit";
 import type { LoadingPack } from "@/lib/factory/lorry-judge";
-import type { LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { HistoryDay, LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumLookup, StockCheckInput, StockKit, StockSave, DrumSave, FactoryData, LoadBoard, LrBatchSave, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import { kvGet, kvSet } from "./model";
@@ -66,6 +66,7 @@ type Ops = {
   saveLrPhotos: (fileIds: string[], kind?: "lr" | "signed_copy") => LrBatchSave;
   uploadTrouble: (reports: UploadTrouble[]) => { ok: true };
   stockKit: () => StockKit;
+  history: (day?: string | null) => HistoryDay;
   stockCheck: (input: StockCheckInput) => StockSave;
   countSave: (input: CountInput) => StockSave;
   checkReason: (kind: "check" | "count", id: string, reason: string) => { ok: boolean };
