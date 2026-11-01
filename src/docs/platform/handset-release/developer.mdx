@@ -11,6 +11,7 @@ There is no store, no staged rollout and no rollback for a sideloaded APK, so a 
 | App identity | `mbos-app/app.json` | `expo.version`, `android.versionCode`, `runtimeVersion` (fingerprint policy), `updates` (channel pinned to `production`), `extra.eas.projectId` |
 | Update nudge (handset) | `mbos-app/src/native/update-check.ts`, `mbos-app/src/engines/app-update.ts` | Reads `/downloads/mbos.json`, compares `versionCode` |
 | Version table (office) | `src/lib/handset-versions.ts`, `src/app/admin/handsets-section.tsx` | Admin Console → Handsets: which build each phone runs |
+| Factory handsets (office) | `factory-mobile/src/device.ts`, `src/lib/factory/devices.ts`, `src/lib/factory-handsets.ts`, `src/app/admin/factory-handsets-section.tsx` | Every five minutes while somebody is signed in, a Factory App phone reports itself with `deviceReport`, stored in `factory_devices`. It sends its APK version and OTA update, handset, network, work waiting, camera permission, font size and clock. Admin Console → Factory handsets lists every phone and every factory worker with no phone. The problems shown are the ones somebody can fix: camera, stuck work, clock, font size |
 | Push (server) | `src/lib/mbos/push.ts`, `src/lib/mbos/push-rules.ts` | `pushReadiness`, `pushToUsers`, receipts, quiet hours, Android channels |
 | Push token | `src/app/api/mbos/push-token/route.ts` | The handset registers its Expo push token |
 | Download | `Caddyfile` `handle_path /downloads/*` | Serves `/opt/mahekone/downloads` off the droplet's disk |

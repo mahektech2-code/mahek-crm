@@ -2,7 +2,7 @@ import { NavLink } from "@/components/shell/nav-link";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { calendarDate } from "@/lib/business-date";
-import { periodLabel, periodWindow, validPeriod } from "@/lib/erp/period";
+import { REGISTER_DEFAULT, periodLabel, periodWindow, validPeriod } from "@/lib/erp/period";
 import { ADJUST_STAGES, STAGE_LABEL, type AdjustStage } from "@/lib/erp/engines/stock-adjust";
 import { inquiryGodowns, inquiryItems, stockInquiry } from "@/lib/erp/stock-inquiry";
 import { stockRowActions } from "@/lib/erp/stock-adjust";
@@ -31,7 +31,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
   const sp = await searchParams;
   const one = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
   const stage = (ADJUST_STAGES as readonly string[]).includes(one("stage")) ? (one("stage") as AdjustStage) : "fg";
-  const pd = validPeriod(one("pd")) ? one("pd") : "month";
+  const pd = validPeriod(one("pd")) ? one("pd") : REGISTER_DEFAULT;
   const godownId = one("godown") || null;
   const itemId = one("item");
   const [items, godowns] = await Promise.all([inquiryItems(stage), inquiryGodowns()]);

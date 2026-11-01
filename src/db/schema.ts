@@ -16021,6 +16021,58 @@ export const factoryRequirementSends = pgTable("factory_requirement_sends", {
 });
 
 /**
+ * EVERY FACTORY PHONE, AS IT LAST DESCRIBED ITSELF — the APK and the
+ * over-the-air update it runs, the handset, its network, the work still
+ * waiting on it and whether it may use the camera. Reported by the phone
+ * every few minutes while somebody is signed in (`lib/factory/devices.ts`),
+ * read by the Admin Console's Factory handsets page. `userId` is whoever was
+ * signed in at the last report: a station phone is shared.
+ */
+export const factoryDevices = pgTable(
+  "factory_devices",
+  {
+    /** Minted by the phone once and kept for the life of the install. */
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    /** The APK's version — also the OTA runtime. */
+    appVersion: text("app_version"),
+    appBuild: text("app_build"),
+    /** The over-the-air update it is running; null with `embedded` is the APK's own bundle. */
+    updateId: text("update_id"),
+    updateCreatedAt: timestamp("update_created_at", { withTimezone: true }),
+    runtime: text("runtime"),
+    channel: text("channel"),
+    embedded: boolean("embedded"),
+    os: text("os"),
+    osVersion: text("os_version"),
+    apiLevel: integer("api_level"),
+    brand: text("brand"),
+    manufacturer: text("manufacturer"),
+    model: text("model"),
+    /** wifi | cellular | none | … as the phone saw it. */
+    network: text("network"),
+    internet: boolean("internet"),
+    /** Jobs waiting on the phone to be sent, and those the server held back. */
+    queuePending: integer("queue_pending"),
+    queueHeld: integer("queue_held"),
+    queueOldestAt: timestamp("queue_oldest_at", { withTimezone: true }),
+    /** granted | denied | undetermined */
+    camera: text("camera"),
+    /** "360x780" in layout points. */
+    screen: text("screen"),
+    /** Android's font size setting, as a percentage — large text breaks layouts. */
+    fontScalePct: integer("font_scale_pct"),
+    /** The phone's clock minus the server's at the report, in milliseconds. */
+    clockSkewMs: integer("clock_skew_ms"),
+    lang: text("lang"),
+  },
+  (t) => [index("factory_devices_user_idx").on(t.userId), index("factory_devices_seen_idx").on(t.lastSeenAt)],
+);
+
+/**
  * Every loading scan the server received from a phone, kept BEFORE it is
  * judged (`lib/factory/scan-batch.ts`). The id is the phone's own, so a resend
  * is answered from `result` instead of being judged twice, and a scan that

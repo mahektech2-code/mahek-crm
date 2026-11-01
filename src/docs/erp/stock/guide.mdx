@@ -41,7 +41,7 @@ The available view opens on **All time** — the period picker in the toolbar na
 
 Every row on all four tabs ends in a **⋯** button. It opens a small menu with two things:
 
-- **Stock inquiry** — the item in detail: what is in stock now, lot by lot and godown by godown, and every movement in and out over a period (this month by default), each with its date, what happened, the document, the lot, the godown and a running balance. Pick another stage, item, godown or period at the top.
+- **Stock inquiry** — the item in detail: what is in stock now, lot by lot and godown by godown, and every movement in and out over a period (the last 7 days by default), each with its date, what happened, the document, the lot, the godown and a running balance. Pick another stage, item, godown or period at the top.
 - **Adjust stock** — when the shelf and the book do not agree. Only people with the stock-control power see it.
 
 <Steps>
@@ -91,7 +91,7 @@ Until its boxes have ids, the dispatch desk takes the batch's own lot QR. Once t
 
 ### The entry logs
 
-Each stage's **Show every entry** list opens on this month (the period picker shows more) and shows the date, the kind of entry (Purchase or Transfer for raw material; the batch, fill or packing batch for the others), the item, lot, quantity, godown and the document that wrote it. An entry whose document has since been deleted is flagged **Source deleted**, and the dashboard counts them as orphaned inventory entries.
+Each stage's **Show every entry** list opens on the last 7 days (the period picker shows more) and shows the date, the kind of entry (Purchase or Transfer for raw material; the batch, fill or packing batch for the others), the item, lot, quantity, godown and the document that wrote it. An entry whose document has since been deleted is flagged **Source deleted**, and the dashboard counts them as orphaned inventory entries.
 
 ## Boxes & labels
 

@@ -10,7 +10,7 @@ The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inw
 | Register row | same | `createPurchase`, `syncPurchaseEntry`, `refreshCache`, `savePurchase`, `register` module, `purchaseStage` |
 | Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, AI read) |
 | Drum labels | same | `barcode` module — working godown's chemical lots; each row (and each register row) links to `erpLabelsHref({ purchase })`, the `?purchase=` view of `app/erp/print-labels` |
-| Date window | `src/lib/erp/window.ts` | `INWARD_WINDOW`, `TEST_WINDOW`, `REGISTER_WINDOW`, `BARCODE_WINDOW` open on this month; an unrouted inward line and an undecided test always show |
+| Date window | `src/lib/erp/window.ts` | `INWARD_WINDOW`, `TEST_WINDOW`, `REGISTER_WINDOW`, `BARCODE_WINDOW` open on the last seven days (`REGISTER_DEFAULT`); an unrouted inward line and an undecided test always show |
 | Landed cost | `src/lib/erp/stock.ts` | `lotLandings` — shares by PR on read; `rmLots` values stock at the landed litre rate |
 | PO back-link | `src/lib/erp/screens/purchase-flow.ts` | `refreshPurchaseOrder`, `receivedByLine` |
 | AI | `src/lib/erp/ai-bills.ts`, `src/lib/erp/ai-photos.ts` | Bill reading for the register, test-photo reading for testing |
