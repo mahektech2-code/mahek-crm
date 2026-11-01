@@ -205,8 +205,11 @@ describe("Excel column filters", () => {
     assert.deepEqual(parseListQuery({ cf: JSON.stringify({ qty: { min: "x" }, item: { in: [1, "A"] } }) }).cf, { item: { in: ["A"] } });
   });
 
-  test("a list that does not offer them ignores them", () => {
-    assert.equal(queryRows(spec, ROWS, Q({ cf: { item: { in: ["Toluene"] } } }), FLAGS).list.length, 4);
+  /* The Filters pop-up may name any drawn column, so a filter is honoured on
+     whichever column it names — not only on a list that draws header funnels. */
+  test("any drawn column can be filtered, and a column the list does not carry cannot", () => {
+    assert.equal(queryRows(spec, ROWS, Q({ cf: { item: { in: ["Toluene"] } } }), FLAGS).list.length, 2);
+    assert.equal(queryRows(spec, ROWS, Q({ cf: { secret: { in: ["x"] } } }), FLAGS).list.length, 4);
   });
 });
 
@@ -251,4 +254,64 @@ test("a group's print link carries every distinct value in the whole group, not 
   const g = Object.values(p.groups)[0];
   assert.equal(g.print, `/erp/print-labels?orders=${encodeURIComponent("10089,10090")}`);
   assert.equal(groupPrintHref({ ...spec, groupPrint: undefined }, rows), undefined);
+});
+
+describe("the figure cards", () => {
+  test("a list that names none gets a Total, over what the filters reach and over everything", () => {
+    const [total] = pageOf(spec, ROWS, Q({ gf: "Vasai" }), FLAGS).stats!;
+    assert.equal(total.l, "Total");
+    assert.equal(total.v, 2);
+    assert.equal(total.base, 4);
+    assert.equal(pageOf(spec, ROWS, Q({ gf: "Vasai" }), FLAGS).filtered, true);
+    assert.equal(pageOf(spec, ROWS, Q(), FLAGS).filtered, false);
+  });
+
+  test("a card can count a flag, and tapping it is the flag filter", () => {
+    const s2: ListSpec = { ...spec, stats: [{ l: "Late", where: { flag: "late" }, tone: "danger" }] };
+    const [late] = pageOf(s2, ROWS, Q(), FLAGS).stats!;
+    assert.equal(late.v, 1);
+    assert.deepEqual(late.pick, { flag: "late" });
+    assert.equal(late.share, 0.25);
+    assert.equal(late.on, false);
+    const p = pageOf(s2, ROWS, Q({ flag: "late" }), FLAGS);
+    assert.equal(p.total, 1);
+    assert.equal(p.stats![0].on, true);
+    assert.deepEqual(parseListQuery(listQueryParams(Q({ flag: "late" }))).flag, "late");
+  });
+
+  test("a sum counts the rows without a value rather than adding them as zero", () => {
+    const s2: ListSpec = { ...spec, stats: [{ l: "Qty", kind: "sum", k: "qty", missing: "without a quantity" }] };
+    const rows = [...ROWS, { id: "e", v: { no: "4", item: "Mystery", qty: null, status: "Open", godown: "Vasai" }, flags: [] }];
+    const [q] = pageOf(s2, rows, Q(), FLAGS).stats!;
+    assert.equal(q.v, 23);
+    assert.equal(q.missing, 1);
+  });
+
+  test("a card on a column the list does not carry — one a power withholds — is not drawn", () => {
+    const s2: ListSpec = { ...spec, stats: [{ l: "Value", kind: "sum", k: "value" }, { l: "Open", where: { k: "status", in: ["Open"] } }] };
+    const st = pageOf(s2, ROWS, Q(), FLAGS).stats!;
+    assert.deepEqual(st.map((x) => x.l), ["Open"]);
+    /* One value of the chips column: tapping it is the chip. */
+    assert.deepEqual(st[0].pick, { chip: "Open" });
+  });
+});
+
+describe("the Filters pop-up", () => {
+  test("a section counts its values over the rows every OTHER filter leaves", () => {
+    const s2: ListSpec = { ...spec, filters: ["item", "qty"] };
+    const panel = pageOf(s2, ROWS, Q({ cf: { item: { in: ["Toluene"] } } }), FLAGS).panel!;
+    const item = panel.find((x) => x.k === "item");
+    assert.ok(item && item.kind === "list");
+    assert.deepEqual(item.opts, [{ v: "Acetone", n: 1 }, { v: "Toluene", n: 2 }, { v: "Xylene", n: 1 }]);
+    const qty = panel.find((x) => x.k === "qty");
+    assert.ok(qty && qty.kind === "range");
+    assert.deepEqual([qty.lo, qty.hi], [1, 10]);
+  });
+
+  test("found for itself, it skips a column that is a name per row, the chips and the godown — and offers a from–to on what it adds up", () => {
+    const panel = pageOf(spec, ROWS, Q(), FLAGS).panel!;
+    assert.deepEqual(panel.map((x) => x.k), ["qty"]);
+    const many = Array.from({ length: 20 }, (_, i) => row(`r${i}`, String(i), i % 2 ? "Toluene" : "Xylene", i, "Open", "Vasai"));
+    assert.deepEqual(pageOf(spec, many, Q(), FLAGS).panel!.map((x) => x.k), ["item", "qty"]);
+  });
 });

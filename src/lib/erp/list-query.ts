@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 import { validPeriod } from "./period";
-import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type SelectSum, type Tone } from "./ui";
+import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type SelectSum, type StatSpec, type Tone } from "./ui";
 
 export type ListSort = { k: string; d: 1 | -1 };
 
@@ -46,6 +46,8 @@ export type ListQuery = {
    * values it may show (a tick list), or a number range on a number column.
    */
   cf: Record<string, ColFilter>;
+  /** Only rows carrying this flag — a figure card such as "Late" or "Rate missing", tapped. */
+  flag?: string;
 };
 
 /**
@@ -58,7 +60,7 @@ export type ColFilter = { in?: string[]; min?: number | null; max?: number | nul
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
-export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx", "cf"] as const;
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx", "cf", "flg"] as const;
 
 type Raw = Record<string, string | string[] | undefined>;
 const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
@@ -125,6 +127,7 @@ export function parseListQuery(raw: Raw): ListQuery {
     parts: one(raw, "parts") === "1",
     fx: parseFx(one(raw, "fx")),
     cf: parseCf(one(raw, "cf")),
+    flag: /^[A-Za-z0-9_]{1,40}$/.test(one(raw, "flg")) ? one(raw, "flg") : "",
   };
 }
 
@@ -144,6 +147,7 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
   if (fx.length) out.fx = JSON.stringify(Object.fromEntries(fx.map((k) => [k, q.fx[k]])));
   const cf = Object.keys(q.cf ?? {}).sort();
   if (cf.length) out.cf = JSON.stringify(Object.fromEntries(cf.map((k) => [k, q.cf[k]])));
+  if (q.flag) out.flg = q.flag;
   return out;
 }
 
@@ -196,7 +200,45 @@ export type ListPage = {
    * rows are then empty and the screen asks for a narrower period instead.
    */
   window?: { pd: string; label: string; dateLabel: string; tooWide: { n: number; cap: number } | null };
+  /** The figure cards, over every row the filters reach (`statsOf`). */
+  stats?: StatValue[];
+  /** The Filters pop-up's sections (`panelSections`). */
+  panel?: PanelSection[];
+  /** Whether anything narrows the list — a search, a chip, a filter, a godown, a flag, a dashboard's ids. */
+  filtered?: boolean;
 };
+
+/** What tapping a figure card filters to: a chip, one column value, or a flag. */
+export type StatPick = { chip: string } | { k: string; v: string } | { flag: string };
+
+/**
+ * One figure card, worked out. `v` is over the rows the filters reach and
+ * `base` over every row the list read, so a filtered card can say what it is
+ * part of. `share` is a narrowed count over the rows shown (the bar of "Late").
+ */
+export type StatValue = {
+  l: string;
+  v: number;
+  base: number;
+  /** Money (paise), or a plain number. */
+  fmt: "m" | "n";
+  u?: string;
+  tone?: Tone;
+  missing: number;
+  missingLabel?: string;
+  share: number | null;
+  pick?: StatPick;
+  on: boolean;
+};
+
+/**
+ * One section of the Filters pop-up: a column's values counted over the rows
+ * every OTHER filter leaves, or a number column's range. `money` ranges are
+ * in paise like the column, and the pop-up types them in rupees.
+ */
+export type PanelSection =
+  | { k: string; l: string; kind: "list"; opts: { v: string; n: number }[]; more: number }
+  | { k: string; l: string; kind: "range"; lo: number | null; hi: number | null; money: boolean; u?: string };
 
 export type Facet = { k: string; l: string; opts: { v: string; n: number }[] };
 
@@ -207,11 +249,21 @@ export type ColFacet = { kind: "list"; opts: { v: string; n: number }[]; more: n
 export const COL_FACET_CAP = 500;
 
 /** Whether a column is filtered by a range rather than a tick list. */
-export const isRangeCol = (c: Pick<ColSpec, "t">) => c.t === "n";
+export const isRangeCol = (c: Pick<ColSpec, "t">) => c.t === "n" || c.t === "m";
 
 /** The columns an Excel filter may be put on: every drawn column but the flags. */
 function excelCols(spec: Pick<ListSpec, "cols" | "colFilters">): ColSpec[] {
   return spec.colFilters ? spec.cols.filter((c) => c.t !== "f") : [];
+}
+
+/**
+ * The columns a `cf` filter may narrow: every drawn column but the flags. The
+ * Filters pop-up may name any of them, so a filter is honoured on whichever
+ * column it names — a column withheld by a power is not among `cols` and so
+ * cannot be filtered on.
+ */
+function cfCols(spec: Pick<ListSpec, "cols">): ColSpec[] {
+  return spec.cols.filter((c) => c.t !== "f");
 }
 
 /** Whether a row passes one column's Excel filter. A blank number fails any bound. */
@@ -231,10 +283,14 @@ function byColFilters(rows: ListRow[], cols: ColSpec[], cf: Record<string, ColFi
 
 /** Each column's Excel-filter choices, over the rows every other column filter leaves. A value still ticked is offered even at zero. */
 export function colFacetsOf(spec: Pick<ListSpec, "cols" | "colFilters">, rows: ListRow[], cf: Record<string, ColFilter>): Record<string, ColFacet> {
-  const cols = excelCols(spec);
+  return facetsFor(excelCols(spec), cfCols(spec), rows, cf);
+}
+
+/** `cols`' choices over the rows every other `cf` filter (on any of `all`) leaves. */
+function facetsFor(cols: ColSpec[], every: ColSpec[], rows: ListRow[], cf: Record<string, ColFilter>): Record<string, ColFacet> {
   const out: Record<string, ColFacet> = {};
   for (const c of cols) {
-    const rs = byColFilters(rows, cols, cf, c.k);
+    const rs = byColFilters(rows, every, cf, c.k);
     if (isRangeCol(c)) {
       let lo: number | null = null;
       let hi: number | null = null;
@@ -327,7 +383,9 @@ export function queryRows(
   const beforeFx = all;
   for (const c of filterCols(spec)) if (query.fx[c.k]) all = byFilter(all, c, query.fx[c.k]);
   const beforeCf = all;
-  all = byColFilters(all, excelCols(spec), query.cf ?? {}, null);
+  all = byColFilters(all, cfCols(spec), query.cf ?? {}, null);
+  const flag = query.flag;
+  if (flag) all = all.filter((r) => r.flags.includes(flag));
   const beforeChip = all;
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
@@ -431,6 +489,148 @@ export function groupPrintHref(spec: ListSpec, rs: ListRow[]): string | undefine
   return vals.length ? `${gp.href}${encodeURIComponent(vals.join(","))}` : undefined;
 }
 
+/* ---------------------------------------------------------------------------
+ * THE FIGURE CARDS AND THE FILTERS POP-UP.
+ *
+ * A card is worked out over every row the filters reach — all pages, not the
+ * twenty-five drawn — and beside it the same figure over every row the list
+ * read, so a filtered card says what it is part of. The pop-up's sections are
+ * the screen's own `filters` where it names them, and otherwise found from the
+ * rows: a column with a handful of values worth picking from, never one that
+ * is a name per row.
+ * ------------------------------------------------------------------------- */
+
+/** The column types a pop-up section offers as a list of values. */
+const LIST_TYPES = new Set(["b", "t", "s", "mono"]);
+/** The most sections the pop-up finds for itself; a screen naming its own is not capped. */
+const AUTO_SECTIONS = 6;
+/** A column with more distinct values than this is a name per row, not something to filter by. */
+const AUTO_MAX_VALUES = 40;
+
+/** A spec's cards, as declared or — where it declares none — a Total and one per group aggregate. */
+export function statSpecsOf(spec: Pick<ListSpec, "stats" | "agg" | "cols">): StatSpec[] {
+  if (spec.stats) return spec.stats;
+  const cap = (s: string) => s.replace(/^./, (c) => c.toUpperCase());
+  return [
+    { l: "Total" },
+    ...aggsOf(spec.agg)
+      .filter((a) => a.t !== "avg")
+      .map((a): StatSpec => ({ l: cap(a.l), kind: "sum", k: a.k, ...(a.missing ? { missing: a.missing } : {}) })),
+  ];
+}
+
+/** The columns the Filters pop-up offers, in order. */
+export function panelCols(spec: Pick<ListSpec, "cols" | "filters" | "colFilters" | "chips" | "godownKey" | "stats" | "agg">, rows: ListRow[]): ColSpec[] {
+  const usable = spec.cols.filter((c) => c.t !== "f" && c.t !== "map" && c.k !== spec.godownKey);
+  const named = spec.filters?.length ? spec.filters : spec.colFilters ? usable.map((c) => c.k) : null;
+  let picked: ColSpec[];
+  if (named) picked = named.flatMap((k) => usable.filter((c) => c.k === k));
+  else {
+    picked = [];
+    for (const c of usable) {
+      if (picked.length >= AUTO_SECTIONS) break;
+      if (!LIST_TYPES.has(c.t) || c.k === spec.chips) continue;
+      const vals = new Set<string>();
+      for (const r of rows) {
+        const v = cellText(c, r.v[c.k]);
+        if (v && v !== "—") vals.add(v);
+        if (vals.size > AUTO_MAX_VALUES) break;
+      }
+      if (vals.size >= 2 && vals.size <= AUTO_MAX_VALUES && vals.size <= Math.max(2, rows.length * 0.6)) picked.push(c);
+    }
+  }
+  /* The figures a screen adds up are the ones worth a from–to. */
+  const sums = new Set([...aggsOf(spec.agg).map((a) => a.k), ...statSpecsOf(spec).filter((x) => x.kind === "sum" || x.kind === "avg").map((x) => x.k ?? "")]);
+  for (const c of usable) if (isRangeCol(c) && sums.has(c.k) && !picked.includes(c)) picked.push(c);
+  return picked;
+}
+
+/** The pop-up's sections: each column's choices over the rows every other filter leaves. */
+export function panelSections(spec: ListSpec, rows: ListRow[], beforeCf: ListRow[], cf: Record<string, ColFilter>): PanelSection[] {
+  const cols = panelCols(spec, rows);
+  const facets = facetsFor(cols, cfCols(spec), beforeCf, cf);
+  return cols.flatMap((c): PanelSection[] => {
+    const f = facets[c.k];
+    if (!f) return [];
+    if (f.kind === "range") return [{ k: c.k, l: c.l, kind: "range", lo: f.lo, hi: f.hi, money: c.t === "m", ...(c.u ? { u: c.u } : {}) }];
+    /* A blank is not a choice anybody looks for, unless it is already ticked. */
+    const opts = f.opts.filter((o) => o.v !== "—" || cf[c.k]?.in?.includes("—"));
+    return [{ k: c.k, l: c.l, kind: "list", opts, more: f.more }];
+  });
+}
+
+const whereMatch = (spec: Pick<ListSpec, "cols">, w: NonNullable<StatSpec["where"]>) => {
+  if ("flag" in w) return (r: ListRow) => r.flags.includes(w.flag);
+  const c = colOf(spec.cols, w.k);
+  return (r: ListRow) => w.in.includes(cellText(c, r.v[w.k]));
+};
+
+/** What one card figure is over some rows. */
+function figure(s: StatSpec, rows: ListRow[]): { v: number; missing: number } {
+  const kind = s.kind ?? "count";
+  if (kind === "count" || !s.k) return { v: rows.length, missing: 0 };
+  const blank = (r: ListRow) => r.v[s.k!] == null || r.v[s.k!] === "";
+  const have = rows.filter((r) => !blank(r));
+  const missing = rows.length - have.length;
+  if (kind === "distinct") return { v: new Set(have.map((r) => String(r.v[s.k!]))).size, missing };
+  const sum = have.reduce((t, r) => t + (Number(r.v[s.k!]) || 0), 0);
+  return { v: kind === "avg" ? (have.length ? sum / have.length : 0) : sum, missing };
+}
+
+/**
+ * The cards, worked out over `shown` (every row the filters reach) and `base`
+ * (every row the list read). A card on a column the spec does not carry — one
+ * a power withholds — is left out rather than drawn as zero.
+ */
+export function statsOf(spec: ListSpec, shown: ListRow[], base: ListRow[], query: Pick<ListQuery, "chip" | "cf" | "flag">): StatValue[] {
+  const has = (k: string) => spec.cols.some((c) => c.k === k);
+  return statSpecsOf(spec).flatMap((s): StatValue[] => {
+    if (s.k && !has(s.k)) return [];
+    if (s.where && !("flag" in s.where) && !has(s.where.k)) return [];
+    const m = s.where ? whereMatch(spec, s.where) : null;
+    const rs = m ? shown.filter(m) : shown;
+    const bs = m ? base.filter(m) : base;
+    const f = figure(s, rs);
+    const col = s.k ? spec.cols.find((c) => c.k === s.k) : undefined;
+    let pick: StatPick | undefined;
+    let on = false;
+    if (s.where && "flag" in s.where) {
+      pick = { flag: s.where.flag };
+      on = query.flag === s.where.flag;
+    } else if (s.where && s.where.in.length === 1) {
+      const v = s.where.in[0];
+      if (s.where.k === spec.chips) {
+        pick = { chip: v };
+        on = query.chip === v;
+      } else {
+        pick = { k: s.where.k, v };
+        const cur = query.cf?.[s.where.k]?.in;
+        on = !!cur && cur.length === 1 && cur[0] === v;
+      }
+    }
+    return [
+      {
+        l: s.l,
+        v: f.v,
+        base: figure(s, bs).v,
+        fmt: col?.t === "m" ? "m" : "n",
+        ...(s.u ?? col?.u ? { u: s.u ?? col?.u } : {}),
+        ...(s.tone ? { tone: s.tone } : {}),
+        missing: s.missing ? f.missing : 0,
+        ...(s.missing ? { missingLabel: s.missing } : {}),
+        share: m && (s.kind ?? "count") === "count" ? (shown.length ? rs.length / shown.length : 0) : null,
+        ...(pick ? { pick } : {}),
+        on,
+      },
+    ];
+  });
+}
+
+/** Whether anything narrows a list beyond the period it was read through. */
+export function isFiltered(q: ListQuery): boolean {
+  return !!(q.q.trim() || q.chip || q.gf || q.flag || q.ids || Object.keys(q.fx).length || Object.keys(q.cf ?? {}).length);
+}
+
 /** One page of a list, with everything the toolbar, the group headers and the pager need about the rest. */
 export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): ListPage {
   const r = queryRows(spec, rows, query, flagWords);
@@ -469,6 +669,9 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
     groups,
     badgeChars: badgeWidths(spec.cols, unfold(spec, rows, query), flagWords),
     all: rows.length,
+    stats: statsOf(spec, r.list, unfold(spec, rows, query), query),
+    panel: panelSections(spec, rows, r.beforeCf, query.cf ?? {}),
+    filtered: isFiltered(query),
   };
 }
 

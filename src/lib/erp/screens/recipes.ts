@@ -158,7 +158,12 @@ export const recipesScreen: ScreenModule = {
       spec: {
         screen: "recipes",
         cols,
-        filters: ["product", "item"],
+        filters: ["product", "item", "qty"],
+        stats: [
+          { l: "Recipes", kind: "distinct", k: "product" },
+          { l: "Raw materials", kind: "distinct", k: "item" },
+          { l: "Lines" },
+        ],
         hidden: [],
         groups: ["product"],
         readOnly: !writer,

@@ -960,6 +960,13 @@ const moneyReports: ScreenModule = {
         ],
         hidden: [],
         chips: "side",
+        stats: [
+          { l: "Transactions", kind: "sum", k: "n" },
+          { l: "Paid out", kind: "sum", k: "amount", where: { k: "side", in: ["Paid out"] }, tone: "danger" },
+          { l: "Received", kind: "sum", k: "amount", where: { k: "side", in: ["Received"] }, tone: "success" },
+          { l: "Petty cash & advances", kind: "sum", k: "petty" },
+        ],
+        filters: ["month", "head", "n", "amount"],
         newMenu: newMenu(),
         readOnly: true,
         noDataLine: "Nothing recorded in this period.",
@@ -993,6 +1000,12 @@ const moneyAudit: ScreenModule = {
           { k: "txn", l: "Record", t: "mono" },
         ],
         hidden: [],
+        stats: [
+          { l: "Changes" },
+          { l: "People", kind: "distinct", k: "who" },
+          { l: "Records", kind: "distinct", k: "txn" },
+        ],
+        filters: ["who", "what"],
         newMenu: newMenu(),
         readOnly: true,
         noDataLine: "Nothing changed in this period.",
@@ -1035,6 +1048,14 @@ const bankLines: ScreenModule = {
         ],
         hidden: [],
         chips: "state",
+        stats: [
+          { l: "Lines" },
+          { l: "Money out", kind: "sum", k: "out" },
+          { l: "Money in", kind: "sum", k: "in" },
+          { l: "Not matched", where: { k: "state", in: ["Not matched"] }, tone: "warn" },
+          { l: "Nothing fits", where: { flag: "noCandidate" }, tone: "danger" },
+        ],
+        filters: ["account", "out", "in"],
         tools: [
           {
             id: "import",
@@ -1221,6 +1242,13 @@ const moneyAccountsScreen: ScreenModule = {
           { k: "state", l: "State", t: "s" },
         ],
         hidden: [],
+        stats: [
+          { l: "Accounts" },
+          { l: "Balance", kind: "sum", k: "balance" },
+          { l: "Bank lines not matched", kind: "sum", k: "unmatched", tone: "warn" },
+          { l: "Below zero", where: { flag: "below" }, tone: "danger" },
+        ],
+        filters: ["kind", "state"],
         newForm: ctx.powers.has("approveMoney")
           ? {
               screen: "moneyAccounts",
@@ -1311,6 +1339,13 @@ const legacyPetty: ScreenModule = {
         ],
         hidden: [],
         chips: "kind",
+        stats: [
+          { l: "Entries" },
+          { l: "Credited", kind: "sum", k: "amount", where: { k: "kind", in: ["Credit"] }, tone: "success" },
+          { l: "Spent", kind: "sum", k: "amount", where: { k: "kind", in: ["Debit"] }, tone: "danger" },
+          { l: "Employees", kind: "distinct", k: "who" },
+        ],
+        filters: ["who", "mode", "status", "amount"],
         newMenu: newMenu(),
         readOnly: true,
         noDataLine: "No old records in this period. Credits and expenses from before the Petty Cash module are kept here, read-only.",

@@ -40,6 +40,14 @@ export const inboxScreen: ScreenModule = {
         cols,
         hidden: [],
         groups: ["status"],
+        stats: [
+          { l: "Messages" },
+          { l: "Customers", kind: "distinct", k: "party" },
+          { l: "To review", where: { k: "status", in: ["New"] }, tone: "warn" },
+          { l: "Converted", where: { k: "status", in: ["Converted"] }, tone: "success" },
+          { l: "Not an order", where: { k: "status", in: ["Not an order"] }, tone: "muted" },
+        ],
+        filters: ["status", "source", "party", "lines"],
         chat: { who: "party", text: "text", when: "received", via: "source" },
         newForm: state.on
           ? {

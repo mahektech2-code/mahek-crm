@@ -32,7 +32,7 @@ import { listedTransporterName, transporterChoices } from "../transporter-rename
 import { isMahekVehicle, MAHEK_VEHICLE } from "../engines/logistics";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
-import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
+import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow, StatSpec } from "../ui";
 import { fd, inr, nf, withFills } from "../ui";
 import {
   addDaysIso,
@@ -1059,6 +1059,30 @@ const orderCols = (keys: (keyof typeof ORDER_COL)[], over: Partial<Record<string
 type Scope = "orders" | "pendingOrders" | "readyOrders" | "labels" | "verifyOrders" | "toBill" | "invoiceCheck";
 
 /**
+ * THE FIGURE CARDS over each Orders tab: what the lines come to, and the one
+ * or two things on that tab somebody has to act on — each a tap away from the
+ * rows it counts. The money is not here: an order line carries a rate behind
+ * a power, never a value to add up.
+ */
+const ORDER_FIGURES: StatSpec[] = [
+  { l: "Lines" },
+  { l: "Orders", kind: "distinct", k: "orderNo" },
+  { l: "Cans", kind: "sum", k: "qty" },
+  { l: "Weight", kind: "sum", k: "weight", missing: "without a weight" },
+];
+const late: StatSpec = { l: "Late", where: { flag: "late" }, tone: "danger" };
+const dueToday: StatSpec = { l: "Due today", where: { flag: "dueToday" }, tone: "brand" };
+const ORDER_STATS: Record<Scope, StatSpec[]> = {
+  verifyOrders: [...ORDER_FIGURES, { l: "Pending party", where: { flag: "pendingParty" }, tone: "warn" }, late],
+  readyOrders: [...ORDER_FIGURES, { l: "Short of allocation", where: { flag: "readyShort" }, tone: "danger" }, late],
+  toBill: [...ORDER_FIGURES, dueToday, late],
+  invoiceCheck: [{ l: "Lines" }, { l: "Invoices", kind: "distinct", k: "bill" }, { l: "Weight", kind: "sum", k: "weight", missing: "without a weight" }, { l: "To check", where: { flag: "invoiceToCheck" }, tone: "warn" }, { l: "Rejected", where: { flag: "invoiceRejected" }, tone: "danger" }],
+  labels: [{ l: "Lines" }, { l: "Orders", kind: "distinct", k: "orderNo" }, { l: "Stickers", kind: "sum", k: "labels" }, { l: "Weight", kind: "sum", k: "weight", missing: "without a weight" }, dueToday, late],
+  pendingOrders: [...ORDER_FIGURES, late],
+  orders: [...ORDER_FIGURES, { l: "Under process", where: { flag: "underProcess" }, tone: "info" }, late],
+};
+
+/**
  * The two lists' own rules, said ONCE: the Pending and Ready tabs, their
  * sidebar badges and the dashboard all read these, so a badge cannot count a
  * different set from the list it opens.
@@ -1315,6 +1339,8 @@ function orderList(scope: Scope): ScreenModule {
           screen: scope,
           cols,
           hidden,
+          stats: ORDER_STATS[scope],
+          filters: labels ? ["transporter", "billing", "sku", "area"] : ["orderStatus", "production", "billingStatus", "dispatchStatus", "billing", "transporter", "city", "source", "qty", "weight"],
           groups: labels ? ["transporter"] : ["orderNo"],
           groupHead: labels ? undefined : ["date", "billing", "delivery", "transporter", "city", "godown"],
           groupHeadStrong: ["delivery", "transporter", "city"],
@@ -2869,6 +2895,15 @@ const orderDetails: ScreenModule = {
         screen: "orderDetails",
         cols,
         hidden,
+        stats: [
+          { l: "Lines" },
+          { l: "Orders", kind: "distinct", k: "orderNo" },
+          { l: "Amount", kind: "sum", k: "amount", tone: "brand" },
+          { l: "Not dispatched", where: { flag: "notVerified" }, tone: "warn" },
+          { l: "Boxes to scan", where: { flag: "toScan" }, tone: "info" },
+          { l: "Invoice rejected", where: { flag: "invoiceRejected" }, tone: "danger" },
+        ],
+        filters: ["verification", "invoiceCheck", "billing", "transporter", "area", "payment", "monthId", "amount"],
         groups: ["orderNo"],
         groupHead: ["date", "billing", "billTotal", "dispatchDate", "bill", "transporter", "area", "godown"],
         groupInvoice: "invoice",
@@ -3327,7 +3362,16 @@ const dispatchRegister: ScreenModule = {
         cols,
         hidden: [],
         readOnly: true,
-        colFilters: true,
+        /* Its column funnels became sections of the one Filters pop-up. */
+        filters: ["billing", "delivery", "sku", "transporter", "when", "city", "weight", "qty", "boxes"],
+        stats: [
+          { l: "Orders", kind: "distinct", k: "orderNo" },
+          { l: "Lines" },
+          { l: "Boxes", kind: "sum", k: "boxes" },
+          { l: "Weight", kind: "sum", k: "weight", missing: "without a weight" },
+          { l: "Today", where: { k: "when", in: ["Today"] }, tone: "brand" },
+          { l: "Late", where: { k: "when", in: ["Late"] }, tone: "danger" },
+        ],
         /* Ticking rows reads what they add up to — the lorry is booked by the weight. */
         selectSum: [
           { k: "weight", l: "kg", missing: "without a weight" },

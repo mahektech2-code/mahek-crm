@@ -97,6 +97,17 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
           hidden: [],
           groups: ["lot", "godown", "status"],
           agg: { k: "cans", l: "cans" },
+          filters: ["status", "sku", "pack", "customer"],
+          stats: [
+            { l: "Boxes" },
+            { l: "Lots", kind: "distinct", k: "lot" },
+            { l: "Cans", kind: "sum", k: "cans", u: "cans" },
+            key === "units"
+              ? { l: "Scanned for dispatch", where: { k: "status", in: ["Scanned for dispatch"] }, tone: "info" }
+              : { l: "Dispatched", where: { k: "status", in: ["Dispatched"] }, tone: "success" },
+            { l: "On hold", where: { flag: "unitHold" }, tone: "warn" },
+            { l: "No label printed", where: { flag: "unlabelled" }, tone: "danger" },
+          ],
           godownKey: "godown",
           bulk,
           sortDefault: ["id", -1],

@@ -154,6 +154,24 @@ export async function erpListIds(screen: string, query: Record<string, string>):
 }
 
 /**
+ * How many rows a reading of a list WOULD leave — the Filters pop-up's
+ * "Shows 9 of 16" while somebody is still picking, before Apply. Read access
+ * only, like the export.
+ */
+export async function erpListCount(screen: string, query: Record<string, string>): Promise<Result<{ n: number; of: number }>> {
+  try {
+    const ctx = await requireErpForm(screen);
+    const mod = screenModule(screen);
+    if (!mod) return err("That list is not available.", "not_found");
+    const q = parseListQuery(query);
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx, { ...scopeFor(mod.window, q, null), forms: "defer" }));
+    return ok({ n: queryRows(spec, rows, q, FLAG).list.length, of: rows.length });
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+/**
  * What the selection bar adds up, for ticked rows the page in the browser does
  * not hold — "Select all" across pages, or an order's "Select all" reaching past
  * this page. Read access only, like the export.

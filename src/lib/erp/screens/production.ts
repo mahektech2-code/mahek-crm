@@ -322,6 +322,14 @@ const sfgBatches: ScreenModule = {
            group header takes the whole batch and the header box the page. */
         groupSel: qcApprover,
         filters: ["product", "item", "qc"],
+        stats: [
+          { l: "Batches", kind: "distinct", k: "sfgNo" },
+          { l: "Litres used", kind: "sum", k: "total", u: "L" },
+          { l: "Cost", kind: "sum", k: "costing", missing: "without a rate" },
+          { l: "QC pending", where: { flag: "qcPending" }, tone: "warn" },
+          { l: "Over recipe", where: { flag: "overRecipe" }, tone: "warn" },
+          { l: "Not posted", where: { flag: "notPosted" }, tone: "danger" },
+        ],
         bulk: qcApprover
           ? [
               { id: "qcApprove", l: "QC approve", prompt: { title: "Approve the selected SFG lots", sub: `Every batch with a ticked line is approved, with these results. Once approved a lot can be filled into cans and drums.${testsSub}`, submit: "Approve", fields: approveFields() } },
@@ -851,6 +859,13 @@ const fgFill: ScreenModule = {
         groups: ["fgNum"],
         groupHead: ["date", "godown"],
         filters: ["fg", "sfg", "size", "canUse", "packing"],
+        stats: [
+          { l: "Fillings", kind: "distinct", k: "fgNum" },
+          { l: "Cans available", kind: "sum", k: "net", u: "cans" },
+          { l: "Litres used", kind: "sum", k: "litres", u: "L" },
+          { l: "Cost", kind: "sum", k: "costing", missing: "without a rate" },
+          { l: "Not posted", where: { flag: "notPosted" }, tone: "danger" },
+        ],
         godownKey: "godown",
         ...(await newFormIn(s, () => fillForm(ctx))),
         newLabel: "New FG filling",
@@ -1185,6 +1200,13 @@ const packBatches: ScreenModule = {
         groups: ["batchNo"],
         groupHead: ["date", "sku", "boxes", "match", "boxType", "emptyBoxes", "godown"],
         filters: ["sku", "match", "boxType"],
+        stats: [
+          { l: "Batches", kind: "distinct", k: "batchNo" },
+          { l: "Cans packed", kind: "sum", k: "cans", u: "cans" },
+          { l: "Cost", kind: "sum", k: "costing", missing: "without a rate" },
+          { l: "Not matched", where: { k: "match", in: ["Not Match"] }, tone: "warn" },
+          { l: "Not posted", where: { flag: "notPosted" }, tone: "danger" },
+        ],
         godownKey: "godown",
         ...(await newFormIn(s, () => packForm(ctx))),
         newLabel: "New packing batch",
@@ -1390,7 +1412,16 @@ const sfgStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "sfgStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["godown", "lot"], filters: ["product", "qc", "type"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
+      spec: { screen: "sfgStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["godown", "lot"], filters: ["product", "qc", "type", "stock"],
+        stats: [
+          { l: "Lots", kind: "distinct", k: "lot" },
+          { l: "Products", kind: "distinct", k: "product" },
+          { l: "Litres", kind: "sum", k: "stock", u: "L" },
+          { l: "Value", kind: "sum", k: "value", missing: "without a rate" },
+          { l: "QC pending", where: { k: "qc", in: ["Pending"] }, tone: "warn" },
+          { l: "QC rejected", where: { k: "qc", in: ["Rejected"] }, tone: "danger" },
+        ],
+        agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
       tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.lotCode}|${l.godownId}`,
@@ -1450,7 +1481,14 @@ const fgStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "fgStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["godown"], filters: ["product", "sku", "packing"], agg: { k: "stock", l: "cans" }, godownKey: "godown", readOnly: true, noDataLine: "No finished goods in stock. Stock appears as filling is saved." },
+      spec: { screen: "fgStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["godown"], filters: ["product", "sku", "packing", "stock"],
+        stats: [
+          { l: "Lots", kind: "distinct", k: "lot" },
+          { l: "Products", kind: "distinct", k: "product" },
+          { l: "Cans", kind: "sum", k: "stock", u: "cans" },
+          { l: "Value", kind: "sum", k: "value", missing: "without a rate" },
+        ],
+        agg: { k: "stock", l: "cans" }, godownKey: "godown", readOnly: true, noDataLine: "No finished goods in stock. Stock appears as filling is saved." },
       tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`,
@@ -1566,7 +1604,14 @@ const packStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "packStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["sku"], filters: ["sku"], agg: { k: "stock", l: "boxes" }, godownKey: "godown", readOnly: true, noDataLine: "No boxed stock. A packing batch reaches stock once its cans match its boxes." },
+      spec: { screen: "packStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["sku"], filters: ["sku", "stock"],
+        stats: [
+          { l: "Batches", kind: "distinct", k: "batch" },
+          { l: "SKUs", kind: "distinct", k: "sku" },
+          { l: "Boxes", kind: "sum", k: "stock", u: "boxes" },
+          { l: "Value", kind: "sum", k: "amount", missing: "without a rate" },
+        ],
+        agg: { k: "stock", l: "boxes" }, godownKey: "godown", readOnly: true, noDataLine: "No boxed stock. A packing batch reaches stock once its cans match its boxes." },
       tooWide: wide,
       rows: lots.map((l): ListRow => {
         const have = labelled.get(`${l.batchNo}|${l.godownId}`) ?? 0;
@@ -1649,7 +1694,14 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
         { k: "f", l: "Flags", t: "f" },
       ];
       return {
-        spec: { screen: key, cols, hidden: [], groups: ["godown"], filters: ["type", "item"], godownKey: "godown", readOnly: true, sortDefault: ["date", -1], noDataLine: "Nothing here yet. Entries appear on their own as documents post." },
+        spec: { screen: key, cols, hidden: [], groups: ["godown"], filters: ["type", "item", "qty"],
+          stats: [
+            { l: "Entries" },
+            { l: table === "sfg" ? "Litres" : table === "fg" ? "Cans" : "Boxes", kind: "sum", k: "qty", u: table === "sfg" ? "L" : table === "fg" ? "cans" : "boxes" },
+            { l: "Adjusted by hand", where: { k: "type", in: ["Adjusted by hand"] }, tone: "warn" },
+            { l: "Source deleted", where: { flag: "orphan" }, tone: "danger" },
+          ],
+          godownKey: "godown", readOnly: true, sortDefault: ["date", -1], noDataLine: "Nothing here yet. Entries appear on their own as documents post." },
         tooWide: wide,
         rows: rows.map((r) => ({
           id: r.id,
