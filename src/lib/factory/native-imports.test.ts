@@ -15,7 +15,7 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const APP = path.join(ROOT, "factory-mobile");
-const ALLOWED = new Set(["@/lib/factory/rules", "@/lib/factory/types", "@/lib/factory/i18n", "@/lib/factory/time", "@/lib/hrms/qr", "@/lib/business-date"]);
+const ALLOWED = new Set(["@/lib/factory/rules", "@/lib/factory/lorry-judge", "@/lib/factory/types", "@/lib/factory/i18n", "@/lib/factory/time", "@/lib/hrms/qr", "@/lib/business-date"]);
 
 function files(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

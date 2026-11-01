@@ -16048,10 +16048,23 @@ export const factoryScanEvents = pgTable(
     /** How long the loader waited, label read to answer shown — the phone's measure, sent with its next batch. */
     waitMs: integer("wait_ms"),
     appBuild: text("app_build"),
+    /** What the phone's own judgement said (`lorry-judge.ts`), sent beside the scan — shadow mode. */
+    localResult: text("local_result"),
+    localLine: text("local_line"),
+    localWhy: text("local_why"),
+    /** Microseconds the phone took to judge it. */
+    localUs: integer("local_us"),
+    /** When the loading pack the phone judged against was read on the server. */
+    packAt: timestamp("pack_at", { withTimezone: true }),
+    /** The line the server put an accepted box on. */
+    serverLine: text("server_line"),
+    /** Whether the two agreed; null where the phone could not judge. */
+    agree: boolean("agree"),
   },
   (t) => [
     index("factory_scan_events_lorry_idx").on(t.godownId, t.lorryKey, t.receivedAt),
     index("factory_scan_events_open_idx").on(t.receivedAt).where(sql`${t.status} in ('received', 'error')`),
+    index("factory_scan_events_disagree_idx").on(t.receivedAt).where(sql`${t.agree} = false`),
     check("factory_scan_events_status_check", sql`${t.status} in ('received', 'accepted', 'repeat', 'refused', 'not_judged', 'error')`),
   ],
 );

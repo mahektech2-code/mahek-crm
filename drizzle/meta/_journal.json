@@ -2115,6 +2115,13 @@
       "when": 1793618800000,
       "tag": "0306_erp_plan_order_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 302,
+      "version": "7",
+      "when": 1793622400000,
+      "tag": "0307_factory_scan_shadow",
+      "breakpoints": true
     }
   ]
 }

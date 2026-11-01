@@ -135,8 +135,7 @@ async function scanLinesFor(ex: Ex, orderNos: number[]): Promise<Map<number, Sca
   return out;
 }
 
-async function unitFor(ex: Ex, code: string, lock: boolean): Promise<ScanUnit | null> {
-  const rows = await q<Row>(ex, sql`
+const UNIT_COLUMNS = sql`
     select u.id, u.status, u.sku_id as "skuId", p.name as sku, b.id as "productId", coalesce(b.name, p.name) as product,
            coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres,
            u.lot_from as "lotFrom", u.lot_code as "lotCode", u.godown_id as "godownId", g.name as godown,
@@ -146,12 +145,9 @@ async function unitFor(ex: Ex, code: string, lock: boolean): Promise<ScanUnit | 
       left join finished_goods fg on fg.id = p.finished_good_id
       left join product_brands b on b.id = fg.brand_id
       join erp_godowns g on g.id = u.godown_id
-      left join erp_orders o on o.id = u.order_id
-     where u.id = ${code}
-     ${lock ? sql`for update of u` : sql``}
-  `);
-  const r = rows[0];
-  if (!r) return null;
+      left join erp_orders o on o.id = u.order_id`;
+
+function unitOfRow(r: Row): ScanUnit {
   return {
     id: String(r.id),
     status: r.status as UnitStatus,
@@ -167,6 +163,41 @@ async function unitFor(ex: Ex, code: string, lock: boolean): Promise<ScanUnit | 
     orderId: r.orderId == null ? null : String(r.orderId),
     orderNo: r.orderNo == null ? null : Number(r.orderNo),
   };
+}
+
+async function unitFor(ex: Ex, code: string, lock: boolean): Promise<ScanUnit | null> {
+  const rows = await q<Row>(ex, sql`${UNIT_COLUMNS} where u.id = ${code} ${lock ? sql`for update of u` : sql``}`);
+  return rows[0] ? unitOfRow(rows[0]) : null;
+}
+
+/**
+ * The boxes a lorry's loading pack carries, read as `unitFor` reads one: every
+ * box at the godown still free that is one of the lorry's SKUs or products,
+ * and every box already scanned onto one of its lines.
+ */
+export async function unitsForLoading(ex: Ex, godownId: string, lineIds: string[], skuIds: string[], productIds: string[]): Promise<ScanUnit[]> {
+  if (!lineIds.length) return [];
+  const want = skuIds.length ? sql`u.sku_id in ${skuIds}` : sql`false`;
+  const family = productIds.length ? sql`b.id in ${productIds}` : sql`false`;
+  const rows = await q<Row>(ex, sql`${UNIT_COLUMNS}
+     where (u.godown_id = ${godownId} and u.status = 'available' and (${want} or ${family}))
+        or (u.order_id in ${lineIds} and u.status in ('scanned', 'dispatched'))`);
+  return rows.map(unitOfRow);
+}
+
+/** What each lot has free at a godown, as `lotFree` reads one — for a loading pack's lots, in two statements. */
+export async function lotsFreeAt(ex: Ex, godownId: string, lots: { lotFrom: "pack" | "fg"; lotCode: string }[]): Promise<{ lotFrom: "pack" | "fg"; lotCode: string; skuId: string | null; free: number }[]> {
+  const pack = [...new Set(lots.filter((l) => l.lotFrom === "pack").map((l) => l.lotCode))];
+  const fg = [...new Set(lots.filter((l) => l.lotFrom === "fg").map((l) => l.lotCode))];
+  const [p, f] = await Promise.all([pack.length ? packLots(ex, { lots: pack }) : [], fg.length ? fgLots(ex, { lots: fg }) : []]);
+  const out: { lotFrom: "pack" | "fg"; lotCode: string; skuId: string | null; free: number }[] = [];
+  for (const code of pack) out.push({ lotFrom: "pack", lotCode: code, skuId: null, free: p.find((x) => x.batchNo === code && x.godownId === godownId)?.stock ?? 0 });
+  for (const code of fg) {
+    const here = f.filter((x) => x.lotCode === code && x.godownId === godownId);
+    out.push({ lotFrom: "fg", lotCode: code, skuId: null, free: here[0]?.stock ?? 0 });
+    for (const x of here) if (x.skuId) out.push({ lotFrom: "fg", lotCode: code, skuId: x.skuId, free: x.stock });
+  }
+  return out;
 }
 
 /* ============================================================ the board */

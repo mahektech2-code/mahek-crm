@@ -19,6 +19,8 @@ import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection,
 import type { LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload } from "@/lib/factory/lorry";
 import { lorryScanBatch } from "@/lib/factory/scan-batch";
+import { lorryPack } from "@/lib/factory/lorry-pack";
+import type { LoadingPack } from "@/lib/factory/lorry-judge";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { readStoredLrs } from "@/lib/erp/lr-upload-read";
@@ -369,6 +371,11 @@ export async function factoryUnloadBox(order: string, unitId: string): Promise<B
 export async function factoryLorryBoard(key: string): Promise<LorryBoard | null> {
   const fc = await factoryContext();
   return fc ? lorryBoard(fc, key) : null;
+}
+/** What the phone judges a lorry's scans against in shadow mode (`lib/factory/lorry-pack.ts`). */
+export async function factoryLorryPack(key: string): Promise<LoadingPack | null> {
+  const fc = await factoryContext();
+  return fc ? lorryPack(fc, key) : null;
 }
 /** `half`: the box or dispatch sticker scanned just before, still waiting for its other half. An older app sends none. */
 export async function factoryLorryScan(key: string, code: string, taskId: string | null, half?: string | null): Promise<LorryScan> {
