@@ -41,8 +41,10 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
     ctx.viewingAs ? Promise.resolve(null) : lrUploadKit(),
     orderNo == null ? Promise.resolve(null) : dispatchBoard(orderNo),
   ]);
-  /* The boxes that could go on it, for picking off a list when a QR will not read. */
-  const boxes = board && !ctx.viewingAs ? await pickableBoxes(board) : [];
+  /* The boxes that could go on it, for picking off a list when a QR will not
+     read. Only the owner and super admins get the list: everybody else on the
+     desk scans, so the box physically in their hands is the box that counts. */
+  const boxes = board && !ctx.viewingAs && ctx.administrator ? await pickableBoxes(board) : [];
   const upload = typeof sp.upload === "string" ? sp.upload : "";
   const uploadButton = kit ? <UploadLrsButton key={upload} variant="secondary" today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={upload === "1"} /> : null;
 

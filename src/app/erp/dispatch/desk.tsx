@@ -138,13 +138,13 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                 onChange={(e) => setCode(e.target.value)}
                 autoFocus
                 disabled={!open.length}
-                placeholder={open.length ? "Scan a box or lot QR, type its code, or pick boxes from the list" : "Nothing on this order is Ready to dispatch"}
+                placeholder={!open.length ? "Nothing on this order is Ready to dispatch" : administrator ? "Scan a box or lot QR, type its code, or pick boxes from the list" : "Scan a box or lot QR, or type its code"}
                 className="h-12 flex-1 rounded-lg border-2 border-brand bg-surface px-3.5 font-mono text-lg text-ink outline-none placeholder:text-faint"
               />
               <Button variant="primary" disabled={pending || !code.trim()} className="h-12">
                 Scan
               </Button>
-              {open.length ? (
+              {open.length && administrator ? (
                 <PickBoxesButton
                   board={board}
                   boxes={boxes}
