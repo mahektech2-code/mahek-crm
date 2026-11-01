@@ -403,6 +403,43 @@ describe("recipes", () => {
     const c = await as(clerk);
     assert.ok(!(await mod("recipes").actions!.qty(c, r.id, { qty: "1" })).ok, "a manager sets a recipe");
   });
+
+  test("Edit recipe opens every line, and saving writes exactly what the form shows", async () => {
+    const ctx = await as(admin);
+    await db.insert(erpRawMaterials).values({ id: "rm_xyl", serialNo: 99, name: "Xylene", code: "XYL", unit: "Litre", materialType: "Chemical", testingList: [] }).onConflictDoNothing();
+    assert.ok((await mod("recipes").forms!.new(ctx, { product: SFG }, [{ item: "Toluene", qty: "200" }])).ok);
+    const [r] = (await mod("recipes").load(ctx)).rows.filter((x) => x.v.product === SFG);
+    const form = await mod("recipes").formLoaders!.edit(ctx, r.id);
+    assert.equal(form?.id, "edit");
+    assert.equal(form?.init?.product, SFG);
+    assert.deepEqual(form?.initLines?.map((l) => l.item), ["Toluene"]);
+    assert.ok(form?.line?.find((f) => f.k === "item")?.opts?.includes("Xylene"));
+    assert.ok(!form?.line?.find((f) => f.k === "item")?.opts?.includes("Tin can 5L"), "cans are never a recipe line");
+
+    /* Add one, change nothing, then swap: what the form shows is the recipe. */
+    const added = await mod("recipes").forms!.edit(ctx, {}, [{ item: "Toluene", qty: "200" }, { item: "Xylene", qty: "50", note: "last" }], r.id);
+    assert.ok(added.ok, JSON.stringify(added));
+    const lines = async () => (await mod("recipes").load(ctx)).rows.filter((x) => x.v.product === SFG).map((x) => `${x.v.item}:${x.v.qty}`).sort();
+    assert.deepEqual(await lines(), ["Toluene:200", "Xylene:50"]);
+    const same = await mod("recipes").forms!.edit(ctx, {}, [{ item: "Toluene", qty: "200" }, { item: "Xylene", qty: "50", note: "last" }], r.id);
+    assert.equal(same.ok && same.message, "Nothing changed");
+    const swapped = await mod("recipes").forms!.edit(ctx, {}, [{ item: "Xylene", qty: "60" }], r.id);
+    assert.ok(swapped.ok && /Toluene taken out/.test(swapped.message ?? ""), JSON.stringify(swapped));
+    assert.deepEqual(await lines(), ["Xylene:60"]);
+
+    /* Refused: a material twice, nothing at all, a clerk, and a recipe whose line went while the form was open. */
+    const xyl = (await mod("recipes").load(ctx)).rows.find((x) => x.v.product === SFG)!;
+    assert.ok(!(await mod("recipes").forms!.edit(ctx, {}, [{ item: "Xylene", qty: "1" }, { item: "Xylene", qty: "2" }], xyl.id)).ok);
+    assert.ok(!(await mod("recipes").forms!.edit(ctx, {}, [], xyl.id)).ok);
+    assert.ok(!(await mod("recipes").forms!.edit(await as(clerk), {}, [{ item: "Xylene", qty: "1" }], xyl.id)).ok);
+    assert.equal(await mod("recipes").formLoaders!.edit(await as(clerk), xyl.id), null);
+    assert.ok(!(await mod("recipes").forms!.edit(ctx, {}, [{ item: "Xylene", qty: "1" }], r.id)).ok, "Toluene's line id no longer exists");
+    assert.deepEqual(await lines(), ["Xylene:60"]);
+
+    /* Back to the one Toluene line the deletes below expect. */
+    assert.ok((await mod("recipes").forms!.edit(ctx, {}, [{ item: "Toluene", qty: "150" }], xyl.id)).ok);
+    assert.deepEqual(await lines(), ["Toluene:150"]);
+  });
 });
 
 describe("low stock reaches the people who would buy", () => {
