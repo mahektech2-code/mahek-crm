@@ -642,6 +642,8 @@ export type OrderTrackingView = {
   orderDate: string;
   view: "full" | "delivery";
   deliverTo: string;
+  /** Who placed the order and is billed for it — said on both views, so a shop a distributor delivers to knows whose order it is. */
+  billingParty: string;
   status: { label: string; current: Step | null; lastUpdated: string | null; delivered: boolean };
   expectedOn: string | null;
   deliveredOn: string | null;
@@ -703,6 +705,7 @@ async function viewOf(t: Tracking, view: "full" | "delivery", token: string): Pr
     orderDate: o.orderDate,
     view,
     deliverTo: [o.deliveryName, o.deliveryCity].filter(Boolean).join(", "),
+    billingParty: o.billingName,
     status: { label: journey.currentLabel, current: journey.current, lastUpdated: journey.lastUpdated, delivered },
     expectedOn: dispatched && !delivered ? (hold?.revisedDeliveryOn ?? latest?.expectedOn ?? null) : null,
     deliveredOn: delivered ? (latest?.deliveredOn ?? null) : null,
