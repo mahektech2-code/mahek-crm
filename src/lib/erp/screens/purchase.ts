@@ -63,6 +63,7 @@ import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
 import { sortPoLines, type GrnItem, type GrnPoLine } from "../engines/grn-pick";
 import { poOption, purchaseOrderViews, receivedByLine, refreshPurchaseOrder, type PoView } from "./purchase-flow";
+import { REGISTER_DEFAULT } from "../period";
 
 /* ---------------------------------------------------------------------------
  * Purchase (spec §5): goods inward (the GRN), testing, the purchase register
@@ -457,7 +458,7 @@ export async function inwardFormForPo(ctx: ErpContext, poId: string): Promise<Fo
 }
 
 /** Goods inward is a register by received date; a line not yet routed is work and always shows. */
-const INWARD_WINDOW = { label: "Received date", default: "month" } as const;
+const INWARD_WINDOW = { label: "Received date", default: REGISTER_DEFAULT } as const;
 
 const inward: ScreenModule = {
   key: "inward",
@@ -938,7 +939,7 @@ function missingEvidence(t: typeof erpTests.$inferSelect): string[] {
 }
 
 /** Testing is a register by testing date; a test nobody has decided is work and always shows. */
-const TEST_WINDOW = { label: "Testing date", default: "month" } as const;
+const TEST_WINDOW = { label: "Testing date", default: REGISTER_DEFAULT } as const;
 
 const testing: ScreenModule = {
   key: "testing",
@@ -1430,7 +1431,7 @@ function landingFields(materialPaise: number | null, l: LotLanding | undefined, 
   ];
 }
 
-const REGISTER_WINDOW = { label: "Purchase date", default: "month" } as const;
+const REGISTER_WINDOW = { label: "Purchase date", default: REGISTER_DEFAULT } as const;
 
 const register: ScreenModule = {
   key: "register",
@@ -1844,7 +1845,7 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
 
 /* ============================================================= barcode */
 
-const BARCODE_WINDOW = { label: "Purchase date", default: "month" } as const;
+const BARCODE_WINDOW = { label: "Purchase date", default: REGISTER_DEFAULT } as const;
 
 const barcode: ScreenModule = {
   key: "barcode",
@@ -2014,7 +2015,7 @@ const rmStock: ScreenModule = {
   },
 };
 
-const RMLOG_WINDOW = { label: "Entry date", default: "month" } as const;
+const RMLOG_WINDOW = { label: "Entry date", default: REGISTER_DEFAULT } as const;
 
 const rmLog: ScreenModule = {
   key: "rmLog",

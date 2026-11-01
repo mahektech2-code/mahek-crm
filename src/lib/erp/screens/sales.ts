@@ -56,7 +56,7 @@ import { fgLevelAvailable, fgLots, fgRates, lockLot, packBatchCosting, packLots 
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
 import { pageMap, readOnceKeyed } from "../read-memo";
-import { monthWindow } from "../period";
+import { REGISTER_DEFAULT, monthWindow } from "../period";
 import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
@@ -1125,7 +1125,7 @@ function inScope(scope: Scope, l: OrderLine, detailedOrders: Set<number>): boole
 }
 
 /** The orders list is the register: every line, read by order date. The other three are open work. */
-const ORDERS_WINDOW = { label: "Order date", default: "month" } as const;
+const ORDERS_WINDOW = { label: "Order date", default: REGISTER_DEFAULT } as const;
 
 /**
  * The lines a list draws, read in SQL: the register through its window, a
@@ -2592,7 +2592,7 @@ async function saveAllocation(ctx: ErpContext, h: Record<string, string>, id?: s
 
 /* ========================================================= batch codes */
 
-const BATCH_WINDOW = { label: "Allocation date", default: "month" } as const;
+const BATCH_WINDOW = { label: "Allocation date", default: REGISTER_DEFAULT } as const;
 
 const batchCodes: ScreenModule = {
   key: "batchCodes",
@@ -2837,7 +2837,7 @@ async function allocationCosts(orderIds: string[]): Promise<Map<string, (number 
 }
 
 /** Order details is a register too: billed lines by dispatch date, plus every line still awaiting verification. */
-const DETAILS_WINDOW = { label: "Dispatch date", default: "month" } as const;
+const DETAILS_WINDOW = { label: "Dispatch date", default: REGISTER_DEFAULT } as const;
 
 const orderDetails: ScreenModule = {
   key: "orderDetails",

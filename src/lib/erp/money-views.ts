@@ -35,6 +35,7 @@ async function q<T>(query: SQL): Promise<T[]> {
 /* ------------------------------------------------------------------ period */
 
 export const PERIODS = [
+  { v: "7d", l: "Last 7 days" },
   { v: "month", l: "This month" },
   { v: "last", l: "Last month" },
   { v: "3m", l: "Last 3 months" },
@@ -44,7 +45,8 @@ export const PERIODS = [
 export type Period = (typeof PERIODS)[number]["v"];
 
 export function periodOf(v: string | undefined): Period {
-  return (PERIODS.find((p) => p.v === v)?.v ?? "month") as Period;
+  /* Opens on the last seven days, like every ERP register (`REGISTER_DEFAULT` in period.ts). */
+  return (PERIODS.find((p) => p.v === v)?.v ?? "7d") as Period;
 }
 
 /** A period as two dates, inclusive; null for "all time". */
@@ -62,6 +64,7 @@ export function periodRange(p: Period, day: string): { from: string; to: string 
     return iso(yy, mm);
   };
   if (p === "all") return null;
+  if (p === "7d") return { from: addDays(day, -6), to: day };
   if (p === "month") return { from: iso(y, m), to: day };
   if (p === "last") {
     // the last day of the previous month: the day before this month's first

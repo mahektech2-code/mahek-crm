@@ -162,7 +162,7 @@ describe("every screen, at the size of the real book", () => {
 });
 
 describe("the window cuts the register, never the work", () => {
-  test("the orders register opens on this month", async () => {
+  test("the orders register opens on the last seven days", async () => {
     const res = await page("orders");
     assert.equal(res.rows.length, 30);
     assert.equal(res.tooWide ?? null, null);
