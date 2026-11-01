@@ -1330,6 +1330,8 @@ function orderList(scope: Scope): ScreenModule {
           ],
           godownKey: "godown",
           groupInvoice: labels ? undefined : "invoice",
+          /* Stickers go on by the lorry: one print for every order a transporter takes. */
+          groupPrint: labels ? { k: "orderNo", l: "Print stickers", href: erpLabelsHref({ orders: [] }) } : undefined,
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
           ...(labels || checking ? {} : await newFormIn(s, () => orderForm(ctx))),

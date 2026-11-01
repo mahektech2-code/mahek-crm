@@ -410,6 +410,13 @@ export type ListSpec = {
    * Add PDF), absent (not billed). Read off the group's first row.
    */
   groupInvoice?: string;
+  /**
+   * A print button on each group's heading that prints the whole group in
+   * one go: `href` with the distinct values of row key `k` across the group
+   * (every page of it, after the filters) appended, comma-separated. The
+   * Stickers tab groups by transporter and prints every order the lorry takes.
+   */
+  groupPrint?: { k: string; l: string; href: string };
   /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
   rowMenu?: string[];
   /**

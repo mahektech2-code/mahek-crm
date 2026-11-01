@@ -28,6 +28,8 @@ import { LabelPrinter } from "./printer";
  *   ?purchase=<id>    the purchased lot's label, 80 × 80 mm, one per drum
  *   ?order=1256       dispatch labels, 80 × 80 mm — one per box or can on
  *                     every line of the order
+ *   ?orders=1256,1260 the same for several orders, one after another — what
+ *                     a transporter's group on the Stickers tab prints
  *   &copies=3         how many of an SFG or purchase label
  *
  * The page draws the labels; `LabelPrinter` sends them to the label printer
@@ -54,8 +56,10 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   const sfg = one("sfg");
   const purchase = one("purchase");
   const order = /^\d+$/.test(one("order")) ? Number(one("order")) : null;
+  /* The order list, or the one order: each printed whole, in the order named. */
+  const orders = order != null ? [order] : [...new Set(one("orders").split(",").map((x) => x.trim()).filter((x) => /^\d+$/.test(x)).map(Number))];
 
-  const kind: LabelKind = order != null ? "dispatch" : sfg ? "sfg" : purchase ? "purchase" : "box";
+  const kind: LabelKind = orders.length ? "dispatch" : sfg ? "sfg" : purchase ? "purchase" : "box";
   if (!SCREENS[kind].some((s) => ctx.screens.has(s))) redirect("/erp");
 
   const config = await getConfig();
@@ -75,16 +79,20 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   let unlabelled: Unlabelled[] = [];
   const views: React.ReactNode[] = [];
 
-  if (kind === "dispatch" && order != null) {
-    title = `Dispatch stickers · order ${order}`;
-    empty = "No dispatch stickers for this order. They are printed once a line is under process or ready, and not after it has left.";
-    fileName = `dispatch-order-${order}.prn`;
+  if (kind === "dispatch") {
+    const many = orders.length > 1;
+    title = many ? `Dispatch stickers · ${orders.length} orders` : `Dispatch stickers · order ${orders[0]}`;
+    empty = many
+      ? "No dispatch stickers for these orders. They are printed once a line is under process or ready, and not after it has left."
+      : "No dispatch stickers for this order. They are printed once a line is under process or ready, and not after it has left.";
+    fileName = many ? `dispatch-orders-${orders[0]}-and-${orders.length - 1}-more.prn` : `dispatch-order-${orders[0]}.prn`;
     /* Printing gives each piece its own sticker id — the same ids on every reprint. A preview ("View the ERP as") gives none. */
-    for (const r of await dispatchLabels(order, ctx.viewingAs ? undefined : ctx.actor.id))
-      for (let i = 0; i < r.copies; i++) {
-        const s = r.stickers[i];
-        views.push(s ? <DispatchLabelView key={s.label.sticker!.id} l={s.label} qr={s.qr} lineId={r.lineId} /> : <DispatchLabelView key={`${r.lineId}:${i}`} l={r.label} qr={null} lineId={r.lineId} copy={i + 1} />);
-      }
+    for (const o of orders)
+      for (const r of await dispatchLabels(o, ctx.viewingAs ? undefined : ctx.actor.id))
+        for (let i = 0; i < r.copies; i++) {
+          const s = r.stickers[i];
+          views.push(s ? <DispatchLabelView key={s.label.sticker!.id} l={s.label} qr={s.qr} lineId={r.lineId} /> : <DispatchLabelView key={`${r.lineId}:${i}`} l={r.label} qr={null} lineId={r.lineId} copy={i + 1} />);
+        }
   } else if (kind === "sfg") {
     title = `SFG label · lot ${sfg}`;
     empty = `No SFG lot ${sfg} was found. Open it from Stock → Semi-finished.`;
@@ -126,7 +134,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
     : kind === "box"
       ? `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm. Each QR carries the box's own id; scan it in Trace for the lot and the batch.`
       : kind === "dispatch"
-        ? `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm: one for every box or can on the order. The lot size on each is the pieces on the whole order.`
+        ? `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm: one for every box or can on ${orders.length > 1 ? `orders ${orders.join(", ")}` : "the order"}. The lot size on each is the pieces on the whole order.`
         : `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm. The QR carries the lot; scan it in Trace.`;
 
   return (
