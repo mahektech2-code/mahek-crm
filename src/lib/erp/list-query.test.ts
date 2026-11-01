@@ -242,10 +242,10 @@ test("a figure no ticked row carries reads as unknown, never as zero", () => {
 test("a group's print link carries every distinct value in the whole group, not just its page", () => {
   const spec = { screen: "t", cols: [{ k: "orderNo", l: "Order", t: "mono" }, { k: "tr", l: "Transporter", t: "t" }], groups: ["tr"], groupPrint: { k: "orderNo", l: "Print", href: "/erp/print-labels?orders=" } } as unknown as ListSpec;
   const rows = [
-    { id: "a", v: { orderNo: "10089", tr: "Jignesh" } },
-    { id: "b", v: { orderNo: "10089", tr: "Jignesh" } },
-    { id: "c", v: { orderNo: "10102", tr: "MK" } },
-    { id: "d", v: { orderNo: "10090", tr: "Jignesh" } },
+    { id: "a", v: { orderNo: "10089", tr: "Jignesh" }, flags: [] },
+    { id: "b", v: { orderNo: "10089", tr: "Jignesh" }, flags: [] },
+    { id: "c", v: { orderNo: "10102", tr: "MK" }, flags: [] },
+    { id: "d", v: { orderNo: "10090", tr: "Jignesh" }, flags: [] },
   ] as ListRow[];
   const p = pageOf(spec, rows, Q({ grp: true, size: 1, page: 1 }), {});
   const g = Object.values(p.groups)[0];
