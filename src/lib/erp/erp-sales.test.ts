@@ -449,15 +449,12 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok(printed[0].stickers.every((x, i) => /^DS-[1-9]\d{5}$/.test(x.label.sticker!.id) && x.label.sticker!.pos === i + 1 && x.label.sticker!.of === printed[0].copies));
     const again = await dispatchLabels(line.orderNo, admin.id);
     assert.deepEqual(again[0].stickers.map((x) => x.label.sticker!.id), printed[0].stickers.map((x) => x.label.sticker!.id), "printed again: the same ids");
-    assert.ok((await a.stickers(ctx, line.id, {})).ok);
-    const [after1] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
-    assert.ok(after1.stickersAt, "recorded on the line, which has no bill yet");
+    assert.equal(a.stickers, undefined, "there is no \"Stickers are on\" to press any more");
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "7", rate: "400", transport: "0" }, [], line.id)).ok);
     assert.ok((await a.verifyOrder(ctx, line.id, {})).ok, "an edit sends the order back to the back office");
     const b = await a.bill(ctx, line.id, { invoiceNo: `MMI/26-27/${tag}`, invoiceDate: TODAY });
     assert.ok(b.ok, b.ok ? "" : b.error);
     assert.ok(await onStickers(), "billed with the check still pending — still on the tab until it leaves");
-    assert.equal((await a.stickers(ctx, line.id, {})).ok, false, "and billing did not lose the record that they are on");
   });
 
   test("an order is billed only once Ready, an invoice is shared only on its own date, and a changed invoice goes back to the checker", async () => {
@@ -491,8 +488,6 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
       ["order:submitted", "order:verified", "invoice:submitted", "invoice:rejected", "invoice:submitted", "invoice:approved", "invoice:reset", "invoice:approved"],
     );
     assert.ok((await mod("labels").load(ctx)).rows.some((r) => r.id === line.id), "a billed line not yet gone is on Dispatch stickers");
-    assert.ok((await a.stickers(ctx, line.id, {})).ok);
-    assert.ok((await det()).stickersAt, "the stickers are recorded");
     /* A line with no lot is not "packed before box ids": nothing says what is on the lorry, so it waits for its boxes to be scanned (order 10058 left with no lot code at all). */
     assert.match(msg(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /3 of 3 still to scan/, "a lot-less line is held for its scans");
     assert.equal((await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, line.id))).length, 0, "and took no stock");

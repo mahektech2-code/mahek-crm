@@ -140,7 +140,7 @@ You cannot check a bill you entered yourself: *You entered this bill, so somebod
 
 ## Dispatch stickers
 
-On **Dispatch stickers**, press **Print dispatch stickers** for any order under process or ready — before billing too. Each sticker carries who it is **delivered to** (with the area) and who is **billed**, the **order no.** and date, the **product**, the **order qty**, **type** (box or can), **weight**, **lot size** (the pieces on the whole order), the order's **remark** and the **transporter**. It carries no lot or box code; the box's own label carries those. Once they are on the boxes, press **Stickers are on** to record it. Stickers cannot be printed after the goods have left.
+On **Dispatch stickers**, press **Print dispatch stickers** for any order under process or ready — before billing too. Each sticker carries who it is **delivered to** (with the area) and who is **billed**, the **order no.** and date, the **product**, the **order qty**, **type** (box or can), **weight**, **lot size** (the pieces on the whole order), the order's **remark** and the **transporter**. It carries no lot or box code; the box's own label carries those. Printed stickers carry their own ids, and in the Factory App each box is loaded by scanning it with its sticker — that pairing is the record that a sticker is on. Stickers cannot be printed after the goods have left.
 
 ## Billing & dispatch
 
@@ -152,18 +152,17 @@ On **Dispatch stickers**, press **Print dispatch stickers** for any order under 
       ["7 Oct", "1249", <b key="c">Customer C</b>, "PU Sealer – 4 Liter (4 Can/Box)", "₹21,240", "8 Oct", "Dispatched", <WfPill key="d" tone="success">Sales target reached</WfPill>],
     ]}
   />
-  <WfBar><WfButton primary>Confirm dispatch</WfButton><WfButton>Stickers are on</WfButton><WfButton>Extra expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch stickers</WfButton><Hotspot n={2} /></WfBar>
+  <WfBar><WfButton primary>Confirm dispatch</WfButton><WfButton>Extra expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch stickers</WfButton><Hotspot n={2} /></WfBar>
 </Wireframe>
 
 <Hotspots items={[
   <span key="1"><b>Boxes still to scan.</b> Every box on the order has to be scanned at the Dispatch desk before it can be dispatched.</span>,
-  <span key="2"><b>The line's actions.</b> Confirm dispatch, record the stickers, add extra expenses, change GST, print the stickers, open the desk or trace the order.</span>,
+  <span key="2"><b>The line's actions.</b> Confirm dispatch, add extra expenses, change GST, print the stickers, open the desk or trace the order.</span>,
 ]} />
 
 | Action | What it does |
 |---|---|
 | **Confirm dispatch** | Asks for the **dispatch date**, the **vehicle / tempo / truck no.**, the **driver or transporter** and any **remark or exception**, and dispatches the **whole order**: every billed line of it is marked **Verified** and **Dispatched**. It needs the invoice **approved** and every box scanned, where the lots carry box ids. The date cannot be before the order date. The order opens one record on [Logistics](/docs/erp/transport); bills with the same vehicle on the same day travel as one trip. |
-| **Stickers are on** | Records that the dispatch stickers were applied. Not required to dispatch. |
 | **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is dispatched. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. An approved invoice goes back to the checker. |
 | **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
@@ -171,7 +170,7 @@ On **Dispatch stickers**, press **Print dispatch stickers** for any order under 
 | **Scan its boxes / Dispatch desk** | Opens the order at the Dispatch desk. |
 | **Trace this order** | Opens [Traceability](/docs/erp/traceability) on the order. |
 
-Confirm dispatch, Stickers are on and Extra expenses can also be done to a selection of lines at once; Confirm dispatch still takes each order whole.
+Confirm dispatch and Extra expenses can also be done to a selection of lines at once; Confirm dispatch still takes each order whole.
 
 ### What the record shows
 
