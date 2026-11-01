@@ -1074,6 +1074,20 @@ export function ListScreen({
                                   })}
                                   <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
                                   {spec.groupInvoice ? <InvoiceButtons v={grp.head[spec.groupInvoice]} row={r} screen={spec.screen} /> : null}
+                                  {spec.groupPrint && grp.print ? (
+                                    <NavLink
+                                      href={grp.print}
+                                      title={`${spec.groupPrint.l} · ${g || "—"}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={cx(
+                                        "inline-flex h-8 items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-2.5 text-meta font-medium text-body hover:bg-canvas",
+                                        headShown.length === 0 && "ml-auto",
+                                      )}
+                                    >
+                                      <Icon n="print" s={15} />
+                                      {spec.groupPrint.l}
+                                    </NavLink>
+                                  ) : null}
                                   {spec.groupSel && selectOn ? (
                                     <LinkButton
                                       onClick={() => {

@@ -14,12 +14,15 @@ export function erpTraceHref(code: string): string {
  * `ids`; the label of an `sfg` lot (at a `godown`) or of a `purchase`; or the
  * dispatch labels of an `order`.
  */
-export function erpLabelsHref(q: { batch?: string; lot?: string; ids?: string[]; order?: number | string; sfg?: string; godown?: string; purchase?: string }): string {
+export function erpLabelsHref(q: { batch?: string; lot?: string; ids?: string[]; order?: number | string; orders?: (number | string)[]; sfg?: string; godown?: string; purchase?: string }): string {
   const p = new URLSearchParams();
   if (q.batch) p.set("batch", q.batch);
   if (q.lot) p.set("lot", q.lot);
   if (q.ids?.length) p.set("ids", q.ids.join(","));
   if (q.order != null) p.set("order", String(q.order));
+  /* Several orders' dispatch stickers in one print. Empty, it is the prefix a
+     list's group appends its own order numbers to (`ListSpec.groupPrint`). */
+  if (q.orders) p.set("orders", q.orders.join(","));
   if (q.sfg) p.set("sfg", q.sfg);
   if (q.sfg && q.godown) p.set("godown", q.godown);
   if (q.purchase) p.set("purchase", q.purchase);
