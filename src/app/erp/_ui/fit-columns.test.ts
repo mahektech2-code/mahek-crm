@@ -53,14 +53,24 @@ test("a list that fits draws everything and shares the spare width to text", () 
   assert.equal(fit.widths.a, 1000 - minWidth(cols[1]) - minWidth(cols[2]));
 });
 
-test("a person's pick is honoured as far as the width allows, and the rest is counted", () => {
+test("a person's pick is drawn whole, every column of it, and scrolls sideways where it must", () => {
   const chosen = WIDE.map((c) => c.k);
-  const fit = fitColumns({ cols: WIDE, avail: 1014, chosen });
-  assert.ok(fit.dropped > 0);
-  assert.equal(fit.shown.length + fit.dropped, chosen.length);
+  const fit = fitColumns({ cols: WIDE, avail: 1014, check: true, chosen });
+  assert.equal(fit.shown.length, WIDE.length, "all 26 columns, at a width where the automatic set draws far fewer");
+  assert.equal(fit.dropped, 0);
+  assert.ok(fit.shown.every((c) => fit.widths[c.k] === minWidth(c)), "each at its narrowest");
+  assert.equal(fit.total, total(fit) + CHECK_COL);
+  assert.ok(fit.total > 1014, "wider than the screen: the table scrolls");
+  assert.ok(fitColumns({ cols: WIDE, avail: 1014 }).shown.length < WIDE.length, "the automatic set still fits the width");
   const few = fitColumns({ cols: WIDE, avail: 1014, chosen: ["x3", "godown"] });
   assert.deepEqual(few.shown.map((c) => c.k), ["x3", "godown"], "an unpicked essential is not forced back in");
-  assert.equal(few.dropped, 0);
+  assert.equal(few.total, 1014, "a pick that fits still fills the width exactly");
+});
+
+test("the Columns menu has no cap: every column may be ticked at any width", () => {
+  const fit = fitColumns({ cols: WIDE, avail: 600 });
+  assert.ok(fit.folded.length > 0);
+  assert.ok(fit.folded.every((c) => fit.roomFor(c.k)));
 });
 
 test("a long heading word widens its column rather than overflowing it", () => {

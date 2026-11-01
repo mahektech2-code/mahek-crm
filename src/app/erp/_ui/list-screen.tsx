@@ -996,7 +996,8 @@ export function ListScreen({
               </div>
             ) : (
             <div ref={tableBox} className="overflow-x-auto">
-              <table className="w-full table-fixed">
+              {/* A person's own pick may be wider than the card: drawn whole, it scrolls sideways (`fit-columns.ts`). */}
+              <table className="w-full table-fixed" style={{ minWidth: fit.total + (menuOn ? MENU_COL : 0) }}>
                 <colgroup>
                   {selectOn ? <col style={{ width: CHECK_COL }} /> : null}
                   {shownCols.map((c) => (
