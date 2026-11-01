@@ -1266,7 +1266,7 @@ function orderList(scope: Scope): ScreenModule {
         labels
           ? []
           : checking
-            ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const }]
+            ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const, fits: false as const }]
             : [
               ...(verifier && (scope === "verifyOrders" || scope === "orders") ? [{ id: "verifyOrder", l: "Verify order" }] : []),
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
@@ -1291,7 +1291,8 @@ function orderList(scope: Scope): ScreenModule {
                     },
                   ]
                 : []),
-              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const }] : []),
+              /* Every billed line carries the invoice PDF action, and only a billed line has an invoice to print. */
+              ...(scope === "orders" ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const, fits: "invoiceFile" }] : []),
             ];
       const byNo = new Map<number, OrderLine[]>();
       /* An order is billed, checked and dispatched WHOLE, so its blockers are read off every line of it — not only the ones this tab draws. */
@@ -2895,7 +2896,8 @@ const orderDetails: ScreenModule = {
         bulk: [
           { id: "verify", l: "Confirm dispatch", prompt: DISPATCH_PROMPT("Every selected order leaves whole: each needs its invoice approved and every box scanned.") },
           { id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT },
-          { id: "printInvoices", l: "Print invoices", client: "printInvoices" },
+          /* Every line here is billed, so every one has an invoice. */
+          { id: "printInvoices", l: "Print invoices", client: "printInvoices", fits: false },
         ],
         noDataLine: "Nothing billed yet. An order arrives here once it is billed; it is dispatched after its invoice is approved.",
       },
