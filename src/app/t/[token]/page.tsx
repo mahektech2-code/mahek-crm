@@ -38,11 +38,19 @@ function TrackView({ v }: { v: OrderTrackingView }) {
     <main className="min-h-screen bg-canvas px-4 py-6 sm:py-10">
       <div className="mx-auto grid max-w-[1040px] gap-4 lg:grid-cols-[1.15fr_1fr] lg:items-start lg:gap-5">
         <header className="grid gap-3 lg:col-span-2 lg:flex lg:items-end lg:justify-between">
-          <div>
-            <div className="text-xs font-semibold tracking-label text-brand uppercase">Mahek Marketing India</div>
-            <h1 className="mt-1 text-2xl leading-tight font-semibold text-ink">Track Your Order</h1>
+          <div className="flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element -- a fixed 256 px file; the image optimiser is not on the public host's short list */}
+            <img src="/brand/mahek-logo.png" alt="Mahek" width={56} height={56} className="h-14 w-14 flex-none rounded-full bg-surface object-contain" />
+            <div>
+              <div className="text-xs font-semibold tracking-label text-brand uppercase">Mahek Marketing India</div>
+              <h1 className="mt-1 text-2xl leading-tight font-semibold text-ink">Track Your Order</h1>
+            </div>
           </div>
           <dl className="grid grid-cols-2 gap-x-8 gap-y-1">
+            <div className="col-span-2">
+              <dt className="text-xs text-muted">Billing party</dt>
+              <dd className="text-base font-medium text-ink">{v.billingParty}</dd>
+            </div>
             <div>
               <dt className="text-xs text-muted">Order number</dt>
               <dd className="text-base font-medium text-ink tabular-nums">{v.orderNo}</dd>

@@ -23,8 +23,8 @@ test("the public host serves the links and their assets, and refuses everything 
   assert.deepEqual(publicRouting("track.mahekindia.com", "/t/abc", pub), { kind: "pass" });
   assert.deepEqual(publicRouting("TRACK.mahekindia.com:443", "/po/abc", pub), { kind: "pass" });
   assert.deepEqual(publicRouting("track.mahekindia.com", "/_next/static/chunks/a.js", pub), { kind: "pass" });
-  for (const p of ["/favicon.ico", "/icon.png", "/apple-icon.png"]) assert.deepEqual(publicRouting("track.mahekindia.com", p, pub), { kind: "pass" }, p);
-  for (const p of ["/", "/login", "/erp/transport", "/api/version", "/api/notifications", "/accounts"]) assert.deepEqual(publicRouting("track.mahekindia.com", p, pub), { kind: "refuse" }, p);
+  for (const p of ["/favicon.ico", "/icon.png", "/apple-icon.png", "/brand/mahek-logo.png"]) assert.deepEqual(publicRouting("track.mahekindia.com", p, pub), { kind: "pass" }, p);
+  for (const p of ["/", "/login", "/erp/transport", "/api/version", "/api/notifications", "/accounts", "/brand/other.png"]) assert.deepEqual(publicRouting("track.mahekindia.com", p, pub), { kind: "refuse" }, p);
 });
 
 test("a public link opened on the staff host is sent to the public host; staff pages stay", () => {

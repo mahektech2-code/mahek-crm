@@ -143,6 +143,7 @@ describe("customer order tracking", () => {
 
     let page = (await T.publicOrderTracking(t.token))!;
     assert.equal(page.status.label, "Preparing Your Order");
+    assert.equal(page.billingParty, "Shree Paints", "the page says whose order it is");
     assert.equal(page.expectedOn, null, "no delivery date before anything says one");
     assert.deepEqual(page.products, [{ name: "ERPT Thinner", qty: 4, unit: "Cans", pack: "5 L can", measure: "20 Litre" }]);
     assert.equal(page.documents.invoice.available, false);
@@ -268,6 +269,7 @@ describe("customer order tracking", () => {
     const t = await tokenOf(o.orderNo);
     assert.ok(t.deliveryToken);
     const shop = (await T.publicOrderTracking(t.deliveryToken!))!;
+    assert.equal(shop.billingParty, "Shree Paints", "the shop delivered to is told who placed the order");
     assert.equal(shop.view, "delivery");
     assert.equal(shop.documents.invoice.available, false);
     assert.equal(shop.documents.invoice.detail, "Sent to the party who placed the order.");
