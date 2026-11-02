@@ -12,6 +12,7 @@
  * ------------------------------------------------------------------------- */
 
 import { similarity } from "./match";
+import { billKey, partyWords, sameParty } from "./delivery-proof";
 
 /**
  * Where a consignment is. The first and the last three are Mahek Plus's own
@@ -178,21 +179,97 @@ export function runningLate(t: { expectedDeliveryOn: string | null; billDate: st
   return !!t.billDate && daysBetween(t.billDate, today) > lateAfterDays;
 }
 
+/* ------------------------------------------------- what is pending */
+
+/** A bill at the transporter this many days with no LR is stuck there — the Today tab's "Needs attention" says the same. */
+export const AT_TRANSPORT_STUCK_DAYS = 2;
+
+/**
+ * Why a bill is waiting on the Documents desk:
+ *  - noLr:        a transporter's bill out longer than `stuckLrDays` with no LR (the "LR missing" alert);
+ *  - atTransport: at the transporter `AT_TRANSPORT_STUCK_DAYS` or more with no LR, not yet that old;
+ *  - signedCopy:  a Mahek Vehicle bill out longer than `stuckLrDays` with no signed copy.
+ */
+export type PendingKind = "noLr" | "atTransport" | "signedCopy";
+export type PendingFacts = {
+  ownVehicle: boolean;
+  lrId: string | null;
+  signedCopyId: string | null;
+  phase: Phase;
+  billDate: string | null;
+  atTransportAt: string | null;
+};
+
+/**
+ * What a bill is pending for, and for how many days, or null. One bill has one
+ * reason: the "LR missing" alert wins over "at the transporter", because it
+ * names the same missing paper with more days on it. A bill already delivered
+ * is never pending, whatever paper it lacks.
+ */
+export function pendingOf(c: PendingFacts, today: string, stuckLrDays: number): { kind: PendingKind; days: number } | null {
+  if (c.phase === "delivered") return null;
+  const out = c.billDate ? daysBetween(c.billDate, today) : null;
+  if (c.ownVehicle) return !c.signedCopyId && out != null && out > stuckLrDays ? { kind: "signedCopy", days: out } : null;
+  if (c.lrId) return null;
+  if (out != null && out > stuckLrDays) return { kind: "noLr", days: out };
+  if (c.phase === "lrPending" && c.atTransportAt) {
+    const at = daysBetween(c.atTransportAt.slice(0, 10), today);
+    if (at >= AT_TRANSPORT_STUCK_DAYS) return { kind: "atTransport", days: at };
+  }
+  return null;
+}
+
 /* ------------------------------------------------------- the LR desk */
 
-export type LrFacts = { transporter: string | null; packages: number | null; destination: string | null };
-export type LrCandidate = { id: string; transporter: string | null; packages: number | null; area: string | null; party: string; atTransport: boolean };
+export type LrFacts = {
+  transporter: string | null;
+  packages: number | null;
+  destination: string | null;
+  /** The consignee printed on the LR — the shop the goods go to. */
+  partyHint?: string | null;
+  /** Our invoice number printed on the LR, where the transporter wrote it. */
+  billHint?: string | null;
+};
+export type LrCandidate = {
+  id: string;
+  transporter: string | null;
+  packages: number | null;
+  area: string | null;
+  /** The delivery party: who the goods go to, so who the LR names as consignee. */
+  party: string;
+  /** Who is billed, where it is not the delivery party — some LRs name the buyer instead. */
+  billingParty?: string | null;
+  billNo?: string | null;
+  atTransport: boolean;
+};
 
 /**
  * Which waiting bills an uploaded LR most likely carries, best first. A
- * suggestion, never a decision: the transporter named alike, the destination
- * naming the bill's area or party, the box count matching, and the bill having
- * actually reached the transporter. Nothing is attached by this.
+ * suggestion, never a decision: our invoice number printed on the LR, the
+ * consignee being the bill's party, the transporter named alike, the
+ * destination naming the bill's area or party, the box count matching, and
+ * the bill having actually reached the transporter. A consignee that is
+ * plainly a DIFFERENT shop counts against a bill. Nothing is attached by this.
  */
 export function rankForLr(lr: LrFacts, cands: LrCandidate[]): { id: string; score: number; reasons: string[] }[] {
+  const bill = billKey(lr.billHint);
+  const consignee = partyWords(lr.partyHint).length ? lr.partyHint! : null;
   const out = cands.map((c) => {
     let score = 0;
     const reasons: string[] = [];
+    if (bill && billKey(c.billNo) === bill) {
+      score += 6;
+      reasons.push("same bill no.");
+    }
+    if (consignee) {
+      if (sameParty(consignee, c.party)) {
+        score += 4;
+        reasons.push("same party");
+      } else if (c.billingParty && sameParty(consignee, c.billingParty)) {
+        score += 3;
+        reasons.push("same party");
+      } else score -= 2;
+    }
     if (lr.transporter && c.transporter) {
       const s = Math.max(similarity(lr.transporter, c.transporter), similarity(c.transporter, lr.transporter));
       if (s >= 0.5) {

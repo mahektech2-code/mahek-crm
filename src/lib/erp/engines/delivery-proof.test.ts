@@ -116,3 +116,12 @@ test("the customer's page for our own vehicle skips the transporter's steps", as
   assert.ok(!pending.includes("at_transport"));
   assert.ok(pending.includes("in_transit") && pending.includes("delivered"));
 });
+
+test("two shops are told apart by their own words, never by \"Hardware\" or \"Traders\"", async () => {
+  const { sameParty } = await import("./delivery-proof");
+  assert.equal(sameParty("Dinesh Hardware", "DINESH HARDWARE & PAINTS"), true);
+  assert.equal(sameParty("M/s. Saif Traders", "SAIF TRADERS"), true);
+  assert.equal(sameParty("Om Hardware", "Sai Hardware"), false);
+  assert.equal(sameParty("Hardware Stores", "Sai Hardware Stores"), false);
+  assert.equal(sameParty(null, "Sai Hardware"), false);
+});

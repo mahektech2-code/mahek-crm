@@ -61,7 +61,9 @@ Each LR photo or PDF is read by OpenAI (<Setting k="erp.ai.visionModel" />) as s
 An LR is one consignment to one consignee, so the bills under it must go to one delivery party. A bill already under another LR, or delivered, cannot be attached.
 </Rule>
 
-The desk *suggests* the bills an LR carries — same transporter, destination naming the bill's area or party, box count matching, already at the transporter — and attaches nothing by itself.
+The desk *suggests* the bills an LR carries — our invoice number printed on it, its consignee being the bill's party (or, where the LR names the buyer, the billed party), same transporter, destination naming the bill's area or party, box count matching, already at the transporter — and attaches nothing by itself. A consignee that is plainly another shop counts against a bill. Party names are compared on their own words: "Hardware", "Traders", "Paints" and the like are set aside, so "Om Hardware" is never taken for "Sai Hardware".
+
+An LR's date is read from the date as printed, day first (31/10/26 is 31 October), not from the AI's own conversion. A date that cannot be this LR's — in the future, or more than four months old — is not used; where it reads as January and exactly one of October, November or December fits (a handwritten 10 read as 1), that month is taken and the desk is told to check it.
 
 ## Vehicle trips and the transport payment
 
