@@ -153,7 +153,9 @@ async function boardOf(fc: FactoryCtx, key: string, lines?: LoadingLine[]): Prom
 /** Per order on the lorry with stickers: how many are on, and the numbers still off. */
 async function stickerCounts(ls: LoadingLine[]): Promise<LorryStickers[]> {
   const nos = [...new Set(ls.map((l) => l.orderNo))];
-  const places = await stickerPlaces(db, nos);
+  /* Only a boxed line's stickers are loaded by scanning: a loose can goes on by its own label, so its stickers are never "still off". */
+  const boxedLines = new Set(ls.filter((l) => l.boxed).map((l) => l.id));
+  const places = (await stickerPlaces(db, nos)).filter((p) => boxedLines.has(p.lineId));
   if (!places.length) return [];
   const withIds = [...new Set(places.map((p) => p.orderNo))];
   const parties = (await db.execute(sql`
@@ -336,10 +338,13 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
       if (heldBox === code) return fail("Now its sticker", `Box ${code} is read.`, "Scan the dispatch sticker on this box.", await boardOf(fc, key, lines), null, null, true);
       return fail("Scan its sticker first", `Box ${heldBox} is waiting for its dispatch sticker.`, "Scan the sticker on that box, or press Cancel.", await boardOf(fc, key, lines), null);
     }
-    /* A box an order with stickers still wants is not loaded alone: the phone asks for its sticker. */
+    /* A box an order with stickers still wants is not loaded alone: the phone asks for its sticker.
+       A loose can is: its own LU label is the only label on it, and asking for a
+       dispatch sticker nobody sticks on a can stopped every loose line printed
+       with stickers — the loaders went to the ERP desk, which never asked. */
     const unit = await unitInfo(code);
     if (unit && unit.status === "available" && unit.godownId === fc.godown.id) {
-      const wanting = lines.filter((l) => l.skuId === unit.skuId && l.scanned < l.target);
+      const wanting = lines.filter((l) => l.boxed && l.skuId === unit.skuId && l.scanned < l.target);
       if ((await stickeredLines(db, wanting.map((l) => l.id))).size) {
         const b = await boardOf(fc, key, lines);
         return { ok: true, code, tone: "ok", title: "Box read", message: `${unit.skuName} · lot ${unit.lotCode}.`, board: b, task: b.lorry?.task ?? "", data: null, half: { kind: "box", code, says: "Now scan the dispatch sticker on this box" } };
