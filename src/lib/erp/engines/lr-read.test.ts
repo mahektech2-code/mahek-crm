@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLrNo, cleanLrReading, fitsStyle, freightTermOf, listedTransporter, lrShape, matchTransporter, styleLine, type LrRawReading, type LrStyle } from "./lr-read";
+import { cleanInvoiceNo, cleanLrNo, cleanLrReading, dayFromPrinted, lrDateOf, fitsStyle, freightTermOf, listedTransporter, lrShape, matchTransporter, styleLine, type LrRawReading, type LrStyle } from "./lr-read";
 
 const DIR: LrStyle[] = [
   { name: "Shree Maruti Courier", label: "GR Number", examples: ["1048821", "1048830", "1048902"] },
@@ -113,4 +113,39 @@ test("nonsense figures are dropped", () => {
 test("the style line names the label and the examples", () => {
   assert.equal(styleLine(DIR[0]), '- Shree Maruti Courier — calls it "GR Number"; earlier numbers: 1048821, 1048830, 1048902');
   assert.equal(styleLine(DIR[2]), "- Gati");
+});
+
+test("an LR's date is read day first from what is printed, not from the model's conversion", () => {
+  const today = "2026-11-02";
+  assert.equal(dayFromPrinted("31/10/26", today), "2026-10-31");
+  assert.equal(dayFromPrinted("31-10-2026", today), "2026-10-31");
+  assert.equal(dayFromPrinted("31.10.26", today), "2026-10-31");
+  assert.equal(dayFromPrinted("31 Oct 2026", today), "2026-10-31");
+  assert.equal(dayFromPrinted("31-Oct-26", today), "2026-10-31");
+  assert.equal(dayFromPrinted("9/10", today), "2026-10-09");
+  assert.equal(dayFromPrinted("25/12", today), "2025-12-25", "no year: never in the future");
+  assert.equal(dayFromPrinted("31/02/26", today), null);
+  assert.equal(dayFromPrinted("no date", today), null);
+  /* The screenshot: printed 31/10/26, converted by the model to 2026-01-31. */
+  assert.deepEqual(lrDateOf("31/10/26", "2026-01-31", today), { day: "2026-10-31", note: null });
+  /* Nothing printed to fall back on, and a handwritten 10 read as 1: repaired, and said. */
+  const fixed = lrDateOf(null, "2026-01-31", today);
+  assert.equal(fixed.day, "2026-10-31");
+  assert.match(fixed.note!, /taken as 2026-10-31/);
+  /* Out of range with no single repair: left alone, and said. */
+  const left = lrDateOf(null, "2025-03-05", today);
+  assert.equal(left.day, null);
+  assert.match(left.note!, /cannot be this LR's/);
+  assert.deepEqual(lrDateOf(null, "2026-10-30", today), { day: "2026-10-30", note: null });
+});
+
+test("an LR's consignee and our invoice number are read, and a GSTIN or e-way number is not taken for an invoice", () => {
+  assert.equal(cleanInvoiceNo(" MMI/26-27/1919 "), "MMI/26-27/1919");
+  assert.equal(cleanInvoiceNo("27AAPFU0939F1ZV"), null);
+  assert.equal(cleanInvoiceNo("381012345678"), null);
+  assert.equal(cleanInvoiceNo("NIL"), null);
+  const r = cleanLrReading({ lrNo: "6741", lrLabelSeen: "No.", transporter: null, lrDate: null, lrDatePrinted: "31/10/26", destination: "Harda", packages: 37, freightTerm: "To Pay", freightRupees: null, consignee: "  Dinesh   Hardware ", invoiceNo: "MMI/26-27/1925", confidence: "high" }, [], "2026-11-02");
+  assert.equal(r.partyHint, "Dinesh Hardware");
+  assert.equal(r.billHint, "MMI/26-27/1925");
+  assert.equal(r.lrDate, "2026-10-31");
 });

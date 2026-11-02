@@ -77,6 +77,39 @@ export function billKey(v: string | null | undefined): string {
 }
 
 /**
+ * Words nearly every shop's name carries — "Om Hardware" and "Sai Hardware"
+ * are two customers, and a match on "hardware" would make them one. Set aside
+ * before two party names are compared.
+ */
+const GENERIC_PARTY_WORDS = new Set([
+  "m", "s", "ms", "the", "and", "co", "company", "pvt", "private", "ltd", "limited", "llp",
+  "traders", "trader", "trading", "enterprises", "enterprise", "agencies", "agency", "stores", "store",
+  "hardware", "hardwares", "paints", "paint", "sons", "son", "industries", "corporation", "corp",
+  "centre", "center", "house", "mart", "shop", "brothers", "bros", "distributors", "distributor", "sales", "marketing",
+]);
+
+/** A party name with case, punctuation and the generic words set aside — the words that tell one shop from another. */
+export function partyWords(name: string | null | undefined): string[] {
+  return (name ?? "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !GENERIC_PARTY_WORDS.has(w));
+}
+
+/**
+ * Whether a name read off a paper (an LR's consignee, a signed copy's party)
+ * is the same shop as a customer on the book. Only the distinctive words are
+ * compared; a name of nothing but generic words ("Hardware Stores") matches
+ * nothing, because it could be anybody.
+ */
+export function sameParty(read: string | null | undefined, party: string | null | undefined): boolean {
+  const a = partyWords(read);
+  const b = partyWords(party);
+  if (!a.length || !b.length) return false;
+  return Math.max(similarity(a.join(" "), b.join(" ")), similarity(b.join(" "), a.join(" "))) >= 0.6;
+}
+
+/**
  * Every copy on the desk that looks like one uploaded EARLIER, and what it
  * looks like. Only copies still on the desk and not cleared by a person are
  * flagged; the earlier one of a pair is never flagged, so discarding the later
@@ -173,7 +206,11 @@ export function confidentPick(ranked: { id: string; score: number }[], min: numb
   return a.id;
 }
 
-/** How sure a suggestion must be for "Attach all ready": an LR needs the transporter and the destination; a signed copy its bill number. */
+/**
+ * How sure a suggestion must be for "Attach all ready": an LR needs the
+ * transporter and either the destination, the consignee or our invoice number
+ * printed on it; a signed copy its bill number.
+ */
 export const READY_SCORE = { lr: 7, signed_copy: 6 } as const;
 
 /** What a copy on the desk still needs before it can be attached, in the order a person would see it. */

@@ -400,7 +400,7 @@ export async function lrForEdit(id: string): Promise<UploadedLr | null> {
 export function suggestBills(lr: UploadedLr, waiting: Consignment[]) {
   return rankForLr(
     lr,
-    waiting.map((c) => ({ id: c.id, transporter: c.transporter, packages: c.packages, area: c.area ?? c.partyCity, party: c.deliveryParty, atTransport: c.phase === "lrPending" })),
+    waiting.map((c) => ({ id: c.id, transporter: c.transporter, packages: c.packages, area: c.area ?? c.partyCity, party: c.deliveryParty, billingParty: c.party, billNo: c.billNo, atTransport: c.phase === "lrPending" })),
   );
 }
 
@@ -666,7 +666,7 @@ export type LrInput = {
   readingId?: string | null;
   /** lr (default) | signed_copy. */
   kind?: ProofKind | null;
-  /** A signed copy: who signed, the day on it, and the bill and party stamped on it. */
+  /** A signed copy: who signed and the day on it. Bill and party: what a signed copy is stamped with, or the consignee and our invoice number printed on an LR. */
   receivedBy?: string | null;
   deliveredOn?: string | null;
   billHint?: string | null;
@@ -843,6 +843,9 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput, opts
     freightPaise: input.freightRupees != null ? Math.round(input.freightRupees * 100) : null,
     freightTerm: input.freightTerm || null,
     note: (input.note ?? "").trim() || null,
+    /* The consignee and our invoice number printed on it — sent by the Documents desk only, so an edit that does not send them keeps them. */
+    ...(input.partyHint !== undefined ? { partyHint: (input.partyHint ?? "").trim().replace(/\s+/g, " ").slice(0, 160) || null } : {}),
+    ...(input.billHint !== undefined ? { billHint: (input.billHint ?? "").trim().slice(0, 80) || null } : {}),
     ...(input.fileId ? { fileId: input.fileId } : {}),
   };
   /* What the party was told and is now different: the number, the transporter, the date on the paper. */

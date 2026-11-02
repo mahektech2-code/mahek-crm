@@ -42,11 +42,14 @@ const ReadingSchema = z.object({
   lrNo: z.string().nullable().describe("The consignment number exactly as printed, without its label. Null if none is printed."),
   lrLabelSeen: z.string().nullable().describe('The words printed beside that number, e.g. "G.R. No.", "LR No", "Consignment Note No".'),
   transporter: z.string().nullable().describe("The transport company that issued the receipt — from its letterhead. Use the directory's spelling where it is one of them."),
-  lrDate: z.string().nullable().describe("The receipt's date as YYYY-MM-DD. Indian receipts write dates day first: 09/10/26 is 2026-10-09."),
+  lrDatePrinted: z.string().nullable().describe('The receipt\'s date EXACTLY as printed or handwritten, characters as they appear, e.g. "31/10/26" or "31-Oct-2026". Read every digit of the month: a handwritten 10, 11 or 12 is two digits.'),
+  lrDate: z.string().nullable().describe("The same date as YYYY-MM-DD. Indian receipts write dates day first: 09/10/26 is 2026-10-09, 31/10/26 is 2026-10-31."),
   destination: z.string().nullable().describe("The destination / to station printed on the receipt, in English letters."),
   packages: z.number().nullable().describe("The number of articles / packages / boxes."),
   freightTerm: z.string().nullable().describe('How freight is paid as printed: "Paid", "To Pay" or "TBB" (to be billed).'),
   freightRupees: z.number().nullable().describe("The total freight in rupees, if printed."),
+  consignee: z.string().nullable().describe("The CONSIGNEE — the party the goods are sent to, written beside \"Consignee\" / \"To\" / \"Party\". Not the consignor (the sender, which is the paint company itself) and not the transport company."),
+  invoiceNo: z.string().nullable().describe('The sender\'s invoice / bill number written on the receipt (often beside "Invoice No", "Inv No", "Bill No"; often like MMI/26-27/1188). Not the e-way bill number, the LR number or a GSTIN. Null if none.'),
   confidence: z.enum(["high", "check"]).describe('"high" only if the number is printed clearly and you are sure which number it is.'),
   paper: z.enum(["lr", "signed_copy", "other"]).describe('What this paper is: "lr" for a transporter\'s lorry receipt; "signed_copy" for our own invoice or delivery challan signed or stamped by the customer on receipt; "other" for anything else.'),
 });
@@ -70,6 +73,8 @@ The consignment number is the one the transport company gives this consignment. 
 
 The transporters this company uses, how each one labels its consignment number, and what its earlier numbers looked like:
 ${directory}
+
+The consignor (sender) is always the paint company itself; the consignee is its customer, and is the one to read.
 
 First decide which transporter issued the receipt from its letterhead. Then read the number printed under that transporter's label, and expect it to look like its earlier numbers. If it is handwritten or smudged, or you cannot tell which number it is, answer it with confidence "check".`;
 }
@@ -108,7 +113,7 @@ export async function readUploadedLr(ctx: ErpContext, fileId: string): Promise<R
 }
 
 /** The fields a reading proposed, in the shape the upload saves them. */
-const COMPARED = ["lrNo", "lrDate", "transporter", "destination", "packages", "freightTerm", "freightRupees"] as const;
+const COMPARED = ["lrNo", "lrDate", "transporter", "destination", "packages", "freightTerm", "freightRupees", "partyHint", "billHint"] as const;
 
 /**
  * Once the LRs are uploaded, each reading is marked accepted or edited against
@@ -198,6 +203,8 @@ export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{
         freight_term = coalesce(freight_term, ${set.freight_term}),
         freight_paise = coalesce(freight_paise, ${set.freight_paise}::bigint),
         lr_date = case when ${set.lr_date}::date is not null and status = 'unassigned' then ${set.lr_date}::date else lr_date end,
+        party_hint = coalesce(party_hint, ${s.partyHint}),
+        bill_hint = coalesce(bill_hint, ${s.billHint}),
         note = coalesce(note, ${set.note}),
         read_lr_no = ${s.lrNo ? s.lrNo.toUpperCase() : null},
         read_kind = ${out.output.paper ?? null},
@@ -212,7 +219,7 @@ export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{
       servedBy: out.model,
       userId: ctx.actor.id,
     });
-    const [after] = (await db.execute(sql`select lr_no as "lrNo", lr_date::text as "lrDate", transporter, destination, packages, freight_term as "freightTerm", freight_paise as "freightPaise" from erp_lrs where id = ${id}`)) as unknown as { lrNo: string | null; lrDate: string; transporter: string | null; destination: string | null; packages: number | null; freightTerm: string | null; freightPaise: number | null }[];
+    const [after] = (await db.execute(sql`select lr_no as "lrNo", lr_date::text as "lrDate", transporter, destination, packages, freight_term as "freightTerm", freight_paise as "freightPaise", party_hint as "partyHint", bill_hint as "billHint" from erp_lrs where id = ${id}`)) as unknown as { lrNo: string | null; lrDate: string; transporter: string | null; destination: string | null; packages: number | null; freightTerm: string | null; freightPaise: number | null; partyHint: string | null; billHint: string | null }[];
     await settleLrReadings(ctx, [{ readingId, lrId: id, final: { ...after, freightRupees: after.freightPaise == null ? null : Number(after.freightPaise) / 100 } }]);
     read++;
   }

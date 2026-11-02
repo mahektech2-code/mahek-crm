@@ -32,10 +32,16 @@ export type LrRawReading = {
   lrLabelSeen: string | null;
   transporter: string | null;
   lrDate: string | null;
+  /** The date exactly as printed or written ("31/10/26"). Read by the rules here, day first, rather than trusting the model's conversion. */
+  lrDatePrinted?: string | null;
   destination: string | null;
   packages: number | null;
   freightTerm: string | null;
   freightRupees: number | null;
+  /** The consignee — the shop the goods go to. */
+  consignee?: string | null;
+  /** Our invoice / bill number, where the LR carries it. */
+  invoiceNo?: string | null;
   confidence: "high" | "check";
 };
 
@@ -48,6 +54,10 @@ export type LrSuggestion = {
   packages: number | null;
   freightTerm: "Paid" | "To pay" | "TBB" | null;
   freightRupees: number | null;
+  /** The consignee printed on the LR. */
+  partyHint: string | null;
+  /** Our invoice number printed on the LR. */
+  billHint: string | null;
   /** The number is worth a second look: unsure, or not shaped like this transporter's. */
   checkNumber: boolean;
   /** Sentences for the person, about what was read and what to check. */
@@ -180,6 +190,79 @@ function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 }
 
+const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const iso = (y: number, m: number, d: number) => validDay(`${y}-${pad(m)}-${pad(d)}`);
+const inWindow = (d: string | null, today: string) => !!d && d <= today && daysBetween(d, today) <= LR_MAX_AGE_DAYS;
+
+/**
+ * A date as an Indian LR prints it, DAY FIRST — "31/10/26", "31-10-2026",
+ * "31.10.26", "31 Oct 2026", "31/10" — as YYYY-MM-DD, or null. A year left
+ * off is the latest year that does not put the day in the future. Asked of
+ * the printed text rather than the model's own conversion, which on a
+ * handwritten date has turned 31/10/26 into 2026-01-31.
+ */
+export function dayFromPrinted(text: string | null | undefined, today: string): string | null {
+  const t = (text ?? "").trim().toLowerCase();
+  if (!t) return null;
+  const year = (y: string | undefined, m: number, d: number): number | null => {
+    if (y) return y.length <= 2 ? 2000 + Number(y) : Number(y);
+    const ty = Number(today.slice(0, 4));
+    return (iso(ty, m, d) ?? "9999") <= today ? ty : ty - 1;
+  };
+  let m = /^(\d{1,2})\s*[/.\-\s]\s*(\d{1,2})\s*(?:[/.\-\s]\s*(\d{2}|\d{4}))?$/.exec(t);
+  if (m) {
+    const [d, mo] = [Number(m[1]), Number(m[2])];
+    const y = year(m[3], mo, d);
+    return y ? iso(y, mo, d) : null;
+  }
+  m = /^(\d{1,2})(?:st|nd|rd|th)?\s*[/.\-\s]?\s*([a-z]{3,9})\.?\s*[/.\-\s,]?\s*(\d{2}|\d{4})?$/.exec(t);
+  if (m) {
+    const mo = MONTHS[m[2].slice(0, 4)] ?? MONTHS[m[2].slice(0, 3)];
+    if (!mo) return null;
+    const d = Number(m[1]);
+    const y = year(m[3], mo, d);
+    return y ? iso(y, mo, d) : null;
+  }
+  return null;
+}
+
+/**
+ * The LR's date, from what is printed first and the model's conversion
+ * second, kept only where it can be this LR's — not in the future and not
+ * older than `LR_MAX_AGE_DAYS`.
+ *
+ * One repair, said in a note: a handwritten "10", "11" or "12" whose second
+ * digit was missed reads as month 1. Where the date read is out of range and
+ * exactly one of those months puts it in range, that month is taken — and the
+ * desk is told to check it.
+ */
+export function lrDateOf(printed: string | null | undefined, modelIso: string | null | undefined, today: string): { day: string | null; note: string | null } {
+  const fromText = dayFromPrinted(printed, today);
+  const fromModel = validDay(modelIso);
+  for (const d of [fromText, fromModel]) if (inWindow(d, today)) return { day: d, note: null };
+  const read = fromText ?? fromModel;
+  if (!read) return { day: null, note: printed?.trim() ? `The date "${printed.trim()}" could not be read — check it against the photo.` : null };
+  const [y, mo, d] = read.split("-").map(Number);
+  if (mo === 1) {
+    const fits = [10, 11, 12]
+      .flatMap((m) => [iso(y, m, d), iso(y - 1, m, d)])
+      .filter((x): x is string => inWindow(x, today));
+    if (fits.length === 1) return { day: fits[0], note: `The date was read as ${read}, which cannot be this LR's — taken as ${fits[0]}. Check it against the photo.` };
+  }
+  return { day: null, note: `The date read (${read}) cannot be this LR's — it was left as the upload day. Check it against the photo.` };
+}
+
+/** Our invoice number as printed on an LR: kept only where it carries digits, and never a GSTIN or e-way bill number. */
+export function cleanInvoiceNo(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim().replace(/\s+/g, "").toUpperCase();
+  if (!s || !/\d/.test(s) || s.length > 40) return null;
+  /* A GSTIN is 15 characters, two digits then a PAN; an e-way bill number is twelve digits. */
+  if (/^\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(s) || /^\d{12}$/.test(s)) return null;
+  return s;
+}
+
 /** The model's reading, checked against the directory and the day. */
 export function cleanLrReading(r: LrRawReading, directory: LrStyle[], today: string): LrSuggestion {
   const notes: string[] = [];
@@ -200,15 +283,16 @@ export function cleanLrReading(r: LrRawReading, directory: LrStyle[], today: str
   if (!lrNo) notes.push(r.lrNo ? `"${r.lrNo}" does not look like an LR number — type it from the photo.` : "No LR number could be read — type it from the photo.");
   else if (checkNumber && !notes.some((n) => n.startsWith(lrNo))) notes.push(`Check ${lrNo} against the photo.`);
 
-  let lrDate = validDay(r.lrDate);
-  if (lrDate && (lrDate > today || daysBetween(lrDate, today) > LR_MAX_AGE_DAYS)) {
-    notes.push(`The date read (${lrDate}) cannot be this LR's — it was left as today.`);
-    lrDate = null;
-  }
+  const dated = lrDateOf(r.lrDatePrinted, r.lrDate, today);
+  const lrDate = dated.day;
+  if (dated.note) notes.push(dated.note);
 
   const packages = r.packages != null && Number.isFinite(r.packages) && r.packages > 0 && r.packages <= 10_000 ? Math.trunc(r.packages) : null;
   const freightRupees = r.freightRupees != null && Number.isFinite(r.freightRupees) && r.freightRupees > 0 && r.freightRupees < 10_000_000 ? Math.round(r.freightRupees * 100) / 100 : null;
   const destination = r.destination?.trim() || null;
 
-  return { lrNo, lrDate, transporter, destination, packages, freightTerm: freightTermOf(r.freightTerm), freightRupees, checkNumber: Boolean(lrNo) && checkNumber, notes };
+  const partyHint = r.consignee?.trim().replace(/\s+/g, " ").slice(0, 160) || null;
+  const billHint = cleanInvoiceNo(r.invoiceNo);
+
+  return { lrNo, lrDate, transporter, destination, packages, freightTerm: freightTermOf(r.freightTerm), freightRupees, partyHint, billHint, checkNumber: Boolean(lrNo) && checkNumber, notes };
 }

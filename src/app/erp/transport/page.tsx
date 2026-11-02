@@ -143,7 +143,8 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           notifyOn={cfg["erp.logistics.notifyCustomers"]}
           canWrite={canWrite}
           canRead={kit?.canRead ?? false}
-          initialKind={one("kind") === "signed_copy" ? "signed_copy" : "lr"}
+          stuckLrDays={cfg["erp.ai.alerts.stuckLrDays"]}
+          initialKind={one("kind") === "signed_copy" ? "signed_copy" : one("kind") === "pending" ? "pending" : "lr"}
         />
       ) : null}
       {view === "trackLr" ? (

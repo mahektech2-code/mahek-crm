@@ -176,6 +176,13 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(lrs.length, 2);
     const lr = lrs.find((l) => l.lrNo === "LR-7781")!;
     assert.equal(L.suggestBills(lr, await L.consignments())[0].id, t.id);
+    /* The desk records whose consignment it is and our invoice number; an edit that does not send them keeps them. */
+    const full = { lrNo: lr.lrNo, lrDate: lr.lrDate, transporter: lr.transporter, destination: lr.destination, packages: lr.packages };
+    assert.ok((await L.editLr(ctx, lr.id, { ...full, partyHint: "  Dinesh   Hardware ", billHint: " MMI/26-27/1925 " })).ok);
+    assert.ok((await L.editLr(ctx, lr.id, full)).ok);
+    const kept = (await L.lrForEdit(lr.id))!;
+    assert.equal(kept.partyHint, "Dinesh Hardware");
+    assert.equal(kept.billHint, "MMI/26-27/1925");
     /* Voiding asks first: the bare act is refused, and the modal names the LR leaving the desk. */
     const nine = lrs.find((l) => l.lrNo === "LR-9")!;
     assert.equal(msg(await L.voidLr(ctx, nine.id, "duplicate photo")), "Check what this affects and confirm it first.");
