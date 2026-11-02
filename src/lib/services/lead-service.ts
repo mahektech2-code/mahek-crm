@@ -44,6 +44,7 @@ import {
   type MoveDirection,
 } from "../engines/lead-ladder";
 import { NURTURE_SOURCE_TYPE } from "../engines/lead-nurture";
+import { skippedSentence, stageSelection } from "../engines/lead-stage-select";
 import { PROSPECT_ANSWERS, prospectAnswerFaults } from "../engines/lead-prospect-answers";
 import {
   stageLabel,
@@ -676,7 +677,7 @@ export async function leadRecord(customerId: string): Promise<LeadRecord | null>
  * belongs anyway.
  */
 
-export type LeadMoveKind = "passed" | "overridden" | "reverted";
+export type LeadMoveKind = "passed" | "overridden" | "reverted" | "skipped";
 
 /** Rungs a lead has finished at. None of them can be paused. */
 const ENDED_STAGES: readonly LeadStage[] = ["lost", "won", "customer", "active_distributor"];
@@ -694,10 +695,13 @@ export type LeadMoveRefusalCode =
   | "prospect_reason"
   | "prospect_answers"
   | "prospect_no_override"
-  | "revert_not_permitted";
+  | "revert_not_permitted"
+  | "select_not_offered"
+  | "select_use_move"
+  | "skip_reason";
 
 export type LeadMoveDecision =
-  | { ok: true; kind: LeadMoveKind; overriddenConditions: string[] }
+  | { ok: true; kind: LeadMoveKind; overriddenConditions: string[]; skippedStages?: LeadStage[] }
   | { ok: false; code: LeadMoveRefusalCode; message: string; missing: Condition[] };
 
 /**
@@ -731,6 +735,76 @@ async function resumeDirection(
   const parked = customerId ? await parkedFromRung(customerId) : null;
   if (!parked || !ladder.includes(foldStage(parked))) return "up";
   return to === parked ? "same" : directionOf(parked, to, salesType);
+}
+
+/**
+ * A SALES MANAGER CHOOSING A LATER STAGE FROM QUALIFICATION.
+ *
+ * Its own evaluator rather than a flag on `evaluateLeadStageMove`, because that
+ * one is shared with the handset and an APK cannot be recalled: nothing a phone
+ * queues can ask for this. What is allowed, what is never lifted and why this is
+ * not an override are all in `engines/lead-stage-select.ts`, which the screen
+ * reads too, so what the picker offers and what this accepts cannot differ.
+ *
+ * The caller has already asked the capability (`lead.verify`); this answers
+ * about the lead and the reason.
+ */
+export async function evaluateStageSelection(input: {
+  lead: Pick<LeadRow, "leadStage" | "leadSalesType">;
+  gate: LeadGateInput;
+  to: LeadStage;
+  reasonCode?: string | null;
+}): Promise<LeadMoveDecision> {
+  const config = await getConfig();
+  const selection = stageSelection(input.gate, { requireNextAction: config["leads.requireNextAction"] });
+  if (!selection.applies) {
+    return {
+      ok: false,
+      code: "select_not_offered",
+      message:
+        "Choosing a later stage is offered from Qualification only, on the direct and third-party ladders.",
+      missing: [],
+    };
+  }
+  if (input.to === "sample_trial") {
+    return {
+      ok: false,
+      code: "select_use_move",
+      message: "Sample / Trial is the next rung, so it is an ordinary move rather than a skip.",
+      missing: [],
+    };
+  }
+  const choice = selection.choices.find((c) => c.to === input.to);
+  if (!choice) {
+    return {
+      ok: false,
+      code: "off_ladder",
+      message: `${stageLabel(input.to)} is not a stage this lead can be moved to from Qualification.`,
+      missing: [],
+    };
+  }
+  if (!choice.available) {
+    return {
+      ok: false,
+      code: "gate_shut",
+      message: choice.missing.length === 0
+        ? choice.reasons[0] ?? `${stageLabel(input.to)} is not open.`
+        : `${stageLabel(input.to)} is not open yet. ${choice.missing.length} thing${
+            choice.missing.length === 1 ? "" : "s"
+          } still to do.`,
+      missing: choice.missing,
+    };
+  }
+  const codes = config["leads.stageSkipReasons"].map((r) => r.code);
+  if (!input.reasonCode || !codes.includes(input.reasonCode)) {
+    return {
+      ok: false,
+      code: "skip_reason",
+      message: `Say why ${skippedSentence(choice.skips)} ${choice.skips.length === 1 ? "is" : "are"} not needed. Pick one of the reasons.`,
+      missing: [],
+    };
+  }
+  return { ok: true, kind: "skipped", overriddenConditions: [], skippedStages: choice.skips };
 }
 
 /**
@@ -1143,6 +1217,8 @@ export async function applyLeadStageMove(
      * is asked where it can be asked.
      */
     hold?: { reason?: string; resumeDate: string } | null;
+    /** The reason's wording, for the timeline sentence of a skipped move only. */
+    reasonLabel?: string | null;
     /** The business date, resolved by the caller — engines read no clock. */
     day: string;
     /**
@@ -1193,6 +1269,7 @@ export async function applyLeadStageMove(
       reasonCode: o.reasonCode ?? null,
       note: o.note ?? null,
       overriddenConditions: o.decision.overriddenConditions,
+      skippedStages: o.decision.skippedStages ?? null,
       actorId: actor.userId,
       actorRole: actor.hat?.role ?? null,
       actorApp: actor.hat?.app ?? null,
@@ -1375,12 +1452,12 @@ export async function applyLeadStageMove(
      */
     await writeTimelineEvent(tx, {
       customerId: lead.id,
-      eventType: MBOS_EVENT.leadStage,
+      eventType: o.decision.kind === "skipped" ? MBOS_EVENT.leadStageSkipped : MBOS_EVENT.leadStage,
       sourceApp: actor.sourceApp,
       sourceRecordId: transitionId,
       occurredAt: new Date(),
       actorUserId: actor.userId,
-      summary: stageMoveSummary(from, to, o.decision, promoted),
+      summary: stageMoveSummary(from, to, o.decision, promoted, o.reasonLabel),
     });
 
     if (promoted) {
@@ -1440,7 +1517,17 @@ function stageMoveSummary(
   to: LeadStage,
   decision: Extract<LeadMoveDecision, { ok: true }>,
   promoted: boolean,
+  reasonLabel?: string | null,
 ): string {
+  /* A skipped move names what was NOT climbed and why, so the stream cannot
+     read like an ordinary climb. */
+  if (decision.kind === "skipped") {
+    const skipped = decision.skippedStages?.length
+      ? ` — ${skippedSentence(decision.skippedStages)} not climbed`
+      : "";
+    const why = reasonLabel ? `. Reason: ${reasonLabel}` : "";
+    return `Lead moved from ${from ? stageLabel(from) : "Qualification"} to ${stageLabel(to)}${skipped}${why}`;
+  }
   const head =
     decision.kind === "reverted"
       ? `Lead moved back to ${stageLabel(to)}`

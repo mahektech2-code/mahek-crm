@@ -230,6 +230,12 @@ export const MBOS_EVENT = {
 
   /** Every move up, down or out of a ladder. §25's timeline is built on it. */
   leadStage: "lead_stage",
+  /**
+   * A Sales Manager chose a later stage from Qualification and the rungs between
+   * were not climbed. Its own kind rather than a `leadStage` with a different
+   * sentence, so "when did anybody skip a trial" is a filter and not a search.
+   */
+  leadStageSkipped: "lead_stage_skipped",
 
   /**
    * §5.3 — the sales manager's verdict on a qualification checklist.

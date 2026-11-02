@@ -1,4 +1,5 @@
 import "server-only";
+import { WEB_ENTRY_VERIFIED } from "@/lib/web-gate";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { canFor, type Capability } from "../access-control";
@@ -1610,7 +1611,7 @@ export function gateInputFor(record: LeadRecord, freshDays: number): LeadGateInp
        true exactly when the lead has been past Suspect. Reading it off the
        transitions rather than a column is what keeps the two in step. */
     prospectReasonRecorded: Boolean(record.stageSince) && record.stage !== "suspect",
-    verifiedAt: record.verifiedAt,
+    verifiedAt: record.verifiedAt ?? WEB_ENTRY_VERIFIED,
     /* §5.3 — and the gate refuses on the two negatives. It was absent from this
        assembler while `lead-service.ts` passed it, so the handset was blocked
        and the console screen drawing the same checklist was not: two readings

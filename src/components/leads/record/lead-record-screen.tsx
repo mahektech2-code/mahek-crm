@@ -96,6 +96,8 @@ import { CheckVisitsButton } from "@/components/leads/activity/check-visits";
 import type { ReopenOffer } from "@/components/leads/lost/reopen-lost-dialog";
 import { EditDetails } from "./edit-details";
 import { ReopenLead } from "./reopen-lead";
+import { SelectStage } from "./select-stage";
+import type { StageSelection } from "@/lib/engines/lead-stage-select";
 import { ConvertButton, ConvertProvider } from "./convert-to-prospect";
 import type { VantageViewer } from "@/lib/lead-vantage";
 
@@ -335,6 +337,9 @@ export function LeadRecordScreen({
   requireNextAction,
   desk = null,
   reopen = null,
+  stageSelection = null,
+  stageSkipReasons = [],
+  skipSampleOnly = false,
   canEditBasics = false,
   defaultNextDate = null,
   openCall = false,
@@ -516,6 +521,16 @@ export function LeadRecordScreen({
   desk?: DeskLeadRecord | null;
   /** Where a lost lead may be reversed from, and why — null for a reader who holds neither door. */
   reopen?: ReopenOffer | null;
+  /**
+   * The Sales Manager's choice of next stage from Qualification, computed on the
+   * server by `stageSelection` - null for anybody who may not make it
+   * (`lead.verify`), so the card is never drawn for a Telecaller or a Salesman.
+   */
+  stageSelection?: StageSelection | null;
+  /** `leads.stageSkipReasons`. */
+  stageSkipReasons?: { code: string; label: string }[];
+  /** True for somebody who works the lead but is not its reviewer: Skip Sample / Trial only. */
+  skipSampleOnly?: boolean;
   /** Holds the Sales Manager workspace, whose six-field edit form this opens. */
   canEditBasics?: boolean;
   /** The call dialog's default next-call day, worked out on the server. */
@@ -848,6 +863,15 @@ export function LeadRecordScreen({
                 overrideAllowed={overrideAllowed}
                 fixes={FIXED_ON}
               />
+              {stageSelection ? (
+                <SelectStage
+                  customerId={record.customerId}
+                  leadName={record.name}
+                  selection={stageSelection}
+                  reasons={stageSkipReasons}
+                  skipOnly={skipSampleOnly}
+                />
+              ) : null}
               <Card
                 title="Opportunity"
                 action={
