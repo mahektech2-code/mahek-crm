@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/console/parts";
 import { useToast } from "@/components/ui/toast";
-import { advanceLeadStage, selectLeadStage } from "@/lib/actions/leads";
+import { advanceLeadStage, selectLeadStage, skipSampleTrial } from "@/lib/actions/leads";
 import { REASON_CODE_NEEDING_REMARKS, stageLabel, type LeadStage } from "@/lib/lead-labels";
-import { skippedSentence, type StageSelection } from "@/lib/engines/lead-stage-select";
+import { SAMPLE_IN_PROGRESS_SAYS, skippedSentence, type StageSelection } from "@/lib/engines/lead-stage-select";
 import { Card } from "./record-chrome";
 
 /**
@@ -30,12 +30,15 @@ export function SelectStage({
   leadName,
   selection,
   reasons,
+  skipOnly = false,
 }: {
   customerId: string;
   leadName: string;
   selection: StageSelection;
   /** `leads.stageSkipReasons`, read on the server. */
   reasons: { code: string; label: string }[];
+  /** Not the reviewer: the only choice is Skip Sample / Trial. */
+  skipOnly?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -45,10 +48,13 @@ export function SelectStage({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  if (!selection.applies) return null;
+  /* A sample already approved or further on continues through the sample
+     workflow: Skip is not drawn at all, rather than drawn and refused. */
+  const shown = selection.choices.filter((c) => c.reasons[0] !== SAMPLE_IN_PROGRESS_SAYS);
+  if (!selection.applies || (selection.entryMissing.length === 0 && shown.length === 0)) return null;
 
   const open = selection.entryMissing.length === 0;
-  const choice = selection.choices.find((c) => c.to === pick);
+  const choice = shown.find((c) => c.to === pick);
   const isSkip = Boolean(choice && choice.skips.length > 0);
   const needsNote = reason === REASON_CODE_NEEDING_REMARKS;
   const ready =
@@ -62,7 +68,9 @@ export function SelectStage({
     setError(null);
     try {
       const r = isSkip
-        ? await selectLeadStage({ customerId, to: choice.to, reasonCode: reason, note: note.trim() || undefined })
+        ? skipOnly
+          ? await skipSampleTrial({ customerId, reasonCode: reason, note: note.trim() || undefined })
+          : await selectLeadStage({ customerId, to: choice.to, reasonCode: reason, note: note.trim() || undefined })
         : await advanceLeadStage({ customerId, to: choice.to });
       if (!r.ok) {
         setError(r.error);
@@ -107,7 +115,7 @@ export function SelectStage({
                 <span className="block text-muted">Decide later. Nothing changes.</span>
               </span>
             </label>
-            {selection.choices.map((c) => (
+            {shown.map((c) => (
               <label
                 key={c.to}
                 title={c.available ? undefined : c.reasons.join(" · ")}
@@ -124,7 +132,7 @@ export function SelectStage({
                   className="mt-0.5"
                 />
                 <span>
-                  <b className="text-ink">{stageLabel(c.to)}</b>
+                  <b className="text-ink">{c.to === "negotiation" ? "Skip Sample / Trial — go to Negotiation" : stageLabel(c.to)}</b>
                   {c.skips.length ? (
                     <span className="block text-muted">Skips {skippedSentence(c.skips)}.</span>
                   ) : (

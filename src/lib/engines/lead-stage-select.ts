@@ -32,13 +32,17 @@ import { foldStage, ladderFor } from "./lead-ladder";
  * ------------------------------------------------------------------------- */
 
 /** The only rung this choice is made from. */
-export const SELECT_FROM: LeadStage = "qualification";
+const SELECT_FROM: LeadStage = "qualification";
 
 /** The conditions that ask about the sample — the ones a skip means "not needed" for. */
-export const SAMPLE_CONDITION_IDS: readonly string[] = ["sample_sent", "sample_reviewed", "sample_approved"];
+const SAMPLE_CONDITION_IDS: readonly string[] = ["sample_sent", "sample_reviewed", "sample_approved"];
 
 /** The next-action condition's id, which `leads.requireNextAction` may lift. */
 const NEXT_ACTION_ID = "next_action";
+
+/** Sample states already inside the sample workflow. A request still at `requested` is open and may be skipped; these continue as they are. */
+const SAMPLE_IN_PROGRESS: readonly string[] = ["approved", "dispatched", "received", "tried", "trial_done", "reviewed"];
+export const SAMPLE_IN_PROGRESS_SAYS = "A sample is already in progress. It continues through the sample workflow.";
 
 export type StageChoice = {
   to: LeadStage;
@@ -85,7 +89,12 @@ export function stageSelection(
     if (to === "sample_review") continue;
     const skips = ladder.slice(here + 1, ladder.indexOf(to)) as LeadStage[];
     const own = lift(gateTo(gate, to).missing).filter((c) => !SAMPLE_CONDITION_IDS.includes(c.id));
+    const inFlight = skips.length > 0 && gate.sample != null && SAMPLE_IN_PROGRESS.includes(gate.sample.state);
     const missing = [...entryMissing, ...own].filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+    if (inFlight) {
+      choices.push({ to, skips, available: false, missing, reasons: [SAMPLE_IN_PROGRESS_SAYS, ...missing.map((c) => c.says)] });
+      continue;
+    }
     choices.push({ to, skips, available: missing.length === 0, missing, reasons: missing.map((c) => c.says) });
   }
 

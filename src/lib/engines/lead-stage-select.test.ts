@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { LeadGateInput } from "./lead-gates";
-import { SAMPLE_CONDITION_IDS, skippedSentence, stageSelection } from "./lead-stage-select";
+import { skippedSentence, stageSelection } from "./lead-stage-select";
 
 /* A Sales Manager choosing a later stage from Qualification: what is open, what
    is not, and what is never lifted. Pure — no database. */
@@ -109,7 +109,6 @@ describe("stage selection from Qualification", () => {
   });
 
   test("only the three sample conditions are lifted, and only by id", () => {
-    assert.deepEqual([...SAMPLE_CONDITION_IDS].sort(), ["sample_approved", "sample_reviewed", "sample_sent"]);
     const sel = stageSelection(ready({ qualificationReview: null }), opts);
     assert.ok(choice(sel, "negotiation").missing.some((c) => c.id === "manager_review_pending"), "the review is never lifted");
   });

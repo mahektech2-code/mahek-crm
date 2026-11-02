@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { selectLeadStage } from "@/lib/actions/leads";
+import { advanceLeadStage, selectLeadStage, skipSampleTrial } from "@/lib/actions/leads";
 import { canActAsQualificationApprover } from "@/lib/services/qualification-approver";
 import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
@@ -349,5 +349,95 @@ describe("the authority is the Qualification reviewer's, not a capability", () =
     const lead = await qualified();
     assert.equal(await canActAsQualificationApprover(manager, lead.id), true);
     assert.equal((await selectLeadStage({ customerId: lead.id, to: "negotiation", reasonCode: "knows_product" })).ok, true);
+  });
+});
+
+describe("Skip Sample / Trial: anyone who works the lead, with no review authority", () => {
+  const sample = (leadId: string, state: string) =>
+    db.insert(mbosSamples).values({ id: id("smp"), customerId: leadId, salesmanId: manager.id, productId, state } as never);
+
+  test("a Telecaller who owns the lead skips Sample / Trial: a `skipped` transition with actor, reason and time", async () => {
+    const lead = await qualified({ ownerId: telecaller.id });
+    setTestUser(telecaller);
+    const r = await skipSampleTrial({ customerId: lead.id, reasonCode: "sample_not_needed" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "negotiation");
+    const t = await lastTransition(lead.id);
+    assert.equal(t.kind, "skipped");
+    assert.equal(t.actorId, telecaller.id);
+    assert.deepEqual(t.skippedStages, ["sample_trial", "sample_review"]);
+    assert.ok(t.at);
+    const ev = (await db.select().from(timelineEvents).where(eq(timelineEvents.customerId, lead.id))).filter((e) => e.eventType === "lead_stage_skipped");
+    assert.equal(ev.length, 1);
+  });
+
+  test("a Salesman who owns the lead skips it too", async () => {
+    const lead = await qualified({ ownerId: salesman.id });
+    setTestUser(salesman);
+    const r = await skipSampleTrial({ customerId: lead.id, reasonCode: "knows_product" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "negotiation");
+  });
+
+  test("skipping grants NO Qualification Review authority", async () => {
+    const lead = await qualified({ ownerId: telecaller.id, leadQualificationReview: null as never });
+    setTestUser(telecaller);
+    const r = await reviewLeadQualification({ customerId: lead.id, verdict: "verified", note: "" }).catch(() => ({ ok: false as const }));
+    assert.equal(r.ok, false);
+  });
+
+  test("the review is still mandatory: an unreviewed Qualification cannot be skipped past", async () => {
+    const lead = await qualified({ ownerId: telecaller.id, leadQualificationReview: null as never });
+    setTestUser(telecaller);
+    const r = await skipSampleTrial({ customerId: lead.id, reasonCode: "knows_product" });
+    assert.equal(r.ok, false);
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    assert.equal(await count("lead_stage_transitions"), 0);
+  });
+
+  test("a person with no access to the lead is refused and nothing is written", async () => {
+    const lead = await qualified({ ownerId: manager.id });
+    setTestUser(telecaller);
+    const r = await skipSampleTrial({ customerId: lead.id, reasonCode: "knows_product" }).catch(() => ({ ok: false as const }));
+    assert.equal(r.ok, false);
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    assert.equal(await count("lead_stage_transitions"), 0);
+  });
+
+  test("an OPEN (requested) sample may be skipped, and its record is left exactly as it is", async () => {
+    const lead = await qualified({ ownerId: telecaller.id });
+    await sample(lead.id, "requested");
+    const before = await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id));
+    setTestUser(telecaller);
+    const r = await skipSampleTrial({ customerId: lead.id, reasonCode: "sample_not_needed" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after_ = await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, lead.id));
+    assert.deepEqual(after_, before, "the request is not deleted, cancelled, rejected or edited");
+    assert.equal((await row(lead.id)).leadStage, "negotiation");
+  });
+
+  for (const state of ["approved", "dispatched", "received", "trial_done", "reviewed"]) {
+    test(`a sample already ${state} continues through its own workflow: Skip is refused`, async () => {
+      const lead = await qualified({ ownerId: telecaller.id });
+      await sample(lead.id, state);
+      setTestUser(telecaller);
+      const r = await skipSampleTrial({ customerId: lead.id, reasonCode: "sample_not_needed" });
+      assert.equal(r.ok, false);
+      assert.equal((await row(lead.id)).leadStage, "qualification");
+      assert.equal(await count("lead_stage_transitions"), 0);
+    });
+  }
+});
+
+describe("Prospect → Qualification is a manual move with no prior confirmation", () => {
+  test("a Telecaller who owns an unverified Prospect moves it to Qualification; nothing automatic", async () => {
+    const lead = await qualified({ ownerId: telecaller.id, leadStage: "prospect", leadQualificationReview: null as never, leadQualificationReviewedAt: null as never, leadQualificationReviewedById: null as never });
+    assert.equal((await row(lead.id)).leadVerifiedAt, null);
+    assert.equal((await row(lead.id)).leadStage, "prospect", "left alone it stays a Prospect");
+    setTestUser(telecaller);
+    const r = await advanceLeadStage({ customerId: lead.id, to: "qualification" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    assert.equal((await row(lead.id)).leadVerifiedAt, null, "no verification was needed or faked");
   });
 });

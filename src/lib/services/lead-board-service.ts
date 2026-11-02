@@ -1,4 +1,5 @@
 import "server-only";
+import { WEB_ENTRY_VERIFIED } from "@/lib/web-gate";
 import { notConverted } from "../lead-action-window";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -349,7 +350,7 @@ export async function leadBoard(
          has been past Suspect. One copy of that inference would be better than
          two and it belongs beside the other one — see the report. */
       prospectReasonRecorded: Boolean(r.stageSince) && r.stage !== "suspect",
-      verifiedAt: asDate(r.verifiedAt),
+      verifiedAt: asDate(r.verifiedAt) ?? WEB_ENTRY_VERIFIED,
       thirdParty: Boolean(r.thirdParty),
       distributorCount: Number(r.distributorCount ?? 0),
       sample,

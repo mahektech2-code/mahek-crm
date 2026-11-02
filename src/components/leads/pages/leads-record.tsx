@@ -25,6 +25,7 @@ import {
   qualificationReadyForReview,
 } from "@/lib/engines/lead-gates";
 import { stageSelection } from "@/lib/engines/lead-stage-select";
+import { forWebQualificationEntry } from "@/lib/web-gate";
 import { canActAsQualificationApprover } from "@/lib/services/qualification-approver";
 import { isParked, rungOf } from "@/lib/engines/lead-ladder";
 import {
@@ -219,7 +220,7 @@ export async function Body({
   }
 
   const freshDays = config["leads.figuresFreshDays"];
-  const gateInput = gateInputFor(record, freshDays);
+  const gateInput = forWebQualificationEntry(gateInputFor(record, freshDays));
   const figuresStale = Boolean(gateInput.figuresStale);
 
   /*
@@ -427,11 +428,8 @@ export async function Body({
          SAME engine the action enforces, and only for somebody holding the
          capability the action asks (lead.verify). Everyone else is handed null,
          so nothing is drawn. */
-      stageSelection={
-        (await canActAsQualificationApprover(user, id))
-          ? stageSelection(gateInput, { requireNextAction: config["leads.requireNextAction"] })
-          : null
-      }
+      stageSelection={await selectionFor(user, id, gateInput, config["leads.requireNextAction"])}
+      skipSampleOnly={!(await canActAsQualificationApprover(user, id))}
       stageSkipReasons={config["leads.stageSkipReasons"]}
       /* The two doors the central Lost list offers, asked the same way — see
          `app/crm/leads/lost/page.tsx`. The actions ask again. */
@@ -479,4 +477,23 @@ function cursorFrom(raw: string | null): { at: string; id: string } | null {
   const id = raw.slice(cut + 1);
   if (!id || Number.isNaN(Date.parse(at))) return null;
   return { at, id };
+}
+
+/**
+ * The next-stage choice. The designated Qualification reviewer is offered every
+ * stage the gates allow. Anyone else who works the lead (`lead.work`, and the page
+ * already proved they can reach it) is offered the one thing that needs no review
+ * authority: Skip Sample / Trial, to Negotiation. The actions ask again.
+ */
+async function selectionFor(
+  user: Parameters<typeof canActAsQualificationApprover>[0],
+  id: string,
+  gateInput: Parameters<typeof stageSelection>[0],
+  requireNextAction: boolean,
+) {
+  const all = stageSelection(gateInput, { requireNextAction });
+  if (!all.applies) return null;
+  if (await canActAsQualificationApprover(user, id)) return all;
+  if (!(await canLead(user, "lead.work"))) return null;
+  return { ...all, choices: all.choices.filter((c) => c.to === "negotiation") };
 }

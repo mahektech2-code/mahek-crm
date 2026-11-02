@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { z } from "zod";
+import { forWebQualificationEntry } from "@/lib/web-gate";
 import { db } from "@/db";
 import {
   appAccess,
@@ -301,8 +302,9 @@ export async function advanceLeadStage(input: {
       );
     }
 
-    const gate = await leadGateInput(p.customerId);
-    if (!gate) return err("That lead is not on MahekOne.", "not_found");
+    const rawGate = await leadGateInput(p.customerId);
+    if (!rawGate) return err("That lead is not on MahekOne.", "not_found");
+    const gate = to === "qualification" ? forWebQualificationEntry(rawGate) : rawGate;
 
     /* The supplied next action counts towards §24 immediately, and is written
        below in the same transaction as the move — so the gate is never asked
@@ -549,6 +551,77 @@ export async function selectLeadStage(input: {
     return ok(
       { stage: to, skipped },
       `${lead.name} moved to ${stageLabel(to)}.${skipped.length ? ` ${skippedSentence(skipped)} not climbed.` : ""}`,
+    );
+  } catch (e) {
+    if (e instanceof StageAlreadyMoved) {
+      return err("This lead has already moved. Reload to see where it is now.", "rule_violation");
+    }
+    return fromThrown(e);
+  }
+}
+
+/**
+ * SKIP SAMPLE / TRIAL, for anyone who works the lead. Qualification -> Negotiation
+ * only. The authority is the ordinary one for moving a lead (`lead.work` plus
+ * being able to reach the lead); it grants NO Qualification Review authority, and
+ * the review must already be verified because the full Sample / Trial entry gate
+ * is a precondition inside `evaluateStageSelection`. A request still at
+ * `requested` may be skipped and is left exactly as it is; one already approved or
+ * further on is refused (it continues through the sample workflow). No sample,
+ * order, bill, receipt or payment row is written; the move is a `skipped`
+ * transition with its reason, actor and time, and its own timeline event.
+ */
+export async function skipSampleTrial(input: {
+  customerId: string;
+  reasonCode: string;
+  note?: string;
+}): Promise<Result<{ stage: LeadStage; skipped: LeadStage[] }>> {
+  try {
+    const parsed = selectStageSchema.safeParse({ ...input, to: "negotiation" });
+    if (!parsed.success) return zodErr(parsed.error);
+    const p = parsed.data;
+
+    const ctx = await requireCapability("lead.work");
+    const found = await reachableLead(p.customerId);
+    if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    const gate = await leadGateInput(p.customerId);
+    if (!gate) return err("That lead is not on MahekOne.", "not_found");
+
+    if (p.reasonCode === REASON_CODE_NEEDING_REMARKS && !p.note?.trim()) {
+      return {
+        ok: false,
+        error: "You picked Other — say in words what it actually is.",
+        code: "validation",
+        fieldErrors: [{ field: "note", message: "Say what it actually is." }],
+      };
+    }
+
+    const decision = await evaluateStageSelection({ lead, gate, to: "negotiation", reasonCode: p.reasonCode });
+    if (!decision.ok) {
+      return {
+        ok: false,
+        error: decision.message,
+        code: decision.code === "gate_shut" ? "rule_violation" : "validation",
+        fieldErrors: decision.missing.map<FieldError>((c) => ({ field: c.id, message: c.says })),
+      };
+    }
+
+    const config = await getConfig();
+    const reasonLabel = config["leads.stageSkipReasons"].find((r) => r.code === p.reasonCode)?.label ?? null;
+    await applyLeadStageMove(
+      { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
+      lead,
+      "negotiation",
+      { decision, reasonCode: p.reasonCode, note: p.note ?? null, reasonLabel, day: await today(), expectFrom: "qualification" },
+    );
+
+    refresh(p.customerId);
+    const skipped = decision.skippedStages ?? [];
+    return ok(
+      { stage: "negotiation", skipped },
+      `${lead.name} moved to ${stageLabel("negotiation")}.${skipped.length ? ` ${skippedSentence(skipped)} not climbed.` : ""}`,
     );
   } catch (e) {
     if (e instanceof StageAlreadyMoved) {

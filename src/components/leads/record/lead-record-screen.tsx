@@ -339,6 +339,7 @@ export function LeadRecordScreen({
   reopen = null,
   stageSelection = null,
   stageSkipReasons = [],
+  skipSampleOnly = false,
   canEditBasics = false,
   defaultNextDate = null,
   openCall = false,
@@ -528,6 +529,8 @@ export function LeadRecordScreen({
   stageSelection?: StageSelection | null;
   /** `leads.stageSkipReasons`. */
   stageSkipReasons?: { code: string; label: string }[];
+  /** True for somebody who works the lead but is not its reviewer: Skip Sample / Trial only. */
+  skipSampleOnly?: boolean;
   /** Holds the Sales Manager workspace, whose six-field edit form this opens. */
   canEditBasics?: boolean;
   /** The call dialog's default next-call day, worked out on the server. */
@@ -866,6 +869,7 @@ export function LeadRecordScreen({
                   leadName={record.name}
                   selection={stageSelection}
                   reasons={stageSkipReasons}
+                  skipOnly={skipSampleOnly}
                 />
               ) : null}
               <Card

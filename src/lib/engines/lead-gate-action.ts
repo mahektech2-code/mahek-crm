@@ -230,19 +230,14 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
       /* A Prospect the manager has already verified but that is still standing
          here is the recovery case — the automatic opening did not happen — and
          opening it is an ordinary move. */
-      if (facts.verified) {
-        return {
-          label: "Open qualification",
-          tone: "brand",
-          control: "advance",
-          says: "The Sales Manager has verified this Prospect. The lead's owner now completes the Qualification, and the Sales Manager reviews it.",
-        };
-      }
+      /* The Web CRM moves a Prospect into Qualification by hand: anyone who
+         works the lead presses it, nothing waits for a confirmation, and the
+         Qualification Review that follows is the mandatory one. */
       return {
-        label: "Make the verification call",
-        tone: "danger",
-        control: "verify",
-        says: "A sales manager rings the customer and answers the twelve questions. No amount of GPS proves that Mahek was explained properly, which is what this call is for.",
+        label: "Move to Qualification",
+        tone: "brand",
+        control: "advance",
+        says: "Move this Prospect into Qualification. The lead's owner completes it, and the Sales Manager reviews every Suspect, Prospect and Qualification answer before it can go further. The verification call is optional.",
       };
 
     /*

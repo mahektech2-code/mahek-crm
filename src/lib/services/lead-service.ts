@@ -787,9 +787,11 @@ export async function evaluateStageSelection(input: {
     return {
       ok: false,
       code: "gate_shut",
-      message: `${stageLabel(input.to)} is not open yet. ${choice.missing.length} thing${
-        choice.missing.length === 1 ? "" : "s"
-      } still to do.`,
+      message: choice.missing.length === 0
+        ? choice.reasons[0] ?? `${stageLabel(input.to)} is not open.`
+        : `${stageLabel(input.to)} is not open yet. ${choice.missing.length} thing${
+            choice.missing.length === 1 ? "" : "s"
+          } still to do.`,
       missing: choice.missing,
     };
   }
