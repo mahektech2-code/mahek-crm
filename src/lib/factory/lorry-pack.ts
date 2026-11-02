@@ -40,7 +40,7 @@ export async function lorryPack(fc: FactoryCtx, key: string): Promise<LoadingPac
     lines: lines.map((l) => ({
       id: l.id, orderNo: l.orderNo, skuId: l.skuId, skuName: l.skuName, productId: l.productId, productName: l.productName, packLabel: l.packLabel,
       godownId: l.godownId, godownName: l.godownName, boxed: l.boxed, target: l.target, scanned: l.scanned, alloc: l.alloc,
-      dispatched: l.dispatched, cancelled: l.cancelled, finishedGoodId: l.finishedGoodId ?? null, dispatchOn: l.dispatchOn, stickered: stickered.has(l.id),
+      dispatched: l.dispatched, cancelled: l.cancelled, finishedGoodId: l.finishedGoodId ?? null, dispatchOn: l.dispatchOn, stickered: l.boxed && stickered.has(l.id),
     })),
     units,
     overrides,

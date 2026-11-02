@@ -622,8 +622,8 @@ describe("dispatch", () => {
              b.lot_from as "from", b.lot_code as lot, b.godown_id as godown, b.finished_good_id as fg
         from erp_orders o join erp_batch_codes b on b.order_id = o.id join products p on p.id = o.sku_id
         left join erp_product_packing pk on pk.product_id = p.id
-       where o.status = 'Ready' and o.godown_id = ${fc.godown.id} limit 1`);
-    assert.ok(ln, "the seed has a Ready line with a lot given");
+       where o.status = 'Ready' and o.godown_id = ${fc.godown.id} and coalesce(pk.empty_boxes_required, 0) > 0 limit 1`);
+    assert.ok(ln, "the seed has a boxed Ready line with a lot given");
     await db.execute(sql`update erp_orders set transporter = case when id = ${ln.id} then 'Sticker Lorry' else 'Other Transport' end where godown_id = ${fc.godown.id}`);
     await db.execute(sql`update erp_orders set qty_cans = ${ln.boxed ? ln.cpb * 2 : 2} where id = ${ln.id}`);
     await db.execute(sql`update erp_units set status = 'available', order_id = null where order_id = ${ln.id}`);
@@ -709,6 +709,48 @@ describe("dispatch", () => {
     assert.ok(c2?.ok && !c2.half && c2.title === "On the lorry", JSON.stringify(chain.results));
     assert.equal(chain.half, null, "the pair is in: nothing held after it");
     await lorryUnload(fc, key, box1);
+  });
+
+  test("a loose can goes on the lorry by its own label, even where the order printed dispatch stickers for its cans", async () => {
+    /* Every loose line printed with stickers asked for one on each can, which nobody sticks on a can:
+       not one loose sticker was ever paired, and the loaders went to the ERP desk instead. */
+    const { fc } = await as("imran");
+    /* The seed's loose line, given an FG lot of its own finished good here: earlier tests take its lot away. */
+    const [ln] = await q<{ id: string; no: number; sku: string; lot: string; godown: string; fg: string }>(sql`
+      select o.id, o.order_no as no, o.sku_id as sku, e.lot_code as lot, o.godown_id as godown, p.finished_good_id as fg
+        from erp_orders o join products p on p.id = o.sku_id
+        left join erp_product_packing pk on pk.product_id = p.id
+        join erp_fg_entries e on e.finished_good_id = p.finished_good_id and e.godown_id = o.godown_id
+       where o.status = 'Ready' and o.godown_id = ${fc.godown.id} and coalesce(pk.empty_boxes_required, 0) = 0 limit 1`);
+    assert.ok(ln, "the seed has a loose Ready line and an FG lot of what it sells");
+    await db.execute(sql`update erp_orders set transporter = case when id = ${ln.id} then 'Loose Lorry' else 'Other Transport' end where godown_id = ${fc.godown.id}`);
+    await db.execute(sql`update erp_orders set qty_cans = 2 where id = ${ln.id}`);
+    await db.execute(sql`update erp_units set status = 'available', order_id = null where order_id = ${ln.id}`);
+    await db.execute(sql`delete from erp_batch_codes where order_id = ${ln.id}`);
+    await db.execute(sql`
+      insert into erp_batch_codes (id, order_id, lot_from, lot_code, finished_good_id, godown_id, quantity)
+      values (${"bc_loose_" + randomUUID()}, ${ln.id}, 'fg', ${ln.lot}, ${ln.fg}, ${ln.godown}, 2)`);
+    const key = lorryKeyOf("loose lorry");
+    const can = "LU-991104-" + String(Date.now() % 1e6).padStart(6, "0");
+    await db.execute(sql`
+      insert into erp_units (id, kind, sku_id, lot_from, lot_code, finished_good_id, seq, cans, godown_id, status)
+      values (${can}, 'loose', ${ln.sku}, 'fg', ${ln.lot}, ${ln.fg}, (select coalesce(max(seq), 0) + 1 from erp_units where lot_from = 'fg' and lot_code = ${ln.lot}), 1, ${ln.godown}, 'available')`);
+    await ensureStickers(ln.no, new Map([[ln.id, 2]]), fc.user.id);
+    assert.equal((await stickerPlaces(db, [ln.no])).filter((x) => x.lineId === ln.id).length, 2, "the line has a sticker for each can");
+
+    const board0 = (await lorryBoard(fc, key))!;
+    assert.ok((board0.stickers ?? []).every((x) => x.orderNo !== ln.no), "a loose can's sticker is never shown as still to load: " + JSON.stringify(board0.stickers));
+    const pack = await lorryPack(fc, key);
+    assert.ok(pack && pack.lines.every((l) => !l.stickered), "the phone's own judge does not ask for a sticker either");
+
+    const on = await lorryScan(fc, key, can, null, null);
+    assert.ok(on.ok && !on.half && on.title === "On the lorry", JSON.stringify(on));
+    const [u] = await q<{ status: string; order: string }>(sql`select status, order_id as "order" from erp_units where id = ${can}`);
+    assert.deepEqual([u.status, u.order], ["scanned", ln.id]);
+    await lorryUnload(fc, key, can);
+    /* Left as the seed had it, for the tests after: no lot on the loose line, no stickers. */
+    await db.execute(sql`delete from erp_batch_codes where order_id = ${ln.id}`);
+    await db.execute(sql`update erp_dispatch_stickers set status = 'cancelled', unit_id = null where order_id = ${ln.id}`);
   });
 
   test("queued scans are judged in one call and in order: a refusal stops the batch, and a resend is answered from the scan log", async () => {
