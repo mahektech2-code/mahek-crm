@@ -37,6 +37,30 @@ test("an LR suggests the bills it most likely carries, and attaches none", () =>
   assert.equal(ranked[ranked.length - 1].id, "a");
 });
 
+test("the consignee and our invoice number on an LR pick its bill out of one transporter's pile", () => {
+  const pile = [
+    { id: "saif", transporter: "New Bombay Tarapur", packages: 1, area: "Bhiwandi", party: "SAIF TRADERS", billNo: "MMI/26-27/1919", atTransport: true },
+    { id: "colour", transporter: "New Bombay Tarapur", packages: 26, area: "Thane", party: "COLOUR CAMP", billNo: "MMI/26-27/1918", atTransport: true },
+    { id: "dinesh", transporter: "New Bombay Tarapur", packages: 37, area: "Harda", party: "Dinesh Hardware", billNo: "MMI/26-27/1925", atTransport: true },
+  ];
+  const byParty = rankForLr({ transporter: "New Bombay Tarapur", packages: null, destination: null, partyHint: "Dinesh Hardware" }, pile);
+  assert.equal(byParty[0].id, "dinesh");
+  assert.ok(byParty[0].reasons.includes("same party"));
+  assert.ok(byParty[0].score - byParty[1].score >= 6, "another shop named on the LR counts against a bill");
+  const byBill = rankForLr({ transporter: null, packages: null, destination: null, billHint: "1918" }, pile);
+  assert.equal(byBill[0].id, "colour");
+  assert.equal(byBill[0].reasons[0], "same bill no.");
+  /* "Hardware" alone could be anybody, so it decides nothing. */
+  const generic = rankForLr({ transporter: null, packages: null, destination: null, partyHint: "Hardware Stores" }, pile);
+  assert.ok(generic.every((r) => r.score === generic[0].score));
+  /* Some LRs name the buyer rather than the shop the goods go to. */
+  const buyer = rankForLr({ transporter: null, packages: null, destination: null, partyHint: "Om Distributors" }, [
+    { id: "x", transporter: null, packages: null, area: null, party: "Sai Paints", billingParty: "Om Distributors", atTransport: false },
+    { id: "y", transporter: null, packages: null, area: null, party: "Ravi Paints", atTransport: false },
+  ]);
+  assert.equal(buyer[0].id, "x");
+});
+
 test("one LR is one party; a bill under another LR or delivered cannot be attached", () => {
   const b = (id: string, party: string, lrId: string | null = null, stage = "At transport") => ({ id, orderNo: Number(id.slice(1)), deliveryPartyId: party, lrId, materialStage: stage });
   assert.equal(attachRefusal([b("o1", "p1"), b("o2", "p1")], "lr1"), null);

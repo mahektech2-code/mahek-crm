@@ -13073,7 +13073,7 @@ export const erpLrs = pgTable(
     readKind: text("read_kind"),
     /** When the photo was read; null while it is still waiting to be read. */
     readAt: timestamp("read_at", { withTimezone: true }),
-    /** A signed copy: the bill number and party the AI read off it, to match it to a delivery. */
+    /** Our bill number and the party the paper names, to match it to its bills: on a signed copy what it is stamped with, on an LR its consignee and the invoice number the transporter wrote. Read by the AI, corrected on the Documents desk. */
     billHint: text("bill_hint"),
     partyHint: text("party_hint"),
     /** A signed copy: who signed, and the day written on it. */

@@ -17,7 +17,7 @@ import {
   erpLogisticsVoidLr,
 } from "@/lib/actions/erp-logistics";
 import { addDays, PROOF_WORD, rankForLr, shortDay, type ProofKind } from "@/lib/erp/engines/logistics";
-import { confidentPick, duplicateFlags, missingFor, rankForSignedCopy, READY_SCORE, wrongKind, type DeskCopy, type DupFlag } from "@/lib/erp/engines/delivery-proof";
+import { confidentPick, duplicateFlags, missingFor, partyWords, rankForSignedCopy, READY_SCORE, sameParty, wrongKind, type DeskCopy, type DupFlag } from "@/lib/erp/engines/delivery-proof";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
 import { rupeesField } from "@/lib/erp/ui";
 import { clock, stamp } from "@/lib/format";
@@ -120,7 +120,7 @@ export function DocumentsDesk({
           const missing = missingFor(l);
           const ranked: Ranked =
             l.kind === "lr"
-              ? rankForLr(l, (showAll ? allLrBills : waitingBills).map((b) => ({ id: b.key, transporter: b.c.transporter, packages: b.packages, area: b.c.area ?? b.c.partyCity, party: b.c.deliveryParty, atTransport: b.rows.every((c) => c.phase === "lrPending") }))).map((x) => ({
+              ? rankForLr(l, (showAll ? allLrBills : waitingBills).map((b) => ({ id: b.key, transporter: b.c.transporter, packages: b.packages, area: b.c.area ?? b.c.partyCity, party: b.c.deliveryParty, billingParty: b.c.party, billNo: b.c.billNo, atTransport: b.rows.every((c) => c.phase === "lrPending") }))).map((x) => ({
                   b: (showAll ? allLrBills : waitingBills).find((p) => p.key === x.id)!,
                   score: x.score,
                   reasons: x.reasons,
@@ -240,12 +240,14 @@ export function DocumentsDesk({
 
 function titleOf(l: UploadedLr): string {
   if (l.kind === "signed_copy") return l.partyHint ?? (l.billHint ? `Bill ${l.billHint}` : "Not read");
-  return l.transporter ?? (l.lrNo ? lrLabel(l.lrNo) : "Not read");
+  return l.partyHint ?? l.transporter ?? (l.lrNo ? lrLabel(l.lrNo) : "Not read");
 }
 
 function subOf(l: UploadedLr): string | null {
   if (l.kind === "signed_copy") return l.billHint && l.partyHint ? l.billHint : null;
-  return l.lrNo ?? (l.readLrNo ? `${l.readLrNo}?` : null);
+  const no = l.lrNo ?? (l.readLrNo ? `${l.readLrNo}?` : null);
+  /* The consignee is the title once it is read, so the transporter moves down beside the number. */
+  return l.partyHint && l.transporter ? [l.transporter, no].filter(Boolean).join(" ") : no;
 }
 
 function Tally({ icon, tone, n, label }: { icon: string; tone: string; n: number; label: string }) {
@@ -395,13 +397,15 @@ function Detail({
   const selIds = selBills.flatMap((x) => x.b.rows.map((c) => c.id));
   const parties = new Set(selBills.map((x) => x.b.c.deliveryPartyId));
   const boxes = sumPackages(selBills.flatMap((x) => x.b.rows));
+  /* A ticked bill going to a shop the LR does not name — said, never refused: a consignee can be written as a person, or as the buyer. */
+  const otherParty = lr && partyWords(l.partyHint).length ? selBills.find((x) => !sameParty(l.partyHint, x.b.c.deliveryParty) && !sameParty(l.partyHint, x.b.c.party)) : undefined;
 
   const save = () =>
     run(() =>
       erpLogisticsEditLr(
         l.id,
         lr
-          ? { lrNo: v.lrNo, lrDate: v.lrDate, transporter: v.transporter, destination: v.destination, packages: v.packages ? Number(v.packages) : null, freightTerm: v.freightTerm || null, freightRupees: v.freight ? Number(v.freight) : null, note: v.note }
+          ? { lrNo: v.lrNo, lrDate: v.lrDate, transporter: v.transporter, destination: v.destination, packages: v.packages ? Number(v.packages) : null, freightTerm: v.freightTerm || null, freightRupees: v.freight ? Number(v.freight) : null, partyHint: v.partyHint, billHint: v.billHint, note: v.note }
           : { billHint: v.billHint, partyHint: v.partyHint, receivedBy: v.receivedBy, deliveredOn: v.deliveredOn, note: v.note },
       ),
     );
@@ -466,6 +470,12 @@ function Detail({
                 </Field>
                 <Field label="Boxes">
                   <Input inputMode="numeric" value={v.packages} onChange={set("packages")} disabled={!canWrite} />
+                </Field>
+                <Field label="Consignee">
+                  <Input value={v.partyHint} onChange={set("partyHint")} placeholder="The party on the LR" disabled={!canWrite} />
+                </Field>
+                <Field label="Our invoice no.">
+                  <Input value={v.billHint} onChange={set("billHint")} placeholder="If the LR shows it" disabled={!canWrite} />
                 </Field>
                 <Field label="Destination">
                   <Input value={v.destination} onChange={set("destination")} disabled={!canWrite} />
@@ -584,6 +594,7 @@ function Detail({
               <span className="flex-1 text-meta text-muted">
                 {selIds.length ? `${plural(selBills.length, "bill")}${boxes != null ? ` · ${plural(boxes, "box", "boxes")}` : ""}` : ""}
                 {lr && l.packages != null && boxes != null && boxes !== l.packages ? <span className="ml-2 text-warn-ink">The LR says {l.packages}</span> : null}
+                {otherParty ? <span className="ml-2 text-warn-ink">The LR is for {l.partyHint}, not {otherParty.b.c.deliveryParty}</span> : null}
               </span>
               <Button variant="primary" disabled={pending || !!blocked} title={blocked ?? undefined} onClick={attach}>
                 {lr ? `Attach${selBills.length ? ` to ${plural(selBills.length, "bill")}` : ""}` : "Attach & mark delivered"}

@@ -9397,7 +9397,13 @@ Documents desk, the `pendingLr` tab, `parts/documents-desk.tsx`). LRs and
 Signed copies tabs; a mark per copy (ready, something to add, possible
 duplicate, being read); the photo with crop and rotate (`parts/photo-editor.tsx`
 → `replaceLrFile`, which moves only the file); the fields; and the bills
-ranked by `rankForLr` / `rankForSignedCopy`. "Attach N ready" is
+ranked by `rankForLr` / `rankForSignedCopy`. An LR's `party_hint` and
+`bill_hint` are its CONSIGNEE and our invoice number printed on it (the same
+columns a signed copy's party and bill use), read by the AI and edited on the
+desk; `rankForLr` scores the bill number and the party first, and
+`sameParty` compares names on their distinctive words only. An LR's date is
+read from the PRINTED text, day first (`lrDateOf` in `engines/lr-read.ts`),
+not from the model's conversion. "Attach N ready" is
 `attachReady`: only copies with no flag, nothing missing (`missingFor`) and
 one CLEAR winner (`confidentPick` at `READY_SCORE`), each through the
 ordinary `attachLr` / `markDelivered`. A copy the AI thinks is the other kind
