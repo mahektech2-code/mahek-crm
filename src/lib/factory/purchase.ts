@@ -17,18 +17,18 @@ import type { ReqCard, ReqDept, ReqInput, ReqItem, ReqKit, ReqLine, ReqSave } fr
  * to buy what the department needs — the ERP's own requirement, raised through
  * `raiseRequirementWith`, so every rule the ERP keeps still holds: which
  * categories a department may ask for, who may request each material, the
- * purchase rule copied on raise, and the stock check before buying.
+ * purchase rule copied on raise.
  *
- * EVERY ITEM IS COUNTED BEFORE IT IS ASKED FOR, BLIND. The phone is never sent
- * a stock figure — not in the item list, not after the save. What the
- * in-charge counted becomes that item's stock check (`writeCounted`, the same
- * judgement Stock accuracy uses), and the answer is only "matches" or "does
- * not": a recount that knew the book would not be a count. A count that does
- * not match holds nothing — stock control is told and the purchase carries
- * on, the ERP's rule since the count stopped being a gate.
+ * NOTHING IS COUNTED ON THE WAY (Nov 2026, a reversal). The in-charge used to
+ * count every item, blind, before asking for it. The count was taken out of
+ * the purchase flow, so the phone asks for the item and how much to buy, and
+ * the requirement goes straight to its purchase method. An APK from before
+ * still makes its in-charge count and still sends the figure; it is recorded
+ * as a stock check of that shelf and holds nothing (`raiseRequirementWith`).
  *
- * It needs the network on purpose, like Stock check: a requirement queued for
- * hours is a count judged against a book that has moved.
+ * It needs the network on purpose: the requirement number and the open
+ * requirements for each item are the office's, and a queued one could be
+ * raised twice.
  * ------------------------------------------------------------------------- */
 
 /** The floor's department → the ERP's department seat and the label a requirement carries. */
@@ -161,7 +161,7 @@ const fail = (title: string, text: string, fix: string, line?: number): ReqSave 
 const PRIORITIES = ["Urgent", "Medium", "For Stock"] as const;
 const finite = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-/** Raises one requirement with every item's count. Safe to send twice: the key answers a resend from the first save. */
+/** Raises one requirement. Safe to send twice: the key answers a resend from the first save. */
 export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<ReqSave> {
   const key = typeof input?.key === "string" ? input.key.trim().slice(0, 80) : "";
   if (!key) return fail("Start again", "The phone did not say which requirement this is.", "Close it and raise it again.");
@@ -171,8 +171,9 @@ export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<R
   if (!lines.length) return fail("Add an item", "A requirement needs at least one item.", "Add what you need, then send.");
   if (lines.length > 100) return fail("Too many items", "Send at most 100 items at a time.", "Split it into two requirements.");
   for (const [i, l] of lines.entries()) {
-    const counted = finite(l?.counted), need = finite(l?.need);
-    if (counted == null || counted < 0) return fail("Count it first", "Every item needs what you counted in the godown — 0 if there is none.", "Open the item and enter your count.", i);
+    const need = finite(l?.need);
+    /* A figure only an older APK sends: it may be left out, never be negative. */
+    if (l?.counted != null && (finite(l.counted) == null || Number(l.counted) < 0)) return fail("Check the count", "What you counted cannot be below 0.", "Open the item and fix your count.", i);
     if (need == null || need <= 0) return fail("How much to buy?", "Every item needs a quantity above 0.", "Open the item and enter how much you need.", i);
   }
   const requiredBy = typeof input?.requiredBy === "string" ? input.requiredBy : "";
@@ -192,14 +193,15 @@ export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<R
   }
 
   const ctx = erpCtxForReq(fc, dept);
-  const counts = new Map(lines.map((l) => [String(l.itemId), Number(l.counted)]));
+  /* Only an older APK counts; its figures are recorded as stock checks and hold nothing. */
+  const counts = new Map(lines.filter((l) => finite(l.counted) != null).map((l) => [String(l.itemId), Number(l.counted)]));
   let res;
   try {
     res = await raiseRequirementWith(
       ctx,
       { date: today(), requiredBy, department: REQ_DEPT_LABEL[dept], godown: fc.godown.name, priority, remarks: typeof input.remarks === "string" ? input.remarks.trim().slice(0, 1000) : "" },
       lines.map((l) => ({ rawMaterialId: String(l.itemId), required: String(l.need) })),
-      counts,
+      counts.size ? counts : undefined,
     );
   } catch (e) {
     await db.execute(sql`delete from factory_requirement_sends where key = ${key}`);
@@ -218,7 +220,13 @@ export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<R
   const out: ReqSave = {
     ok: true,
     no: requirementLabel(reqNo),
-    lines: items.map((x) => ({ item: x.item, qty: x.qty, unit: x.unit, counted: counts.get(x.rawMaterialId) ?? 0, countUnit: unitOf.get(x.rawMaterialId) ?? "L", verdict: x.count?.verdict ?? "skipped" })),
+    lines: items.map((x) => ({
+      item: x.item,
+      qty: x.qty,
+      unit: x.unit,
+      countUnit: unitOf.get(x.rawMaterialId) ?? "L",
+      ...(counts.has(x.rawMaterialId) ? { counted: counts.get(x.rawMaterialId), verdict: x.count?.verdict ?? "skipped" } : {}),
+    })),
     next: nextWords(items.map((x) => ({ item: x.item, rule: x.rule, vendor: x.rule === "direct" ? (vendorOf.get(x.rawMaterialId) ?? null) : null }))),
   };
   await db.execute(sql`update factory_requirement_sends set status = 'done', result = ${JSON.stringify(out)}::jsonb where key = ${key}`);

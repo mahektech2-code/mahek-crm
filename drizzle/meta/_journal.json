@@ -2150,6 +2150,13 @@
       "when": 1793636800000,
       "tag": "0311_qualification_stage_selection",
       "breakpoints": true
+    },
+    {
+      "idx": 307,
+      "version": "7",
+      "when": 1793640400000,
+      "tag": "0312_requirements_without_blind_count",
+      "breakpoints": true
     }
   ]
 }

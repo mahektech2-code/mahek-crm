@@ -1323,7 +1323,7 @@ describe("purchase requirements from the floor", () => {
     assert.doesNotMatch(words, /"(book|stock|avail|onHand|reconciled)"/, "no book figure travels to the phone");
   });
 
-  test("each item's count becomes its blind stock check; the answer is matches or not, and a resend raises nothing twice", async () => {
+  test("an older APK's count is still taken as a stock check that holds nothing; the answer is matches or not, and a resend raises nothing twice", async () => {
     const { fc } = await as("rakesh");
     const kit = await requirementKit(fc);
     assert.ok(kit.ok);
@@ -1366,29 +1366,34 @@ describe("purchase requirements from the floor", () => {
     assert.ok(card.lines.every((l) => l.counted != null), "the in-charge sees what they counted");
   });
 
-  test("a department asks only for its own categories, and every item needs a count", async () => {
+  test("a department asks only for its own categories, and an item needs no count", async () => {
     const { fc } = await as("rakesh");
     const [can] = await q<{ id: string }>(sql`select id from erp_raw_materials where material_type = 'Can' and active limit 1`);
     const notMine = await raiseFromFloor(fc, { key: "REQ-can-" + randomUUID().slice(0, 6), dept: "mixing", requiredBy: "2999-01-01", priority: "Medium", lines: [{ itemId: can.id, counted: 0, need: 10 }] });
     assert.equal(notMine.ok, false, "Mixing does not buy cans");
     const kit = await requirementKit(fc);
     assert.ok(kit.ok);
-    const noCount = await raiseFromFloor(fc, { key: "REQ-nc-" + randomUUID().slice(0, 6), dept: "mixing", requiredBy: "2999-01-01", priority: "Medium", lines: [{ itemId: kit.depts[0].items[0].id, counted: null as unknown as number, need: 10 }] });
-    assert.equal(noCount.ok, false);
-    assert.match((noCount as { title: string }).title, /Count it first/);
+    const noCount = await raiseFromFloor(fc, { key: "REQ-nc-" + randomUUID().slice(0, 6), dept: "mixing", requiredBy: "2999-01-01", priority: "Medium", lines: [{ itemId: kit.depts[0].items[0].id, need: 10 }] });
+    assert.ok(noCount.ok, JSON.stringify(noCount));
+    assert.ok(noCount.lines.every((l) => l.verdict === undefined && l.counted === undefined), "nothing was counted, so nothing is judged");
+    const [{ n }] = await q<{ n: number }>(sql`
+      select count(*)::int as n from erp_stock_counts c join erp_requisitions r on r.id = c.requisition_id
+       where r.req_no = ${Number(noCount.no.replace("REQ-", ""))}`);
+    assert.equal(n, 0, "raising a requirement opens no count");
   });
 
   test("an item is cancelled from the floor until it is on a PO", async () => {
     const { fc } = await as("rakesh");
     const kit = await requirementKit(fc);
     assert.ok(kit.ok);
-    const line = kit.reqs[0].lines[0];
+    const req = kit.reqs.find((x) => x.lines.length >= 2)!;
+    const line = req.lines[0];
     const done = await cancelFromFloor(fc, line.id, "Asked for by mistake");
     assert.ok(done.ok);
     const twice = await cancelFromFloor(fc, line.id, "Again");
     assert.equal(twice.ok, false);
     const { fc: other } = await as("sunita");
-    assert.equal((await cancelFromFloor(other, kit.reqs[0].lines[1].id, "Not mine")).ok, false, "another department's item is not theirs to cancel");
+    assert.equal((await cancelFromFloor(other, req.lines[1].id, "Not mine")).ok, false, "another department's item is not theirs to cancel");
   });
 });
 

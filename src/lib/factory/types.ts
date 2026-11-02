@@ -569,7 +569,7 @@ export type ReqItem = {
   name: string;
   /** The item master's category: Chemical, Can, Drum, Box, Stationary. */
   cat: string;
-  /** What a count is made in — litres or pieces. */
+  /** What a count is made in — litres or pieces. Read only by an APK from before the count left the requirement. */
   countUnit: "L" | "pcs";
   /** What it is bought in. */
   buyUnit: string;
@@ -586,13 +586,17 @@ export type ReqLine = {
   item: string;
   qty: number;
   unit: string;
-  /** The ERP's stage, in its words: "Count stock", "Waiting for PO number", "Waiting for goods", "Received". */
+  /** The ERP's stage, in its words: "Create PO", "Waiting for PO number", "Waiting for goods", "Received". */
   stage: string;
   /** Index into `steps`; −1 cancelled; steps.length done. */
   step: number;
   /** What happens next, in a sentence. */
   next: string;
-  /** What the requester counted, and what came of it — never the book. */
+  /**
+   * What the requester counted, and what came of it — never the book. Only an
+   * APK from before the count left the requirement (Nov 2026) ever counts, and
+   * only it draws these.
+   */
   counted: number | null;
   countUnit: "L" | "pcs";
   countState: "matched" | "flagged" | "waiting" | null;
@@ -637,14 +641,16 @@ export type ReqInput = {
   requiredBy: string;
   priority: "Urgent" | "Medium" | "For Stock";
   remarks?: string | null;
-  lines: { itemId: string; counted: number; need: number }[];
+  /** `counted` comes only from an APK from before the count left the requirement; a current phone sends what to buy and nothing else. */
+  lines: { itemId: string; counted?: number | null; need: number }[];
 };
 
 export type ReqSave =
   | {
       ok: true;
       no: string;
-      lines: { item: string; qty: number; unit: string; counted: number; countUnit: "L" | "pcs"; verdict: "matched" | "flagged" | "skipped" }[];
+      /** `counted` and `verdict` only where the phone counted (an older APK). */
+      lines: { item: string; qty: number; unit: string; counted?: number; countUnit: "L" | "pcs"; verdict?: "matched" | "flagged" | "skipped" }[];
       next: string[];
       replay?: boolean;
     }

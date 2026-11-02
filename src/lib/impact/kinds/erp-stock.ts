@@ -11,11 +11,9 @@ import { erpMayDelete, many, present } from "./erp-common";
 
 /* ---------------------------------------------------------------------------
  * STOCK ACCURACY AND BOX IDS. A count is not only a row on the office's list:
- * it is a task on the factory phone, it may be the recount a red flag is
- * waiting on, and it may be the blind count a requisition is held behind
- * before anybody may buy. Cancelling one lets go of each of those, and the
- * requisition is the surprise — a cancelled count holds the purchase again
- * until somebody counts.
+ * it is a task on the factory phone, and it may be the recount a red flag is
+ * waiting on. Cancelling one lets go of both. No requirement waits on a count
+ * any more (Nov 2026), so cancelling one never holds a purchase.
  *
  * A box released from hold, or put back after a customer returned it, is
  * scannable at the dispatch desk again; a returned one also leaves the order
@@ -38,17 +36,6 @@ async function countOf(id: string): Promise<Count | null> {
       left join erp_requisitions r on r.id = c.requisition_id
      where c.id = ${id}`);
   return c ?? null;
-}
-
-/** A requisition held behind this count: it waits for a new one once this is cancelled. */
-function heldAgain(c: Count, still: boolean): ImpactItem {
-  return {
-    app: "ERP",
-    label: `requisition ${c.reqNo ?? ""} ${still ? "stays" : "is"} held at Blind count until the stock is counted again`,
-    effect: still ? "kept" : "changed",
-    count: c.req ? 1 : 0,
-    note: "A cancelled count does not let the purchase through: open a new count, or have the stock exception approved.",
-  };
 }
 
 /* ============================================================ one count */
@@ -77,7 +64,6 @@ export const stockCountImpact: ImpactSource = {
         count: open && c.parent && c.parentStatus === "recount" ? 1 : 0,
       },
     ];
-    if (!c.parent) items.push(heldAgain(c, true));
     return {
       title: `${countLabel(c.no)} · ${c.item} at ${c.godown}`,
       verb: "Cancel count",
@@ -103,8 +89,6 @@ export const stockCheckImpact: ImpactSource = {
       db.execute<{ no: number }>(sql`select count_no as no from erp_stock_counts where recount_of_id = ${id} and status = 'open' order by count_no`),
     ]);
     const blockers = Number(pending?.n) > 0 ? ["An adjustment for this check is waiting for a decision — decide it first."] : [];
-    /* A flagged check lets the purchase carry on; cancelled, the requisition waits for a count again. */
-    const wasLetting = c.status === "flagged" || c.status === "recount" || c.status === "investigating" || c.status === "matched" || c.status === "resolved";
     return {
       title: `${countLabel(c.no)} · ${c.item} at ${c.godown}`,
       verb: "Cancel check",
@@ -124,7 +108,6 @@ export const stockCheckImpact: ImpactSource = {
           count: recounts.length,
           examples: recounts.slice(0, 5).map((r) => countLabel(Number(r.no))),
         },
-        heldAgain(c, !wasLetting),
       ]),
       blockers,
     };

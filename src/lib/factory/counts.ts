@@ -69,7 +69,8 @@ async function officeCounts(fc: FactoryCtx): Promise<CountTask[]> {
     kind: COUNT_KIND_LABEL[c.kind] ?? c.kind,
     reason: c.reason,
     recount: !!c.parent,
-    forPurchase: !!c.req,
+    /* No count is raised for a purchase any more; kept false for the APKs that still draw the pill. */
+    forPurchase: false,
     blocked: c.parent && c.parentCounterId === fc.user.id ? "You counted this first. A recount is done by somebody else." : null,
   }));
 }

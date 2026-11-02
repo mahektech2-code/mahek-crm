@@ -6,12 +6,9 @@ import {
   controlStep,
   cycleDaysFor,
   daysBetween,
-  gateCountStatus,
   judgeCount,
   pickCycleCounts,
   recountOutcome,
-  reorderJustification,
-  stockGate,
   toleranceFor,
   type CycleCandidate,
 } from "./stock-check";
@@ -95,18 +92,6 @@ test("daysBetween is calendar days", () => {
   assert.equal(daysBetween("2026-09-30", "2026-10-11"), 11);
 });
 
-test("even a matching count must justify the quantity", () => {
-  const ok = reorderJustification({ requested: 500, onShelf: 300, min: 200, max: 800, allowancePercent: 25 });
-  assert.equal(ok.justified, 500);
-  assert.equal(ok.unexpected, false);
-  const tooMuch = reorderJustification({ requested: 900, onShelf: 300, min: 200, max: 800, allowancePercent: 25 });
-  assert.equal(tooMuch.unexpected, true);
-  const full = reorderJustification({ requested: 10, onShelf: 900, min: 200, max: 800, allowancePercent: 25 });
-  assert.equal(full.justified, 0);
-  assert.equal(full.unexpected, true);
-  assert.equal(reorderJustification({ requested: 10, onShelf: 0, min: null, max: null, allowancePercent: 25 }).justified, null);
-});
-
 test("causes: a record that accounts for the gap is likely; a shortage nothing explains is physical", () => {
   const surplus = causeCandidates(200, 5, [
     { kind: "under_test", qty: 200, label: "PR 41 under test", screen: "testing", ids: ["t1"] },
@@ -127,32 +112,6 @@ test("causes: a record that accounts for the gap is likely; a shortage nothing e
   ]);
   assert.equal(twoAddUp.filter((c) => c.likelihood === "likely" && c.missing === "transaction").length, 2);
   assert.deepEqual(causeCandidates(3, 5, []), [], "within tolerance there is nothing to explain");
-});
-
-test("a requirement waits only for its count to be entered; what the count finds is a flag, never a hold", () => {
-  const g = (x: Partial<Parameters<typeof stockGate>[0]>) => stockGate({ required: true, countStatus: null, unexpectedQty: false, ...x });
-  assert.equal(stockGate({ required: false, countStatus: null, unexpectedQty: true }).blocks, false);
-  assert.equal(g({}).state, "to_count");
-  assert.equal(g({}).blocks, true, "no count yet: it is counted first");
-  assert.equal(g({ countStatus: "open" }).blocks, true);
-  assert.equal(g({ countStatus: "cancelled" }).blocks, true, "a cancelled count is no count");
-  for (const status of ["flagged", "recount", "investigating"] as const) {
-    assert.equal(g({ countStatus: status }).blocks, false, `${status} does not hold the purchase`);
-    assert.equal(g({ countStatus: status }).flag, "stockFlag");
-  }
-  assert.equal(g({ countStatus: "matched" }).blocks, false);
-  assert.equal(g({ countStatus: "matched" }).flag, null);
-  assert.equal(g({ countStatus: "resolved" }).flag, null);
-  assert.equal(g({ countStatus: "matched", unexpectedQty: true }).flag, "stockOverJustified");
-  assert.equal(g({ countStatus: "matched", unexpectedQty: true }).blocks, false);
-});
-
-test("the gate reads the newest live root count", () => {
-  const t = (s: string) => new Date(s);
-  assert.equal(gateCountStatus([]), null);
-  assert.equal(gateCountStatus([{ status: "flagged", createdAt: t("2026-10-01") }, { status: "open", createdAt: t("2026-10-02") }]), "open");
-  assert.equal(gateCountStatus([{ status: "matched", createdAt: t("2026-10-01") }, { status: "cancelled", createdAt: t("2026-10-02") }]), "matched");
-  assert.equal(gateCountStatus([{ status: "cancelled", createdAt: t("2026-10-01") }]), "cancelled");
 });
 
 test("control steps", () => {

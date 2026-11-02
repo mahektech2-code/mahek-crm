@@ -2054,9 +2054,9 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   /* ============================================================ purchase requirement
-   * The in-charge asks the office to buy what the department needs. Every item
-   * is COUNTED before it is added — the phone is never sent the book — and the
-   * count goes to the ERP as that item's stock check (lib/factory/purchase.ts).
+   * The in-charge asks the office to buy what the department needs: the item
+   * and how much. Nothing is counted on the way — the purchase goes straight
+   * to its method in the ERP (lib/factory/purchase.ts).
    */
 
   openReq() {
@@ -2077,7 +2077,7 @@ export class FactoryApp extends Component<Props, State> {
       if (r.ok) this.setState((st) => (st.req ? { req: { ...st.req, loading: false, kit: r, dept: st.req.dept ?? r.depts[0]?.key ?? null } } : null));
       else this.setReq({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
     } catch (e) {
-      this.setReq({ loading: false, err: { title: "No network", text: "The requirements could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A requirement needs the network — your counts are checked the moment they arrive." } });
+      this.setReq({ loading: false, err: { title: "No network", text: "The requirements could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A requirement needs the network, so it is never raised twice." } });
       if (!(e instanceof NotReceived)) throw e;
     }
   }
@@ -2104,10 +2104,10 @@ export class FactoryApp extends Component<Props, State> {
     this.setReq({ view: "pick", lines: [], q: "", requiredBy: this.reqDay(2), priority: "Medium", remarks: "", key: mintReqKey(), saved: null, err: null, ask: null, dept: s.dept ?? s.kit.depts[0]?.key ?? null });
   }
 
-  /** Tap Add (or an item already added): count first, then how much to buy. */
+  /** Tap Add (or an item already added): how much to buy. */
   askReqItem(it: ReqItem) {
     const have = this.state.req?.lines.find((l) => l.itemId === it.id);
-    this.setReq({ ask: { itemId: it.id, step: "count", counted: have ? String(have.counted) : "", need: have ? String(have.need) : "" } });
+    this.setReq({ ask: { itemId: it.id, need: have ? String(have.need) : "" } });
   }
 
   /** The quick amounts and the − / + step for how an item is bought. */
@@ -2119,10 +2119,9 @@ export class FactoryApp extends Component<Props, State> {
   addReqLine() {
     const s = this.state.req, a = s?.ask;
     if (!s || !a) return;
-    const counted = Number(a.counted), need = Number(a.need);
-    if (a.counted === "" || !Number.isFinite(counted) || counted < 0) return this.setReq({ ask: { ...a, step: "count" } });
+    const need = Number(a.need);
     if (!Number.isFinite(need) || need <= 0) return this.toast("Enter how much to buy", "warn");
-    const line = { itemId: a.itemId, counted, need };
+    const line = { itemId: a.itemId, need };
     const lines = s.lines.some((l) => l.itemId === a.itemId) ? s.lines.map((l) => (l.itemId === a.itemId ? line : l)) : s.lines.concat([line]);
     this.setReq({ lines, ask: null, err: null });
   }
@@ -2181,10 +2180,10 @@ export class FactoryApp extends Component<Props, State> {
   reqBack() {
     const s = this.state.req;
     if (!s) return this.setState({ route: "more" });
-    if (s.ask) return this.setReq({ ask: s.ask.step === "need" ? { ...s.ask, step: "count" } : null });
+    if (s.ask) return this.setReq({ ask: null });
     if (s.view === "send") return this.setReq({ view: "pick", err: null });
     if (s.view === "pick" && s.lines.length)
-      return this.setState({ sheet: { type: "reason", title: "Leave this requirement?", sub: "The items you added and counted are not sent.", reasons: ["Yes, leave it"], okL: "Leave", danger: true, done: () => this.setState({ sheet: null, req: { ...s, view: "list", lines: [] } }) } });
+      return this.setState({ sheet: { type: "reason", title: "Leave this requirement?", sub: "The items you added are not sent.", reasons: ["Yes, leave it"], okL: "Leave", danger: true, done: () => this.setState({ sheet: null, req: { ...s, view: "list", lines: [] } }) } });
     if (s.view === "pick" || s.view === "detail") return this.setReq({ view: "list", open: null, err: null });
     if (s.view === "sent") return this.setReq({ view: "list", saved: null }), void this.loadReq();
     this.setState({ route: "more", req: null });
@@ -2196,96 +2195,47 @@ export class FactoryApp extends Component<Props, State> {
     return this.state.route === "req" && !!s && (s.view === "pick" || s.view === "send" || s.view === "sent" || s.view === "detail");
   }
 
-  /** The sheet that adds one item: count it (blind), then how much to buy. */
-  renderReqAsk(it: ReqItem, godown: string): ReactNode {
+  /** The sheet that adds one item: how much to buy. Nothing is counted first. */
+  renderReqAsk(it: ReqItem): ReactNode {
     const s = this.state.req!, a = s.ask!;
     const round = { width: "40px", height: "40px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" } as CSSProperties;
-    const cu = it.countUnit, bu = it.buyUnit === "Litre" ? "L" : it.buyUnit === "Kg" ? "kg" : "pcs";
-    const dots = (n: number, l: string) => (
-      <Div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px" }}>
-        <Span style={{ width: "24px", height: "6px", borderRadius: "3px", background: "#6835FB" }} />
-        <Span style={{ width: "24px", height: "6px", borderRadius: "3px", background: n > 1 ? "#6835FB" : "#DDE1E8" }} />
-        <Span style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385", marginLeft: "2px" }}>{l}</Span>
-      </Div>
-    );
-    const top = (n: number, l: string) => (
-      <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
-        <Div style={{ flex: 1, minWidth: 0 }}>
-          <Div style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700 }}>{it.name}</Div>
-          {dots(n, l)}
-        </Div>
-        <Btn onClick={() => this.setReq({ ask: null })} aria-label="Close" style={round}>{ic("x", 20, "#5223E0")}</Btn>
-      </Div>
-    );
-    const pad = (k: string) => {
-      const press = () => {
-        let v = a.counted;
-        if (k === "⌫") v = v.slice(0, -1);
-        else if (k === ".") v = cu === "L" && !v.includes(".") ? (v || "0") + "." : v;
-        else v = (v === "0" ? "" : v) + k;
-        this.setReq({ ask: { ...a, counted: v.slice(0, 8) } });
-      };
-      return <Btn key={k} onClick={press} aria-label={k === "⌫" ? "Delete" : k} style={{ height: "48px", borderRadius: "10px", border: "none", background: "#F1F2F5", fontSize: "21px", fontWeight: 600, color: k === "." && cu !== "L" ? "#C2C8D2" : "#1A1E28", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{k}</Btn>;
-    };
+    const bu = it.buyUnit === "Litre" ? "L" : it.buyUnit === "Kg" ? "kg" : "pcs";
     const purpleBtn = (on: boolean, l: string, run: () => void) => <Btn onClick={() => on && run()} style={btn(on ? "p" : "off", 58)}>{l}</Btn>;
-    let body: ReactNode;
-    if (a.step === "count") {
-      const has = a.counted !== "";
-      body = (
-        <>
-          {top(1, "Count, then how much you need")}
-          <MsgBox m={msg("Go and check the godown first. How much " + it.name + " is at " + godown + " right now? Count every " + (cu === "L" ? "drum" : "piece") + ", open ones too.", "info")} />
-          <Div>
-            <Div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>Available now</Div>
-            <Div style={{ height: "58px", borderRadius: "12px", border: "2px solid " + (has ? "#6835FB" : "#DDE1E8"), background: "#FFFFFF", display: "flex", alignItems: "center", padding: "0 16px", gap: "8px" }}>
-              <Span style={{ flex: 1, fontSize: has ? "26px" : "19px", fontWeight: has ? 700 : 500, color: has ? "#1A1E28" : "#9BA3B2" }}>{has ? a.counted : "Type what you counted"}</Span>
-              <Span style={{ fontSize: "17px", fontWeight: 600, color: "#3D4453" }}>{cu}</Span>
+    const q = this.reqQuick(it);
+    const n = Number(a.need) || 0;
+    const setNeed = (v: number) => this.setReq({ ask: { ...a, need: v > 0 ? String(Math.round(v * 1000) / 1000) : "" } });
+    const sq: CSSProperties = { width: "60px", height: "60px", flex: "none", borderRadius: "14px", border: "none", background: "#F1ECFF", color: "#5223E0", fontSize: "30px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
+    const body: ReactNode = (
+      <>
+        <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+          <Div style={{ flex: 1, minWidth: 0 }}>
+            <Div style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700 }}>{it.name}</Div>
+            <Div style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385", marginTop: "4px" }}>{it.how}</Div>
+          </Div>
+          <Btn onClick={() => this.setReq({ ask: null })} aria-label="Close" style={round}>{ic("x", 20, "#5223E0")}</Btn>
+        </Div>
+        {it.openReq && <MsgBox m={msg("Already asked for on " + it.openReq + ". Add it again only if the department needs more.", "info")} />}
+        <Div>
+          <Div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>How much to buy?</Div>
+          <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <Btn onClick={() => setNeed(Math.max(0, n - q.step))} aria-label="Less" style={sq}>−</Btn>
+            <Div style={{ flex: 1, minWidth: 0, height: "60px", borderRadius: "14px", border: "2px solid #6835FB", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", padding: "0 10px" }}>
+              <Input value={a.need} onChange={(e) => this.setReq({ ask: { ...a, need: String(e.target.value).replace(it.buyUnit === "Pcs" ? /[^\d]/g : /[^\d.]/g, "").slice(0, 8) } })} inputMode={it.buyUnit === "Pcs" ? "numeric" : "decimal"} placeholder="0" aria-label={"How much " + it.name + " to buy"} style={{ width: "100%", minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "28px", fontWeight: 700, color: "#1A1E28", textAlign: "center" }} />
+              <Span style={{ fontSize: "17px", fontWeight: 600, color: "#6B7385", flex: "none" }}>{bu}</Span>
             </Div>
+            <Btn onClick={() => setNeed(n + q.step)} aria-label="More" style={sq}>＋</Btn>
           </Div>
-          <Div style={{ display: "flex" }}>
-            <Btn onClick={() => this.setReq({ ask: { ...a, counted: "0" } })} style={{ padding: "10px 14px", borderRadius: "18px", border: "1.5px solid #DDE1E8", background: "#FFFFFF", color: "#3D4453", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>None in the godown · 0</Btn>
-          </Div>
-          <Div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "6px" }}>{["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"].map(pad)}</Div>
-          {purpleBtn(has, "Next", () => this.setReq({ ask: { ...a, step: "need" } }))}
-        </>
-      );
-    } else {
-      const q = this.reqQuick(it);
-      const n = Number(a.need) || 0;
-      const setNeed = (v: number) => this.setReq({ ask: { ...a, need: v > 0 ? String(Math.round(v * 1000) / 1000) : "" } });
-      const sq: CSSProperties = { width: "60px", height: "60px", flex: "none", borderRadius: "14px", border: "none", background: "#F1ECFF", color: "#5223E0", fontSize: "30px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
-      body = (
-        <>
-          {top(2, "How much you need")}
-          <Div style={{ ...card, borderRadius: "12px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <Span style={{ fontSize: "15px", color: "#6B7385" }}>You counted</Span>
-            <Span style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <Span style={{ fontSize: "18px", fontWeight: 700 }}>{nf(Number(a.counted)) + " " + cu}</Span>
-              <Btn onClick={() => this.setReq({ ask: { ...a, step: "count" } })} style={{ background: "none", border: "none", padding: 0, color: "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>Change</Btn>
-            </Span>
-          </Div>
-          <Div>
-            <Div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>How much to buy?</Div>
-            <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <Btn onClick={() => setNeed(Math.max(0, n - q.step))} aria-label="Less" style={sq}>−</Btn>
-              <Div style={{ flex: 1, minWidth: 0, height: "60px", borderRadius: "14px", border: "2px solid #6835FB", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", padding: "0 10px" }}>
-                <Input value={a.need} onChange={(e) => this.setReq({ ask: { ...a, need: String(e.target.value).replace(it.buyUnit === "Pcs" ? /[^\d]/g : /[^\d.]/g, "").slice(0, 8) } })} inputMode={it.buyUnit === "Pcs" ? "numeric" : "decimal"} placeholder="0" aria-label={"How much " + it.name + " to buy"} style={{ width: "100%", minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "28px", fontWeight: 700, color: "#1A1E28", textAlign: "center" }} />
-                <Span style={{ fontSize: "17px", fontWeight: 600, color: "#6B7385", flex: "none" }}>{bu}</Span>
-              </Div>
-              <Btn onClick={() => setNeed(n + q.step)} aria-label="More" style={sq}>＋</Btn>
-            </Div>
-          </Div>
-          <Div style={{ display: "flex", gap: "8px" }}>
-            {q.quick.map((v) => {
-              const on = n === v;
-              return <Btn key={v} onClick={() => setNeed(v)} style={{ flex: 1, padding: "10px 4px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{nf(v) + " " + bu}</Btn>;
-            })}
-          </Div>
-          <Div style={{ fontSize: "13px", color: "#6B7385" }}>{q.hint}</Div>
-          {purpleBtn(n > 0, "Add to requirement", () => this.addReqLine())}
-        </>
-      );
-    }
+        </Div>
+        <Div style={{ display: "flex", gap: "8px" }}>
+          {q.quick.map((v) => {
+            const on = n === v;
+            return <Btn key={v} onClick={() => setNeed(v)} style={{ flex: 1, padding: "10px 4px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{nf(v) + " " + bu}</Btn>;
+          })}
+        </Div>
+        <Div style={{ fontSize: "13px", color: "#6B7385" }}>{q.hint}</Div>
+        {purpleBtn(n > 0, "Add to requirement", () => this.addReqLine())}
+      </>
+    );
     return (
       <Div onClick={() => this.setReq({ ask: null })} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
         <Div onClick={(e) => e.stopPropagation()} role="dialog" aria-label={it.name} style={{ width: "100%", maxHeight: "94%", overflowY: "auto", background: "#FFFFFF", borderRadius: "26px 26px 0 0", padding: "10px 20px 18px 20px", display: "flex", flexDirection: "column", gap: "14px", animation: "fx-up 200ms cubic-bezier(0.2,0,0.2,1)" }}>
@@ -2341,9 +2291,7 @@ export class FactoryApp extends Component<Props, State> {
     const PRI: Record<string, { bg: string; fg: string; l: string }> = { Urgent: { bg: "#FCECEC", fg: "#B3261E", l: "Urgent" }, Medium: { bg: "#EDEFF3", fg: "#3D4453", l: "Medium" }, "For Stock": { bg: "#EDEFF3", fg: "#3D4453", l: "For stock" } };
     const tag = (l: string, bg: string, fg: string) => <Pill key={l} l={l} bg={bg} fg={fg} />;
     const stageTone = (l: ReqLine) =>
-      l.step < 0 ? { bg: "#EDEFF3", fg: "#6B7385" } : l.step >= kit.steps.length ? { bg: "#E9F5EE", fg: "#1D7A45" } : l.step <= 1 ? { bg: "#FDF6E7", fg: "#8A5C05" } : l.step >= 4 ? { bg: "#E8F1FD", fg: "#1A5BB5" } : { bg: "#F1ECFF", fg: "#3D14A8" };
-    const countWords = (l: ReqLine) =>
-      l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "flagged" ? { t: "Count doesn't match — stock control told", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
+      l.step < 0 ? { bg: "#EDEFF3", fg: "#6B7385" } : l.step >= kit.steps.length ? { bg: "#E9F5EE", fg: "#1D7A45" } : l.step <= 1 ? { bg: "#FDF6E7", fg: "#8A5C05" } : l.step >= 3 ? { bg: "#E8F1FD", fg: "#1A5BB5" } : { bg: "#F1ECFF", fg: "#3D14A8" };
     const cardS = card;
 
     /* ---- the list */
@@ -2438,7 +2386,7 @@ export class FactoryApp extends Component<Props, State> {
           </Div>
           {this.sectionLabel("Items · " + r.lines.length)}
           {r.lines.map((l) => {
-            const t = stageTone(l), cw = countWords(l);
+            const t = stageTone(l);
             const open = s.expand === l.id;
             const cur = Math.min(Math.max(l.step, 0), kit.steps.length);
             const facts: [string, string][] = [];
@@ -2450,7 +2398,7 @@ export class FactoryApp extends Component<Props, State> {
                 <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
                   <Span style={{ flex: 1, minWidth: 0 }}>
                     <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{l.item}</Span>
-                    <Span style={{ display: "block", fontSize: "14px", color: "#6B7385", marginTop: "2px" }}>{"Need " + qtyW(l.qty, l.unit) + (l.counted != null ? " · you counted " + nf(l.counted) + " " + l.countUnit : "")}</Span>
+                    <Span style={{ display: "block", fontSize: "14px", color: "#6B7385", marginTop: "2px" }}>{"Need " + qtyW(l.qty, l.unit)}</Span>
                   </Span>
                   {tag(l.stage, t.bg, t.fg)}
                 </Div>
@@ -2460,7 +2408,6 @@ export class FactoryApp extends Component<Props, State> {
                   </Div>
                 )}
                 <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#3D4453" }}>{l.next}</Div>
-                {cw && <Div style={{ display: "flex" }}>{tag(cw.t, cw.bg, cw.fg)}</Div>}
                 {!!facts.length && (
                   <Div style={{ borderTop: "1px solid #EDEFF3" }}>
                     {facts.map(([a, b], i) => (
@@ -2502,9 +2449,6 @@ export class FactoryApp extends Component<Props, State> {
     /* ---- the answer */
     if (view === "sent" && s.saved) {
       const sv = s.saved;
-      const off = sv.lines.filter((l) => l.verdict === "flagged").map((l) => l.item);
-      const fine = sv.lines.filter((l) => l.verdict === "matched").map((l) => l.item);
-      const and = (xs: string[]) => (xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
       return wrap(
         <Div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: "14px", padding: "8px" }}>
           <Span style={{ width: "80px", height: "80px", borderRadius: "50%", background: "#E9F5EE", display: "flex", alignItems: "center", justifyContent: "center", alignSelf: "center" }}>{ic("check", 42, "#1D7A45")}</Span>
@@ -2513,17 +2457,14 @@ export class FactoryApp extends Component<Props, State> {
             <Div style={{ ...mono, fontSize: "17px", color: "#3D4453", marginTop: "4px" }}>{sv.no + " · " + PRI[s.priority].l + " · by " + this.reqDayWords(s.requiredBy)}</Div>
           </Div>
           <Div style={{ ...cardS, padding: "6px 16px" }}>
-            <Div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", padding: "8px 0 4px 0" }}>Your counts</Div>
+            <Div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", padding: "8px 0 4px 0" }}>Items</Div>
             {sv.lines.map((l, i) => (
               <Div key={l.item} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", padding: "10px 0", borderBottom: i < sv.lines.length - 1 ? "1px solid #EDEFF3" : "none" }}>
-                <Span style={{ fontSize: "15px", fontWeight: 700 }}>{l.item + " · " + nf(l.counted) + " " + l.countUnit}</Span>
-                {l.verdict === "matched" ? tag("✓ Matches the book", "#E9F5EE", "#1D7A45") : l.verdict === "flagged" ? tag("Doesn’t match", "#FDF6E7", "#8A5C05") : tag("Recount already open", "#EDEFF3", "#3D4453")}
+                <Span style={{ fontSize: "15px", fontWeight: 700 }}>{l.item}</Span>
+                <Span style={{ fontSize: "15px", color: "#3D4453" }}>{qtyW(l.qty, l.unit)}</Span>
               </Div>
             ))}
           </Div>
-          {!!off.length && (
-            <MsgBox m={msg(and(off) + (off.length > 1 ? " don’t" : " doesn’t") + " match the book. Stock control has been told — buying carries on" + (fine.length ? ", and " + and(fine) + (fine.length > 1 ? " match." : " matches.") : "."), "warn")} />
-          )}
           <Div style={{ ...cardS, padding: "14px 16px" }}>
             <Div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>What happens next</Div>
             {sv.next.map((x) => <Div key={x} style={{ fontSize: "14px", lineHeight: "21px", color: "#3D4453" }}>{x}</Div>)}
@@ -2552,15 +2493,14 @@ export class FactoryApp extends Component<Props, State> {
         <>
           <Div style={{ ...cardS, padding: "2px 14px" }}>
             <Div style={{ display: "flex", padding: "10px 0", borderBottom: "1px solid #EDEFF3", fontSize: "12px", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "#6B7385" }}>
-              <Span style={{ flex: 1 }}>Item</Span><Span style={{ width: "80px", textAlign: "right" }}>Counted</Span><Span style={{ width: "70px", textAlign: "right" }}>Need</Span>
+              <Span style={{ flex: 1 }}>Item</Span><Span style={{ width: "90px", textAlign: "right" }}>Need</Span>
             </Div>
             {s.lines.map((l, i) => {
               const it = itemOf(l.itemId);
               return (
                 <Div key={l.itemId} style={{ display: "flex", padding: "11px 0", borderBottom: i < s.lines.length - 1 ? "1px solid #EDEFF3" : "none", fontSize: "15px" }}>
                   <Span style={{ flex: 1, fontWeight: 700 }}>{it?.name ?? ""}</Span>
-                  <Span style={{ width: "80px", textAlign: "right", color: "#3D4453" }}>{nf(l.counted) + " " + (it?.countUnit ?? "")}</Span>
-                  <Span style={{ width: "70px", textAlign: "right", fontWeight: 700 }}>{qtyW(l.need, it?.buyUnit ?? "")}</Span>
+                  <Span style={{ width: "90px", textAlign: "right", fontWeight: 700 }}>{qtyW(l.need, it?.buyUnit ?? "")}</Span>
                 </Div>
               );
             })}
@@ -2585,14 +2525,13 @@ export class FactoryApp extends Component<Props, State> {
           <Div>{lbl("Note for the office (optional)")}
             <Input multiline value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" style={{ width: "100%", minHeight: "84px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "12px", fontSize: "17px", lineHeight: "23px", color: "#1A1E28", background: "#FFFFFF" }} />
           </Div>
-          <MsgBox m={msg("Your counts are sent as this requirement’s stock check. If one doesn’t match the book, stock control is told — buying carries on.", "info")} />
           {s.err && errBox(s.err)}
         </>,
         <Btn onClick={() => void this.sendReq()} style={btn(s.saving ? "off" : "p", 58)}>{s.saving ? "Sending…" : "Raise requirement"}</Btn>,
       );
     }
 
-    /* ---- step 1: pick and count */
+    /* ---- step 1: pick the items and how much */
     const q = s.q.trim().toLowerCase();
     const items = (dept?.items ?? []).filter((i) => !q || i.name.toLowerCase().includes(q));
     const chosen = new Set(s.lines.map((l) => l.itemId));
@@ -2604,12 +2543,11 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ display: "block", fontSize: "16px", fontWeight: 700, color: "#1A1E28" }}>{it.name}</Span>
             {l ? (
               <Span style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                {tag("✓ Counted " + nf(l.counted) + " " + it.countUnit, "#E9F5EE", "#1D7A45")}
-                {tag("Need " + qtyW(l.need, it.buyUnit), "#F1ECFF", "#3D14A8")}
+                {tag("✓ Need " + qtyW(l.need, it.buyUnit), "#F1ECFF", "#3D14A8")}
               </Span>
             ) : (
               <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "2px" }}>
-                {(it.countUnit === "L" ? "Litres" : "Pieces") + " · " + it.how.charAt(0).toLowerCase() + it.how.slice(1)}
+                {it.how}
                 {it.openReq && <Span style={{ color: "#3D14A8", fontWeight: 700 }}>{" · already on " + it.openReq}</Span>}
               </Span>
             )}
@@ -2649,7 +2587,7 @@ export class FactoryApp extends Component<Props, State> {
         {!items.length && <Div style={{ ...cardS, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{q ? "Nothing matches “" + s.q + "”." : "No " + what + " for " + (dept?.label ?? "this department") + ". The office adds them in ERP → Masters → Raw materials."}</Div>}
       </>,
       <Btn onClick={() => n && this.setReq({ view: "send", err: null })} style={btn(n ? "p" : "off", 58)}>{n ? "Next · " + n + " item" + (n > 1 ? "s" : "") : "Next · add an item first"}</Btn>,
-      asking ? this.renderReqAsk(asking, kit.godown) : null,
+      asking ? this.renderReqAsk(asking) : null,
     );
   }
 
@@ -3019,7 +2957,6 @@ export class FactoryApp extends Component<Props, State> {
                 <Div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                   <Pill l={t.kind} bg="#EDEFF3" fg="#3D4453" />
                   {t.recount && <Pill l="Recount" bg="#FDF6E7" fg="#8A5C05" />}
-                  {t.forPurchase && <Pill l="Before a purchase" bg="#EAF0FB" fg="#2B5CBF" />}
                   {t.overdue && <Pill l="Overdue" bg="#FCECEC" fg="#B3261E" />}
                 </Div>
                 {t.blocked && <Span style={{ fontSize: "13px", color: "#8A5C05" }}>{t.blocked}</Span>}

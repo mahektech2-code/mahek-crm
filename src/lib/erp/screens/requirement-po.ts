@@ -22,7 +22,7 @@ import {
   type QuotePoCell,
 } from "../engines/purchase-flow";
 import { godownIdByName, godownOptions, inTx, refuse, today, type Tx } from "./common";
-import { heldByStock, refreshPurchaseOrder, requirementViews, type ReqView } from "./purchase-flow";
+import { refreshPurchaseOrder, requirementViews, type ReqView } from "./purchase-flow";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
@@ -49,8 +49,6 @@ function poRefusal(ctx: ErpContext, v: ReqView | undefined): Result<never> | nul
   if (v.legacy) return err("This requirement was ordered before POs were kept in the ERP.", "conflict");
   if (v.po) return err(`It is already on ${v.po.name}.`, "conflict");
   if (!v.r.rawMaterialId) return err("Only a raw-material requirement is put on a PO.", "rule_violation");
-  const held = heldByStock(v);
-  if (held) return held as Result<never>;
   return null;
 }
 
@@ -602,7 +600,6 @@ export async function orderFromQuote(
       vendorSelectedAt: new Date(),
       vendorSelectedById: ctx.user.id,
       status: "Order Placed",
-      stockCheckRequired: false,
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
