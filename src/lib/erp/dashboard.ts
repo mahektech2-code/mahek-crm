@@ -124,8 +124,8 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ================================================ inventory accuracy */
   /*
-   * Before purchase, because it is what holds purchase: a requirement waits
-   * on a blind count, and a red flag stops it until it is resolved.
+   * Counting is its own work now: no requirement waits on a count, so this
+   * section is about the shelves, not about buying.
    */
   if (has("stockCheck")) {
     /* The control's own steps — counts to do, red flags, recounts, what is
@@ -156,7 +156,6 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       const list = ids(stage);
       if (list.length || always) purchase.push({ l, v: String(list.length), sub, tone: list.length ? tone : undefined, href: tileHref("requisitions", list, stage) });
     };
-    tile("Blind count", "Requirements · waiting for a blind count", "the count comes before the purchase method", "info");
     tile("Waiting for PO number", "Requirements · waiting for PO number", "quotation items — buy on the Quotation manager, link its PO number", "warn", true);
     tile("Create PO", "Requirements · create PO", "direct purchases — create the PO at the item's price", "brand", true);
     tile("Create or link PO", "Requirements · create or link PO", "buyer decision — create a PO or link one", "brand");
@@ -520,19 +519,14 @@ export type FlowStep = { l: string; v: number; sub: string; href: string; tone?:
 export async function accuracyFlow(ctx: ErpContext, godownName: string | null): Promise<{ steps: FlowStep[]; accuracy: ControlWork["accuracy"] } | null> {
   if (!ctx.screens.has("stockCheck")) return null;
   const inG = (g: unknown) => !godownName || g === godownName;
-  const [w, work] = await Promise.all([controlWork(), ctx.screens.has("requisitions") ? requirementWork(ctx) : Promise.resolve({} as Record<string, { id: string; godown: string }[]>)]);
+  const w = await controlWork();
   const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
-  const stage = (...names: string[]) => ids(names.flatMap((n) => work[n] ?? []));
-  /* The count holds a requirement only until it is entered; a red flag never does. */
-  const held = stage("Blind count");
-  const moving = stage("Waiting for PO number", "Create PO", "Create or link PO");
+  /* Counting runs on its own clock — cycle counts, counts somebody asked for — and no purchase waits on it. */
   const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
   return {
     accuracy: w.accuracy,
     steps: [
-      { l: "Requirement", v: held.length, sub: "waiting for the blind count", href: tileHref("requisitions", held, "Waiting for the blind count"), tone: held.length ? "info" : undefined },
-      { l: "Blind count", v: ids(w.toCount).length, sub: dueNow ? `${dueNow} due today or overdue · book hidden` : "to count, book hidden", href: tileHref("countTasks", null, ""), tone: ids(w.toCount).length ? "info" : undefined },
-      { l: "Buying", v: moving.length, sub: "counted — the purchase carries on", href: tileHref("requisitions", moving, "Counted, buying"), tone: moving.length ? "brand" : undefined },
+      { l: "To count", v: ids(w.toCount).length, sub: dueNow ? `${dueNow} due today or overdue · book hidden` : "to count, book hidden", href: tileHref("countTasks", null, ""), tone: ids(w.toCount).length ? "info" : undefined },
       { l: "Red flag", v: ids(w.flags).length, sub: "beyond tolerance · stock control told", href: tileHref("stockFlags", ids(w.flags), "Red flag"), tone: ids(w.flags).length ? "danger" : undefined },
       { l: "Recount", v: ids(w.recounts).length, sub: "by somebody else", href: tileHref("stockFlags", ids(w.recounts), "Recount out"), tone: ids(w.recounts).length ? "warn" : undefined },
       { l: "Investigate", v: ids(w.investigating).length, sub: "under investigation", href: tileHref("stockFlags", ids(w.investigating), "Investigating"), tone: ids(w.investigating).length ? "warn" : undefined },

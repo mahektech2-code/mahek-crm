@@ -288,20 +288,19 @@ const countTasks: ScreenModule = {
           { l: "Items", kind: "distinct", k: "item" },
           { l: "Overdue", where: { flag: "countOverdue" }, tone: "danger" },
           { l: "Recounts", where: { flag: "recount" }, tone: "info" },
-          { l: "For a purchase", where: { flag: "forPurchase" }, tone: "warn" },
         ],
         godownKey: "godown",
         sortDefault: ["due", 1],
         newForm: runsCounts(ctx) ? { screen: "countTasks", id: "ask", title: "Ask for a count", sub: "A blind count anybody at the godown can do.", submit: "Open counts", header: askFields } : undefined,
         newLabel: "Ask for a count",
-        noDataLine: "Nothing to count. Counts open with each purchase request and each morning.",
+        noDataLine: "Nothing to count. Cycle counts open each morning, and anybody running stock control can ask for one.",
       },
       rows: rows.map((c): ListRow => {
         const sameCounter = !!c.parent && c.parentCounterId === ctx.user.id;
         return {
           id: c.id,
           v: { no: countLabel(c.no), due: c.due, kind: COUNT_KIND_LABEL[c.kind], item: c.item, godown: c.godown, unit: c.unit, reason: c.reason, assignee: c.assignee ?? "Anybody at the godown" },
-          flags: [...(c.due < day ? ["countOverdue"] : []), ...(c.parent ? ["recount"] : []), ...(c.req ? ["forPurchase"] : [])],
+          flags: [...(c.due < day ? ["countOverdue"] : []), ...(c.parent ? ["recount"] : [])],
           title: `${countLabel(c.no)} · ${c.item}`,
           header: `${c.godown} · ${COUNT_KIND_LABEL[c.kind]} · due ${c.due}`,
           actions: [
@@ -560,7 +559,7 @@ const stockFlags: ScreenModule = {
             requirement: c.reqNo ? requirementLabel(c.reqNo) : null,
             counter: latest.counter,
           },
-          flags: [...(c.req ? ["forPurchase"] : []), ...(adj ? ["adjustmentPending"] : [])],
+          flags: [...(adj ? ["adjustmentPending"] : [])],
           title: `${countLabel(c.no)} · ${c.item}`,
           header: `${c.godown} · ${COUNT_STATUS_LABEL[c.status]} · ${signed(latest.difference ?? 0)} ${c.unit} against the book`,
           actions,
@@ -1117,16 +1116,3 @@ const floorChecks: ScreenModule = {
 };
 
 export const STOCK_CHECK_SCREENS: ScreenModule[] = [countTasks, floorChecks, stockFlags, stockAdjustments, missingRecordsScreen, stockCounts];
-
-/* -------------------------------------------- requirements, from outside */
-
-/**
- * Opens the reorder counts for requirements just raised, inside the raise's
- * own transaction — the requirement and the count it waits on are one act.
- */
-export async function openRequirementCounts(tx: Tx, reqs: { id: string; rawMaterialId: string | null; godownId: string; label: string }[], byId: string): Promise<void> {
-  for (const r of reqs) {
-    if (!r.rawMaterialId) continue;
-    await openCount(tx, { kind: "reorder", rawMaterialId: r.rawMaterialId, godownId: r.godownId, requisitionId: r.id, reason: `Before purchase — ${r.label}`, byId });
-  }
-}

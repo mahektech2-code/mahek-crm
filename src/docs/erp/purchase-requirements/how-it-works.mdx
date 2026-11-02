@@ -1,10 +1,8 @@
-The purchase flow is **Requirement → Blind count → Book comparison → Verification → Purchase method → PO number → Receipt**, and no purchase is completed without a PO. The blind count — a physical count of the shelf, entered without seeing the book — is compared with the reconciled system quantity (ledger + goods at the gate, under test or awaiting a rate) and the verdict is **passed** or a **red flag**; a red flag notifies stock control and never stops the purchase. It has its own page: [Stock accuracy](/docs/erp/stock-accuracy/how-it-works).
-
-Then the item's **purchase rule** decides how the PO comes, and **no PO is approved** on any route:
+The purchase flow is **Requirement → Purchase method → PO number → Receipt**, and no purchase is completed without a PO. A requirement waits on no count: the moment it is raised, the item's **purchase rule** decides how the PO comes, and **no PO is approved** on any route:
 
 <Flow caption="Where a requirement goes" chart={`
 flowchart TD
-  R["Requirement raised<br/>the item's purchase rule is copied on"] --> C["Blind count entered<br/>compared with the reconciled book"] --> M{"Purchase rule"}
+  R["Requirement raised<br/>the item's purchase rule is copied on"] --> M{"Purchase rule"}
   M -- "Quotation" --> QM["Bought on the Quotation manager<br/>Purchase it writes the PO, Sent"]
   QM -- "requirement picked in the dialog" --> G
   QM -- "not picked" --> L["Link PO on the requirement<br/>details fetched and checked"]
@@ -15,6 +13,10 @@ flowchart TD
   L --> G["Waiting for goods"]
   CP --> G
 `} />
+
+<Callout kind="why">
+Until November 2026 every requirement opened a blind count of its shelf and waited at **Blind count** until somebody entered it, then showed a book comparison and a verdict. Work waited behind stock paperwork, so the step was taken out. Counting the shelf is still [Stock accuracy](/docs/erp/stock-accuracy/how-it-works)'s job — cycle counts, counts somebody asks for and floor checks — it simply no longer stands in front of a purchase. Counts still open for a requirement when this changed were cancelled.
+</Callout>
 
 ## The requirement
 

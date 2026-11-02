@@ -4666,9 +4666,9 @@ export const SETTINGS = [
     key: "erp.stockCheck.onRequirement",
     type: "boolean",
     category: "erp",
-    label: "Count stock before every purchase requirement",
+    label: "Count stock before every purchase requirement (retired)",
     description:
-      "Every raw-material requirement raised from now opens a blind physical count of the item at its godown, and waits only until the count is entered before its purchase method, vendor or PO. Whatever the count finds, the purchase carries on: a count that differs from the book beyond its tolerance flags the requirement and notifies stock control, and is recounted, investigated or adjusted on the side. Requirements already raised are not affected.",
+      "RETIRED — nothing reads this. A purchase requirement used to open a blind count of its item and wait until the count was entered; that step was taken out of the purchase flow in November 2026, and a requirement now goes straight to its purchase method whatever this says. Stock is counted on Stock accuracy instead. Kept so a stored value has a name.",
     default: true,
   },
   {
@@ -4697,9 +4697,9 @@ export const SETTINGS = [
     key: "erp.stockCheck.unexpectedQtyPercent",
     type: "integer",
     category: "erp",
-    label: "Quantity above what the count justifies",
+    label: "Quantity above what the count justifies (retired)",
     description:
-      "A requirement asking for more than the count justifies (up to the item's maximum level) by more than this percentage is flagged \"More than the shelf needs\" on the requirements list. It is not held.",
+      "RETIRED — nothing reads this. It flagged a requirement \"More than the shelf needs\" against the blind count raised with it, which is no longer raised. Kept so a stored value has a name.",
     default: 25,
     min: 0,
     max: 1000,

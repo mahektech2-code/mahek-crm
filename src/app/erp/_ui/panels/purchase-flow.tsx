@@ -19,11 +19,11 @@ import { IMPACT_FIELD } from "@/lib/impact/types";
 /* ---------------------------------------------------------------------------
  * The purchase flow, drawn in the record of a requirement and of a PO:
  *
- *   Requirement → Blind count → Book comparison → Verification →
- *   Purchase method → PO number → Receipt
+ *   Requirement → Purchase method → PO number → Receipt
  *
- * A requirement's record shows its book comparison and verdict, then the PO
- * by the item's purchase rule — and both happen IN the record:
+ * No count is asked for on the way (Nov 2026): a requirement's record goes
+ * straight to the PO by the item's purchase rule, and it happens IN the
+ * record:
  *
  * - Quotation: a PO NUMBER box. What is typed is looked up on the Quotation
  *   manager after a pause and shown; "Link PO" links it.
@@ -65,8 +65,6 @@ type Flow = {
   stage: string;
   next: string;
   facts: Fact[];
-  comparison: { count: string | null; counted: string; book: string; pendingIn: string; pendingOut: string | null; reconciled: string; difference: string; tolerance: string } | null;
-  verdict: "passed" | "red" | "waiting" | null;
   po: {
     name: string;
     fromQuotationManager: boolean;
@@ -79,55 +77,10 @@ type Flow = {
     href: string;
     canUnlink: boolean;
   } | null;
-  entry: { held: boolean; link: boolean; create: CreateData | null } | null;
+  entry: { link: boolean; create: CreateData | null } | null;
 };
 
 const count = (q: string) => (Number.isFinite(Number(q)) && q.trim() ? qty(Number(q)) : q);
-
-function Comparison({ c, verdict }: { c: NonNullable<Flow["comparison"]>; verdict: Flow["verdict"] }) {
-  const rows: [string, string, string?][] = [
-    ["Physical count", c.counted, "font-semibold text-ink"],
-    ["Book — stock ledger", c.book],
-    ["+ At the gate, under test or awaiting rate", c.pendingIn],
-    ...(c.pendingOut ? ([["− Going out, not yet booked", c.pendingOut]] as [string, string][]) : []),
-  ];
-  return (
-    <div className="grid gap-2">
-      <div className="overflow-hidden rounded-control border border-line text-meta">
-        <div className="border-b border-divider bg-canvas px-3 py-2 font-medium text-ink">Book comparison{c.count ? ` · ${c.count}` : ""}</div>
-        {rows.map(([l, v, tone]) => (
-          <div key={l} className="flex justify-between gap-3 border-b border-divider px-3 py-1.5">
-            <span className="text-muted">{l}</span>
-            <span className={cx("tabular-nums", tone)}>{v}</span>
-          </div>
-        ))}
-        <div className="flex justify-between gap-3 border-b border-divider px-3 py-1.5 font-semibold text-ink">
-          <span>Reconciled system quantity</span>
-          <span className="tabular-nums">{c.reconciled}</span>
-        </div>
-        <div className="flex justify-between gap-3 border-b border-divider px-3 py-1.5">
-          <span>Difference</span>
-          <span className={cx("font-semibold tabular-nums", verdict === "red" ? "text-danger" : "text-success")}>{c.difference}</span>
-        </div>
-        <div className="flex justify-between gap-3 px-3 py-1.5">
-          <span className="text-muted">Allowed difference</span>
-          <span className="tabular-nums">{c.tolerance}</span>
-        </div>
-      </div>
-      {verdict === "passed" ? (
-        <Callout tone="success" className="mb-0 block">
-          <div className="font-semibold text-success">✓ Stock verification passed</div>
-          <div className="text-meta text-body">The physical count agrees with the reconciled book within the allowed difference.</div>
-        </Callout>
-      ) : verdict === "red" ? (
-        <Callout tone="danger" className="mb-0 block">
-          <div className="font-semibold text-danger">⚑ Red flag — stock differs from the book</div>
-          <div className="text-meta text-body">Beyond the allowed difference. Stock control is told and a recount is opened. The purchase carries on.</div>
-        </Callout>
-      ) : null}
-    </div>
-  );
-}
 
 /** The PO number box: typed, looked up after a pause, linked with one press. Never a pop-up. */
 function LinkPo({ id }: { id: string }) {
@@ -528,7 +481,6 @@ function PurchaseFlow({ data }: PanelProps) {
           {f.next}
         </div>
       ) : null}
-      {f.comparison ? <Comparison c={f.comparison} verdict={f.verdict} /> : null}
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
         {f.facts.map((x) => (
           <div key={x.l} className="min-w-0">
@@ -588,9 +540,7 @@ function PurchaseFlow({ data }: PanelProps) {
           ) : null}
         </div>
       ) : null}
-      {f.entry && f.entry.held ? (
-        <div className="rounded-control bg-canvas px-3 py-2 text-meta text-muted">The PO comes after the blind count — enter the count first.</div>
-      ) : f.entry ? (
+      {f.entry ? (
         <>
           {f.entry.link ? <LinkPo key={f.id} id={f.id} /> : null}
           {f.entry.create ? (

@@ -373,9 +373,9 @@ export type StockEntry = {
  * are read against the Testing list as it stands when they arrive.
  */
 /**
- * A PURCHASE REQUIREMENT being raised, and the department's list. Every item
- * is counted before it is added (`lines[].counted`) — the phone is never sent
- * the book. Online only: the count is judged the moment it arrives.
+ * A PURCHASE REQUIREMENT being raised, and the department's list: each item
+ * and how much to buy. Nothing is counted on the way. Online only, so the
+ * office numbers it once.
  */
 export type ReqEntry = {
   loading: boolean;
@@ -385,7 +385,7 @@ export type ReqEntry = {
   tab: "open" | "received" | "cancelled";
   dept: ReqDept | null;
   q: string;
-  lines: { itemId: string; counted: number; need: number }[];
+  lines: { itemId: string; need: number }[];
   requiredBy: string;
   priority: "Urgent" | "Medium" | "For Stock";
   remarks: string;
@@ -395,8 +395,8 @@ export type ReqEntry = {
   saved: Extract<ReqSave, { ok: true }> | null;
   /** The requirement number open in the detail view. */
   open: string | null;
-  /** The item being added: counted first, then how much to buy. Typed values are text until saved. */
-  ask: { itemId: string; step: "count" | "need"; counted: string; need: string } | null;
+  /** The item being added: how much to buy. The typed value is text until saved. */
+  ask: { itemId: string; need: string } | null;
   /** The item opened to every step in the detail view. */
   expand: string | null;
   /** Search over the list: a requirement number or an item. */

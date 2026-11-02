@@ -846,7 +846,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "stock-accuracy",
         title: "Stock accuracy and counting",
-        summary: "Inventory Accuracy Control: a blind count before every purchase method and every day, stock checks from the floor, red flags that notify without stopping the purchase, recounts, causes, approved adjustments and missing records.",
+        summary: "Inventory Accuracy Control: daily blind cycle counts and counts on asking, stock checks from the floor, red flags that notify stock control, recounts, causes, approved adjustments and missing records.",
         group: "Make and store",
         modules: ["erp.stockCheck"],
         written: ALL,

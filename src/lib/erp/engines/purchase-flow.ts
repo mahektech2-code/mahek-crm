@@ -3,8 +3,7 @@ import { roundBill } from "@/lib/bill-round";
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW, as rules (PURE, client-safe):
  *
- *   Requirement → Blind count → Book comparison → Verification →
- *   Purchase method → PO number → Receipt
+ *   Requirement → Purchase method → PO number → Receipt
  *
  * THE PO NUMBER COMES FROM THE QUOTATION MANAGER (Oct 2026, a reversal).
  * The admin marks the rate to buy there (Ready to buy) and the desk buys it
@@ -15,10 +14,13 @@ import { roundBill } from "@/lib/bill-round";
  * already on the old path (a vendor chosen, a PO awaiting approval) finishes
  * on it.
  *
- * THE BLIND COUNT (Inventory Accuracy Control, `stock-check.ts`) holds a
- * requirement that carries `stockCheckRequired` only until the count is
- * ENTERED. A count that differs from the book flags the requirement and
- * tells stock control; the purchase goes on to its method regardless.
+ * THERE IS NO COUNT IN IT (Nov 2026, a reversal). A requirement used to open a
+ * blind count of its item and wait until the count was entered — Blind count,
+ * Book comparison and Verification were three steps of this flow. Mahek took
+ * them out: a requirement goes straight to its purchase method. Stock is still
+ * counted on Stock accuracy (cycle counts, floor checks), on its own clock and
+ * never in front of a purchase. `stock_check_required` on old rows is read by
+ * nothing.
  *
  * The item master's PURCHASE RULE decides the method — direct purchase,
  * quotation, or the buyer decides — and it is copied onto the requirement
@@ -61,10 +63,10 @@ export function methodByLabel(label: string | null | undefined): PurchaseMethod 
 }
 
 /** The steps the flow is drawn as, in order. */
-export const FLOW_STEPS = ["Requirement", "Blind count", "Book comparison", "Verification", "Purchase method", "PO number", "Receipt"] as const;
+export const FLOW_STEPS = ["Requirement", "Purchase method", "PO number", "Receipt"] as const;
 
 /** Where each step sits in FLOW_STEPS — named, so a step moved in the list moves every reader. */
-const STEP = { count: 1, method: 4, po: 5, receipt: 6 } as const;
+const STEP = { method: 1, po: 2, receipt: 3 } as const;
 
 /** A PO that still stands — one that was cancelled or sent back no longer holds its requirements. */
 export const LIVE_PO = ["Pending approval", "Approved", "Sent", "Partly received", "Received", "Closed"];
@@ -81,8 +83,6 @@ export type RequirementState = {
   po: { status: string; ordered: number; received: number } | null;
   /** A requirement from before POs, already ordered or received the old way. */
   legacy: boolean;
-  /** The blind count's verdict on it (`stockGate`): it blocks only while the count is not yet entered. */
-  gate?: { blocks: boolean; stage: string | null; next: string | null } | null;
 };
 
 export type Stage = {
@@ -112,10 +112,7 @@ export function requirementStage(r: RequirementState): Stage {
     if (r.status === "Received") return { stage: "Received", step: done, next: "Received before POs were kept in the ERP.", readyForPo: false };
     return { stage: `${r.status} (before POs)`, step: STEP.receipt, next: "Ordered before POs were kept in the ERP. Receive it as it arrives, or cancel it.", readyForPo: false };
   }
-  if (r.gate?.blocks) {
-    return { stage: r.gate.stage ?? "Blind count", step: STEP.count, next: r.gate.next ?? "Count the stock first.", readyForPo: false };
-  }
-  /* Counted (or never asked to be): the comparison and the verdict are the count's own answer, so the next thing owed is the PO — by the item's rule. */
+  /* Raised: the next thing owed is the PO — by the item's rule. */
   const route = poRouteOf(r);
   if (route === "link")
     return { stage: "Waiting for PO number", step: STEP.method, next: "Buy it on the Quotation manager, then link the PO number it made here.", readyForPo: false };

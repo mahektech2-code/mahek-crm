@@ -95,7 +95,7 @@ export const requirementCancelImpact: ImpactSource = {
       },
       {
         app: "ERP",
-        label: `open blind ${many(counts, "count")} opened before buying it`,
+        label: `open stock ${many(counts, "count")} raised with it`,
         effect: "kept",
         count: counts,
         note: "It stays on Stock accuracy → To count: what the shelf holds is still worth knowing. Cancel it there if it is not.",
