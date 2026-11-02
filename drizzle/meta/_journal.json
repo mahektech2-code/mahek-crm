@@ -2143,6 +2143,13 @@
       "when": 1793633200000,
       "tag": "0310_erp_units_of_measure",
       "breakpoints": true
+    },
+    {
+      "idx": 306,
+      "version": "7",
+      "when": 1793636800000,
+      "tag": "0311_qualification_stage_selection",
+      "breakpoints": true
     }
   ]
 }

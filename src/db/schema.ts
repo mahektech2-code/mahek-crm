@@ -1195,6 +1195,8 @@ export const leadTransitionKindEnum = pgEnum("lead_transition_kind", [
   "overridden",
   /* moved back down the ladder */
   "reverted",
+  /* a Sales Manager chose a later stage from Qualification, skipping the rungs between */
+  "skipped",
 ]);
 
 export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
@@ -7173,6 +7175,14 @@ export const leadStageTransitions = pgTable(
      * they ignoring" is the whole point of allowing an override at all.
      */
     overriddenConditions: jsonb("overridden_conditions").$type<string[]>().notNull().default([]),
+    /**
+     * THE RUNGS A SALES MANAGER SKIPPED, on a `skipped` move and null on every
+     * other. Kept apart from `overridden_conditions` on purpose: that column
+     * says which gate CONDITIONS were passed while shut, and the override
+     * reports count it; this says which RUNGS were not climbed, and nothing
+     * was passed while shut.
+     */
+    skippedStages: jsonb("skipped_stages").$type<string[]>(),
     actorId: text("actor_id").references(() => users.id),
     /** Which hat allowed it. Null means not recorded, never "no role". */
     actorRole: text("actor_role"),

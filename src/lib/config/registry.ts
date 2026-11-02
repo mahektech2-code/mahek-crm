@@ -11,6 +11,7 @@
  * ------------------------------------------------------------------------- */
 
 import { COMPLAINT_CATEGORIES } from "../constants";
+import { STAGE_SKIP_REASONS } from "../lead-stage-skip";
 import {
   LOST_REASONS,
   HOLD_REASONS,
@@ -3914,6 +3915,15 @@ export const SETTINGS = [
     default: HOLD_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.stageSkipReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lead skipped Sample / Trial",
+    description:
+      "The answers a Sales Manager picks when they move a lead from Qualification straight to a later stage and the Sample / Trial rungs are not climbed. Coded rather than free text so 'how many leads skipped the trial, and why' is a question somebody can ask. 'Other' makes the remarks mandatory.",
+    default: STAGE_SKIP_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.sampleCancelReasons",
     type: "structured",
     category: "mbos-leads",
@@ -7095,6 +7105,7 @@ export type Config = {
   "leads.holdReasons": { code: string; label: string }[];
   "leads.reopenReasons": { code: string; label: string }[];
   "leads.sampleCancelReasons": { code: string; label: string }[];
+  "leads.stageSkipReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.bypassReasons": { code: string; label: string }[];
   "leads.orderBlockers": { code: string; label: string }[];

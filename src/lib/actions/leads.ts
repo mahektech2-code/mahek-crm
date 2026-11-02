@@ -1,7 +1,8 @@
 "use server";
 
 import { assertLeadInScope } from "@/lib/services/lead-scope";
-import { qualificationCollectorRefusal, requireLeadVerifier } from "@/lib/services/lead-verifier";
+import { qualificationCollectorRefusal, requireLeadVerifier, requireQualificationApprover } from "@/lib/services/lead-verifier";
+import { assertDesignatedQualificationApprover } from "@/lib/services/qualification-approver";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
@@ -52,11 +53,14 @@ import { isParked, ladderFor, rungOf } from "@/lib/engines/lead-ladder";
 import {
   applyLeadStageMove,
   evaluateLeadStageMove,
+  evaluateStageSelection,
   leadGateInput,
   leadManagerCandidatesFor,
   leadRow,
+  StageAlreadyMoved,
   type LeadRow,
 } from "@/lib/services/lead-service";
+import { skippedSentence } from "@/lib/engines/lead-stage-select";
 import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
 import {
   isReviewer,
@@ -439,6 +443,117 @@ export async function advanceLeadStage(input: {
         : `Moved to ${stageLabel(to)}.`,
     );
   } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+const selectStageSchema = z.object({
+  customerId: z.string().min(1),
+  to: z.string().min(1),
+  reasonCode: z.string().trim().min(1).max(80),
+  note: z.string().trim().max(2000).optional(),
+});
+
+/**
+ * A SALES MANAGER CHOOSING A LATER STAGE FROM QUALIFICATION.
+ *
+ * Once the Qualification is complete and the Sales Manager has verified it, the
+ * lead does not have to climb Sample / Trial: they may move it straight to
+ * Negotiation, or to a later rung whose real facts (an order, a delivery, money
+ * in the bank) are true. NOTHING MOVES UNLESS THEY ASK — leaving a lead in
+ * Qualification is simply not pressing this.
+ *
+ * THE AUTHORITY IS THE QUALIFICATION REVIEWER'S: `requireQualificationApprover`
+ * and `assertDesignatedQualificationApprover`, the pair `reviewLeadQualification`
+ * asks, enforced HERE on the server — a Telecaller, a Salesman or a manager who
+ * is not this lead's designated reviewer never reaches the move however the
+ * screen is drawn. It is deliberately not `lead.override`, and it does not read
+ * `leads.allowManagerOverride` — nothing is passed while shut.
+ * What is required, what is lifted and why is `engines/lead-stage-select.ts`;
+ * the move is written as a `skipped` transition naming the rungs it did not
+ * climb, with its reason, and a timeline event of its own. No sample, order,
+ * payment or review row is created or touched. The Verification Call is not
+ * read: it stays optional.
+ */
+export async function selectLeadStage(input: {
+  customerId: string;
+  to: LeadStage;
+  reasonCode: string;
+  note?: string;
+}): Promise<Result<{ stage: LeadStage; skipped: LeadStage[] }>> {
+  try {
+    const parsed = selectStageSchema.safeParse(input);
+    if (!parsed.success) return zodErr(parsed.error);
+    const p = parsed.data;
+
+    /* THE AUTHORITY IS THE QUALIFICATION REVIEWER'S, exactly: the same two gates
+       `reviewLeadQualification` asks, in the same order. Not `lead.verify` — a
+       Sales Manager who is the lead's designated reviewer may choose a stage
+       whatever level their CRM account carries, and a manager who is NOT the
+       designated reviewer may not, whatever they hold. */
+    const approver = await requireQualificationApprover(p.customerId);
+    if (!approver.ok) return err(approver.message, "not_permitted");
+    const ctx = approver.ctx;
+    const designated = await assertDesignatedQualificationApprover(p.customerId, ctx.user.id);
+    if (!designated.ok) return err(designated.message, "not_permitted");
+
+    const found = await reachableLead(p.customerId);
+    if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    const gate = await leadGateInput(p.customerId);
+    if (!gate) return err("That lead is not on MahekOne.", "not_found");
+
+    /* `other` answers nothing on its own, so it must say what it is — the same
+       rule every other coded reason here keeps. */
+    if (p.reasonCode === REASON_CODE_NEEDING_REMARKS && !p.note?.trim()) {
+      return {
+        ok: false,
+        error: "You picked Other — say in words what it actually is.",
+        code: "validation",
+        fieldErrors: [{ field: "note", message: "Say what it actually is." }],
+      };
+    }
+
+    const to = p.to as LeadStage;
+    const decision = await evaluateStageSelection({ lead, gate, to, reasonCode: p.reasonCode });
+    if (!decision.ok) {
+      return {
+        ok: false,
+        error: decision.message,
+        code: decision.code === "gate_shut" ? "rule_violation" : "validation",
+        fieldErrors: decision.missing.map<FieldError>((c) => ({ field: c.id, message: c.says })),
+      };
+    }
+
+    const config = await getConfig();
+    const reasonLabel = config["leads.stageSkipReasons"].find((r) => r.code === p.reasonCode)?.label ?? null;
+
+    /* The rung the caller read, so two doors cannot both make this move. */
+    await applyLeadStageMove(
+      { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
+      lead,
+      to,
+      {
+        decision,
+        reasonCode: p.reasonCode,
+        note: p.note ?? null,
+        reasonLabel,
+        day: await today(),
+        expectFrom: "qualification",
+      },
+    );
+
+    refresh(p.customerId);
+    const skipped = decision.skippedStages ?? [];
+    return ok(
+      { stage: to, skipped },
+      `${lead.name} moved to ${stageLabel(to)}.${skipped.length ? ` ${skippedSentence(skipped)} not climbed.` : ""}`,
+    );
+  } catch (e) {
+    if (e instanceof StageAlreadyMoved) {
+      return err("This lead has already moved. Reload to see where it is now.", "rule_violation");
+    }
     return fromThrown(e);
   }
 }

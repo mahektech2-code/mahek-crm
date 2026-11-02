@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, users } from "@/db/schema";
-import { approverFor } from "./lead-verifier";
+import { approverFor, canVerifyLeadById, qualificationApproverRefusalById } from "./lead-verifier";
 
 /* ---------------------------------------------------------------------------
  * THE ONE PERSON WHO APPROVES A LEAD'S QUALIFICATION.
@@ -98,4 +98,27 @@ export async function assertDesignatedQualificationApprover(
     };
   }
   return { ok: true, approver };
+}
+
+/**
+ * MAY THIS PERSON ACT AS THE QUALIFICATION REVIEWER OF THIS LEAD — the screens'
+ * form of the authority the review's verdict asks, as a boolean.
+ *
+ * The same two questions, in the same order, that `reviewLeadQualification`
+ * asks: may they review at all (`canVerifyLeadById` and the ownership refusals
+ * of `qualificationApproverRefusalById`, which is `requireQualificationApprover`
+ * without a request), and are they THE designated person
+ * (`assertDesignatedQualificationApprover`). It is asked by anything that draws
+ * a control only the reviewer may use — the Sales Manager's choice of next
+ * stage — so what is drawn and what the action allows cannot differ. It grants
+ * nothing and reads no level: an Associate who holds the seat is the reviewer,
+ * and a manager who is not the designated person is not.
+ */
+export async function canActAsQualificationApprover(
+  user: { id: string; role: string },
+  customerId: string,
+): Promise<boolean> {
+  if (!(await canVerifyLeadById(user, customerId))) return false;
+  if (await qualificationApproverRefusalById(user, customerId)) return false;
+  return (await assertDesignatedQualificationApprover(customerId, user.id)).ok;
 }

@@ -24,6 +24,8 @@ import {
   qualificationComplete,
   qualificationReadyForReview,
 } from "@/lib/engines/lead-gates";
+import { stageSelection } from "@/lib/engines/lead-stage-select";
+import { canActAsQualificationApprover } from "@/lib/services/qualification-approver";
 import { isParked, rungOf } from "@/lib/engines/lead-ladder";
 import {
   canLead,
@@ -421,6 +423,16 @@ export async function Body({
       nowMs={nowMs()}
       requireNextAction={config["leads.requireNextAction"]}
       desk={desk}
+      /* A Sales Manager's choice of next stage from Qualification: computed by the
+         SAME engine the action enforces, and only for somebody holding the
+         capability the action asks (lead.verify). Everyone else is handed null,
+         so nothing is drawn. */
+      stageSelection={
+        (await canActAsQualificationApprover(user, id))
+          ? stageSelection(gateInput, { requireNextAction: config["leads.requireNextAction"] })
+          : null
+      }
+      stageSkipReasons={config["leads.stageSkipReasons"]}
       /* The two doors the central Lost list offers, asked the same way — see
          `app/crm/leads/lost/page.tsx`. The actions ask again. */
       reopen={
