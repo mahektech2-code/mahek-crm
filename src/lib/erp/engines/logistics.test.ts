@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachRefusal, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
+import { AT_TRANSPORT_STUCK_DAYS, attachRefusal, pendingOf, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
 
 test("the phase is the stage and the LR together, never stored", () => {
   assert.equal(phaseOf({ lrNo: null, materialStage: "Dispatched" }), "toTransport");
@@ -166,4 +166,19 @@ test("the route line says only what was reported, and a ready-for-pickup message
   const body = customerMessage("stage", f);
   assert.match(body, /ready for you to collect from Kerala Roadways/);
   assert.match(body, /Collect it from: Kerala Roadways, Vadakara office \(Suresh 98xxxxxx\)/);
+});
+
+test("a bill is pending for one reason: the missing LR, the days at the transporter, or the missing signed copy", () => {
+  const today = "2026-11-02";
+  const base = { ownVehicle: false, lrId: null, signedCopyId: null, phase: "lrPending" as const, billDate: "2026-10-31", atTransportAt: null };
+  assert.equal(pendingOf(base, today, 4), null, "two days out, not yet at the transporter long: nothing to chase");
+  assert.deepEqual(pendingOf({ ...base, billDate: "2026-10-27" }, today, 4), { kind: "noLr", days: 6 });
+  assert.deepEqual(pendingOf({ ...base, atTransportAt: "2026-10-31T09:00:00.000Z" }, today, 4), { kind: "atTransport", days: AT_TRANSPORT_STUCK_DAYS });
+  assert.equal(pendingOf({ ...base, atTransportAt: "2026-11-01T09:00:00.000Z" }, today, 4), null);
+  assert.deepEqual(pendingOf({ ...base, billDate: "2026-10-20", atTransportAt: "2026-10-31T09:00:00.000Z" }, today, 4), { kind: "noLr", days: 13 }, "the older reason wins");
+  assert.equal(pendingOf({ ...base, billDate: "2026-10-20", lrId: "elr1" }, today, 4), null, "it has its LR");
+  assert.equal(pendingOf({ ...base, billDate: "2026-10-20", phase: "delivered" }, today, 4), null, "delivered is never pending");
+  const own = { ...base, ownVehicle: true, phase: "onRoad" as const, billDate: "2026-10-25" };
+  assert.deepEqual(pendingOf(own, today, 4), { kind: "signedCopy", days: 8 });
+  assert.equal(pendingOf({ ...own, signedCopyId: "elr2" }, today, 4), null);
 });

@@ -179,6 +179,46 @@ export function runningLate(t: { expectedDeliveryOn: string | null; billDate: st
   return !!t.billDate && daysBetween(t.billDate, today) > lateAfterDays;
 }
 
+/* ------------------------------------------------- what is pending */
+
+/** A bill at the transporter this many days with no LR is stuck there — the Today tab's "Needs attention" says the same. */
+export const AT_TRANSPORT_STUCK_DAYS = 2;
+
+/**
+ * Why a bill is waiting on the Documents desk:
+ *  - noLr:        a transporter's bill out longer than `stuckLrDays` with no LR (the "LR missing" alert);
+ *  - atTransport: at the transporter `AT_TRANSPORT_STUCK_DAYS` or more with no LR, not yet that old;
+ *  - signedCopy:  a Mahek Vehicle bill out longer than `stuckLrDays` with no signed copy.
+ */
+export type PendingKind = "noLr" | "atTransport" | "signedCopy";
+export type PendingFacts = {
+  ownVehicle: boolean;
+  lrId: string | null;
+  signedCopyId: string | null;
+  phase: Phase;
+  billDate: string | null;
+  atTransportAt: string | null;
+};
+
+/**
+ * What a bill is pending for, and for how many days, or null. One bill has one
+ * reason: the "LR missing" alert wins over "at the transporter", because it
+ * names the same missing paper with more days on it. A bill already delivered
+ * is never pending, whatever paper it lacks.
+ */
+export function pendingOf(c: PendingFacts, today: string, stuckLrDays: number): { kind: PendingKind; days: number } | null {
+  if (c.phase === "delivered") return null;
+  const out = c.billDate ? daysBetween(c.billDate, today) : null;
+  if (c.ownVehicle) return !c.signedCopyId && out != null && out > stuckLrDays ? { kind: "signedCopy", days: out } : null;
+  if (c.lrId) return null;
+  if (out != null && out > stuckLrDays) return { kind: "noLr", days: out };
+  if (c.phase === "lrPending" && c.atTransportAt) {
+    const at = daysBetween(c.atTransportAt.slice(0, 10), today);
+    if (at >= AT_TRANSPORT_STUCK_DAYS) return { kind: "atTransport", days: at };
+  }
+  return null;
+}
+
 /* ------------------------------------------------------- the LR desk */
 
 export type LrFacts = {

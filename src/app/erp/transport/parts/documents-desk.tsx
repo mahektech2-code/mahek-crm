@@ -7,6 +7,7 @@ import { IconButton, LinkButton, SubTitle, toggleClass } from "../../_ui/look";
 import { Icon } from "../../_ui/icons";
 import { ErpImpactDialog } from "../../_ui/impact-confirm";
 import {
+  erpLogisticsAtTransport,
   erpLogisticsAttach,
   erpLogisticsAttachReady,
   erpLogisticsClearDuplicate,
@@ -16,12 +17,12 @@ import {
   erpLogisticsSetKind,
   erpLogisticsVoidLr,
 } from "@/lib/actions/erp-logistics";
-import { addDays, PROOF_WORD, rankForLr, shortDay, type ProofKind } from "@/lib/erp/engines/logistics";
+import { addDays, AT_TRANSPORT_STUCK_DAYS, pendingOf, PROOF_WORD, rankForLr, shortDay, type PendingKind, type ProofKind } from "@/lib/erp/engines/logistics";
 import { confidentPick, duplicateFlags, missingFor, partyWords, rankForSignedCopy, READY_SCORE, sameParty, wrongKind, type DeskCopy, type DupFlag } from "@/lib/erp/engines/delivery-proof";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
 import { rupeesField } from "@/lib/erp/ui";
 import { clock, stamp } from "@/lib/format";
-import { BillRef, Empty, NotifyToggle, plural, ReasonDialog, sumPackages, useAct, lrLabel } from "./common";
+import { BillRef, CallLink, driverPhone, Empty, NotifyToggle, plural, ReasonDialog, sumPackages, useAct, lrLabel } from "./common";
 import { PhotoEditor } from "./photo-editor";
 
 /* ---------------------------------------------------------------------------
@@ -34,6 +35,12 @@ import { PhotoEditor } from "./photo-editor";
  * Two tabs. LRs are attached to the bills waiting for them, which puts those
  * bills on the road and tells the customer. Signed copies close a Mahek
  * Vehicle delivery: attaching one marks the bill delivered, with who signed.
+ *
+ * A third tab, Pending, turns the desk round: the bills still waiting for
+ * their paper (`pendingOf`), oldest first, in the same fixed-height list. A
+ * bill opens beside the LRs on the desk that may be it, and "Check and
+ * attach" opens that LR on its own tab with the bill already ticked, so the
+ * attach is the ordinary one.
  * ------------------------------------------------------------------------- */
 
 type Bill = { key: string; c: Consignment; rows: Consignment[]; packages: number | null };
@@ -66,6 +73,15 @@ const toDesk = (l: UploadedLr): DeskCopy => ({
 });
 
 type Ranked = { b: Bill; score: number; reasons: string[] }[];
+type Tab = ProofKind | "pending";
+type PendingBill = { b: Bill; kind: PendingKind; days: number };
+
+/** How each kind of pending bill is named, with the configured day counts in it. */
+function pendingLabel(kind: PendingKind, stuckLrDays: number): string {
+  if (kind === "noLr") return `No LR ${stuckLrDays + 1}+ days`;
+  if (kind === "atTransport") return `At transporter ${AT_TRANSPORT_STUCK_DAYS}+ days`;
+  return "Signed copy missing";
+}
 type State = "dup" | "reading" | "todo" | "ready" | "pick";
 type Row = { l: UploadedLr; flag: DupFlag | null; wrong: ProofKind | null; missing: string[]; ranked: Ranked; pick: string | null; state: State };
 
@@ -83,6 +99,7 @@ export function DocumentsDesk({
   notifyOn,
   canWrite,
   canRead,
+  stuckLrDays,
   initialKind = "lr",
 }: {
   /** Every live copy: those on the desk, and the recently attached ones the duplicate check compares against. */
@@ -98,17 +115,47 @@ export function DocumentsDesk({
   notifyOn: boolean;
   canWrite: boolean;
   canRead: boolean;
-  initialKind?: ProofKind;
+  /** `erp.ai.alerts.stuckLrDays` — how long a bill may go without its paper before it is pending. */
+  stuckLrDays: number;
+  initialKind?: Tab;
 }) {
   const { run, pending } = useAct();
-  const [kind, setKind] = useState<ProofKind>(initialKind);
+  const [tab, setTab] = useState<Tab>(initialKind);
+  const kind: ProofKind = tab === "pending" ? "lr" : tab;
   const [pick, setPick] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  /* The bill a pending row sent us here for — ticked on the LR it opened. */
+  const [preTick, setPreTick] = useState<string | null>(null);
 
   const flags = useMemo(() => duplicateFlags(copies.map(toDesk)), [copies]);
   const waitingBills = useMemo(() => byBill(waiting), [waiting]);
   const allLrBills = useMemo(() => byBill([...waiting, ...onTheWay]), [waiting, onTheWay]);
   const ownBills = useMemo(() => byBill(ownOnRoad), [ownOnRoad]);
+
+  /* One bill, one reason: the reason with the most days on any of its records. */
+  const pendingBills: PendingBill[] = useMemo(() => {
+    const all = [...waiting, ...onTheWay, ...ownOnRoad];
+    const why = new Map(all.map((c) => [c.id, pendingOf(c, today, stuckLrDays)]));
+    return byBill(all.filter((c) => why.get(c.id)))
+      .map((b) => {
+        const worst = b.rows.map((c) => why.get(c.id)!).sort((x, y) => y.days - x.days)[0];
+        return { b, kind: worst.kind, days: worst.days };
+      })
+      .sort((x, y) => y.days - x.days || (x.b.c.billNo ?? "").localeCompare(y.b.c.billNo ?? ""));
+  }, [waiting, onTheWay, ownOnRoad, today, stuckLrDays]);
+
+  const switchTab = (t: Tab) => {
+    setTab(t);
+    setPick(null);
+    setPreTick(null);
+  };
+  /* From a pending bill to the copy that may be it: that copy's tab, the bill ticked, and the bill listed. */
+  const openCopy = (copyId: string, copyKind: ProofKind, bill: Bill) => {
+    setTab(copyKind);
+    setPick(copyId);
+    setPreTick(bill.key);
+    if (copyKind === "lr" && !waitingBills.some((b) => b.key === bill.key)) setShowAll(true);
+  };
 
   const rows: Row[] = useMemo(
     () =>
@@ -160,20 +207,33 @@ export function DocumentsDesk({
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1 rounded-control bg-canvas p-1">
           {(["lr", "signed_copy"] as ProofKind[]).map((k) => (
-            <button key={k} type="button" onClick={() => (setKind(k), setPick(null))} className={toggleClass(kind === k, "flex items-center gap-1.5")}>
+            <button key={k} type="button" onClick={() => switchTab(k)} className={toggleClass(tab === k, "flex items-center gap-1.5")}>
               {k === "lr" ? "LRs" : "Signed copies"}
-              <Badge label={String(count(k))} tone={kind === k ? "brand" : "muted"} />
+              <Badge label={String(count(k))} tone={tab === k ? "brand" : "muted"} />
             </button>
           ))}
+          <button type="button" onClick={() => switchTab("pending")} title="Bills still waiting for their LR or signed copy" className={toggleClass(tab === "pending", "flex items-center gap-1.5")}>
+            Pending
+            <Badge label={String(pendingBills.length)} tone={tab === "pending" ? "brand" : pendingBills.length ? "danger" : "muted"} />
+          </button>
         </div>
         <span className="flex-1" />
-        {canWrite && ready.length ? (
+        {canWrite && tab !== "pending" && ready.length ? (
           <Button variant="primary" disabled={pending} onClick={attachReady} title={kind === "lr" ? "Attach every LR whose bill the desk is sure of" : "Close every delivery whose signed copy the desk is sure of"}>
             {kind === "lr" ? `Attach ${ready.length} ready` : `Close ${ready.length} ready`}
           </Button>
         ) : null}
       </div>
 
+      {tab === "pending" ? (
+        <PendingDesk
+          items={pendingBills}
+          rows={rows}
+          stuckLrDays={stuckLrDays}
+          canWrite={canWrite}
+          onOpen={openCopy}
+        />
+      ) : (
       <div className="grid grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start gap-4">
         <Card className="overflow-hidden">
           <div className="flex items-center gap-3 border-b border-divider px-3 py-2 text-meta">
@@ -214,8 +274,9 @@ export function DocumentsDesk({
             <DuplicatePanel key={sel.l.id} row={sel} other={copies.find((c) => c.id === sel.flag!.ofId) ?? null} canWrite={canWrite} />
           ) : (
             <Detail
-              key={`${sel.l.id}|${sel.l.fileId}`}
+              key={`${sel.l.id}|${sel.l.fileId}|${preTick ?? ""}`}
               row={sel}
+              preTick={preTick}
               prev={at > 0 ? () => setPick(list[at - 1].l.id) : null}
               next={at < list.length - 1 ? () => setPick(list[at + 1].l.id) : null}
               today={today}
@@ -234,7 +295,172 @@ export function DocumentsDesk({
           </Card>
         )}
       </div>
+      )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------ the Pending tab */
+
+const PENDING_ORDER: PendingKind[] = ["noLr", "atTransport", "signedCopy"];
+
+/**
+ * The bills still waiting for their paper, in the same fixed-height list the
+ * copies use, so a hundred of them scroll inside the box and never push the
+ * page. Picking one shows the copies on the desk that may be it.
+ */
+function PendingDesk({
+  items,
+  rows,
+  stuckLrDays,
+  canWrite,
+  onOpen,
+}: {
+  items: PendingBill[];
+  rows: Row[];
+  stuckLrDays: number;
+  canWrite: boolean;
+  onOpen: (copyId: string, kind: ProofKind, bill: Bill) => void;
+}) {
+  const [filter, setFilter] = useState<PendingKind | "all">("all");
+  const [pick, setPick] = useState<string | null>(null);
+  const shown = filter === "all" ? items : items.filter((p) => p.kind === filter);
+  const sel = shown.find((p) => p.b.key === pick) ?? shown[0] ?? null;
+  const chip = (k: PendingKind | "all", label: string, n: number) => (
+    <button key={k} type="button" onClick={() => (setFilter(k), setPick(null))} className={toggleClass(filter === k, "flex items-center gap-1 text-meta")}>
+      {label} <span className="tabular-nums">{n}</span>
+    </button>
+  );
+
+  return (
+    <div className="grid grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start gap-4">
+      <Card className="overflow-hidden">
+        <div className="flex flex-wrap gap-1 border-b border-divider p-2">
+          {chip("all", "All", items.length)}
+          {PENDING_ORDER.map((k) => chip(k, pendingLabel(k, stuckLrDays), items.filter((p) => p.kind === k).length))}
+        </div>
+        <div className="border-b border-divider px-3 py-1.5 text-meta text-muted">{plural(shown.length, "bill")}, longest waiting first</div>
+        {shown.length ? (
+          <div className="max-h-[72vh] overflow-y-auto">
+            {shown.map((p) => (
+              <button
+                key={p.b.key}
+                type="button"
+                onClick={() => setPick(p.b.key)}
+                className={cx("flex w-full cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-left last:border-0", sel?.b.key === p.b.key ? "bg-brand-soft" : "hover:bg-canvas")}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">{p.b.c.deliveryParty}</span>
+                  <span className="block truncate text-meta text-muted">
+                    {[p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? "Mahek Vehicle") : p.b.c.transporter].filter(Boolean).join(" · ")}
+                  </span>
+                </span>
+                <span className={cx("shrink-0 text-meta font-semibold tabular-nums", p.kind === "noLr" ? "text-danger" : "text-warn-ink")}>{plural(p.days, "day")}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Empty>{items.length ? "Nothing pending of this kind." : "Nothing is pending. Every bill has its LR or signed copy."}</Empty>
+        )}
+      </Card>
+
+      {sel ? (
+        <PendingDetail key={sel.b.key} item={sel} rows={rows} stuckLrDays={stuckLrDays} canWrite={canWrite} onOpen={onOpen} />
+      ) : (
+        <Card>
+          <Empty>Pick a bill on the left.</Empty>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function PendingDetail({
+  item,
+  rows,
+  stuckLrDays,
+  canWrite,
+  onOpen,
+}: {
+  item: PendingBill;
+  rows: Row[];
+  stuckLrDays: number;
+  canWrite: boolean;
+  onOpen: (copyId: string, kind: ProofKind, bill: Bill) => void;
+}) {
+  const { run, pending } = useAct();
+  const { b } = item;
+  const c = b.c;
+  const copyKind: ProofKind = c.ownVehicle ? "signed_copy" : "lr";
+  const word = copyKind === "lr" ? "LR" : "signed copy";
+  /* The copies on the desk ranked against this one bill, by the same rules the copy's own tab uses. */
+  const matches = rows
+    .filter((r) => r.l.kind === copyKind)
+    .map((r) => {
+      const x =
+        copyKind === "lr"
+          ? rankForLr(r.l, [{ id: b.key, transporter: c.transporter, packages: b.packages, area: c.area ?? c.partyCity, party: c.deliveryParty, billingParty: c.party, billNo: c.billNo, atTransport: b.rows.every((y) => y.phase === "lrPending") }])[0]
+          : rankForSignedCopy(r.l, [{ id: b.key, billNo: c.billNo, party: c.deliveryParty, vehicleNo: c.vehicleNo }])[0];
+      return { r, score: x.score, reasons: x.reasons };
+    })
+    .filter((m) => m.score > 0)
+    .sort((x, y) => y.score - x.score)
+    .slice(0, 6);
+  const toTransport = b.rows.filter((y) => y.phase === "toTransport");
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-start gap-3 border-b border-divider px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-lg font-semibold text-ink">{c.deliveryParty}</div>
+          <div className="flex flex-wrap items-center gap-2 text-meta text-muted">
+            <BillRef c={c} />
+            {[c.billDate ? shortDay(c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, c.ownVehicle ? (c.vehicleNo ? `Mahek Vehicle ${c.vehicleNo}` : "Mahek Vehicle") : c.transporter].filter(Boolean).join(" · ")}
+          </div>
+        </div>
+        <Badge label={`${pendingLabel(item.kind, stuckLrDays)} · ${plural(item.days, "day")}`} tone={item.kind === "noLr" ? "danger" : "warn"} />
+      </div>
+
+      <div className="flex flex-col gap-4 p-4">
+        <div className="flex flex-wrap items-center gap-4">
+          {c.ownVehicle ? (
+            driverPhone(c.driver) ? <CallLink phone={driverPhone(c.driver)} name={c.driver ?? "Driver"} /> : <span className="text-xs text-muted">No driver number on this bill</span>
+          ) : (
+            <CallLink phone={c.transporterPhone} name={c.transporter} />
+          )}
+          {canWrite && toTransport.length ? (
+            <Button size="sm" disabled={pending} onClick={() => run(() => erpLogisticsAtTransport(toTransport.map((y) => y.id)))} title="The goods are at the transporter's godown">
+              Reached transporter
+            </Button>
+          ) : null}
+        </div>
+
+        <div>
+          <SubTitle className="mb-1">{copyKind === "lr" ? "LRs on the desk that may be this bill" : "Signed copies on the desk that may be this bill"}</SubTitle>
+          {matches.length ? (
+            <div className="rounded-card border border-line">
+              {matches.map(({ r, reasons }) => (
+                <div key={r.l.id} className="flex flex-wrap items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0">
+                  <Thumb fileId={r.l.fileId} size={36} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-ink">{titleOf(r.l)}</span>
+                    <span className="block truncate text-meta text-muted">{[subOf(r.l), `uploaded ${clock(new Date(r.l.uploadedAt))}`].filter(Boolean).join(" · ")}</span>
+                  </span>
+                  {reasons.slice(0, 2).map((x) => (
+                    <Badge key={x} label={x} tone={x.startsWith("same") || x === "destination matches" ? "success" : "neutral"} />
+                  ))}
+                  <Button size="sm" variant="primary" onClick={() => onOpen(r.l.id, copyKind, b)}>
+                    Check and attach
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty>No {word} on the desk looks like this bill. It has not been uploaded yet — ring and ask for it.</Empty>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -340,6 +566,7 @@ function Viewer({ l, prev, next, canWrite }: { l: UploadedLr; prev: (() => void)
 
 function Detail({
   row,
+  preTick,
   prev,
   next,
   today,
@@ -352,6 +579,8 @@ function Detail({
   moreToShow,
 }: {
   row: Row;
+  /** A bill a pending row asked for: ticked from the start in place of the desk's own pick. */
+  preTick: string | null;
   prev: (() => void) | null;
   next: (() => void) | null;
   today: string;
@@ -383,7 +612,7 @@ function Detail({
   const [v, setV] = useState(initial);
   const dirty = (Object.keys(initial) as (keyof typeof initial)[]).some((k) => v[k] !== initial[k]);
   const set = (k: keyof typeof initial) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setV({ ...v, [k]: e.target.value });
-  const [ticked, setTicked] = useState<Set<string>>(() => new Set(row.pick ? [row.pick] : []));
+  const [ticked, setTicked] = useState<Set<string>>(() => new Set(preTick ? [preTick] : row.pick ? [row.pick] : []));
   const [expected, setExpected] = useState("");
   const [nextCall, setNextCall] = useState(addDays(today, callEveryDays));
   const [notify, setNotify] = useState(true);
@@ -392,7 +621,8 @@ function Detail({
 
   /* What the AI read but did not write — unsure, or already on another LR — offered to the person. */
   const offered = lr && !l.lrNo && l.readLrNo ? l.readLrNo : null;
-  const shown = row.ranked.slice(0, 8);
+  /* The best eight, and any ticked bill below them — a ticked bill the list did not draw could not be unticked. */
+  const shown = [...row.ranked.slice(0, 8), ...row.ranked.slice(8).filter((x) => ticked.has(x.b.key))];
   const selBills = row.ranked.filter((x) => ticked.has(x.b.key));
   const selIds = selBills.flatMap((x) => x.b.rows.map((c) => c.id));
   const parties = new Set(selBills.map((x) => x.b.c.deliveryPartyId));
