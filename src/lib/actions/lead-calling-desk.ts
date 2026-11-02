@@ -892,23 +892,29 @@ async function preparePromotion(
    * lead stays a Suspect — ready, waiting for somebody to be set — rather than
    * becoming a Prospect nobody can verify.
    */
-  /* THE ORG CHART IS ALWAYS ASKED FIRST, starting from whoever is making this request:
+  /* A LEAD A SALESMAN RAISED OR NOW HOLDS IS ASKED FIRST, BEFORE THE CHART. The
+     person Mahek designates for exactly that (`leads.fieldVerifierEmail`)
+     verifies it, whoever is converting it: a Telecaller who happens to report to
+     Pritesh must not carry a Salesman's lead to Pritesh. Only the two
+     Salesman reasons take this precedence — the field verifier's own lead, a
+     refusal, an unknown creator and every desk lead are left to what follows,
+     exactly as before. Blank setting: this is off and nothing changes. */
+  const fieldFirst = await fieldRouteFor({ id: p.customerId, ownerId: lead.ownerId }, ctx.user.id);
+  const salesmanFirst =
+    fieldFirst.kind === "verifier" && (fieldFirst.reason === "assigned" || fieldFirst.reason === "salesman_created");
+
+  /* THE ORG CHART IS ASKED NEXT, starting from whoever is making this request:
      the nearest eligible manager above them verifies it. Everything below is the
      FALLBACK for a chart that cannot answer, kept exactly as it was. */
-  const orgPick = await orgChartVerifierFor(ctx.user.id);
-  let managerId: string | null = orgPick.ok ? orgPick.id : null;
-  const fallbackNote = orgPick.ok ? null : `Routed through Settings, not the Org Chart: ${orgFallbackWords(orgPick.reason)}.`;
-  /* A LEAD A SALESMAN RAISED OR NOW HOLDS is verified by the person Mahek
-     designates for exactly that (`leads.fieldVerifierEmail`), and this answers
-     FIRST: current Salesman assignment overrides who raised the lead, and the
-     field verifier's own lead goes to the desk verifier instead. Configured but
-     unusable it REFUSES in words rather than routing the lead somewhere else.
-     Blank, it is off and everything below is exactly what it was. An unknown
-     creator is only a fallback — it applies after every seat below has had its
-     say, so an org-chart or decided seat is never undone by it. */
-  const fieldRoute = managerId
-    ? ({ kind: "off" } as Awaited<ReturnType<typeof fieldRouteFor>>)
-    : await fieldRouteFor({ id: p.customerId, ownerId: lead.ownerId }, ctx.user.id);
+  const orgPick = salesmanFirst ? null : await orgChartVerifierFor(ctx.user.id);
+  let managerId: string | null = salesmanFirst ? fieldFirst.id : orgPick?.ok ? orgPick.id : null;
+  const fallbackNote =
+    salesmanFirst || orgPick?.ok || !orgPick
+      ? null
+      : `Routed through Settings, not the Org Chart: ${orgFallbackWords(orgPick.reason)}.`;
+  /* Where the chart answered, the field route has nothing to add (as before);
+     where it did not, its own answer — a refusal included — stands. */
+  const fieldRoute = managerId && !salesmanFirst ? ({ kind: "off" } as typeof fieldFirst) : fieldFirst;
   if (fieldRoute.kind === "refuse") return err(fieldRoute.message, "rule_violation");
   if (fieldRoute.kind === "verifier") managerId = fieldRoute.id;
   /* THE LEAD'S OWN SALES MANAGER COMES FIRST. Verification follows `sales_manager_id`,
