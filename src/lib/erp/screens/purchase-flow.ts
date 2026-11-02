@@ -46,15 +46,15 @@ import {
 } from "../engines/purchase-flow";
 import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
-import { countLabel, gatesFor, notifyStockFlag, openCount, type GateInfo } from "../stock-check";
-import { openRequirementCounts, writeCounted } from "./stock-check";
+import { notifyStockFlag, openCount } from "../stock-check";
+import { writeCounted } from "./stock-check";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
- * THE PURCHASE FLOW'S FIRST FOUR STEPS (docs: AGENTS.md, "The purchase flow"):
+ * THE PURCHASE FLOW (docs: AGENTS.md, "The purchase flow"):
  *
- *   Requirement → Purchase method → Vendor / quotation → Approval → PO → Receipt
+ *   Requirement → Purchase method → PO number → Receipt
  *
  * Requirements (`requisitions`) and Purchase orders. Supplier rates are kept on
  * the Quotation manager, not on a requirement.
@@ -88,8 +88,6 @@ export type ReqView = {
   po: { id: string; number: number; name: string; source: string; status: string; lineId: string; ordered: number; received: number; ratePaise: number; gstBp: number; drums: number | null; supplier: string } | null;
   legacy: boolean;
   by: string | null;
-  /** Inventory Accuracy Control: the blind count this requirement waits to have entered, and what it found. */
-  stock: GateInfo | null;
 };
 
 /**
@@ -130,7 +128,7 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
     .where(where?.ids ? inArray(erpRequisitions.id, where.ids.length ? where.ids : ["-"]) : undefined)
     .orderBy(asc(erpRequisitions.reqDate), asc(erpRequisitions.createdAt), asc(erpRequisitions.id));
   const ids = rows.map((x) => x.r.id);
-  const [lines, received, gates] = await Promise.all([
+  const [lines, received] = await Promise.all([
     ids.length
       ? db
           .select({
@@ -148,7 +146,6 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
           .where(and(inArray(erpPoLines.requisitionId, ids), inArray(erpPurchaseOrders.status, LIVE_PO)))
       : Promise.resolve([]),
     receivedByLine(),
-    gatesFor(rows.map((x) => ({ ...x.r, createdAt: x.r.createdAt }))),
   ]);
   const poOf = new Map<string, ReqView["po"]>();
   lines
@@ -187,20 +184,8 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
       po: poOf.get(x.r.id) ?? null,
       legacy,
       by: x.by,
-      stock: gates.get(x.r.id) ?? null,
     };
   });
-}
-
-/**
- * THE BLIND COUNT COMES FIRST: no method, vendor, quotation or PO for a
- * requirement while its count has not been ENTERED — the same answer the
- * list draws, asked again by every handler, because a server action is a
- * URL. What the count found never holds it: a difference is a flag.
- */
-export function heldByStock(v: ReqView): Result<unknown> | null {
-  if (v.po || v.legacy || !v.stock?.gate.blocks) return null;
-  return err(`Waiting for the blind count — ${v.stock.gate.next ?? "count the stock first"}`, "rule_violation");
 }
 
 export function stageOf(v: ReqView): Stage {
@@ -211,7 +196,6 @@ export function stageOf(v: ReqView): Stage {
     supplierId: v.r.supplierId,
     po: v.po ? { status: v.po.status, ordered: v.po.ordered, received: v.po.received } : null,
     legacy: v.legacy,
-    gate: v.stock?.gate ?? null,
   });
 }
 
@@ -492,47 +476,6 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
   };
 }
 
-/* ------------------------------------------------- the stock check, per row */
-
-const GATE_WORDS: Record<string, string> = {
-  to_count: "Waiting for the blind count",
-  flagged: "Red flag — the count differs from the book; stock control is told",
-  over_justified: "Counted — more is asked for than the shelf needs",
-  clear: "Counted and matched",
-};
-
-function countHref(g: GateInfo): string | null {
-  if (!g.count) return null;
-  const tab = g.count.status === "open" ? "countTasks" : ["flagged", "recount", "investigating"].includes(g.count.status) ? "stockFlags" : "stockCounts";
-  return erpLink(tab, { open: g.count.id });
-}
-
-function stockFacts(v: ReqView): { l: string; v: string; href?: string }[] {
-  const g = v.stock;
-  if (!g) return [];
-  const out: { l: string; v: string; href?: string }[] = [
-    { l: "Blind count", v: `${GATE_WORDS[g.gate.state] ?? g.gate.state}${g.count ? ` · ${countLabel(g.count.countNo)}` : ""}`, href: countHref(g) ?? undefined },
-  ];
-  if (g.onShelf != null) out.push({ l: "On the shelf", v: `${nf(g.onShelf)} ${g.unit}` });
-  if (g.justification) out.push({ l: "Quantity the shelf needs", v: g.justification.sentence });
-  /* Written under the rules before the count stopped holding the purchase; kept as the record they are. */
-  if (v.r.qtyConfirmNote) out.push({ l: "Quantity confirmed because", v: v.r.qtyConfirmNote });
-  if (v.r.stockExceptionReason) out.push({ l: "Urgent purchase", v: `${v.r.stockExceptionStatus === "approved" ? "Approved" : v.r.stockExceptionStatus === "rejected" ? "Rejected" : "Requested"} — ${v.r.stockExceptionReason}${v.r.stockExceptionNote ? ` · ${v.r.stockExceptionNote}` : ""}` });
-  return out;
-}
-
-/** The count's own way in from the requirement: count it while it waits, open the red flag once it is in. */
-function stockActions(v: ReqView): ActionSpec[] {
-  const g = v.stock as GateInfo;
-  const href = countHref(g);
-  if (g.gate.state === "to_count") {
-    if (href && g.count?.status === "open") return [{ id: "openCount", l: "Count the stock", primary: true, href }];
-    return [{ id: "newCount", l: "Open a count", primary: true, confirm: `Open a blind count of ${v.item} at ${v.godown}?` }];
-  }
-  if (g.gate.state === "flagged" && href) return [{ id: "openCount", l: `Open the red flag (${countLabel(g.count!.countNo)})`, href }];
-  return [];
-}
-
 /** What the Create PO modal is handed: the choices once per list, the requirement's own figures per row. */
 export type CreatePoChoices = {
   vendors: { name: string; terms: string | null }[];
@@ -544,8 +487,6 @@ export type CreatePoChoices = {
   canCreate: boolean;
 };
 
-const VERDICT: Record<string, "passed" | "red" | "waiting"> = { clear: "passed", over_justified: "passed", flagged: "red", to_count: "waiting" };
-
 /**
  * Another requirement Create PO can put on the same PO: every one this person
  * may create a PO for (`createPoReady`, the check saving makes too), with the
@@ -556,13 +497,7 @@ export type PoCompanion = { id: string; reqNo: string | null; item: string; qty:
 
 function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoices, prices: Map<string, number | null>, companions: PoCompanion[]) {
   const route = poRouteOf({ rule: v.rule, method: v.method });
-  const g = v.stock;
-  const c = g?.comparison ?? null;
-  const unit = g?.unit ?? "";
-  const q = (n: number) => `${nf(n)} ${unit}`;
-  const signed = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${nf(Math.abs(n))} ${unit}`;
   const open = st.step >= 0 && !v.po && !v.legacy && !!v.r.rawMaterialId;
-  const held = !!g?.gate.blocks;
   const price = v.r.rawMaterialId ? (prices.get(v.r.rawMaterialId) ?? null) : null;
   const defaultVendor = v.preferredSupplierId ? (choices.nameOf.get(v.preferredSupplierId) ?? null) : null;
   const rateBp = choices.gstPercent * 100;
@@ -578,24 +513,10 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
       next: st.next,
       facts: [
         ...(v.r.reqNo ? [{ l: "Requirement", v: requirementLabel(v.r.reqNo) }] : []),
-        ...stockFacts(v),
         { l: "Purchase method · the item's rule", v: route === "link" ? "Quotation — bought on the Quotation manager" : route === "create" ? "Direct purchase — no quotation" : "Buyer decision — create or link" },
         ...(v.r.methodNote ? [{ l: "Buyer's note", v: v.r.methodNote }] : []),
         ...(v.r.cancelReason ? [{ l: "Cancelled because", v: v.r.cancelReason }] : []),
       ],
-      comparison: c
-        ? {
-            count: g?.count ? countLabel(g.count.countNo) : null,
-            counted: g?.onShelf != null ? q(g.onShelf) : "—",
-            book: q(c.book),
-            pendingIn: signed(c.pendingIn),
-            pendingOut: c.pendingOut ? signed(-c.pendingOut) : null,
-            reconciled: q(c.reconciled),
-            difference: `${signed(c.difference)}${c.reconciled ? ` (${c.difference >= 0 ? "+" : "−"}${nf(Math.round((Math.abs(c.difference) / c.reconciled) * 1000) / 10)}%)` : ""}`,
-            tolerance: `± ${q(c.tolerance)}`,
-          }
-        : null,
-      verdict: g ? (VERDICT[g.gate.state] ?? null) : null,
       po: v.po
         ? {
             name: v.po.name,
@@ -613,7 +534,6 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
       entry:
         open && v.r.status !== "Cancelled"
           ? {
-              held,
               link: route !== "create",
               create:
                 route !== "link"
@@ -734,8 +654,6 @@ const requisitions: ScreenModule = {
         const r = v.r;
         const actions: ActionSpec[] = [];
         const open = st.step >= 0 && !v.po && !v.legacy;
-        const held = open && !!v.stock?.gate.blocks;
-        if (open && v.stock) actions.push(...stockActions(v));
         if (v.po) actions.push({ id: "openPo", l: `Open ${v.po.name}`, href: erpLink("purchaseOrders", { open: v.po.id }) });
         if (open) actions.push({ id: "edit", l: "Edit", loadsForm: true });
         if (st.step >= 0 && st.step < FLOW_STEPS.length && (!v.po || v.legacy))
@@ -748,8 +666,6 @@ const requisitions: ScreenModule = {
         else if (v.po && st.step >= 0 && st.step < FLOW_STEPS.length)
           actions.push({ id: "cancel", l: "Cancel requirement", why: `It is on ${v.po.name} — cancel or send back the PO first` });
         const flags: string[] = [];
-        if (held) flags.push("stockToCount");
-        if (open && v.stock?.gate.flag) flags.push(v.stock.gate.flag);
         if (r.requiredBy && r.requiredBy < day && st.step >= 0 && st.step < FLOW_STEPS.length) flags.push("requiredOverdue");
         if (v.legacy) flags.push("noPo");
         return {
@@ -795,8 +711,6 @@ const requisitions: ScreenModule = {
           { l: "Requirements", kind: "distinct", k: "reqNo", missing: "without a number" },
           { l: "Urgent", where: { k: "priority", in: ["Urgent"] }, tone: "danger" },
           { l: "Past required by", where: { flag: "requiredOverdue" }, tone: "danger" },
-          { l: "To count", where: { flag: "stockToCount" }, tone: "warn" },
-          { l: "Stock red flag", where: { flag: "stockFlag" }, tone: "danger" },
         ],
         filters: ["item", "type", "department", "priority", "method", "vendor"],
         newForm: form,
@@ -831,22 +745,12 @@ const requisitions: ScreenModule = {
     async createPo(ctx, id, values) {
       return (await import("./requirement-po")).createRequirementPo(ctx, id, values);
     },
-    async newCount(ctx, id) {
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v?.r.rawMaterialId) return err("That requirement no longer exists.", "not_found");
-      const label = v.r.reqNo ? requirementLabel(v.r.reqNo) : "a requirement";
-      await db.transaction((tx) => openRequirementCounts(tx, [{ id, rawMaterialId: v.r.rawMaterialId!, godownId: v.r.godownId, label }], ctx.user.id));
-      await erpAudit(ctx, "erp.requisition.newCount", "erp_requisition", id, null, null);
-      return okVoid("A blind count is open — it is on Stock accuracy → To count");
-    },
     async decide(ctx, id, values) {
       if (!ctx.powers.has("purchaseBuyer")) return err("Only the buyer decides how a requirement is bought.", "not_permitted");
       const m = methodByLabel(text(values.method));
       if (m !== "direct" && m !== "quotation") return fieldErr("method", "Choose direct purchase or quotation");
       const [v] = await requirementViews({ ids: [id] });
       if (!v) return err("That requirement no longer exists.", "not_found");
-      const held = heldByStock(v);
-      if (held) return held;
       if (stageOf(v).stage !== "Buyer decision") return err("This requirement's method is already decided.", "conflict");
       const preset = m === "direct" && v.preferredSupplierId ? v.preferredSupplierId : null;
       await db
@@ -872,8 +776,6 @@ const requisitions: ScreenModule = {
       if (v.r.status === "Cancelled") return err("This requirement is cancelled.", "conflict");
       if (v.po) return err(`It is on ${v.po.name} — the vendor is the PO's now.`, "conflict");
       if (v.method !== "direct") return err("Only a direct purchase has its vendor picked; a quotation item's vendor comes with the Quotation manager's PO.", "rule_violation");
-      const held = heldByStock(v);
-      if (held) return held;
       await db
         .update(erpRequisitions)
         .set({ method: "direct", supplierId: sup.id, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
@@ -959,13 +861,15 @@ export type RaisedItem = {
 };
 
 /**
- * Raises a requirement, and — where `counts` names an item's raw material —
- * records the raiser's count of it at the godown as that item's stock check,
- * in the same transaction. The count is the ordinary blind count the
- * requirement waits on (`openRequirementCounts`), written and judged by
- * `writeCounted`, the same function Stock accuracy submits through. It is
- * recorded whether or not `erp.stockCheck.onRequirement` holds the purchase:
- * a figure somebody counted is evidence either way.
+ * Raises a requirement. Nothing is counted for it and nothing waits on a
+ * count: the next step is the purchase method.
+ *
+ * `counts` is only for a factory phone on an APK from before the count came
+ * out of the flow, which still makes its in-charge count every item first. A
+ * figure somebody counted is evidence, so it is still recorded as a stock
+ * check of that shelf (`writeCounted`, the same judgement Stock accuracy uses)
+ * and a difference still tells stock control — but it holds nothing. A
+ * current phone sends none.
  *
  * A line may name its item by label (`item`, the ERP form) or by raw material
  * id (`rawMaterialId`, the factory phone).
@@ -1029,8 +933,6 @@ export async function raiseRequirementWith(
     items.push({ m, qty });
   }
 
-  /* Copied onto each row, like the purchase rule: changing the setting never re-routes a requirement in flight. */
-  const stockCheck = (await getConfig())["erp.stockCheck.onRequirement"];
   const raisedItems: RaisedItem[] = [];
   /* Red flags found by the raiser's counts, told to stock control once the requirement is saved. */
   const alarms: Parameters<typeof notifyStockFlag>[0][] = [];
@@ -1059,13 +961,10 @@ export async function raiseRequirementWith(
         purchaseRule: rule,
         method: rule === "buyer" ? null : rule,
         ...(preset ? { supplierId: preset, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id } : {}),
-        stockCheckRequired: stockCheck,
         createdById: ctx.user.id,
         updatedById: ctx.user.id,
       });
     }
-    /* INVENTORY ACCURACY CONTROL: the blind count each item waits on, opened in the same act. */
-    if (stockCheck) await openRequirementCounts(tx, raised, ctx.user.id);
     for (const [i, r] of raised.entries()) {
       const { m, qty } = items[i];
       const counted = counts?.get(m.id);
@@ -1108,7 +1007,7 @@ export async function raiseRequirementWith(
             : "direct purchase — select the vendor next";
     return ok(
       { reqNo, items: raisedItems },
-      `${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${stockCheck ? "count the stock first, then " : ""}${next}`,
+      `${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${next}`,
     );
   }
   const count = (r: string) => items.filter((x) => x.m.purchaseMethod === r).length;
@@ -1117,7 +1016,7 @@ export async function raiseRequirementWith(
     count("quotation") ? `${count("quotation")} by quotation` : "",
     count("buyer") ? `${count("buyer")} for the buyer` : "",
   ].filter(Boolean);
-  return ok({ reqNo, items: raisedItems }, `${requirementLabel(reqNo)} raised · ${items.length} items · ${split.join(" · ")}${stockCheck ? " · each waits on a stock count" : ""}`);
+  return ok({ reqNo, items: raisedItems }, `${requirementLabel(reqNo)} raised · ${items.length} items · ${split.join(" · ")}`);
 }
 
 /* ===================================================== requirement labels */

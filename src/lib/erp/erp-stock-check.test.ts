@@ -1,7 +1,7 @@
 /**
  * Inventory Accuracy Control — against a real database through the real
- * handlers: a requirement waits for a blind count; a matching count lets it
- * through; a difference is a red flag, recounted by somebody else, and moves
+ * handlers: a purchase requirement opens no count and waits on none; a count
+ * is blind; a difference is a red flag, recounted by somebody else, and moves
  * stock only through an adjustment somebody else approves. Missing records
  * and the daily cycle count are read off the same ledgers.
  *
@@ -22,7 +22,7 @@ import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { requirementViews, stageOf } from "@/lib/erp/screens/purchase-flow";
 import { rmItemStockAt } from "@/lib/erp/stock";
-import { controlWork, missingRecords, planCycleCounts } from "@/lib/erp/stock-check";
+import { controlWork, missingRecords, openCount, planCycleCounts } from "@/lib/erp/stock-check";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
 import { testPhone } from "@/lib/test-phone";
@@ -64,6 +64,9 @@ async function stock(rm: string, lot: string, qty: number) {
 const raise = async (u: typeof users.$inferSelect, item: string, required: string) =>
   mod("requisitions").forms!.new(await as(u), { date: TODAY, requiredBy: "2026-10-30", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item, required, priority: "Medium" }, []);
 
+/** A count of a raw material at Bhiwandi, opened the way Stock accuracy opens one somebody asked for. */
+const ask = async (u: typeof users.$inferSelect, rm: string) => db.transaction((tx) => openCount(tx, { kind: "event", rawMaterialId: rm, godownId: BHW, reason: "Asked for in a test", byId: u.id }));
+
 const reqOf = async (rm: string) => (await db.select().from(erpRequisitions).where(eq(erpRequisitions.rawMaterialId, rm)).orderBy(sql`created_at desc`))[0];
 const stage = async (reqId: string) => {
   const [v] = await requirementViews({ ids: [reqId] });
@@ -82,6 +85,7 @@ before(async () => {
         erp_purchase_orders, erp_po_lines, erp_user_powers, erp_godown_staff, erp_user_settings, erp_stock_counts, erp_stock_adjustments,
         erp_transfers, erp_rm_levels, erp_sfg_lines, erp_sfg_entries, notifications, audit_log restart identity cascade`,
   );
+  /* Retired: nothing reads it. Set on, so a requirement that still opened a count would fail the first test. */
   await setting("erp.stockCheck.onRequirement", true, "boolean");
   await setting("erp.stockCheck.tolerancePercent", 2, "decimal");
   await setting("erp.stockCheck.toleranceFloor", 1, "decimal");
@@ -105,83 +109,52 @@ before(async () => {
 
 after(async () => {
   setTestUser(null);
-  await setting("erp.stockCheck.onRequirement", true, "boolean");
   await db.$client.end();
 });
 
-describe("a requirement waits for its blind count to be entered, and no longer", () => {
-  test("raising it opens the count, and the buying steps wait for it", async () => {
+describe("a purchase requirement opens no count and waits on none", () => {
+  test("raising it goes straight to its purchase method", async () => {
     const r = await raise(store1, "Toluene", "300");
     assert.ok(r.ok, r.ok ? "" : r.error);
-    assert.match(r.message ?? "", /count the stock first/);
+    assert.doesNotMatch(r.message ?? "", /count/i);
     const req = await reqOf("rm_tol");
-    assert.equal(req.stockCheckRequired, true);
+    assert.equal(req.stockCheckRequired, false);
     const st = await stage(req.id);
-    assert.equal(st.stage, "Blind count");
-    assert.equal(st.readyForPo, false);
-    const count = await rootCount("rm_tol");
-    assert.equal(count.status, "open");
-    assert.equal(count.kind, "reorder");
-    assert.equal(count.requisitionId, req.id);
-    /* The server refuses what the list draws disabled. */
-    const vendor = await mod("requisitions").actions!.vendor(await as(admin), req.id, { vendor: "Asian Solvents" });
-    assert.ok(!vendor.ok && /blind count/.test(vendor.error));
+    assert.equal(st.stage, "Create PO");
+    assert.equal(st.readyForPo, true, "direct, default vendor — ready for the PO at once");
+    assert.equal(await rootCount("rm_tol"), undefined, "no count is opened for it");
   });
 
   test("the To count tab never shows the book", async () => {
+    await ask(controller, "rm_tol");
     const load = await mod("countTasks").load(await as(store1));
     const row = load.rows.find((x) => String(x.v.item) === "Toluene");
     assert.ok(row);
     assert.equal(JSON.stringify(row.v).includes("500"), false, "the book is not in the row");
+    assert.equal(row.flags.length, 0, "no count is marked as holding a purchase");
     const panel = row.panel?.data as { blind: boolean; book: number | null; reconciled: number | null };
     assert.equal(panel.blind, true);
     assert.equal(panel.book, null);
     assert.equal(panel.reconciled, null);
   });
 
-  test("a count within tolerance: the purchase goes on, with no flag", async () => {
+  test("a count within tolerance is matched", async () => {
     const count = await rootCount("rm_tol");
     const res = await mod("countTasks").actions!.count(await as(store1), count.id, { qty: "495", bin: "Bay 3" });
     assert.ok(res.ok, res.ok ? "" : res.error);
     assert.match(res.message ?? "", /book 500/);
     assert.equal((await rootCount("rm_tol")).status, "matched");
-    const req = await reqOf("rm_tol");
-    const [v] = await requirementViews({ ids: [req.id] });
-    assert.equal(v.stock?.gate.blocks, false);
-    assert.equal(v.stock?.gate.flag, null);
-    assert.equal(v.stock?.justification?.justified, 305);
-    assert.equal(stageOf(v).readyForPo, true, "direct, default vendor, counted — ready for the PO");
-  });
-
-  test("asking for far more than the count justifies is flagged, not held", async () => {
-    const r = await raise(store1, "Toluene", "900");
-    assert.ok(r.ok);
-    /* The open count for the shelf is new: the earlier match was before this requirement. */
-    const req = await reqOf("rm_tol");
-    assert.equal((await stage(req.id)).stage, "Blind count");
-    const count = await rootCount("rm_tol");
-    assert.ok((await mod("countTasks").actions!.count(await as(store2), count.id, { qty: "500" })).ok);
-    const [v] = await requirementViews({ ids: [req.id] });
-    assert.equal(v.stock?.gate.flag, "stockOverJustified");
-    assert.equal(stageOf(v).readyForPo, true, "nothing to confirm — it goes on");
   });
 });
 
 describe("a red flag is recounted, investigated and adjusted — never silently", () => {
-  let reqId = "";
   let rootId = "";
-  test("a short count is a red flag that notifies stock control, and the purchase goes on", async () => {
-    assert.ok((await raise(store1, "Xylene", "100")).ok);
-    reqId = (await reqOf("rm_xyl")).id;
-    rootId = (await rootCount("rm_xyl")).id;
+  test("a short count is a red flag that notifies stock control", async () => {
+    rootId = (await ask(controller, "rm_xyl")).id;
     const res = await mod("countTasks").actions!.count(await as(store1), rootId, { qty: "440" });
     assert.ok(res.ok);
     assert.match(res.message ?? "", /Red flag: -60/);
     assert.equal((await rootCount("rm_xyl")).status, "flagged");
-    const st = await stage(reqId);
-    assert.equal(st.readyForPo, true, "a red flag never holds the requirement");
-    const [v] = await requirementViews({ ids: [reqId] });
-    assert.equal(v.stock?.gate.flag, "stockFlag");
     const told = await db.select().from(notifications).where(eq(notifications.userId, controller.id));
     assert.equal(told.length, 1, "the stock-control holder is told");
     assert.match(told[0].title, /Stock difference: Xylene at Bhiwandi/);
@@ -239,12 +212,10 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
     const root = await rootCount("rm_xyl");
     assert.equal(root.status, "resolved");
     assert.equal(root.resolution, "adjusted");
-    assert.equal((await stage(reqId)).readyForPo, true);
   });
 
   test("a surplus is entered on the newest lot", async () => {
-    const r = await raise(store1, "Acetone", "50");
-    assert.ok(r.ok);
+    await ask(controller, "rm_ace");
     const root = await rootCount("rm_ace");
     assert.ok((await mod("countTasks").actions!.count(await as(store1), root.id, { qty: "120" })).ok);
     assert.ok((await mod("stockFlags").actions!.recount(await as(admin), root.id, {})).ok);
@@ -257,17 +228,6 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
     const [e] = await db.select().from(erpRmEntries).where(eq(erpRmEntries.sourceType, "adjustment"));
     assert.equal(e.lotNo, "AS-ACE-1");
     assert.equal(e.quantity, 20);
-  });
-});
-
-describe("an urgent purchase approved under the old rule", () => {
-  test("goes on without its count", async () => {
-    await db.update(erpStockCounts).set({ status: "cancelled" }).where(sql`raw_material_id = 'rm_tol' and status = 'open'`);
-    assert.ok((await raise(store1, "Toluene", "100")).ok);
-    const req = await reqOf("rm_tol");
-    assert.equal((await stage(req.id)).stage, "Blind count");
-    await db.update(erpRequisitions).set({ stockExceptionStatus: "approved", stockExceptionReason: "Line stops tomorrow without it" }).where(eq(erpRequisitions.id, req.id));
-    assert.notEqual((await stage(req.id)).stage, "Blind count");
   });
 });
 
@@ -335,11 +295,12 @@ describe("a stock check of anything, by anybody", () => {
 });
 
 describe("a count cancelled says what it lets go of", () => {
-  test("the factory phone loses the task, and the requisition stays held until somebody counts", async () => {
+  test("the factory phone loses the task, and no purchase is held by it", async () => {
     await db.insert(erpRawMaterials).values({ id: "rm_mek", serialNo: 50, name: "MEK", code: "MEK", unit: "Litre", materialType: "Chemical", purchaseMethod: "direct", preferredSupplierId: "sup_a" });
     await stock("rm_mek", "AS-MEK-1", 80);
     assert.ok((await raise(store1, "MEK", "40")).ok);
     const req = await reqOf("rm_mek");
+    await ask(controller, "rm_mek");
     const count = await rootCount("rm_mek");
     const why = { reason: "Raised against the wrong godown" };
     const bare = await mod("countTasks").actions!.cancel(await as(controller), count.id, why);
@@ -349,10 +310,10 @@ describe("a count cancelled says what it lets go of", () => {
     assert.ok(report.ok, report.ok ? "" : report.error);
     assert.equal(report.data.confirmWord, `SC-${count.countNo}`);
     assert.ok(report.data.items.some((i) => i.app === "Factory" && /counting task leaves/.test(i.label)), JSON.stringify(report.data.items));
-    assert.ok(report.data.items.some((i) => i.effect === "kept" && /stays held at Blind count/.test(i.label)), "the requisition is not let through by a cancel");
+    assert.ok(!report.data.items.some((i) => /Blind count|held/.test(i.label)), "no requisition waits on a count");
     const done = await mod("countTasks").actions!.cancel(await as(controller), count.id, { ...why, [IMPACT_FIELD]: JSON.stringify({ typed: report.data.confirmWord, fingerprint: report.data.fingerprint }) });
     assert.ok(done.ok, done.ok ? "" : done.error);
     assert.equal((await db.select().from(erpStockCounts).where(eq(erpStockCounts.id, count.id)))[0].status, "cancelled");
-    assert.equal((await stage(req.id)).stage, "Blind count", "and it is still held");
+    assert.equal((await stage(req.id)).stage, "Create PO", "the requirement never waited on it");
   });
 });

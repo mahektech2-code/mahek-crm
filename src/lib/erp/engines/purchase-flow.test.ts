@@ -11,7 +11,7 @@ import {
 } from "./purchase-flow";
 
 /* The purchase flow's rules, pinned:
-   Requirement → Blind count → Book comparison → Verification → Purchase method → PO number → Receipt. */
+   Requirement → Purchase method → PO number → Receipt. */
 
 const base: RequirementState = {
   status: "Pending",
@@ -116,17 +116,12 @@ test("a pasted list: the last number is the quantity, names match exactly or uni
   assert.deepEqual(parsePastedLines("Toluene 5", labels, ["Toluene"]).duplicates, ["Toluene"]);
 });
 
-test("a requirement waiting for its blind count sits at that step, before the purchase method", () => {
-  const held = requirementStage({ ...base, gate: { blocks: true, stage: "Blind count", next: "Count it." } });
-  assert.equal(FLOW_STEPS[held.step], "Blind count");
-  assert.equal(FLOW_STEPS[held.step + 1], "Book comparison");
-  assert.equal(held.stage, "Blind count");
-  assert.equal(held.readyForPo, false);
-  const counted = requirementStage({ ...base, gate: { blocks: false, stage: null, next: null } });
-  assert.deepEqual(counted, requirementStage(base), "once counted — matched or not — nothing changes");
-  /* A PO already raised is never pulled back by a later count. */
-  const onPo = requirementStage({ ...base, po: { status: "Sent", ordered: 10, received: 0 }, gate: { blocks: true, stage: "Blind count", next: null } });
-  assert.equal(onPo.stage, "Waiting for goods");
+test("there is no count in the flow: a requirement goes straight to its purchase method", () => {
+  assert.deepEqual([...FLOW_STEPS], ["Requirement", "Purchase method", "PO number", "Receipt"]);
+  for (const step of ["Blind count", "Book comparison", "Verification"]) assert.ok(!(FLOW_STEPS as readonly string[]).includes(step), `${step} is not a step`);
+  const raised = requirementStage(base);
+  assert.equal(FLOW_STEPS[raised.step], "Purchase method");
+  assert.notEqual(raised.stage, "Blind count");
 });
 
 test("a PO number picks the bought cell for this item, or says why not", async () => {

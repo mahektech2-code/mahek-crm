@@ -8,7 +8,7 @@ Requirements are one screen module, `requisitions`, in `lib/erp/screens/purchase
 | Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `FLOW_STEPS`, `requirementStage`, `poRouteOf`, `purchaseUnit`, `requirementLabel`, `itemPickLabels`, `parsePastedLines` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `requirementViews`, `stageOf`, `requirementWork` (dashboard and badge), `receivedByLine` |
 | Form | same | `requisitionForm` (new: header + `table` lines; edit: one item) |
-| Writes | same | `raiseRequirement` / `raiseRequirementWith`, `saveRequirement` (edit), `linkPo`, `unlinkPo`, `createPo`, `newCount`, `cancel` (and the older `decide`, `vendor`, which no button offers any more) |
+| Writes | same | `raiseRequirement` / `raiseRequirementWith`, `saveRequirement` (edit), `linkPo`, `unlinkPo`, `createPo`, `cancel` (and the older `decide`, `vendor`, which no button offers any more) |
 | PO step | `src/lib/erp/screens/requirement-po.ts` | `linkRequirementPo`, `unlinkRequirementPo`, `createRequirementPo`; `orderFromQuote` puts a Quotation manager purchase against a requirement, or raises one (`QM_RAISED_REMARK`) |
 | Departments (pure) | `src/lib/erp/departments.ts` | `requirementDepartmentsFor`, `categoriesFor`, `requirementRefusal`, `requirementVisibleTo` |
 | Line table UI | `src/app/erp/_ui/line-table.tsx` | Add-by-search and paste for `lineLayout: "table"` |
@@ -46,7 +46,7 @@ sequenceDiagram
 
 ## From the factory phone
 
-`lib/factory/purchase.ts` is the floor's side: `requirementKit`, `raiseFromFloor` and `cancelFromFloor`, behind the `reqKit`, `reqRaise` and `reqCancel` ops on `/api/factory/rpc`. The phone raises through `raiseRequirementWith`, the function the ERP form uses, with a map of counts by raw material. Inside the same transaction, each count is written onto the item's blind count by `writeCounted`, the same judgement `submitCount` uses. Red flags are passed to `notifyStockFlag` once the requirement has saved. `factory_requirement_sends` holds the key the phone mints, so a resend gets the first answer back instead of a second requirement. `FactoryCtx.reqDepts` decides who sees the screen: crew seat `owner`, or a manager over the department.
+`lib/factory/purchase.ts` is the floor's side: `requirementKit`, `raiseFromFloor` and `cancelFromFloor`, behind the `reqKit`, `reqRaise` and `reqCancel` ops on `/api/factory/rpc`. The phone raises through `raiseRequirementWith`, the function the ERP form uses, with each item's quantity to buy. No count is asked. An older APK still sends a count per item; that count is opened as a stock check of the shelf (`openCount`) and written by `writeCounted`, the same judgement `submitCount` uses, and a red flag goes to `notifyStockFlag` once the requirement has saved — it holds nothing. `factory_requirement_sends` holds the key the phone mints, so a resend gets the first answer back instead of a second requirement. `FactoryCtx.reqDepts` decides who sees the screen: crew seat `owner`, or a manager over the department.
 
 ## The stage
 

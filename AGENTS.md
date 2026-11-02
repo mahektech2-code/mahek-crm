@@ -2173,8 +2173,8 @@ or item any more. `engines/purchase-flow.ts` is the rule, pure, and
 `screens/purchase-flow.ts` the requirements and the Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
 
 **THE PO COMES BY THE ITEM'S PURCHASE RULE, AND NOTHING IS APPROVED — a
-reversal (Oct 2026).** The flow is now Requirement → Blind count → Book
-comparison → Verification → Purchase method → PO number → Receipt; the vendor /
+reversal (Oct 2026).** The flow is now Requirement → Purchase method → PO
+number → Receipt (the blind count left it in Nov 2026, below); the vendor /
 quotation step and PO approval in the paragraphs below are history. At the
 purchase method the item's rule (`poRouteOf`) decides, and both happen inside
 the requirement's record (`screens/requirement-po.ts`, the `purchaseFlow`
@@ -2275,8 +2275,7 @@ approves this PO" is one too many, so it was removed and
 (`lib/erp/departments.ts`) still applies: it rides on the designation, which
 is itself set in the Admin Console.
 
-**A requirement's STAGE is derived, never typed** (`requirementStage`): Blind
-count, Waiting for PO number (quotation), Create PO (direct), Create or link PO
+**A requirement's STAGE is derived, never typed** (`requirementStage`): Waiting for PO number (quotation), Create PO (direct), Create or link PO
 (buyer), PO awaiting approval (an old PO only), Waiting for goods, Partly
 received, Received, Closed short, Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
 Placed on approval → Received) and the old "Change status" button is gone,
@@ -2448,37 +2447,29 @@ group (its cans stay, not grouped), or a can's own Edit form.
 
 ## Inventory Accuracy Control
 
-**NO PURCHASE METHOD BEFORE THE SHELF IS COUNTED.** A raw-material requirement
-raised while `erp.stockCheck.onRequirement` is on opens a BLIND count of its
-item at its godown in the same transaction (`openRequirementCounts`), and the
-flow is Requirement → **Blind count** → Purchase method → Vendor / quotation →
-Approval → PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
-like the purchase rule, so nothing raised before it was held up. The rules are
-pure in `engines/stock-check.ts`; `stock-check.ts` hands them the ledgers'
-figures; `screens/stock-check.ts` is the Stock accuracy screen (To count · Red
-flags · Adjustments · Missing records · Every count).
-
-**THE COUNT HOLDS ONLY UNTIL IT IS ENTERED, AND THAT IS A REVERSAL (Oct
-2026).** It used to hold the purchase until the count MATCHED or its difference
-was resolved, PO approval was refused over an open discrepancy, and an "urgent
-purchase" approval and a "confirm quantity" step were the ways round. Work
-stopped behind stock paperwork, so Mahek's rule now is: count first, then the
-purchase carries on whatever the count found. `stockGate` blocks in one state,
-`to_count` (no count entered — none, open or cancelled), which `stageOf` hands
-to `requirementStage` as the **Blind count** stage; every buying handler asks
-`heldByStock` again, because a server action is a URL. `flagged` and
-`over_justified` block nothing and carry a FLAG the requirements list draws
-(`stockFlag`, `stockOverJustified`). A requirement reads the counts raised for
-it, any later count of its shelf, and any count of its shelf still UNRESOLVED,
-so an open discrepancy flags every requirement for that shelf. PO approval does
-not read the stock check. The `stock_exception_*` and `qty_confirm_*` columns
-are no longer written; an exception approved under the old rule still unblocks
-its requirement (`gatesFor`).
+**A PURCHASE REQUIREMENT IS NOT COUNTED, AND THAT IS A REVERSAL (Nov 2026).**
+A raw-material requirement used to open a BLIND count of its item at its
+godown and stop at a **Blind count** stage until somebody entered it, with a
+book comparison and a verdict on the record. Mahek asked for it out of the
+flow, so the flow is Requirement → Purchase method → PO number → Receipt
+(`FLOW_STEPS`): raising one opens no count, nothing on the purchase side reads
+a count (`stockGate`, `gatesFor`, `heldByStock`, `reorderJustification` and
+`openRequirementCounts` are gone), and `erp.stockCheck.onRequirement` and
+`erp.stockCheck.unexpectedQtyPercent` are retired. `0312` cancelled the open
+counts requirements had opened. `stock_check_required` and the
+`stock_exception_*` / `qty_confirm_*` columns stay as the record they are and
+are read by nothing. Stock accuracy itself is unchanged and stands on its own:
+cycle counts, counts somebody asks for, floor checks, red flags, recounts and
+approved adjustments. The rules are pure in `engines/stock-check.ts`;
+`stock-check.ts` hands them the ledgers' figures; `screens/stock-check.ts` is
+the Stock accuracy screen (To count · Red flags · Adjustments · Missing records
+· Every count).
 
 **A RED FLAG IS TOLD.** With nothing held, the bell is what makes a leak reach
 somebody: `notifyStockFlag`, after `submitCount` commits, tells every active
-`stockControl` holder on the ERP, every ERP administrator and whoever raised
-the requirement — not the counter, who saw it — on a new red flag and again
+`stockControl` holder on the ERP, every ERP administrator and, for a count an
+older factory phone sent with a requirement, whoever raised it — not the
+counter, who saw it — on a new red flag and again
 when a recount confirms it. It cannot fail the count.
 
 **THE COUNT IS BLIND.** Nothing on To count, its prompt or its drawer shows the
@@ -2510,11 +2501,6 @@ Record, oldest lot first, refused if the lots do not hold it (no negative
 stock); a surplus is an `erp_rm_entries` row with `source_type = 'adjustment'`
 on the newest lot. Lots are locked under BOTH spellings the ERP uses (`rm`,
 `Purchase`) and read again under the locks.
-
-**A QUANTITY THE SHELF DOES NOT NEED IS FLAGGED.** `reorderJustification`:
-up to the maximum level is justified; more than that by
-`erp.stockCheck.unexpectedQtyPercent` flags the requirement "More than the
-shelf needs". Nothing is confirmed and nothing waits.
 
 **CYCLE COUNTS ARE OPENED HOURLY, ONCE A DAY'S WORTH.** `erp-cycle-counts`
 (`planCycleCounts`) ranks shelves by ABC (value moved over 90 days, 80/95),
@@ -9679,24 +9665,20 @@ still holding that the ERP refuses offers Fix it AND Send to supervisor, so
 there is always a way to finish. "Put it in the ERP" on the review posts it
 under the WORKER's name; the head's decision is the line in the history.
 
-**THE IN-CHARGE RAISES PURCHASE REQUIREMENTS FROM THE PHONE, AND COUNTS EVERY
-ITEM FIRST.** More → Purchase requirement is offered to whoever holds a
-department's `owner` crew seat, a manager over that department, and the
-Production Head. It covers the three departments that buy anything
-(`FactoryCtx.reqDepts`): Mixing & Blending, Refilling and Packing. It is the
-ERP's own requirement, raised through `raiseRequirementWith`, so the
-department's categories, the material duties, the purchase rule and the stock
-check all still apply. Each item is COUNTED before it is added. The phone is
-never sent a stock figure: not in the item list, and not after the save. The
-count is written onto the item's blind count by `writeCounted` in the same
-transaction, so it is the requirement's stock check. The answer is only
-"matches" or "doesn't match". A count that doesn't match goes to stock control
-through `notifyStockFlag`, and buying carries on. It needs the network,
-because a count judged hours later is judged against a book that has moved.
-The phone's key in `factory_requirement_sends` answers a resend from the first
-save. An item can be cancelled from the phone until it is on a PO. The steps
-take the whole screen, as the design draws them. The screens are in the APK,
-so they reach the floor with a Factory release.
+**THE IN-CHARGE RAISES PURCHASE REQUIREMENTS FROM THE PHONE.** More →
+Purchase requirement is offered to whoever holds a department's `owner` crew
+seat, a manager over that department, and the Production Head. It covers the
+three departments that buy anything (`FactoryCtx.reqDepts`): Mixing &
+Blending, Refilling and Packing. It is the ERP's own requirement, raised
+through `raiseRequirementWith`, so the department's categories, the material
+duties and the purchase rule all still apply. Each item asks only how much to
+buy — it used to be COUNTED first, and that went with the blind count (Nov
+2026). An APK from before still sends a count: it is written as a stock check
+of that shelf by `writeCounted` (matches or not, a mismatch to stock control
+through `notifyStockFlag`) and holds nothing. The phone is never sent a stock
+figure. The phone's key in `factory_requirement_sends` answers a resend from
+the first save. An item can be cancelled from the phone until it is on a PO.
+The screens are in the APK, so they reach the floor with a Factory release.
 
 **A FIELD STAYS IN VIEW WHEN THE KEYBOARD OPENS.** On the native app, every
 scrolling box offers `reveal` (`ScrollBox` in `web.tsx`), and an `Input` that

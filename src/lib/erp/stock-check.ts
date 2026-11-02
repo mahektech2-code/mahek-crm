@@ -8,17 +8,12 @@ import { calendarDate } from "@/lib/business-date";
 import {
   abcClasses,
   causeCandidates,
-  gateCountStatus,
   judgeCount,
   pickCycleCounts,
-  reorderJustification,
-  stockGate,
   type CauseFact,
   type CountKind,
   type CountStatus,
   type CycleCandidate,
-  type Justification,
-  type StockGate,
 } from "./engines/stock-check";
 import { notifyUsers } from "@/lib/notify";
 import { erpLink } from "./registry";
@@ -29,7 +24,7 @@ import { rmLots, stockUnit, type Ex } from "./stock";
  * INVENTORY ACCURACY CONTROL, wired to the ledgers. The rules are
  * `engines/stock-check.ts`; this file finds the figures they are handed:
  * the book for one shelf, the movements still on their way into it, the
- * records that are missing anywhere, and which counts a requirement waits on.
+ * records that are missing anywhere.
  *
  * It never moves stock. The one write here is opening a count.
  * ------------------------------------------------------------------------- */
@@ -221,111 +216,6 @@ export async function openCount(tx: Ex, c: OpenCount): Promise<{ id: string; cou
 }
 
 export const countLabel = (no: number) => `SC-${no}`;
-
-/* ------------------------------------------------- the purchase gate */
-
-export type GateInfo = {
-  gate: StockGate;
-  /** The count the gate reads, where there is one. */
-  count: { id: string; countNo: number; status: CountStatus; kind: string } | null;
-  justification: Justification | null;
-  /** What is on the shelf by the newest count, in the stock unit. */
-  onShelf: number | null;
-  /**
-   * The book comparison of that newest count, snapshotted when it was
-   * entered: the ledger, goods on their way in and out, the reconciled book
-   * (ledger + in − out), and the difference against the tolerance allowed.
-   * Null until a count is entered.
-   */
-  comparison: { book: number; pendingIn: number; pendingOut: number; reconciled: number; difference: number; tolerance: number } | null;
-  unit: "Ltr" | "Pcs";
-};
-
-type GateReq = {
-  id: string;
-  rawMaterialId: string | null;
-  godownId: string;
-  createdAt: Date;
-  requiredQty: number;
-  unit: string;
-  stockCheckRequired: boolean;
-  /** An urgent purchase approved under the old rule: it went on without its count, and stays on. */
-  stockExceptionStatus?: string | null;
-};
-
-const LIVE: CountStatus[] = ["open", "flagged", "recount", "investigating"];
-
-/**
- * Where each requirement stands with its blind count. A requirement reads
- * the counts raised for it, any later count of its shelf, and any count of
- * its shelf still unresolved — an open discrepancy on a shelf FLAGS every
- * requirement for it. Only a count not yet entered holds one.
- */
-export async function gatesFor(reqs: GateReq[]): Promise<Map<string, GateInfo>> {
-  const out = new Map<string, GateInfo>();
-  const want = reqs.filter((r) => r.stockCheckRequired && r.rawMaterialId);
-  if (!want.length) return out;
-  const items = [...new Set(want.map((r) => r.rawMaterialId as string))];
-  const [counts, levels, mats, config] = await Promise.all([
-    q<{ id: string; no: number; status: CountStatus; kind: string; req: string | null; parent: string | null; rm: string; godown: string; created: string; counted: number | null; countedAt: string | null; book: number | null; pendingIn: number | null; pendingOut: number | null; difference: number | null; tolerance: number | null }>(
-      sql`select id, count_no as no, status, kind, requisition_id as req, recount_of_id as parent, raw_material_id as rm, godown_id as godown,
-                 created_at::text as created, counted_qty::float8 as counted, counted_at::text as "countedAt",
-                 book_qty::float8 as book, pending_in::float8 as "pendingIn", pending_out::float8 as "pendingOut",
-                 difference::float8 as difference, tolerance::float8 as tolerance
-            from erp_stock_counts where raw_material_id in ${items}`,
-    ),
-    q<{ rm: string; godown: string; min: number; max: number }>(
-      sql`select raw_material_id as rm, godown_id as godown, min_qty::float8 as min, max_qty::float8 as max from erp_rm_levels
-           where raw_material_id in ${items}`,
-    ),
-    q<{ id: string; unit: string; density: number | null }>(
-      sql`select id, unit, density::float8 as density from erp_raw_materials where id in ${items}`,
-    ),
-    getConfig(),
-  ]);
-  const matOf = new Map(mats.map((m) => [m.id, m]));
-  for (const r of want) {
-    const rm = r.rawMaterialId as string;
-    const shelf = counts.filter((c) => c.rm === rm && c.godown === r.godownId);
-    const roots = shelf.filter((c) => !c.parent && (c.req === r.id || new Date(c.created) >= r.createdAt || LIVE.includes(c.status)));
-    const status = gateCountStatus(roots.map((c) => ({ status: c.status, createdAt: new Date(c.created) })));
-    const root = status ? [...roots].filter((c) => c.status === status).sort((a, b) => b.created.localeCompare(a.created))[0] : null;
-    /* The newest figure anybody counted for this check — the root or a recount of it. */
-    const family = root ? shelf.filter((c) => (c.id === root.id || c.parent === root.id) && c.countedAt) : [];
-    const latest = family.sort((a, b) => String(b.countedAt).localeCompare(String(a.countedAt)))[0];
-    const onShelf = latest?.counted ?? null;
-    const m = matOf.get(rm);
-    const level = levels.find((l) => l.rm === rm && l.godown === r.godownId);
-    const requested = toStockUnit(r.requiredQty, r.unit, m?.density ?? null);
-    const justification =
-      onShelf != null ? reorderJustification({ requested, onShelf, min: level?.min ?? null, max: level?.max ?? null, allowancePercent: config["erp.stockCheck.unexpectedQtyPercent"] }) : null;
-    const gate = stockGate({
-      required: true,
-      countStatus: status,
-      unexpectedQty: !!justification?.unexpected,
-    });
-    if (gate.blocks && r.stockExceptionStatus === "approved") Object.assign(gate, { blocks: false, stage: null, next: null });
-    out.set(r.id, {
-      gate,
-      count: root ? { id: root.id, countNo: Number(root.no), status: root.status, kind: root.kind } : null,
-      justification,
-      onShelf,
-      comparison:
-        latest && latest.book != null
-          ? {
-              book: Number(latest.book),
-              pendingIn: Number(latest.pendingIn ?? 0),
-              pendingOut: Number(latest.pendingOut ?? 0),
-              reconciled: Number(latest.book) + Number(latest.pendingIn ?? 0) - Number(latest.pendingOut ?? 0),
-              difference: Number(latest.difference ?? 0),
-              tolerance: Number(latest.tolerance ?? 0),
-            }
-          : null,
-      unit: stockUnit(m?.unit ?? "Litre"),
-    });
-  }
-  return out;
-}
 
 /* ---------------------------------------------------- missing records */
 

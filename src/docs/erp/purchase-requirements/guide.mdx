@@ -1,13 +1,13 @@
-A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month. Each item is counted blind first, then gets its PO by its purchase rule: a **Quotation** item is bought on the Quotation manager, which writes its PO, a **Direct purchase** item creates its PO here at the item's price. No PO is approved.
+A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month. Each item gets its PO straight away by its purchase rule: a **Quotation** item is bought on the Quotation manager, which writes its PO, a **Direct purchase** item creates its PO here at the item's price. No PO is approved.
 
 ## The screen at a glance
 
 <Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Requirements" caption="Requirements, one group per requirement number, filtered by stage">
   <WfBar>
-    <WfTitle sub="What each department needs bought, through blind count and stock verification to the PO and the goods.">Requirements</WfTitle>
+    <WfTitle sub="What each department needs bought, through the PO to the goods.">Requirements</WfTitle>
     <WfSpacer /><WfButton primary>New requirement</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Create PO 3</WfPill><WfPill>Waiting for PO number 2</WfPill><WfPill>Blind count 1</WfPill><WfPill>Waiting for goods 4</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Create PO 3</WfPill><WfPill>Waiting for PO number 2</WfPill><WfPill>Waiting for goods 4</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
     columns={["Requirement", "Item", "Quantity", "Required by", "Department", "Priority", "Method", "Stage", "Vendor", "PO"]}
@@ -58,20 +58,17 @@ If you work in one department it is chosen for you and only its items are offere
 
 Whoever is in charge of Mixing, Refilling or Packing, a supervisor over one of those departments, and the Production Head can raise a requirement from the Factory app: **More → Purchase requirement**. It takes two steps:
 
-1. **Pick the items.** For each item, the phone first asks how much is in the godown right now, then how much to buy. It never shows the stock the office has on record.
+1. **Pick the items.** For each item, say how much to buy. Nothing is counted first.
 2. **Say when it is needed and how urgent it is**, add a note if you like, and send it.
 
-What they counted becomes that item's stock check. They see only whether it matches the record. If it does not, stock control is told and buying carries on. The phone then follows each item through to receipt, and an item can be cancelled from it until it is on a PO.
+An older version of the app still asks how much is in the godown first; what it sends is recorded as a stock check of that item, and it holds nothing up. The phone then follows each item through to receipt, and an item can be cancelled from it until it is on a PO.
 
 ## What happens to each item next
 
-First the shelf is **counted blind** — the count is entered without seeing the book. The requirement's record then shows the **book comparison** (the count against the reconciled system quantity) and the verdict: **Stock verification passed**, or a **Red flag** where it differs beyond the allowed difference. A red flag tells stock control; the purchase carries on.
-
-Then the PO comes by the item's **purchase rule**, copied from the item when you raised it:
+Nothing is counted first: the PO comes straight away by the item's **purchase rule**, copied from the item when you raised it:
 
 | Stage | What it means | What you do |
 |---|---|---|
-| **Blind count** | The count has not been entered | Count the stock |
 | **Waiting for PO number** | Quotation: bought on the Quotation manager | Buy it there, picking this requirement in **Purchase it** — or type the PO number made there in the record and **Link PO** |
 | **Create PO** | Direct purchase: no quotation | **Create PO** in the record |
 | **Create or link PO** | Buyer decision | Either of the two |

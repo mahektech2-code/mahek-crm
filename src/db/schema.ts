@@ -11853,11 +11853,9 @@ export const erpRequisitions = pgTable(
     selectionNote: text("selection_note"),
     cancelReason: text("cancel_reason"),
     /**
-     * INVENTORY ACCURACY CONTROL: whether this requirement waits for a blind
-     * physical count before it is bought. COPIED on raise from
-     * `erp.stockCheck.onRequirement`, so a requirement in flight when the
-     * rule changes is never re-routed — and every row from before it reads
-     * false.
+     * RETIRED (Nov 2026): whether this requirement waited for a blind count
+     * before it was bought. The count was taken out of the purchase flow, so
+     * nothing writes or reads it; kept as the record of the rows it was set on.
      */
     stockCheckRequired: boolean("stock_check_required").notNull().default(false),
     /** The urgent-purchase exception: requested | approved | rejected. */

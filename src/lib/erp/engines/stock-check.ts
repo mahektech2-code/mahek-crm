@@ -203,36 +203,6 @@ export function pickCycleCounts(cands: CycleCandidate[], today: string, days: Cy
   return out.slice(0, Math.max(0, limit));
 }
 
-/* ------------------------------------------------- the reorder quantity */
-
-export type Justification = {
-  /** What the shelf justifies buying: up to the maximum level. Null where no level is set. */
-  justified: number | null;
-  /** Requested above what the count justifies by more than the allowance. */
-  unexpected: boolean;
-  sentence: string;
-};
-
-/**
- * EVEN A MATCHING COUNT DOES NOT JUSTIFY ANY QUANTITY. The shelf says what is
- * there; the level says what should be; the difference is what a purchase is
- * for. Asking for well over it — or for anything while the shelf is above its
- * maximum — needs somebody to confirm the quantity in words.
- */
-export function reorderJustification(p: { requested: number; onShelf: number; min: number | null; max: number | null; allowancePercent: number }): Justification {
-  if (p.max == null) {
-    return { justified: null, unexpected: false, sentence: "No re-order level is set for this item at this godown, so the count cannot say what quantity is justified." };
-  }
-  const justified = r3(Math.max(0, p.max - p.onShelf));
-  const ceiling = justified * (1 + Math.max(p.allowancePercent, 0) / 100);
-  const unexpected = p.requested > ceiling + 1e-9;
-  const sentence =
-    justified === 0
-      ? `The shelf holds ${r3(p.onShelf)} against a maximum of ${p.max}: nothing needs buying to reach it.`
-      : `The shelf holds ${r3(p.onShelf)}; buying ${justified} brings it to the maximum of ${p.max}.`;
-  return { justified, unexpected, sentence };
-}
-
 /* ------------------------------------------------------ possible causes */
 
 /**
@@ -334,46 +304,6 @@ export function causeCandidates(difference: number, tolerance: number, facts: Ca
   }
   const rank = (c: Cause) => (c.likelihood === "likely" ? 0 : 1);
   return out.sort((a, b) => rank(a) - rank(b) || Math.abs(Math.abs(a.qty ?? 0) - gap) - Math.abs(Math.abs(b.qty ?? 0) - gap));
-}
-
-/* -------------------------------------- the count on the requirement */
-
-export type GateState = "not_required" | "to_count" | "flagged" | "over_justified" | "clear";
-
-/**
- * Where a requirement stands with its blind count. It WAITS only while the
- * count has not been entered (`blocks`); once it has, whatever it found, the
- * purchase goes on and a difference is a FLAG on the row (`flag`, a key of
- * the list's flag map), never a hold.
- */
-export type StockGate = { state: GateState; blocks: boolean; flag: string | null; stage: string | null; next: string | null };
-
-export function stockGate(p: {
-  required: boolean;
-  /** The status of the newest count raised for it; null when none exists. */
-  countStatus: CountStatus | null;
-  /** More is asked for than the counted shelf needs to reach its maximum. */
-  unexpectedQty: boolean;
-}): StockGate {
-  const none = { blocks: false, stage: null, next: null };
-  if (!p.required) return { state: "not_required", flag: null, ...none };
-  if (p.countStatus === "flagged" || p.countStatus === "recount" || p.countStatus === "investigating")
-    return { state: "flagged", flag: "stockFlag", ...none };
-  if (p.countStatus === "matched" || p.countStatus === "resolved")
-    return p.unexpectedQty ? { state: "over_justified", flag: "stockOverJustified", ...none } : { state: "clear", flag: null, ...none };
-  return { state: "to_count", blocks: true, flag: null, stage: "Blind count", next: "Count what is on the shelf. The book quantity is not shown until the count is in; whatever it finds, the purchase goes on." };
-}
-
-/**
- * The status a requirement's gate reads: its newest ROOT count — a recount is
- * a child of the count it checks, and the root carries where the check has
- * got to. Cancelled counts stand only when nothing else does.
- */
-export function gateCountStatus(roots: { status: CountStatus; createdAt: Date }[]): CountStatus | null {
-  if (!roots.length) return null;
-  const live = roots.filter((c) => c.status !== "cancelled");
-  const pool = live.length ? live : roots;
-  return [...pool].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0].status;
 }
 
 /** The steps of the control, as drawn on the dashboard and in a count's record. */

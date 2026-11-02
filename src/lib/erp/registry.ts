@@ -119,7 +119,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Purchase",
     icon: "cart",
     screens: [
-      s("requisitions", "requisitions", "Requirements", "What each department needs bought, through blind count and stock verification to the PO and the goods.", true),
+      s("requisitions", "requisitions", "Requirements", "What each department needs bought, from its purchase method through the PO to the goods.", true),
       s("purchaseOrders", "purchase-orders", "Purchase orders", "Raised from requirements, approved, sent and received against.", true),
       s("register", "register", "Purchases", "Goods received against a PO, and the lots they become.", true, [
         v("inward", "Goods receipt (GRN)"),

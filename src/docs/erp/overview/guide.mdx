@@ -10,8 +10,7 @@ Everything in the ERP follows the paint from the supplier to the customer. Each 
 
 <Flow caption="From a department's need to money in the bank" chart={`
 flowchart TD
-  A["A department needs something<br/>Purchase requirements"] --> A2["Blind count of the shelf<br/>Stock accuracy"]
-  A2 --> B["How is it bought?<br/>direct · quotation · buyer decides"]
+  A["A department needs something<br/>Purchase requirements"] --> B["How is it bought?<br/>direct · quotation · buyer decides"]
   B --> C["Purchase order<br/>linked from the Quotation manager, or created"]
   C --> D["Goods arrive at the gate<br/>Goods receipt (GRN) against the PO"]
   D --> E{"Does the item<br/>need testing?"}
@@ -33,7 +32,7 @@ flowchart TD
 
 Read it top to bottom and you have the whole ERP:
 
-1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). What is on the shelf is [counted blind](/docs/erp/stock-accuracy) first, and the item's purchase rule then decides whether the store buys it directly, buys it at a rate from the [Quotation manager](/docs/erp/quotation-manager), or lets the buyer decide.
+1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). The item's purchase rule decides whether the store buys it directly, buys it at a rate from the [Quotation manager](/docs/erp/quotation-manager), or lets the buyer decide.
 2. **Order.** Nothing is bought without a [purchase order](/docs/erp/purchase-orders). A quotation item links the PO the Quotation manager made; a direct-purchase item has one created on the requirement. No PO waits for an approval on either route.
 3. **Receive and test.** Goods are received at the gate [against the PO](/docs/erp/goods-receipt-and-testing). A chemical goes to the tester; everything else goes straight into the register and into stock.
 4. **Make.** [Production](/docs/erp/production) mixes raw-material lots into semi-finished liquid (SFG), fills approved SFG into cans or drums (FG), and packs loose cans into boxes.
@@ -58,7 +57,7 @@ The dashboard is the first screen you see. It answers one question: **what needs
     <Hotspot n={2} />
   </WfCard>
   <WfCard title="Stock accuracy · 92% counted right first time · 30 days">
-    <WfText>1 Requirement · 2 · 2 Blind count · 3 · 3 Buying · 1 · 4 Red flag · 0 · 5 Recount · 0 · 6 Investigate · 0 · 7 Approve · 1</WfText>
+    <WfText>1 To count · 3 · 2 Red flag · 0 · 3 Recount · 0 · 4 Investigate · 0 · 5 Approve · 1</WfText>
     <Hotspot n={3} />
   </WfCard>
   <WfBar>
@@ -86,7 +85,7 @@ The dashboard is the first screen you see. It answers one question: **what needs
 <Hotspots items={[
   <span key="1"><b>Greeting and scope.</b> Your first name, today's date, and which godown the stock figures are for — your working location, or "All godowns" if you have none. If money figures are not on your account, a line under the title says so.</span>,
   <span key="2"><b>Yesterday in one paragraph.</b> Counts only: orders taken, lines dispatched, goods received, SFG batches made, and the open alerts. Everybody who opens the dashboard may read it, because it carries no rate or amount. It is the newest paragraph the nightly pass wrote, and the date says which day it is about.</span>,
-  <span key="3"><b>Stock accuracy.</b> Drawn only if you hold Stock accuracy. It is the Inventory Accuracy Control as the flow it is — requirements waiting for their blind count, counts to do, purchases carrying on, red flags, recounts, investigations and adjustments to approve — with how often a count matched the book first time over the last 30 days. Every step opens its records. See [Stock accuracy](/docs/erp/stock-accuracy).</span>,
+  <span key="3"><b>Stock accuracy.</b> Drawn only if you hold Stock accuracy. It is the Inventory Accuracy Control as the flow it is — counts to do, red flags, recounts, investigations and adjustments to approve — with how often a count matched the book first time over the last 30 days. Every step opens its records. See [Stock accuracy](/docs/erp/stock-accuracy).</span>,
   <span key="4"><b>A section per area you hold.</b> Each line is a count of records that need somebody. A count above zero that matters is coloured.</span>,
   <span key="5"><b>Every line opens its records.</b> Click a line and the list it counts opens filtered to exactly those rows, with a pill naming the filter. Clear the pill to see the whole list.</span>,
 ]} />
@@ -97,7 +96,7 @@ The dashboard is the first screen you see. It answers one question: **what needs
 |---|---|---|
 | **Alerts** | Alerts | Open unusual-activity alerts by kind — see [Alerts and AI](/docs/erp/alerts-and-ai) |
 | **Stock checks** | Stock accuracy | Floor checks that differ from the book, documents with no stock entry, the commonest cause of approved adjustments, and whether a full count is due — the control's own steps are the strip above |
-| **Purchase** | Requirements, Purchase orders, Purchases, Testing | Requirements waiting for a blind count, a PO number or a PO to be created; urgent and late requirements; POs to send, awaiting delivery or overdue; goods awaiting routing; tests waiting for the verifier; purchases with no rate or no bill |
+| **Purchase** | Requirements, Purchase orders, Purchases, Testing | Requirements waiting for a PO number or a PO to be created; urgent and late requirements; POs to send, awaiting delivery or overdue; goods awaiting routing; tests waiting for the verifier; purchases with no rate or no bill |
 | **Stock** | Any stock tab | Lots and quantity at each stage; stock value only with the cost power |
 | **Production and re-order** | Production screens, Transfers, Levels | Incomplete packing batches, production today and this month, transfers today, write-offs this month, items below their minimum |
 | **Sales** | Orders, Billing & dispatch | Orders by status, allocation short, ready to bill, dispatch today and late, missing bill numbers or rates, pending-party orders, labels to print, dispatch verification, dispatched today and this month |
