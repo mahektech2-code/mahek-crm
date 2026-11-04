@@ -69,6 +69,18 @@ function billMatches(b: Bill, query: string): boolean {
   return words.every((w) => hay.includes(w));
 }
 
+/**
+ * Does a copy on the desk answer what was typed in its search? The same
+ * every-word rule as the bills: transporter, consignee, LR or bill number
+ * (typed or only read), destination, and who uploaded it.
+ */
+function copyMatches(l: UploadedLr, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [l.transporter, l.partyHint, l.billHint, l.lrNo, l.readLrNo, l.destination, l.uploadedBy].filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
 /** How many bills the Attach-to list draws before "Show more". */
 const ATTACH_PAGE = 10;
 
@@ -141,6 +153,7 @@ export function DocumentsDesk({
   const kind: ProofKind = tab === "pending" ? "lr" : tab;
   const [pick, setPick] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [copyQuery, setCopyQuery] = useState("");
   /* The bill a pending row sent us here for — ticked on the LR it opened. */
   const [preTick, setPreTick] = useState<string | null>(null);
 
@@ -166,11 +179,13 @@ export function DocumentsDesk({
     setTab(t);
     setPick(null);
     setPreTick(null);
+    setCopyQuery("");
   };
   /* From a pending bill to the copy that may be it: that copy's tab, the bill ticked, and the bill listed. */
   const openCopy = (copyId: string, copyKind: ProofKind, bill: Bill) => {
     setTab(copyKind);
     setPick(copyId);
+    setCopyQuery("");
     setPreTick(bill.key);
     if (copyKind === "lr" && !waitingBills.some((b) => b.key === bill.key)) setShowAll(true);
   };
@@ -200,9 +215,11 @@ export function DocumentsDesk({
   );
 
   const list = rows.filter((r) => r.l.kind === kind);
+  /* What the search leaves on the left; the tallies, "Attach N ready" and the tab count still speak for the whole desk. */
+  const visible = copyQuery.trim() ? list.filter((r) => copyMatches(r.l, copyQuery)) : list;
   const count = (k: ProofKind) => rows.filter((r) => r.l.kind === k).length;
-  const sel = list.find((r) => r.l.id === pick) ?? list[0] ?? null;
-  const at = sel ? list.indexOf(sel) : -1;
+  const sel = visible.find((r) => r.l.id === pick) ?? visible[0] ?? null;
+  const at = sel ? visible.indexOf(sel) : -1;
   const ready = list.filter((r) => r.state === "ready");
   const tally = (s: State) => list.filter((r) => r.state === s).length;
 
@@ -259,11 +276,30 @@ export function DocumentsDesk({
             <Tally icon="warn" tone="text-warn-ink" n={tally("todo")} label="Something to add or fix" />
             <Tally icon="copy" tone="text-danger" n={tally("dup")} label="Possible duplicate" />
             <Tally icon="clock" tone="text-muted" n={tally("reading")} label="Being read" />
-            <span className="ml-auto text-muted">{plural(list.length, kind === "lr" ? "LR" : "copy", kind === "lr" ? "LRs" : "copies")}</span>
+            <span className="ml-auto text-muted">
+              {copyQuery.trim() ? `${visible.length} of ` : ""}
+              {plural(list.length, kind === "lr" ? "LR" : "copy", kind === "lr" ? "LRs" : "copies")}
+            </span>
           </div>
           {list.length ? (
+            <div className="border-b border-divider p-2">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
+                  <Icon n="search" s={14} />
+                </span>
+                <Input
+                  value={copyQuery}
+                  onChange={(e) => setCopyQuery(e.target.value)}
+                  placeholder={kind === "lr" ? "Search transporter, LR no., party, city" : "Search party, bill no., uploaded by"}
+                  aria-label={kind === "lr" ? "Search the LRs" : "Search the signed copies"}
+                  className="pl-8"
+                />
+              </div>
+            </div>
+          ) : null}
+          {visible.length ? (
             <div className="max-h-[72vh] overflow-y-auto">
-              {list.map((r) => (
+              {visible.map((r) => (
                 <button
                   key={r.l.id}
                   type="button"
@@ -282,6 +318,8 @@ export function DocumentsDesk({
                 </button>
               ))}
             </div>
+          ) : list.length ? (
+            <Empty>Nothing matches “{copyQuery.trim()}”.</Empty>
           ) : (
             <Empty>{kind === "lr" ? "No LR is waiting. The dispatch team uploads them from the phone." : "No signed copy is waiting. Copies for Mahek Vehicle deliveries arrive here from the phone."}</Empty>
           )}
@@ -295,8 +333,8 @@ export function DocumentsDesk({
               key={`${sel.l.id}|${sel.l.fileId}|${preTick ?? ""}`}
               row={sel}
               preTick={preTick}
-              prev={at > 0 ? () => setPick(list[at - 1].l.id) : null}
-              next={at < list.length - 1 ? () => setPick(list[at + 1].l.id) : null}
+              prev={at > 0 ? () => setPick(visible[at - 1].l.id) : null}
+              next={at < visible.length - 1 ? () => setPick(visible[at + 1].l.id) : null}
               today={today}
               transporters={transporters}
               callEveryDays={callEveryDays}
@@ -310,7 +348,7 @@ export function DocumentsDesk({
           )
         ) : (
           <Card>
-            <Empty>Pick a copy on the left.</Empty>
+            <Empty>{list.length && !visible.length ? "Nothing on the desk matches the search." : "Pick a copy on the left."}</Empty>
           </Card>
         )}
       </div>
