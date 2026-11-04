@@ -92,3 +92,19 @@ test("net weight is the gross off the scale less every empty drum", () => {
   assert.equal(netWeight(1040, 5, null), null);
   assert.equal(netWeight(null, 5, 18), null);
 });
+
+test("the feed-adjusted amount comes off the final amount, and a minus figure adds to it", () => {
+  const at = (feed: number) => purchaseFigures({ ...base, quantity: 330, unit: "Kg", density: 0.9, ratePaise: 13100, feedAdjustedAmountPaise: feed }).finalPaise;
+  assert.equal(at(0), 5_101_140);
+  assert.equal(at(500), 5_100_640);
+  assert.equal(at(-500), 5_101_640);
+});
+
+test("the register's Final amount shows whole rupees; the form lets a minus feed amount through", async () => {
+  const { cellText, moneyText } = await import("../ui");
+  const { checkField } = await import("@/app/erp/_ui/form-check");
+  assert.equal(cellText({ k: "final", l: "Final amount", t: "m", whole: true }, 5_101_140), "₹51,011");
+  assert.equal(cellText({ k: "final", l: "Final amount", t: "m", whole: true }, 5_101_150), "₹51,012");
+  assert.equal(moneyText({}, 5_101_140), "₹51,011.40");
+  assert.equal(checkField({ k: "feedAmount", l: "Feed-adjusted amount (₹)", t: "num", min: Number.MIN_SAFE_INTEGER }, "-5"), "");
+});

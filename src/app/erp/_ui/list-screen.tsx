@@ -7,7 +7,7 @@ import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
-import { aggsOf, cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
+import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
@@ -591,7 +591,7 @@ export function ListScreen({
   const cfText = (k: string, f: ColFilter) => {
     const c = colOf(k);
     const blank = (v: string) => (v === "—" || v === "" ? "(Blank)" : v);
-    const num = (v: number) => (c.t === "m" ? inr(v) : `${nf(v)}${c.u ? ` ${c.u}` : ""}`);
+    const num = (v: number) => (c.t === "m" ? moneyText(c, v) : `${nf(v)}${c.u ? ` ${c.u}` : ""}`);
     return f.in
       ? f.in.length === 0
         ? "nothing"
@@ -986,7 +986,7 @@ export function ListScreen({
                           aggsOf(spec.agg).forEach((a, i) => {
                             const got = grp.agg[i];
                             if (got == null) return;
-                            aggText += ` · ${colOf(a.k).t === "m" ? inr(got.v) : nf(got.v)} ${a.l}`;
+                            aggText += ` · ${colOf(a.k).t === "m" ? moneyText(colOf(a.k), got.v) : nf(got.v)} ${a.l}`;
                             if (got.missing) aggText += ` (${nf(got.missing)} ${got.missing === 1 ? "row" : "rows"} ${a.missing})`;
                           });
                           const allSel = grp.ids.every((id) => sel[id]);

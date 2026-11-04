@@ -1,3 +1,4 @@
+import { roundedTotal } from "@/lib/bill-round";
 import { fmt, n, registerCalc } from "../calc";
 import { lotNumber, netWeight, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
 import { poLineFigures } from "../engines/purchase-flow";
@@ -174,7 +175,7 @@ registerCalc("register.available", ({ h, data }) => (n(h.qty) ? fmt(figures(h, d
 registerCalc("register.final", ({ h, data }) => {
   const f = figures(h, data);
   if (f.finalPaise == null) return "Enter a rate";
-  return `₹${fmt(f.finalPaise / 100)}`;
+  return `₹${fmt(roundedTotal(f.finalPaise) / 100)}`;
 });
 
 registerCalc("register.summary", ({ h, data }) => {
