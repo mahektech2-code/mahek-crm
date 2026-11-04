@@ -222,6 +222,8 @@ export type StatValue = {
   base: number;
   /** Money (paise), or a plain number. */
   fmt: "m" | "n";
+  /** Money shown to the rupee — the column's `whole`. */
+  whole?: boolean;
   u?: string;
   tone?: Tone;
   missing: number;
@@ -238,7 +240,7 @@ export type StatValue = {
  */
 export type PanelSection =
   | { k: string; l: string; kind: "list"; opts: { v: string; n: number }[]; more: number }
-  | { k: string; l: string; kind: "range"; lo: number | null; hi: number | null; money: boolean; u?: string };
+  | { k: string; l: string; kind: "range"; lo: number | null; hi: number | null; money: boolean; whole?: boolean; u?: string };
 
 export type Facet = { k: string; l: string; opts: { v: string; n: number }[] };
 
@@ -552,7 +554,7 @@ export function panelSections(spec: ListSpec, rows: ListRow[], beforeCf: ListRow
   return cols.flatMap((c): PanelSection[] => {
     const f = facets[c.k];
     if (!f) return [];
-    if (f.kind === "range") return [{ k: c.k, l: c.l, kind: "range", lo: f.lo, hi: f.hi, money: c.t === "m", ...(c.u ? { u: c.u } : {}) }];
+    if (f.kind === "range") return [{ k: c.k, l: c.l, kind: "range", lo: f.lo, hi: f.hi, money: c.t === "m", ...(c.whole ? { whole: true } : {}), ...(c.u ? { u: c.u } : {}) }];
     /* A blank is not a choice anybody looks for, unless it is already ticked. */
     const opts = f.opts.filter((o) => o.v !== "—" || cf[c.k]?.in?.includes("—"));
     return [{ k: c.k, l: c.l, kind: "list", opts, more: f.more }];
@@ -614,6 +616,7 @@ export function statsOf(spec: ListSpec, shown: ListRow[], base: ListRow[], query
         v: f.v,
         base: figure(s, bs).v,
         fmt: col?.t === "m" ? "m" : "n",
+        ...(col?.whole ? { whole: true } : {}),
         ...(s.u ?? col?.u ? { u: s.u ?? col?.u } : {}),
         ...(s.tone ? { tone: s.tone } : {}),
         missing: s.missing ? f.missing : 0,

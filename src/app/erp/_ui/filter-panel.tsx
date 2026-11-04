@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button, checkboxClass, cx, Input } from "@/components/ui/primitives";
 import { cleanDecimal, parseRupees } from "@/lib/format";
-import { inr, nf } from "@/lib/erp/ui";
+import { moneyText, nf } from "@/lib/erp/ui";
 import type { ColFilter, PanelSection } from "@/lib/erp/list-query";
 import { Icon } from "./icons";
 import { LinkButton, popoverClass } from "./look";
@@ -217,7 +217,7 @@ function Panel({
               );
             }
             const r = p && "min" in p ? p : { min: "", max: "" };
-            const fmt = (v: number | null) => (v == null ? "" : s.money ? inr(v) : `${nf(v)}${s.u ? ` ${s.u}` : ""}`);
+            const fmt = (v: number | null) => (v == null ? "" : s.money ? moneyText(s, v) : `${nf(v)}${s.u ? ` ${s.u}` : ""}`);
             const clean = (v: string) => cleanDecimal(v.replace(/[^\d.]/g, ""), s.money ? 2 : 3);
             return (
               <Section key={s.k} title={`${s.l}${s.money ? " (₹)" : s.u ? ` (${s.u})` : ""}`} aside={s.lo != null && s.hi != null ? `${fmt(s.lo)} – ${fmt(s.hi)}` : undefined}>

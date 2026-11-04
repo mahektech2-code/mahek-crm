@@ -3,6 +3,7 @@
 import { cx } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
 import { moneyShort } from "@/lib/format";
+import { roundedTotal } from "@/lib/bill-round";
 import { inr, nf, type Tone } from "@/lib/erp/ui";
 import type { StatPick, StatValue } from "@/lib/erp/list-query";
 
@@ -31,7 +32,10 @@ const FILL: Record<Tone, string> = {
 
 /** A card's figure as it is read at a glance, and in full on hover. */
 function figureText(s: StatValue, v: number): { short: string; full: string } {
-  if (s.fmt === "m") return { short: moneyShort(v), full: inr(v) };
+  if (s.fmt === "m") {
+    const m = s.whole ? roundedTotal(v) : v;
+    return { short: moneyShort(m), full: inr(m) };
+  }
   const n = nf(Math.round(v * 100) / 100);
   const u = s.u?.trim();
   return { short: u ? `${n} ${u}` : n, full: u ? `${n} ${u}` : n };

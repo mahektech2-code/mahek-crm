@@ -1395,7 +1395,9 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
             ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rateOf } }),
           },
           { k: "gst", l: "GST %", t: "num", min: 0, max: 100, ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: gstOf } }) },
-          { k: "feedAmount", l: "Feed-adjusted amount (₹)", t: "num", min: 0 },
+          /* Taken OFF the bill amount, so a minus figure adds to it: the form only
+             lets a number below zero through where `min` is below zero itself. */
+          { k: "feedAmount", l: "Feed-adjusted amount (₹)", t: "num", min: Number.MIN_SAFE_INTEGER, hint: "Taken off the final amount. Enter a minus figure (−5) to add it instead." },
           { k: "final", l: "Final amount", t: "derived", calc: "register.final" },
           { k: "company", l: "Company", t: "select", req: true, opts: ["Mahek Marketing India", "MYLAC"] },
         ] as FieldSpec[])
@@ -1489,7 +1491,7 @@ const register: ScreenModule = {
       { k: "unit", l: "Unit", t: "t" },
       { k: "rate", l: "Rate", t: "m", pw: "viewPurchaseMoney" },
       { k: "gst", l: "GST %", t: "n", pw: "viewPurchaseMoney" },
-      { k: "final", l: "Final amount", t: "m", pw: "viewPurchaseMoney" },
+      { k: "final", l: "Final amount", t: "m", whole: true, pw: "viewPurchaseMoney" },
       { k: "landing", l: "Landing cost", t: "m", pw: "viewPurchaseMoney" },
       { k: "stage", l: "Stage", t: "s", pw: "viewPurchaseMoney" },
       { k: "billNo", l: "Bill no", t: "t" },

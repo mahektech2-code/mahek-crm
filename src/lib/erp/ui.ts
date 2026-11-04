@@ -10,6 +10,7 @@
  * PURE and client-safe.
  * ------------------------------------------------------------------------- */
 
+import { roundedTotal } from "@/lib/bill-round";
 import { groupIndian, rupeesFromPaise } from "@/lib/format";
 import { measureOfBase } from "./engines/uom";
 
@@ -24,6 +25,12 @@ export type ColSpec = {
   u?: string;
   /** Minimum width override in px. */
   w?: number;
+  /**
+   * Money shown to the RUPEE, as Tally rounds a bill's final amount. Only how
+   * it is SHOWN: the value stays exact, so a group's total is the exact sum
+   * rounded once — the bill's own figure — and never a sum of rounded lines.
+   */
+  whole?: boolean;
 };
 
 /**
@@ -764,9 +771,16 @@ export function qty(v: CellValue | undefined): string {
   return QTY.format(n);
 }
 
+/** A money figure as a column shows it: to the rupee where the column says `whole`, else to the paisa. */
+export function moneyText(col: Pick<ColSpec, "whole">, v: CellValue | undefined): string {
+  if (!col.whole || v == null || v === "") return inr(v);
+  const n = Number(v);
+  return Number.isFinite(n) ? inr(roundedTotal(n)) : inr(v);
+}
+
 export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "d") return fd(v) || "—";
-  if (col.t === "m") return v === "" || v == null ? "—" : inr(v);
+  if (col.t === "m") return v === "" || v == null ? "—" : moneyText(col, v);
   if (col.t === "n") return v === "" || v == null ? "—" : typeof v === "number" ? nf(v) + (col.u ?? "") : String(v);
   return v == null || v === "" ? "—" : String(v);
 }
