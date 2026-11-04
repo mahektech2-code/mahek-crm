@@ -62,7 +62,14 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
   const open = board.lines.filter((l) => !l.cancelled && !l.dispatched);
   const totalTarget = open.reduce((a, l) => a + l.target, 0);
   const totalScanned = open.reduce((a, l) => a + Math.min(l.scanned, l.target), 0);
-  const gated = board.lines.filter((l) => l.gate && !l.dispatched);
+  /* A CANCELLED line is not waiting for anything. It was taken off the order
+     (on 10089, two boxed lines swapped for loose ones) and has nothing
+     allocated or scanned, so the gate reads it as "every box still to scan"
+     and greyed out Confirm dispatch, though the server's own check, which
+     skips cancelled lines, would have let it through. */
+  const isCancel = (l: { status: string }) => l.status === "Cancel";
+  const lines = [...board.lines.filter((l) => !isCancel(l)), ...board.lines.filter(isCancel)];
+  const gated = board.lines.filter((l) => l.gate && !l.dispatched && !isCancel(l));
   /* "Mark not verified" is an administrator's, and the line cannot be dispatched after it — so it is not waiting, and the panel says why. */
   const markedNot = board.lines.filter((l) => l.billed && !l.dispatched && l.verification === "Not Verify");
   const billedWaiting = board.lines.filter((l) => l.billed && !l.dispatched && l.verification !== "Not Verify");
@@ -165,12 +172,12 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
               </span>
             </div>
             </div>
-            {board.lines.map((l) => (
+            {lines.map((l) => (
               <div key={l.id} className={cx("flex items-center gap-4 border-t border-divider px-5 py-3", l.cancelled && "opacity-60")}>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-ink">{l.skuName}</span>
+                  <span className={cx("block truncate text-sm font-semibold text-ink", isCancel(l) && "line-through")}>{l.skuName}</span>
                   <span className="block truncate text-meta text-muted">
-                    {l.packLabel} · {l.alloc.length ? `Lots ${l.alloc.map((a) => `${a.lotCode} × ${a.qty}`).join(", ")}` : "No lot allocated yet — scanning allocates"}
+                    {l.packLabel} · {isCancel(l) ? "Cancelled on the order — nothing to scan" : l.alloc.length ? `Lots ${l.alloc.map((a) => `${a.lotCode} × ${a.qty}`).join(", ")}` : "No lot allocated yet — scanning allocates"}
                     {!l.unitsExist && l.alloc.length ? " · packed before box ids: no scan needed" : ""}
                   </span>
                   {/* Scanning allocates. Stock packed before box labels has
@@ -192,6 +199,8 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                 <span className="flex-none">
                   {l.dispatched ? (
                     <Badge label="Dispatched" tone="success" />
+                  ) : isCancel(l) ? (
+                    <Badge label="Cancelled" tone="muted" />
                   ) : l.cancelled ? (
                     <Badge label="Not Ready" tone="muted" />
                   ) : l.scanned >= l.target && l.target > 0 ? (
