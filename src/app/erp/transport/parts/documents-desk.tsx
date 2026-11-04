@@ -55,6 +55,35 @@ function byBill(cs: Consignment[]): Bill[] {
   return [...out].map(([key, rows]) => ({ key, c: rows[0], rows, packages: sumPackages(rows) }));
 }
 
+/**
+ * Does a bill answer what was typed in the Attach-to search? Every word has to
+ * appear somewhere — the shop, who is billed, the bill or order number, the
+ * transporter or where it is going — so "dinesh harda" finds the one bill and
+ * not every bill to Harda.
+ */
+function billMatches(b: Bill, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const c = b.c;
+  const hay = [c.deliveryParty, c.party, c.billNo, String(c.orderNo), c.transporter, c.area, c.partyCity, c.destination].filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/**
+ * Does a copy on the desk answer what was typed in its search? The same
+ * every-word rule as the bills: transporter, consignee, LR or bill number
+ * (typed or only read), destination, and who uploaded it.
+ */
+function copyMatches(l: UploadedLr, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [l.transporter, l.partyHint, l.billHint, l.lrNo, l.readLrNo, l.destination, l.uploadedBy].filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/** How many bills the Attach-to list draws before "Show more". */
+const ATTACH_PAGE = 10;
+
 const toDesk = (l: UploadedLr): DeskCopy => ({
   id: l.id,
   kind: l.kind,
@@ -92,6 +121,7 @@ export function DocumentsDesk({
   waiting,
   onTheWay,
   ownOnRoad,
+  transporterOnRoad,
   today,
   nowMs,
   transporters,
@@ -108,6 +138,8 @@ export function DocumentsDesk({
   onTheWay: Consignment[];
   /** Mahek Vehicle bills still on the road — what a signed copy closes. */
   ownOnRoad: Consignment[];
+  /** Bills on the road under a transporter's LR — a signed copy can close them too. */
+  transporterOnRoad: Consignment[];
   today: string;
   nowMs: number;
   transporters: string[];
@@ -124,13 +156,24 @@ export function DocumentsDesk({
   const kind: ProofKind = tab === "pending" ? "lr" : tab;
   const [pick, setPick] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [copyQuery, setCopyQuery] = useState("");
   /* The bill a pending row sent us here for — ticked on the LR it opened. */
   const [preTick, setPreTick] = useState<string | null>(null);
 
   const flags = useMemo(() => duplicateFlags(copies.map(toDesk)), [copies]);
   const waitingBills = useMemo(() => byBill(waiting), [waiting]);
   const allLrBills = useMemo(() => byBill([...waiting, ...onTheWay]), [waiting, onTheWay]);
+  const onTheWayBills = useMemo(() => byBill(onTheWay), [onTheWay]);
   const ownBills = useMemo(() => byBill(ownOnRoad), [ownOnRoad]);
+  /*
+   * WHAT A SIGNED COPY MAY CLOSE: every open bill, Mahek Vehicle ones first. It
+   * was Mahek Vehicle bills only, and that is a transporter NAME — a bill whose
+   * transporter was typed as the lorry number, "Tempo" or "Portal" is our own
+   * vehicle in every way but the spelling, and its signed copy had nothing to
+   * close. A customer-signed copy is proof of delivery whoever carried it.
+   */
+  const ownKeys = useMemo(() => new Set(ownBills.map((b) => b.key)), [ownBills]);
+  const signedBills = useMemo(() => byBill([...ownOnRoad, ...waiting, ...onTheWay, ...transporterOnRoad]), [ownOnRoad, waiting, onTheWay, transporterOnRoad]);
 
   /* One bill, one reason: the reason with the most days on any of its records. */
   const pendingBills: PendingBill[] = useMemo(() => {
@@ -148,11 +191,13 @@ export function DocumentsDesk({
     setTab(t);
     setPick(null);
     setPreTick(null);
+    setCopyQuery("");
   };
   /* From a pending bill to the copy that may be it: that copy's tab, the bill ticked, and the bill listed. */
   const openCopy = (copyId: string, copyKind: ProofKind, bill: Bill) => {
     setTab(copyKind);
     setPick(copyId);
+    setCopyQuery("");
     setPreTick(bill.key);
     if (copyKind === "lr" && !waitingBills.some((b) => b.key === bill.key)) setShowAll(true);
   };
@@ -172,19 +217,22 @@ export function DocumentsDesk({
                   score: x.score,
                   reasons: x.reasons,
                 }))
-              : rankForSignedCopy(l, ownBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: b.c.deliveryParty, vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: ownBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
-          const sure = confidentPick(ranked.map((r) => ({ id: r.b.key, score: r.score })), READY_SCORE[l.kind]);
+              : rankForSignedCopy(l, signedBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: b.c.deliveryParty, vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: signedBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
+          /* "Close N ready" stays what it was: a signed copy is closed unasked only against a Mahek Vehicle bill; any other is a person's tick. */
+          const sure = confidentPick((l.kind === "lr" ? ranked : ranked.filter((r) => ownKeys.has(r.b.key))).map((r) => ({ id: r.b.key, score: r.score })), READY_SCORE[l.kind]);
           const reading = canRead && !l.readAt && nowMs - Date.parse(l.uploadedAt) < READING_MINUTES * 60_000;
           const state: State = flag ? "dup" : reading ? "reading" : wrong || missing.length ? "todo" : sure ? "ready" : "pick";
           return { l, flag, wrong, missing, ranked, pick: sure, state };
         }),
-    [copies, flags, waitingBills, allLrBills, ownBills, showAll, canRead, nowMs],
+    [copies, flags, waitingBills, allLrBills, signedBills, ownKeys, showAll, canRead, nowMs],
   );
 
   const list = rows.filter((r) => r.l.kind === kind);
+  /* What the search leaves on the left; the tallies, "Attach N ready" and the tab count still speak for the whole desk. */
+  const visible = copyQuery.trim() ? list.filter((r) => copyMatches(r.l, copyQuery)) : list;
   const count = (k: ProofKind) => rows.filter((r) => r.l.kind === k).length;
-  const sel = list.find((r) => r.l.id === pick) ?? list[0] ?? null;
-  const at = sel ? list.indexOf(sel) : -1;
+  const sel = visible.find((r) => r.l.id === pick) ?? visible[0] ?? null;
+  const at = sel ? visible.indexOf(sel) : -1;
   const ready = list.filter((r) => r.state === "ready");
   const tally = (s: State) => list.filter((r) => r.state === s).length;
 
@@ -241,11 +289,30 @@ export function DocumentsDesk({
             <Tally icon="warn" tone="text-warn-ink" n={tally("todo")} label="Something to add or fix" />
             <Tally icon="copy" tone="text-danger" n={tally("dup")} label="Possible duplicate" />
             <Tally icon="clock" tone="text-muted" n={tally("reading")} label="Being read" />
-            <span className="ml-auto text-muted">{plural(list.length, kind === "lr" ? "LR" : "copy", kind === "lr" ? "LRs" : "copies")}</span>
+            <span className="ml-auto text-muted">
+              {copyQuery.trim() ? `${visible.length} of ` : ""}
+              {plural(list.length, kind === "lr" ? "LR" : "copy", kind === "lr" ? "LRs" : "copies")}
+            </span>
           </div>
           {list.length ? (
+            <div className="border-b border-divider p-2">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
+                  <Icon n="search" s={14} />
+                </span>
+                <Input
+                  value={copyQuery}
+                  onChange={(e) => setCopyQuery(e.target.value)}
+                  placeholder={kind === "lr" ? "Search transporter, LR no., party, city" : "Search party, bill no., uploaded by"}
+                  aria-label={kind === "lr" ? "Search the LRs" : "Search the signed copies"}
+                  className="pl-8"
+                />
+              </div>
+            </div>
+          ) : null}
+          {visible.length ? (
             <div className="max-h-[72vh] overflow-y-auto">
-              {list.map((r) => (
+              {visible.map((r) => (
                 <button
                   key={r.l.id}
                   type="button"
@@ -264,6 +331,8 @@ export function DocumentsDesk({
                 </button>
               ))}
             </div>
+          ) : list.length ? (
+            <Empty>Nothing matches “{copyQuery.trim()}”.</Empty>
           ) : (
             <Empty>{kind === "lr" ? "No LR is waiting. The dispatch team uploads them from the phone." : "No signed copy is waiting. Copies for Mahek Vehicle deliveries arrive here from the phone."}</Empty>
           )}
@@ -277,8 +346,8 @@ export function DocumentsDesk({
               key={`${sel.l.id}|${sel.l.fileId}|${preTick ?? ""}`}
               row={sel}
               preTick={preTick}
-              prev={at > 0 ? () => setPick(list[at - 1].l.id) : null}
-              next={at < list.length - 1 ? () => setPick(list[at + 1].l.id) : null}
+              prev={at > 0 ? () => setPick(visible[at - 1].l.id) : null}
+              next={at < visible.length - 1 ? () => setPick(visible[at + 1].l.id) : null}
               today={today}
               transporters={transporters}
               callEveryDays={callEveryDays}
@@ -287,11 +356,12 @@ export function DocumentsDesk({
               showAll={showAll}
               setShowAll={setShowAll}
               moreToShow={onTheWay.length > 0}
+              hidden={showAll ? [] : onTheWayBills}
             />
           )
         ) : (
           <Card>
-            <Empty>Pick a copy on the left.</Empty>
+            <Empty>{list.length && !visible.length ? "Nothing on the desk matches the search." : "Pick a copy on the left."}</Empty>
           </Card>
         )}
       </div>
@@ -324,7 +394,10 @@ function PendingDesk({
 }) {
   const [filter, setFilter] = useState<PendingKind | "all">("all");
   const [pick, setPick] = useState<string | null>(null);
-  const shown = filter === "all" ? items : items.filter((p) => p.kind === filter);
+  const [query, setQuery] = useState("");
+  /* The chips count the whole kind; the search narrows inside whichever chip is on. */
+  const ofKind = filter === "all" ? items : items.filter((p) => p.kind === filter);
+  const shown = query.trim() ? ofKind.filter((p) => billMatches(p.b, query)) : ofKind;
   const sel = shown.find((p) => p.b.key === pick) ?? shown[0] ?? null;
   const chip = (k: PendingKind | "all", label: string, n: number) => (
     <button key={k} type="button" onClick={() => (setFilter(k), setPick(null))} className={toggleClass(filter === k, "flex items-center gap-1 text-meta")}>
@@ -339,7 +412,19 @@ function PendingDesk({
           {chip("all", "All", items.length)}
           {PENDING_ORDER.map((k) => chip(k, pendingLabel(k, stuckLrDays), items.filter((p) => p.kind === k).length))}
         </div>
-        <div className="border-b border-divider px-3 py-1.5 text-meta text-muted">{plural(shown.length, "bill")}, longest waiting first</div>
+        {items.length ? (
+          <div className="border-b border-divider p-2">
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
+                <Icon n="search" s={14} />
+              </span>
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search party, bill no., order no., transporter, city" aria-label="Search the pending bills" className="pl-8" />
+            </div>
+          </div>
+        ) : null}
+        <div className="border-b border-divider px-3 py-1.5 text-meta text-muted">
+          {query.trim() ? `${shown.length} of ${plural(ofKind.length, "bill")}` : plural(shown.length, "bill")}, longest waiting first
+        </div>
         {shown.length ? (
           <div className="max-h-[72vh] overflow-y-auto">
             {shown.map((p) => (
@@ -360,7 +445,7 @@ function PendingDesk({
             ))}
           </div>
         ) : (
-          <Empty>{items.length ? "Nothing pending of this kind." : "Nothing is pending. Every bill has its LR or signed copy."}</Empty>
+          <Empty>{query.trim() && ofKind.length ? `No pending bill matches “${query.trim()}”.` : items.length ? "Nothing pending of this kind." : "Nothing is pending. Every bill has its LR or signed copy."}</Empty>
         )}
       </Card>
 
@@ -393,12 +478,16 @@ function PendingDetail({
   const c = b.c;
   const copyKind: ProofKind = c.ownVehicle ? "signed_copy" : "lr";
   const word = copyKind === "lr" ? "LR" : "signed copy";
-  /* The copies on the desk ranked against this one bill, by the same rules the copy's own tab uses. */
+  /*
+   * The copies on the desk ranked against this one bill, by the same rules the
+   * copy's own tab uses. A transporter's bill can be closed by a signed copy
+   * too, so for one of those both kinds are looked at.
+   */
   const matches = rows
-    .filter((r) => r.l.kind === copyKind)
+    .filter((r) => r.l.kind === copyKind || copyKind === "lr")
     .map((r) => {
       const x =
-        copyKind === "lr"
+        r.l.kind === "lr"
           ? rankForLr(r.l, [{ id: b.key, transporter: c.transporter, packages: b.packages, area: c.area ?? c.partyCity, party: c.deliveryParty, billingParty: c.party, billNo: c.billNo, atTransport: b.rows.every((y) => y.phase === "lrPending") }])[0]
           : rankForSignedCopy(r.l, [{ id: b.key, billNo: c.billNo, party: c.deliveryParty, vehicleNo: c.vehicleNo }])[0];
       return { r, score: x.score, reasons: x.reasons };
@@ -436,7 +525,7 @@ function PendingDetail({
         </div>
 
         <div>
-          <SubTitle className="mb-1">{copyKind === "lr" ? "LRs on the desk that may be this bill" : "Signed copies on the desk that may be this bill"}</SubTitle>
+          <SubTitle className="mb-1">{copyKind === "lr" ? "LRs and signed copies on the desk that may be this bill" : "Signed copies on the desk that may be this bill"}</SubTitle>
           {matches.length ? (
             <div className="rounded-card border border-line">
               {matches.map(({ r, reasons }) => (
@@ -446,10 +535,11 @@ function PendingDetail({
                     <span className="block truncate font-medium text-ink">{titleOf(r.l)}</span>
                     <span className="block truncate text-meta text-muted">{[subOf(r.l), `uploaded ${clock(new Date(r.l.uploadedAt))}`].filter(Boolean).join(" · ")}</span>
                   </span>
+                  {copyKind === "lr" && r.l.kind === "signed_copy" ? <Badge label="Signed copy" tone="brand" /> : null}
                   {reasons.slice(0, 2).map((x) => (
                     <Badge key={x} label={x} tone={x.startsWith("same") || x === "destination matches" ? "success" : "neutral"} />
                   ))}
-                  <Button size="sm" variant="primary" onClick={() => onOpen(r.l.id, copyKind, b)}>
+                  <Button size="sm" variant="primary" onClick={() => onOpen(r.l.id, r.l.kind, b)}>
                     Check and attach
                   </Button>
                 </div>
@@ -577,6 +667,7 @@ function Detail({
   showAll,
   setShowAll,
   moreToShow,
+  hidden,
 }: {
   row: Row;
   /** A bill a pending row asked for: ticked from the start in place of the desk's own pick. */
@@ -591,6 +682,8 @@ function Detail({
   showAll: boolean;
   setShowAll: (v: boolean) => void;
   moreToShow: boolean;
+  /** Bills not yet at the transporter while they are left out — searched only to say a match is there. */
+  hidden: Bill[];
 }) {
   const { run, pending } = useAct();
   const l = row.l;
@@ -621,8 +714,20 @@ function Detail({
 
   /* What the AI read but did not write — unsure, or already on another LR — offered to the person. */
   const offered = lr && !l.lrNo && l.readLrNo ? l.readLrNo : null;
-  /* The best eight, and any ticked bill below them — a ticked bill the list did not draw could not be unticked. */
-  const shown = [...row.ranked.slice(0, 8), ...row.ranked.slice(8).filter((x) => ticked.has(x.b.key))];
+  /*
+   * Every bill waiting for an LR, best match first: ten at a time, narrowed by
+   * the search. A ticked bill the filter or the page leaves out is still drawn,
+   * at the bottom — a ticked bill the list did not draw could not be unticked.
+   */
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(ATTACH_PAGE);
+  const matching = query.trim() ? row.ranked.filter((x) => billMatches(x.b, query)) : row.ranked;
+  const page = matching.slice(0, limit);
+  const onPage = new Set(page.map((x) => x.b.key));
+  const shown = [...page, ...row.ranked.filter((x) => ticked.has(x.b.key) && !onPage.has(x.b.key))];
+  const left = matching.length - page.length;
+  const hiddenMatches = lr && query.trim() ? hidden.filter((b) => billMatches(b, query)).length : 0;
+  const searchable = row.ranked.length > 0;
   const selBills = row.ranked.filter((x) => ticked.has(x.b.key));
   const selIds = selBills.flatMap((x) => x.b.rows.map((c) => c.id));
   const parties = new Set(selBills.map((x) => x.b.c.deliveryPartyId));
@@ -762,8 +867,30 @@ function Detail({
             ) : undefined}>
               {lr ? "Attach to" : "Closes"}
             </SubTitle>
+            {searchable ? (
+              <div className="mb-1.5 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
+                    <Icon n="search" s={14} />
+                  </span>
+                  <Input
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setLimit(ATTACH_PAGE);
+                    }}
+                    placeholder="Search party, bill no., order no., transporter, city"
+                    aria-label="Search the bills"
+                    className="pl-8"
+                  />
+                </div>
+                <span className="shrink-0 text-meta text-muted">
+                  {query.trim() ? `${matching.length} of ${plural(row.ranked.length, "bill")}` : plural(row.ranked.length, "bill")} {lr ? "waiting for an LR" : "not yet delivered"}
+                </span>
+              </div>
+            ) : null}
             {shown.length ? (
-              <div className="max-h-[230px] overflow-y-auto rounded-card border border-line">
+              <div className="max-h-[340px] overflow-y-auto rounded-card border border-line">
                 {shown.map(({ b, reasons }) => (
                   <label key={b.key} className={cx("flex cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0", ticked.has(b.key) && "bg-brand-soft/50")}>
                     <input
@@ -784,7 +911,7 @@ function Detail({
                       <span className="block truncate font-medium text-ink">{b.c.deliveryParty}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
-                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr ? b.c.transporter : b.c.vehicleNo].filter(Boolean).join(" · ")}
+                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? "Mahek Vehicle")].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {reasons.slice(0, 2).map((r) => (
@@ -792,13 +919,27 @@ function Detail({
                     ))}
                   </label>
                 ))}
+                {left > 0 ? (
+                  <div className="flex items-center justify-center gap-4 px-3 py-2 text-meta">
+                    <LinkButton onClick={() => setLimit((n) => n + ATTACH_PAGE)}>Show {Math.min(ATTACH_PAGE, left)} more</LinkButton>
+                    {left > ATTACH_PAGE ? <LinkButton onClick={() => setLimit(matching.length)}>Show all {matching.length}</LinkButton> : null}
+                  </div>
+                ) : null}
               </div>
+            ) : query.trim() ? (
+              <Empty>No bill matches “{query.trim()}”.</Empty>
             ) : (
-              <Empty>{lr ? "No bill is waiting for an LR." : "No Mahek Vehicle delivery is waiting for its signed copy."}</Empty>
+              <Empty>{lr ? "No bill is waiting for an LR." : "No bill is waiting to be delivered."}</Empty>
             )}
+            {hiddenMatches ? (
+              <p className="mt-1.5 text-meta text-muted">
+                {plural(hiddenMatches, "more bill")} not yet at the transporter {hiddenMatches === 1 ? "matches" : "match"}.{" "}
+                <LinkButton onClick={() => setShowAll(true)}>Show {hiddenMatches === 1 ? "it" : "them"}</LinkButton>
+              </p>
+            ) : null}
           </div>
 
-          {canWrite && shown.length ? (
+          {canWrite && row.ranked.length ? (
             <div className="flex flex-wrap items-end gap-3">
               {lr ? (
                 <>
