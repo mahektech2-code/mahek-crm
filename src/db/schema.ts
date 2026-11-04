@@ -9571,6 +9571,7 @@ export const mbosPositions = pgTable(
   },
   (t) => [
     index("mbos_positions_user_at_idx").on(t.userId, t.at),
+    index("mbos_positions_at_idx").on(t.at),
     /*
      * A position IS its reading, so the same reading is one row.
      *

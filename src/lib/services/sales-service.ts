@@ -60,6 +60,20 @@ import { expenseStateSql } from "@/lib/expense-money-sql";
 const IST_DAY = sql.raw(`at time zone '${APP_TIMEZONE}'`);
 
 /**
+ * THE SAME DAY AS A RANGE, for a column with an index under it.
+ *
+ * `(p.at at time zone …)::date = day` is correct and cannot use an index: it
+ * computes a value per row, so Postgres reads every row to find the day.
+ * On `mbos_positions` that is every GPS fix ever taken — 567k rows by
+ * November 2026, growing by 150k a week — and the Live map asks it on every
+ * refresh. It was the most expensive statement in production (3.2 s mean),
+ * slower each week, and on one core everything else waited behind it.
+ * A half-open range on the column says the same thing and uses the index.
+ */
+const istDayStart = (day: string) => sql`(${day}::date)::timestamp ${IST_DAY}`;
+const istDayEnd = (day: string) => sql`(${day}::date + 1)::timestamp ${IST_DAY}`;
+
+/**
  * HOW LONG A LEAD HAS BEEN QUIET, AND A LEAD NOBODY HAS EVER TOUCHED IS THE
  * QUIETEST THERE IS.
  *
@@ -4028,7 +4042,7 @@ export async function lastKnownPositionsFor(
          reverse-geocoded street name would be a guess dressed as a fact. */
       select p.user_id, p.lat, p.lng, p.at, null as place, p.accuracy_m
         from mbos_positions p
-       where (p.at ${IST_DAY})::date = ${day}::date
+       where p.at >= ${istDayStart(day)} and p.at < ${istDayEnd(day)}
     ),
     latest as (
       select distinct on (uid) uid, lat, lng, at, place, acc
@@ -4040,7 +4054,7 @@ export async function lastKnownPositionsFor(
     trail as (
       select p.user_id as uid, max(p.at) as at
         from mbos_positions p
-       where (p.at ${IST_DAY})::date = ${day}::date
+       where p.at >= ${istDayStart(day)} and p.at < ${istDayEnd(day)}
        group by p.user_id
     )
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
@@ -4124,7 +4138,7 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
     select p.lat, p.lng, p.at, p.accuracy_m as "accuracyM", null::text as place
       from mbos_positions p
      where p.user_id = ${salesmanId}
-       and (p.at ${IST_DAY})::date = ${day}::date
+       and p.at >= ${istDayStart(day)} and p.at < ${istDayEnd(day)}
     union all
     select v.check_in_lat, v.check_in_lng, v.check_in_at, v.check_in_accuracy_m, c.name
       from mbos_visits v
@@ -4188,7 +4202,7 @@ export async function tracksForDay(
       select p.user_id as "salesmanId", p.lat, p.lng, p.at,
              p.accuracy_m as "accuracyM"
         from mbos_positions p
-       where (p.at ${IST_DAY})::date = ${day}::date
+       where p.at >= ${istDayStart(day)} and p.at < ${istDayEnd(day)}
          ${onlyMine(scope, "p.user_id")}
     ),
     numbered as (
