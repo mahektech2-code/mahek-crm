@@ -29,6 +29,7 @@ import {
 import { canFor, levelInApp } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
+import { cached } from "@/lib/reference-cache";
 import {
   customerPricing,
   pricingOptions,
@@ -171,8 +172,13 @@ export default async function CustomerRecordPage({
   ]);
 
   const [quickNoteRows, productRows, amChanges, backOfficePeople] = await Promise.all([
-    db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
-    popularProducts(),
+    // The same two reference reads the call log makes, under the same keys, so
+    // opening a record does not re-aggregate every order line ever taken —
+    // popularProducts is a whole-history sum and is identical for everybody.
+    cached("crm.quickNotes", () =>
+      db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
+    ),
+    cached("crm.popularProducts", () => popularProducts()),
     listAmChanges(id),
     // The same candidate list the customers list offers for all three seats —
     // accounts and current employees both, since none of the three needs a

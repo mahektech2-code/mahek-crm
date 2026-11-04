@@ -3418,6 +3418,11 @@ export const orders = pgTable(
      * (credit_days) WHERE credit_days IS NOT NULL -- is in
      * drizzle/0290_orders_terms_index.sql for the same reason: it is what
      * `billCreditDaysSql` reads a bill's term off.
+     *
+     * orders_status_ordered_idx -- (status, ordered_at) INCLUDE
+     * (total_amount) -- is in
+     * drizzle/0313_orders_status_ordered_idx.sql for the same reason: it is
+     * what every Accounts navigation counts the approval queue off.
      */
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
     uniqueIndex("orders_order_no_key").on(t.orderNo),
