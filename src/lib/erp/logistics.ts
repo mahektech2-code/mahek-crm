@@ -22,6 +22,7 @@ import {
   cleanPlace,
   CLOSED,
   isMahekVehicle,
+  plateIn,
   isProofKind,
   MAHEK_VEHICLE,
   type ProofKind,
@@ -1340,13 +1341,18 @@ export async function setDeliveredBy(ctx: ErpContext, transportIds: string[], tr
   const moving = ts.filter((t) => (t.transporter ?? "").toLowerCase() !== transporter.toLowerCase());
   if (!moving.length) return okVoid("No change");
   await db.transaction(async (tx) => {
-    for (const t of moving)
+    for (const t of moving) {
+      /* A plate typed where the transporter belongs ("MH-04 NB-7322 Sunil") becomes the vehicle number, unless one is recorded already. */
+      const plate = toOwn && !t.vehicleNo ? plateIn(t.transporter) : null;
       await tx
         .update(erpTransports)
-        .set({ transporter, ...(toOwn ? { trackStatus: "Track", reminderDate: t.reminderDate ?? today() } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+        .set({ transporter, ...(toOwn ? { trackStatus: "Track", reminderDate: t.reminderDate ?? today() } : {}), ...(plate ? { vehicleNo: plate } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(erpTransports.id, t.id));
+    }
     await tx.execute(sql`update erp_orders set transporter = ${transporter}, updated_at = now() where id in (select order_id from erp_order_details where transport_id in ${moving.map((t) => t.id)})`);
-    await addEvent(tx as unknown as typeof db, ctx, moving.map((t) => t.id), "delivered_by", null, `Delivered by ${transporter}`, false);
+    /* What it said before is kept on the timeline — "MH-04 NB-7322 Sunil" names a driver nothing else records. */
+    const was = [...new Set(moving.map((t) => t.transporter?.trim()).filter((x): x is string => !!x))];
+    await addEvent(tx as unknown as typeof db, ctx, moving.map((t) => t.id), "delivered_by", null, `Delivered by ${transporter}${was.length ? ` (was ${was.join(", ")})` : ""}`, false);
   });
   await erpAudit(ctx, "erp.logistics.deliveredBy", "erp_transport", moving.map((t) => t.id).join(","), { transporter: moving.map((t) => t.transporter) }, { transporter });
   await syncBookOrders([...new Set(moving.map((t) => t.orderNo))]);

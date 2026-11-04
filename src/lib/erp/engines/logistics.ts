@@ -104,6 +104,19 @@ export function isMahekVehicle(transporter: string | null | undefined): boolean 
   return (transporter ?? "").trim().toLowerCase() === MAHEK_VEHICLE.toLowerCase();
 }
 
+/**
+ * A VEHICLE REGISTRATION written where a transporter's name belongs. Bills
+ * from before the transporter list was enforced carry "MH04NB7322",
+ * "MH-04 NB-7322 Sunil" or "MH20GZ7144 PORTAL" in the transporter column —
+ * a vehicle and sometimes its driver, not a company. When such a bill is moved
+ * to a Mahek Vehicle the plate is kept as its vehicle number, compact and upper
+ * case. Two letters, one or two digits, up to three letters, four digits.
+ */
+export function plateIn(text: string | null | undefined): string | null {
+  const m = (text ?? "").toUpperCase().match(/(?:^|[^A-Z0-9])([A-Z]{2})[\s.-]*(\d{1,2})[\s.-]*([A-Z]{0,3})[\s.-]*(\d{4})(?![0-9])/);
+  return m ? `${m[1]}${m[2].padStart(2, "0")}${m[3]}${m[4]}` : null;
+}
+
 /** The two kinds of delivery proof, and what each is called on a screen. */
 export const PROOF_KINDS = ["lr", "signed_copy"] as const;
 export type ProofKind = (typeof PROOF_KINDS)[number];

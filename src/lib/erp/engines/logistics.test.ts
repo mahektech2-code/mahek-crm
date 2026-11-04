@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AT_TRANSPORT_STUCK_DAYS, attachRefusal, pendingOf, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
+import { AT_TRANSPORT_STUCK_DAYS, attachRefusal, pendingOf, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, plateIn, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
 
 test("the phase is the stage and the LR together, never stored", () => {
   assert.equal(phaseOf({ lrNo: null, materialStage: "Dispatched" }), "toTransport");
@@ -181,4 +181,15 @@ test("a bill is pending for one reason: the missing LR, the days at the transpor
   const own = { ...base, ownVehicle: true, phase: "onRoad" as const, billDate: "2026-10-25" };
   assert.deepEqual(pendingOf(own, today, 4), { kind: "signedCopy", days: 8 });
   assert.equal(pendingOf({ ...own, signedCopyId: "elr2" }, today, 4), null);
+});
+
+test("a vehicle registration typed as a transporter is read back as the plate", () => {
+  assert.equal(plateIn("MH04NB7322"), "MH04NB7322");
+  assert.equal(plateIn("MH-04 NB-7322 Sunil"), "MH04NB7322");
+  assert.equal(plateIn("mh-04 nb-7322 Mukesh"), "MH04NB7322");
+  assert.equal(plateIn("MH20GZ7144 PORTAL"), "MH20GZ7144");
+  assert.equal(plateIn("MH05FJ5889"), "MH05FJ5889");
+  assert.equal(plateIn("MH4 AB 1234"), "MH04AB1234");
+  for (const company of ["Portal", '"Name - Tempo"', "Harsh Trasnport", "DELHI RAJASTHAN TRANSPORT COMPANY LIMITED", "HRL  Cargo ( HARSH TRANSPORT )", "Mahek Vehicle", "", null])
+    assert.equal(plateIn(company), null, String(company));
 });

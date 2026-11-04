@@ -334,12 +334,13 @@ function ActionDialog({ dialog, today, notifyOn, onClose }: { dialog: { kind: "i
 }
 
 /** Who takes it to the party, changeable until it is delivered. Our own vehicle carries no LR. */
-function DeliveredByDialog({ group, transporters, onClose }: { group: Consignment[]; transporters: string[]; onClose: () => void }) {
+export function DeliveredByDialog({ group, transporters, onClose }: { group: Consignment[]; transporters: string[]; onClose: () => void }) {
   const { run, pending } = useAct();
   const c = group[0];
   const [own, setOwn] = useState(!c.ownVehicle);
-  const [transporter, setTransporter] = useState(c.ownVehicle ? "" : (c.transporter ?? ""));
   const list = transporters.filter((t) => t.toLowerCase() !== MAHEK_VEHICLE.toLowerCase());
+  /* Starts on the bill's transporter only where the list knows it — "MH04NB7322" is not a choice, and saving it would be refused. */
+  const [transporter, setTransporter] = useState(c.ownVehicle ? "" : (list.find((t) => t.toLowerCase() === (c.transporter ?? "").trim().toLowerCase()) ?? ""));
   return (
     <ErpDialog onClose={onClose} label="Delivered by" size="sm" tall={false}>
       <DialogHeader onClose={onClose}>

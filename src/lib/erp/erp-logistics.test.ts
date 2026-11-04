@@ -1074,4 +1074,22 @@ describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Veh
     const plain = await L.markDelivered(ctx, [other.id], { date: "2026-10-22", notify: false });
     assert.ok(plain.ok, "a transporter's bill still closes without any copy, as before");
   });
+
+  test("a plate typed as the transporter becomes the vehicle number when the bill moves to a Mahek Vehicle, and the old name stays on the timeline", async () => {
+    const o = await dispatch("2026-10-23", 9, "SC/26-27/7703", "2026-10-24");
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.orderNo, o.orderNo));
+    /* What the order-sheet history left on prod: a vehicle and its driver in the transporter column, no vehicle number. */
+    await db.execute(sql`update erp_transports set transporter = 'MH-04 NB-7322 Sunil', vehicle_no = null where id = ${t.id}`);
+    const ctx = await as(admin);
+    const r = await L.setDeliveredBy(ctx, [t.id], "Mahek Vehicle");
+    assert.ok(r.ok, msg(r));
+    const [after] = await db.select().from(erpTransports).where(eq(erpTransports.id, t.id));
+    assert.equal(after.transporter, "Mahek Vehicle");
+    assert.equal(after.vehicleNo, "MH04NB7322");
+    const [ev] = (await db.execute(sql`select note from erp_transport_events where transport_id = ${t.id} and kind = 'delivered_by' order by at desc limit 1`)) as unknown as { note: string }[];
+    assert.match(ev.note, /was MH-04 NB-7322 Sunil/);
+    const [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.ownVehicle, true);
+    assert.equal(c.phase, "onRoad", "no longer waiting for an LR");
+  });
 });
