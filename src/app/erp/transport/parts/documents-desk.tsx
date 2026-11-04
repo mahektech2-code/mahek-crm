@@ -55,6 +55,23 @@ function byBill(cs: Consignment[]): Bill[] {
   return [...out].map(([key, rows]) => ({ key, c: rows[0], rows, packages: sumPackages(rows) }));
 }
 
+/**
+ * Does a bill answer what was typed in the Attach-to search? Every word has to
+ * appear somewhere — the shop, who is billed, the bill or order number, the
+ * transporter or where it is going — so "dinesh harda" finds the one bill and
+ * not every bill to Harda.
+ */
+function billMatches(b: Bill, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const c = b.c;
+  const hay = [c.deliveryParty, c.party, c.billNo, String(c.orderNo), c.transporter, c.area, c.partyCity, c.destination].filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/** How many bills the Attach-to list draws before "Show more". */
+const ATTACH_PAGE = 10;
+
 const toDesk = (l: UploadedLr): DeskCopy => ({
   id: l.id,
   kind: l.kind,
@@ -130,6 +147,7 @@ export function DocumentsDesk({
   const flags = useMemo(() => duplicateFlags(copies.map(toDesk)), [copies]);
   const waitingBills = useMemo(() => byBill(waiting), [waiting]);
   const allLrBills = useMemo(() => byBill([...waiting, ...onTheWay]), [waiting, onTheWay]);
+  const onTheWayBills = useMemo(() => byBill(onTheWay), [onTheWay]);
   const ownBills = useMemo(() => byBill(ownOnRoad), [ownOnRoad]);
 
   /* One bill, one reason: the reason with the most days on any of its records. */
@@ -287,6 +305,7 @@ export function DocumentsDesk({
               showAll={showAll}
               setShowAll={setShowAll}
               moreToShow={onTheWay.length > 0}
+              hidden={showAll ? [] : onTheWayBills}
             />
           )
         ) : (
@@ -577,6 +596,7 @@ function Detail({
   showAll,
   setShowAll,
   moreToShow,
+  hidden,
 }: {
   row: Row;
   /** A bill a pending row asked for: ticked from the start in place of the desk's own pick. */
@@ -591,6 +611,8 @@ function Detail({
   showAll: boolean;
   setShowAll: (v: boolean) => void;
   moreToShow: boolean;
+  /** Bills not yet at the transporter while they are left out — searched only to say a match is there. */
+  hidden: Bill[];
 }) {
   const { run, pending } = useAct();
   const l = row.l;
@@ -621,8 +643,20 @@ function Detail({
 
   /* What the AI read but did not write — unsure, or already on another LR — offered to the person. */
   const offered = lr && !l.lrNo && l.readLrNo ? l.readLrNo : null;
-  /* The best eight, and any ticked bill below them — a ticked bill the list did not draw could not be unticked. */
-  const shown = [...row.ranked.slice(0, 8), ...row.ranked.slice(8).filter((x) => ticked.has(x.b.key))];
+  /*
+   * Every bill waiting for an LR, best match first: ten at a time, narrowed by
+   * the search. A ticked bill the filter or the page leaves out is still drawn,
+   * at the bottom — a ticked bill the list did not draw could not be unticked.
+   */
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(ATTACH_PAGE);
+  const matching = query.trim() ? row.ranked.filter((x) => billMatches(x.b, query)) : row.ranked;
+  const page = matching.slice(0, limit);
+  const onPage = new Set(page.map((x) => x.b.key));
+  const shown = [...page, ...row.ranked.filter((x) => ticked.has(x.b.key) && !onPage.has(x.b.key))];
+  const left = matching.length - page.length;
+  const hiddenMatches = lr && query.trim() ? hidden.filter((b) => billMatches(b, query)).length : 0;
+  const searchable = row.ranked.length > 0;
   const selBills = row.ranked.filter((x) => ticked.has(x.b.key));
   const selIds = selBills.flatMap((x) => x.b.rows.map((c) => c.id));
   const parties = new Set(selBills.map((x) => x.b.c.deliveryPartyId));
@@ -762,8 +796,30 @@ function Detail({
             ) : undefined}>
               {lr ? "Attach to" : "Closes"}
             </SubTitle>
+            {searchable ? (
+              <div className="mb-1.5 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
+                    <Icon n="search" s={14} />
+                  </span>
+                  <Input
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setLimit(ATTACH_PAGE);
+                    }}
+                    placeholder="Search party, bill no., order no., transporter, city"
+                    aria-label="Search the bills"
+                    className="pl-8"
+                  />
+                </div>
+                <span className="shrink-0 text-meta text-muted">
+                  {query.trim() ? `${matching.length} of ${plural(row.ranked.length, "bill")}` : plural(row.ranked.length, "bill")} {lr ? "waiting for an LR" : "on the road"}
+                </span>
+              </div>
+            ) : null}
             {shown.length ? (
-              <div className="max-h-[230px] overflow-y-auto rounded-card border border-line">
+              <div className="max-h-[340px] overflow-y-auto rounded-card border border-line">
                 {shown.map(({ b, reasons }) => (
                   <label key={b.key} className={cx("flex cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0", ticked.has(b.key) && "bg-brand-soft/50")}>
                     <input
@@ -792,13 +848,27 @@ function Detail({
                     ))}
                   </label>
                 ))}
+                {left > 0 ? (
+                  <div className="flex items-center justify-center gap-4 px-3 py-2 text-meta">
+                    <LinkButton onClick={() => setLimit((n) => n + ATTACH_PAGE)}>Show {Math.min(ATTACH_PAGE, left)} more</LinkButton>
+                    {left > ATTACH_PAGE ? <LinkButton onClick={() => setLimit(matching.length)}>Show all {matching.length}</LinkButton> : null}
+                  </div>
+                ) : null}
               </div>
+            ) : query.trim() ? (
+              <Empty>No bill matches “{query.trim()}”.</Empty>
             ) : (
               <Empty>{lr ? "No bill is waiting for an LR." : "No Mahek Vehicle delivery is waiting for its signed copy."}</Empty>
             )}
+            {hiddenMatches ? (
+              <p className="mt-1.5 text-meta text-muted">
+                {plural(hiddenMatches, "more bill")} not yet at the transporter {hiddenMatches === 1 ? "matches" : "match"}.{" "}
+                <LinkButton onClick={() => setShowAll(true)}>Show {hiddenMatches === 1 ? "it" : "them"}</LinkButton>
+              </p>
+            ) : null}
           </div>
 
-          {canWrite && shown.length ? (
+          {canWrite && row.ranked.length ? (
             <div className="flex flex-wrap items-end gap-3">
               {lr ? (
                 <>
