@@ -3421,7 +3421,7 @@ export const orders = pgTable(
      *
      * orders_status_ordered_idx -- (status, ordered_at) INCLUDE
      * (total_amount) -- is in
-     * drizzle/0314_orders_pending_approval_idx.sql for the same reason: it is
+     * drizzle/0313_orders_status_ordered_idx.sql for the same reason: it is
      * what every Accounts navigation counts the approval queue off.
      */
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
@@ -9576,7 +9576,6 @@ export const mbosPositions = pgTable(
   },
   (t) => [
     index("mbos_positions_user_at_idx").on(t.userId, t.at),
-    index("mbos_positions_at_idx").on(t.at),
     /*
      * A position IS its reading, so the same reading is one row.
      *
