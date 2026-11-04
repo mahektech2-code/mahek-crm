@@ -24,6 +24,7 @@ import { rupeesField } from "@/lib/erp/ui";
 import { clock, stamp } from "@/lib/format";
 import { BillRef, CallLink, driverPhone, Empty, NotifyToggle, plural, ReasonDialog, sumPackages, useAct, lrLabel } from "./common";
 import { PhotoEditor } from "./photo-editor";
+import { DeliveredByDialog } from "./on-road";
 
 /* ---------------------------------------------------------------------------
  * THE DOCUMENTS DESK. The phone only uploads — up to ten photos of LRs or
@@ -275,6 +276,7 @@ export function DocumentsDesk({
 
       {tab === "pending" ? (
         <PendingDesk
+          transporters={transporters}
           items={pendingBills}
           rows={rows}
           stuckLrDays={stuckLrDays}
@@ -385,21 +387,26 @@ function PendingDesk({
   stuckLrDays,
   canWrite,
   onOpen,
+  transporters,
 }: {
   items: PendingBill[];
   rows: Row[];
   stuckLrDays: number;
   canWrite: boolean;
   onOpen: (copyId: string, kind: ProofKind, bill: Bill) => void;
+  /** The active transporter list — a bill naming something else is flagged for a person to settle. */
+  transporters: string[];
 }) {
-  const [filter, setFilter] = useState<PendingKind | "all">("all");
+  const listed = useMemo(() => new Set(transporters.map((t) => t.trim().toLowerCase())), [transporters]);
+  const offList = (p: PendingBill) => !p.b.c.ownVehicle && !p.b.c.lrId && !listed.has((p.b.c.transporter ?? "").trim().toLowerCase());
+  const [filter, setFilter] = useState<PendingKind | "all" | "offList">("all");
   const [pick, setPick] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   /* The chips count the whole kind; the search narrows inside whichever chip is on. */
-  const ofKind = filter === "all" ? items : items.filter((p) => p.kind === filter);
+  const ofKind = filter === "all" ? items : filter === "offList" ? items.filter(offList) : items.filter((p) => p.kind === filter);
   const shown = query.trim() ? ofKind.filter((p) => billMatches(p.b, query)) : ofKind;
   const sel = shown.find((p) => p.b.key === pick) ?? shown[0] ?? null;
-  const chip = (k: PendingKind | "all", label: string, n: number) => (
+  const chip = (k: PendingKind | "all" | "offList", label: string, n: number) => (
     <button key={k} type="button" onClick={() => (setFilter(k), setPick(null))} className={toggleClass(filter === k, "flex items-center gap-1 text-meta")}>
       {label} <span className="tabular-nums">{n}</span>
     </button>
@@ -411,6 +418,7 @@ function PendingDesk({
         <div className="flex flex-wrap gap-1 border-b border-divider p-2">
           {chip("all", "All", items.length)}
           {PENDING_ORDER.map((k) => chip(k, pendingLabel(k, stuckLrDays), items.filter((p) => p.kind === k).length))}
+          {items.some(offList) ? chip("offList", "Not a listed transporter", items.filter(offList).length) : null}
         </div>
         {items.length ? (
           <div className="border-b border-divider p-2">
@@ -450,7 +458,7 @@ function PendingDesk({
       </Card>
 
       {sel ? (
-        <PendingDetail key={sel.b.key} item={sel} rows={rows} stuckLrDays={stuckLrDays} canWrite={canWrite} onOpen={onOpen} />
+        <PendingDetail key={sel.b.key} item={sel} rows={rows} stuckLrDays={stuckLrDays} canWrite={canWrite} onOpen={onOpen} transporters={transporters} offList={offList(sel)} />
       ) : (
         <Card>
           <Empty>Pick a bill on the left.</Empty>
@@ -466,14 +474,20 @@ function PendingDetail({
   stuckLrDays,
   canWrite,
   onOpen,
+  transporters,
+  offList,
 }: {
   item: PendingBill;
   rows: Row[];
   stuckLrDays: number;
   canWrite: boolean;
   onOpen: (copyId: string, kind: ProofKind, bill: Bill) => void;
+  transporters: string[];
+  /** Its transporter is not on the list — usually a vehicle number typed where the company belongs. */
+  offList: boolean;
 }) {
   const { run, pending } = useAct();
+  const [changing, setChanging] = useState(false);
   const { b } = item;
   const c = b.c;
   const copyKind: ProofKind = c.ownVehicle ? "signed_copy" : "lr";
@@ -522,7 +536,26 @@ function PendingDetail({
               Reached transporter
             </Button>
           ) : null}
+          {canWrite && !c.lrId ? (
+            <Button size="sm" variant="ghost" className="ml-auto" disabled={pending} onClick={() => setChanging(true)} title="Who takes it to the party — a transporter or a Mahek Vehicle">
+              Delivered by…
+            </Button>
+          ) : null}
         </div>
+
+        {offList ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-card bg-warn-soft px-3 py-2 text-sm text-warn-ink">
+            <Icon n="warn" s={14} />
+            <span className="min-w-0 flex-1">
+              “{c.transporter || "No transporter"}” is not on the transporter list. If it went in our own vehicle, set it to Mahek Vehicle — the signed copy then closes it. Otherwise pick the transporter.
+            </span>
+            {canWrite ? (
+              <Button size="sm" disabled={pending} onClick={() => setChanging(true)}>
+                Fix
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div>
           <SubTitle className="mb-1">{copyKind === "lr" ? "LRs and signed copies on the desk that may be this bill" : "Signed copies on the desk that may be this bill"}</SubTitle>
@@ -550,6 +583,7 @@ function PendingDetail({
           )}
         </div>
       </div>
+      {changing ? <DeliveredByDialog key={b.key} group={b.rows} transporters={transporters} onClose={() => setChanging(false)} /> : null}
     </Card>
   );
 }
