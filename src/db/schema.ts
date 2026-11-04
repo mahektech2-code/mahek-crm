@@ -12721,6 +12721,8 @@ export const erpOrderDetails = pgTable("erp_order_details", {
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
   dispatchDate: date("dispatch_date"),
   /** Verified | Not Verify | Pending, or null (not yet looked at). */
+  /* erp_order_details_unverified_idx (order_id) WHERE verification is null
+     or = 'Pending' is in drizzle/0314 — the verification badge reads it. */
   verification: text("verification"),
   withoutGstPaise: bigint("without_gst_paise", { mode: "number" }),
   transportFollowUp: text("transport_follow_up"),
