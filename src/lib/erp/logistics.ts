@@ -1276,15 +1276,24 @@ export async function markDelivered(
   const receivedBy = input.receivedBy?.trim() || null;
   const proof = input.proof?.trim().slice(0, 200) || null;
   const note = input.note?.trim() || null;
-  /* A MAHEK VEHICLE DELIVERY CLOSES ONLY WITH THE CUSTOMER-SIGNED COPY, and who signed it. */
+  /*
+   * A MAHEK VEHICLE DELIVERY CLOSES ONLY WITH THE CUSTOMER-SIGNED COPY, and who
+   * signed it. A transporter's bill MAY close with one too — the desk offers a
+   * signed copy every open bill, because "Mahek Vehicle" is a spelling and the
+   * floor types the lorry number, "Tempo" or "Portal" — and a copy that closes a
+   * bill is held to the same rule whoever carried the goods: it is on the desk,
+   * it closes nothing else, and it says who signed.
+   */
   const own = ts.filter((t) => isMahekVehicle(t.transporter));
+  const named = input.signedCopyId?.trim() || null;
+  const closedBy = named ? ts : own;
   let copy: typeof erpLrs.$inferSelect | null = null;
-  if (own.length) {
-    const want = input.signedCopyId?.trim() || own.find((t) => t.signedCopyId)?.signedCopyId || null;
+  if (closedBy.length) {
+    const want = named || own.find((t) => t.signedCopyId)?.signedCopyId || null;
     if (!want) return fieldErr("signedCopy", "A Mahek Vehicle delivery needs the customer-signed copy. Upload it or pick one waiting on the desk.");
     [copy] = await db.select().from(erpLrs).where(eq(erpLrs.id, want));
     if (!copy || copy.status === "void" || copy.kind !== "signed_copy") return fieldErr("signedCopy", "That signed copy is not on the desk.");
-    const elsewhere = copy.status === "assigned" && !own.some((t) => t.signedCopyId === copy!.id);
+    const elsewhere = copy.status === "assigned" && !closedBy.some((t) => t.signedCopyId === copy!.id);
     if (elsewhere) return fieldErr("signedCopy", "That signed copy already closes another delivery.");
     if (!receivedBy && !copy.receivedBy) return fieldErr("receivedBy", "Say who signed for it — the name on the copy");
   }
@@ -1295,8 +1304,8 @@ export async function markDelivered(
       .update(erpTransports)
       .set({ materialStage: CLOSED, trackStatus: "Don't Track", deliveredOn: d, receivedBy: signer, deliveredById: ctx.user.id, deliveryProof: proof, issue: null, issueNote: null, issueAt: null, reminderDate: null, ...(note ? { note } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
       .where(inArray(erpTransports.id, ts.map((t) => t.id)));
-    if (copy && own.length) {
-      await tx.update(erpTransports).set({ signedCopyId: copy.id, deliveryProof: proof ?? "Customer-signed copy" }).where(inArray(erpTransports.id, own.map((t) => t.id)));
+    if (copy && closedBy.length) {
+      await tx.update(erpTransports).set({ signedCopyId: copy.id, deliveryProof: proof ?? "Customer-signed copy" }).where(inArray(erpTransports.id, closedBy.map((t) => t.id)));
       await tx.update(erpLrs).set({ status: "assigned", assignedById: ctx.user.id, assignedAt: new Date(), receivedBy: signer, deliveredOn: d }).where(eq(erpLrs.id, copy.id));
     }
     eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "delivered", CLOSED, [signer ? `Received by ${signer}` : null, copy ? "Signed copy" : proof ? `Proof: ${proof}` : null, note].filter(Boolean).join(" · ") || null);

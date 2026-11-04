@@ -1050,4 +1050,28 @@ describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Veh
     assert.deepEqual(l, { kind: "signed_copy", status: "unassigned", lrNo: null }, "on the desk under Signed copies");
     assert.equal(msg(await L.setLrKind(ctx, id, "lr")), "ok", "and back, while it is on the desk");
   });
+
+  test("a signed copy can close a transporter's bill too, held to the same rules", async () => {
+    const a = await dispatch("2026-10-20", 7, "SC/26-27/7701", "2026-10-21");
+    const b = await dispatch("2026-10-20", 8, "SC/26-27/7702", "2026-10-21");
+    const ctx = await as(admin);
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.orderNo, a.orderNo));
+    const [other] = await db.select().from(erpTransports).where(eq(erpTransports.orderNo, b.orderNo));
+    assert.ok(t && other, "two bills dispatched by a transporter");
+    assert.notEqual((t.transporter ?? "").toLowerCase(), "mahek vehicle");
+    const up = await L.uploadLrs(ctx, [{ kind: "signed_copy", billHint: t.billNo ?? "" }]);
+    assert.ok(up.ok, msg(up));
+    const copy = up.ok ? up.data.ids[0] : "";
+    assert.match(msg(await L.markDelivered(ctx, [t.id], { date: "2026-10-22", signedCopyId: copy, notify: false })), /who signed/);
+    const done = await L.markDelivered(ctx, [t.id], { date: "2026-10-22", signedCopyId: copy, receivedBy: "Counter Staff", notify: false });
+    assert.ok(done.ok, msg(done));
+    const [after] = await db.select().from(erpTransports).where(eq(erpTransports.id, t.id));
+    assert.equal(after.materialStage, "Close - Received to Party");
+    assert.equal(after.signedCopyId, copy, "the copy is on the bill it closed, not left on the desk");
+    const [l] = (await db.execute(sql`select status from erp_lrs where id = ${copy}`)) as unknown as { status: string }[];
+    assert.equal(l.status, "assigned");
+    assert.match(msg(await L.markDelivered(ctx, [other.id], { date: "2026-10-22", signedCopyId: copy, receivedBy: "Someone", notify: false })), /closes another delivery/);
+    const plain = await L.markDelivered(ctx, [other.id], { date: "2026-10-22", notify: false });
+    assert.ok(plain.ok, "a transporter's bill still closes without any copy, as before");
+  });
 });

@@ -136,6 +136,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           waiting={rows.filter((c) => c.phase === "lrPending")}
           onTheWay={rows.filter((c) => c.phase === "toTransport")}
           ownOnRoad={rows.filter((c) => c.ownVehicle && c.phase === "onRoad")}
+          transporterOnRoad={rows.filter((c) => !c.ownVehicle && c.phase === "onRoad")}
           today={today}
           nowMs={nowMs()}
           transporters={dir.filter((t) => t.active).map((t) => t.name)}

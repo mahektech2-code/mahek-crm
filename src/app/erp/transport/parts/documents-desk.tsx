@@ -121,6 +121,7 @@ export function DocumentsDesk({
   waiting,
   onTheWay,
   ownOnRoad,
+  transporterOnRoad,
   today,
   nowMs,
   transporters,
@@ -137,6 +138,8 @@ export function DocumentsDesk({
   onTheWay: Consignment[];
   /** Mahek Vehicle bills still on the road — what a signed copy closes. */
   ownOnRoad: Consignment[];
+  /** Bills on the road under a transporter's LR — a signed copy can close them too. */
+  transporterOnRoad: Consignment[];
   today: string;
   nowMs: number;
   transporters: string[];
@@ -162,6 +165,15 @@ export function DocumentsDesk({
   const allLrBills = useMemo(() => byBill([...waiting, ...onTheWay]), [waiting, onTheWay]);
   const onTheWayBills = useMemo(() => byBill(onTheWay), [onTheWay]);
   const ownBills = useMemo(() => byBill(ownOnRoad), [ownOnRoad]);
+  /*
+   * WHAT A SIGNED COPY MAY CLOSE: every open bill, Mahek Vehicle ones first. It
+   * was Mahek Vehicle bills only, and that is a transporter NAME — a bill whose
+   * transporter was typed as the lorry number, "Tempo" or "Portal" is our own
+   * vehicle in every way but the spelling, and its signed copy had nothing to
+   * close. A customer-signed copy is proof of delivery whoever carried it.
+   */
+  const ownKeys = useMemo(() => new Set(ownBills.map((b) => b.key)), [ownBills]);
+  const signedBills = useMemo(() => byBill([...ownOnRoad, ...waiting, ...onTheWay, ...transporterOnRoad]), [ownOnRoad, waiting, onTheWay, transporterOnRoad]);
 
   /* One bill, one reason: the reason with the most days on any of its records. */
   const pendingBills: PendingBill[] = useMemo(() => {
@@ -205,13 +217,14 @@ export function DocumentsDesk({
                   score: x.score,
                   reasons: x.reasons,
                 }))
-              : rankForSignedCopy(l, ownBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: b.c.deliveryParty, vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: ownBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
-          const sure = confidentPick(ranked.map((r) => ({ id: r.b.key, score: r.score })), READY_SCORE[l.kind]);
+              : rankForSignedCopy(l, signedBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: b.c.deliveryParty, vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: signedBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
+          /* "Close N ready" stays what it was: a signed copy is closed unasked only against a Mahek Vehicle bill; any other is a person's tick. */
+          const sure = confidentPick((l.kind === "lr" ? ranked : ranked.filter((r) => ownKeys.has(r.b.key))).map((r) => ({ id: r.b.key, score: r.score })), READY_SCORE[l.kind]);
           const reading = canRead && !l.readAt && nowMs - Date.parse(l.uploadedAt) < READING_MINUTES * 60_000;
           const state: State = flag ? "dup" : reading ? "reading" : wrong || missing.length ? "todo" : sure ? "ready" : "pick";
           return { l, flag, wrong, missing, ranked, pick: sure, state };
         }),
-    [copies, flags, waitingBills, allLrBills, ownBills, showAll, canRead, nowMs],
+    [copies, flags, waitingBills, allLrBills, signedBills, ownKeys, showAll, canRead, nowMs],
   );
 
   const list = rows.filter((r) => r.l.kind === kind);
@@ -381,7 +394,10 @@ function PendingDesk({
 }) {
   const [filter, setFilter] = useState<PendingKind | "all">("all");
   const [pick, setPick] = useState<string | null>(null);
-  const shown = filter === "all" ? items : items.filter((p) => p.kind === filter);
+  const [query, setQuery] = useState("");
+  /* The chips count the whole kind; the search narrows inside whichever chip is on. */
+  const ofKind = filter === "all" ? items : items.filter((p) => p.kind === filter);
+  const shown = query.trim() ? ofKind.filter((p) => billMatches(p.b, query)) : ofKind;
   const sel = shown.find((p) => p.b.key === pick) ?? shown[0] ?? null;
   const chip = (k: PendingKind | "all", label: string, n: number) => (
     <button key={k} type="button" onClick={() => (setFilter(k), setPick(null))} className={toggleClass(filter === k, "flex items-center gap-1 text-meta")}>
@@ -396,7 +412,19 @@ function PendingDesk({
           {chip("all", "All", items.length)}
           {PENDING_ORDER.map((k) => chip(k, pendingLabel(k, stuckLrDays), items.filter((p) => p.kind === k).length))}
         </div>
-        <div className="border-b border-divider px-3 py-1.5 text-meta text-muted">{plural(shown.length, "bill")}, longest waiting first</div>
+        {items.length ? (
+          <div className="border-b border-divider p-2">
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
+                <Icon n="search" s={14} />
+              </span>
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search party, bill no., order no., transporter, city" aria-label="Search the pending bills" className="pl-8" />
+            </div>
+          </div>
+        ) : null}
+        <div className="border-b border-divider px-3 py-1.5 text-meta text-muted">
+          {query.trim() ? `${shown.length} of ${plural(ofKind.length, "bill")}` : plural(shown.length, "bill")}, longest waiting first
+        </div>
         {shown.length ? (
           <div className="max-h-[72vh] overflow-y-auto">
             {shown.map((p) => (
@@ -417,7 +445,7 @@ function PendingDesk({
             ))}
           </div>
         ) : (
-          <Empty>{items.length ? "Nothing pending of this kind." : "Nothing is pending. Every bill has its LR or signed copy."}</Empty>
+          <Empty>{query.trim() && ofKind.length ? `No pending bill matches “${query.trim()}”.` : items.length ? "Nothing pending of this kind." : "Nothing is pending. Every bill has its LR or signed copy."}</Empty>
         )}
       </Card>
 
@@ -450,12 +478,16 @@ function PendingDetail({
   const c = b.c;
   const copyKind: ProofKind = c.ownVehicle ? "signed_copy" : "lr";
   const word = copyKind === "lr" ? "LR" : "signed copy";
-  /* The copies on the desk ranked against this one bill, by the same rules the copy's own tab uses. */
+  /*
+   * The copies on the desk ranked against this one bill, by the same rules the
+   * copy's own tab uses. A transporter's bill can be closed by a signed copy
+   * too, so for one of those both kinds are looked at.
+   */
   const matches = rows
-    .filter((r) => r.l.kind === copyKind)
+    .filter((r) => r.l.kind === copyKind || copyKind === "lr")
     .map((r) => {
       const x =
-        copyKind === "lr"
+        r.l.kind === "lr"
           ? rankForLr(r.l, [{ id: b.key, transporter: c.transporter, packages: b.packages, area: c.area ?? c.partyCity, party: c.deliveryParty, billingParty: c.party, billNo: c.billNo, atTransport: b.rows.every((y) => y.phase === "lrPending") }])[0]
           : rankForSignedCopy(r.l, [{ id: b.key, billNo: c.billNo, party: c.deliveryParty, vehicleNo: c.vehicleNo }])[0];
       return { r, score: x.score, reasons: x.reasons };
@@ -493,7 +525,7 @@ function PendingDetail({
         </div>
 
         <div>
-          <SubTitle className="mb-1">{copyKind === "lr" ? "LRs on the desk that may be this bill" : "Signed copies on the desk that may be this bill"}</SubTitle>
+          <SubTitle className="mb-1">{copyKind === "lr" ? "LRs and signed copies on the desk that may be this bill" : "Signed copies on the desk that may be this bill"}</SubTitle>
           {matches.length ? (
             <div className="rounded-card border border-line">
               {matches.map(({ r, reasons }) => (
@@ -503,10 +535,11 @@ function PendingDetail({
                     <span className="block truncate font-medium text-ink">{titleOf(r.l)}</span>
                     <span className="block truncate text-meta text-muted">{[subOf(r.l), `uploaded ${clock(new Date(r.l.uploadedAt))}`].filter(Boolean).join(" · ")}</span>
                   </span>
+                  {copyKind === "lr" && r.l.kind === "signed_copy" ? <Badge label="Signed copy" tone="brand" /> : null}
                   {reasons.slice(0, 2).map((x) => (
                     <Badge key={x} label={x} tone={x.startsWith("same") || x === "destination matches" ? "success" : "neutral"} />
                   ))}
-                  <Button size="sm" variant="primary" onClick={() => onOpen(r.l.id, copyKind, b)}>
+                  <Button size="sm" variant="primary" onClick={() => onOpen(r.l.id, r.l.kind, b)}>
                     Check and attach
                   </Button>
                 </div>
@@ -852,7 +885,7 @@ function Detail({
                   />
                 </div>
                 <span className="shrink-0 text-meta text-muted">
-                  {query.trim() ? `${matching.length} of ${plural(row.ranked.length, "bill")}` : plural(row.ranked.length, "bill")} {lr ? "waiting for an LR" : "on the road"}
+                  {query.trim() ? `${matching.length} of ${plural(row.ranked.length, "bill")}` : plural(row.ranked.length, "bill")} {lr ? "waiting for an LR" : "not yet delivered"}
                 </span>
               </div>
             ) : null}
@@ -878,7 +911,7 @@ function Detail({
                       <span className="block truncate font-medium text-ink">{b.c.deliveryParty}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
-                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr ? b.c.transporter : b.c.vehicleNo].filter(Boolean).join(" · ")}
+                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? "Mahek Vehicle")].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {reasons.slice(0, 2).map((r) => (
@@ -896,7 +929,7 @@ function Detail({
             ) : query.trim() ? (
               <Empty>No bill matches “{query.trim()}”.</Empty>
             ) : (
-              <Empty>{lr ? "No bill is waiting for an LR." : "No Mahek Vehicle delivery is waiting for its signed copy."}</Empty>
+              <Empty>{lr ? "No bill is waiting for an LR." : "No bill is waiting to be delivered."}</Empty>
             )}
             {hiddenMatches ? (
               <p className="mt-1.5 text-meta text-muted">
