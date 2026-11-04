@@ -209,7 +209,7 @@ export type DispatchBoard = {
   area: string | null;
   transporter: string | null;
   dispatchOn: string | null;
-  lines: (ScanLine & { billed: boolean; verification: string | null; invoiceCheck: string | null; gate: string | null; unitsExist: boolean })[];
+  lines: (ScanLine & { /** The line's own status: Ready, Cancel, Under Process or Hold From Office. */ status: string; billed: boolean; verification: string | null; invoiceCheck: string | null; gate: string | null; unitsExist: boolean })[];
   /** The Tally invoice on the order, once billed. */
   invoiceNo: string | null;
   units: { id: string; lineId: string; sku: string; lotCode: string; status: string; scannedAt: string | null; by: string | null }[];
@@ -263,7 +263,7 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
     invoiceNo: h.invoiceNo == null ? null : String(h.invoiceNo),
     lines: lines.map((l) => {
       const unitsExist = withUnits.has(l.id);
-      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, lotAllocated: l.alloc.length > 0, target: l.target, scanned: l.scanned }) };
+      return { ...l, status: String(meta.get(l.id)?.status ?? ""), billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, lotAllocated: l.alloc.length > 0, target: l.target, scanned: l.scanned }) };
     }),
     units: units.map((u) => ({ id: String(u.id), lineId: String(u.lineId), sku: String(u.sku), lotCode: String(u.lotCode), status: String(u.status), scannedAt: u.scannedAt == null ? null : new Date(u.scannedAt as string).toISOString(), by: u.by == null ? null : String(u.by) })),
     scans: scans.map((s) => ({ at: new Date(s.at as string).toISOString(), code: String(s.code), result: String(s.result), message: String(s.message), by: s.by == null ? null : String(s.by) })),
