@@ -6,6 +6,8 @@ import {
   ago,
   arrivals,
   dwellMs,
+  nextPopups,
+  popsUpIn,
   pruneAnnounced,
   soundOn,
   splitForDisplay,
@@ -90,4 +92,29 @@ test("marking one notification read is limited to the caller's own", () => {
   const src = readFileSync(join(import.meta.dirname, "actions/crm.ts"), "utf8");
   const fn = src.slice(src.indexOf("export async function markNotificationRead("));
   assert.match(fn.slice(0, 600), /eq\(notifications\.userId, ctx\.user\.id\)/);
+});
+
+test("only the ERP pops up; every other app keeps its corner", () => {
+  assert.equal(popsUpIn("erp"), true);
+  for (const app of ["crm", "accounts", "sales", null]) assert.equal(popsUpIn(app), false);
+});
+
+test("the pop-up queue keeps who is waiting, then what came due, then what arrived", () => {
+  const answer = { now: NOW, items: [item("old", 5), item("new", 0)], due: [item("due", 90)] };
+  assert.deepEqual(nextPopups([item("old", 5)], answer, [item("new", 0)]).map((n) => n.id), ["old", "due", "new"]);
+  assert.deepEqual(nextPopups([item("old", 5)], answer, [item("old", 5)]).map((n) => n.id), ["old", "due"], "never twice");
+});
+
+test("a pop-up answered somewhere else leaves the queue", () => {
+  const later = new Date(Date.parse(NOW) + 60_000).toISOString();
+  const answer = { now: NOW, items: [item("read", 1, true), { ...item("snoozed", 1), remindAt: later }], due: [] };
+  assert.deepEqual(nextPopups([item("read", 1), item("snoozed", 1), item("gone", 99)], answer, []).map((n) => n.id), ["gone"]);
+});
+
+test("a reminder still to come does not pop on a fresh page, and one that has passed does", () => {
+  const later = new Date(Date.parse(NOW) + 60_000).toISOString();
+  const past = new Date(Date.parse(NOW) - 60_000).toISOString();
+  const answer = { now: NOW, items: [], due: [] };
+  assert.deepEqual(nextPopups([], answer, [{ ...item("a", 1), remindAt: later }]), []);
+  assert.equal(nextPopups([], answer, [{ ...item("b", 1), remindAt: past }]).length, 1);
 });
