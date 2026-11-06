@@ -2138,7 +2138,8 @@ export async function listNotifications(userId: string) {
  */
 export async function notificationFeed(userId: string, app: string | null = null) {
   const appExpr = notificationAppSql();
-  const mine = eq(notifications.userId, userId);
+  /* A handset-only notification is the phone's and is in no web bell, All apps included. */
+  const mine = and(eq(notifications.userId, userId), sql`${appExpr} is distinct from 'field'`);
   const inApp = app === null ? undefined : or(sql`${appExpr} = ${app}`, sql`${appExpr} is null`);
   const pick = {
     id: notifications.id,

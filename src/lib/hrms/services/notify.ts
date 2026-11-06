@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, hrmsUserPowers, users } from "@/db/schema";
-import { notifyUsers, type NotifyEntry } from "@/lib/notify";
+import { notifyUsers, type NotifyEntry, type NotifyMessage } from "@/lib/notify";
 import type { HrmsPower } from "../powers";
 
 /* ---------------------------------------------------------------------------
@@ -61,13 +61,13 @@ export async function tell(entries: NotifyEntry[]): Promise<void> {
 }
 
 /** Tell the accounts of some employees, never the person who did it. */
-export async function tellEmployees(actorUserId: string, employeeIds: (string | null | undefined)[], entry: Omit<NotifyEntry, "userId">): Promise<void> {
+export async function tellEmployees(actorUserId: string, employeeIds: (string | null | undefined)[], entry: NotifyMessage): Promise<void> {
   const to = (await usersOfEmployees(employeeIds)).filter((u) => u !== actorUserId);
   await tell(to.map((userId) => ({ ...entry, userId })));
 }
 
 /** Tell everybody who holds a power, never the person who did it. */
-export async function tellPowerHolders(actorUserId: string, power: HrmsPower, entry: Omit<NotifyEntry, "userId">): Promise<void> {
+export async function tellPowerHolders(actorUserId: string, power: HrmsPower, entry: NotifyMessage): Promise<void> {
   const to = (await powerHolderUserIds(power)).filter((u) => u !== actorUserId);
   await tell(to.map((userId) => ({ ...entry, userId })));
 }

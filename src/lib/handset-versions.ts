@@ -25,6 +25,10 @@ export type HandsetRow = {
   /** The newest of every request, a location upload and a sign-in. */
   lastHeardAt: string | null;
   boundAt: string | null;
+  /** What the phone answered about notifications. Null: this build cannot say. */
+  notificationPermission: string | null;
+  /** Whether the office can actually push to it. The token itself never leaves the server. */
+  hasPushToken: boolean;
 };
 
 export type HandsetsPayload = {

@@ -492,7 +492,7 @@ export async function handOn(userId: string, fromName: string, item: InboxItem, 
     title: `${fromName} handed you: ${item.title}`,
     body: `${item.why}${note ? `\n\nNote: ${note}` : ""}`,
     kind: item.sev === "Urgent" ? "warn" : "info",
-    href: null,
+    href: "/founder",
   });
 }
 

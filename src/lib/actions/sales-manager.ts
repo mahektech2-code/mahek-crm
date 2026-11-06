@@ -10,14 +10,13 @@ import {
   customerAmChanges,
   customers,
   employees,
-  notifications,
   users,
 } from "@/db/schema";
 import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { customerFilterClause, customerScopeClause } from "@/lib/queries";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
-import { notifyUsers } from "../notify";
+import { notifyUsers, type NotifyEntry } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * Who the salesperson answers to.
@@ -392,13 +391,12 @@ export async function assignSalesManager(
      * a change can hand accounts to several people at once — so it is a single
      * row rather than a map.
      */
-    const notes: (typeof notifications.$inferInsert)[] = [];
+    const notes: NotifyEntry[] = [];
     const plural = (n: number) => `${n} account${n === 1 ? "" : "s"}`;
     const why = `${input.reasonCode}${input.note?.trim() ? `: ${input.note.trim()}` : ""}`;
 
     if (toUserId) {
       notes.push({
-        id: id("ntf"),
         userId: toUserId,
         title: "Accounts now report to you",
         body: `${ctx.user.name} made you the sales manager on ${plural(moving.length)} — ${why}`,
@@ -411,7 +409,6 @@ export async function assignSalesManager(
       // actually leave them.
       if (userId === toUserId) continue;
       notes.push({
-        id: id("ntf"),
         userId,
         title: "Accounts no longer report to you",
         body: `${ctx.user.name} moved ${plural(count)} to ${toName ?? "nobody"} — ${input.reasonCode}`,

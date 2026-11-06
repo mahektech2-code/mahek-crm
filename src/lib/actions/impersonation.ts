@@ -179,6 +179,8 @@ export async function enterImpersonatedSession(
     await notifyUser({
       userId: user.id,
       kind: "warn",
+      /* About the person and their account, wherever they next look. */
+      general: true,
       title: "An administrator signed in as you",
       body: `${by?.name ?? "An administrator"} opened MahekOne as you at ${stamp(new Date())}, using a one-time admin link. Nothing about your password changed. If you did not expect this, tell your manager.`,
     });

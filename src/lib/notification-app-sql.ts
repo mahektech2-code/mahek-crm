@@ -12,7 +12,7 @@ import { APP_ROUTES } from "./app-routes";
  * or a LIKE wildcard; the assertion below keeps it that way.
  */
 export function notificationAppSql(table = "notifications"): SQL {
-  const whens = APP_ROUTES.map(([prefix, app]) => {
+  const whens = [...APP_ROUTES, ["/field", "field"] as const].map(([prefix, app]) => {
     if (!/^\/[a-z/-]+$/.test(prefix) || !/^[a-z]+$/.test(app)) {
       throw new Error(`notificationAppSql: unexpected route ${prefix} → ${app}`);
     }

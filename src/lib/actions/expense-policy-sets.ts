@@ -487,6 +487,7 @@ export async function assignPolicySet(input: z.input<typeof assignSchema>): Prom
           title: "Your expense policy changed",
           body: `You are now on ${targetName}. Open Expenses to see what it pays.`,
           kind: "info",
+          mbosHref: "/expenses",
         })),
       );
     } catch {

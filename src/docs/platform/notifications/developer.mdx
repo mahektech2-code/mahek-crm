@@ -37,3 +37,9 @@ A notification's app is **derived from its link**, never stored. `notificationAp
 | `src/lib/notification-apps.test.ts` | The rule: prefixes, handset-only, general, what is shown where, unread elsewhere |
 | `src/lib/notification-apps.db.test.ts` | SQL and browser agree on every link; the feed filters and counts per app; mark-all-read stays inside the app |
 | `src/lib/notification-feed.test.ts` | What pops, tones, dwell |
+
+## Where a notification goes
+
+`notifyUsers` refuses, at compile time, an entry that names no destination. It takes `href`, `mbosHref`, or an explicit `general: true`. `reachesHandset(href, mbosHref)` decides the handset list and the push from the same two links: a handset link, or no link at all. `/notifications` is the handset link when no screen is more precise. A raw insert into `notifications` is held to the same rule by a test in `notification-apps.test.ts`, and it does not push.
+
+`mbos_devices.notification_permission` is what each phone answered, shown beside whether it holds a token on Admin Console → Handsets. A phone can allow notifications and still hold no token: see "Push notifications" in `DEPLOY.md`.

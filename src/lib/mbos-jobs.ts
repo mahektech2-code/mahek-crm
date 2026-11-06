@@ -240,9 +240,7 @@ export async function escalateOverdueTasks(): Promise<Counted> {
         title: "Task overdue",
         body: `${t.title} is past its date and your manager has been told.`,
         kind: "warn",
-        href: "/field/tasks",
-        // The handset's own task list. `/field/tasks` is a MahekOne route the
-        // salesman this is addressed to has no app to open.
+        // The handset's own task list. No web link: the Salesman App has no web screens.
         mbosHref: "/tasks",
       },
     ]);

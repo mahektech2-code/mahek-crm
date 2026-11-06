@@ -211,12 +211,11 @@ async function assignOne(
       kind: "info",
       /* Where it will actually be for THEM: a person with no Calling desk is
          sent to the record, and a handset-only person to no web route at all. */
-      href:
-        target.place === "desk"
-          ? `/crm/leads/calling-desk/${lead.id}`
-          : target.place === "crm"
-            ? `/crm/leads/${lead.id}`
-            : undefined,
+      ...(target.place === "desk"
+        ? { href: `/crm/leads/calling-desk/${lead.id}` }
+        : target.place === "crm"
+          ? { href: `/crm/leads/${lead.id}` }
+          : { mbosHref: "/notifications" }),
     }).catch(() => {});
   }
   if (lead.ownerId && lead.ownerId !== ctx.user.id && lead.ownerId !== (target?.id ?? null)) {
@@ -227,6 +226,8 @@ async function assignOne(
         ? `${ctx.user.name} reassigned it to ${target.name}.`
         : `${ctx.user.name} took it off your desk. It is unassigned for now.`,
       kind: "info",
+      href: `/crm/leads/${lead.id}`,
+      mbosHref: "/notifications",
     }).catch(() => {});
   }
 

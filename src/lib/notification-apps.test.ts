@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { notificationAppName, notificationAppOf, shownIn, unreadElsewhere } from "./notification-apps";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { notificationAppName, notificationAppOf, reachesHandset, shownIn, unreadElsewhere } from "./notification-apps";
 
 test("a notification belongs to the app its link opens", () => {
   assert.equal(notificationAppOf("/crm/customers/c_1"), "crm");
@@ -45,4 +47,40 @@ test("names come from the app registry", () => {
   assert.equal(notificationAppName("accounts"), "Accounts");
   assert.equal(notificationAppName(null), "General");
   assert.equal(notificationAppName("field"), "Salesman App");
+});
+
+test("the Salesman App has no web screens, so its notifications are in no web bell", () => {
+  assert.equal(notificationAppOf("/field/tasks"), "field");
+  assert.equal(notificationAppOf("/field"), "field");
+  assert.equal(shownIn("field", "erp"), false);
+  assert.equal(shownIn("field", null), false, "All apps does not show them either");
+  assert.deepEqual(unreadElsewhere([{ app: "field", unread: 4 }], "erp"), []);
+});
+
+test("the phone gets what names a phone screen, and general notices, and nothing else", () => {
+  assert.equal(reachesHandset(null, "/tasks"), true);
+  assert.equal(reachesHandset("/crm/performance", "/performance"), true);
+  assert.equal(reachesHandset(null, null), true, "general is everyone's");
+  assert.equal(reachesHandset("/erp/orders", null), false, "a desk's alert does not buzz a phone");
+  assert.equal(reachesHandset("/feedback", null), false);
+});
+
+test("every direct insert into notifications names where it goes", () => {
+  /* notifyUsers is held to this by its type; a raw insert is not. */
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((name) => {
+      const path = join(dir, name);
+      return statSync(path).isDirectory() ? walk(path) : /\.tsx?$/.test(name) && !/\.test\./.test(name) ? [path] : [];
+    });
+  const missing: string[] = [];
+  for (const file of walk("src")) {
+    if (file.endsWith(join("db", "seed.ts"))) continue;
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (/\.insert\(notifications\)/.test(line + (lines[i + 1] ?? "")) && !/\.insert\(notifications\)/.test(lines[i - 1] ?? "")) {
+        if (!/\b(href|mbosHref)\b/.test(lines.slice(i, i + 30).join("\n"))) missing.push(`${file}:${i + 1}`);
+      }
+    });
+  }
+  assert.deepEqual(missing, []);
 });
