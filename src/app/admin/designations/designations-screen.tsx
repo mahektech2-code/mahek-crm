@@ -9,6 +9,25 @@ import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getModule, isAlwaysOpen, moduleGroupsForApp, moduleKeysForApp } from "@/lib/modules";
 import { ERP_POWERS, ERP_POWER_LABEL, type ErpPower } from "@/lib/erp/powers";
+import { dayLabel, erpPowersNewSince, namedList, screensNewSince } from "@/lib/module-since";
+import type { ErpDesignationDef } from "@/lib/erp/designations";
+
+/**
+ * What shipped after this designation was last saved and it does not carry —
+ * screens and powers nobody decided for this job. An every-screen designation
+ * receives new screens by itself, and an administrator holds every power.
+ */
+function NewMark() {
+  return <span className="flex-none rounded-[3px] bg-brand-soft px-1 text-[10px] font-medium text-brand-hover">new</span>;
+}
+
+function newSinceSaved(d: ErpDesignationDef): { screens: string[]; powers: string[] } {
+  const setOn = d.setOn ?? null;
+  return {
+    screens: d.allScreens ? [] : screensNewSince("erp", setOn, d.modules).map((m) => m.key),
+    powers: d.level === "admin" ? [] : erpPowersNewSince(setOn, d.powers),
+  };
+}
 import { describeDiff, grantableModules, type ErpLevel } from "@/lib/erp/designations";
 import { DEPARTMENT_SEATS, SEAT_LABEL, departmentsOf, isDepartmentSeat, type ErpDepartmentSeat } from "@/lib/erp/departments";
 import { deleteErpDesignation, saveErpDesignation } from "@/lib/actions/erp-designations";
@@ -116,6 +135,23 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
                           <span className="block text-muted">{d.modules.map(screenLabel).join(", ")}</span>
                         </span>
                       )}
+                      {(() => {
+                        /* SHIPPED SINCE IT WAS LAST SAVED — not left out by
+                           anybody, just never offered. Editing it is the
+                           decision, whichever way it goes. */
+                        const n = newSinceSaved(d);
+                        const count = n.screens.length + n.powers.length;
+                        return count && d.setOn ? (
+                          <span className="mt-1 inline-block">
+                            <Badge
+                              tone="brand"
+                              title={`Added after this was last saved on ${dayLabel(d.setOn)}: ${namedList([...n.screens.map(screenLabel), ...n.powers.map((p) => powerLabel(p))], 99)}. Edit it to decide.`}
+                            >
+                              {count} new since {dayLabel(d.setOn)}
+                            </Badge>
+                          </span>
+                        ) : null;
+                      })()}
                     </Td>
                     <Td className="py-2.5 align-top text-[13px] whitespace-normal">
                       {d.level === "admin" ? (
@@ -236,6 +272,8 @@ function DesignationEditor({
   const [saving, setSaving] = React.useState(false);
 
   const groups = moduleGroupsForApp("erp").map((g) => ({ ...g, modules: g.modules.filter((m) => !isAlwaysOpen(m.key)) })).filter((g) => g.modules.length);
+  const fresh = designation ? newSinceSaved(designation) : { screens: [], powers: [] };
+  const freshSince = designation?.setOn ? dayLabel(designation.setOn) : "";
   const toggle = (list: string[], k: string) => (list.includes(k) ? list.filter((x) => x !== k) : [...list, k]);
 
   const members = designation?.members ?? [];
@@ -264,6 +302,18 @@ function DesignationEditor({
       if (removed.length) changeLines.push(`Takes away the power to ${removed.map(powerLabel).join(", ").toLowerCase()}.`);
     }
     if ((before.description ?? "") !== description.trim()) changeLines.push("Description reworded.");
+    /* What shipped since it was last saved is decided by this save, either
+       way — said even where nothing else moved, so the flag can be cleared by
+       a deliberate no. */
+    const freshScreens = allScreens ? [] : fresh.screens;
+    const freshPowers = level === "admin" ? [] : fresh.powers;
+    if (freshScreens.length || freshPowers.length) {
+      const leftOut = [
+        ...freshScreens.filter((k) => !modules.includes(k)).map(screenLabel),
+        ...freshPowers.filter((p) => !powers.includes(p)).map(powerLabel),
+      ];
+      if (leftOut.length) changeLines.push(`Added since ${freshSince} and left out on purpose: ${namedList(leftOut, 99)}.`);
+    }
     if ((before.department ?? null) !== department)
       changeLines.push(department ? `Works in ${SEAT_LABEL[department]}${before.department ? ` (was ${SEAT_LABEL[before.department]})` : ""}.` : "No longer a production department.");
   }
@@ -380,9 +430,15 @@ function DesignationEditor({
                         <Checkbox
                           key={m.key}
                           checked={modules.includes(m.key)}
+                          title={fresh.screens.includes(m.key) ? `Built after this designation was last saved on ${freshSince} — nobody has decided it for this job yet.` : undefined}
                           onChange={() => setModules(toggle(modules, m.key))}
                           className="min-w-0 py-[1px]"
-                          label={<span className="truncate text-[13px] text-body">{m.label}</span>}
+                          label={
+                            <span className="flex min-w-0 items-center gap-1">
+                              <span className="truncate text-[13px] text-body">{m.label}</span>
+                              {fresh.screens.includes(m.key) ? <NewMark /> : null}
+                            </span>
+                          }
                         />
                       ))}
                     </span>
@@ -403,10 +459,15 @@ function DesignationEditor({
                   <Checkbox
                     key={p}
                     checked={powers.includes(p)}
-                    title={ERP_POWER_LABEL[p].source}
+                    title={fresh.powers.includes(p) ? `Added after this designation was last saved on ${freshSince}. ${ERP_POWER_LABEL[p].source}` : ERP_POWER_LABEL[p].source}
                     onChange={() => setPowers(toggle(powers, p))}
                     className="min-w-0 py-[1px]"
-                    label={<span className="truncate text-[13px] text-body">{ERP_POWER_LABEL[p].label}</span>}
+                    label={
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="truncate text-[13px] text-body">{ERP_POWER_LABEL[p].label}</span>
+                        {fresh.powers.includes(p) ? <NewMark /> : null}
+                      </span>
+                    }
                   />
                 ))}
               </div>

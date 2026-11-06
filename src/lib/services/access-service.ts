@@ -11,6 +11,8 @@ import { appAccess, appModuleAccess, employees, erpUserPowers, hireUserRoles, hr
 import { APPS, type AppId } from "@/lib/apps";
 import { placeFromRow, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp, writeLevelsForApp } from "@/lib/modules";
+import { screensNewSince } from "@/lib/module-since";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, read for the Access screen.
@@ -59,6 +61,14 @@ export type AppGrant = {
   readOnly: string[];
   /** True where nothing has ever been unticked, so the grant is the whole app. */
   whole: boolean;
+  /**
+   * The business day this narrowed grant was last saved, and the screens that
+   * shipped AFTER it which it does not hold — nobody has decided those yet.
+   * Null and empty for a whole-app grant, which receives every new screen by
+   * itself. See `lib/module-since.ts`.
+   */
+  setOn: string | null;
+  newScreens: { key: string; label: string }[];
 };
 
 export type AccessRow = {
@@ -189,6 +199,7 @@ function buildGrants(
   apps: AppId[],
   modulesByApp: Map<AppId, string[]>,
   roleFor: (app: AppId) => Role,
+  setOnByApp: Map<AppId, string>,
 ): AppGrant[] {
   return APPS.filter((a) => apps.includes(a.id)).map((a) => {
     const stored = modulesByApp.get(a.id) ?? [];
@@ -215,6 +226,7 @@ function buildGrants(
     const levels = new Set(writeLevelsForApp(a.id).values());
     const screens = modules.filter((m) => !isWrite.has(m.key));
     const held = new Set(modules.filter((m) => m.granted).map((m) => m.key));
+    const setOn = whole ? null : (setOnByApp.get(a.id) ?? null);
     return {
       app: a.id,
       appName: a.name,
@@ -226,6 +238,8 @@ function buildGrants(
         .filter((m) => levels.has(m.key) && m.writeOf && held.has(m.writeOf) && !held.has(m.key))
         .map((m) => all.find((x) => x.key === m.writeOf)?.label ?? m.writeOf!),
       whole,
+      setOn,
+      newScreens: screensNewSince(a.id, setOn, held).map((m) => ({ key: m.key, label: m.label })),
     };
   });
 }
@@ -254,6 +268,10 @@ export async function listAccess(): Promise<AccessRow[]> {
         userId: appModuleAccess.userId,
         app: appModuleAccess.app,
         module: appModuleAccess.module,
+        /* The business day the row was written. Every save of an app rewrites
+           all its rows (`writeModules`), so this is when the grant was last
+           decided — named in the zone, never cast bare. */
+        setOn: sql<string>`(${appModuleAccess.createdAt} at time zone ${APP_TIMEZONE})::date::text`,
       })
       .from(appModuleAccess),
     employeeRows(),
@@ -285,7 +303,11 @@ export async function listAccess(): Promise<AccessRow[]> {
   }
 
   const modulesByUser = new Map<string, Map<AppId, string[]>>();
+  const setOnByUser = new Map<string, Map<AppId, string>>();
   for (const m of moduleRows) {
+    const days = setOnByUser.get(m.userId) ?? new Map<AppId, string>();
+    if ((days.get(m.app as AppId) ?? "") < m.setOn) days.set(m.app as AppId, m.setOn);
+    setOnByUser.set(m.userId, days);
     const forUser = modulesByUser.get(m.userId) ?? new Map<AppId, string[]>();
     const list = forUser.get(m.app as AppId) ?? [];
     list.push(m.module);
@@ -349,6 +371,7 @@ export async function listAccess(): Promise<AccessRow[]> {
         appsByUser.get(u.id) ?? [],
         modulesByUser.get(u.id) ?? new Map(),
         (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? "associate",
+        setOnByUser.get(u.id) ?? new Map(),
       ),
       roles: heldRoles,
       conflicts: conflictsFor(heldHats),

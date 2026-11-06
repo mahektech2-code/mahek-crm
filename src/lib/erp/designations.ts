@@ -32,6 +32,12 @@ export type ErpDesignationDef = {
   powers: ErpPower[];
   /** The production department the job works in; null for any other job. Not access — it narrows what is asked to be bought. */
   department?: ErpDepartmentSeat | null;
+  /**
+   * The business day it was last saved. Screens and powers that shipped after
+   * it are ones nobody decided for this job (`lib/module-since.ts`). Absent on
+   * a draft that has never been stored.
+   */
+  setOn?: string | null;
 };
 
 /** What one person holds in the ERP, as stored. */
