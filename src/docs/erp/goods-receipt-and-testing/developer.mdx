@@ -125,7 +125,7 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 ## Permissions
 
 - **Modules:** <ModuleRef k="erp.register" /> (Goods receipt, Register, Drum labels), <ModuleRef k="erp.testing" />.
-- **Powers:** `viewPurchaseMoney` (also the register's bulk `billReceivedMany`), `verifyTest`, `verifyPurchase`, `reopenPurchase`.
+- **Powers:** `viewPurchaseMoney` (also the register's bulk `billReceived`), `verifyTest`, `verifyPurchase` (with `viewPurchaseMoney`, the register's bulk `verifyMany`), `reopenPurchase`.
 - **Labels:** a purchase label opens for anybody holding `barcode`, `register` or `stock` (`SCREENS` in `app/erp/print-labels/page.tsx`).
 
 ## Tests that pin this
