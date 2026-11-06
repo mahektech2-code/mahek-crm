@@ -51,13 +51,17 @@ if [ "${1:-}" = "--install-cron" ]; then
   #
   # 20:45 UTC = 02:15 IST, AFTER the nightly (20:13 UTC), so the night's dump
   # holds the recomputed caches rather than a database half-way between two
-  # days. The daytime dumps land at 08:15, 14:15 and 20:15 IST: the working
+  # days. The daytime dumps land at 08:15, 20:15 and 22:15 IST: the working
   # day is when the data no spreadsheet can give back is written — calls,
   # visits, receipts, approvals — and a nightly alone loses up to a whole day
-  # of it. The verify is Monday 04:00 IST, the quietest hour of the week.
+  # of it. None lands between 09:30 and 20:00, because a dump on this box
+  # stalls every screen while it reads the photographs and GPS tables; one at
+  # 14:15 ran through the busiest hours of the day. The price is a twelve-hour
+  # gap between 08:15 and 20:15. The verify is Monday 04:00 IST, the quietest
+  # hour of the week.
   lines=(
     "45 20 * * * /usr/bin/env bash ${APP_DIR}/backup.sh >> ${APP_DIR}/backups/backup.log 2>&1"
-    "45 2,8,14 * * * /usr/bin/env bash ${APP_DIR}/backup.sh --intraday >> ${APP_DIR}/backups/backup.log 2>&1"
+    "45 2,14,16 * * * /usr/bin/env bash ${APP_DIR}/backup.sh --intraday >> ${APP_DIR}/backups/backup.log 2>&1"
     "30 22 * * 0 /usr/bin/env bash ${APP_DIR}/backup.sh --verify >> ${APP_DIR}/backups/backup.log 2>&1"
   )
   # Both `|| true`s are load-bearing under `set -o pipefail`, and both fire on

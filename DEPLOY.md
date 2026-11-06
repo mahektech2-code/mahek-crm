@@ -243,7 +243,7 @@ Two, doing different jobs.
 | Kind | When (IST) | Droplet keeps | R2 keeps |
 |---|---|---|---|
 | nightly | 02:15 | 7 days | `daily/`, 30 days |
-| daytime | 08:15, 14:15, 20:15 | 2 days | `intraday/`, 7 days |
+| daytime | 08:15, 20:15, 22:15 | 2 days | `intraday/`, 7 days |
 | first nightly of the month | 02:15 on the 2nd | — | `monthly/`, ~13 months |
 | verify | Monday 04:00 | restores the newest dump into a scratch database, compares it with the live one, drops it | — |
 
@@ -253,8 +253,11 @@ found at run time rather than listed. Restore one by hand:
 `gunzip -c backups/db-mahek_website_<stamp>.sql.gz | docker compose exec -T
 postgres psql -U mahek -d mahek_website` (it was dumped with `--clean`).
 
-So the most a disk failure can lose is about six working hours, not a day,
-and a mistake noticed after a month still has a monthly copy to go back to.
+So the most a disk failure can lose is about twelve working hours, between the
+08:15 and 20:15 dumps, and a mistake noticed after a month still has a monthly
+copy to go back to. There is deliberately no dump in the working day: on this
+box one stalls every screen while it runs, and the 14:15 one landed in the
+busiest hours.
 
 Install the schedule (re-run after changing `backup.sh`; it replaces its own
 lines and leaves everything else in the crontab alone):
@@ -336,7 +339,7 @@ The host clock is **UTC**, so the crontab is written in UTC.
 | `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
 | `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, the activity tab's full compare, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
-| `02:45`, `08:45`, `14:45` | 08:15, 14:15, 20:15 | `backup.sh --intraday` — the day's work, so a disk failure loses hours, not a day |
+| `02:45`, `14:45`, `16:45` | 08:15, 20:15, 22:15 | `backup.sh --intraday` — the day's work, so a disk failure loses hours, not a day |
 | `22:30` Sunday | 04:00 Monday | `backup.sh --verify` — restore the newest dump into a scratch database and compare |
 | `04:30` on the 1st | 10:00 on the 1st | `sheet-sync.sh monthly` — the Top customers report for the month just finished |
 
