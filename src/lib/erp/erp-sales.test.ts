@@ -30,6 +30,7 @@ import {
   erpProductPacking,
   finishedGoods,
   monthlyTargets,
+  orders,
   priceListDiscountTerms,
   priceListRates,
   priceListScopes,
@@ -45,7 +46,8 @@ import { screenModule } from "@/lib/erp/screens";
 import { fgLots, packLots } from "@/lib/erp/stock";
 import { dueOf, orderForm } from "@/lib/erp/screens/sales";
 import { dispatchLabels } from "@/lib/erp/label-data";
-import { withFills, type FieldSpec } from "@/lib/erp/ui";
+import { withFills, type FieldSpec, type FormSpec } from "@/lib/erp/ui";
+import { bookOrderRef } from "@/lib/erp/book";
 import { impactReport } from "@/lib/impact/registry";
 import { ensureStickers } from "@/lib/erp/dispatch-stickers";
 import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
@@ -627,6 +629,30 @@ describe("editing the whole order in one modal", () => {
     assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, loose.id))).length, 0, "the swapped line is gone");
     const left = (await db.execute(sql`select count(*)::int as n from erp_dispatch_stickers where order_id = ${loose.id}`)) as unknown as { n: number }[];
     assert.equal(Number(left[0].n), 0, "and its printed stickers with it");
+  });
+
+  test("the billing party can be corrected until the order is billed, and the delivery party follows it", async () => {
+    const ctx = await erpContext();
+    const made = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-24", godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "11", rate: "400" }]);
+    assert.ok(made.ok, JSON.stringify(made));
+    const [line] = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = '2026-09-24' and ${erpOrders.qtyCans} = 11`);
+    await db.update(erpOrders).set({ orderCheck: "Verified" }).where(eq(erpOrders.id, line.id));
+    const form = (await mod("orders").formLoaders!.editOrder(ctx, line.id)) as FormSpec;
+    assert.equal(form.header.find((f) => f.k === "billing")?.readOnly, false, "open to change until it is billed");
+
+    const r = await mod("orders").forms!.editOrder(ctx, { delivery: "Shree Paints", billing: "No List Traders", dispatchOn: "" }, [{ lineId: line.id, sku: LOOSE, qty: "11", rate: "400" }], line.id);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
+    assert.equal(after.billingCustomerId, "cus_nolist");
+    assert.equal(after.deliveryCustomerId, "cus_nolist", "a delivery that was the billing party moves with it");
+    assert.equal(after.listRatePaise, null, "the new party's list has no rate, so the old list's is not kept");
+    assert.equal(after.orderCheck, "Pending", "what was verified is verified again");
+    const [book] = await db.select({ customerId: orders.customerId }).from(orders).where(eq(orders.externalRef, bookOrderRef(line.orderNo)));
+    if (book) assert.equal(book.customerId, "cus_nolist", "the Accounts order names the new party");
+
+    const refused = await mod("orders").forms!.editOrder(ctx, { delivery: "No List Traders", billing: "Nobody By This Name", dispatchOn: "" }, [{ lineId: line.id, sku: LOOSE, qty: "11", rate: "400" }], line.id);
+    assert.equal(refused.ok, false);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, line.id)))[0].billingCustomerId, "cus_nolist");
   });
 
   test("it refuses before it writes anything", async () => {

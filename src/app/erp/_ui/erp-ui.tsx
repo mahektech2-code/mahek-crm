@@ -1,7 +1,7 @@
 "use client";
 
 import { resultError } from "./use-act";
-import { Fragment, createContext, useCallback, useContext, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Callout, cx, SectionLabel, Td, Th, Tr, buttonClass } from "@/components/ui/primitives";
 import { labelClass, LinkButton } from "./look";
@@ -46,6 +46,8 @@ type Ui = {
   confirm: (msg: string, fn: () => void) => void;
   prompt: (spec: PromptSpec, done: (v: Record<string, string>) => Promise<Result<unknown> | void>) => void;
   openForm: (spec: FormSpec) => void;
+  /** Opens a form the server has to build: the window now, its fields when they land. */
+  askForm: (label: string, ask: () => Promise<Result<FormSpec>>, shape?: (f: FormSpec) => FormSpec) => void;
   /** Runs a record action: confirm → prompt/form → server → toast → refresh. */
   act: (screen: string, a: ActionSpec, recordId: string, after?: () => void) => void;
   bulk: (screen: string, b: BulkSpec, ids: string[], after?: () => void) => void;
@@ -107,6 +109,38 @@ export function ErpUiProvider({
     setFormKey((k) => k + 1);
   }, []);
 
+  /* A FORM THAT HAS TO BE ASKED FOR OPENS ON THE PRESS. The window comes up at
+     once and fills when the answer lands: a button that does nothing for a few
+     seconds gets pressed again, and on a factory tablet nothing says it worked.
+     Closing it before then drops the answer rather than opening over whatever
+     the person has moved on to. */
+  const [asking, setAsking] = useState<string | null>(null);
+  const askNo = useRef(0);
+  const cancelAsk = useCallback(() => {
+    askNo.current += 1;
+    setAsking(null);
+  }, []);
+  const askForm = useCallback(
+    (label: string, ask: () => Promise<Result<FormSpec>>, shape?: (f: FormSpec) => FormSpec) => {
+      const no = ++askNo.current;
+      setAsking(label);
+      void ask().then(
+        (res) => {
+          if (askNo.current !== no) return;
+          setAsking(null);
+          if (res.ok) openForm(shape ? shape(res.data) : res.data);
+          else toast(res.error, "error");
+        },
+        () => {
+          if (askNo.current !== no) return;
+          setAsking(null);
+          toast("That form could not be opened. Check the connection and try again.", "error");
+        },
+      );
+    },
+    [openForm, toast],
+  );
+
   const finish = useCallback(
     (res: Result<unknown> | void, after?: () => void, screen?: string) => {
       if (!res) return;
@@ -162,10 +196,7 @@ export function ErpUiProvider({
         return;
       }
       if (a.loadsForm) {
-        void kit.loadForm(screen, a.id, recordId).then((res) => {
-          if (res.ok) openForm(res.data);
-          else toast(res.error, "error");
-        });
+        askForm(a.l, () => kit.loadForm(screen, a.id, recordId));
         return;
       }
       const go = () => {
@@ -182,7 +213,7 @@ export function ErpUiProvider({
       if (a.confirm) confirm(a.confirm, go);
       else go();
     },
-    [confirm, finish, kit, openForm, prompt, router, toast],
+    [askForm, confirm, finish, kit, openForm, prompt, router],
   );
 
   const bulk = useCallback(
@@ -259,8 +290,25 @@ export function ErpUiProvider({
   return (
     <KitContext.Provider value={kit}>
     <ErpVoice.Provider value={voice}>
-      <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk, tool }}>
+      <Ctx.Provider value={{ toast, confirm, prompt, openForm, askForm, act, bulk, tool }}>
         {children}
+        {asking != null ? (
+          <ErpDialog onClose={cancelAsk} label={asking}>
+            <DialogHeader onClose={cancelAsk}>
+              <DialogTitle>{asking}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              <div role="status" aria-label="Opening the form" className="flex animate-pulse flex-col gap-4">
+                {[0, 1, 2, 3, 4].map((n) => (
+                  <div key={n} className="flex flex-col gap-1.5">
+                    <span className="h-3 w-28 rounded bg-divider" />
+                    <span className="h-9 w-full rounded bg-divider" />
+                  </div>
+                ))}
+              </div>
+            </DialogBody>
+          </ErpDialog>
+        ) : null}
         {form?.flow === "grn" ? (
           <GrnDialog
             key={formKey}

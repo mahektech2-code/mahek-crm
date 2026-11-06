@@ -247,6 +247,8 @@ function Control({
   }
   if (f.t === "select") {
     if ((opts.length > 12 || f.typed) && !f.readOnly) return <Combo value={value} opts={opts} error={error} onChange={onChange} placeholder={f.typed} />;
+    /* A locked field offers nothing, so it draws no list: a fixed billing party was six thousand <option>s in the page. */
+    if (f.readOnly && opts.length > 12) return <input value={value} disabled readOnly className={control(error)} />;
     return (
       <select value={value} disabled={f.readOnly} onChange={(e) => onChange(e.target.value)} className={control(error, "cursor-pointer")}>
         <option value="">{opts.length ? "Choose…" : "Nothing available"}</option>

@@ -1004,6 +1004,7 @@ export const VERBS: Record<string, string> = {
   add: "added",
   added: "added",
   edit: "edited",
+  billing_party: "changed the billing party on {}",
   update: "updated",
   updated: "updated",
   set: "set",

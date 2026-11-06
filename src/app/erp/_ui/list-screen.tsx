@@ -385,18 +385,14 @@ export function ListScreen({
     if (!spec.newForm && spec.newFormLazy) void askNew();
   };
   const openNew = (preset?: Record<string, string>) => {
-    const open = (form: FormSpec) => {
+    const shape = (form: FormSpec): FormSpec => {
       const known = new Set(form.header.map((f) => f.k));
       const given = Object.fromEntries(Object.entries(preset ?? {}).filter(([k]) => known.has(k)));
-      ui.openForm(preset ? { ...form, init: { ...form.init, ...given } } : form);
+      return preset ? { ...form, init: { ...form.init, ...given } } : form;
     };
-    if (spec.newForm) return open(spec.newForm);
+    if (spec.newForm) return ui.openForm(shape(spec.newForm));
     if (!spec.newFormLazy) return;
-    void askNew().then((res) => {
-      newAsk.current = null;
-      if (res.ok) open(res.data);
-      else ui.toast(res.error, "error");
-    });
+    ui.askForm(spec.newLabel ?? "New", () => askNew().finally(() => (newAsk.current = null)), shape);
   };
   /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
   const newOpened = useRef(false);

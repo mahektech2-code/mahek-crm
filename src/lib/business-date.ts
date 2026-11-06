@@ -359,16 +359,33 @@ function shiftDays(
   };
 }
 
+/**
+ * One formatter per zone, kept. Building an `Intl.DateTimeFormat` costs far more
+ * than using one, and "what day is it" is asked in loops: the order form asked
+ * once per party and per SKU, and this constructor was a third of the CPU behind
+ * opening that form.
+ */
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function zoneFormatter(timezone: string): Intl.DateTimeFormat {
+  let fmt = zoneFormatters.get(timezone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    zoneFormatters.set(timezone, fmt);
+  }
+  return fmt;
+}
+
 function zonedParts(now: Date, timezone: string) {
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  const fmt = zoneFormatter(timezone);
   const parts = Object.fromEntries(
     fmt.formatToParts(now).map((p) => [p.type, p.value]),
   );
