@@ -18,6 +18,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { listedTransporterName } from "@/lib/erp/transporter-rename";
 import { notificationAppSql } from "@/lib/notification-app-sql";
+import { REMIND_AFTER_MINUTES } from "@/lib/notification-feed";
 import {
   auditLog,
   customers,
@@ -2222,6 +2223,22 @@ export async function markNotificationRead(
     .update(notifications)
     .set({ read: true })
     .where(and(eq(notifications.id, notificationId), eq(notifications.userId, ctx.user.id)));
+  return okVoid();
+}
+
+/**
+ * The ERP pop-up's answers, for one notification or a whole batch. Only your
+ * own rows, and only unread ones: "later" must not bring back something
+ * already dealt with. The server sets the time, so a wrong laptop clock cannot.
+ */
+export async function answerNotifications(ids: string[], answer: "read" | "later"): Promise<Result> {
+  const ctx = await resolveScope();
+  if (!ids.length) return okVoid();
+  const later = new Date(Date.now() + REMIND_AFTER_MINUTES * 60_000);
+  await db
+    .update(notifications)
+    .set(answer === "read" ? { read: true } : { remindAt: later })
+    .where(and(inArray(notifications.id, ids.slice(0, 100)), eq(notifications.userId, ctx.user.id), eq(notifications.read, false)));
   return okVoid();
 }
 

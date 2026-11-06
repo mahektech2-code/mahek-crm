@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { markNotificationRead, markNotificationsRead } from "@/lib/actions/crm";
+import { answerNotifications, markNotificationRead, markNotificationsRead } from "@/lib/actions/crm";
 import {
   ANNOUNCED_KEY,
   PREF_DESKTOP,
@@ -10,6 +10,8 @@ import {
   ago,
   arrivals,
   dwellMs,
+  nextPopups,
+  popsUpIn,
   pruneAnnounced,
   soundOn,
   splitForDisplay,
@@ -23,6 +25,7 @@ import { appFor } from "@/lib/app-routes";
 import { shownIn, type AppUnread } from "@/lib/notification-apps";
 import { cx } from "@/components/ui/primitives";
 import { Icon } from "./icons";
+import { NotificationModal, TONE_STYLE } from "./notification-modal";
 
 /* ---------------------------------------------------------------------------
  * THE LIVE BELL — one per tab, mounted in the root layout so every app gets
@@ -39,6 +42,11 @@ import { Icon } from "./icons";
  *   3. where the tab is in the background and the person has allowed it,
  *      raises a desktop notification, so a telecaller on another tab still
  *      hears about the declined order.
+ *
+ * IN THE ERP the first of those is different: `popsUpIn` makes it a pop-up over
+ * the screen, one notification at a time, answered by taking action or by being
+ * reminded in half an hour (`notification-modal.tsx`). That reminder needs no
+ * scheduled job: the time is stored on the row and this polling brings it back.
  *
  * The chime and the desktop alert are CLAIMED once per notification across
  * every tab of the browser (`ANNOUNCED_KEY`), so four open tabs are one
@@ -103,6 +111,14 @@ function markLocal(hits: (n: FeedItem) => boolean) {
     .filter(([app]) => state.forApp == null || app === null || app === state.forApp)
     .reduce((t, [, c]) => t + c, 0);
   setFeed({ ...state, items, all: mark(state.all), byApp, unread: Math.max(0, (state.unread ?? 0) - dropped) });
+}
+
+/** Answers a pop-up: read now, or back in half an hour. Keeps the badge honest at once. */
+async function answerPopups(ids: string[], answer: "read" | "later") {
+  if (answer === "read") markLocal((n) => ids.includes(n.id));
+  const res = await answerNotifications(ids, answer);
+  refreshNotifications();
+  return res;
 }
 
 export async function readOne(id: string) {
@@ -264,6 +280,7 @@ export function NotificationCenter() {
   const viewApp = pathname ? appFor(pathname) : null;
   const appRef = React.useRef(viewApp);
   const [pops, setPops] = React.useState<Pop[]>([]);
+  const [popups, setPopups] = React.useState<FeedItem[]>([]);
   const known = React.useRef<Set<string> | null>(null);
   const signedOut = React.useRef(false);
   const inFlight = React.useRef(false);
@@ -279,7 +296,14 @@ export function NotificationCenter() {
       byApp: answer.byApp ?? [],
       forApp: appRef.current,
     });
-    if (!fresh.length) return;
+    const popsUp = popsUpIn(appRef.current);
+    if (popsUp) setPopups((current) => nextPopups(current, answer, fresh));
+    /* A reminder chimes each time it comes back, so its claim names the reminder. */
+    const toAnnounce = [
+      ...fresh.map((n) => ({ n, key: n.id })),
+      ...(popsUp ? (answer.due ?? []) : []).map((n) => ({ n, key: `${n.id}@${n.remindAt}` })),
+    ];
+    if (!toAnnounce.length) return;
 
     const hidden = document.visibilityState === "hidden";
     const { show, more } = splitForDisplay(fresh);
@@ -292,8 +316,8 @@ export function NotificationCenter() {
     // One chime per batch, in the tone of the most serious thing in it.
     let chimeTone: NotifyTone | null = null;
     const rank: Record<NotifyTone, number> = { info: 0, success: 1, warn: 2, danger: 3 };
-    for (const n of fresh) {
-      if (!claim(n.id)) continue;
+    for (const { n, key } of toAnnounce) {
+      if (!claim(key)) continue;
       const t = toneOf(n.kind);
       if (chimeTone === null || rank[t] > rank[chimeTone]) chimeTone = t;
       if (hidden && desktop) {
@@ -312,6 +336,7 @@ export function NotificationCenter() {
     }
     if (chimeTone && sound) playChime(chimeTone);
 
+    if (popsUp) return;
     setPops((current) => {
       const already = new Set(current.map((p) => p.item.id));
       const added = show
@@ -424,9 +449,40 @@ export function NotificationCenter() {
   /* The factory app is a phone screen of its own, with its own toasts; a
      desktop pop-up over a scan screen covers the one button that matters. */
   const onSignIn = pathname?.startsWith("/login") || pathname?.startsWith("/factory");
-  if (onSignIn || !pops.length) return null;
+  /* A label or an invoice being printed is not to be stopped by a pop-up. */
+  const onPrint = pathname?.startsWith("/erp/print");
+  const showPopups = !onSignIn && !onPrint && popsUpIn(viewApp) && popups.length > 0;
+  const leave = (ids: string[]) => setPopups((q) => q.filter((n) => !ids.includes(n.id)));
+  /* Taken off the screen at once; if the save fails it goes back, rather than being lost. */
+  const answer = async (items: FeedItem[], how: "read" | "later") => {
+    const ids = items.map((n) => n.id);
+    leave(ids);
+    try {
+      const res = await answerPopups(ids, how);
+      if (!res.ok) setPopups((q) => [...items, ...q]);
+    } catch {
+      setPopups((q) => [...items, ...q]);
+    }
+  };
+  const popupModal = showPopups ? (
+    <NotificationModal
+      queue={popups}
+      onAct={(n) => {
+        void answer([n], "read");
+        /* The page they are sent to is the job; the rest wait rather than landing on top of it. */
+        const rest = popups.filter((x) => x.id !== n.id);
+        if (rest.length) void answer(rest, "later");
+        if (n.href) router.push(n.href);
+      }}
+      onRead={(items) => void answer(items, "read")}
+      onLater={(items) => void answer(items, "later")}
+    />
+  ) : null;
+  if (onSignIn || !pops.length) return popupModal;
 
   return (
+    <>
+    {popupModal}
     <div
       role="region"
       aria-label="New notifications"
@@ -454,17 +510,11 @@ export function NotificationCenter() {
         />
       ))}
     </div>
+    </>
   );
 }
 
 /* ------------------------------------------------------------------- popup */
-
-const TONE_STYLE: Record<NotifyTone, { bar: string; chip: string; label: string }> = {
-  info: { bar: "bg-brand", chip: "bg-brand-soft text-brand", label: "Notification" },
-  success: { bar: "bg-success", chip: "bg-success-soft text-success", label: "Good news" },
-  warn: { bar: "bg-warn", chip: "bg-warn-soft text-warn-ink", label: "Needs a look" },
-  danger: { bar: "bg-danger", chip: "bg-danger-soft text-danger", label: "Needs you" },
-};
 
 function NotificationPopup({
   pop,

@@ -2171,6 +2171,13 @@
       "when": 1793640600000,
       "tag": "0314_erp_order_details_unverified_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 310,
+      "version": "7",
+      "when": 1793641200000,
+      "tag": "0315_notifications_remind_at",
+      "breakpoints": true
     }
   ]
 }

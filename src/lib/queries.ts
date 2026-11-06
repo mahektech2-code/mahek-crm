@@ -3,6 +3,7 @@ import { cache } from "react";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { notificationAppSql } from "@/lib/notification-app-sql";
+import { popsUpIn } from "@/lib/notification-feed";
 import { APP_TIMEZONE, asDate, calendarDate } from "@/lib/business-date";
 import type { TrackedMessage } from "@/lib/whatsapp-status";
 import {
@@ -2147,13 +2148,23 @@ export async function notificationFeed(userId: string, app: string | null = null
     href: notifications.href,
     read: notifications.read,
     createdAt: notifications.createdAt,
+    remindAt: notifications.remindAt,
     app: sql<string | null>`${appExpr}`,
   };
   const newest = (where: SQL | undefined) =>
     db.select(pick).from(notifications).where(where).orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(30);
-  const [items, all, byApp] = await Promise.all([
+  const [items, all, due, byApp] = await Promise.all([
     newest(and(mine, inApp)),
     app === null ? Promise.resolve(null) : newest(mine),
+    /* Read apart from the newest thirty, which a reminder can fall out of while it waits. */
+    popsUpIn(app)
+      ? db
+          .select(pick)
+          .from(notifications)
+          .where(and(mine, inApp, eq(notifications.read, false), sql`${notifications.remindAt} <= now()`))
+          .orderBy(asc(notifications.remindAt))
+          .limit(30)
+      : Promise.resolve([]),
     db
       .select({ app: sql<string | null>`${appExpr}`, unread: sql<number>`count(*)::int` })
       .from(notifications)
@@ -2170,6 +2181,7 @@ export async function notificationFeed(userId: string, app: string | null = null
       app: n.app ?? null,
       read: n.read,
       createdAt: n.createdAt.toISOString(),
+      remindAt: n.remindAt ? n.remindAt.toISOString() : null,
     }));
   const counts = byApp.map((r) => ({ app: r.app ?? null, unread: Number(r.unread) }));
   const unread = counts
@@ -2179,6 +2191,7 @@ export async function notificationFeed(userId: string, app: string | null = null
     items: shape(items),
     unread,
     all: all === null ? shape(items) : shape(all),
+    due: shape(due),
     byApp: counts,
     now: new Date().toISOString(),
   };

@@ -4563,6 +4563,8 @@ export const notifications = pgTable(
      */
     mbosHref: text("mbos_href"),
     read: boolean("read").notNull().default(false),
+    /** "Remind me later" on the ERP pop-up: it comes back once this has passed. Null: nobody asked. */
+    remindAt: timestamp("remind_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -28,6 +28,8 @@ export type FeedItem = {
   read: boolean;
   /** ISO instant. */
   createdAt: string;
+  /** ISO instant somebody asked to be reminded at, or null. Only the live feed carries it. */
+  remindAt?: string | null;
 };
 
 export type FeedAnswer = {
@@ -39,6 +41,8 @@ export type FeedAnswer = {
   all: FeedItem[];
   /** Unread in every app, null being general. */
   byApp: { app: string | null; unread: number }[];
+  /** Unread reminders that have come due, in an app that pops them up. */
+  due?: FeedItem[];
   /** The server's clock, so "fresh" is not measured against a laptop's. */
   now: string;
 };
@@ -102,6 +106,41 @@ export function arrivals(
     return Number.isFinite(at) && Number.isFinite(now) && now - at <= freshMs;
   });
   return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+/** How long "Remind me later" waits. */
+export const REMIND_AFTER_MINUTES = 30;
+
+/**
+ * THE APPS WHOSE NOTIFICATIONS ARE A POP-UP RATHER THAN THE CORNER.
+ *
+ * In the ERP the corner cards stacked up and slid away unanswered, and most of
+ * them ask somebody to do something. There, one notification at a time stops the
+ * screen and is answered: take action, or be reminded. Every other app keeps its
+ * corner.
+ */
+export function popsUpIn(app: string | null): boolean {
+  return app === "erp";
+}
+
+/**
+ * Who is waiting to be answered, oldest first: whoever was already waiting, then
+ * the reminders that came due, then what just arrived. Anything answered in
+ * another tab or on another machine leaves, which the next answer says by being
+ * read or by carrying a reminder still to come.
+ */
+export function nextPopups(current: readonly FeedItem[], answer: Pick<FeedAnswer, "items" | "due" | "now">, fresh: readonly FeedItem[]): FeedItem[] {
+  const now = Date.parse(answer.now);
+  const latest = new Map<string, FeedItem>();
+  for (const n of [...answer.items, ...(answer.due ?? [])]) latest.set(n.id, n);
+  const out = new Map<string, FeedItem>();
+  for (const n of [...current, ...(answer.due ?? []), ...fresh]) {
+    const seen = latest.get(n.id) ?? n;
+    if (seen.read || out.has(n.id)) continue;
+    if (seen.remindAt && Date.parse(seen.remindAt) > now) continue;
+    out.set(n.id, seen);
+  }
+  return [...out.values()];
 }
 
 /** The pops to fly, and how many more there were behind them. */

@@ -16,7 +16,7 @@ import { setTestUser } from "@/lib/auth";
 import { notificationAppSql } from "@/lib/notification-app-sql";
 import { notificationAppOf } from "@/lib/notification-apps";
 import { notificationFeed } from "@/lib/queries";
-import { markNotificationsRead } from "@/lib/actions/crm";
+import { answerNotifications, markNotificationsRead } from "@/lib/actions/crm";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 let priya: typeof users.$inferSelect;
@@ -124,4 +124,38 @@ test("mark all read inside an app leaves the other apps' notifications unread", 
 
   await markNotificationsRead(null);
   assert.equal(await read(e), true);
+});
+
+test("the ERP pop-up: a reminder stays unread, comes due in the ERP only, and leaves once read", async () => {
+  const e = await note("/erp/transport");
+  const c = await note("/crm/customers/c_1");
+  const stranger = id("ntf");
+  const [other] = await db
+    .insert(users)
+    .values({ id: id("usr"), name: "Other", email: "other@test.local", phone: "9820011002", passwordHash: "x", role: "associate", initials: "OT" })
+    .returning();
+  await db.insert(notifications).values({ id: stranger, userId: other.id, title: "theirs", body: "", href: "/erp/transport" });
+
+  assert.equal((await answerNotifications([e, stranger], "later")).ok, true);
+  const row = async (nid: string) => (await db.select().from(notifications).where(eq(notifications.id, nid)))[0];
+  const set = await row(e);
+  assert.equal(set.read, false, "being reminded is not having read it");
+  const mins = (set.remindAt!.getTime() - Date.now()) / 60_000;
+  assert.ok(mins > 29 && mins <= 30, "half an hour, on the server's clock");
+  assert.equal((await row(stranger)).remindAt, null, "only your own");
+
+  const waiting = await notificationFeed(priya.id, "erp");
+  assert.deepEqual(waiting.due, [], "not due yet");
+  assert.ok(waiting.items.find((n) => n.id === e)?.remindAt, "the list says it is waiting");
+
+  await db.update(notifications).set({ remindAt: new Date(Date.now() - 1000) }).where(eq(notifications.id, e));
+  await db.update(notifications).set({ remindAt: new Date(Date.now() - 1000) }).where(eq(notifications.id, c));
+  assert.deepEqual((await notificationFeed(priya.id, "erp")).due?.map((n) => n.id), [e], "the ERP's, not the CRM's");
+  assert.deepEqual((await notificationFeed(priya.id, "crm")).due, [], "other apps ask for no reminders");
+
+  assert.equal((await answerNotifications([e], "read")).ok, true);
+  assert.deepEqual((await notificationFeed(priya.id, "erp")).due, []);
+  await answerNotifications([e], "later");
+  const after = await row(e);
+  assert.ok(after.read && after.remindAt!.getTime() < Date.now(), "something read cannot be brought back");
 });
