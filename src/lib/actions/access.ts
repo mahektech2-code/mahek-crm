@@ -20,6 +20,8 @@ import {
 } from "@/db/schema";
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
 import { getModule, moduleKeysForApp, wholeAppKeys } from "@/lib/modules";
+import { screensNewSince } from "@/lib/module-since";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { hashPassword } from "@/lib/auth";
 import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
@@ -196,6 +198,15 @@ export type SetAccessInput = {
    * report the person read. Grants, narrowing and levels need none.
    */
   confirmation?: ImpactConfirmation;
+  /**
+   * Apps whose NEW screens the dialog showed — the ones that shipped after the
+   * narrowed grant was last saved. Saving with them, ticked or left out, is
+   * the decision nobody had made, so the grant is re-stamped even where its
+   * screens did not move; otherwise a deliberate "no" could never clear the
+   * flag. The server recomputes which screens are new and ignores an app that
+   * has none.
+   */
+  reviewedNew?: string[];
   /** Only read when an account has to be created. */
   account?: {
     /** At least one of these two. Both is fine and often better. */
@@ -669,13 +680,19 @@ export async function setAccess(
   );
 
   const storedRows = await db
-    .select({ app: appModuleAccess.app, module: appModuleAccess.module })
+    .select({
+      app: appModuleAccess.app,
+      module: appModuleAccess.module,
+      setOn: sql<string>`(${appModuleAccess.createdAt} at time zone ${APP_TIMEZONE})::date::text`,
+    })
     .from(appModuleAccess)
     .where(eq(appModuleAccess.userId, userId));
   const storedByApp = new Map<AppId, string[]>();
+  const setOnByApp = new Map<AppId, string>();
   for (const r of storedRows) {
     const app = r.app as AppId;
     storedByApp.set(app, [...(storedByApp.get(app) ?? []), r.module]);
+    if ((setOnByApp.get(app) ?? "") < r.setOn) setOnByApp.set(app, r.setOn);
   }
   /** What they hold today, with "no rows" spelled out as every ordinary module — never an explicit-only one. */
   const before = new Map<AppId, string[]>(
@@ -723,6 +740,16 @@ export async function setAccess(
     return was.size !== now.length || now.some((m) => !was.has(m));
   });
 
+  /* NEW SCREENS DECIDED WITHOUT MOVING. A narrowed app kept exactly as it was
+     while the dialog was showing it screens that shipped after its last save:
+     the person was asked and said no. Its rows are rewritten as they stand so
+     the grant's date moves past those screens — and the audit says which. */
+  const reviewedNew = new Set(input.reviewedNew ?? []);
+  const acknowledged = [...wanted.keys()]
+    .filter((a) => held.includes(a) && !changed.includes(a) && reviewedNew.has(a) && storedByApp.has(a))
+    .map((a) => ({ app: a, left: screensNewSince(a, setOnByApp.get(a) ?? null, storedByApp.get(a) ?? []) }))
+    .filter((x) => x.left.length);
+
   const currentPowers = (
     await db.select({ power: erpUserPowers.power }).from(erpUserPowers).where(eq(erpUserPowers.userId, userId))
   ).map((r) => r.power);
@@ -754,6 +781,7 @@ export async function setAccess(
     !granted.length &&
     !revoked.length &&
     !changed.length &&
+    !acknowledged.length &&
     !releveled.length &&
     !powers &&
     !hrmsPowers &&
@@ -826,6 +854,9 @@ export async function setAccess(
     for (const app of [...granted, ...changed]) {
       await writeModules(tx, userId!, app, wanted.get(app)!, me.id);
     }
+    for (const { app } of acknowledged) {
+      await writeModules(tx, userId!, app, storedByApp.get(app)!, me.id);
+    }
   });
 
   const detail = [
@@ -837,6 +868,9 @@ export async function setAccess(
       : "",
     releveled.length
       ? `level ${releveled.map((a) => `${a} ${heldLevel.get(a)} → ${wantedRoles.get(a)}`).join(", ")}`
+      : "",
+    acknowledged.length
+      ? `new screens left out ${acknowledged.map((x) => `${x.app} (${x.left.map((m) => m.key).join(", ")})`).join(", ")}`
       : "",
     granted.length
       ? `level ${granted.map((a) => `${a} ${wantedRoles.get(a)}`).join(", ")}`
@@ -884,6 +918,9 @@ export async function setAccess(
           .join(", ")
       : "",
     revoked.length ? `no longer opens ${describe(revoked)}` : "",
+    acknowledged.length
+      ? `still without ${acknowledged.flatMap((x) => x.left.map((m) => m.label)).join(", ")} — decided`
+      : "",
     powers && wanted.has("erp") ? `holds ${powers.length} ERP power${powers.length === 1 ? "" : "s"}` : "",
     hrmsPowers && wanted.has("hrms") ? `holds ${hrmsPowers.length} HRMS power${hrmsPowers.length === 1 ? "" : "s"}` : "",
     designation.next ? `is ${designation.name} in the ERP` : designation.next === null && wanted.has("erp") ? "holds no ERP designation" : "",

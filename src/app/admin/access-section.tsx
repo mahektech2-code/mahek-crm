@@ -35,6 +35,7 @@ import {
   type ErpLevel,
 } from "@/lib/erp/designations";
 import { levelCarries } from "@/lib/capability-labels";
+import { dayLabel, namedList } from "@/lib/module-since";
 import { LEVEL_LABELS } from "@/lib/hat-labels";
 import { getApp, type AppId } from "@/lib/apps";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
@@ -128,10 +129,14 @@ const ALWAYS_OF = (app: AppId) => modulesForApp(app).filter((m) => isAlwaysOpen(
 const VIEWS = [
   "Everyone with access",
   "Narrowed access",
+  "New screens to decide",
   "No app at all",
   "Disabled",
 ] as const;
 type View = (typeof VIEWS)[number];
+
+/** Per app: the screens shipped after a narrowed grant was last saved. */
+type Fresh = Record<string, { keys: string[]; labels: string[]; setOn: string }>;
 
 /** The desired state while the dialog is open: app → the modules ticked. */
 type Draft = Record<string, string[]>;
@@ -235,12 +240,14 @@ export function AccessSection({
     if (!r.active) return false;
     if (view === "No app at all") return r.grants.length === 0;
     if (view === "Narrowed access") return r.grants.some((g) => !g.whole);
+    if (view === "New screens to decide") return r.grants.some((g) => g.newScreens.length > 0);
     return r.grants.length > 0;
   });
 
   const withAccess = rows.filter((r) => r.active && r.grants.length > 0).length;
   const narrowed = rows.filter((r) => r.grants.some((g) => !g.whole)).length;
   const disabled = rows.filter((r) => !r.active).length;
+  const undecided = rows.filter((r) => r.active && r.grants.some((g) => g.newScreens.length > 0)).length;
 
   return (
     <div>
@@ -277,6 +284,7 @@ export function AccessSection({
         <span className="flex-1" />
         <span className="text-[13px] whitespace-nowrap text-muted">
           {withAccess} with access · {narrowed} narrowed
+          {undecided ? ` · ${undecided} with new screens to decide` : ""}
           {disabled ? ` · ${disabled} disabled` : ""}
         </span>
       </div>
@@ -291,6 +299,8 @@ export function AccessSection({
             title={
               view === "Narrowed access"
                 ? "Nobody has been narrowed yet"
+                : view === "New screens to decide"
+                  ? "Nothing new to decide"
                 : view === "No app at all"
                   ? "Everybody has at least one app"
                   : view === "Disabled"
@@ -300,6 +310,8 @@ export function AccessSection({
             body={
               view === "Narrowed access"
                 ? "Every grant is the whole app. Manage somebody's access to withhold a screen."
+                : view === "New screens to decide"
+                  ? "Every narrowed grant was set after the screens it leaves out existed, so each of those was a decision. Whole-app grants receive new screens by themselves."
                 : view === "Disabled"
                   ? "Disabling a sign-in keeps the apps it holds, so it is the way to stop somebody signing in without deciding anything about their access."
                   : "Nothing matches this view."
@@ -367,6 +379,19 @@ export function AccessSection({
                                   {label} read only
                                 </Badge>
                               ))}
+                              {/* SHIPPED SINCE THIS WAS LAST SET. A narrowed
+                                  grant does not receive new screens, which is
+                                  right for the ones somebody left out and
+                                  wrong for the ones that did not exist yet —
+                                  so those are named until somebody decides. */}
+                              {g.newScreens.length && g.setOn ? (
+                                <Badge
+                                  tone="brand"
+                                  title={`Shipped after this was last set on ${dayLabel(g.setOn)}: ${namedList(g.newScreens.map((m) => m.label), 99)}. Manage access to decide — saving, ticked or left out, clears this.`}
+                                >
+                                  {g.newScreens.length} new screen{g.newScreens.length === 1 ? "" : "s"}
+                                </Badge>
+                              ) : null}
                             </span>
                           ))}
                         </span>
@@ -822,6 +847,20 @@ function AccessDialog({
   const levelsBefore = React.useMemo(() => levelsOf(basis), [basis]);
 
   const [draft, setDraft] = React.useState<Draft>(before);
+  /* SCREENS NOBODY HAS DECIDED FOR THEM: shipped after a narrowed grant was
+     last saved. Drawn with a "new" mark beside their boxes, and sent with the
+     save so that leaving one out is recorded as a decision rather than as
+     the same silence that made it invisible. */
+  const fresh: Fresh = React.useMemo(
+    () =>
+      Object.fromEntries(
+        (basis?.grants ?? [])
+          .filter((g) => g.newScreens.length && g.setOn)
+          .map((g) => [g.app, { keys: g.newScreens.map((m) => m.key), labels: g.newScreens.map((m) => m.label), setOn: g.setOn! }]),
+      ),
+    [basis],
+  );
+  const freshInDraft = Object.keys(fresh).filter((a) => draft[a]);
   /* THE ERP'S POWERS, beside the ERP grant: who verifies tests, who sees
      purchase money. Sent only while the ERP is ticked — unticking it takes the
      powers with it, the same as its screens. */
@@ -923,6 +962,7 @@ function AccessDialog({
          administrator out of somebody given nothing but associate grants. */
       account: chosen.userId ? undefined : { email: email.trim() || null, phone: phone.trim() || null },
       confirmation,
+      reviewedNew: freshInDraft,
     }).then((r) => {
       setSaving(false);
       if (!r.ok && r.fieldErrors?.length) {
@@ -969,7 +1009,7 @@ function AccessDialog({
   const hireRoleChanged = hireRoleAfter !== hireRoleBefore;
   const placeAfter = draft.factory ? factoryPlace : null;
   const placeChanged = JSON.stringify(placeAfter) !== JSON.stringify(placeBefore);
-  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged || placeChanged };
+  const changes = { ...moduleChanges, any: moduleChanges.any || freshInDraft.length > 0 || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged || placeChanged };
 
   return (
     <>
@@ -1050,6 +1090,7 @@ function AccessDialog({
             designations={designations}
             designationId={designationId}
             onDesignation={setDesignationId}
+            fresh={fresh}
           />
         ) : step === "review" ? (
           <ReviewStep
@@ -1064,6 +1105,7 @@ function AccessDialog({
             hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
             hireRoleChange={hireRoleChanged && draft.hire ? { before: hireRoleBefore, after: hireRoleAfter, level: levelOf("hire") } : null}
             placeChange={placeChanged && draft.factory ? { before: placeBefore, after: placeAfter, level: levelOf("factory") } : null}
+            fresh={Object.fromEntries(freshInDraft.map((a) => [a, fresh[a]]))}
             designationChange={
               designationChanged || (designationNow && standingAfter && !standingAfter.matches)
                 ? { before: designationName(designationBefore), after: designationName(designationAfter), standing: standingAfter }
@@ -1405,6 +1447,7 @@ function AccessStep({
   designations,
   designationId,
   onDesignation,
+  fresh,
 }: {
   needsAccount: boolean;
   name: string;
@@ -1435,6 +1478,8 @@ function AccessStep({
   designations: ErpDesignationDef[];
   designationId: string | null;
   onDesignation: (id: string | null) => void;
+  /** Screens shipped after each narrowed grant was last saved. */
+  fresh: Fresh;
 }) {
   /* PICKING A DESIGNATION WRITES WHAT IT HOLDS — screens, level and powers in
      one move, through the same `draftFor` the server's own reading of
@@ -1554,6 +1599,7 @@ function AccessStep({
             built={app.built}
             retired={!!app.retiredInto}
             ticked={draft[app.id] ?? []}
+            fresh={fresh[app.id]}
             first={i === 0}
             role={roleDraft[app.id] ?? "associate"}
             onRole={(next) => {
@@ -1616,6 +1662,7 @@ function AppBlock({
   built,
   retired,
   ticked,
+  fresh,
   first,
   role,
   onRole,
@@ -1632,6 +1679,8 @@ function AppBlock({
   /** Retired into another app: drawn only while held, so it can be taken away. */
   retired: boolean;
   ticked: string[];
+  /** Screens of this app shipped after the grant was last saved. */
+  fresh?: Fresh[string];
   first: boolean;
   role: RoleId;
   onRole: (next: RoleId) => void;
@@ -1735,6 +1784,14 @@ function AppBlock({
                 </option>
               ))}
             </select>
+          </span>
+        ) : null}
+        {on && fresh ? (
+          <span
+            className="text-[11px] whitespace-nowrap text-brand-hover"
+            title={`Shipped after this was last set on ${dayLabel(fresh.setOn)}: ${namedList(fresh.labels, 99)}. Tick what they should have; saving records the rest as decided.`}
+          >
+            {fresh.keys.length} new since {dayLabel(fresh.setOn)}
           </span>
         ) : null}
         {on && !whole ? (
@@ -1932,10 +1989,17 @@ function AppBlock({
                       // in the layout: forty sentences on one page is clutter
                       // rather than help, the same trade the microphone's own
                       // guidance makes.
-                      title={m.note}
+                      title={fresh?.keys.includes(m.key) ? `New since ${dayLabel(fresh.setOn)} — nobody has decided this one for them yet.${m.note ? ` ${m.note}` : ""}` : m.note}
                       onChange={() => change(toggleModule(app, ticked, m.key))}
                       className="min-w-0 py-[1px]"
-                      label={<span className="truncate text-[13px] text-body">{m.label}</span>}
+                      label={
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="truncate text-[13px] text-body">{m.label}</span>
+                          {fresh?.keys.includes(m.key) ? (
+                            <span className="flex-none rounded-[3px] bg-brand-soft px-1 text-[10px] font-medium text-brand-hover">new</span>
+                          ) : null}
+                        </span>
+                      }
                     />
                   ),
                 )}
@@ -2057,6 +2121,7 @@ function ReviewStep({
   hireRoleChange,
   placeChange,
   designationChange,
+  fresh,
 }: {
   name: string;
   creating: boolean;
@@ -2080,6 +2145,8 @@ function ReviewStep({
     after: string | null;
     standing: { matches: boolean; lines: string[] } | null;
   } | null;
+  /** New screens on apps they keep — what this save decides about each. */
+  fresh: Fresh;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
   /* "Manager in Accounts", because a level on its own no longer names a hat
@@ -2333,6 +2400,23 @@ function ReviewStep({
             to do both. Every action taken under it records which hat allowed
             it, so the audit can answer for it later.
           </p>
+        </div>
+      ) : null}
+
+      {Object.keys(fresh).length ? (
+        <div className="mt-2 text-[13px] leading-[19px] text-body">
+          {Object.entries(fresh).map(([app, f]) => {
+            const given = f.keys.filter((k) => draft[app]?.includes(k));
+            const left = f.labels.filter((_, i) => !draft[app]?.includes(f.keys[i]));
+            return (
+              <p key={app}>
+                New on {appName(app as AppId)} since {dayLabel(f.setOn)}:{" "}
+                {given.length ? <>gets {namedList(f.labels.filter((_, i) => given.includes(f.keys[i])), 99)}</> : null}
+                {given.length && left.length ? "; " : null}
+                {left.length ? <>left out on purpose — {namedList(left, 99)}</> : null}.
+              </p>
+            );
+          })}
         </div>
       ) : null}
 

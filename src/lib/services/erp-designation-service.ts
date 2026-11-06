@@ -14,6 +14,7 @@ import {
 import { moduleKeysForApp } from "@/lib/modules";
 import { isErpPower } from "@/lib/erp/powers";
 import { isDepartmentSeat } from "@/lib/erp/departments";
+import { calendarDate } from "@/lib/business-date";
 import {
   designationShape,
   diffFromDesignation,
@@ -48,6 +49,7 @@ export async function listErpDesignations(): Promise<ErpDesignationDef[]> {
     modules: mods.filter((m) => m.designationId === d.id).map((m) => m.module).sort(),
     powers: pows.filter((p) => p.designationId === d.id).map((p) => p.power).filter(isErpPower),
     department: isDepartmentSeat(d.department) ? d.department : null,
+    setOn: calendarDate(d.updatedAt),
   }));
 }
 
