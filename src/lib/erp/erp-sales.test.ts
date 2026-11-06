@@ -47,6 +47,7 @@ import { dueOf, orderForm } from "@/lib/erp/screens/sales";
 import { dispatchLabels } from "@/lib/erp/label-data";
 import { withFills, type FieldSpec } from "@/lib/erp/ui";
 import { impactReport } from "@/lib/impact/registry";
+import { ensureStickers } from "@/lib/erp/dispatch-stickers";
 import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
 import { testPhone } from "@/lib/test-phone";
 
@@ -604,6 +605,28 @@ describe("editing the whole order in one modal", () => {
     assert.equal(kept.dispatchOn, "2026-09-25");
     assert.ok(!after.some((r) => r.id === boxed.id), "the line left off the form is removed");
     assert.ok(after.some((r) => r.skuId === dashedId && r.qtyCans === 12), "the new line joins the same order");
+  });
+
+  test("a line whose dispatch stickers were printed can still be swapped for another SKU", async () => {
+    const ctx = await as(admin);
+    const made = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-23", godown: "Bhiwandi", billing: "Shree Paints", dupOk: "Yes — it is a separate order" }, [
+      { sku: LOOSE, qty: "6", rate: "300" },
+      { sku: BOXED, qty: "8" },
+    ]);
+    assert.ok(made.ok, msg(made));
+    const rows = await db.select().from(erpOrders).where(eq(erpOrders.orderDate, "2026-09-23"));
+    const loose = rows.find((r) => r.qtyCans === 6)!;
+    const boxed = rows.find((r) => r.qtyCans === 8)!;
+    /* Order 10159: stickers printed, then the Loose line swapped for a variant — the delete hit the stickers' foreign key. */
+    await ensureStickers(loose.orderNo, new Map([[loose.id, 6]]), admin.id);
+    const saved = await mod("orders").forms!.editOrder!(ctx, {}, [
+      { sku: DASHED, qty: "12" },
+      { lineId: boxed.id, sku: BOXED, qty: "8" },
+    ], boxed.id);
+    assert.ok(saved.ok, msg(saved));
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, loose.id))).length, 0, "the swapped line is gone");
+    const left = (await db.execute(sql`select count(*)::int as n from erp_dispatch_stickers where order_id = ${loose.id}`)) as unknown as { n: number }[];
+    assert.equal(Number(left[0].n), 0, "and its printed stickers with it");
   });
 
   test("it refuses before it writes anything", async () => {

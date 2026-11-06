@@ -61,6 +61,7 @@ import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
+import { dropLineStickers } from "../dispatch-stickers";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
 import { notifyUsers } from "@/lib/notify";
 import {
@@ -958,7 +959,10 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
     }
   }
   for (const l of [...removed, ...replaced]) {
-    await db.delete(erpOrders).where(eq(erpOrders.id, l.o.id));
+    await db.transaction(async (tx) => {
+      await dropLineStickers(tx, [l.o.id]);
+      await tx.delete(erpOrders).where(eq(erpOrders.id, l.o.id));
+    });
     await erpAudit(ctx, "erp.order.delete", "erp_order", l.o.id, l.o, null);
     await reopenOrderCheck(ctx, l.o.orderNo, `${l.sku.name} removed`);
   }
@@ -2186,7 +2190,10 @@ async function doMoveOut(ctx: ErpContext, id: string, values: Record<string, str
       updatedById: ctx.user.id,
     });
     if (split.stays > 0) await tx.update(erpOrders).set({ qtyCans: split.stays, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrders.id, id));
-    else await tx.delete(erpOrders).where(eq(erpOrders.id, id));
+    else {
+      await dropLineStickers(tx, [id]);
+      await tx.delete(erpOrders).where(eq(erpOrders.id, id));
+    }
     await addReview(tx, ctx, l.o.orderNo, "order", "reset", `${nf(split.moves)} cans of ${l.sku.name} moved to order ${newNo}, to go later`);
   });
   await erpAudit(ctx, "erp.order.moveOut", "erp_order", id, { orderNo: l.o.orderNo, qty: l.o.qtyCans }, { newOrderNo: newNo, moved: split.moves, stays: split.stays });
@@ -2260,6 +2267,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
           /* Mahek Plus's retired follow-up remark held the line by a foreign
              key, so a line that carried one could never be deleted at all. */
           await tx.delete(erpFollowups).where(eq(erpFollowups.orderId, id));
+          await dropLineStickers(tx, [id]);
           await tx.delete(erpOrders).where(eq(erpOrders.id, id));
         });
         await erpAudit(ctx, "erp.order.delete", "erp_order", id, l.o, null);

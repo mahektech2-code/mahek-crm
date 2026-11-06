@@ -129,6 +129,21 @@ export async function stickerInfo(ex: Ex, id: string, lock = false): Promise<Sti
   };
 }
 
+/**
+ * A LINE BEING DELETED TAKES ITS STICKERS WITH IT. A sticker row names its
+ * line by a foreign key, so once an order's stickers were printed, removing or
+ * swapping a line in Edit order failed with a raw "Failed query: delete from
+ * erp_orders" (order 10159, a Loose line swapped for its 700 gm variant). The
+ * paper for a line that no longer exists is void either way; the order's
+ * stickers are printed again for the lines it now has. A sticker already
+ * paired with a box is left alone: that box is on the line, and the line's own
+ * allocation guard refuses the delete before this runs.
+ */
+export async function dropLineStickers(ex: Ex, lineIds: string[]): Promise<void> {
+  if (!lineIds.length) return;
+  await ex.execute(sql`delete from erp_dispatch_stickers where order_id in ${lineIds} and unit_id is null`);
+}
+
 /** The lines (by id) that carry live stickers: those load by box AND sticker. */
 export async function stickeredLines(ex: Ex, lineIds: string[]): Promise<Set<string>> {
   if (!lineIds.length) return new Set();
