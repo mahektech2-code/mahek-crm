@@ -278,6 +278,7 @@ export function HandsetsSection() {
                   <Th>Handset</Th>
                   <Th>App version</Th>
                   <Th>Status</Th>
+                  <Th>Notifications</Th>
                   <Th>On this build</Th>
                   <Th align="right">Last heard</Th>
                   <Th align="right"> </Th>
@@ -464,6 +465,9 @@ function HandsetLine({
         ) : null}
       </Td>
       <Td className="py-3">
+        <NotificationsCell row={row} />
+      </Td>
+      <Td className="py-3">
         {row.appVersionChangedAt ? (
           <div className="text-[13px] text-ink" title={stamp(row.appVersionChangedAt)}>
             Upgraded {now ? ago(row.appVersionChangedAt, now) : ""}
@@ -518,4 +522,20 @@ function StatusBadge({ status }: { status: VersionStatus }) {
     default:
       return <Badge tone="muted">No handset</Badge>;
   }
+}
+
+/** Allowed and reachable are two facts: a phone can say yes and still hold no push token. */
+function NotificationsCell({ row }: { row: HandsetRow }) {
+  if (!row.deviceId) return <span className="text-[13px] text-muted">—</span>;
+  if (row.hasPushToken) return <Badge tone="success">On</Badge>;
+  if (row.notificationPermission === "granted") {
+    return (
+      <span title="The phone allows notifications but has no push token, so nothing can reach it yet. It needs an app build with Firebase.">
+        <Badge tone="warn">Allowed, no token</Badge>
+      </span>
+    );
+  }
+  if (row.notificationPermission === "denied") return <Badge tone="danger">Turned off</Badge>;
+  if (row.notificationPermission === "undetermined") return <Badge tone="warn">Not answered</Badge>;
+  return <span className="text-[13px] text-muted">Not reported</span>;
 }

@@ -94,8 +94,7 @@ async function tell(
     userId,
     title,
     body,
-    href: href ?? null,
-    mbosHref: mbosHref ?? null,
+    ...(href ? { href, mbosHref: mbosHref ?? null } : { mbosHref: mbosHref ?? "/notifications" }),
   }).catch(() => {});
 }
 

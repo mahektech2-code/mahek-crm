@@ -3263,7 +3263,7 @@ async function unreadNotifications(userId: string) {
       createdAt: notifications.createdAt,
     })
     .from(notifications)
-    .where(and(eq(notifications.userId, userId), eq(notifications.read, false)))
+    .where(and(eq(notifications.userId, userId), eq(notifications.read, false), sql`(${notifications.mbosHref} is not null or coalesce(${notifications.href}, '') = '')`))
     .orderBy(sql`${notifications.createdAt} desc`)
     .limit(100);
 }
@@ -3678,6 +3678,8 @@ export async function buildPull(
           and(
             eq(notifications.userId, principal.user.id),
             sql`${notifications.createdAt} > ${sinceIso}`,
+            /* A desk's notification stays at the desk: same rule as `reachesHandset`. */
+            sql`(${notifications.mbosHref} is not null or coalesce(${notifications.href}, '') = '')`,
           ),
         )
         .orderBy(sql`${notifications.createdAt} asc`)

@@ -85,6 +85,7 @@ export async function releaseHandsetBinding(input: {
     id: gen("ntf"),
     userId: row.userId,
     kind: "neutral",
+    mbosHref: "/notifications",
     title: "Your handset was released",
     body: `${input.actor.name} released the phone you were signed in on — ${reason}. Sign in again on the handset you are using now.`,
   });

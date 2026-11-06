@@ -8,7 +8,6 @@ import {
   customerAmChanges,
   customers,
   employees,
-  notifications,
   users,
 } from "@/db/schema";
 import { assignedUserId } from "@/lib/access-control";
@@ -17,7 +16,7 @@ import { CRM_EVENT, writeTimelineEvents } from "@/lib/timeline";
 import { getConfig } from "@/lib/config/store";
 import { err, ok, okVoid, type Result } from "@/lib/result";
 import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
-import { notifyUsers } from "@/lib/notify";
+import { notifyUsers, type NotifyEntry } from "@/lib/notify";
 import type { AccountManagerChange } from "@/lib/actions/account-manager";
 
 /* ---------------------------------------------------------------------------
@@ -506,7 +505,7 @@ export async function applyAccountManagerChange(
      * accounts is told for the same reason in reverse — a book that shrinks
      * silently reads as a bug in the queue.
      */
-    const notes: (typeof notifications.$inferInsert)[] = [];
+    const notes: NotifyEntry[] = [];
     const plural = (n: number) => `${n} account${n === 1 ? "" : "s"}`;
     /*
      * Which reason to tell somebody about. A person can gain accounts through
@@ -527,23 +526,25 @@ export async function applyAccountManagerChange(
       .join(" · ");
     for (const [userId, count] of gained) {
       notes.push({
-        id: id("ntf"),
         userId,
         title: "Accounts assigned to you",
         body: `${actor.name} moved ${plural(count)} to you — ${reasonSentence}${noteSentence ? `: ${noteSentence}` : ""}`,
         kind: "info",
         href: "/crm/customers",
+        /* A salesman's book moves too, and he works it on the phone. */
+        mbosHref: "/customers",
       });
     }
     for (const [userId, count] of lost) {
       if (gained.has(userId)) continue; // net-unchanged: do not tell them twice
       notes.push({
-        id: id("ntf"),
         userId,
         title: "Accounts moved from you",
         body: `${actor.name} moved ${plural(count)} to somebody else — ${reasonSentence}`,
         kind: "info",
         href: "/crm/customers",
+        /* A salesman's book moves too, and he works it on the phone. */
+        mbosHref: "/customers",
       });
     }
     if (notes.length) await notifyUsers(notes);

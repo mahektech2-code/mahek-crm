@@ -44,7 +44,7 @@ export type Announcement = {
 export async function announce(a: Announcement): Promise<{ id: string; reached: number }> {
   const to = [...new Set(a.recipients)].filter((u) => u !== a.senderUserId);
   const title = a.title?.trim() || a.fromName;
-  const bellIds = await notifyUsers(to.map((userId) => ({ userId, title, body: a.text, href: a.href ?? null })));
+  const bellIds = await notifyUsers(to.map((userId) => ({ userId, title, body: a.text, general: true as const, href: a.href ?? null })));
   const id = `hntf_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   await db.insert(hrmsNotifications).values({
     id,

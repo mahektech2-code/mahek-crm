@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 import Constants from 'expo-constants';
@@ -292,6 +292,24 @@ async function registerForPushOnce(): Promise<PushReadiness> {
       why: 'This phone could not be set up for notifications. Messages still come in the app.',
     };
   }
+}
+
+/**
+ * "Turn on" on the pop-up. Android asks only so many times: past that the dialog
+ * never appears and only the phone's settings can change the answer, so that is
+ * where this goes rather than a button that visibly does nothing.
+ */
+export async function turnOnNotifications(): Promise<PushReadiness> {
+  try {
+    const now = (await Notifications.getPermissionsAsync()) as unknown as { granted: boolean; canAskAgain?: boolean };
+    if (!now.granted && now.canAskAgain === false) {
+      await Linking.openSettings();
+      return { ok: false, reason: 'permission', why: 'Turn on notifications for MBOS in your phone Settings.' };
+    }
+  } catch {
+    /* Falls through to the ordinary ask, which reports its own failure. */
+  }
+  return registerForPush();
 }
 
 /** Called on sign-out, so a released handset stops being pushed to. */

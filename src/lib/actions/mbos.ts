@@ -7716,6 +7716,7 @@ async function handleLeave(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     `${principal.user.name} has asked for ${leaveType.replace(/_/g, " ")} leave — ${span}.${
       p.reason ? ` ${p.reason}` : ""
     }`,
+    "/sales/leave",
   );
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -7839,6 +7840,7 @@ async function handleTerritoryRequest(principal: MbosPrincipal, item: SyncItem):
       `${principal.user.name} has asked to work ${p.requestedPlaces.join(", ")}` +
         (p.currentPlaces.length ? ` instead of ${p.currentPlaces.join(", ")}` : "") +
         `. ${p.reason?.trim() ?? ""} It is waiting on the Approvals queue.`,
+      "/sales/approvals",
     );
   }
 
@@ -8119,6 +8121,7 @@ async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<
       principal.user.id,
       `${principal.user.name} planned ${planDate}`,
       `He is working ${city} on ${planDate}, his own plan rather than a proposed one. He picks the shops next.`,
+      "/sales/journeys",
     );
 
     return { kind: "accepted", value: { serverId: item.entityId } };
@@ -8190,6 +8193,7 @@ async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<
     p.answer === "agreed"
       ? `${plan.city ?? "The day"} is agreed. He picks the shops next.`
       : `${(p.reason ?? "").trim()}${p.counterCity ? ` He would rather have ${p.counterCity.trim()}.` : ""}`,
+    "/sales/journeys",
   );
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -8336,6 +8340,7 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
     principal.user.id,
     `${principal.user.name} planned ${plan.planDate}`,
     `${allowed.length} ${allowed.length === 1 ? "shop" : "shops"} picked${plan.city ? ` in ${plan.city}` : ""}.`,
+    "/sales/journeys",
   );
 
   /* Accepted, and the shortfall said out loud rather than swallowed. Silently
@@ -8350,7 +8355,6 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
         title: `${plan.planDate}: ${refused.length} ${refused.length === 1 ? "shop" : "shops"} left out`,
         body: `${allowed.length} of ${allowed.length + refused.length} picked. The rest are not in your book any more — ask your manager if one of them should be.`,
         kind: "warn",
-        href: "/journey",
         mbosHref: "/journey",
       },
     ]).catch(() => {});
@@ -8963,6 +8967,7 @@ async function handleCustomerEdit(
           /* `warn` is the kind the bell colours; `warning` drew as ordinary. */
           kind: "warn",
           href: `/crm/customers/${customer.id}`,
+          mbosHref: "/notifications",
         },
       ]);
     }
@@ -9028,13 +9033,12 @@ export async function raiseRejectionTask(
       title: "An order was refused",
       body: rejection.message,
       kind: "warn",
-      href: "/field",
       mbosHref: "/rejections",
     },
   ]).catch(() => {});
 }
 
-async function notifyManagers(actorId: string, title: string, body: string) {
+async function notifyManagers(actorId: string, title: string, body: string, href = "/sales") {
   const [actor] = await db.select().from(users).where(eq(users.id, actorId)).limit(1);
   const targets = await db
     .select({ id: users.id })
@@ -9055,6 +9059,9 @@ async function notifyManagers(actorId: string, title: string, body: string) {
         title,
         body,
         kind: "info",
+        href,
+        /* A manager working from the phone hears it there too. */
+        mbosHref: "/notifications",
       })),
     )
     .catch(() => {});

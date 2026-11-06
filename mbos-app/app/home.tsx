@@ -49,6 +49,7 @@ import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix, type Fix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
 import { walkthroughDue } from '../src/data/setup-walkthrough';
+import { NotificationsPrompt } from '../src/components/setup/NotificationsPrompt';
 import { queueOdometerPhoto, queueSelfie } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
@@ -1760,6 +1761,8 @@ export default function Home() {
         tap and leaves nothing written — the same bargain the selfie strikes
         one step earlier.
       */}
+      <NotificationsPrompt />
+
       <BottomSheet
         open={modeOpen}
         onClose={() => {

@@ -80,7 +80,7 @@ export async function askAboutLine(input: { lineId: string; orderDate: string; n
         kind: "warn",
         title: `Billed below the book: ${line.customerName}`,
         body,
-        href: line.customerId ? `/crm/customers/${line.customerId}` : null,
+        href: line.customerId ? `/crm/customers/${line.customerId}` : "/accounts/price-lists/watch",
       })),
     );
     return ok({ told: others.length }, others.length === 1 ? "Asked. One person has been told." : `Asked. ${others.length} people have been told.`);

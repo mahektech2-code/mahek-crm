@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { notifications } from "@/db/schema";
 import { pushToUsers } from "./mbos/push";
+import { reachesHandset } from "./notification-apps";
 
 /**
  * Telling somebody something, once, through every channel they have.
@@ -33,28 +34,32 @@ import { pushToUsers } from "./mbos/push";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
-export type NotifyEntry = {
-  userId: string;
+/**
+ * WHERE IT GOES IS NOT OPTIONAL. A notification with no link used to count as
+ * general, so a holiday meant for salesmen and a manager's "leave requested" were
+ * drawn in every app's bell. Naming the destination is what keeps each app's bell
+ * to its own work, so the compiler refuses an entry that names none.
+ */
+type NotifyDestination =
+  /** Where the BELL goes, in MahekOne: a web route, and that app's bell. */
+  | { href: string; mbosHref?: string | null; general?: never }
+  /**
+   * Where a TAP goes, on the handset: an MBOS route, and a different set of
+   * screens entirely. `/notifications` when no screen is more precise. A row with
+   * only this goes to the phone and appears in no bell on the web.
+   */
+  | { href?: null; mbosHref: string; general?: never }
+  /** About the person or the whole company, not one app's work: shown everywhere. */
+  | { general: true; href?: string | null; mbosHref?: string | null };
+
+export type NotifyMessage = {
   title: string;
   body: string;
   /** `info` unless the caller says otherwise, matching the column's default. */
   kind?: string;
-  /**
-   * Where the BELL goes, in MahekOne. A web route.
-   */
-  href?: string | null;
-  /**
-   * Where a TAP goes, on the handset — an MBOS route, and a different set of
-   * screens entirely. `/accounts/approvals` is a page a field salesman has no
-   * app to open; `/rejections` is the one that shows him the same thing.
-   *
-   * Left null, a tap opens `/notifications`, which is always right and never
-   * precise. That is the honest default: a wrong deep link is a tap that
-   * lands somewhere confusing, and there is no way to guess the mapping for
-   * a kind nobody has thought about yet.
-   */
-  mbosHref?: string | null;
-};
+} & NotifyDestination;
+
+export type NotifyEntry = { userId: string } & NotifyMessage;
 
 /** Writes the bell rows and pushes them; answers the ids written, in the order given. */
 export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<string[]> {
@@ -80,13 +85,13 @@ export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<stri
      cannot throw — `pushToUsers` swallows everything — so awaiting costs the
      request the round trip and never its success. */
   await pushToUsers(
-    entries.map((e, i) => ({
-      userId: e.userId,
-      title: e.title,
-      body: e.body,
-      href: e.mbosHref ?? null,
-      notificationId: rows[i].id,
-      kind: rows[i].kind,
+    rows.filter((r) => reachesHandset(r.href, r.mbosHref)).map((r) => ({
+      userId: r.userId,
+      title: r.title,
+      body: r.body,
+      href: r.mbosHref,
+      notificationId: r.id,
+      kind: r.kind,
     })),
   );
   return rows.map((r) => r.id);

@@ -6430,6 +6430,8 @@ export const mbosDevices = pgTable(
      * leaves a real earlier answer standing instead of erasing it.
      */
     batteryExemption: text("battery_exemption"),
+    /** What the phone has answered about notifications. Null: this build cannot say. */
+    notificationPermission: text("notification_permission"),
     /**
      * WHEN THE THREE READINGS ABOVE WERE TAKEN, and the reason they are
      * useless without it.
