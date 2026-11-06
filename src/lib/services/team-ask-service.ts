@@ -1,4 +1,5 @@
 import "server-only";
+import { answerLanguageKey, answerLanguageNote, type AskVoice } from "@/lib/ask-voice";
 import { createHash } from "node:crypto";
 import { createOpenAI } from "@ai-sdk/openai";
 import { isStepCount, streamText, tool, type ModelMessage } from "ai";
@@ -438,11 +439,12 @@ async function answerStream(
   history: AskTurn[],
   emit: (e: AskEvent) => void,
   started: number,
+  voice: AskVoice | null = null,
 ): Promise<void> {
   /* A FRESH QUESTION ASKED A MOMENT AGO IS ANSWERED FROM MEMORY. Only a
      fresh one: "and last month?" means something different after every
      conversation, so a follow-up always goes to the model. */
-  const answerKey = history.length ? null : `${ctx.visibility}|${normaliseQuestion(question)}`;
+  const answerKey = history.length ? null : `${ctx.visibility}|${normaliseQuestion(question)}${answerLanguageKey(voice)}`;
   const remembered = answerKey ? answers.get(answerKey) : undefined;
   if (remembered) {
     emit({ type: "delta", text: remembered.text });
@@ -458,7 +460,7 @@ async function answerStream(
 
     const messages: ModelMessage[] = [
       ...history.slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 4000) }) as ModelMessage),
-      { role: "user", content: question },
+      { role: "user", content: question + answerLanguageNote(voice) },
     ];
 
     const result = streamText({
@@ -554,6 +556,8 @@ export async function askTeamStream(
   question: string,
   history: AskTurn[],
   emit: (e: AskEvent) => void,
+  /** Asked by voice: what was said, so the answer comes back in that language. */
+  voice: AskVoice | null = null,
 ): Promise<void> {
   const started = Date.now();
   try {
@@ -569,7 +573,7 @@ export async function askTeamStream(
       return;
     }
     const ctx = await contextFor(scope.user, config["salesAsk.contextCacheSeconds"]);
-    await answerStream(ctx, key, await limitsFor(config["salesAsk.model"]), question, history, emit, started);
+    await answerStream(ctx, key, await limitsFor(config["salesAsk.model"]), question, history, emit, started, voice);
   } catch (e) {
     console.error("Ask about the team failed:", e instanceof Error ? e.message : e);
     emit({ type: "error", message: failure(e, "Your access does not include asking about the team.") });
@@ -657,6 +661,8 @@ export async function askCrmStream(
   question: string,
   history: AskTurn[],
   emit: (e: AskEvent) => void,
+  /** Asked by voice: what was said, so the answer comes back in that language. */
+  voice: AskVoice | null = null,
 ): Promise<void> {
   const started = Date.now();
   try {
@@ -672,7 +678,7 @@ export async function askCrmStream(
       return;
     }
     const ctx = await crmContextFor(user, config["salesAsk.contextCacheSeconds"]);
-    await answerStream(ctx, key, await limitsFor(config["crmAsk.model"]), question, history, emit, started);
+    await answerStream(ctx, key, await limitsFor(config["crmAsk.model"]), question, history, emit, started, voice);
   } catch (e) {
     console.error("Ask the CRM failed:", e instanceof Error ? e.message : e);
     emit({ type: "error", message: failure(e, "Your access does not include asking the CRM.") });

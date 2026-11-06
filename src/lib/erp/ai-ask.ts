@@ -1,4 +1,5 @@
 import "server-only";
+import { answerLanguageNote, type AskVoice } from "@/lib/ask-voice";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, isStepCount, tool } from "ai";
 import { z } from "zod";
@@ -123,6 +124,8 @@ export async function askErp(
   question: string,
   /** Earlier turns of the drawer's conversation, so "and last month?" means something. */
   history: Array<{ role: "user" | "assistant"; text: string }> = [],
+  /** Asked by voice: what was said, so the answer comes back in that language. */
+  voice: AskVoice | null = null,
 ): Promise<{ ok: true; answer: AskAnswer } | { ok: false; error: string }> {
   const state = await featureState("ask", true);
   if (!state.on) return { ok: false, error: state.reason };
@@ -152,7 +155,7 @@ export async function askErp(
       ].join(" "),
       messages: [
         ...history.slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 4000) })),
-        { role: "user" as const, content: q },
+        { role: "user" as const, content: q + answerLanguageNote(voice) },
       ],
       tools: askTools(ctx, records),
       stopWhen: isStepCount(5),
