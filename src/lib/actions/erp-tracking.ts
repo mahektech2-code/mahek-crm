@@ -78,6 +78,20 @@ export async function erpInvoicePanel(no: number) {
 }
 
 /** The Print invoices pop-up: the orders behind a selection of order lines, and which have a PDF. */
+/** The ticked order lines as the invoice to make in Tally. Reads only, so a preview may open it. */
+export async function erpBillingView(screen: string, lineIds: unknown) {
+  try {
+    const ctx = await requireErpForm(screen);
+    const ids = Array.isArray(lineIds) ? [...new Set(lineIds.filter((x): x is string => typeof x === "string"))] : [];
+    if (!ids.length) return err("Nothing selected.", "validation");
+    const { billingViewFor, BILLING_VIEW_MAX_LINES } = await import("@/lib/erp/billing-view-read");
+    if (ids.length > BILLING_VIEW_MAX_LINES) return err(`That is ${ids.length} lines. Tick ${BILLING_VIEW_MAX_LINES} or fewer to see them as invoices.`, "validation");
+    return ok(await billingViewFor(ctx, ids));
+  } catch (e) {
+    return refused(e);
+  }
+}
+
 export async function erpInvoicePrintList(lineIds: unknown) {
   try {
     await requireErpForm("orders");

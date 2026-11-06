@@ -368,8 +368,12 @@ export type ToolResult = {
 export type BulkSpec = {
   id: string;
   l: string;
-  /** Handled on the page rather than by the server: "printInvoices" opens the Print invoices pop-up over the selection. */
-  client?: "printInvoices";
+  /**
+   * Handled on the page rather than by the server: "printInvoices" opens the
+   * Print invoices pop-up over the selection, "billingView" the invoice to make
+   * in Tally.
+   */
+  client?: "printInvoices" | "billingView";
   /**
    * Which row action says whether a ticked row can take this — by default the
    * row action with this bulk action's own id. The selection bar offers the

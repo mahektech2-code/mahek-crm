@@ -1331,12 +1331,15 @@ function orderList(scope: Scope): ScreenModule {
       const verifier = ctx.powers.has("verifyOrders");
       const checker = ctx.powers.has("checkInvoices");
       const holdKit = await holdSentences("hold");
+      /* Reading only, so any ticked line can take it, whatever state its order is in. */
+      const billingViewBulk: BulkSpec = { id: "billingView", l: "Billing view", client: "billingView", fits: false };
       const bulk: BulkSpec[] =
         labels
           ? []
           : checking
-            ? [{ id: "printInvoices", l: "Print invoices", client: "printInvoices" as const, fits: false as const }]
+            ? [billingViewBulk, { id: "printInvoices", l: "Print invoices", client: "printInvoices" as const, fits: false as const }]
             : [
+              billingViewBulk,
               ...(verifier && (scope === "verifyOrders" || scope === "orders") ? [{ id: "verifyOrder", l: "Verify order" }] : []),
               ...(verifier && scope === "orders" ? [{ id: "unverifyOrder", l: "Undo verification" }] : []),
               { id: "ready", l: "Ready" },

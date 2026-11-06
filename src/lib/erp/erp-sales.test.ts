@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { attachInvoicePdf } from "@/lib/erp/invoice-fixture";
+import { billingViewFor } from "@/lib/erp/billing-view-read";
 import { invoicePrintList } from "@/lib/erp/invoice-panel";
 import { db } from "@/db";
 import {
@@ -664,6 +665,33 @@ describe("editing the whole order in one modal", () => {
     assert.equal(bad.ok ? "" : bad.fieldErrors?.[0]?.field, "l0.qty", "the error lands on the line it is about");
     const [still] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
     assert.equal(still.qtyCans, 9, "nothing written");
+  });
+});
+
+describe("the billing view", () => {
+  test("a ticked line brings its whole order, leaves cancelled lines out, and answers for what the viewer may see", async () => {
+    const ctx = await as(admin);
+    const made = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-23", godown: "Bhiwandi", billing: "No List Traders", dupOk: "Yes — it is a separate order" }, [
+      { sku: LOOSE, qty: "3", rate: "300" },
+      { sku: LOOSE, qty: "5", rate: "300" },
+      { sku: BOXED, qty: "4", rate: "300" },
+    ]);
+    assert.ok(made.ok, msg(made));
+    const lines = await db.select().from(erpOrders).where(eq(erpOrders.orderDate, "2026-09-23"));
+    const gone = lines.find((l) => l.qtyCans === 5)!;
+    await db.update(erpOrders).set({ status: "Cancel" }).where(eq(erpOrders.id, gone.id));
+    const ticked = lines.find((l) => l.qtyCans === 3)!;
+
+    const [sheet, ...rest] = await billingViewFor(ctx, [ticked.id]);
+    assert.equal(rest.length, 0);
+    assert.equal(sheet.buyer[0].v.show, "No List Traders");
+    assert.deepEqual(sheet.rows.map((r) => r.cans.copy).sort(), ["3", "4"]);
+    assert.ok(sheet.totals.some((t) => t.l === "Invoice total"));
+
+    const blind = { ...ctx, powers: new Set([...ctx.powers].filter((p) => p !== "viewSalesRate" && p !== "viewSalesAmounts")) };
+    const [hidden] = await billingViewFor(blind, [ticked.id]);
+    assert.ok(hidden.rows.every((r) => r.rate == null && r.amount == null));
+    assert.deepEqual(hidden.totals, []);
   });
 });
 
