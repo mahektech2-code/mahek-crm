@@ -36,6 +36,7 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
+import { bulkOffers } from "@/lib/erp/bulk-fit";
 import { purchaseStage } from "@/lib/erp/screens/purchase";
 import { publicPoPdf } from "@/lib/erp/po-share";
 import { rmLots, rmLotStock } from "@/lib/erp/stock";
@@ -523,6 +524,63 @@ describe("register and stock", () => {
     assert.ok(!r.ok);
     const reopen = await mod("register").actions!.reopen(c2, p.id, {});
     assert.ok(!reopen.ok && reopen.code === "not_permitted");
+  });
+
+  test("the register's selection records one bill and verifies, and the bar offers both", async () => {
+    const ctx = await as(admin);
+    const reg = mod("register");
+    const [first, ...rest] = await db.select().from(erpPurchases);
+    assert.ok(rest.length >= 2, "the fixture has three purchases");
+    /* A second party for one of them, so a selection can span two. */
+    const before = rest[0].supplierId;
+    await db.update(erpPurchases).set({ supplierId: first.supplierId === "sup_b" ? "sup_a" : "sup_b" }).where(eq(erpPurchases.id, rest[0].id));
+    const others = [rest[0]];
+    const offered = async (c: Awaited<ReturnType<typeof as>>, ids: string[]) => {
+      const { spec, rows } = await reg.load(c);
+      return bulkOffers(spec.bulk ?? [], rows, ids).map((o) => o.label);
+    };
+
+    /* Both are offered on rows that can take them: this is what the bar draws. */
+    assert.deepEqual(await offered(ctx, [first.id]), ["Record the bill", "Verify purchase"]);
+
+    /* One bill comes from one party. */
+    const mixed = await reg.bulk!.billReceived(ctx, [first.id, others[0].id], { billNo: "AS/500" });
+    assert.ok(!mixed.ok && mixed.code === "rule_violation");
+    assert.ok(!(await reg.bulk!.billReceived(ctx, [first.id], { billNo: " " })).ok, "the number is required");
+
+    /* A row with its bill keeps its number, and the count says so. */
+    await db.update(erpPurchases).set({ billReceived: "Received", billNumber: "OLD/1", status: "Invoice Received" }).where(eq(erpPurchases.id, others[0].id));
+    const billed = await reg.bulk!.billReceived(ctx, [first.id, others[0].id], { billNo: "AS/500" });
+    assert.ok(billed.ok);
+    assert.match(billed.message ?? "", /1 purchase · 1 already had a bill/);
+    const after = async (id: string) => (await db.select().from(erpPurchases).where(eq(erpPurchases.id, id)))[0];
+    assert.equal((await after(first.id)).billNumber, "AS/500");
+    assert.equal(purchaseStage(await after(first.id)), "Bill received");
+    assert.equal((await after(others[0].id)).billNumber, "OLD/1");
+    assert.deepEqual(await offered(ctx, [first.id]), ["Verify purchase"], "nothing more to record");
+
+    /* Verify: a verified row says so on the button count and is left alone. */
+    assert.ok((await reg.bulk!.verifyMany(ctx, [first.id], {})).ok);
+    assert.equal(purchaseStage(await after(first.id)), "Verified");
+    assert.deepEqual(await offered(ctx, [first.id, others[0].id]), ["Verify purchase · 1 of 2"]);
+    assert.deepEqual(await offered(ctx, [first.id]), [], "a verified row has nothing left to offer");
+    const again = await reg.bulk!.verifyMany(ctx, [first.id, others[0].id], {});
+    assert.ok(again.ok);
+    assert.match(again.message ?? "", /1 purchase · 1 already verified/);
+    assert.ok(!(await reg.bulk!.verifyMany(ctx, [first.id], {})).ok, "nothing left to verify");
+
+    /* Money without the verifier power: the bill yes, Verify neither drawn nor allowed. */
+    await db.execute(sql`delete from erp_user_powers`);
+    await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney')`);
+    const c = await as(clerk);
+    const third = rest[1];
+    await db.update(erpPurchases).set({ billReceived: "Bill Not Received", status: "Pending" }).where(eq(erpPurchases.id, third.id));
+    assert.deepEqual(await offered(c, [third.id]), ["Record the bill"]);
+    const refused = await reg.bulk!.verifyMany(c, [third.id], {});
+    assert.ok(!refused.ok && refused.code === "not_permitted");
+    assert.notEqual((await after(third.id)).status, "Purchase Verified");
+    await db.update(erpPurchases).set({ supplierId: before }).where(eq(erpPurchases.id, rest[0].id));
+    await db.update(erpPurchases).set({ billReceived: third.billReceived, status: third.status }).where(eq(erpPurchases.id, third.id));
   });
 
   test("available stock lists lots above zero, and the cost is hidden without its power", async () => {

@@ -1520,7 +1520,21 @@ const register: ScreenModule = {
         filters: ["party", "item", "stage", "posting", "unit", "final"],
         newForm: newForm ?? undefined,
         newLabel: "New purchase",
-        bulk: money ? [{ id: "billReceivedMany", l: "Mark bill received", confirm: "Mark every selected purchase's bill as received?" }] : undefined,
+        bulk: money
+          ? [
+              {
+                id: "billReceived",
+                l: "Record the bill",
+                prompt: {
+                  title: "Record the bill",
+                  sub: "This bill number goes on every selected purchase that has no bill yet. One bill comes from one party.",
+                  submit: "Save",
+                  fields: [{ k: "billNo", l: "Bill number", t: "text", req: true }],
+                },
+              },
+              ...(verifier ? [{ id: "verifyMany", l: "Verify purchase", fits: "status", confirm: "Set every selected purchase to Purchase Verified?" }] : []),
+            ]
+          : undefined,
         noDataLine: "No purchases yet. Rows arrive as goods are received against a PO.",
       },
       tooWide: wide,
@@ -1552,6 +1566,8 @@ const register: ScreenModule = {
           actions.push({
             id: "status",
             l: "Change status",
+            /* A verifier's one choice is Purchase Verified, so a verified row has nothing left to set. This `why` is also what tells the selection bar it cannot take Verify purchase. */
+            why: verifier && p.status === "Purchase Verified" ? "Already Purchase Verified" : "",
             prompt: {
               title: "Purchase status",
               sub: verifier ? "The verifier sets Purchase Verified." : "Purchase Verified is set by the verifier.",
@@ -1751,17 +1767,43 @@ const register: ScreenModule = {
     },
   },
   bulk: {
-    async billReceivedMany(ctx, ids) {
+    /* The row action's rule, over a selection: a row that already has its bill keeps its number. */
+    async billReceived(ctx, ids, values) {
       if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
-      await db
+      const billNo = text(values.billNo);
+      if (!billNo) return fieldErr("billNo", "Bill number is required");
+      const open = and(inArray(erpPurchases.id, ids), sql`${erpPurchases.billReceived} is distinct from 'Received'`);
+      const parties = await db.selectDistinct({ id: erpPurchases.supplierId }).from(erpPurchases).where(open);
+      if (!parties.length) return err("These purchases already have their bill.", "rule_violation");
+      if (parties.length > 1) return err(`These purchases come from ${parties.length} parties, and one bill comes from one party. Select one party's purchases.`, "rule_violation");
+      const done = await db
         .update(erpPurchases)
-        .set({ billReceived: "Received", status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
-        .where(inArray(erpPurchases.id, ids));
-      await erpAudit(ctx, "erp.purchase.billReceived.bulk", "erp_purchase", null, null, { ids });
-      return okVoid(`${ids.length} marked bill received`);
+        .set({ billReceived: "Received", billNumber: billNo, status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(open)
+        .returning({ id: erpPurchases.id });
+      await erpAudit(ctx, "erp.purchase.billReceived.bulk", "erp_purchase", null, null, { billNo, ids: done.map((r) => r.id) });
+      return okVoid(`Bill ${billNo} recorded on ${counted(done.length, ids.length, "already had a bill")}`);
+    },
+    async verifyMany(ctx, ids) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      if (!ctx.powers.has("verifyPurchase")) return err(powerRefusal("verifyPurchase"), "not_permitted");
+      const done = await db
+        .update(erpPurchases)
+        .set({ status: "Purchase Verified", billReceived: "Received", updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(inArray(erpPurchases.id, ids), sql`${erpPurchases.status} <> 'Purchase Verified'`))
+        .returning({ id: erpPurchases.id });
+      if (!done.length) return err("These purchases are already Purchase Verified.", "rule_violation");
+      await erpAudit(ctx, "erp.purchase.status.bulk", "erp_purchase", null, null, { status: "Purchase Verified", ids: done.map((r) => r.id) });
+      return okVoid(`Purchase Verified: ${counted(done.length, ids.length, "already verified")}`);
     },
   },
 };
+
+/** "3 purchases", and how many of the selection were left alone and why. */
+function counted(done: number, chosen: number, leftAlone: string): string {
+  const said = `${done} purchase${done === 1 ? "" : "s"}`;
+  return done < chosen ? `${said} · ${chosen - done} ${leftAlone}` : said;
+}
 
 function figIn(p: typeof erpPurchases.$inferSelect) {
   return {
