@@ -1,4 +1,5 @@
 import "server-only";
+import { answerLanguageKey, answerLanguageNote, type AskVoice } from "@/lib/ask-voice";
 import { createOpenAI } from "@ai-sdk/openai";
 import { isStepCount, streamText, tool, type ModelMessage } from "ai";
 import { z } from "zod";
@@ -115,6 +116,8 @@ export async function askDocsStream(
   /** One app's pages only, or null for every app — the reader's choice in the panel. */
   scopeApp: string | null,
   emit: (e: DocsAskEvent) => void,
+  /** Asked by voice: what was said, so the answer comes back in that language. */
+  voice: AskVoice | null = null,
 ): Promise<void> {
   const started = Date.now();
   try {
@@ -137,7 +140,7 @@ export async function askDocsStream(
     const prefer = here && herePage ? { app: here.app, slug: herePage.slug } : null;
 
     const scope = scopeApp ? docApp(scopeApp) : undefined;
-    const answerKey = history.length ? null : `${scope?.app ?? "*"}|${here?.app ?? ""}|${normaliseQuestion(question)}`;
+    const answerKey = history.length ? null : `${scope?.app ?? "*"}|${here?.app ?? ""}|${normaliseQuestion(question)}${answerLanguageKey(voice)}`;
     const remembered = answerKey ? answers.get(answerKey) : undefined;
     if (remembered) {
       for (const s of remembered.sources) emit(s);
@@ -174,7 +177,7 @@ export async function askDocsStream(
         role: "user",
         content: `${question}\n\n---\n${where}${limitTo}\n\nFirst search of the documentation for this question:\n\n${
           first.length ? first.map((h) => hitLine(h, question, 900)).join("\n\n") : "(nothing matched — search with other words)"
-        }`,
+        }${answerLanguageNote(voice)}`,
       },
     ];
 

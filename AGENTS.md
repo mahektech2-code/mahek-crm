@@ -4958,6 +4958,20 @@ crosses the wire, and the handset defaults to unavailable. The model is
 `callIntel.confirmBelowPercent`, because how often a person should be asked is
 one judgement, not two.
 
+**EVERY ASK AI DRAWER TAKES A SPOKEN QUESTION, and answers in the language it
+was spoken in.** `components/shell/ask-mic.tsx` puts this same microphone
+beside the box in the CRM, Sales, ERP and Docs drawers — the same window, the
+same review of the English, with "Ask this" as its button. The ENGLISH is what
+the assistant reads, because the SQL, the screen loaders and the documentation
+search are all good at English; what was SAID rides beside it as `voice`, and
+`lib/ask-voice.ts` turns it into one instruction appended to the question:
+write the answer in that language and its own script, keeping figures and
+names exactly as the records give them. A telecaller who does not read English
+gains nothing from an English answer to a Marathi question. The answer cache
+is keyed on the answer's language too, or a Hindi answer would be served to the
+next person typing the same question in English. English speech adds nothing —
+the model already answers English in English.
+
 **THE SALESMAN GETS THE SAME MICROPHONE, and he needed it more than the
 telecaller did.** A telecaller types slowly with a customer on the line; a
 salesman types on a phone, one-handed, standing in a shop, in a language he

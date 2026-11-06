@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { listUserApps } from "@/lib/access";
+import { voiceSchema } from "@/lib/ask-voice";
 import { getCurrentUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 
@@ -23,6 +24,8 @@ const body = z.object({
     .array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(8000) }))
     .max(20)
     .default([]),
+  /** Asked by voice: the words as spoken, so the answer comes back in that language. */
+  voice: voiceSchema,
   warm: z.boolean().optional(),
 });
 
@@ -55,7 +58,7 @@ export async function POST(request: Request) {
         if (!ctx.level) emit({ type: "error", message: "The ERP is not on your account." });
         else {
           const { askErp } = await import("@/lib/erp/ai-ask");
-          const r = await askErp(ctx, question, parsed.data.history);
+          const r = await askErp(ctx, question, parsed.data.history, parsed.data.voice ?? null);
           if (!r.ok) emit({ type: "error", message: r.error });
           else {
             emit({ type: "delta", text: r.answer.answer });

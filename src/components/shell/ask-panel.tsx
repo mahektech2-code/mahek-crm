@@ -4,6 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { BodyPortal } from "@/components/ui/body-portal";
 import { SalesIcon } from "@/components/console/icons";
+import type { AskVoice } from "@/lib/ask-voice";
+import { AskMic, SpokenQuestion } from "./ask-mic";
 
 /* ---------------------------------------------------------------------------
  * ASK AI — one drawer for every MahekOne app that answers questions from its
@@ -30,6 +32,10 @@ import { SalesIcon } from "@/components/console/icons";
  * choosing "Ask AI" fires `askAi(question)`, which opens this drawer with the
  * question already asked — one box to find a thing or ask about it, the way
  * the ERP's header works.
+ *
+ * IT CAN BE ASKED BY SPEAKING, in any language (`ask-mic.tsx`): the
+ * telecallers' dictation microphone sits beside the box, the question is read
+ * as English, and the answer is written back in the language that was spoken.
  *
  * OPENING THE DRAWER WARMS IT: the server resolves and remembers what this
  * person may read before they have typed, so the first question starts
@@ -60,7 +66,7 @@ export type AskSetup = {
 };
 
 type Message =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; spoken?: string }
   | {
       role: "ai";
       text: string;
@@ -163,7 +169,7 @@ function Drawer({ setup, initial, onClose }: { setup: AskSetup; initial: string 
       return [...t.slice(0, -1), fn(last)];
     });
 
-  const ask = async (question: string) => {
+  const ask = async (question: string, voice: AskVoice | null = null) => {
     const text = question.trim();
     if (!text || thinking) return;
     // Earlier finished turns, so a follow-up keeps its meaning.
@@ -173,14 +179,22 @@ function Drawer({ setup, initial, onClose }: { setup: AskSetup; initial: string 
       .filter((m) => m.text.trim());
     setQ("");
     setProblem(null);
-    setThread((t) => [...t, { role: "user", text }, { role: "ai", text: "", steps: [], done: false }]);
+    setThread((t) => [
+      ...t,
+      { role: "user", text, spoken: voice?.spoken || undefined },
+      { role: "ai", text: "", steps: [], done: false },
+    ]);
     setThinking(true);
     scroll();
-    await run(text, history);
+    await run(text, history, voice);
   };
 
   /** Read the answer into the last message. Every state change waits on the network. */
-  async function run(text: string, history: Array<{ role: "user" | "assistant"; text: string }>) {
+  async function run(
+    text: string,
+    history: Array<{ role: "user" | "assistant"; text: string }>,
+    voice: AskVoice | null = null,
+  ) {
     const controller = new AbortController();
     abort.current = controller;
     let failed: string | null = null;
@@ -188,7 +202,7 @@ function Drawer({ setup, initial, onClose }: { setup: AskSetup; initial: string 
       const res = await fetch(setup.endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: text, history }),
+        body: JSON.stringify({ question: text, history, voice }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -301,7 +315,7 @@ function Drawer({ setup, initial, onClose }: { setup: AskSetup; initial: string 
             m.role === "user" ? (
               <div key={i} className="mb-3 text-right">
                 <span className="inline-block max-w-[86%] rounded-[10px_10px_2px_10px] border border-brand-softer bg-brand-soft px-3 py-2.5 text-left text-sm leading-5 text-ink">
-                  {m.text}
+                  {m.spoken ? <SpokenQuestion spoken={m.spoken} english={m.text} /> : m.text}
                 </span>
               </div>
             ) : (
@@ -334,6 +348,7 @@ function Drawer({ setup, initial, onClose }: { setup: AskSetup; initial: string 
             autoFocus
             className="h-10 min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-brand"
           />
+          <AskMic disabled={thinking} onAsk={(english, voice) => void ask(english, voice)} />
           <button
             type="submit"
             disabled={thinking || !q.trim()}

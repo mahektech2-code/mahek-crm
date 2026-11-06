@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { listUserApps } from "@/lib/access";
+import { voiceSchema } from "@/lib/ask-voice";
 import { getCurrentUser } from "@/lib/auth";
 import { askCrmStream, warmCrmAsk, type AskEvent } from "@/lib/services/team-ask-service";
 
@@ -23,6 +24,8 @@ const body = z.object({
     .array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(8000) }))
     .max(20)
     .default([]),
+  /** Asked by voice: the words as spoken, so the answer comes back in that language. */
+  voice: voiceSchema,
   warm: z.boolean().optional(),
 });
 
@@ -55,7 +58,7 @@ export async function POST(request: Request) {
           /* the drawer was closed; the answer finishes and is dropped */
         }
       };
-      await askCrmStream(question, parsed.data.history, emit);
+      await askCrmStream(question, parsed.data.history, emit, parsed.data.voice ?? null);
       try {
         controller.close();
       } catch {

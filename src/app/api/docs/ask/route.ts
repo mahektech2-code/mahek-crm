@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { listUserApps } from "@/lib/access";
+import { voiceSchema } from "@/lib/ask-voice";
 import { getCurrentUser } from "@/lib/auth";
 import { askDocsStream, type DocsAskEvent } from "@/lib/services/docs-ask-service";
 
@@ -21,6 +22,8 @@ const body = z.object({
     .array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(8000) }))
     .max(20)
     .default([]),
+  /** Asked by voice: the words as spoken, so the answer comes back in that language. */
+  voice: voiceSchema,
   place: z
     .object({ app: z.string().max(40), slug: z.string().max(80).nullish(), tab: z.string().max(40).nullish() })
     .nullish(),
@@ -48,7 +51,7 @@ export async function POST(request: Request) {
           /* the panel was closed; the answer finishes and is dropped */
         }
       };
-      await askDocsStream(parsed.data.question, parsed.data.history, parsed.data.place ?? null, parsed.data.scope ?? null, emit);
+      await askDocsStream(parsed.data.question, parsed.data.history, parsed.data.place ?? null, parsed.data.scope ?? null, emit, parsed.data.voice ?? null);
       try {
         controller.close();
       } catch {
