@@ -1215,8 +1215,8 @@ function FoldToggle({ open, n, onToggle }: { open: boolean; n: number; onToggle:
 
 function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?: string; cols: ColSpec[]; lead?: React.ReactNode; small?: boolean }) {
   /* Every cell is held to its column: the table is fixed-width, so a long
-     value ends in "…" with the whole of it on hover, and badges that do not
-     fit are clipped rather than pushing the row wider. */
+     value goes to the next line (globals.css), and badges that do not fit are
+     clipped rather than pushing the row wider. */
   const { flags } = useKit();
   if (c.t === "f") {
     const shown = flagsBesideStatus(r, cols, flags);
