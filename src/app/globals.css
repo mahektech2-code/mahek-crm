@@ -650,3 +650,34 @@
     z-index: 3;
   }
 }
+
+/*
+ * A TABLE CELL NEVER CUTS ITS TEXT OFF. What does not fit goes to the next line.
+ *
+ * This is one rule rather than a change at each table because it was ninety-six
+ * places in forty-two files, and the next table would have been the ninety-seventh.
+ * It is outside every layer so it beats the `truncate` utility wherever that is
+ * written, on the cell or on anything inside it.
+ *
+ * A fixed-width table cannot widen a column, so its cells wrap as well: without
+ * this a long value is painted over the cell beside it. An ordinary table is left
+ * holding its line (see `Td`), because it has the width to take, and a phone number
+ * must not come out on three lines. Something that says `whitespace-nowrap` for
+ * itself inside a cell, such as a badge, keeps saying it.
+ */
+td.truncate,
+td .truncate,
+td.text-ellipsis,
+td .text-ellipsis,
+td [class*="line-clamp-"] {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: break-word;
+  -webkit-line-clamp: unset;
+}
+
+table.table-fixed td {
+  white-space: normal;
+  overflow-wrap: break-word;
+}

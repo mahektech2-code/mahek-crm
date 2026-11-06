@@ -471,8 +471,10 @@ export function Td({
    * sideways is something people do without thinking; reading a phone number
    * down three lines is not.
    *
-   * Callers that genuinely want prose to flow say so — `whitespace-normal`, or
-   * `truncate` with a `title`, which several already do. `cx` is a plain join
+   * Callers that genuinely want prose to flow say so with `whitespace-normal`.
+   * `truncate` means the same now: globals.css sends text to the next line in
+   * any cell that asks for it, and in every fixed-width table, because a cell
+   * must never hide what it holds. `cx` is a plain join
    * with no Tailwind conflict resolution, so two whitespace utilities on one
    * element would be settled by stylesheet order rather than by intent. The
    * default is therefore only applied when the caller has not spoken.
