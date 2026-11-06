@@ -31,6 +31,8 @@ export async function listHandsets(): Promise<HandsetsPayload> {
       appVersionChangedAt: string | Date | null;
       lastHeardAt: string | Date | null;
       boundAt: string | Date | null;
+      notificationPermission: string | null;
+      hasPushToken: boolean | null;
     }>(sql`
       select u.id as "userId", u.name, u.phone, u.email,
              d.device_id as "deviceId", d.model, d.platform,
@@ -38,7 +40,9 @@ export async function listHandsets(): Promise<HandsetsPayload> {
              d.app_version_reported_at as "appVersionReportedAt",
              d.app_version_changed_at as "appVersionChangedAt",
              greatest(d.last_request_at, d.last_seen_at, d.bound_at) as "lastHeardAt",
-             d.bound_at as "boundAt"
+             d.bound_at as "boundAt",
+             d.notification_permission as "notificationPermission",
+             (d.push_token is not null) as "hasPushToken"
         from users u
         join app_access a on a.user_id = u.id and a.app = 'field'
         left join lateral (
@@ -58,6 +62,8 @@ export async function listHandsets(): Promise<HandsetsPayload> {
   const list: HandsetRow[] = (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
     userId: r.userId as string,
     name: r.name as string,
+    notificationPermission: (r.notificationPermission as string | null) ?? null,
+    hasPushToken: r.hasPushToken === true,
     phone: (r.phone as string | null) ?? null,
     email: (r.email as string | null) ?? null,
     deviceId: (r.deviceId as string | null) ?? null,

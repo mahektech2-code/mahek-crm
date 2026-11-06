@@ -63,7 +63,11 @@ export const BATTERY_EXEMPTIONS = [
 
 export type BatteryExemption = (typeof BATTERY_EXEMPTIONS)[number];
 
+export const NOTIFICATION_PERMISSIONS = ["granted", "denied", "undetermined"] as const;
+export type NotificationPermission = (typeof NOTIFICATION_PERMISSIONS)[number];
+
 export type DeviceState = {
+  notificationPermission?: NotificationPermission;
   locationPermission?: LocationPermission;
   locationServicesEnabled?: boolean;
   connectionType?: ConnectionType;
@@ -167,6 +171,9 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
 
   const permission = oneOf(LOCATION_PERMISSIONS, body.locationPermission);
   if (permission) state.locationPermission = permission;
+
+  const notificationPermission = oneOf(NOTIFICATION_PERMISSIONS, body.notificationPermission);
+  if (notificationPermission) state.notificationPermission = notificationPermission;
 
   if (typeof body.locationServicesEnabled === "boolean") {
     state.locationServicesEnabled = body.locationServicesEnabled;

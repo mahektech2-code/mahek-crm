@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import {
   batteryPercent,
   connectionAnswer,
@@ -28,6 +29,7 @@ import {
  */
 
 export type DeviceStateReport = {
+  notificationPermission?: 'granted' | 'denied' | 'undetermined';
   locationPermission?: LocationPermission;
   locationServicesEnabled?: boolean;
   connectionType?: 'wifi' | 'cellular' | 'none' | 'unknown';
@@ -337,6 +339,18 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
   }
 }
 
+/** Whether this phone lets MBOS notify, so the office can see who still has to say yes. */
+async function notificationState(): Promise<Partial<DeviceStateReport>> {
+  try {
+    const { status } = (await Notifications.getPermissionsAsync()) as unknown as { status: string };
+    return status === 'granted' || status === 'denied' || status === 'undetermined'
+      ? { notificationPermission: status }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Everything the handset can currently say, gathered in parallel.
  *
@@ -347,6 +361,7 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
 export async function readDeviceState(): Promise<DeviceStateReport> {
   const parts = await Promise.all([
     locationState(),
+    notificationState(),
     connectionState(),
     batteryState(),
     exemptionState(),

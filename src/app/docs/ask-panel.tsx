@@ -6,6 +6,8 @@ import { cx } from "@/components/ui/primitives";
 import { SalesIcon } from "@/components/console/icons";
 import { DOC_APPS, docApp } from "@/docs/registry";
 import { AnswerBody } from "./answer-blocks";
+import type { AskVoice } from "@/lib/ask-voice";
+import { AskMic, SpokenQuestion } from "@/components/shell/ask-mic";
 
 /* ---------------------------------------------------------------------------
  * "Ask the docs" — the Documentation app's chat, docked on the right.
@@ -33,7 +35,7 @@ import { AnswerBody } from "./answer-blocks";
 type Source = { href: string; title: string; heading: string | null; tab: string };
 
 type Message =
-  | { role: "user"; text: string; scope: string | null }
+  | { role: "user"; text: string; scope: string | null; spoken?: string }
   | { role: "ai"; text: string; steps: string[]; sources: Source[]; done: boolean; meta?: { lookups: number; cached: boolean; ms: number } };
 
 type AskEvent =
@@ -100,7 +102,7 @@ export function AskPanel({
       return [...t.slice(0, -1), fn(last)];
     });
 
-  const ask = async (question: string) => {
+  const ask = async (question: string, voice: AskVoice | null = null) => {
     const text = question.trim();
     if (!text || thinking) return;
     const history = thread
@@ -109,7 +111,7 @@ export function AskPanel({
       .filter((m) => m.text.trim());
     setQ("");
     setProblem(null);
-    setThread((t) => [...t, { role: "user", text, scope }, { role: "ai", text: "", steps: [], sources: [], done: false }]);
+    setThread((t) => [...t, { role: "user", text, scope, spoken: voice?.spoken || undefined }, { role: "ai", text: "", steps: [], sources: [], done: false }]);
     setThinking(true);
     scroll();
 
@@ -120,7 +122,7 @@ export function AskPanel({
       const res = await fetch("/api/docs/ask", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: text, history, place, scope }),
+        body: JSON.stringify({ question: text, history, place, scope, voice }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -255,7 +257,7 @@ export function AskPanel({
           m.role === "user" ? (
             <div key={i} className="mb-3 text-right">
               <span className="inline-block max-w-[88%] rounded-[10px_10px_2px_10px] border border-brand-softer bg-brand-soft px-3 py-2 text-left text-[13px] leading-5 text-ink">
-                {m.text}
+                {m.spoken ? <SpokenQuestion spoken={m.spoken} english={m.text} /> : m.text}
               </span>
               <span className="mt-0.5 block text-[10px] text-faint">
                 {m.scope ? `in ${docApp(m.scope)?.title ?? m.scope}` : "in all apps"}
@@ -321,6 +323,7 @@ export function AskPanel({
           placeholder={scope ? `Ask about the ${docApp(scope)?.title ?? scope}` : "Ask about any app"}
           className="max-h-32 min-h-10 min-w-0 flex-1 resize-none rounded-[6px] border border-line bg-surface px-3 py-2 text-[13px] leading-5 text-ink outline-none focus:border-brand [field-sizing:content]"
         />
+        <AskMic disabled={thinking} onAsk={(english, voice) => void ask(english, voice)} />
         <button
           type="submit"
           disabled={thinking || !q.trim()}

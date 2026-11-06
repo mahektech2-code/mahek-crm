@@ -112,7 +112,7 @@ function pickContainer(): string | undefined {
 
 /* ----------------------------------------------------------------- icons */
 
-function MicIcon({ size = 16 }: { size?: number }) {
+export function MicIcon({ size = 16 }: { size?: number }) {
   return (
     <svg
       width={size}

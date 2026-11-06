@@ -81,7 +81,7 @@ import { refreshDayMoney, repriceDay, rescoreLeg } from "@/lib/services/expense-
 import { ensureDay } from "@/lib/services/expense-service";
 import { writeHometowns } from "@/lib/services/hometown-service";
 import { ADMIN } from "@/lib/admin-routes";
-import { notifyUsers } from "../notify";
+import { notifyUsers, type NotifyEntry } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -299,7 +299,7 @@ function refresh() {
  * the href points at MBOS's own approvals screen rather than at a MahekOne
  * route he cannot open.
  */
-async function tell(userId: string, title: string, body: string, mbosHref: string | null) {
+async function tell(userId: string, title: string, body: string, mbosHref: string | null, href?: string) {
   /* The row and the push are one act, and `notifyUsers` is where that act
      lives now — this function used to do its own device lookup, which is
      exactly the copy fourteen other callers never made.
@@ -309,7 +309,7 @@ async function tell(userId: string, title: string, body: string, mbosHref: strin
      route for Tuesday" both opened the handset's list of records the office
      REFUSED — a screen that by construction cannot contain either. Null is the
      honest default and falls through to `/notifications`. */
-  await notifyUsers([{ userId, title, body, mbosHref }]).catch(() => {});
+  await notifyUsers([{ userId, title, body, href: href ?? null, mbosHref: mbosHref ?? "/notifications" } as NotifyEntry]).catch(() => {});
 }
 
 /**
@@ -337,8 +337,9 @@ async function notifyNewOwner(
       userId: to.id,
       title: n.title,
       body: `${n.body}${where}`,
-      href: to.place === "handset" ? undefined : n.id ? `/crm/leads/${n.id}` : "/crm/leads",
-      mbosHref: to.place === "handset" ? n.handsetHref : null,
+      ...(to.place === "handset"
+        ? { mbosHref: n.handsetHref }
+        : { href: n.id ? `/crm/leads/${n.id}` : "/crm/leads" }),
     },
   ]).catch(() => {});
 }
@@ -1655,8 +1656,7 @@ export async function saveHoliday(input: HolidayInput): Promise<Result<{ id: str
           title: `Holiday: ${name}`,
           body: `${shortDay(input.onDate)} is a holiday for you${note ? ` — ${note}` : ""}. No punch-in is expected that day.`,
           kind: "info" as const,
-          href: null,
-          mbosHref: null,
+          mbosHref: "/notifications",
         })),
       );
     }
@@ -1729,8 +1729,7 @@ export async function setHolidayPerson(input: {
               ? `${shortDay(h.onDate)} is a holiday for you${reason ? ` — ${reason}` : ""}.`
               : `${shortDay(h.onDate)} is not a holiday for you: ${reason}. Punch in as usual.`,
           kind: input.mode === "include" ? "info" : "warn",
-          href: null,
-          mbosHref: null,
+          mbosHref: "/notifications",
         },
       ]);
 
@@ -2604,6 +2603,7 @@ export async function reassignLead(input: {
         `${leadLabel(lead)} was moved`,
         `${user.name} reassigned it to ${salesman.name}.`,
         null,
+        `/crm/leads/${input.leadId}`,
       );
     }
 
@@ -2778,6 +2778,7 @@ export async function chaseLeadOwner(input: {
       `Chase — ${leadLabel(lead)}`,
       note || `${user.name} asked you to follow up on ${leadLabel(lead)}.`,
       `/lead?id=${encodeURIComponent(lead.id)}`,
+      `/crm/leads/${lead.id}`,
     );
 
     refresh();
@@ -2844,6 +2845,7 @@ export async function archiveLead(
         `${leadLabel(lead)} was archived`,
         `${user.name} filed it away — ${reason}`,
         null,
+        "/crm/leads",
       );
     }
 
@@ -3122,6 +3124,7 @@ export async function bulkReassignLeads(input: {
           `${plural(n, "lead")} moved`,
           `${user.name} reassigned ${n === 1 ? "it" : "them"} to ${salesman.name}.`,
           null,
+          "/crm/leads",
         );
       }
     }
@@ -3199,6 +3202,7 @@ export async function bulkArchiveLeads(
           `${plural(n, "lead")} archived`,
           `${user.name} filed ${n === 1 ? "it" : "them"} away — ${reason}`,
           null,
+          "/crm/leads",
         );
       }
     }
@@ -3300,6 +3304,7 @@ export async function bulkChaseLeadOwners(input: {
         `Chase — ${plural(held.length, "lead")}`,
         note || `${user.name} asked you to follow up on ${names}${more}.`,
         "/leads",
+        "/crm/leads",
       );
       done += held.length;
     }
@@ -5159,8 +5164,7 @@ export async function reviewDayEvidence(input: {
           kind: "warn",
           title: what,
           body: `${day} — ${remark}${corrected}`,
-          href: "/apps",
-          mbosHref: null,
+          mbosHref: "/notifications",
         },
       ]);
     }

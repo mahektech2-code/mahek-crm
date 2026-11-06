@@ -16,8 +16,8 @@
  *
  * Two answers that are not an app:
  *  - a notification with no web link but a HANDSET link is the field app's
- *    (MBOS), which has no browser screen and so no bell of its own — it is
- *    listed under "All apps";
+ *    (MBOS), which has no browser screen: it goes to the phone and is shown in no
+ *    bell on the web, not even under "All apps";
  *  - a notification with neither, or a link into no app (`/feedback`, the
  *    launcher), is GENERAL: about the person rather than about one app's work,
  *    so it is shown in every app's bell.
@@ -30,10 +30,24 @@ import { APPS } from "./apps";
 export function notificationAppOf(href: string | null | undefined, mbosHref?: string | null): string | null {
   if (href && href.startsWith("/")) {
     const path = href.split(/[?#]/, 1)[0];
+    /* The Salesman App has no browser screens, so `/field/...` opens nothing on
+       this site. Read as a general link it reached every app's bell and 404ed. */
+    if (path === "/field" || path.startsWith("/field/")) return "field";
     return appFor(path);
   }
   if (!href && mbosHref) return "field";
   return null;
+}
+
+/**
+ * Whether a notification goes to the handset: its list and its push.
+ *
+ * A handset link says so. No link at all is a general notice, which is everyone's.
+ * A web link with no handset link belongs to a desk, and a stock alert on the ERP
+ * has no business buzzing somebody's phone.
+ */
+export function reachesHandset(href: string | null | undefined, mbosHref: string | null | undefined): boolean {
+  return Boolean(mbosHref) || !href;
 }
 
 /**
@@ -42,6 +56,7 @@ export function notificationAppOf(href: string | null | undefined, mbosHref?: st
  * everywhere.
  */
 export function shownIn(itemApp: string | null, viewApp: string | null): boolean {
+  if (itemApp === "field") return false;
   return viewApp === null || itemApp === null || itemApp === viewApp;
 }
 
@@ -62,6 +77,6 @@ export type AppUnread = { app: string | null; unread: number };
 export function unreadElsewhere(byApp: readonly AppUnread[], viewApp: string | null): AppUnread[] {
   if (viewApp === null) return [];
   return byApp
-    .filter((r) => r.app !== null && r.app !== viewApp && r.unread > 0)
+    .filter((r) => r.app !== null && r.app !== "field" && r.app !== viewApp && r.unread > 0)
     .sort((a, b) => b.unread - a.unread || notificationAppName(a.app).localeCompare(notificationAppName(b.app)));
 }

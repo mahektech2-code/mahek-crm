@@ -2208,6 +2208,8 @@ export async function markNotificationsRead(app: string | null = null): Promise<
       and(
         eq(notifications.userId, ctx.user.id),
         eq(notifications.read, false),
+        /* The phone's own stay unread for the phone: this bell never showed them. */
+        sql`${appExpr} is distinct from 'field'`,
         app === null ? undefined : or(sql`${appExpr} = ${app}`, sql`${appExpr} is null`),
       ),
     );
