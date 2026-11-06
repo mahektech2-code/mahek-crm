@@ -1,7 +1,7 @@
 import "server-only";
 import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
-import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { adjustStockRow, stockRowActions } from "../stock-adjust";
 import { erpStockInquiryHref } from "../stock-links";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
@@ -37,7 +37,7 @@ import {
   withoutHidden,
   type ScreenModule,
 } from "../server";
-import type { ActionSpec, ColSpec, FieldSpec, FormSpec } from "../ui";
+import type { ActionSpec, ColSpec, FieldSpec, FormSpec, PromptSpec } from "../ui";
 import { fd, inr, nf } from "../ui";
 import {
   TRANSPORT_MODES,
@@ -458,6 +458,125 @@ export async function inwardFormForPo(ctx: ErpContext, poId: string): Promise<Fo
   return inwardForm(ctx, undefined, { poId });
 }
 
+/* ---------------------------------------------------------------------------
+ * A RECEIPT CAN BE CORRECTED AT ANY TIME, and the correction travels. A saved
+ * line has usually gone on already, to Lot testing or to Purchases and from
+ * there into stock, so only what THIS edit changed is written onward: a remark
+ * or a quantity somebody corrected in Purchases is left alone unless this line's
+ * own figure moved. The item, the PO and the PR stay as they are, because the
+ * lot number is built from them and is already on the drum labels.
+ *
+ * Nothing refuses a line whose lot has been used. That was asked for: a late
+ * correction can leave a lot's stock short, and the audit row says who did it.
+ * ------------------------------------------------------------------------- */
+
+type InwardRow = typeof erpInward.$inferSelect;
+type InwardChange = Pick<InwardRow, "receivedDate" | "godownId" | "drums" | "weightWithDrum" | "emptyDrumWeight" | "quantity" | "drumOwnership" | "remark">;
+
+async function writeInwardChange(tx: Tx, ctx: ErpContext, r: InwardRow, next: InwardChange): Promise<void> {
+  const moved = <K extends keyof InwardChange>(k: K) => (next[k] ?? null) !== (r[k] ?? null);
+  const stamp = { updatedAt: new Date(), updatedById: ctx.user.id };
+  await tx.update(erpInward).set({ ...next, ...stamp }).where(eq(erpInward.id, r.id));
+
+  const shared = {
+    ...(moved("godownId") ? { godownId: next.godownId } : {}),
+    ...(moved("quantity") ? { quantity: next.quantity } : {}),
+    ...(moved("drums") ? { drums: next.drums } : {}),
+    ...(moved("weightWithDrum") ? { weightWithDrum: next.weightWithDrum } : {}),
+  };
+  if (Object.keys(shared).length) await tx.update(erpTests).set({ ...shared, ...stamp }).where(eq(erpTests.inwardId, r.id));
+
+  /* A tested line's register row names the test as well as, or instead of, this line. */
+  const tests = await tx.select({ id: erpTests.id }).from(erpTests).where(eq(erpTests.inwardId, r.id));
+  const lots = await tx
+    .select({ id: erpPurchases.id, source: erpPurchases.source })
+    .from(erpPurchases)
+    .where(tests.length ? or(eq(erpPurchases.inwardId, r.id), inArray(erpPurchases.testId, tests.map((t) => t.id))) : eq(erpPurchases.inwardId, r.id));
+  for (const lot of lots) {
+    const onward = {
+      ...shared,
+      /* A tested lot is dated by its test, not by the day the goods came in. */
+      ...(moved("receivedDate") && lot.source === "inward" ? { purchaseDate: next.receivedDate } : {}),
+      ...(moved("remark") ? { remark: next.remark } : {}),
+    };
+    if (!Object.keys(onward).length) continue;
+    await tx.update(erpPurchases).set({ ...onward, ...stamp }).where(eq(erpPurchases.id, lot.id));
+    await refreshCache(tx, lot.id);
+    await syncPurchaseEntry(tx, lot.id);
+  }
+  if (moved("quantity")) await refreshPurchaseOrder(tx, r.poId);
+}
+
+async function inwardEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [x] = await db
+    .select({ r: erpInward, item: erpRawMaterials.name, unit: erpRawMaterials.unit, godown: erpGodowns.name })
+    .from(erpInward)
+    .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpInward.rawMaterialId))
+    .innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId))
+    .where(eq(erpInward.id, id));
+  if (!x) return null;
+  const gds = await godownOptions(ctx, { lost: false });
+  const chemical = x.r.materialType === "Chemical";
+  const scale = chemical && x.unit === "Kg";
+  const own = x.r.drumOwnership as "mahek" | "returnable" | null;
+  return {
+    screen: "inward",
+    id: "edit",
+    recordId: id,
+    title: `Edit PR ${x.r.prNumber} · ${x.item}`,
+    sub: x.r.routed ? `Already sent to ${x.r.routed}: a change here carries over to it and to stock.` : undefined,
+    submit: "Save line",
+    init: {
+      date: x.r.receivedDate,
+      godown: x.godown,
+      drums: x.r.drums == null ? "" : String(x.r.drums),
+      weight: x.r.weightWithDrum == null ? "" : String(x.r.weightWithDrum),
+      emptyDrum: x.r.emptyDrumWeight == null ? "" : String(x.r.emptyDrumWeight),
+      drumOwner: own ? OWNERSHIP_LABEL[own] : DRUM_OWNER_OPTS[0],
+      qty: String(x.r.quantity),
+      remark: x.r.remark ?? "",
+    },
+    header: [
+      { k: "date", l: "Date received", t: "date", req: true },
+      godownField(gds),
+      ...(chemical
+        ? ([
+            { k: "drums", l: "Drums", t: "num", req: true, min: 0, qtyUnit: { base: "drums" } },
+            { k: "weight", l: "Weight with drum (kg)", t: "num", min: 0, req: scale, hint: scale ? "The quantity is worked out from this, less the empty drums." : undefined },
+            { k: "emptyDrum", l: "Empty drum weight (kg, per drum)", t: "num", min: 0, req: scale, qtyUnit: { base: "Kg" } },
+            { k: "drumOwner", l: "Drums belong to", t: "select", opts: DRUM_OWNER_OPTS },
+          ] as FieldSpec[])
+        : []),
+      ...(scale ? [] : ([{ k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, qtyUnit: { base: x.r.unit } }] as FieldSpec[])),
+      { k: "remark", l: "Remark", t: "area", mic: true },
+    ],
+  };
+}
+
+/** What several lines can share. Quantity and weights belong to one line, so they stay on the row's own Edit. */
+function inwardBulkPrompt(form: FormSpec): PromptSpec {
+  const godowns = form.header.find((f) => f.k === "godown")?.opts ?? [];
+  return {
+    title: "Edit selected lines",
+    sub: "Blank keeps what each line has. For quantity or weights, use Edit on the line.",
+    submit: "Save lines",
+    fields: [
+      { k: "date", l: "Date received", t: "date" },
+      { k: "godown", l: "Godown", t: "select", opts: godowns },
+      { k: "drumOwner", l: "Drums belong to", t: "select", opts: DRUM_OWNER_OPTS, hint: "Applies to chemical lines only." },
+      { k: "remark", l: "Remark", t: "area", mic: true },
+    ],
+  };
+}
+
+/** The drum owner a form named: the supplier's own where it says to follow the supplier's master. */
+async function drumOwnerNamed(label: string | null | undefined, supplierId: string, tx: Tx | typeof db = db): Promise<string | null> {
+  const named = ownershipByLabel(label ?? undefined);
+  if (named) return named;
+  const [sup] = await tx.select({ own: erpSuppliers.drumOwnership }).from(erpSuppliers).where(eq(erpSuppliers.id, supplierId));
+  return sup?.own ?? null;
+}
+
 /** Goods inward is a register by received date; a line not yet routed is work and always shows. */
 const INWARD_WINDOW = { label: "Received date", default: REGISTER_DEFAULT } as const;
 
@@ -522,6 +641,7 @@ const inward: ScreenModule = {
         filters: ["supplier", "type", "item", "testing", "routed", "drumOwner"],
         newForm: form,
         newLabel: "Receive goods",
+        bulk: [{ id: "editMany", l: "Edit", fits: false, prompt: inwardBulkPrompt(form) }],
         noDataLine: "No goods received yet. Goods are received against a PO.",
       },
       tooWide: wide,
@@ -550,6 +670,7 @@ const inward: ScreenModule = {
               }
             : undefined,
         });
+        actions.push({ id: "edit", l: "Edit", loadsForm: true });
         const c = costs.get(x.r.prNumber);
         actions.push({
           id: "costs",
@@ -754,6 +875,52 @@ const inward: ScreenModule = {
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
       );
     },
+    async edit(ctx, h, _lines, id) {
+      if (!id) return err("No line named.", "not_found");
+      const [r] = await db.select().from(erpInward).where(eq(erpInward.id, id));
+      if (!r) return err("That line no longer exists.", "not_found");
+      const [m] = await db.select({ unit: erpRawMaterials.unit }).from(erpRawMaterials).where(eq(erpRawMaterials.id, r.rawMaterialId));
+      const godownId = await godownIdByName(text(h.godown));
+      if (!godownId) return fieldErr("godown", "Godown is required");
+      const receivedDate = text(h.date);
+      if (!receivedDate) return fieldErr("date", "Date received is required");
+      const chemical = r.materialType === "Chemical";
+      const scale = chemical && m?.unit === "Kg";
+      const drums = chemical ? int(h.drums) : null;
+      if (chemical && (drums == null || drums < 0)) return fieldErr("drums", "Drums is required");
+      const weight = chemical ? num(h.weight) : null;
+      const empty = chemical ? num(h.emptyDrum) : null;
+      let quantity: number | null;
+      if (scale) {
+        if (!(weight! > 0)) return fieldErr("weight", "Weight with drum is required for an item bought in kg");
+        if (empty == null || empty < 0) return fieldErr("emptyDrum", empty != null ? "Minus Quantity Not Allowed" : "Empty drum weight is required");
+        quantity = netWeight(weight, drums, empty);
+        if (quantity == null) return fieldErr("weight", "The empty drums weigh as much as the load — check the scale");
+      } else {
+        quantity = num(h.qty);
+        if (quantity == null || quantity <= 0) return fieldErr("qty", quantity != null && quantity < 0 ? "Minus Quantity Not Allowed" : "Quantity received is required");
+      }
+      /* Taking more than the PO allows is refused here exactly as it is on the way in. A cut, or no change, never is. */
+      if (r.poLineId && quantity > r.quantity) {
+        const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.id, r.poLineId));
+        const others = ((await receivedByLine()).get(r.poLineId) ?? 0) - r.quantity;
+        const room = line ? receivableQuantity(line.quantity, others, (await getConfig())["erp.purchase.receiptTolerancePercent"]) : Infinity;
+        if (quantity > room) return fieldErr(scale ? "weight" : "qty", `More than the PO allows: ${nf(line!.quantity)} ${line!.unit} ordered, ${nf(others)} received on other lines, ${nf(room)} may be taken here.`);
+      }
+      const next: InwardChange = {
+        receivedDate,
+        godownId,
+        drums,
+        weightWithDrum: weight,
+        emptyDrumWeight: empty,
+        quantity,
+        drumOwnership: chemical ? await drumOwnerNamed(h.drumOwner, r.supplierId) : null,
+        remark: text(h.remark),
+      };
+      await db.transaction((tx) => writeInwardChange(tx, ctx, r, next));
+      await erpAudit(ctx, "erp.inward.edit", "erp_inward", id, r, next);
+      return okVoid(`PR ${r.prNumber} line saved`);
+    },
     /* A PR's transport and other cost, recorded or corrected after the inward. */
     async costs(ctx, h, _lines, recordId) {
       const pr = int(recordId);
@@ -769,6 +936,40 @@ const inward: ScreenModule = {
         .onConflictDoUpdate({ target: erpPrCosts.prNumber, set: { ...row.data, updatedAt: new Date(), updatedById: ctx.user.id } });
       await erpAudit(ctx, "erp.inward.costs", "erp_pr_costs", String(pr), before ?? null, row.data);
       return okVoid(`PR ${pr} · transport and costs saved`);
+    },
+  },
+  formLoaders: {
+    edit: (ctx, id) => inwardEditForm(ctx, id),
+  },
+  bulk: {
+    async editMany(ctx, ids, values) {
+      const date = text(values.date);
+      const godownName = text(values.godown);
+      const owner = text(values.drumOwner);
+      const remark = text(values.remark);
+      if (!date && !godownName && !owner && !remark) return err("Fill in at least one box. Blank keeps what each line has.", "rule_violation");
+      const godownId = godownName ? await godownIdByName(godownName) : null;
+      if (godownName && !godownId) return fieldErr("godown", "Pick a godown from the list");
+      const rows = await db.select().from(erpInward).where(inArray(erpInward.id, ids));
+      if (!rows.length) return err("Those lines no longer exist.", "not_found");
+      /* All of them or none: half a selection changed is harder to put right than a failure. */
+      await db.transaction(async (tx) => {
+        for (const r of rows) {
+          await writeInwardChange(tx, ctx, r, {
+            receivedDate: date ?? r.receivedDate,
+            godownId: godownId ?? r.godownId,
+            drums: r.drums,
+            weightWithDrum: r.weightWithDrum,
+            emptyDrumWeight: r.emptyDrumWeight,
+            quantity: r.quantity,
+            drumOwnership: owner && r.materialType === "Chemical" ? await drumOwnerNamed(owner, r.supplierId, tx) : r.drumOwnership,
+            remark: remark ?? r.remark,
+          });
+        }
+      });
+      await erpAudit(ctx, "erp.inward.edit", "erp_inward", rows.map((r) => r.id).join(","), null, { date, godown: godownName, drumOwner: owner, remark });
+      const skipped = owner ? rows.filter((r) => r.materialType !== "Chemical").length : 0;
+      return okVoid(`${rows.length} line${rows.length > 1 ? "s" : ""} saved${skipped ? ` · drum owner not set on ${skipped} that carry no drums` : ""}`);
     },
   },
   actions: {
