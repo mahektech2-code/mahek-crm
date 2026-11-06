@@ -11,7 +11,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, isNotNull, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -1080,5 +1080,66 @@ describe("Create PO puts the vendor's other items on the same PO", () => {
       assert.equal(x.supplierId, "sup_a");
     }
     assert.equal((await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, of("rm_plain").id)))[0].status, "Pending", "the item left off stays waiting");
+  });
+});
+
+describe("correcting a goods receipt", () => {
+  /* There is more than one MEK line by now, and an update moves a row, so pick one and stay on it. */
+  let mekId = "";
+  const mekLine = async () => {
+    mekId ||= (await db.select({ id: erpPurchases.inwardId }).from(erpPurchases).where(and(eq(erpPurchases.rawMaterialId, "rm_mek"), isNotNull(erpPurchases.inwardId))).orderBy(erpPurchases.lotNo))[0].id!;
+    return (await db.select().from(erpInward).where(eq(erpInward.id, mekId)))[0];
+  };
+
+  test("a row's edit carries on to the purchase and stock, and the PO limit still holds", async () => {
+    const ctx = await as(admin);
+    const r = await mekLine();
+    const row = (await mod("inward").load(ctx)).rows.find((x) => x.id === r.id);
+    assert.ok(row?.actions?.some((a) => a.id === "edit" && a.loadsForm), "every line offers Edit");
+    const form = (await mod("inward").formLoaders!.edit(ctx, r.id))!;
+    assert.equal(form.init?.weight, String(r.weightWithDrum));
+
+    const refused = await mod("inward").forms!.edit(ctx, { date: r.receivedDate, godown: "Bhiwandi", drums: "1", weight: "9999999", emptyDrum: "15" }, [], r.id);
+    assert.equal(refused.ok, false, "more than the PO allows");
+    assert.equal((await mekLine()).weightWithDrum, r.weightWithDrum, "a refusal writes nothing");
+
+    const saved = await mod("inward").forms!.edit(ctx, { date: r.receivedDate, godown: "Bhiwandi", drums: "1", weight: "95", emptyDrum: "15", remark: "Rechecked on the scale" }, [], r.id);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const after = await mekLine();
+    assert.equal(after.quantity, 80, "95 kg less one 15 kg drum");
+    const [p] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, r.id));
+    assert.equal(p.quantity, 80);
+    assert.equal(p.weightWithDrum, 95);
+    assert.equal(p.remark, "Rechecked on the scale");
+    assert.equal(p.availableLitres, 100, "80 kg at density 0.8");
+    const entries = await db.select().from(erpRmEntries).where(eq(erpRmEntries.sourceId, p.id));
+    assert.equal(entries.find((e) => e.sourceType === "purchase")?.quantity, 100, "the stock entry follows");
+  });
+
+  test("a multi-select edit sets what the lines share and keeps what is left blank", async () => {
+    const ctx = await as(admin);
+    const r = await mekLine();
+    assert.equal((await mod("inward").bulk!.editMany(ctx, [r.id], {})).ok, false, "nothing to change");
+    const saved = await mod("inward").bulk!.editMany(ctx, [r.id], { date: "2026-08-01", remark: "Moved on paper" });
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const after = await mekLine();
+    assert.equal(after.receivedDate, "2026-08-01");
+    assert.equal(after.remark, "Moved on paper");
+    assert.equal(after.quantity, r.quantity, "quantity is the row's own");
+    assert.equal(after.godownId, r.godownId, "a blank godown stays");
+    const [p] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, r.id));
+    assert.equal(p.purchaseDate, "2026-08-01");
+    const { spec } = await mod("inward").load(ctx);
+    assert.ok(spec.bulk?.some((b) => b.id === "editMany"), "the selection bar offers it");
+  });
+
+  test("a line sent to testing carries its corrected quantity onto the test", async () => {
+    const ctx = await as(admin);
+    const [r] = await db.select().from(erpInward).where(eq(erpInward.rawMaterialId, "rm_tol"));
+    const [t] = await db.select().from(erpTests).where(eq(erpTests.inwardId, r.id));
+    assert.ok(t, "the flow above tested this line");
+    const saved = await mod("inward").forms!.edit(ctx, { date: r.receivedDate, godown: "Bhiwandi", drums: String(r.drums ?? 1), qty: String(r.quantity - 1) }, [], r.id);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    assert.equal((await db.select().from(erpTests).where(eq(erpTests.id, t.id)))[0].quantity, r.quantity - 1);
   });
 });
