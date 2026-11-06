@@ -289,18 +289,24 @@ export function resolvePriceList(
 ): Resolution | null {
   const listsById = new Map(lists.map((l) => [l.id, l]));
   const left = leftOutLists(geo, scopes, today);
+  /* One pass over the scopes, not one per kind: a form resolves every party in
+     the book, so a pass per kind per party is what the form spent its time on. */
+  const named = new Map<PriceScopeKind, { scope: ScopeRow; list: ListMeta }[]>();
+  for (const s of scopes) {
+    if (s.excluded || left.has(s.priceListId) || !scopeInForce(s, today) || !scopeNames(s, geo)) continue;
+    const list = listsById.get(s.priceListId);
+    if (!list || !inForce(list, today, opts) || !freightAgrees(s, list, geo)) continue;
+    const of = named.get(s.scopeKind);
+    if (of) of.push({ scope: s, list });
+    else named.set(s.scopeKind, [{ scope: s, list }]);
+  }
   const chain: ResolutionStep[] = [];
   const candidates: ResolutionCandidate[] = [];
   const seen = new Set<string>();
   let winner: { scope: ScopeRow; list: ListMeta } | null = null;
 
   for (const kind of SCOPE_SPECIFICITY) {
-    const found = scopes
-      .filter((s) => !s.excluded && !left.has(s.priceListId))
-      .filter((s) => s.scopeKind === kind && scopeInForce(s, today) && scopeNames(s, geo))
-      .map((s) => ({ scope: s, list: listsById.get(s.priceListId) }))
-      .filter((c): c is { scope: ScopeRow; list: ListMeta } => !!c.list && inForce(c.list, today, opts))
-      .filter((c) => freightAgrees(c.scope, c.list, geo));
+    const found = named.get(kind) ?? [];
 
     found.sort((a, b) => {
       // A shop's own agreed prices LAYER over whatever it is otherwise on, so

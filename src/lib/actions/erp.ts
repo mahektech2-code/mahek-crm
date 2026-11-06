@@ -113,7 +113,8 @@ export async function erpLoadForm(screen: string, action: string, id: string): P
     if (!mod) return err("That form is not available.", "not_found");
     const loader = mod.formLoaders?.[action];
     /* No loader of its own: a form the list left on the server because it was heavy (`lazy-forms.ts`). */
-    const spec = loader ? await loader(ctx, id) : await lazyForm(ctx, mod, action, id);
+    /* Opening a form writes nothing, so it may share reads the way a page does: this form asks for the SKU book three times. */
+    const spec = await withReadMemo(() => (loader ? loader(ctx, id) : lazyForm(ctx, mod, action, id)));
     if (!spec) return err(loader ? "That record no longer exists." : "That form is not available any more. Reload the page.", "not_found");
     return ok(spec);
   } catch (e) {

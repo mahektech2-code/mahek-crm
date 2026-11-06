@@ -736,8 +736,9 @@ async function priceFills(active: CustomerRow[], skuList: Sku[]): Promise<{ list
   const list: Record<string, string> = {};
   const terms: Record<string, string> = {};
   const rate: Record<string, string> = {};
+  const day = today();
   for (const p of active) {
-    const l = prices.listOf(p.id);
+    const l = prices.listOf(p.id, day);
     if (l && !label.has(l.id)) {
       /* Two published lists can share a name; the rates are keyed on it, so it has to be unique here. */
       let name = l.name;
@@ -745,7 +746,7 @@ async function priceFills(active: CustomerRow[], skuList: Sku[]): Promise<{ list
       taken.add(name);
       label.set(l.id, name);
       for (const s of skuList) {
-        const r = prices.rateOf(p.id, s);
+        const r = prices.rateOf(p.id, s, day);
         if (r != null) rate[`${name}|${s.name}`] = rupeesField(r);
       }
     }
@@ -814,8 +815,9 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
  * from the same place. This is the New order form opened on the order as it
  * stands: its delivery, transporter and dispatch day above, every live line
  * below, each line carrying its own id so the save knows which row it is.
- * What the order was raised as — its date, godown, billing party and source —
- * is shown and fixed; a different billing party is a different order.
+ * What the order was raised as — its date, godown and source — is shown and
+ * fixed. The billing party can be corrected until the order is billed; after
+ * that the invoice names it, and it stays.
  */
 async function editOrderForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   const [one] = await lines([id]);
@@ -842,9 +844,9 @@ async function editOrderForm(ctx: ErpContext, id: string): Promise<FormSpec | nu
     title: `Edit order ${first.o.orderNo} · ${first.billing.name}`,
     sub: [
       billed
-        ? "Billed: the delivery party and quantities are fixed and no line can be added; a change to a rate or discount sends the invoice back to the checker."
+        ? "Billed: the billing party, delivery party and quantities are fixed and no line can be added; a change to a rate or discount sends the invoice back to the checker."
         : first.o.orderCheck === "Verified"
-          ? "Verified: a change to a quantity, the delivery party, a rate or a discount — or a line added or removed — sends the order back to the back office."
+          ? "Verified: a change to the billing party, a quantity, the delivery party, a rate or a discount — or a line added or removed — sends the order back to the back office."
           : "Change any line, add a SKU, or remove a line.",
       all.some((l) => l.allocations > 0) ? "A line with lots allocated keeps its SKU and cannot be removed until its batch codes are released." : "",
     ]
@@ -852,7 +854,7 @@ async function editOrderForm(ctx: ErpContext, id: string): Promise<FormSpec | nu
       .join(" "),
     submit: "Save order",
     init: { ...base.init, dispatchOn: first.o.dispatchOn ?? "", delivery: first.delivery.name, transporter: isMahekVehicle(first.o.transporter) ? "" : (first.o.transporter ?? ""), deliveredBy: isMahekVehicle(first.o.transporter) ? MAHEK_VEHICLE : "Transporter" },
-    header: base.header.map((f) => (f.k === "delivery" ? { ...f, readOnly: billed } : f.k === "dispatchOn" || f.k === "transporter" || f.k === "deliveredBy" ? { ...f, readOnly: false } : f)),
+    header: base.header.map((f) => (f.k === "billing" || f.k === "delivery" ? { ...f, readOnly: billed } : f.k === "dispatchOn" || f.k === "transporter" || f.k === "deliveredBy" ? { ...f, readOnly: false } : f)),
     initLines: all.map((l) => ({
       lineId: l.o.id,
       sku: l.sku.name,
@@ -914,17 +916,44 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
   }
   if (added.length && billed) return err(`Order ${one.o.orderNo} is billed. One order is one bill — take a new order for these goods.`, "rule_violation");
 
+  const head = all[0] ?? one;
+  /* The billing party, corrected. Whatever a new party's list would refuse is
+     refused here, before anything is written; a rate the save would otherwise
+     leave alone was decided against the old party's list. */
+  const wantBilling = text(h.billing);
+  let moved: { party: CustomerRow; listRates: Map<string, number | null> } | null = null;
+  if (wantBilling && wantBilling !== head.billing.name) {
+    if (billed) return fieldErr("billing", "This order is billed; its billing party is fixed");
+    const party = await partyByName(wantBilling);
+    if (!party) return fieldErr("billing", "Pick a billing party from the list");
+    if (partyStatus(party) === "Deactive") return fieldErr("billing", "This party is deactivated");
+    const prices = await priceBook([party.id]);
+    const authority = await priceAuthorityOf(ctx);
+    const listRates = new Map<string, number | null>();
+    for (const { i, l, v } of kept) {
+      const listRate = prices.rateOf(party.id, l.sku, l.o.orderDate, int(v.qty));
+      listRates.set(l.o.id, listRate);
+      const rate = ctx.powers.has("viewSalesRate") ? paise(v.rate) : l.o.ratePaise;
+      const typed = num(v.discount);
+      const discount = !ctx.powers.has("viewSalesAmounts") ? l.o.discountBp : typed == null ? null : Math.round(typed * 100);
+      const decided = decidePrice(ctx, authority, { listRatePaise: listRate, ratePaise: rate, discountBp: discount });
+      if (!decided.ok) return fieldErr(`l${i}.${decided.field}`, decided.reason);
+    }
+    moved = { party, listRates };
+  }
+  /* A delivery party that was simply the billing party moves with it, or a corrected order ships to the wrong shop. */
+  const delivery = moved && head.delivery.id === head.billing.id && text(h.delivery) === head.delivery.name ? moved.party.name : (text(h.delivery) ?? head.delivery.name);
+
   /* Added lines first: saveOrder checks every one of them before it writes any. */
   if (added.length) {
-    const head = all[0] ?? one;
     const res = await saveOrder(
       ctx,
       {
         orderFixed: String(one.o.orderNo),
         date: head.o.orderDate,
         godown: head.godown,
-        billing: head.billing.name,
-        delivery: text(h.delivery) ?? head.delivery.name,
+        billing: moved?.party.name ?? head.billing.name,
+        delivery,
         transporter: carrierOf(h),
         dispatchOn: h.dispatchOn ?? "",
         source: head.o.orderSource ?? "",
@@ -937,13 +966,27 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
       return m ? fieldErr(`l${added[Number(m[1])].i}.${m[2]}`, fe!.message) : res;
     }
   }
+  if (moved) {
+    const { party, listRates } = moved;
+    const was = head.billing.name;
+    await db.transaction(async (tx) => {
+      /* Every line of the order, cancelled ones too: the order takes its party from its first line, whichever that is. */
+      await tx
+        .update(erpOrders)
+        .set({ billingCustomerId: party.id, partyStatus: partyStatus(party) === "Pending" ? "Pending" : null, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpOrders.orderNo, one.o.orderNo));
+      for (const [lineId, listRatePaise] of listRates) await tx.update(erpOrders).set({ listRatePaise }).where(eq(erpOrders.id, lineId));
+    });
+    await erpAudit(ctx, "erp.order.billing_party", "erp_order", String(one.o.orderNo), { billing: was }, { billing: party.name });
+    await reopenOrderCheck(ctx, one.o.orderNo, `Billing party changed: ${was} to ${party.name}`);
+  }
   for (const { i, l, v } of kept) {
     const res = await saveEdit(
       ctx,
       {
         status: l.o.status,
         dispatchOn: h.dispatchOn ?? "",
-        delivery: text(h.delivery) ?? l.delivery.name,
+        delivery,
         transporter: carrierOf(h),
         qty: v.qty ?? "",
         rate: v.rate ?? rupeesField(l.o.ratePaise),
@@ -966,7 +1009,7 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
     await erpAudit(ctx, "erp.order.delete", "erp_order", l.o.id, l.o, null);
     await reopenOrderCheck(ctx, l.o.orderNo, `${l.sku.name} removed`);
   }
-  if (removed.length || replaced.length) await syncBookOrders([one.o.orderNo]);
+  if (moved || removed.length || replaced.length) await syncBookOrders([one.o.orderNo]);
   const n = (k: number, w: string) => (k ? `${k} ${w}` : "");
   const said = [n(kept.length, "kept"), n(added.length - replaced.length, "added"), n(replaced.length, "SKU changed"), n(removed.length, "removed")].filter(Boolean).join(" · ");
   return okVoid(`Order ${one.o.orderNo} saved${said ? ` — ${said}` : ""}`);
