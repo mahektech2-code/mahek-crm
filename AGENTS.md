@@ -226,6 +226,16 @@ rendered at `/accounts/whatsapp`, read through the Accounts scope — every
 customer. "Open record" goes to the ledger there, since Accounts has no record
 page.
 
+**A narrowed grant does not receive new screens, so the screen SAYS when one
+shipped.** That is right for a screen somebody left out and wrong for one that
+did not exist when they decided — on prod in November 2026 three telecallers
+had gone a month without Opportunities with nothing anywhere saying so.
+`lib/module-since-data.ts` carries the day every module and ERP power shipped
+(a test fails on a key without one), and the Access screen and the Designations
+page name what arrived after a grant or a designation was last saved. Saving it
+again — ticked, or deliberately left out — is the decision: `setAccess` takes
+`reviewedNew` and rewrites the unchanged rows so their date moves past it.
+
 **Revoking an app takes its module rows with it.** Left behind, they would
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
