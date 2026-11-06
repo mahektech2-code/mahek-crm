@@ -861,13 +861,15 @@ export function QuoteGrid({
                       className={cx(HEAD, "group z-20 cursor-pointer pt-2 pb-1.5 font-normal hover:bg-divider", c.kind === "text" ? "min-w-[160px]" : "min-w-[128px]")}
                       title={`${[c.pack, c.name, c.brand].filter(Boolean).join(" · ")}\nClick to select the column · double-click to edit it`}
                     >
-                      {/* A selected column is tinted over the cell, since `Th` carries its own ground. */}
+                      {/* A selected column is tinted over the cell, since `Th` carries its own ground.
+                          The v4 head is navy, so its words are white — and turn to ink only on that
+                          lavender tint. Ink on navy was every unselected column's name, invisible. */}
                       {colSelected ? <span aria-hidden className="pointer-events-none absolute inset-0 bg-brand-soft" /> : null}
-                      <div className={cx("relative h-4 truncate leading-4", eyebrowClass)}>{c.pack}</div>
-                      <div className="relative text-meta leading-tight font-semibold tracking-normal whitespace-normal text-ink normal-case">{c.name || <span className="font-normal text-muted">Untitled</span>}</div>
-                      <div className="relative h-4 truncate text-2xs leading-4 tracking-normal text-muted normal-case">{c.brand}</div>
+                      <div className={cx("relative h-4 truncate text-2xs leading-4 font-medium tracking-label uppercase", colSelected ? "text-muted" : "text-white/70")}>{c.pack}</div>
+                      <div className={cx("relative text-meta leading-tight font-semibold tracking-normal whitespace-normal normal-case", colSelected ? "text-ink" : "text-white")}>{c.name || <span className={cx("font-normal", colSelected ? "text-muted" : "text-white/60")}>Untitled</span>}</div>
+                      <div className={cx("relative h-4 truncate text-2xs leading-4 tracking-normal normal-case", colSelected ? "text-muted" : "text-white/70")}>{c.brand}</div>
                       {!readOnly ? (
-                        <span className={cx("relative mt-1 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
+                        <span className={cx("relative mt-1 flex gap-0.5 opacity-0", colSelected ? "text-ink" : "text-white", "group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
                           <HeadBtn label="Move left" onClick={() => moveColumn(c.id, -1)} disabled={i === 0}>
                             <ShellIcon name="chevron" size={12} className="rotate-180" />
                           </HeadBtn>
