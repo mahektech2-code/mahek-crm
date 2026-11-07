@@ -684,14 +684,16 @@ describe("the billing view", () => {
 
     const [sheet, ...rest] = await billingViewFor(ctx, [ticked.id]);
     assert.equal(rest.length, 0);
-    assert.equal(sheet.buyer[0].v.show, "No List Traders");
+    assert.equal(sheet.buyers[0].fields[0].v.show, "No List Traders");
     assert.deepEqual(sheet.rows.map((r) => r.cans.copy).sort(), ["3", "4"]);
     assert.ok(sheet.totals.some((t) => t.l === "Invoice total"));
+    assert.ok(sheet.rows.some((r) => r.weight), "the line weights reach the sheet");
+    assert.ok(sheet.totals.some((t) => t.l === "Total weight"));
 
     const blind = { ...ctx, powers: new Set([...ctx.powers].filter((p) => p !== "viewSalesRate" && p !== "viewSalesAmounts")) };
     const [hidden] = await billingViewFor(blind, [ticked.id]);
     assert.ok(hidden.rows.every((r) => r.rate == null && r.amount == null));
-    assert.deepEqual(hidden.totals, []);
+    assert.deepEqual(hidden.totals, [{ l: "Total weight", v: { show: "7.8 kg", copy: "7.8" } }], "3 loose cans of 1.1 kg and one box of 4.5 kg: weight is not money");
   });
 });
 

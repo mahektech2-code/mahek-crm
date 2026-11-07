@@ -14,11 +14,11 @@ const line = (over: Partial<BillingLine> = {}): BillingLine => ({
   litresPerCan: 5,
   boxes: null,
   ratePaise: 100_050,
+  weightKg: null,
   discountBp: null,
   transportCostPaise: 0,
   gstBp: 1800,
-  invoiceNo: null,
-  invoiceDate: null,
+  billed: false,
   transporter: null,
   creditDays: null,
   ...over,
@@ -26,13 +26,31 @@ const line = (over: Partial<BillingLine> = {}): BillingLine => ({
 const all = { rates: true, amounts: true };
 const total = (s: { totals: { l: string; v: { copy: string } }[] }, l: string) => s.totals.find((t) => t.l === l)?.v.copy;
 
-test("orders for one party make one invoice, and another party makes another", () => {
-  const sheets = billingSheets([line({ orderNo: 102 }), line({ orderNo: 101 }), line({ orderNo: 103, billing: party("b") })], all);
-  assert.equal(sheets.length, 2);
-  const one = sheets.find((s) => s.buyer[0].v.show === "Party a")!;
-  assert.equal(one.orderCount, 2);
-  assert.deepEqual(one.rows.map((r) => r.orderNo.show), ["101", "102"]);
-  assert.equal(one.head.find((f) => f.l === "Order no")!.v.copy, "101, 102");
+test("every ticked order is clubbed onto ONE invoice, whichever party it bills, each row keeping its order number", () => {
+  const sheets = billingSheets([line({ orderNo: 102 }), line({ orderNo: 101 }), line({ orderNo: 103, billing: party("b"), creditDays: 30 }), line({ orderNo: 101, description: "PU Thinner" })], all);
+  assert.equal(sheets.length, 1);
+  const [s] = sheets;
+  assert.equal(s.orderCount, 3);
+  assert.deepEqual(s.rows.map((r) => r.orderNo.show), ["101", "101", "102", "103"]);
+  assert.equal(s.head.find((f) => f.l === "Order no")!.v.copy, "101, 102, 103");
+  assert.deepEqual(s.buyers.map((b) => b.fields[0].v.show), ["Party a", "Party b"]);
+  assert.equal(s.head.find((f) => f.l === "Terms of payment")!.v.copy, "30 days");
+});
+
+test("a billed line is left off, and the sheet says how many were", () => {
+  const sheets = billingSheets([line({ orderNo: 101 }), line({ orderNo: 102, billed: true }), line({ orderNo: 102, billed: true })], all);
+  assert.equal(sheets.length, 1);
+  assert.deepEqual(sheets[0].rows.map((r) => r.orderNo.show), ["101"]);
+  assert.ok(sheets[0].notes.includes("2 lines are already billed, so they are left off."));
+  assert.deepEqual(billingSheets([line({ billed: true })], all), [], "nothing left to bill draws no invoice");
+});
+
+test("each row says what it weighs, and the invoice its total weight, whatever money the viewer may see", () => {
+  const [s] = billingSheets([line({ weightKg: 27 }), line({ orderNo: 102, weightKg: 7.7 }), line({ orderNo: 103, weightKg: 0.1 }), line({ orderNo: 104, weightKg: null })], { rates: false, amounts: false });
+  assert.deepEqual(s.rows[0].weight, { show: "27 kg", copy: "27" });
+  assert.equal(s.rows[3].weight, null);
+  assert.equal(total(s, "Total weight"), "34.8", "summed in grams, not as floats");
+  assert.ok(s.notes.some((n) => n.startsWith("1 line has no weight")));
 });
 
 test("a value is shown formatted and copied bare, ready for a Tally field", () => {
@@ -70,6 +88,7 @@ test("money somebody may not see is not built at all", () => {
   assert.equal(none.rows[0].amount, null);
   assert.deepEqual(none.totals, []);
   assert.equal(none.rows[0].cans.copy, "10");
+  assert.equal(none.rows[0].weight, null);
   assert.ok(!JSON.stringify(none).includes("1000.50"));
   const [rateOnly] = billingSheets([line()], { rates: true, amounts: false });
   assert.equal(rateOnly.rows[0].rate?.copy, "1000.50");
@@ -84,24 +103,17 @@ test("a line with no rate is said, and left out of the total", () => {
   assert.ok(s.notes.some((n) => n.startsWith("1 line has no rate")));
 });
 
-test("an unbilled order says its GST is the usual rate; a billed one does not", () => {
+test("an unbilled line says its GST is the usual rate", () => {
   const [open] = billingSheets([line({ gstBp: null })], all);
   assert.equal(open.title, "New invoice");
   assert.equal(open.rows[0].gst.copy, "18");
   assert.ok(open.notes.some((n) => n.startsWith("Not billed yet")));
-  const [billed] = billingSheets([line({ invoiceNo: "MMI/26-27/900", invoiceDate: "2026-11-06" })], all);
-  assert.equal(billed.title, "Invoice MMI/26-27/900");
-  assert.equal(billed.head.find((f) => f.l === "Invoice no")!.v.copy, "MMI/26-27/900");
-  assert.deepEqual(billed.notes, []);
+  const [stated] = billingSheets([line({ weightKg: 5 })], all);
+  assert.deepEqual(stated.notes, []);
 });
 
-test("two invoices or two companies are never drawn as one sheet", () => {
-  const twoInvoices = billingSheets([line({ invoiceNo: "A/1" }), line({ orderNo: 102, invoiceNo: "A/2" })], all);
-  assert.equal(twoInvoices.length, 2);
-  const spellings = billingSheets([line({ invoiceNo: "mmi/ 900" }), line({ orderNo: 102, invoiceNo: "MMI/900" })], all);
-  assert.equal(spellings.length, 1);
-  const twoCompanies = billingSheets([line({ invoiceNo: "A/1" }), line({ orderNo: 102, invoiceNo: "A/1", gstBp: 0 })], all);
-  assert.equal(twoCompanies.length, 2);
+test("two companies are never one invoice", () => {
+  assert.equal(billingSheets([line(), line({ orderNo: 102, gstBp: 0 })], all).length, 2);
 });
 
 test("each shop the goods go to is listed once, and blank party fields are left out", () => {

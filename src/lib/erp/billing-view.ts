@@ -1,8 +1,15 @@
 /* ---------------------------------------------------------------------------
  * WHAT SOMEBODY TYPES INTO TALLY, laid out as the invoice. PURE and client-safe.
  *
- * Ticked order lines become one sheet per invoice: one billing party, one
- * company and one invoice number, because `doBill` refuses anything wider.
+ * Ticked order lines become ONE sheet, whichever orders and parties they come
+ * from: several orders are routinely clubbed onto one Tally bill, and the
+ * office asked for the selection to read as that one bill rather than as an
+ * invoice per order. Each row keeps its own order number. Only lines NOT yet
+ * billed are drawn — a billed line already has its invoice, in Tally and in
+ * order details — and the sheet says how many it left out. The one split kept
+ * is the company: GST decides it, and Mylac and Mahek Marketing India are never
+ * one invoice (unbilled lines all carry the usual GST, so in practice it never
+ * divides a selection).
  * Every value carries two spellings. `show` is what the eye reads ("₹1,200.50");
  * `copy` is what a Tally field takes ("1200.50"), since a rupee sign or an
  * Indian comma pasted into a number field is one more thing to delete.
@@ -14,7 +21,6 @@
  * Money somebody may not see is never built, so it never reaches the browser.
  * ------------------------------------------------------------------------- */
 import { roundBill } from "@/lib/bill-round";
-import { invoiceKey } from "./engines/money";
 import { billFigures, type OrderType } from "./engines/sales";
 import { fdLong, inr, inrRate, nf, qty } from "./ui";
 
@@ -44,12 +50,14 @@ export type BillingLine = {
   /** Null where the line is loose. */
   boxes: number | null;
   ratePaise: number | null;
+  /** What the line weighs, in kg, or null where the SKU carries no weight. */
+  weightKg: number | null;
   discountBp: number | null;
   transportCostPaise: number;
   /** Null until the line is billed: order details is where GST is held. */
   gstBp: number | null;
-  invoiceNo: string | null;
-  invoiceDate: string | null;
+  /** In order details already: it has its invoice, so it is left off this one. */
+  billed: boolean;
   transporter: string | null;
   creditDays: number | null;
 };
@@ -60,6 +68,7 @@ export type BillingRow = {
   cans: BillingValue;
   boxes: BillingValue | null;
   litres: BillingValue;
+  weight: BillingValue | null;
   rate: BillingValue | null;
   per: BillingValue;
   discount: BillingValue | null;
@@ -69,11 +78,11 @@ export type BillingRow = {
 
 export type BillingSheet = {
   key: string;
-  /** "Invoice MMI/26-27/900", or "New invoice" before it is billed. */
   title: string;
   orderCount: number;
   head: BillingField[];
-  buyer: BillingField[];
+  /** One per billing party: clubbed orders can name more than one. */
+  buyers: { key: string; fields: BillingField[] }[];
   consignees: { key: string; fields: BillingField[] }[];
   rows: BillingRow[];
   totals: BillingField[];
@@ -88,6 +97,7 @@ const USUAL_GST_BP = 1800;
 const text = (s: string): BillingValue => ({ show: s, copy: s });
 const rupees = (paise: number) => (paise / 100).toFixed(2);
 const money = (paise: number): BillingValue => ({ show: inr(paise), copy: rupees(paise) });
+const kg = (v: number): BillingValue => ({ show: `${qty(v)} kg`, copy: String(v) });
 const percent = (bp: number): BillingValue => ({ show: `${nf(bp / 100)}%`, copy: String(bp / 100) });
 /** A row of the party block, or nothing: a blank line has nothing to copy. */
 const field = (l: string, v: string | null | undefined): BillingField[] => (v?.trim() ? [{ l, v: text(v.trim()) }] : []);
@@ -99,7 +109,9 @@ function partyFields(p: BillingParty): BillingField[] {
 /** Several orders can sit on one invoice: one spelling for the field, the list for the eye. */
 const listed = (values: string[]): string => [...new Set(values)].join(", ");
 
-export function billingSheets(lines: BillingLine[], sight: BillingSight): BillingSheet[] {
+export function billingSheets(all: BillingLine[], sight: BillingSight): BillingSheet[] {
+  const lines = all.filter((l) => !l.billed);
+  const billedOut = all.length - lines.length;
   const figured = lines.map((l) => {
     const gstBp = l.gstBp ?? USUAL_GST_BP;
     return { l, gstBp, bill: billFigures({ type: l.type, qtyCans: l.qtyCans, litresPerCan: l.litresPerCan, ratePaise: l.ratePaise, discountBp: l.discountBp, transportCostPaise: l.transportCostPaise, gstBp }) };
@@ -107,17 +119,17 @@ export function billingSheets(lines: BillingLine[], sight: BillingSight): Billin
   const groups = new Map<string, typeof figured>();
   for (const f of figured) {
     /* `company` is decided by the GST, and two companies are never one invoice. */
-    const key = [f.l.billing.id, invoiceKey(f.l.invoiceNo), f.bill.company].join("|");
+    const key = f.bill.company;
     groups.set(key, [...(groups.get(key) ?? []), f]);
   }
 
   return [...groups.entries()]
     .map(([key, unordered]): BillingSheet => {
+      const notes: string[] = [];
       const group = [...unordered].sort((a, b) => a.l.orderNo - b.l.orderNo);
       const first = group[0];
-      const invoiceNo = group.find((f) => f.l.invoiceNo)?.l.invoiceNo ?? null;
-      const invoiceDate = group.find((f) => f.l.invoiceDate)?.l.invoiceDate ?? null;
       const orderNos = group.map((f) => String(f.l.orderNo));
+      const buyers = new Map(group.map((f) => [f.l.billing.id, f.l.billing]));
       const consignees = new Map(group.map((f) => [f.l.delivery.id, f.l.delivery]));
       const transporters = group.map((f) => f.l.transporter?.trim() ?? "").filter((t) => t && t !== "—");
 
@@ -129,6 +141,7 @@ export function billingSheets(lines: BillingLine[], sight: BillingSight): Billin
           cans: { show: nf(l.qtyCans), copy: String(l.qtyCans) },
           boxes: l.boxes == null ? null : { show: nf(l.boxes), copy: String(l.boxes) },
           litres: { show: qty(bill.litres), copy: String(bill.litres) },
+          weight: l.weightKg == null ? null : kg(l.weightKg),
           rate: sight.rates && l.ratePaise != null ? { show: inrRate(l.ratePaise), copy: rupees(l.ratePaise) } : null,
           per: text(l.type === "Drum" ? "Litre" : "Can"),
           discount: sight.amounts && l.discountBp ? percent(l.discountBp) : null,
@@ -137,8 +150,12 @@ export function billingSheets(lines: BillingLine[], sight: BillingSight): Billin
         };
       });
 
-      const notes: string[] = [];
       const totals: BillingField[] = [];
+      const weighed = group.filter((f) => f.l.weightKg != null);
+      /* Summed in grams: kilograms to three places do not add exactly as floats. */
+      if (weighed.length) totals.push({ l: "Total weight", v: kg(weighed.reduce((n, f) => n + Math.round(f.l.weightKg! * 1000), 0) / 1000) });
+      const unweighed = group.length - weighed.length;
+      if (unweighed) notes.push(`${unweighed} ${unweighed === 1 ? "line has" : "lines have"} no weight in the catalogue, so the total weight leaves ${unweighed === 1 ? "it" : "them"} out.`);
       if (sight.amounts) {
         const priced = group.filter((f) => f.bill.finalPaise != null);
         const gross = priced.reduce((n, f) => n + (f.bill.amountPaise ?? 0), 0);
@@ -159,21 +176,20 @@ export function billingSheets(lines: BillingLine[], sight: BillingSight): Billin
         if (unpriced) notes.push(`${unpriced} ${unpriced === 1 ? "line has" : "lines have"} no rate, so the total leaves ${unpriced === 1 ? "it" : "them"} out.`);
       }
       if (group.some((f) => f.l.gstBp == null)) notes.push("Not billed yet, so GST shows the usual 18%.");
+      if (billedOut) notes.push(`${billedOut} ${billedOut === 1 ? "line is" : "lines are"} already billed, so ${billedOut === 1 ? "it is" : "they are"} left off.`);
 
       return {
         key,
-        title: invoiceNo ? `Invoice ${invoiceNo}` : "New invoice",
+        title: "New invoice",
         orderCount: new Set(orderNos).size,
         head: [
           ...field("Company", first.bill.company),
-          ...field("Invoice no", invoiceNo),
-          ...(invoiceDate ? [{ l: "Invoice date", v: { show: fdLong(invoiceDate), copy: fdLong(invoiceDate) } }] : []),
           ...field("Order no", listed(orderNos)),
           ...field("Order date", listed(group.map((f) => fdLong(f.l.orderDate)))),
           ...field("Dispatch through", listed(transporters)),
-          ...field("Terms of payment", first.l.creditDays == null ? null : `${first.l.creditDays} days`),
+          ...field("Terms of payment", listed(group.flatMap((f) => (f.l.creditDays == null ? [] : [`${f.l.creditDays} days`])))),
         ],
-        buyer: partyFields(first.l.billing),
+        buyers: [...buyers.values()].map((p) => ({ key: p.id, fields: partyFields(p) })),
         consignees: [...consignees.values()].map((p) => ({ key: p.id, fields: partyFields(p) })),
         rows,
         totals,

@@ -10,9 +10,11 @@ import { orderLines, type OrderLine } from "./screens/sales";
 export const BILLING_VIEW_MAX_LINES = 500;
 
 /**
- * The invoices a selection of order lines makes. One order is one complete bill,
- * so a ticked line brings the rest of its order with it; a cancelled line is not
- * on any bill. Rates and amounts follow the same powers as the list's columns.
+ * The invoice a selection of order lines makes — one, however many orders and
+ * parties it spans. One order is one complete bill, so a ticked line brings the
+ * rest of its order with it; a cancelled line is not on any bill, and a billed
+ * one is left off (`billingSheets` says how many). Rates and amounts follow the
+ * same powers as the list's columns.
  */
 export async function billingViewFor(ctx: ErpContext, lineIds: string[]): Promise<BillingSheet[]> {
   const ticked = await db.selectDistinct({ no: erpOrders.orderNo }).from(erpOrders).where(inArray(erpOrders.id, lineIds));
@@ -34,11 +36,11 @@ export async function billingViewFor(ctx: ErpContext, lineIds: string[]): Promis
     litresPerCan: l.sku.litresPerCan,
     boxes: l.boxed ? l.boxes : null,
     ratePaise: l.o.ratePaise,
+    weightKg: l.weightKg,
     discountBp: l.o.discountBp,
     transportCostPaise: l.o.transportCostPaise,
     gstBp: l.gstBp,
-    invoiceNo: l.o.tallyBillNo,
-    invoiceDate: l.o.invoiceDate,
+    billed: l.inDetails,
     transporter: l.o.transporter ?? l.delivery.p?.transporter ?? null,
     creditDays: l.billing.creditDays,
   }));
