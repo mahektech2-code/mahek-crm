@@ -641,7 +641,31 @@ const inward: ScreenModule = {
         filters: ["supplier", "type", "item", "testing", "routed", "drumOwner"],
         newForm: form,
         newLabel: "Receive goods",
-        bulk: [{ id: "editMany", l: "Edit", fits: false, prompt: inwardBulkPrompt(form) }],
+        /* WHAT A SELECTION CAN DO, BY ITS SHAPE. Sending on and the shared edit
+           are line by line, so any selection takes them; Transport & costs is
+           once per PR, so it is offered only while the ticks are one PR's lines
+           and it opens that PR's own form. */
+        bulk: [
+          { id: "combined", l: "Combined view", client: "combinedView", fits: false },
+          { id: "toTesting", l: "Send to Testing" },
+          { id: "toPurchase", l: "Send to Purchase" },
+          { id: "editMany", l: "Edit", fits: false, prompt: inwardBulkPrompt(form) },
+          { id: "costs", l: "Transport & costs", same: ["pr"], asRow: true },
+        ],
+        combined: {
+          cols: ["pr", "po", "item", "drums", "weight", "qty", "unit", "testing", "routed"],
+          facts: ["supplier", "pr", "po", "date", "godown", "transport"],
+          totals: [
+            { l: "Lines" },
+            { l: "PRs", kind: "distinct", k: "pr" },
+            { l: "Drums", kind: "sum", k: "drums" },
+            { l: "Not sent on", where: { flag: "awaitingRoute" }, tone: "warn" },
+            { l: "Before POs", where: { flag: "noPo" }, tone: "muted" },
+          ],
+          /* kg, litres and pieces do not add, so the net weight is said per unit. */
+          sumBy: { k: "qty", by: "unit", l: "Weight without drum" },
+          words: { pr: "PR" },
+        },
         noDataLine: "No goods received yet. Goods are received against a PO.",
       },
       tooWide: wide,
@@ -942,6 +966,14 @@ const inward: ScreenModule = {
     edit: (ctx, id) => inwardEditForm(ctx, id),
   },
   bulk: {
+    /* The row act on each ticked line in turn: each line is its own decision,
+       so one already sent does not hold back the rest, and the count says so. */
+    async toTesting(ctx, ids) {
+      return eachLine(ids, (id) => inward.actions!.toTesting(ctx, id, {}), "sent to Testing", "already sent, or not needing testing");
+    },
+    async toPurchase(ctx, ids) {
+      return eachLine(ids, (id) => inward.actions!.toPurchase(ctx, id, {}), "sent to Purchase", "already sent, or needing testing first");
+    },
     async editMany(ctx, ids, values) {
       const date = text(values.date);
       const godownName = text(values.godown);
@@ -1721,21 +1753,72 @@ const register: ScreenModule = {
         filters: ["party", "item", "stage", "posting", "unit", "final"],
         newForm: newForm ?? undefined,
         newLabel: "New purchase",
-        bulk: money
-          ? [
-              {
-                id: "billReceived",
-                l: "Record the bill",
-                prompt: {
-                  title: "Record the bill",
-                  sub: "This bill number goes on every selected purchase that has no bill yet. One bill comes from one party.",
-                  submit: "Save",
-                  fields: [{ k: "billNo", l: "Bill number", t: "text", req: true }],
+        /* WHAT A SELECTION CAN DO, BY ITS SHAPE. One bill comes from one party,
+           so Record the bill waits for one party's lots; one rate fits one item
+           in one unit; a supplier bill is read against one PR's rows. The rest
+           is line by line and any selection takes it. */
+        bulk: [
+          { id: "combined", l: "Combined view", client: "combinedView", fits: false },
+          ...(money
+            ? [
+                {
+                  id: "rate",
+                  l: "Enter rate",
+                  same: ["item", "unit"],
+                  prompt: {
+                    title: "Enter the purchase rate",
+                    sub: "One rate goes on every ticked lot of this item that has no rate yet, and each posts to stock.",
+                    submit: "Save rate and post",
+                    fields: [{ k: "rate", l: "Rate per unit (₹)", t: "num" as const, req: true, min: 0.01 }],
+                  },
                 },
-              },
-              ...(verifier ? [{ id: "verifyMany", l: "Verify purchase", fits: "status", confirm: "Set every selected purchase to Purchase Verified?" }] : []),
-            ]
-          : undefined,
+                {
+                  id: "billReceived",
+                  l: "Record the bill",
+                  same: ["party"],
+                  prompt: {
+                    title: "Record the bill",
+                    sub: "This bill number goes on every selected purchase that has no bill yet. One bill comes from one party.",
+                    submit: "Save",
+                    fields: [{ k: "billNo", l: "Bill number", t: "text" as const, req: true }],
+                  },
+                },
+                ...(aiBills ? [{ id: "aiBillRead", l: "Read supplier bill", same: ["pr"], asRow: true }] : []),
+                ...(verifier ? [{ id: "verifyMany", l: "Verify purchase", fits: "status", confirm: "Set every selected purchase to Purchase Verified?" }] : []),
+                /* A verifier's one status is Purchase Verified, which Verify purchase already is. */
+                ...(verifier
+                  ? []
+                  : [
+                      {
+                        id: "status",
+                        l: "Change status",
+                        prompt: {
+                          title: "Purchase status",
+                          sub: "Every ticked purchase takes this status. Purchase Verified is set by the verifier.",
+                          submit: "Save status",
+                          fields: [{ k: "status", l: "Status", t: "select" as const, req: true, opts: settableStatuses(false) }],
+                        },
+                      },
+                    ]),
+                { id: "billNotReceived", l: "Bill Not Received", confirm: "Mark every ticked purchase as bill not received? A purchase matched to its bill keeps it." },
+                { id: "reopen", l: "Back to pending", confirm: "Set every ticked verified purchase back to Pending?" },
+              ]
+            : []),
+        ],
+        combined: {
+          cols: ["pr", "lot", "item", "qty", "unit", "rate", "gst", "final", "landing", "stage", "billNo", "posting"],
+          facts: ["party", "pr", "po", "billNo", "date"],
+          totals: [
+            { l: "Lots" },
+            { l: "On the bill", kind: "sum", k: "final", missing: "without a rate" },
+            { l: "Landing cost", kind: "sum", k: "landing", missing: "without a landing cost" },
+            { l: "Rate missing", where: { flag: "rateMissing" }, tone: "danger" },
+            { l: "Rate differs from PO", where: { flag: "rateOffPo" }, tone: "warn" },
+            { l: "Bill to come", where: { k: "stage", in: ["Arrived", "Tested"] }, tone: "warn" },
+          ],
+          sumBy: { k: "qty", by: "unit", l: "Quantity" },
+          words: { pr: "PR", party: "party", item: "item" },
+        },
         noDataLine: "No purchases yet. Rows arrive as goods are received against a PO.",
       },
       tooWide: wide,
@@ -1985,6 +2068,65 @@ const register: ScreenModule = {
       await erpAudit(ctx, "erp.purchase.billReceived.bulk", "erp_purchase", null, null, { billNo, ids: done.map((r) => r.id) });
       return okVoid(`Bill ${billNo} recorded on ${counted(done.length, ids.length, "already had a bill")}`);
     },
+    /* One rate fits one item in one unit, and only a lot with no rate takes it — the row's rule. */
+    async rate(ctx, ids, values) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      const rate = paise(values.rate);
+      if (rate == null || rate <= 0) return fieldErr("rate", "Rate is required");
+      const rows = await db.select({ id: erpPurchases.id, item: erpPurchases.rawMaterialId, unit: erpPurchases.unit, ratePaise: erpPurchases.ratePaise }).from(erpPurchases).where(inArray(erpPurchases.id, ids));
+      const open = rows.filter((r) => !postsToStock(r.ratePaise));
+      if (!open.length) return err("Every ticked lot already has its rate.", "rule_violation");
+      if (new Set(open.map((r) => `${r.item}|${r.unit}`)).size > 1) return err("One rate fits one item in one unit. Tick one item's lots.", "rule_violation");
+      let posted = 0;
+      /* All of them or none: a rate on half a bill's lots is harder to put right than a failure. */
+      await db.transaction(async (tx) => {
+        for (const r of open) {
+          await tx.update(erpPurchases).set({ ratePaise: rate, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, r.id));
+          await refreshCache(tx, r.id);
+          if (await syncPurchaseEntry(tx, r.id)) posted++;
+        }
+      });
+      await erpAudit(ctx, "erp.purchase.rate.bulk", "erp_purchase", null, null, { ratePaise: rate, ids: open.map((r) => r.id) });
+      const said = `Rate saved on ${counted(open.length, ids.length, "already had a rate")}`;
+      return okVoid(posted ? `${said} · ${posted} posted to stock` : said);
+    },
+    async status(ctx, ids, values) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      const status = text(values.status);
+      const allowed = settableStatuses(ctx.powers.has("verifyPurchase"));
+      if (!status || !allowed.includes(status)) return fieldErr("status", status === "Purchase Verified" ? "Only the verifier sets Purchase Verified" : "Pick a status");
+      const done = await db
+        .update(erpPurchases)
+        .set({ status, ...(BILLED.includes(status) ? { billReceived: "Received" } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(inArray(erpPurchases.id, ids), sql`${erpPurchases.status} is distinct from ${status}`))
+        .returning({ id: erpPurchases.id });
+      if (!done.length) return err(`These purchases are already ${status}.`, "rule_violation");
+      await erpAudit(ctx, "erp.purchase.status.bulk", "erp_purchase", null, null, { status, ids: done.map((r) => r.id) });
+      return okVoid(`${status}: ${counted(done.length, ids.length, `already ${status}`)}`);
+    },
+    async billNotReceived(ctx, ids) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      /* The row's rule: a purchase matched to its bill has its bill. */
+      const done = await db
+        .update(erpPurchases)
+        .set({ billReceived: "Bill Not Received", status: sql`case when ${erpPurchases.status} = 'Invoice Received' then 'Pending' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(inArray(erpPurchases.id, ids), sql`${erpPurchases.billReceived} = 'Received'`, sql`${erpPurchases.status} not in ('Purchase Matched', 'Purchase Verified')`))
+        .returning({ id: erpPurchases.id });
+      if (!done.length) return err("None of these has a bill that can be taken off — a purchase matched to its bill keeps it.", "rule_violation");
+      await erpAudit(ctx, "erp.purchase.billNotReceived.bulk", "erp_purchase", null, null, { ids: done.map((r) => r.id) });
+      return okVoid(`Bill not received: ${counted(done.length, ids.length, "had no bill, or are matched to it")}`);
+    },
+    async reopen(ctx, ids) {
+      if (!ctx.powers.has("reopenPurchase")) return err("Only an admin sets a verified purchase back to Pending.", "not_permitted");
+      const done = await db
+        .update(erpPurchases)
+        .set({ status: "Pending", updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(inArray(erpPurchases.id, ids), sql`${erpPurchases.status} in ('Purchase Verified', '')`))
+        .returning({ id: erpPurchases.id });
+      if (!done.length) return err("None of these is verified.", "rule_violation");
+      await erpAudit(ctx, "erp.purchase.reopen.bulk", "erp_purchase", null, null, { ids: done.map((r) => r.id) });
+      return okVoid(`Back to Pending: ${counted(done.length, ids.length, "not verified")}`);
+    },
     async verifyMany(ctx, ids) {
       if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       if (!ctx.powers.has("verifyPurchase")) return err(powerRefusal("verifyPurchase"), "not_permitted");
@@ -1999,6 +2141,20 @@ const register: ScreenModule = {
     },
   },
 };
+
+/** A row act over a selection, line by line: "4 lines sent to Testing · 1 already sent". */
+async function eachLine(ids: string[], act: (id: string) => Promise<Result<unknown>>, did: string, leftAlone: string): Promise<Result<unknown>> {
+  let done = 0;
+  let refusal: Result<unknown> | null = null;
+  for (const id of ids) {
+    const r = await act(id);
+    if (r.ok) done++;
+    else refusal ??= r;
+  }
+  if (!done) return refusal ?? err("Nothing was ticked.", "validation");
+  const said = `${done} line${done === 1 ? "" : "s"} ${did}`;
+  return okVoid(done < ids.length ? `${said} · ${ids.length - done} ${leftAlone}` : said);
+}
 
 /** "3 purchases", and how many of the selection were left alone and why. */
 function counted(done: number, chosen: number, leftAlone: string): string {
