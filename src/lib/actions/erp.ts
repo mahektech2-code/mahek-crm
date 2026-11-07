@@ -14,10 +14,10 @@ import { err, fromThrown, okVoid, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, VIEW_AS_COOKIE, erpContext, isErpAdministrator, previewRefusal, requireErpForm, requireErpWrite, setTestViewAs } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { erpScreen, erpHref, erpLink } from "@/lib/erp/registry";
-import { FLAG, type FormSpec } from "@/lib/erp/ui";
+import { FLAG, type FormSpec, type ListRow, type ListSpec } from "@/lib/erp/ui";
 import { listCsv, parseListQuery, queryRows, selectionTotals, type SelectionTotal } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
-import { scopeFor } from "@/lib/erp/window";
+import { scopeFor, unscoped } from "@/lib/erp/window";
 import { erpAudit } from "@/lib/erp/server";
 import { lazyForm } from "@/lib/erp/lazy-forms";
 
@@ -186,6 +186,35 @@ export async function erpListTotals(screen: string, query: Record<string, string
     const q = parseListQuery(query);
     const { spec, rows } = await withReadMemo(() => mod.load(ctx, { ...scopeFor(mod.window, q, null), forms: "defer" }));
     return ok(selectionTotals(spec, rows, ids.filter((x) => typeof x === "string")));
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+/** Past this a pop-up is not something anybody reads row by row. */
+const COMBINED_MAX = 500;
+
+/**
+ * The "Combined view" pop-up: exactly the ticked rows, read fresh by the
+ * screen's own loader — the same values, flags and actions the list has, so
+ * the view, its totals and the actions it offers cannot disagree with the
+ * table, and a "Select all" past this page is judged on every row it reaches.
+ * Read access only, like the export.
+ */
+export async function erpCombinedView(screen: string, ids: unknown): Promise<Result<{ spec: ListSpec; rows: ListRow[] }>> {
+  try {
+    const ctx = await requireErpForm(screen);
+    const mod = screenModule(screen);
+    if (!mod) return err("That list is not available.", "not_found");
+    const want = Array.isArray(ids) ? [...new Set(ids.filter((x): x is string => typeof x === "string"))] : [];
+    if (!want.length) return err("Nothing selected.", "validation");
+    if (want.length > COMBINED_MAX) return err(`That is ${want.length} rows. Tick ${COMBINED_MAX} or fewer to see them together.`, "validation");
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx, { ...unscoped(), ids: want, forms: "defer" }));
+    if (!spec.combined) return err("This list has no combined view.", "not_found");
+    const keep = new Set(want);
+    const picked = rows.flatMap((r) => [r, ...(r.sub ?? [])]).filter((r) => keep.has(r.id));
+    /* The New form is the heaviest thing a load builds, and the view never opens it. */
+    return ok({ spec: { ...spec, newForm: undefined }, rows: picked.map((r) => ({ ...r, sub: undefined })) });
   } catch (e) {
     return refused(e);
   }

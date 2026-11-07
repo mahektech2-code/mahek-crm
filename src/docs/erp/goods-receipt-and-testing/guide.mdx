@@ -117,14 +117,40 @@ Every lot bought, with what it cost. A row arrives on its own — from a receipt
 | **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
 | **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against a PO, correct a row, or add another lot to the PR |
 | **Print drum label** | The screen | Opens the lot's drum label to print — see below |
-| **Record the bill** (ticked rows) | Purchase money | Asks for one bill number and puts it on every ticked purchase with no bill yet. They must all be from one party; a purchase that already has its bill keeps its number |
-| **Verify purchase** (ticked rows) | Purchase money and the verifier power | Sets every ticked purchase to Purchase Verified, the same as Change status on each one |
 
 <Callout kind="money">
 A lot is in stock only once it has a rate above zero. A row from a PO already has the PO's rate, so it is in stock the moment it is saved. "Not posted: rate missing" in the Inventory column says why one is not.
 </Callout>
 
 Flags on a row: **Purchase rate empty**, **Rate differs from PO** (the bill moved the rate away from the PO's), **Before POs** (bought before purchase orders), **Filled from bill** (AI read the bill).
+
+## Ticking several rows
+
+Tick rows on **Goods receipt** or **Register** and the bar at the bottom offers what can be done to all of them at once. **Combined view** opens the ticked rows together: the suppliers, PRs and POs once at the top, one row per line or lot, the totals underneath, and the same actions along the bottom. After each action the view reads the rows again.
+
+What is offered depends on what you ticked. An action that only makes sense for one PR, one party or one item appears only while everything ticked shares it, and the Combined view says what a narrower selection would add.
+
+**Goods receipt**
+
+| Action | Offered when | What it does |
+|---|---|---|
+| **Send to Testing**, **Send to Purchase** | Any lines not yet sent on | Sends each ticked line that can go and says how many could not |
+| **Edit** | Any lines | Date, godown, drum owner or remark on every ticked line; a blank box keeps what each has |
+| **Transport & costs** | One PR's lines | Opens that PR's transport and other cost, once — it is shared across the PR's items |
+
+**Register** (needs purchase money)
+
+| Action | Offered when | What it does |
+|---|---|---|
+| **Enter rate** | One item in one unit | One rate on every ticked lot of that item with no rate yet; each posts to stock |
+| **Record the bill** | One party | One bill number on every ticked purchase with no bill yet; one that has its bill keeps its number |
+| **Read supplier bill** | One PR, AI bills on | Reads the PR's bill and matches it to its rows for you to review |
+| **Verify purchase** | The verifier power | Sets every ticked purchase to Purchase Verified |
+| **Change status** | Anyone but the verifier | Invoice Received or Purchase Matched on every ticked purchase |
+| **Bill Not Received** | Any purchases | Takes the bill off each one that has it, except one matched to its bill |
+| **Back to pending** | The reopen power (an admin) | Sets every ticked verified purchase back to Pending |
+
+Opening one row, editing it and adding another lot stay on the row itself.
 
 ## Drum labels
 

@@ -22,6 +22,7 @@ import type { PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { InvoiceButtons } from "./invoice-buttons";
 import { BillingViewModal } from "./billing-view";
+import { CombinedViewModal } from "./combined-view";
 import { PrintInvoicesModal } from "./invoice-modals";
 import { useErpUi } from "./erp-ui";
 import { RecordDialog } from "./record-dialog";
@@ -457,6 +458,7 @@ export function ListScreen({
   const chosen = Object.keys(sel).filter((id) => sel[id] && (!inView || inView.has(id)));
   const [printing, setPrinting] = useState<string[] | null>(null);
   const [billingView, setBillingView] = useState<string[] | null>(null);
+  const [combinedView, setCombinedView] = useState<string[] | null>(null);
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => sel[r.id]);
   const bulkOn = !!spec.bulk?.length;
   /* A row carries a checkbox where something can be done with a selection —
@@ -1134,8 +1136,23 @@ export function ListScreen({
               Select all {nf(total)}
             </button>
           ) : null}
-          {offers.map(({ b, label }) => (
-            <Button key={b.id} variant="dark" size="sm" onClick={() => (b.client === "printInvoices" ? setPrinting(chosen) : b.client === "billingView" ? setBillingView(chosen) : ui.bulk(spec.screen, b, chosen, () => setSel({})))}>
+          {offers.map(({ b, label, row }) => (
+            <Button
+              key={b.id}
+              variant="dark"
+              size="sm"
+              onClick={() => {
+                if (b.client === "printInvoices") return setPrinting(chosen);
+                if (b.client === "billingView") return setBillingView(chosen);
+                if (b.client === "combinedView") return setCombinedView(chosen);
+                /* The selection is one record (one PR): its own action, run once. */
+                if (row) {
+                  const a = row.actions?.find((x) => x.id === (b.fits || b.id));
+                  return a ? ui.act(spec.screen, a, row.id) : undefined;
+                }
+                ui.bulk(spec.screen, b, chosen, () => setSel({}));
+              }}
+            >
               {label}
             </Button>
           ))}
@@ -1146,6 +1163,7 @@ export function ListScreen({
       ) : null}
 
       {printing ? <PrintInvoicesModal lineIds={printing} onClose={() => setPrinting(null)} /> : null}
+      {combinedView ? <CombinedViewModal screen={spec.screen} ids={combinedView} onClose={() => setCombinedView(null)} /> : null}
       {billingView ? <BillingViewModal screen={spec.screen} lineIds={billingView} onClose={() => setBillingView(null)} /> : null}
       {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} /> : null}
     </Frame>

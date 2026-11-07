@@ -371,9 +371,27 @@ export type BulkSpec = {
   /**
    * Handled on the page rather than by the server: "printInvoices" opens the
    * Print invoices pop-up over the selection, "billingView" the invoice to make
-   * in Tally.
+   * in Tally, "combinedView" the ticked rows read together with what can be
+   * done to them as a set (`combined-view.tsx`).
    */
-  client?: "printInvoices" | "billingView";
+  client?: "printInvoices" | "billingView" | "combinedView";
+  /**
+   * Row values every ticked row must share for this to be offered at all —
+   * `["pr"]` is "only while the ticks are one PR", `["party"]` one party. It is
+   * what makes a selection's actions follow its shape: one PR's lines are
+   * offered the PR's own work, several PRs only what each line can take on
+   * its own. Judged only where every ticked row is in hand; otherwise the act
+   * itself refuses a mixed selection.
+   */
+  same?: string[];
+  /**
+   * The selection IS one record of the `same` key — one PR — so pressing this
+   * runs that record's own row action (`fits`, else this id) once, on the
+   * first ticked row that can take it, rather than a bulk act on every row.
+   * Transport & costs is once per PR: ticking a PR's three lines and setting
+   * it three times would be the same cost three times over.
+   */
+  asRow?: boolean;
   /**
    * Which row action says whether a ticked row can take this — by default the
    * row action with this bulk action's own id. The selection bar offers the
@@ -393,6 +411,24 @@ export type BulkSpec = {
    * first and its values travel with the confirmation.
    */
   impact?: { kind: string };
+};
+
+/**
+ * The ticked rows of a list read as one thing — a goods receipt, a supplier's
+ * bill — with the bulk actions that selection can take beside them. Every value
+ * is the list's own row value, so the view and the table cannot disagree.
+ */
+export type CombinedSpec = {
+  /** Columns of the table, in order. */
+  cols: string[];
+  /** Columns said once above the table, every different value listed — the suppliers, the PRs. */
+  facts: string[];
+  /** Figures under the table, worked out like the list's stat cards, over the ticked rows only. */
+  totals: StatSpec[];
+  /** A number column added up per value of another — weight per unit, since kg and litres do not add. */
+  sumBy?: { k: string; by: string; l: string };
+  /** What one of a `same` key is called in a sentence — `{ pr: "PR" }` reads "Tick one PR's rows". */
+  words?: Record<string, string>;
 };
 
 /* -------------------------------------------------------------------- rows */
@@ -518,6 +554,8 @@ export type ListSpec = {
   selectSum?: SelectSum[];
   sortDefault?: [string, 1 | -1];
   bulk?: BulkSpec[];
+  /** How the "Combined view" pop-up reads the ticked rows together (`combined-view.tsx`). */
+  combined?: CombinedSpec;
   /** Key of the godown column the godown filter applies to. */
   godownKey?: string;
   /** Line under the toolbar when the list is scoped to the working godown. */

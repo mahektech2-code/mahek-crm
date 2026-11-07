@@ -11,7 +11,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, isNotNull, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, isNotNull, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -38,6 +38,7 @@ import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { bulkOffers } from "@/lib/erp/bulk-fit";
 import { purchaseStage } from "@/lib/erp/screens/purchase";
+import { postsToStock } from "@/lib/erp/engines/purchase";
 import { publicPoPdf } from "@/lib/erp/po-share";
 import { rmLots, rmLotStock } from "@/lib/erp/stock";
 import { erpNavCounts } from "@/lib/erp/counts";
@@ -537,7 +538,10 @@ describe("register and stock", () => {
     const others = [rest[0]];
     const offered = async (c: Awaited<ReturnType<typeof as>>, ids: string[]) => {
       const { spec, rows } = await reg.load(c);
-      return bulkOffers(spec.bulk ?? [], rows, ids).map((o) => o.label);
+      /* This test is about the bill and verifying; the shape-led actions have their own. */
+      return bulkOffers(spec.bulk ?? [], rows, ids)
+        .filter((o) => o.b.id === "billReceived" || o.b.id === "verifyMany")
+        .map((o) => o.label);
     };
 
     /* Both are offered on rows that can take them: this is what the bar draws. */
@@ -581,6 +585,19 @@ describe("register and stock", () => {
     assert.notEqual((await after(third.id)).status, "Purchase Verified");
     await db.update(erpPurchases).set({ supplierId: before }).where(eq(erpPurchases.id, rest[0].id));
     await db.update(erpPurchases).set({ billReceived: third.billReceived, status: third.status }).where(eq(erpPurchases.id, third.id));
+  });
+
+  test("the Combined view names only columns the register has, and loads exactly the ticked rows", async () => {
+    const ctx = await as(admin);
+    for (const k of ["register", "inward"]) {
+      const all = await mod(k).load(ctx);
+      const c = all.spec.combined!;
+      const have = new Set(all.spec.cols.map((x) => x.k));
+      for (const key of [...c.cols, ...c.facts, ...c.totals.flatMap((t) => (t.k ? [t.k] : [])), ...(c.sumBy ? [c.sumBy.k, c.sumBy.by] : [])]) assert.ok(have.has(key), `${k}: ${key} is a column`);
+      const two = all.rows.slice(0, 2).map((r) => r.id);
+      const picked = await mod(k).load(ctx, { pd: "all", window: { from: null, to: null }, ids: two, open: null, forms: "defer" });
+      assert.deepEqual(picked.rows.map((r) => r.id).sort(), [...two].sort());
+    }
   });
 
   test("available stock lists lots above zero, and the cost is hidden without its power", async () => {
@@ -1141,5 +1158,101 @@ describe("correcting a goods receipt", () => {
     const saved = await mod("inward").forms!.edit(ctx, { date: r.receivedDate, godown: "Bhiwandi", drums: String(r.drums ?? 1), qty: String(r.quantity - 1) }, [], r.id);
     assert.ok(saved.ok, JSON.stringify(saved));
     assert.equal((await db.select().from(erpTests).where(eq(erpTests.id, t.id)))[0].quantity, r.quantity - 1);
+  });
+});
+
+/* Last, because these receive goods of their own and the stock tests above count lots. */
+describe("a selection, by its shape", () => {
+  test("a register selection is offered what its shape allows: one item takes one rate, one party one bill", async () => {
+    const ctx = await as(admin);
+    const reg = mod("register");
+    /* No rate yet on any of them: two receipts of one item, and a second item. */
+    const unrated = { "1 L Tin Can": 0, "Plain Carton": 0 };
+    for (const lines of [[{ item: "1 L Tin Can", qty: "10" }, { item: "Plain Carton", qty: "7" }], [{ item: "1 L Tin Can", qty: "5" }]]) {
+      const got = await receive({ transportMode: NONE }, lines, unrated);
+      assert.ok(got.ok, JSON.stringify(got));
+    }
+    const lots = await db.select().from(erpPurchases).where(inArray(erpPurchases.rawMaterialId, ["rm_can", "rm_plain"])).orderBy(desc(erpPurchases.createdAt));
+    const fresh = lots.filter((l) => !postsToStock(l.ratePaise));
+    const cans = fresh.filter((l) => l.rawMaterialId === "rm_can").slice(0, 2);
+    const [carton] = fresh.filter((l) => l.rawMaterialId === "rm_plain");
+    assert.equal(cans.length, 2);
+    assert.ok(carton);
+    const offered = async (ids: string[]) => {
+      const { spec, rows } = await reg.load(ctx);
+      return bulkOffers(spec.bulk ?? [], rows, ids).map((o) => o.b.id);
+    };
+    const sameItem = await offered(cans.map((l) => l.id));
+    assert.ok(sameItem.includes("combined") && sameItem.includes("rate") && sameItem.includes("billReceived"), sameItem.join());
+    const twoItems = await offered([cans[0].id, carton.id]);
+    assert.ok(!twoItems.includes("rate"), "one rate does not fit two items");
+    assert.ok(twoItems.includes("billReceived"), "one party, so one bill still fits");
+    assert.ok(!twoItems.includes("status"), "a verifier is offered Verify purchase, not a second way to say it");
+
+    const mixed = await reg.bulk!.rate(ctx, [cans[0].id, carton.id], { rate: "3" });
+    assert.ok(!mixed.ok && mixed.code === "rule_violation");
+    const rated = await reg.bulk!.rate(ctx, cans.map((l) => l.id), { rate: "3" });
+    assert.ok(rated.ok, JSON.stringify(rated));
+    assert.match(rated.message ?? "", /Rate saved on 2 purchases · 2 posted to stock/);
+    for (const l of cans) assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.id, l.id)))[0].ratePaise, 300);
+    assert.ok(!(await reg.bulk!.rate(ctx, cans.map((l) => l.id), { rate: "4" })).ok, "a lot with its rate keeps it");
+  });
+
+  test("status, bill not received and back to pending, over a selection, keep the row's rules", async () => {
+    const reg = mod("register");
+    const lots = await db.select().from(erpPurchases).where(eq(erpPurchases.rawMaterialId, "rm_can"));
+    const ids = lots.map((l) => l.id);
+    await db.execute(sql`delete from erp_user_powers`);
+    await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney')`);
+    const c = await as(clerk);
+    assert.ok(!(await reg.bulk!.status(c, ids, { status: "Purchase Verified" })).ok, "only the verifier sets Purchase Verified");
+    assert.ok((await reg.bulk!.status(c, ids, { status: "Purchase Matched" })).ok);
+    const matched = await db.select().from(erpPurchases).where(inArray(erpPurchases.id, ids));
+    assert.ok(matched.every((p) => p.status === "Purchase Matched" && p.billReceived === "Received"), "past Pending the bill is in hand");
+    assert.ok(!(await reg.bulk!.billNotReceived(c, ids, {})).ok, "a purchase matched to its bill keeps it");
+    assert.ok((await reg.bulk!.status(c, ids, { status: "Invoice Received" })).ok);
+    const taken = await reg.bulk!.billNotReceived(c, ids, {});
+    assert.ok(taken.ok);
+    const back = await db.select().from(erpPurchases).where(inArray(erpPurchases.id, ids));
+    assert.ok(back.every((p) => p.status === "Pending" && p.billReceived === "Bill Not Received"));
+    const refused = await reg.bulk!.reopen(c, ids, {});
+    assert.ok(!refused.ok && refused.code === "not_permitted", "only an admin sets a verified purchase back");
+    const ctx = await as(admin);
+    assert.ok((await reg.bulk!.verifyMany(ctx, ids, {})).ok);
+    const reopened = await reg.bulk!.reopen(ctx, ids, {});
+    assert.ok(reopened.ok);
+    assert.ok((await db.select().from(erpPurchases).where(inArray(erpPurchases.id, ids))).every((p) => p.status === "Pending"));
+  });
+
+  test("a GRN selection: Transport & costs only for one PR's lines, and sending on goes line by line", async () => {
+    const ctx = await as(admin);
+    const inw = mod("inward");
+    const a = await receive({ transportMode: NONE }, [{ item: "Toluene", drums: "1", qty: "20" }, { item: "1 L Tin Can", qty: "3" }]);
+    const b = await receive({ transportMode: NONE }, [{ item: "1 L Tin Can", qty: "4" }]);
+    assert.ok(a.ok && b.ok, JSON.stringify([a, b]));
+    const mine = await db.select().from(erpInward).orderBy(desc(erpInward.prNumber), asc(erpInward.rawMaterialId));
+    const prB = mine[0].prNumber;
+    const prA = mine.find((r) => r.prNumber < prB)!.prNumber;
+    const ofA = mine.filter((r) => r.prNumber === prA);
+    const ofB = mine.filter((r) => r.prNumber === prB);
+    assert.equal(ofA.length, 2);
+    const offers = async (ids: string[]) => {
+      const { spec, rows } = await inw.load(ctx);
+      return bulkOffers(spec.bulk ?? [], rows, ids);
+    };
+    const onePr = await offers(ofA.map((r) => r.id));
+    const costs = onePr.find((o) => o.b.id === "costs");
+    assert.ok(costs?.row && ofA.some((r) => r.id === costs.row!.id), "one PR: its own Transport & costs, run once");
+    assert.ok(!(await offers([ofA[0].id, ofB[0].id])).some((o) => o.b.id === "costs"), "two PRs: not offered");
+
+    /* An old line nobody sent on: the bulk act sends what can go and says what could not. */
+    const tol = ofA.find((r) => r.rawMaterialId === "rm_tol")!;
+    await db.update(erpInward).set({ routed: null, routedAt: null, routedById: null }).where(eq(erpInward.id, tol.id));
+    const sent = await inw.bulk!.toTesting(ctx, [tol.id, ofB[0].id], {});
+    assert.ok(sent.ok, JSON.stringify(sent));
+    assert.match(sent.message ?? "", /1 line sent to Testing · 1 already sent, or not needing testing/);
+    assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, tol.id)))[0].routed, "Testing");
+    assert.ok(!(await inw.bulk!.toTesting(ctx, [tol.id], {})).ok, "nothing left to send");
+    assert.ok(!(await inw.bulk!.toPurchase(ctx, [tol.id], {})).ok);
   });
 });

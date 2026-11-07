@@ -125,7 +125,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 ## Permissions
 
 - **Modules:** <ModuleRef k="erp.register" /> (Goods receipt, Register, Drum labels), <ModuleRef k="erp.testing" />.
-- **Powers:** `viewPurchaseMoney` (also the register's bulk `billReceived`), `verifyTest`, `verifyPurchase` (with `viewPurchaseMoney`, the register's bulk `verifyMany`), `reopenPurchase`.
+- **Powers:** `viewPurchaseMoney` (also the register's bulk `rate`, `billReceived`, `status` and `billNotReceived`), `verifyTest`, `verifyPurchase` (with `viewPurchaseMoney`, the register's bulk `verifyMany`), `reopenPurchase` (also the bulk `reopen`).
+- **A selection's shape:** a `BulkSpec` with `same` is offered only while every ticked row shares those values (`["pr"]`, `["party"]`, `["item", "unit"]`), and `asRow` runs that one record's own row action once (`bulk-fit.ts`). The act refuses a mixed selection itself, because the bar cannot judge rows past its page. **Combined view** (`client: "combinedView"`, `ListSpec.combined`) reads exactly the ticked rows through the screen's own loader (`erpCombinedView`), so its values and actions are the list's.
 - **Labels:** a purchase label opens for anybody holding `barcode`, `register` or `stock` (`SCREENS` in `app/erp/print-labels/page.tsx`).
 
 ## Tests that pin this
@@ -138,6 +139,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 | | "register and stock" | Lot number clash message; an edit moves the stock entry; money hidden from a clerk; bill and status cannot disagree; only the verifier sets Purchase Verified; the log flags an orphaned entry |
 | | "transport and landing cost" / "net quantity off the scale" | Weight rules; own vehicle refused without a rate; shares by value; the stock rate is the landed rate; costs corrected once per PR |
 | | "the goods receipt starts from the item" | A receipt started from the item carries a line per PO across one vendor's POs, and refuses a second vendor |
+| | "a selection, by its shape" | One rate only for one item, one bill only for one party; bulk status, bill not received and back to pending keep the row's rules; Transport & costs only for one PR's lines; sending on goes line by line |
+| `npm run test` | `src/lib/erp/bulk-fit.test.ts` | Which bulk actions a selection is offered by its rows' own actions and by its shape, and what a narrower selection would add |
 
 ## Changing it safely
 
