@@ -77,6 +77,7 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 function Sheet({ sheet }: { sheet: BillingSheet }) {
   const showRate = sheet.rows.some((r) => r.rate);
   const showBoxes = sheet.rows.some((r) => r.boxes);
+  const showWeight = sheet.rows.some((r) => r.weight);
   const showDiscount = sheet.rows.some((r) => r.discount);
   const showAmount = sheet.rows.some((r) => r.amount);
   return (
@@ -89,7 +90,11 @@ function Sheet({ sheet }: { sheet: BillingSheet }) {
           <Fields fields={sheet.head} owner="" />
         </Block>
         <Block title="Buyer (bill to)">
-          <Fields fields={sheet.buyer} owner="buyer" />
+          <div className="flex flex-col gap-3">
+            {sheet.buyers.map((b) => (
+              <Fields key={b.key} fields={b.fields} owner="buyer" />
+            ))}
+          </div>
         </Block>
         <Block title="Consignee (ship to)">
           <div className="flex flex-col gap-3">
@@ -100,7 +105,7 @@ function Sheet({ sheet }: { sheet: BillingSheet }) {
         </Block>
       </div>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse text-meta">
+        <table className="w-full min-w-[780px] border-collapse text-meta">
           <thead>
             <tr>
               <Th>Order</Th>
@@ -108,6 +113,7 @@ function Sheet({ sheet }: { sheet: BillingSheet }) {
               <Th align="right">Cans</Th>
               {showBoxes ? <Th align="right">Boxes</Th> : null}
               <Th align="right">Litres</Th>
+              {showWeight ? <Th align="right">Weight</Th> : null}
               {showRate ? <Th align="right">Rate</Th> : null}
               <Th>Per</Th>
               {showDiscount ? <Th align="right">Disc.</Th> : null}
@@ -135,6 +141,11 @@ function Sheet({ sheet }: { sheet: BillingSheet }) {
                 <Td align="right" className="whitespace-normal">
                   <CopyValue label="litres" value={r.litres} end />
                 </Td>
+                {showWeight ? (
+                  <Td align="right" className="whitespace-normal">
+                    <CopyValue label="weight" value={r.weight} end />
+                  </Td>
+                ) : null}
                 {showRate ? (
                   <Td align="right" className="whitespace-normal">
                     <CopyValue label="rate" value={r.rate} end />
@@ -212,7 +223,7 @@ export function BillingViewModal({ screen, lineIds, onClose }: { screen: string;
         ) : !sheets ? (
           <div className="py-16 text-center text-meta text-muted">Reading the selection…</div>
         ) : !sheets.length ? (
-          <Callout tone="warn">These lines are cancelled, so there is nothing to bill.</Callout>
+          <Callout tone="warn">Everything ticked is already billed or cancelled, so there is nothing left to bill.</Callout>
         ) : (
           <div className="flex flex-col gap-4">
             {sheets.map((s) => (
