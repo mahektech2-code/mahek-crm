@@ -266,7 +266,7 @@ function showsFor(view: ViewKey, r: MarginRules): [string, string, (x: Row) => b
   if (["sku", "formulation", "salesmen", "city", "district", "state"].includes(view)) return [all, under, fell, nocost];
   if (view === "customers" || view === "top") return [all, under, fell, ["focus", "Focus list", (x) => !!x.focus], ["down", "Sales down", (x) => !!x.prev && x.t.sales < x.prev.sales]];
   if (view === "lots") return [all, ["none", "No lot allocated", (x) => x.t.noCost > 0], under];
-  if (["lines", "discounts", "extras", "credit"].includes(view)) return [all, ["under", `Under ${r.floorPercent}%`, (x) => !!x.line && underFloor(x.line, r)], ["nocost", "No lot cost", (x) => x.t.noCost > 0]];
+  if (["lines", "discounts", "extras", "credit"].includes(view)) return [all, ["under", `Under ${r.floorPercent}%`, (x) => !!x.line && underFloor(x.line, r)], ["nocost", "No lot cost", (x) => x.t.noCost > 0], ["sheet", "Costed from the sheet", (x) => x.t.sheetCosted > 0]];
   if (view.startsWith("cmp-")) return [all, ["down", "Margin down", (x) => !!x.bridge && x.bridge.margin < x.bridge.prevMargin], ["up", "Margin up", (x) => !!x.bridge && x.bridge.margin > x.bridge.prevMargin]];
   return [all];
 }
@@ -346,8 +346,8 @@ function lineCols(r: MarginRules): Col[] {
     { k: "rate", l: "Rate", right: true, get: (x) => L(x).ratePaise, csv: (x) => (L(x).ratePaise == null ? "" : String(L(x).ratePaise! / 100)), cell: (x) => <Mono>{rs(L(x).ratePaise)}</Mono> },
     { k: "amount", l: "Amount", right: true, get: (x) => L(x).amountPaise, csv: (x) => String(Math.round(L(x).amountPaise / 100)), cell: (x) => <Mono bold>{rs(L(x).amountPaise)}</Mono> },
     {
-      k: "lot", l: "Lot · cost", get: (x) => L(x).lotCostPaise, csv: (x) => `${L(x).lots.join(" ")} ${L(x).lotCostPaise == null ? "" : Math.round(L(x).lotCostPaise! / 100)}`,
-      cell: (x) => (L(x).lotCostPaise == null ? <Tag tone="warn">NOT ALLOCATED</Tag> : <><Mono color={C.brand}>{L(x).lots.join(", ") || "—"}</Mono><Sub>{rs(L(x).lotCostPaise)}</Sub></>),
+      k: "lot", l: "Lot · cost", get: (x) => L(x).lotCostPaise, csv: (x) => `${L(x).costSource === "sheet" ? "order sheet" : L(x).lots.join(" ")} ${L(x).lotCostPaise == null ? "" : Math.round(L(x).lotCostPaise! / 100)}`,
+      cell: (x) => (L(x).lotCostPaise == null ? <Tag tone="warn">NOT ALLOCATED</Tag> : L(x).costSource === "sheet" ? <><Tag tone="info">ORDER SHEET</Tag><Sub>{rs(L(x).lotCostPaise)}</Sub></> : <><Mono color={C.brand}>{L(x).lots.join(", ") || "—"}</Mono><Sub>{rs(L(x).lotCostPaise)}</Sub></>),
     },
     { k: "extra", l: "Extra exp.", right: true, get: (x) => L(x).extraPaise, csv: (x) => String(Math.round(L(x).extraPaise / 100)), cell: (x) => <Mono>{L(x).extraPaise ? rs(L(x).extraPaise) : "—"}</Mono> },
     { k: "discount", l: "Discount", right: true, get: (x) => L(x).discountPaise, csv: (x) => String(Math.round(L(x).discountPaise / 100)), cell: (x) => <Mono>{L(x).discountPaise ? rs(L(x).discountPaise) : "—"}</Mono> },
@@ -1453,7 +1453,7 @@ function RulesDrawer({ rules, href, close }: { rules: MarginRules; href: string 
       <DrawerHead kind="Margins · applies to every sub-tab" title="Margin rules" sub="How margin is worked out, and how it is banded and alerted." close={close} />
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ padding: "12px 14px", borderRadius: 8, background: C.canvas, border: `1px solid ${C.soft}`, fontSize: 14, lineHeight: "21px" }}>
-          <b style={{ color: C.ink, fontWeight: 600 }}>Gross margin</b> = amount − discount − lot cost − extra expenses − credit notes, before GST — the ERP&apos;s own margin on the line. Margin % is taken over sales after discount. A line whose lot is not allocated is held out of margin and margin %, never counted as 100%.
+          <b style={{ color: C.ink, fontWeight: 600 }}>Gross margin</b> = amount − discount − lot cost − extra expenses − credit notes, before GST — the ERP&apos;s own margin on the line. Margin % is taken over sales after discount. A line that left before lots were allocated in the ERP (26 Oct 2026) is costed from the old order sheet&apos;s own Lotcode Costing, and says so. A line costed by neither is held out of margin and margin %, never counted as 100%.
         </div>
         {items.map(([k, v, note]) => (
           <div key={k} style={{ display: "flex", alignItems: "baseline", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.canvas}` }}>

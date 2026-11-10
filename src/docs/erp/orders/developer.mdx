@@ -188,6 +188,7 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
 <DbTable name="erp_order_details" note={{
   order_id: "One row per billed line; deleting it is Undo billing.",
   gst_bp: "1800 or 0 — decides the billing company.",
+  sheet_costing_paise: "The old order sheet's Lotcode Costing (0317), for a line that left before lots were allocated. Read only where no lot is; written by the sheet-lot-costing job.",
   verification: "Verified, Not Verify, Pending or null — the dispatch, not the invoice check.",
   dispatch_date: "Set by Confirm dispatch. Drives the month a line's sale counts in.",
   invoice_check: "Pending, Approved or Rejected. 0285 set existing rows to Approved.",

@@ -106,6 +106,7 @@ export async function marginLines(from: string, to: string): Promise<MarginRead>
         amountPaise: r.amount ?? 0,
         discountPaise: r.discounted ?? 0,
         lotCostPaise: r.costing == null ? null : r.costing - extra,
+        costSource: r.costSource,
         extraPaise: extra,
         creditNotePaise: r.creditNote ?? 0,
         marginPaise: r.margin,

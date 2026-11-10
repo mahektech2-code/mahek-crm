@@ -2782,6 +2782,12 @@ type DetailRow = {
   litres: number;
   company: string;
   costing: number | null;
+  /**
+   * Where `costing` came from: the lots the dispatch desk allocated, or — for a
+   * line that left before anybody allocated one — the old order sheet's own
+   * "Lotcode Costing" (`sheet_costing_paise`). Null exactly when costing is.
+   */
+  costSource: "lots" | "sheet" | null;
   margin: number | null;
   /** Credit notes issued on this line's bill and goods, before GST. */
   creditNote: number | null;
@@ -2827,7 +2833,13 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
     const l = byId.get(d.orderId);
     if (!l) continue;
     const bill = billFigures({ type: l.type, qtyCans: l.o.qtyCans, litresPerCan: l.sku.litresPerCan, ratePaise: l.o.ratePaise, discountBp: l.o.discountBp, transportCostPaise: l.o.transportCostPaise, gstBp: d.gstBp });
-    const costing = lotCosting({ type: l.type, qtyCans: l.o.qtyCans, litres: bill.litres, costs: costs.get(l.o.id) ?? [], extraPaise: d.extraExpensesPaise });
+    /* An allocated lot always wins, even one with no rate yet. Only a line nobody
+       allocated a lot to falls back on the sheet's cost, which is the WHOLE cost
+       the sheet took off the amount — extras included, so none are added. */
+    const allocated = costs.get(l.o.id) ?? [];
+    const costing = allocated.length
+      ? lotCosting({ type: l.type, qtyCans: l.o.qtyCans, litres: bill.litres, costs: allocated, extraPaise: d.extraExpensesPaise })
+      : (d.sheetCostingPaise ?? null);
     rows.push({
       l,
       d,
@@ -2837,6 +2849,7 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
       litres: bill.litres,
       company: bill.company,
       costing,
+      costSource: costing == null ? null : allocated.length ? "lots" : "sheet",
       margin: margin({ amountPaise: bill.amountPaise, discountedPaise: bill.discountedPaise, costingPaise: costing, creditNotePaise: creditOf(credits, l, d.gstBp) }),
       creditNote: creditOf(credits, l, d.gstBp),
       monthId: monthId(d.dispatchDate),
@@ -3058,7 +3071,7 @@ const orderDetails: ScreenModule = {
               ...(amounts ? [{ l: "Final amount", v: r.final == null ? "—" : inr(r.final), der: true }] : []),
               ...(cost
                 ? [
-                    { l: "Lot-code costing", v: r.costing == null ? "—" : inr(r.costing), der: true },
+                    { l: "Lot-code costing", v: r.costing == null ? "—" : r.costSource === "sheet" ? `${inr(r.costing)} · from the old order sheet` : inr(r.costing), der: true },
                     { l: "Cost price per can", v: r.costing == null ? "—" : inr(Math.round(r.costing / l.o.qtyCans)), der: true },
                     { l: "Credit note amount (before GST)", v: r.creditNote == null ? "—" : inr(r.creditNote) },
                   ]

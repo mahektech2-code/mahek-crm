@@ -17,7 +17,7 @@ function line(p: Partial<MarginLine> = {}): MarginLine {
     id: `l${n}`, orderNo: p.orderNo ?? n, date: "2026-10-05", customerId: p.customerId ?? "c1", customer: p.customer ?? "Shop One",
     salesman: p.salesman ?? "Asha", state: "Maharashtra", district: "Pune", city: "Pune", godown: "Bhiwandi",
     product: p.product ?? "Nano 5 L", formulation: p.formulation ?? "Nano", lots: [], cans: p.cans ?? 10, litres: p.litres ?? 50,
-    ratePaise: null, amountPaise: amount, discountPaise: discount, lotCostPaise: lot, extraPaise: extra, creditNotePaise: cn,
+    ratePaise: null, amountPaise: amount, discountPaise: discount, lotCostPaise: lot, costSource: p.costSource !== undefined ? p.costSource : lot == null ? null : "lots", extraPaise: extra, creditNotePaise: cn,
     marginPaise: p.marginPaise !== undefined ? p.marginPaise : lot == null ? null : amount - discount - lot - extra - cn,
     days: 1,
   };
@@ -125,5 +125,26 @@ describe("rollups and alerts", () => {
     assert.ok(!slight.some((x) => x.id === "drop:A"));
     const big = marginAlerts([line({ product: "A", lotCostPaise: 80_000 })], prev, RULES, String);
     assert.ok(big.some((x) => x.id === "drop:A"));
+  });
+});
+
+describe("a line costed from the old order sheet", () => {
+  test("counts in margin like any costed line, and is counted apart", () => {
+    const t = totals([line({ lotCostPaise: 60_000, costSource: "sheet" }), line({ lotCostPaise: 70_000 }), line({ lotCostPaise: null })]);
+    assert.equal(t.noCost, 1);
+    assert.equal(t.sheetCosted, 1);
+    assert.equal(t.sheetCostedSales, 100_000);
+    assert.equal(t.margin, 40_000 + 30_000);
+    assert.equal(t.costedSales, 200_000);
+  });
+
+  test("raises an info alert naming how many, and none when there are none", () => {
+    const money = (p: number) => `₹${p / 100}`;
+    const with_ = marginAlerts([line({ costSource: "sheet" }), line({ costSource: "sheet" }), line()], null, RULES, money);
+    const a = with_.find((x) => x.id === "sheet");
+    assert.ok(a);
+    assert.equal(a.tone, "info");
+    assert.match(a.title, /^2 lines are costed from the old order sheet/);
+    assert.equal(marginAlerts([line()], null, RULES, money).find((x) => x.id === "sheet"), undefined);
   });
 });

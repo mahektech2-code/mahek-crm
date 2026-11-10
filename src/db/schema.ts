@@ -12720,6 +12720,14 @@ export const erpOrderDetails = pgTable("erp_order_details", {
     .references(() => erpOrders.id),
   gstBp: integer("gst_bp").notNull().default(1800),
   extraExpensesPaise: bigint("extra_expenses_paise", { mode: "number" }),
+  /**
+   * The old order sheet's own cost for this line — its "Lotcode Costing" cell —
+   * for a line that left before the dispatch desk allocated lots (26 Oct 2026).
+   * The WHOLE cost the sheet subtracted to reach its margin, extras included.
+   * Read only where the line has no allocated lot: an allocation always wins.
+   * Written by `npm run jobs -- sheet-lot-costing` (0317); never typed.
+   */
+  sheetCostingPaise: bigint("sheet_costing_paise", { mode: "number" }),
   /** Pending | Dispatched. */
   dispatchStatus: text("dispatch_status").notNull().default("Pending"),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),

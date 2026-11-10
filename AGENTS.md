@@ -7056,6 +7056,20 @@ decides who may open a file FROM the parent kind, so a course deck filed as a
 document would be read under the document rules — role lists and a customer's
 scope, neither of which a course has.
 
+**A LINE THAT LEFT BEFORE LOTS WERE ALLOCATED IS COSTED BY THE SHEET THAT
+SHIPPED IT.** The ERP's margin is the allocated lots' cost, and nobody
+allocated a lot to anything before 26 Oct 2026 — so every line before then,
+some twenty-one thousand of them, read as "margin unknown" on the Margins desk
+and the ERP's own Margin column. The old order sheet costed every one of those
+lines itself, in "Lotcode Costing", and its "Margine" is the amount less exactly
+that figure. `erp_order_details.sheet_costing_paise` carries it, matched on
+order number, product and cans by `engines/sheet-costing.ts`, and only where
+that names ONE cost — two rows that disagree are left unknown rather than
+guessed. **An allocated lot always wins**, even one with no rate yet, and every
+screen says which source a cost came from. Filled by `npm run jobs --
+sheet-lot-costing` (`--dry-run` first), read from the staging copy of the tab;
+Google is never asked.
+
 **THE OWNER IS ASKING FIVE QUESTIONS, and they are one funnel rather than five
 reports.** New leads, what became of them, what an order is worth, how often
 one comes, and whether the customers it produced are still buying. That is why
