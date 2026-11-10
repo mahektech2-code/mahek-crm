@@ -20,6 +20,7 @@ export const SECTION_MODULE: Record<SectionKey, string> = {
   company: "founder.overview",
   inbox: "founder.inbox",
   sales: "founder.crm",
+  margins: "founder.margins",
   team: "founder.team",
   customers: "founder.customers",
   leads: "founder.leads",

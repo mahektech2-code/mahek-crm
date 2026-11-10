@@ -142,8 +142,9 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
         if (pp.from) q.set("from", pp.from);
         if (pp.to) q.set("to", pp.to);
       }
+      if (s === "margins") q.delete("s");
       const qs = q.toString();
-      return `/founder${qs ? `?${qs}` : ""}`;
+      return `/founder${s === "margins" ? "/margins" : ""}${qs ? `?${qs}` : ""}`;
     },
     [periodIn],
   );

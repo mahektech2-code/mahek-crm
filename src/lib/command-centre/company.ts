@@ -568,6 +568,7 @@ export const SECTION_TITLE: Record<import("./types").SectionKey, string> = {
   company: "Company",
   inbox: "Needs you",
   sales: "Sales & order book",
+  margins: "Margins",
   team: "Targets & performance",
   customers: "Customers",
   leads: "Leads, samples & distributors",
