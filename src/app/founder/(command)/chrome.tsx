@@ -28,6 +28,7 @@ export const NAV: { label: string; items: [SectionKey, string, string][] }[] = [
     label: "Sell",
     items: [
       ["sales", "Sales & order book", "chart"],
+      ["margins", "Margins", "percent"],
       ["team", "Targets & performance", "people"],
       ["customers", "Customers", "store"],
       ["leads", "Leads, samples & distributors", "funnel"],
@@ -51,6 +52,7 @@ export const TITLES: Record<SectionKey, [string, string]> = {
   company: ["Company", "The headline for the period, a pulse across every section, and what needs you"],
   inbox: ["Needs you", "Every decision waiting on you, every alarm, and what you handed on"],
   sales: ["Sales & order book", "Every order from every source, and deciding them"],
+  margins: ["Margins", "What every sale earned after lot cost, discount, expenses and credit notes"],
   team: ["Targets & performance", "Setting and revising targets; everyone scored, ranked and explained"],
   customers: ["Customers", "Every customer and lead, the full record, and every change to an account"],
   leads: ["Leads, samples & distributors", "The three ladders, gates, samples and distributor appointments"],

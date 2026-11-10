@@ -957,6 +957,12 @@ export const APP_MODULES: AppModule[] = [
   { key: "founder.overview", app: "founder", label: "Company", group: "Today", href: "/founder", exact: true },
   cc("inbox", "inbox", "Needs you", "Today", "Every decision waiting on the founder, every alarm, and what was handed on."),
   cc("crm", "sales", "Sales & order book", "Sell", "Every order from every source, and deciding them."),
+  founder(
+    "margins",
+    "Margins",
+    "Sell",
+    "What every billed line earned after lot cost, discount, extra expenses and credit notes — by product, customer, salesman and place, and why it moved. Shows cost, so it is granted on purpose.",
+  ),
   cc("team", "team", "Targets & performance", "Sell", "Setting and revising targets; everyone scored, ranked and explained."),
   cc("customers", "customers", "Customers", "Sell", "Every customer and lead, the full record, and every change to an account."),
   cc("leads", "leads", "Leads, samples & distributors", "Sell", "The three ladders, gates, samples and distributor appointments."),

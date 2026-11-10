@@ -1404,6 +1404,82 @@ export const SETTINGS = [
     max: 100,
   },
 
+  /* ------------------------------------------------- the founder's margins */
+  {
+    key: "margins.healthyAtOrAbove",
+    type: "decimal",
+    category: "owner",
+    label: "Healthy margin from",
+    description:
+      "A line, product or customer earning at least this margin % (margin over sales after discount, before GST) is drawn green on the founder's Margins desk.",
+    default: 20,
+    min: -100,
+    max: 100,
+  },
+  {
+    key: "margins.fairAtOrAbove",
+    type: "decimal",
+    category: "owner",
+    label: "Fair margin from",
+    description: "From this margin % up to the healthy line a row is drawn blue. Below it is thin.",
+    default: 12,
+    min: -100,
+    max: 100,
+  },
+  {
+    key: "margins.thinAtOrAbove",
+    type: "decimal",
+    category: "owner",
+    label: "Thin margin from",
+    description: "From this margin % up to the fair line a row is drawn amber. Anything below it is drawn red.",
+    default: 8,
+    min: -100,
+    max: 100,
+  },
+  {
+    key: "margins.floorPercent",
+    type: "decimal",
+    category: "owner",
+    label: "Margin floor",
+    description:
+      "A billed line earning less than this margin % is counted as under the floor and raised on the Margins desk. A line with no lot cost is never under it: its margin is unknown, not low.",
+    default: 12,
+    min: -100,
+    max: 100,
+  },
+  {
+    key: "margins.targetPercent",
+    type: "decimal",
+    category: "owner",
+    label: "Company margin target",
+    description: "The margin % the Margins desk measures the company and each salesman against.",
+    default: 20,
+    min: -100,
+    max: 100,
+  },
+  {
+    key: "margins.productDropPoints",
+    type: "decimal",
+    category: "owner",
+    label: "Product margin drop worth an alert",
+    description:
+      "How many percentage points a product's margin must fall against the period before it to be raised on the Margins desk.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "margins.customerDropPercent",
+    type: "decimal",
+    category: "owner",
+    label: "Customer margin fall worth an alert",
+    description:
+      "How far, in percent, the margin ₹ of one of the twenty largest customers must fall against the period before it to be raised on the Margins desk.",
+    default: 30,
+    min: 0,
+    max: 100,
+  },
+
   /* ----------------------------------------------------------- working day */
   {
     key: "workingDay.shiftStart",
@@ -6260,6 +6336,12 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  if (!(config["margins.thinAtOrAbove"] < config["margins.fairAtOrAbove"] && config["margins.fairAtOrAbove"] < config["margins.healthyAtOrAbove"])) {
+    problems.push(
+      `Margin bands must increase: thin (${config["margins.thinAtOrAbove"]}%) < fair (${config["margins.fairAtOrAbove"]}%) < healthy (${config["margins.healthyAtOrAbove"]}%).`,
+    );
+  }
+
   if (config["owner.frequencyMediumOrders"] >= config["owner.frequencyHighOrders"]) {
     problems.push(
       "High frequency must start above medium frequency, or no customer can ever be medium.",
@@ -6684,6 +6766,13 @@ export type Config = {
   "owner.frequencyMediumOrders": number;
   "owner.conversionTargetPercent": number;
   "owner.kpiAlertChangePercent": number;
+  "margins.healthyAtOrAbove": number;
+  "margins.fairAtOrAbove": number;
+  "margins.thinAtOrAbove": number;
+  "margins.floorPercent": number;
+  "margins.targetPercent": number;
+  "margins.productDropPoints": number;
+  "margins.customerDropPercent": number;
 
   "workingDay.shiftStart": string;
   "workingDay.shiftEnd": string;

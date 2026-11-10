@@ -36,6 +36,14 @@ export default async function Page({
   const wanted: SectionKey = isSectionKey(params.s) ? params.s : "company";
   const section = access.allowed.includes(wanted) ? wanted : access.allowed[0]!;
   if (section !== wanted && params.s) redirect(`/founder?s=${section}`);
+  /* Margins is a desk with its own page; an address naming it as a section goes there, period kept. */
+  if (section === "margins") {
+    const q = new URLSearchParams();
+    if (params.p) q.set("p", params.p);
+    if (params.from) q.set("from", params.from);
+    if (params.to) q.set("to", params.to);
+    redirect(`/founder/margins${q.size ? `?${q}` : ""}`);
+  }
 
   const period = await readPeriodState(params.p, { from: params.from, to: params.to });
   const ctx = { period, userId: access.user.id };

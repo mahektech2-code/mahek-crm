@@ -26,6 +26,7 @@ import type { SectionKey } from "@/lib/command-centre/types";
 function deskOf(pathname: string): SectionKey | null {
   if (pathname.startsWith("/founder/whatsapp")) return "whatsapp";
   if (pathname.startsWith("/founder/price-lists")) return "prices";
+  if (pathname.startsWith("/founder/margins")) return "margins";
   return null;
 }
 
@@ -47,7 +48,7 @@ export function DeskFrame({
   if (pathname.endsWith("/print")) return <>{children}</>;
 
   const desk = deskOf(pathname) ?? "whatsapp";
-  const go = (s: SectionKey) => router.push(s === "company" ? "/founder" : `/founder?s=${s}`);
+  const go = (s: SectionKey) => router.push(s === "company" ? "/founder" : s === "margins" ? "/founder/margins" : `/founder?s=${s}`);
   const tabs = desk === "whatsapp" ? WHATSAPP_TABS : null;
   const current = tabs?.find((t) => tabIsOn(t, pathname));
 
@@ -124,7 +125,8 @@ export function DeskFrame({
             />
           </div>
         ) : null}
-        <div style={{ padding: "20px 28px 48px 28px", animation: `fd-fade 160ms ${EASE}` }}>{children}</div>
+        {/* Margins draws its own sticky title block, period switch and sub-tabs, edge to edge like a Command Centre section. */}
+        {desk === "margins" ? children : <div style={{ padding: "20px 28px 48px 28px", animation: `fd-fade 160ms ${EASE}` }}>{children}</div>}
       </AppFrame>
     </div>
   );

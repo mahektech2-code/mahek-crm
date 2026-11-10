@@ -15,6 +15,7 @@ export type SectionKey =
   | "company"
   | "inbox"
   | "sales"
+  | "margins"
   | "team"
   | "customers"
   | "leads"
@@ -32,6 +33,7 @@ export const SECTION_KEYS: readonly SectionKey[] = [
   "company",
   "inbox",
   "sales",
+  "margins",
   "team",
   "customers",
   "leads",

@@ -84,6 +84,7 @@ export const PAGE_TABS: Record<string, Array<{ slug: string; label: string }>> =
   reports: [
     { slug: "kpis", label: "Owner's KPIs" },
     { slug: "health", label: "Customer health" },
+    { slug: "margins", label: "Margins" },
   ],
   ai: [
     { slug: "dictation", label: "Dictation" },
@@ -235,6 +236,7 @@ const RULES: Rule[] = [
 
   /* --------------------------------------------------------------- reports */
   { test: /^owner\./, page: "reports", tab: "kpis", group: "The owner's five" },
+  { test: /^margins\./, page: "reports", tab: "margins", group: "Bands, floor and alerts" },
   { test: /^health\./, page: "reports", tab: "health", group: "Health bands" },
 
   /* ------------------------------------------------------------ voice & AI */

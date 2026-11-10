@@ -7218,6 +7218,26 @@ retirement still resolves, nothing draws it, and `/reports` redirects to the
 launcher rather than to `/founder`, which is granted separately. The nightly
 health snapshot still runs, because the founder's retention movement reads it.
 
+**THE FOUNDER'S MARGINS ARE ONE DESK, AND EVERY FIGURE IS THE ERP'S OWN.**
+`/founder/margins` (module `founder.margins`, section key `margins`, one
+sidebar entry under Sell) reads the ERP's billed, dispatch-verified lines for
+the period and the equal span before it through `detailRows` — the same
+reading the Order details register's Margin column makes — in
+`services/margin-service.ts`. Margin = amount − discount − lot cost (with the
+line's extra expenses, split back out for display) − credit notes, before GST,
+and margin % is over sales after discount. `lib/engines/margins.ts` is pure
+and only adds lines up: totals, bands, roll-ups, the why-it-moved bridge (its
+Mix is the remainder by construction, so the steps always add up) and the
+alerts, which are read off the lines and stored nowhere. **A line with no lot
+cost has no margin** — it counts in sales and litres, is held out of margin and
+margin %, and is counted on its own; never 0% or 100%. The bands, floor,
+target and alert thresholds are `margins.*` settings (Reports → Margins). The
+desk is six sub-tabs, each with a View switch where one subject is read several
+ways, so it stays one entry in the Command Centre's sidebar; filters narrow the
+LINES before anything is added up. Columns, saved views, the focus list and the
+Overview panels are remembered per browser and move no figure. A period of more
+than `MARGIN_LINE_CAP` lines is refused in words.
+
 **A SALESMAN IS NOT MEASURED IN RUPEES ALONE, and the reason is arithmetic
 rather than philosophy.** A price revision moves every rupee figure in the
 business without one extra can leaving the godown, so a book measured on

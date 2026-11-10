@@ -142,6 +142,7 @@ export const MODULE_SINCE: Readonly<Record<string, string>> = {
   "founder.overview": "2026-09-01",
   "founder.inbox": "2026-09-27",
   "founder.crm": "2026-09-01",
+  "founder.margins": "2026-11-10",
   "founder.team": "2026-09-01",
   "founder.customers": "2026-09-27",
   "founder.leads": "2026-09-27",
