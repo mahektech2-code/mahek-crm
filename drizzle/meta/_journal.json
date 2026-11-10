@@ -2185,6 +2185,13 @@
       "when": 1793641800000,
       "tag": "0316_notifications_go_where_they_belong",
       "breakpoints": true
+    },
+    {
+      "idx": 312,
+      "version": "7",
+      "when": 1793642400000,
+      "tag": "0317_erp_sheet_lot_costing",
+      "breakpoints": true
     }
   ]
 }

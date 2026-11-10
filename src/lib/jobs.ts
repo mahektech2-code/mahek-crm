@@ -192,6 +192,8 @@ export type JobName =
   | "party-sync"
   | "project-sheet"
   | "revert-sheet-paid"
+  /** The old order sheet's "Lotcode Costing" onto ERP lines that left before lots were allocated. `--dry-run` first; idempotent. */
+  | "sheet-lot-costing"
   /** Leads sharing a live customer's name, to the Lead Trash. `--dry-run` first. */
   | "trash-lead-twins"
   | "provision-team"
@@ -1405,6 +1407,8 @@ export async function runJob(
       return [await runProjection(triggeredById, options)];
     case "revert-sheet-paid":
       return [await runRevertSheetPaid(triggeredById, options)];
+    case "sheet-lot-costing":
+      return [await runSheetLotCosting(triggeredById, options)];
     case "trash-lead-twins":
       return [await runTrashLeadTwins(triggeredById, options)];
     case "provision-team":
@@ -1882,6 +1886,33 @@ async function runTrashLeadTwins(
           `${report.keptWithOrders.length} carrying orders of their own were left.`;
       const detail = [head, ...report.twins.map(line)].join("\n");
       return { recordsAffected: report.dryRun ? 0 : report.trashed, detail };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * The old order sheet's cost onto the ERP lines nobody allocated a lot to, so
+ * their margin stops reading as unknown. Reads only what is stored; a dry run
+ * says what it would write and writes nothing.
+ */
+async function runSheetLotCosting(triggeredById?: string, options: JobOptions = {}): Promise<JobResult> {
+  return run(
+    "sheet-lot-costing",
+    async () => {
+      const { backfillSheetCosting } = await import("./erp/sheet-costing");
+      const r = await backfillSheetCosting({ dryRun: options.dryRun });
+      const months = Object.entries(r.byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([m, n]) => `${m} ${n}`).join(", ");
+      const head = r.dryRun
+        ? `dry run — ${r.matched} of ${r.candidates} lines without a lot match the order sheet; ${r.written} would be written.`
+        : `${r.matched} of ${r.candidates} lines without a lot match the order sheet; ${r.written} written.`;
+      const detail = [
+        head,
+        `${money(r.matchedCostPaise)} of sheet costing. ${r.ambiguous} ambiguous, ${r.unmatched} unmatched — both left without a cost.`,
+        months ? `By dispatch month: ${months}` : "",
+        ...r.examples,
+      ].filter(Boolean).join("\n");
+      return { recordsAffected: r.dryRun ? 0 : r.written, detail };
     },
     triggeredById,
   );

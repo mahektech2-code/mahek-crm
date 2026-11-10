@@ -40,6 +40,12 @@ export type MarginLine = {
   discountPaise: number;
   /** The allocated lots' cost, WITHOUT the line's extra expenses. Null: no lot cost yet. */
   lotCostPaise: number | null;
+  /**
+   * Where that cost came from: the lots the dispatch desk allocated, or — for a
+   * line that left before lots were allocated (26 Oct 2026) — the old order
+   * sheet's own "Lotcode Costing". Null exactly when the cost is.
+   */
+  costSource: "lots" | "sheet" | null;
   extraPaise: number;
   creditNotePaise: number;
   /** The ERP's margin. Null exactly when the lot cost is unknown. */
@@ -78,6 +84,9 @@ export type Totals = {
   /** Lines held out for want of a lot cost. */
   noCost: number;
   noCostSales: number;
+  /** Of the costed lines, those costed from the old order sheet rather than an allocated lot. */
+  sheetCosted: number;
+  sheetCostedSales: number;
   /** Margin over costed sales; null with nothing costed. */
   pct: number | null;
   /** Margin per costed litre. */
@@ -103,7 +112,7 @@ export function totals(lines: readonly MarginLine[]): Totals {
   const customers = new Set<string>();
   const t: Totals = {
     lines: lines.length, orders: 0, customers: 0, cans: 0, litres: 0, amount: 0, discount: 0, sales: 0, lotCost: 0, extra: 0, creditNote: 0,
-    costedSales: 0, costedLitres: 0, margin: 0, noCost: 0, noCostSales: 0, pct: null, perLitre: null, ratePerLitre: null, costPerLitre: null, leakage: 0,
+    costedSales: 0, costedLitres: 0, margin: 0, noCost: 0, noCostSales: 0, sheetCosted: 0, sheetCostedSales: 0, pct: null, perLitre: null, ratePerLitre: null, costPerLitre: null, leakage: 0,
   };
   for (const l of lines) {
     orders.add(l.orderNo);
@@ -124,6 +133,10 @@ export function totals(lines: readonly MarginLine[]): Totals {
       t.costedSales += s;
       t.costedLitres += l.litres;
       t.lotCost += l.lotCostPaise ?? 0;
+      if (l.costSource === "sheet") {
+        t.sheetCosted += 1;
+        t.sheetCostedSales += s;
+      }
     }
   }
   t.orders = orders.size;
@@ -289,8 +302,19 @@ export function marginAlerts(cur: readonly MarginLine[], prev: readonly MarginLi
       id: "nocost",
       tone: "warn",
       title: `${noCost.length} line${noCost.length === 1 ? " has" : "s have"} no lot cost`,
-      body: `${money(noCost.reduce((a, l) => a + salesOf(l), 0))} of sales whose lot is not allocated, so their margin is unknown. They are held out of margin %, never shown as 100%.`,
+      body: `${money(noCost.reduce((a, l) => a + salesOf(l), 0))} of sales whose lot is not allocated, and which the old order sheet does not cost either, so their margin is unknown. They are held out of margin %, never shown as 100%.`,
       go: { tab: "lines", show: "nocost" },
+      stakePaise: null,
+    });
+  }
+  const sheet = cur.filter((l) => l.costSource === "sheet");
+  if (sheet.length) {
+    out.push({
+      id: "sheet",
+      tone: "info",
+      title: `${sheet.length} line${sheet.length === 1 ? " is" : "s are"} costed from the old order sheet`,
+      body: `${money(sheet.reduce((a, l) => a + salesOf(l), 0))} of sales left before lots were allocated in the ERP (26 Oct 2026). Their cost is the sheet's own "Lotcode Costing", the figure its margin was worked from.`,
+      go: { tab: "lines", show: "sheet" },
       stakePaise: null,
     });
   }
