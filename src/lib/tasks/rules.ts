@@ -112,7 +112,11 @@ export function dueWords(due: string, today: string): string {
 /** `day` plus `n` days, as "YYYY-MM-DD". */
 export function plusDays(day: string, n: number): string {
   const t = Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10)) + n * 86_400_000;
-  return new Date(t).toISOString().slice(0, 10);
+  // A calendar day shifted on a UTC midnight, read back by its UTC parts —
+  // there is no stored instant here whose zone could be lost.
+  const d = new Date(t);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
 }
 
 /* ------------------------------------------------------------- new tasks */
