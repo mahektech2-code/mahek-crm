@@ -2,13 +2,13 @@ A task belongs to **one person** and names **the app its work happens in**. Tele
 
 ## Closing is a statement with evidence
 
-Closing always needs a **confirmation** and a **remark**. Whoever gave the task decides whether a **screenshot** is needed as well, when they create it — and can change it later. The rule is <Code file="src/lib/tasks/rules.ts" symbol="closeProblems" collapsed />, and the server asks it again whatever the screen did.
+Closing always needs a **confirmation**. Whoever gave the task decides, when they create it, whether a **screenshot** and a **remark** are each required or optional — and can change either later. The rule is <Code file="src/lib/tasks/rules.ts" symbol="closeProblems" collapsed />, and the server asks it again whatever the screen did.
 
 A screenshot counts only if the person closing the task uploaded it and it is not attached to anything else, so a file from another task is not evidence for this one.
 
 ## Who may do what
 
-| Who | Sees it | Edits, closes, transfers | Decides "screenshot required" |
+| Who | Sees it | Edits, closes, transfers | Decides "screenshot / remark required" |
 |---|---|---|---|
 | The person it is assigned to | yes | yes | only on a task they added themselves |
 | The person who gave it | yes | edits; deletes it while it is open | yes |
@@ -23,17 +23,44 @@ The org chart is `users.reports_to_id`, then the HRMS reporting line. A platform
 
 A manager above both people **moves** a task. Anybody else **asks**: the task stays with them until the other person accepts. Rejecting needs a reason. One request can be open per task at a time, and closing a task withdraws any request still open on it.
 
+## Who gets it
+
+A task — once, or repeating — is given to **you**, or to a set of **include** and **exclude** rules. A rule is a person, a team (everyone under a manager on the org chart), a designation or department from HRMS, a level in the task's app, an ERP designation, or everybody.
+
+- Only people who **hold the task's app** are offered, and only the designations, departments, teams and levels found among them, with how many people hold each.
+- **A person named on their own wins.** Excluded by name: never gets it. Included by name: always gets it, even if their team or designation is excluded. Everybody else gets it when a group includes them and no group excludes them.
+- A manager's rules reach only themselves and the people under them on the org chart.
+- The preview shows who it comes to and why, and the server works it out again when the task is saved. The rule is <Code file="src/lib/tasks/audience.ts" symbol="resolveAudience" collapsed />.
+
 ## Routines
 
-A **routine** is a task that comes back: daily or weekly on the weekdays it names, or monthly on a day of the month with an optional day it must be done by. On each day it falls due it adds one ordinary task, closed like any other with a remark. The rule for which days is <Code file="src/lib/tasks/routines.ts" symbol="occurrenceOn" collapsed />.
+A **routine** is a task that comes back: daily or weekly on the weekdays it names, or monthly on a day of the month with an optional day it must be done by. On each day it falls due it adds one ordinary task per person, closed like any other. A routine given by rules works out who it is for **afresh each day** — somebody who joins a team or takes a designation later starts getting it on the next day it runs. The rule for which days is <Code file="src/lib/tasks/routines.ts" symbol="occurrenceOn" collapsed />.
 
 - A routine for the 31st lands on a short month's last day rather than skipping the month.
 - Each task names its routine and its day, and the database holds that pair to one row — so the hourly job, the nightly one and somebody opening the app can all ask for today, and only the first copy lands.
 - A routine is changed, paused or deleted by **whoever set it** or **anybody above its person**. The person it belongs to sees it but cannot switch off one their manager set.
 - Changing a routine changes the days to come. Pausing adds nothing until it is resumed, and the paused days are not owed. Deleting keeps every task it already added.
 
+## Automatic tasks
+
+Each app raises some tasks on its own, from its own records, and closes them itself when the work is done there. Nobody types them and nobody has to tick them off.
+
+| App | When | Who gets it | Closes when |
+|---|---|---|---|
+| TeleCRM | A callback is promised (a reminder is set) | Whoever the reminder is for | The reminder is completed or dismissed |
+| TeleCRM | A lead's next action is set | Whoever owes it | The next action changes, or it stops being a lead |
+| TeleCRM | A complaint passes its SLA | Whoever logged it | The complaint is resolved |
+| Accounts | A payment is reported | The Accounts managers | It is confirmed, rejected or reversed |
+| Accounts | An order waits for approval | The Accounts managers | It is approved or declined |
+| ERP | A PO waits for approval | Whoever may approve POs, except who raised it | It is approved, sent back or cancelled |
+| HRMS | Somebody asks for leave | Their reporting manager | The leave is decided |
+
+- They are checked every hour. Each one is raised once per record, so a task you close by hand is not raised again while the record is still open.
+- A dated record raises a task only within a month either side of today.
+- An automatic task cannot be handed over or deleted — the app decides who holds it.
+- **Set up → Automatic tasks** lists them with how many are open. Only a Tasks administrator (or a platform administrator) switches one on or off; switching one off closes what it raised. The rule is <Code file="src/lib/tasks/automations.ts" symbol="planAutoSync" collapsed />.
+
 ## Where the code and the intent disagree today
 
-- Reminders and the CRM's own automatic follow-ups are not tasks yet. They stay on the Reminders screen and the Call Log.
-- A routine belongs to one person, not to a role: giving the same routine to a whole team is one routine each.
+- The rest of the CRM's follow-up engine (payment chasing, stock checks) is not a task; it stays on the Call Log and Collections.
 - A routine task nobody closes stays open and shows as late; nothing closes or skips it automatically.

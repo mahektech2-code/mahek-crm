@@ -84,6 +84,7 @@ import { syncCustomerMasterSheet } from "./services/customer-master-sync-service
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
 import { writeRoutineTasks } from "./tasks/routine-service";
+import { syncAutomations } from "./tasks/automation-service";
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
  *
@@ -98,6 +99,7 @@ export type JobName =
   | "nightly"
   | "hourly"
   | "task-routines"
+  | "task-automations"
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
@@ -251,6 +253,14 @@ async function taskRoutinesStep(): Promise<{ recordsAffected: number; detail: st
   return { recordsAffected: n, detail: `${n} routine tasks written` };
 }
 
+/** Automatic tasks: raised from each app's records, closed when the record is done with. */
+async function taskAutomationsStep(): Promise<{ recordsAffected: number; detail: string }> {
+  const r = await syncAutomations();
+  const n = r.reduce((a, x) => a + x.raised + x.closed, 0);
+  const failed = r.filter((x) => x.error).map((x) => x.rule);
+  return { recordsAffected: n, detail: `${r.reduce((a, x) => a + x.raised, 0)} raised, ${r.reduce((a, x) => a + x.closed, 0)} closed${failed.length ? `; failed: ${failed.join(", ")}` : ""}` };
+}
+
 /* ---------------------------------------------------------------- nightly */
 
 export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
@@ -266,6 +276,11 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     results.push(await run("task-routines", taskRoutinesStep, triggeredById));
   } catch (e) {
     console.error("Routine tasks failed:", e instanceof Error ? e.message : e);
+  }
+  try {
+    results.push(await run("task-automations", taskAutomationsStep, triggeredById));
+  } catch (e) {
+    console.error("Automatic tasks failed:", e instanceof Error ? e.message : e);
   }
 
   /* Old price lists whose successor has taken over — the hourly does this
@@ -886,6 +901,11 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   } catch (e) {
     console.error("Routine tasks failed:", e instanceof Error ? e.message : e);
   }
+  try {
+    results.push(await run("task-automations", taskAutomationsStep, triggeredById));
+  } catch (e) {
+    console.error("Automatic tasks failed:", e instanceof Error ? e.message : e);
+  }
   results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
   results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
@@ -1134,6 +1154,8 @@ export async function runJob(
       return runDayBoundary(triggeredById);
     case "task-routines":
       return [await run("task-routines", taskRoutinesStep, triggeredById)];
+    case "task-automations":
+      return [await run("task-automations", taskAutomationsStep, triggeredById)];
     case "top-customers-report":
       return [await run("top-customers-report", topCustomersReportStep, triggeredById)];
     case "punch-out-reminders":

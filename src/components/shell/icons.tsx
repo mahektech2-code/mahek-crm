@@ -176,6 +176,34 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   tick: <path d="m5 13 4 4L19 7" />,
+  calendar: (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M16 3v4M8 3v4M3 10h18" />
+    </>
+  ),
+  checkCircle: (
+    <>
+      <path d="M22 11.1V12a10 10 0 1 1-5.9-9.1" />
+      <path d="M22 4 12 14l-3-3" />
+    </>
+  ),
+  swap: <path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7" />,
+  repeat: (
+    <>
+      <path d="m17 1 4 4-4 4" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </>
+  ),
+  bolt: <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />,
+  board: (
+    <>
+      <rect x="3" y="4" width="5" height="16" rx="1.5" />
+      <rect x="10" y="4" width="5" height="11" rx="1.5" />
+      <rect x="17" y="4" width="4" height="7" rx="1.5" />
+    </>
+  ),
   clock: (
     <>
       <circle cx="12" cy="12" r="9" />

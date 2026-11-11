@@ -28,6 +28,8 @@ import {
   type TaskStatus,
 } from "@/lib/tasks/rules";
 import { canReceive, getTaskRow, peopleForApp, taskDetail, teamOf, teamPeople, viewerManagesBoth } from "@/lib/tasks/service";
+import { audienceProblems, audienceWords, type Audience } from "@/lib/tasks/audience";
+import { audienceOptions, resolveFor, type AudienceOptions } from "@/lib/tasks/audience-service";
 
 /* ---------------------------------------------------------------------------
  * EVERY WRITE IN THE TASKS APP.
@@ -78,8 +80,12 @@ export type CreateTaskInput = {
   note?: string | null;
   checklist?: string | null;
   proofRequired: boolean;
-  /** Empty, or only the creator, is a task for themselves. */
+  /** Whether closing needs a remark. Required when not said. */
+  remarkRequired?: boolean;
+  /** Empty, or only the creator, is a task for themselves. Ignored where `audience` is given. */
   assigneeIds: string[];
+  /** Include/exclude rules; resolved here, never trusted from the screen's preview. */
+  audience?: Audience | null;
 };
 
 export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: string[] }>> {
@@ -92,10 +98,16 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
     return err("You can't add tasks here.", "not_permitted");
   }
 
-  const ids = [...new Set(input.assigneeIds.length ? input.assigneeIds : [user.id])];
+  let ids = [...new Set(input.assigneeIds.length ? input.assigneeIds : [user.id])];
   const team = await teamOf(user);
+  if (input.audience) {
+    const problems = audienceProblems(input.audience);
+    if (problems.length) return fieldsErr(problems);
+    ids = await resolveFor(user, input.app, input.audience);
+    if (!ids.length) return err("Those rules reach nobody who holds this app today.", "validation", [{ field: "audience", message: "Nobody matches." }]);
+  }
   for (const id of ids) {
-    if (id !== user.id && !team.has(id)) return err("You can give tasks only to the people under you on the org chart.", "not_permitted", [{ field: "assignees", message: "Not in your team." }]);
+    if (id !== user.id && !team.has(id)) return err("You can give tasks only to the people under you on the org chart.", "not_permitted", [{ field: input.audience ? "audience" : "assignees", message: "Not in your team." }]);
     if (id !== user.id && !(await canReceive(id, input.app))) {
       return err(`One of them can't open ${TASK_APP_LABEL[input.app as keyof typeof TASK_APP_LABEL]} or Tasks, so they would never see it.`, "validation", [{ field: "assignees", message: "Can't see it." }]);
     }
@@ -115,7 +127,8 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
       title,
       app: input.app,
       givenById: user.id,
-      audience: ids.length === team.size ? "Everybody in your team" : `${ids.length} people`,
+      audience: input.audience ? audienceWords(input.audience) : ids.length === team.size ? "Everybody in your team" : `${ids.length} people`,
+      rules: input.audience ?? null,
     });
   }
 
@@ -134,6 +147,7 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
     dueDate: input.dueDate,
     dueTime: input.dueTime || null,
     proofRequired: input.proofRequired,
+    remarkRequired: input.remarkRequired ?? true,
     checklist: checklist.map((c) => ({ ...c })),
   }));
   await db.insert(tasks).values(rows);
@@ -176,6 +190,7 @@ export type TaskPatch = {
   dueTime?: string | null;
   priority?: TaskPriority;
   proofRequired?: boolean;
+  remarkRequired?: boolean;
   title?: string;
   note?: string | null;
 };
@@ -185,7 +200,7 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Result> 
   const d = await taskDetail(user, id);
   if (!d) return err("That task is not there any more.", "not_found");
   if (!d.can.edit) return err(d.task.status === "done" ? "Reopen it first." : "You can't change this task.", "not_permitted");
-  if (patch.proofRequired !== undefined && !d.can.setProof) return err("Only the person who gave this task, or a manager above whoever holds it, decides whether it needs a screenshot.", "not_permitted");
+  if ((patch.proofRequired !== undefined || patch.remarkRequired !== undefined) && !d.can.setProof) return err("Only the person who gave this task, or a manager above whoever holds it, decides whether it needs a screenshot.", "not_permitted");
 
   const t = d.task;
   const set: Partial<typeof tasks.$inferInsert> = { updatedAt: new Date() };
@@ -212,6 +227,10 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Result> 
   if (patch.proofRequired !== undefined && patch.proofRequired !== t.proofRequired) {
     set.proofRequired = patch.proofRequired;
     said.push(patch.proofRequired ? "Asked for a screenshot when it closes." : "A screenshot is now optional when it closes.");
+  }
+  if (patch.remarkRequired !== undefined && patch.remarkRequired !== t.remarkRequired) {
+    set.remarkRequired = patch.remarkRequired;
+    said.push(patch.remarkRequired ? "Asked for a remark when it closes." : "A remark is now optional when it closes.");
   }
   if (patch.title !== undefined && patch.title.trim() && patch.title.trim() !== t.title) {
     set.title = patch.title.trim().slice(0, 200);
@@ -296,7 +315,7 @@ export async function closeTask(id: string, input: CloseTaskInput): Promise<Resu
           ),
         )
     : [];
-  const problems = closeProblems({ confirmed: input.confirmed, remark: input.remark, proofs: proofs.length, proofRequired: d.task.proofRequired });
+  const problems = closeProblems({ confirmed: input.confirmed, remark: input.remark, proofs: proofs.length, proofRequired: d.task.proofRequired, remarkRequired: d.task.remarkRequired });
   if (problems.length) return fieldsErr(problems);
 
   const remark = input.remark.trim();
@@ -308,7 +327,7 @@ export async function closeTask(id: string, input: CloseTaskInput): Promise<Resu
   if (!closed.length) return err("Somebody closed it a moment ago.", "conflict");
 
   if (proofs.length) await bindAttachments(proofs.map((p) => p.id), "task", id);
-  await event(id, user.id, "closed", `${remark}${proofs.length ? ` (${proofs.length} screenshot${proofs.length === 1 ? "" : "s"})` : ""}`);
+  await event(id, user.id, "closed", `${remark || "Done."}${proofs.length ? ` (${proofs.length} screenshot${proofs.length === 1 ? "" : "s"})` : ""}`);
 
   /* An offer still open on a task that is now done is an offer of nothing. */
   if (d.task.transfer) {
@@ -320,7 +339,7 @@ export async function closeTask(id: string, input: CloseTaskInput): Promise<Resu
   await audit(user.id, "task.closed", id, { remark, proofs: proofs.length });
 
   const tell: NotifyEntry[] = [];
-  if (d.task.createdById !== user.id) tell.push({ userId: d.task.createdById, title: `${first(user.name)} closed a task you gave`, body: `${d.task.title} — “${remark.slice(0, 140)}”`, href: taskHref(d.task) });
+  if (d.task.createdById !== user.id) tell.push({ userId: d.task.createdById, title: `${first(user.name)} closed a task you gave`, body: remark ? `${d.task.title} — “${remark.slice(0, 140)}”` : d.task.title, href: taskHref(d.task) });
   if (d.task.assigneeId !== user.id && d.task.assigneeId !== d.task.createdById) tell.push({ userId: d.task.assigneeId, title: `${first(user.name)} closed your task`, body: d.task.title, href: taskHref(d.task) });
   await notifyUsers(tell);
   refresh();
@@ -519,6 +538,16 @@ export async function loadTaskOptions(): Promise<Result<TaskOptions>> {
   return ok({ today: day, me: { id: user.id, name: user.name }, apps, team });
 }
 
+/**
+ * The people a task in `app` can be given to, and the teams, designations,
+ * departments and levels among them — only people who hold that app.
+ */
+export async function loadAudienceOptions(app: string): Promise<Result<AudienceOptions>> {
+  const user = await requireUser();
+  if (!isTaskApp(app)) return err("Pick an app.");
+  return ok(await audienceOptions(user, app));
+}
+
 export type TransferCandidate = { id: string; name: string; route: "move" | "request" };
 
 export async function loadTransferCandidates(id: string): Promise<Result<TransferCandidate[]>> {
@@ -537,4 +566,80 @@ export async function loadTransferCandidates(id: string): Promise<Result<Transfe
       .filter((p) => mine || p.route === "move")
       .sort((a, b) => (a.route === b.route ? a.name.localeCompare(b.name) : a.route === "move" ? -1 : 1)),
   );
+}
+
+/* ------------------------------------------------------------ many at once */
+
+/**
+ * Start, park or move several tasks — the All tasks selection bar. Each goes
+ * through `updateTask`, so each is checked exactly as one would be; a task this
+ * person may not change is counted and named rather than stopping the rest.
+ */
+export async function bulkUpdateTasks(ids: string[], op: "doing" | "waiting" | "todo" | "tomorrow"): Promise<Result<{ done: number; skipped: number }>> {
+  await requireUser();
+  const day = await today();
+  const tomorrow = new Date(Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10) + 1));
+  const next = `${tomorrow.getUTCFullYear()}-${String(tomorrow.getUTCMonth() + 1).padStart(2, "0")}-${String(tomorrow.getUTCDate()).padStart(2, "0")}`;
+  let done = 0;
+  let skipped = 0;
+  for (const id of [...new Set(ids)].slice(0, 200)) {
+    const r = await updateTask(id, op === "tomorrow" ? { dueDate: next } : { status: op });
+    if (r.ok) done++;
+    else skipped++;
+  }
+  refresh();
+  const verb = op === "tomorrow" ? "Moved to tomorrow" : op === "doing" ? "Started" : op === "waiting" ? "Marked waiting" : "Moved to To do";
+  return ok({ done, skipped }, `${verb}: ${done}${skipped ? ` · ${skipped} you can't change` : ""}`);
+}
+
+/**
+ * Close several tasks with one confirmation and one remark. A task that needs
+ * a screenshot is closed on its own — a screenshot is evidence about ONE task.
+ */
+export async function closeTasks(ids: string[], input: { confirmed: boolean; remark: string }): Promise<Result<{ closed: number }>> {
+  const user = await requireUser();
+  const list = [...new Set(ids)].slice(0, 200);
+  const details = await Promise.all(list.map((id) => taskDetail(user, id)));
+  if (details.some((d) => !d || !d.can.close)) return err("One of them is not yours to close any more. Refresh and try again.", "not_permitted");
+  if (details.some((d) => d!.task.proofRequired)) return err("Some of these need a screenshot — close those one at a time.", "validation", [{ field: "proof", message: "Needs a screenshot." }]);
+  const needRemark = details.some((d) => d!.task.remarkRequired);
+  const problems = closeProblems({ confirmed: input.confirmed, remark: input.remark, proofs: 0, proofRequired: false, remarkRequired: needRemark });
+  if (problems.length) return fieldsErr(problems);
+  let closed = 0;
+  for (const id of list) {
+    const r = await closeTask(id, { confirmed: true, remark: input.remark, attachmentIds: [] });
+    if (r.ok) closed++;
+  }
+  refresh();
+  return ok({ closed }, `Closed ${closed} task${closed === 1 ? "" : "s"}`);
+}
+
+/**
+ * A manager's reminder to somebody under them that something is late: one
+ * notification naming how many and the oldest. Only above the person.
+ */
+export async function nudgePerson(personId: string): Promise<Result> {
+  const user = await requireUser();
+  const team = await teamOf(user);
+  if (!team.has(personId)) return err("You can nudge only the people under you on the org chart.", "not_permitted");
+  const day = await today();
+  const late = await db
+    .select({ id: tasks.id, title: tasks.title, app: tasks.app, dueDate: tasks.dueDate })
+    .from(tasks)
+    .where(and(eq(tasks.assigneeId, personId), ne(tasks.status, "done"), sql`${tasks.dueDate} < ${day}::date`))
+    .orderBy(tasks.dueDate)
+    .limit(50);
+  if (!late.length) return err("Nothing of theirs is late.");
+  const oldest = late[0];
+  await notifyUsers([
+    {
+      userId: personId,
+      title: `${first(user.name)} nudged you: ${late.length} late task${late.length === 1 ? "" : "s"}`,
+      body: `Oldest: ${oldest.title}`,
+      kind: "warn",
+      href: late.length === 1 ? taskHref({ id: oldest.id, app: oldest.app }) : "/tasks/all",
+    },
+  ]);
+  await db.insert(auditLog).values({ id: newId("aud"), actorId: user.id, action: "task.nudged", entityType: "user", entityId: personId, afterState: { late: late.length } as never });
+  return ok(undefined, "Nudged — they have been told.");
 }

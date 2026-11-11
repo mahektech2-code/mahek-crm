@@ -8,10 +8,13 @@ import { useToast } from "@/components/ui/toast";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog } from "@/app/erp/_ui/dialog";
 import { deleteRoutine, saveRoutine, setRoutineActive } from "@/lib/actions/task-routines";
 import { PRIORITY_LABEL, TASK_APP_LABEL, TASK_PRIORITIES, isTaskApp, type TaskPriority } from "@/lib/tasks/rules";
-import { FREQUENCY_LABEL, ROUTINE_FREQUENCIES, WEEKDAY_SHORT, WORKING_WEEK, ordinal, routineProblems, scheduleWords, windowWords, type RoutineFrequency } from "@/lib/tasks/routines";
+import { WORKING_WEEK, routineProblems, scheduleWords, windowWords, type RoutineFrequency } from "@/lib/tasks/routines";
+import { EMPTY_AUDIENCE, audienceProblems, type Audience } from "@/lib/tasks/audience";
+import { AudienceBuilder, CloseRules, RepeatPicker, ScheduleFields, type ScheduleState } from "./fields";
 import type { RoutineRow } from "@/lib/tasks/routine-service";
 import type { TeamPerson } from "@/lib/tasks/service";
 import { AppChip, PriorityMark, TaskListCard } from "./kit";
+import { Switch } from "./screens-more";
 
 /* ---------------------------------------------------------------------------
  * Routines: what comes back, for whom, and when. One card per person, a row per
@@ -20,6 +23,8 @@ import { AppChip, PriorityMark, TaskListCard } from "./kit";
  * ------------------------------------------------------------------------- */
 
 type Props = { routines: RoutineRow[]; people: TeamPerson[]; apps: string[]; viewerId: string };
+
+const RULES = "__rules__";
 
 export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
   const router = useRouter();
@@ -30,11 +35,14 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
   const [busy, setBusy] = React.useState<string | null>(null);
 
   const hasTeam = people.length > 1;
-  const shown = person === "all" ? routines : routines.filter((r) => r.assigneeId === person);
+  const shown = person === "all" ? routines : routines.filter((r) => (person === RULES ? r.audience : r.assigneeId === person));
+  // A routine given by rules has no one person, so they share one card.
+  const keyOf = (r: RoutineRow) => r.assigneeId ?? RULES;
   const byPerson = new Map<string, RoutineRow[]>();
-  for (const r of shown) byPerson.set(r.assigneeId, [...(byPerson.get(r.assigneeId) ?? []), r]);
-  // Your own first, then everybody else by name.
-  const order = [...byPerson.keys()].sort((a, b) => (a === viewerId ? -1 : b === viewerId ? 1 : byPerson.get(a)![0].assigneeName.localeCompare(byPerson.get(b)![0].assigneeName)));
+  for (const r of shown) byPerson.set(keyOf(r), [...(byPerson.get(keyOf(r)) ?? []), r]);
+  // Given by rules first, then your own, then everybody else by name.
+  const rank = (k: string) => (k === RULES ? 0 : k === viewerId ? 1 : 2);
+  const order = [...byPerson.keys()].sort((a, b) => rank(a) - rank(b) || (byPerson.get(a)![0].assigneeName ?? "").localeCompare(byPerson.get(b)![0].assigneeName ?? ""));
 
   const toggle = async (r: RoutineRow) => {
     setBusy(r.id);
@@ -52,6 +60,7 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
             {hasTeam ? (
               <Select value={person} onChange={(e) => setPerson(e.target.value)} aria-label="Whose routines" className="w-56">
                 <option value="all">Everybody</option>
+                {routines.some((r) => r.audience) ? <option value={RULES}>Given by rules</option> : null}
                 {people.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.id === viewerId ? "Mine" : p.name}
@@ -66,7 +75,7 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
         }
       />
       <p className="-mt-2 mb-5 max-w-[760px] text-sm text-muted">
-        A routine adds the same task on the days it runs — every morning, on a few days of the week, or once a month. Each day&apos;s task is closed like any other, with a remark.
+        A routine adds the same task on the days it runs — every morning, on a few days of the week, or once a month. Each day&apos;s task is closed like any other. Give one to yourself, one person, or a set of people, teams and roles — the rules are read again each day it runs.
       </p>
 
       {!order.length ? (
@@ -77,10 +86,11 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
         const list = byPerson.get(pid)!;
         const live = list.filter((r) => r.active).length;
         return (
-          <TaskListCard key={pid} heading={pid === viewerId ? "Mine" : list[0].assigneeName} count={live}>
+          <TaskListCard key={pid} heading={pid === RULES ? "Given by rules — to teams and roles" : pid === viewerId ? "Mine" : (list[0].assigneeName ?? "")} count={live}>
             {list.map((r) => (
-              <div key={r.id} className={cx("flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-divider px-4 py-3 last:border-b-0", !r.active && "opacity-60")}>
-                <div className="min-w-[260px] flex-1">
+              <div key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-divider px-4 py-3 last:border-b-0">
+                <Switch on={r.active} disabled={!r.canManage || busy === r.id} label={`${r.active ? "Pause" : "Resume"} ${r.title}`} onClick={() => void toggle(r)} />
+                <div className={cx("min-w-[260px] flex-1", !r.active && "opacity-60")}>
                   <div className="flex items-center gap-2 text-[14.5px] font-medium text-ink">
                     <PriorityMark priority={r.priority} />
                     <span className="truncate">{r.title}</span>
@@ -90,7 +100,10 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
                     <AppChip app={r.app} />
                     <span>{scheduleWords(r)}</span>
                     {windowWords(r.startTime, r.dueTime) ? <span>· {windowWords(r.startTime, r.dueTime)}</span> : null}
+                    {r.audience ? <span>· for {r.forWords}</span> : null}
+                    <span>· {r.reach === 1 ? "1 person" : `${r.reach} people`}</span>
                     {r.proofRequired ? <span>· screenshot to close</span> : null}
+                    {!r.remarkRequired ? <span>· remark optional</span> : null}
                     {r.createdById !== r.assigneeId ? <span>· set by {r.createdById === viewerId ? "you" : r.createdByName}</span> : null}
                   </div>
                 </div>
@@ -98,9 +111,6 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
                   <div className="flex flex-none gap-1.5">
                     <Button size="sm" onClick={() => setEditing(r)}>
                       Edit
-                    </Button>
-                    <Button size="sm" onClick={() => void toggle(r)} disabled={busy === r.id}>
-                      {r.active ? "Pause" : "Resume"}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setDeleting(r)}>
                       Delete
@@ -147,45 +157,54 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
 function RoutineDialog({ routine, people, apps, viewerId, onClose }: { routine: RoutineRow | null; people: TeamPerson[]; apps: string[]; viewerId: string; onClose: () => void }) {
   const router = useRouter();
   const toast = useToast();
+  const hasTeam = people.length > 1;
+  const [who, setWho] = React.useState<"me" | "person" | "rules">(routine?.audience ? "rules" : routine && routine.assigneeId !== viewerId ? "person" : "me");
   const [assigneeId, setAssigneeId] = React.useState(routine?.assigneeId ?? viewerId);
+  const [audience, setAudience] = React.useState<Audience>(routine?.audience ?? EMPTY_AUDIENCE);
   const [title, setTitle] = React.useState(routine?.title ?? "");
   const [app, setApp] = React.useState<string>(routine?.app ?? "tasks");
   const [frequency, setFrequency] = React.useState<RoutineFrequency>(routine?.frequency ?? "daily");
-  const [weekdays, setWeekdays] = React.useState<number[]>(routine?.weekdays.length ? routine.weekdays : WORKING_WEEK);
-  const [dayOfMonth, setDayOfMonth] = React.useState(routine?.dayOfMonth != null ? String(routine.dayOfMonth) : "1");
-  const [completeByDay, setCompleteByDay] = React.useState(routine?.completeByDay != null ? String(routine.completeByDay) : "");
-  const [startTime, setStartTime] = React.useState(routine?.startTime ?? "");
-  const [dueTime, setDueTime] = React.useState(routine?.dueTime ?? "");
+  const [sched, setSched] = React.useState<ScheduleState>({
+    weekdays: routine?.weekdays.length ? routine.weekdays : WORKING_WEEK,
+    dayOfMonth: routine?.dayOfMonth != null ? String(routine.dayOfMonth) : "1",
+    completeByDay: routine?.completeByDay != null ? String(routine.completeByDay) : "",
+    startTime: routine?.startTime ?? "",
+    dueTime: routine?.dueTime ?? "",
+  });
   const [priority, setPriority] = React.useState<TaskPriority>(routine?.priority ?? "normal");
   const [proof, setProof] = React.useState(routine?.proofRequired ?? false);
+  const [remarkReq, setRemarkReq] = React.useState(routine?.remarkRequired ?? true);
   const [checklist, setChecklist] = React.useState(routine?.checklist.map((c) => c.text).join("\n") ?? "");
   const [note, setNote] = React.useState(routine?.note ?? "");
   const [problems, setProblems] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
 
-  // The apps this person can be given work in: Personal, and whichever of the viewer's apps they hold too.
-  const who = people.find((p) => p.id === assigneeId);
-  const appChoices = apps.filter((a) => a === "tasks" || (who?.apps ?? []).includes(a) || a === routine?.app);
+  const forId = who === "me" ? viewerId : assigneeId;
+  // The apps it can be filed under: Personal, and the viewer's own apps — given to one person, only those they hold too.
+  const one = people.find((p) => p.id === forId);
+  const appChoices = apps.filter((a) => a === "tasks" || who === "rules" || (one?.apps ?? []).includes(a) || a === routine?.app);
   const input = {
     id: routine?.id,
-    assigneeId,
+    assigneeId: who === "rules" ? null : forId,
+    audience: who === "rules" ? audience : null,
     title,
     app,
     priority,
     frequency,
-    weekdays,
-    dayOfMonth: frequency === "monthly" && dayOfMonth ? Number(dayOfMonth) : null,
-    completeByDay: frequency === "monthly" && completeByDay ? Number(completeByDay) : null,
-    startTime: startTime || null,
-    dueTime: dueTime || null,
+    weekdays: sched.weekdays,
+    dayOfMonth: frequency === "monthly" && sched.dayOfMonth ? Number(sched.dayOfMonth) : null,
+    completeByDay: frequency === "monthly" && sched.completeByDay ? Number(sched.completeByDay) : null,
+    startTime: sched.startTime || null,
+    dueTime: sched.dueTime || null,
     proofRequired: proof,
+    remarkRequired: remarkReq,
     note,
     checklist,
   };
   const summary = routineProblems(input).length ? null : `${scheduleWords(input)}${windowWords(input.startTime, input.dueTime) ? `, ${windowWords(input.startTime, input.dueTime)}` : ""}`;
 
   const save = async () => {
-    const p = routineProblems(input);
+    const p = [...routineProblems(input), ...(who === "rules" ? audienceProblems(audience) : [])];
     if (p.length) return setProblems(Object.fromEntries(p.map((x) => [x.field, x.message])));
     setBusy(true);
     const r = await saveRoutine(input).finally(() => setBusy(false));
@@ -196,7 +215,6 @@ function RoutineDialog({ routine, people, apps, viewerId, onClose }: { routine: 
   };
 
   const seg = (on: boolean) => cx("h-7.5 cursor-pointer rounded-md px-3 text-[13.5px] font-medium", on ? "bg-surface text-brand-hover shadow-sm" : "text-body");
-  const days = Array.from({ length: 31 }, (_, i) => i + 1);
 
   return (
     <ErpDialog onClose={onClose} label={routine ? "Edit routine" : "New routine"} size="lg">
@@ -208,16 +226,7 @@ function RoutineDialog({ routine, people, apps, viewerId, onClose }: { routine: 
           <Field label="What needs doing" required error={problems.title || null} className="col-span-3 max-md:col-span-1">
             <Input autoFocus value={title} invalid={Boolean(problems.title)} onChange={(e) => setTitle(e.target.value)} placeholder="Download the HDFC statement and enter it in Tally" maxLength={200} />
           </Field>
-          <Field label="For" required error={problems.assignee || null}>
-            <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} disabled={Boolean(routine)}>
-              {people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.id === viewerId ? `Me (${p.name})` : p.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="App" required hint="Where the work happens. Its tasks also show on that app's My tasks." error={problems.app || null}>
+          <Field label="App" required hint="Where the work happens. Only people who hold it can be given the routine." error={problems.app || null}>
             <Select value={app} onChange={(e) => setApp(e.target.value)}>
               {appChoices.filter(isTaskApp).map((a) => (
                 <option key={a} value={a}>
@@ -235,77 +244,49 @@ function RoutineDialog({ routine, people, apps, viewerId, onClose }: { routine: 
               ))}
             </Select>
           </Field>
+          <div />
 
-          <Field label="How often" required group error={problems.frequency || null} className="col-span-3 max-md:col-span-1">
+          <Field label="For" required group error={who !== "rules" ? problems.assignee || null : null} className="col-span-3 max-md:col-span-1">
             <span className="inline-flex gap-0.5 rounded-lg bg-canvas p-[3px]">
-              {ROUTINE_FREQUENCIES.map((f) => (
-                <button key={f} type="button" className={seg(frequency === f)} onClick={() => setFrequency(f)}>
-                  {FREQUENCY_LABEL[f]}
-                </button>
-              ))}
+              <button type="button" className={seg(who === "me")} onClick={() => setWho("me")}>
+                Me
+              </button>
+              {hasTeam ? (
+                <>
+                  <button type="button" className={seg(who === "person")} onClick={() => setWho("person")}>
+                    One person
+                  </button>
+                  <button type="button" className={seg(who === "rules")} onClick={() => setWho("rules")}>
+                    People, teams or roles
+                  </button>
+                </>
+              ) : null}
             </span>
-          </Field>
-          {frequency === "monthly" ? (
-            <>
-              <Field label="Appears on" required error={problems.dayOfMonth || null} hint="A day past the end of a short month lands on its last day.">
-                <Select value={dayOfMonth} onChange={(e) => setDayOfMonth(e.target.value)}>
-                  {days.map((d) => (
-                    <option key={d} value={d}>
-                      The {ordinal(d)}
+            {who === "person" ? (
+              <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="mt-2 max-w-[320px]" aria-label="Who">
+                {people
+                  .filter((p) => p.id !== viewerId && (app === "tasks" ? p.apps.includes("tasks") : p.apps.includes(app)))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
                     </option>
                   ))}
-                </Select>
-              </Field>
-              <Field label="Done by" optional error={problems.completeByDay || null} hint="Empty means the same day.">
-                <Select value={completeByDay} onChange={(e) => setCompleteByDay(e.target.value)}>
-                  <option value="">The same day</option>
-                  {days
-                    .filter((d) => d > Number(dayOfMonth))
-                    .map((d) => (
-                      <option key={d} value={d}>
-                        The {ordinal(d)}
-                      </option>
-                    ))}
-                </Select>
-              </Field>
-              <div />
-            </>
-          ) : (
-            <Field label="On" required group error={problems.weekdays || null} className="col-span-3 max-md:col-span-1">
-              <span className="inline-flex flex-wrap gap-1.5">
-                {[1, 2, 3, 4, 5, 6, 0].map((d) => {
-                  const on = weekdays.includes(d);
-                  return (
-                    <button
-                      key={d}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => setWeekdays((w) => (on ? w.filter((x) => x !== d) : [...w, d]))}
-                      className={cx("h-8 w-12 cursor-pointer rounded-md border text-[13px] font-medium", on ? "border-brand bg-brand-soft text-brand-hover" : "border-line bg-surface text-body")}
-                    >
-                      {WEEKDAY_SHORT[d]}
-                    </button>
-                  );
-                })}
-              </span>
-            </Field>
-          )}
-          <Field label="Start" optional error={problems.startTime || null}>
-            <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              </Select>
+            ) : null}
           </Field>
-          <Field label="End" optional hint="The task's own time — it is due by then." error={problems.dueTime || null}>
-            <Input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
+          {who === "rules" ? (
+            <div className="col-span-3 max-md:col-span-1">
+              <AudienceBuilder app={app} value={audience} onChange={setAudience} error={problems.audience || null} />
+              <p className="mt-2 text-[13px] text-muted">The rules are read again on every day it runs, so whoever matches that day gets it — somebody who joins a team or takes the designation later included.</p>
+            </div>
+          ) : null}
+
+          <Field label="How often" required group error={problems.frequency || null} className="col-span-3 max-md:col-span-1">
+            <RepeatPicker value={frequency} onChange={(f) => f !== "once" && setFrequency(f)} allowOnce={false} />
           </Field>
-          <Field label="To close it" required group>
-            <span className="inline-flex gap-0.5 rounded-lg bg-canvas p-[3px]">
-              <button type="button" className={seg(!proof)} onClick={() => setProof(false)}>
-                Remarks only
-              </button>
-              <button type="button" className={seg(proof)} onClick={() => setProof(true)}>
-                Screenshot
-              </button>
-            </span>
-          </Field>
+          <ScheduleFields frequency={frequency} s={sched} set={(p) => setSched((x) => ({ ...x, ...p }))} problems={problems} />
+          <CloseRules proof={proof} remark={remarkReq} onProof={setProof} onRemark={setRemarkReq} />
+          <div />
           <Field label="Checklist" optional hint="One step per line. Each day's task starts with every step unticked." className="col-span-3 max-md:col-span-1">
             <Textarea rows={3} value={checklist} onChange={(e) => setChecklist(e.target.value)} placeholder="One step per line" />
           </Field>

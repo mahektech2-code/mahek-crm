@@ -13,6 +13,8 @@ import { checklistFrom, TASK_APP_LABEL, type FieldProblem } from "@/lib/tasks/ru
 import { normaliseRoutine, routineProblems, scheduleWords, type RoutineFrequency } from "@/lib/tasks/routines";
 import { canManageFor, getRoutine, writeRoutineTasks } from "@/lib/tasks/routine-service";
 import { canReceive } from "@/lib/tasks/service";
+import { audienceProblems, type Audience } from "@/lib/tasks/audience";
+import { resolveFor } from "@/lib/tasks/audience-service";
 
 /* ---------------------------------------------------------------------------
  * EVERY WRITE TO A ROUTINE. Each asks `canManageFor` — a server action is a
@@ -39,7 +41,10 @@ function refresh() {
 export type SaveRoutineInput = {
   /** Absent for a new routine. */
   id?: string;
-  assigneeId: string;
+  /** One person — or, with `audience`, nobody in particular. */
+  assigneeId: string | null;
+  /** Include/exclude rules, re-read on every day the routine runs. */
+  audience?: Audience | null;
   title: string;
   app: string;
   priority: string;
@@ -50,6 +55,7 @@ export type SaveRoutineInput = {
   startTime: string | null;
   dueTime: string | null;
   proofRequired: boolean;
+  remarkRequired?: boolean;
   note?: string | null;
   checklist?: string | null;
 };
@@ -63,11 +69,22 @@ export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id:
   const before = input.id ? await getRoutine(input.id) : null;
   if (input.id && !before) return err("That routine no longer exists.", "not_found");
   if (before && !(await canManageFor(user, before.assigneeId, before.createdById))) return err("Only whoever set this routine, or a manager above its person, can change it.", "not_permitted");
-  if (!(await canManageFor(user, r.assigneeId))) {
-    return err("You can set routines for yourself and the people under you on the org chart.", "not_permitted", [{ field: "assignee", message: "Not in your team." }]);
-  }
-  if (!(await canReceive(r.assigneeId, r.app))) {
-    return err(`They can't open ${TASK_APP_LABEL[r.app as keyof typeof TASK_APP_LABEL] ?? r.app} or Tasks, so they would never see these tasks.`, "validation", [{ field: "assignee", message: "Can't see it." }]);
+
+  const audience = input.audience ?? null;
+  if (audience) {
+    const ap = audienceProblems(audience);
+    if (ap.length) return fieldsErr(ap);
+    // Checked against today's people: a rule nobody matches yet is a typo, not a plan.
+    const reach = await resolveFor(user, r.app, audience);
+    if (!reach.length) return err("Those rules reach nobody who holds this app today.", "validation", [{ field: "audience", message: "Nobody matches." }]);
+  } else {
+    if (!r.assigneeId) return err("Say who it is for.", "validation", [{ field: "assignee", message: "Pick somebody." }]);
+    if (!(await canManageFor(user, r.assigneeId))) {
+      return err("You can set routines for yourself and the people under you on the org chart.", "not_permitted", [{ field: "assignee", message: "Not in your team." }]);
+    }
+    if (!(await canReceive(r.assigneeId, r.app))) {
+      return err(`They can't open ${TASK_APP_LABEL[r.app as keyof typeof TASK_APP_LABEL] ?? r.app} or Tasks, so they would never see these tasks.`, "validation", [{ field: "assignee", message: "Can't see it." }]);
+    }
   }
 
   const day = await today();
@@ -75,9 +92,11 @@ export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id:
     title: r.title,
     note: r.note ?? null,
     app: r.app,
-    assigneeId: r.assigneeId,
+    assigneeId: audience ? null : r.assigneeId,
+    audience,
     priority: r.priority,
     proofRequired: input.proofRequired,
+    remarkRequired: input.remarkRequired ?? true,
     checklist: checklistFrom(input.checklist),
     frequency: r.frequency,
     weekdays: r.weekdays,
@@ -95,20 +114,30 @@ export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id:
     id = newId("trt");
     await db.insert(taskRoutines).values({ id, ...values, createdById: user.id, startsOn: day });
     await audit(user.id, "task.routine.created", id, values);
-    if (r.assigneeId !== user.id) {
+    if (audience) {
+      const reach = (await resolveFor(user, r.app, audience)).filter((p) => p !== user.id);
+      await notifyUsers(
+        reach.map((userId) => ({
+          userId,
+          title: `${first(user.name)} set you a routine`,
+          body: `${r.title} — ${scheduleWords({ ...r, frequency: r.frequency as RoutineFrequency })}`,
+          href: "/tasks/setup/routines",
+        })),
+      );
+    } else if (r.assigneeId && r.assigneeId !== user.id) {
       await notifyUsers([
         {
           userId: r.assigneeId,
           title: `${first(user.name)} set you a routine`,
           body: `${r.title} — ${scheduleWords({ ...r, frequency: r.frequency as RoutineFrequency })}`,
-          href: "/tasks/routines",
+          href: "/tasks/setup/routines",
         },
       ]);
     }
   }
   // Today's task, where today is one of its days — a routine set at ten in
   // the morning for "every day" means today as well.
-  await writeRoutineTasks(day, { assigneeId: r.assigneeId });
+  await writeRoutineTasks(day, { routineId: id });
   refresh();
   return ok({ id }, before ? "Routine saved. It changes the days to come." : "Routine set.");
 }
@@ -126,7 +155,7 @@ export async function setRoutineActive(id: string, active: boolean): Promise<Res
     .set({ active, updatedAt: new Date(), ...(active ? { startsOn: r.startsOn > day ? r.startsOn : day } : {}) })
     .where(eq(taskRoutines.id, id));
   await audit(user.id, active ? "task.routine.resumed" : "task.routine.paused", id, { title: r.title });
-  if (active) await writeRoutineTasks(day, { assigneeId: r.assigneeId });
+  if (active) await writeRoutineTasks(day, { routineId: id });
   refresh();
   return ok(null, active ? "Routine resumed." : "Routine paused. Nothing new is added until it is resumed.");
 }

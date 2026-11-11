@@ -17029,6 +17029,8 @@ export const taskBatches = pgTable("task_batches", {
     .references(() => users.id),
   /** Who it went to, in words — "Everybody in your team", "4 people". */
   audience: text("audience").notNull(),
+  /** The include/exclude rules it was given by (lib/tasks/audience.ts), where it was. */
+  rules: jsonb("rules"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -17048,14 +17050,20 @@ export const taskRoutines = pgTable(
     title: text("title").notNull(),
     note: text("note"),
     app: text("app").notNull().default("tasks"),
-    assigneeId: text("assignee_id")
-      .notNull()
-      .references(() => users.id),
+    /** The one person it is for — null where `audience` decides instead. */
+    assigneeId: text("assignee_id").references(() => users.id),
+    /**
+     * Include/exclude rules (lib/tasks/audience.ts), re-read on every day the
+     * routine runs: a routine for "every Telecaller" reaches whoever is one
+     * that day. Null for a routine that belongs to one person.
+     */
+    audience: jsonb("audience"),
     createdById: text("created_by_id")
       .notNull()
       .references(() => users.id),
     priority: text("priority").notNull().default("normal"),
     proofRequired: boolean("proof_required").notNull().default(false),
+    remarkRequired: boolean("remark_required").notNull().default(true),
     checklist: jsonb("checklist").$type<TaskChecklistItem[]>().notNull().default([]),
     /** daily · weekly · monthly. */
     frequency: text("frequency").notNull(),
@@ -17082,6 +17090,7 @@ export const taskRoutines = pgTable(
     uniqueIndex("task_routines_source_key").on(t.source).where(sql`source is not null`),
     check("task_routines_frequency", sql`${t.frequency} in ('daily','weekly','monthly')`),
     check("task_routines_priority", sql`${t.priority} in ('urgent','high','normal','low')`),
+    check("task_routines_for_someone", sql`${t.assigneeId} is not null or ${t.audience} is not null`),
     check(
       "task_routines_times",
       sql`(${t.startTime} is null or ${t.startTime} ~ '^[0-2][0-9]:[0-5][0-9]$') and (${t.dueTime} is null or ${t.dueTime} ~ '^[0-2][0-9]:[0-5][0-9]$')`,
@@ -17117,6 +17126,8 @@ export const tasks = pgTable(
     dueTime: text("due_time"),
     /** The creator's decision that closing needs a screenshot. Remarks are always needed. */
     proofRequired: boolean("proof_required").notNull().default(false),
+    /** Whether closing needs a written remark — the creator's choice, like the screenshot. */
+    remarkRequired: boolean("remark_required").notNull().default(true),
     checklist: jsonb("checklist").$type<TaskChecklistItem[]>().notNull().default([]),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
@@ -17124,11 +17135,20 @@ export const tasks = pgTable(
     /** The routine that wrote this task, and the day it was written for — one task per routine per day. */
     routineId: text("routine_id").references(() => taskRoutines.id, { onDelete: "set null" }),
     routineDay: date("routine_day"),
+    /**
+     * An AUTOMATIC task: the rule that raised it (lib/tasks/automations.ts)
+     * and the record it is about, as that rule keys it. The rule keeps it in
+     * step and closes it — closed_by_id null — when the record no longer
+     * needs anybody.
+     */
+    autoRule: text("auto_rule"),
+    autoKey: text("auto_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("tasks_routine_day_key").on(t.routineId, t.routineDay).where(sql`routine_id is not null`),
+    uniqueIndex("tasks_auto_key").on(t.autoRule, t.autoKey).where(sql`auto_rule is not null`),
+    uniqueIndex("tasks_routine_person_day_key").on(t.routineId, t.assigneeId, t.routineDay).where(sql`routine_id is not null`),
     index("tasks_assignee_idx").on(t.assigneeId, t.status, t.dueDate),
     index("tasks_created_by_idx").on(t.createdById),
     index("tasks_batch_idx").on(t.batchId),
@@ -17138,10 +17158,21 @@ export const tasks = pgTable(
     check("tasks_due_time", sql`${t.dueTime} is null or ${t.dueTime} ~ '^[0-2][0-9]:[0-5][0-9]$'`),
     check(
       "tasks_closed_with_remark",
-      sql`(${t.status} = 'done') = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closedById} is not null and ${t.closeRemark} is not null))`,
+      sql`(${t.status} = 'done') = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closeRemark} is not null and (${t.closedById} is not null or ${t.autoRule} is not null)))`,
     ),
   ],
 );
+
+/**
+ * Whether each automatic-task rule is on. No row is the rule's own default
+ * (lib/tasks/automations.ts), so a rule added in code needs no migration.
+ */
+export const taskAutomations = pgTable("task_automations", {
+  rule: text("rule").primaryKey(),
+  enabled: boolean("enabled").notNull(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /** What happened to a task, in order — append-only, the task's Activity tab. */
 export const taskEvents = pgTable(

@@ -361,6 +361,9 @@ const DESCRIBE: Record<string, Describer> = {
   "task.routine.paused": () => ["paused a routine"],
   "task.routine.resumed": () => ["resumed a routine"],
   "task.routine.deleted": () => ["deleted a routine"],
+  "task.nudged": () => ["nudged somebody about their late tasks"],
+  "task.automation.on": () => ["switched an automatic task on"],
+  "task.automation.off": () => ["switched an automatic task off"],
   /* ---- customer order tracking */
   "erp.order.hold": () => ["put an order on hold"],
   "erp.order.holdResolved": () => ["resolved an order's hold"],
