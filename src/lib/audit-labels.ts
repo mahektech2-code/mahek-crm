@@ -115,6 +115,12 @@ export const AUDIT_GROUPS = [
     prefixes: ["hrms.", "employee."],
   },
   {
+    slug: "tasks",
+    label: "Tasks",
+    hint: "Tasks given, closed, reopened, deleted and handed over",
+    prefixes: ["task."],
+  },
+  {
     slug: "access",
     label: "People & access",
     hint: "Accounts created, apps granted, passwords, refusals and signing in as somebody",
@@ -340,6 +346,16 @@ const DESCRIBE: Record<string, Describer> = {
   "website.review.published": () => ["published approved website changes"],
   "website.review.enforcement_changed": () => ["changed whether website assignments are enforced"],
   "website.access.denied": () => ["was refused a website action"],
+  /* ---- the Tasks app */
+  "task.created": () => ["gave out a task"],
+  "task.closed": () => ["closed a task"],
+  "task.reopened": () => ["reopened a task"],
+  "task.deleted": () => ["deleted a task"],
+  "task.moved": () => ["moved a task to somebody else in their team"],
+  "task.transfer.requested": () => ["asked a colleague to take a task over"],
+  "task.transfer.accepted": () => ["accepted a task a colleague handed over"],
+  "task.transfer.rejected": () => ["rejected a task a colleague tried to hand over"],
+  "task.transfer.withdrawn": () => ["withdrew a request to hand a task over"],
   /* ---- customer order tracking */
   "erp.order.hold": () => ["put an order on hold"],
   "erp.order.holdResolved": () => ["resolved an order's hold"],

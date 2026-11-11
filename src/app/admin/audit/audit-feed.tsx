@@ -21,6 +21,7 @@ const GROUP_TONE: Record<AuditGroup, Tone> = {
   field: "brand",
   factory: "neutral",
   hr: "neutral",
+  tasks: "brand",
   access: "warn",
   settings: "warn",
   signin: "muted",

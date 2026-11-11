@@ -70,6 +70,7 @@ export const ADMIN_TABS = {
     { slug: "field", label: "Field team" },
     { slug: "factory", label: "Factory" },
     { slug: "hr", label: "HR" },
+    { slug: "tasks", label: "Tasks" },
     { slug: "access", label: "People & access" },
     { slug: "settings", label: "Settings & catalogue" },
     { slug: "signin", label: "Sign-ins" },

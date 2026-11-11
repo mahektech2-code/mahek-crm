@@ -238,6 +238,7 @@ const website = (
 export const APP_MODULES: AppModule[] = [
   /* --------------------------------------------------------------- the CRM */
   crm("dashboard", "Dashboard", "Overview"),
+  crm("tasks", "My tasks", "Daily calling", "Their own tasks that belong to the CRM — the same rows as in the Tasks app."),
   crm("call-log", "Call Log", "Daily calling", "The calling queue itself. Without it there is no day's work to do."),
   crm("reminders", "Reminders", "Daily calling"),
   crm("history", "Call History", "Daily calling"),
@@ -1031,6 +1032,28 @@ export const APP_MODULES: AppModule[] = [
    * to see the rule behind their Call Log is reading the same truth the
    * developer is, and splitting it would make two versions of one answer.
    */
+  /*
+   * TASKS is two modules: a person's own work, and the team view. The team
+   * screens show only the people under somebody on the org chart, so for
+   * somebody nobody reports to they are empty rather than wrong — withholding
+   * them is a courtesy, never the thing that keeps a task private.
+   */
+  {
+    key: "tasks.my-work",
+    app: "tasks",
+    label: "My work",
+    group: "Tasks",
+    href: "/tasks",
+    note: "My day, every task they have in every app, the board and transfers.",
+  },
+  {
+    key: "tasks.team",
+    app: "tasks",
+    label: "My team",
+    group: "Tasks",
+    href: "/tasks/team",
+    note: "The tasks of the people under them on the org chart, and what they have given out.",
+  },
   {
     key: "docs.app",
     app: "docs",

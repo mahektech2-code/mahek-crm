@@ -1,4 +1,5 @@
 import "server-only";
+import { MAX_PROOFS } from "@/lib/tasks/rules";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -62,7 +63,9 @@ export type ParentType =
   /** A price list somebody uploaded to be parsed: the PDF, scan or photograph itself. */
   | "price_list_document"
   /** A supplier's invoice on a vendor payout — one file per invoice row. */
-  | "vendor_payout_invoice";
+  | "vendor_payout_invoice"
+  /** The screenshots somebody attached when closing a task (the Tasks app). */
+  | "task";
 
 export type AttachmentView = {
   id: string;
@@ -89,6 +92,8 @@ export async function limitFor(parentType: ParentType): Promise<number> {
     case "feedback":
     case "feedback_message":
       return config["attachments.maxPerFeedback"];
+    case "task":
+      return MAX_PROOFS;
     case "mbos_document":
     case "mbos_course":
     case "price_list_document":
@@ -369,6 +374,15 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     const ctx = await resolveScope();
     const { canReadPayoutInvoice } = await import("@/lib/services/vendor-payout-service");
     return canReadPayoutInvoice(ctx.user.id);
+  }
+
+  /* A task's screenshots are evidence about the task: whoever may see the task
+     — its assignee, its creator, the person it is offered to, and anybody above
+     the assignee on the org chart — may open them, and nobody else. */
+  if (row.parentType === "task") {
+    const ctx = await resolveScope();
+    const { canSeeTaskById } = await import("@/lib/tasks/service");
+    return canSeeTaskById(ctx.user, row.parentId);
   }
 
   if (row.parentType === "price_list_document") {

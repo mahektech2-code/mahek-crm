@@ -817,6 +817,10 @@ export const MATRIX: Record<AppId, AppMatrix> = {
   /* Documentation is read, never decided. Holding the app opens every page
      and every tab, by decision — see `docs.app` in `lib/modules.ts`. */
   docs: { associate: [], manager: [] },
+  /* Tasks decides by the ORG CHART, not by a capability: a manager may give
+     tasks to, see and move the tasks of the people under them, and nobody
+     else's (`lib/tasks/service.ts`, `teamOf`). The Tasks level is not read. */
+  tasks: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the

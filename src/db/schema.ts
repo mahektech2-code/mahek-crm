@@ -668,6 +668,9 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "vendor_payout_invoice",
   /** The photograph of a loaded truck the dispatch team takes as proof (factory app). */
   "factory_task",
+  /** A screenshot somebody attached when closing a task (the Tasks app). Read by
+      whoever can see the task — see `canSeeTask` in lib/tasks/service.ts. */
+  "task",
 ]);
 
 /**
@@ -706,6 +709,8 @@ export const appIdEnum = pgEnum("app_id", [
   "factory",
   /** Documentation — every app's guide, rules and developer reference, in one place. */
   "docs",
+  /** Tasks — every task a person has, from every app, in one place. */
+  "tasks",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -16990,3 +16995,136 @@ export type PlanSnapshotLine = {
   /** The order numbers behind a line the orders put there; absent on a typed one. */
   orderRefs?: string | null;
 };
+
+/* ---------------------------------------------------------------------------
+ * TASKS — the central task app, and each app's "My tasks".
+ *
+ * A task belongs to ONE person (`assignee_id`) and names the app its work
+ * happens in (`app`, an app id or `tasks` for a personal one), so the same row
+ * shows in the Tasks app and in that app's own My tasks screen. Rules are pure
+ * in lib/tasks/rules.ts; reads and writes in lib/tasks/service.ts.
+ *
+ * CLOSING IS AN ASSERTION WITH EVIDENCE. `closed_at`, `closed_by_id` and
+ * `close_remark` are written together, in the close itself, and a check
+ * constraint holds the three to the status — a task cannot read Done without
+ * the remark somebody wrote when they closed it. Screenshots are attachments
+ * with parent `task`; `proof_required` is the creator's decision that at least
+ * one must be there, checked in `closeTask`.
+ *
+ * A TRANSFER IS A REQUEST UNTIL SOMEBODY ACCEPTS IT. The task stays with its
+ * assignee while a `task_transfers` row is pending; one pending row per task,
+ * held by a partial unique index. A manager over both people moves it straight
+ * away, which is a row written already decided (`moved`).
+ * ------------------------------------------------------------------------- */
+
+export type TaskChecklistItem = { text: string; done: boolean };
+
+/** One "give this to several people" — each of them gets their own `tasks` row. */
+export const taskBatches = pgTable("task_batches", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  app: text("app").notNull(),
+  givenById: text("given_by_id")
+    .notNull()
+    .references(() => users.id),
+  /** Who it went to, in words — "Everybody in your team", "4 people". */
+  audience: text("audience").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    note: text("note"),
+    /** An app id (`crm`, `accounts`…) or `tasks` for one that belongs to no app. */
+    app: text("app").notNull().default("tasks"),
+    /** The customer or lead it is about, where there is one. */
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    assigneeId: text("assignee_id")
+      .notNull()
+      .references(() => users.id),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    batchId: text("batch_id").references(() => taskBatches.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("todo"),
+    priority: text("priority").notNull().default("normal"),
+    dueDate: date("due_date").notNull(),
+    /** "HH:MM", on the 24-hour clock, where a time was set. */
+    dueTime: text("due_time"),
+    /** The creator's decision that closing needs a screenshot. Remarks are always needed. */
+    proofRequired: boolean("proof_required").notNull().default(false),
+    checklist: jsonb("checklist").$type<TaskChecklistItem[]>().notNull().default([]),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedById: text("closed_by_id").references(() => users.id),
+    closeRemark: text("close_remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("tasks_assignee_idx").on(t.assigneeId, t.status, t.dueDate),
+    index("tasks_created_by_idx").on(t.createdById),
+    index("tasks_batch_idx").on(t.batchId),
+    index("tasks_customer_idx").on(t.customerId),
+    check("tasks_status", sql`${t.status} in ('todo','doing','waiting','done')`),
+    check("tasks_priority", sql`${t.priority} in ('urgent','high','normal','low')`),
+    check("tasks_due_time", sql`${t.dueTime} is null or ${t.dueTime} ~ '^[0-2][0-9]:[0-5][0-9]$'`),
+    check(
+      "tasks_closed_with_remark",
+      sql`(${t.status} = 'done') = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closedById} is not null and ${t.closeRemark} is not null))`,
+    ),
+  ],
+);
+
+/** What happened to a task, in order — append-only, the task's Activity tab. */
+export const taskEvents = pgTable(
+  "task_events",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    /** Null where MahekOne did it, not a person. */
+    actorId: text("actor_id").references(() => users.id),
+    kind: text("kind").notNull(),
+    body: text("body"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("task_events_task_idx").on(t.taskId, t.createdAt)],
+);
+
+export const taskTransfers = pgTable(
+  "task_transfers",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    fromId: text("from_id")
+      .notNull()
+      .references(() => users.id),
+    toId: text("to_id")
+      .notNull()
+      .references(() => users.id),
+    /** Who asked — the assignee, or a manager moving it. */
+    requestedById: text("requested_by_id")
+      .notNull()
+      .references(() => users.id),
+    reason: text("reason"),
+    status: text("status").notNull().default("pending"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decisionNote: text("decision_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("task_transfers_one_pending").on(t.taskId).where(sql`status = 'pending'`),
+    index("task_transfers_to_idx").on(t.toId, t.status),
+    index("task_transfers_from_idx").on(t.fromId, t.status),
+    check("task_transfers_status", sql`${t.status} in ('pending','accepted','rejected','withdrawn','moved')`),
+    check("task_transfers_rejection_says_why", sql`${t.status} <> 'rejected' or ${t.decisionNote} is not null`),
+    check("task_transfers_not_to_self", sql`${t.fromId} <> ${t.toId}`),
+  ],
+);

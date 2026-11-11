@@ -189,6 +189,7 @@ export const NAV: NavGroup[] = [
     label: "Daily calling",
     icon: "phone",
     items: [
+      { href: at("/tasks"), label: "My tasks", icon: "check" },
       { href: at("/call-log"), label: "Call Log", icon: "phone" },
       {
         href: at("/reminders"),

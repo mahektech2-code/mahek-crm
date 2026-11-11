@@ -249,6 +249,15 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "tasks",
+        title: "My tasks",
+        summary: "Your CRM tasks — what your manager gave you and what you added — closed with a remark and, where asked, a screenshot, and handed over with the other person's consent.",
+        group: "Daily calling",
+        modules: ["crm.tasks"],
+        screen: "/crm/tasks",
+        written: ALL,
+      },
+      {
         slug: "reminders",
         title: "Reminders",
         summary: "Callbacks customers asked for, and the promises made to them.",

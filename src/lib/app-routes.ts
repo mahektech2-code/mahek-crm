@@ -38,6 +38,7 @@ export const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
      a Referer an offline-cached page may not carry. */
   ["/api/factory", "factory"],
   ["/docs", "docs"],
+  ["/tasks", "tasks"],
 ];
 
 export function appFor(pathname: string): string | null {
