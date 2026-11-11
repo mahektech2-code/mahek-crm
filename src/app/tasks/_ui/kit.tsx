@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { Badge, Button, cx } from "@/components/ui/primitives";
 import type { TaskRow } from "@/lib/tasks/service";
@@ -139,6 +140,8 @@ const Sep = () => <span className="text-faint">·</span>;
 
 /** Who it came from, in words. */
 export function fromWords(t: TaskRow, viewerId: string): string {
+  if (t.kind === "auto") return `${t.app === "tasks" ? "Tasks" : TASK_APP_LABEL[t.app]}, automatically`;
+  if (t.kind === "routine") return t.createdById === t.assigneeId ? "Routine" : `Routine from ${t.createdByName.split(" ")[0]}`;
   if (t.createdById === t.assigneeId) return t.createdById === viewerId ? "Added by you" : `Added by ${t.createdByName.split(" ")[0]}`;
   return t.createdById === viewerId ? `You gave it to ${t.assigneeName.split(" ")[0]}` : `From ${t.createdByName.split(" ")[0]}`;
 }
@@ -157,6 +160,7 @@ export function TaskRowItem({
   onClose,
   onReopen,
   extra,
+  menu,
 }: {
   task: TaskRow;
   today: string;
@@ -167,6 +171,8 @@ export function TaskRowItem({
   onClose?: () => void;
   onReopen?: () => void;
   extra?: React.ReactNode;
+  /** The ⋯ menu, drawn last. */
+  menu?: React.ReactNode;
 }) {
   const steps = task.checklist.length;
   const ticked = task.checklist.filter((c) => c.done).length;
@@ -187,7 +193,10 @@ export function TaskRowItem({
           {showApp ? <AppChip app={task.app} /> : null}
           {task.customerName ? <span className="font-medium text-brand">{task.customerName}</span> : null}
           {task.customerName ? <Sep /> : null}
-          <span>{fromWords(task, viewerId)}</span>
+          <span className="inline-flex items-center gap-1">
+            <KindGlyph kind={task.kind} />
+            {fromWords(task, viewerId)}
+          </span>
           {showAssignee ? (
             <>
               <Sep />
@@ -237,6 +246,11 @@ export function TaskRowItem({
         {task.status === "done" && task.closeRemark ? <div className="mt-1 truncate text-[13px] text-muted">“{task.closeRemark}”</div> : null}
       </div>
       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        {task.status !== "done" && task.customerId && task.app === "crm" && task.assigneeId === viewerId ? (
+          <Link href={`/crm/customers/${task.customerId}?call=1`} className="inline-flex h-8 items-center rounded-control border border-brand bg-brand px-3 text-[13px] font-semibold text-white no-underline hover:bg-brand-hover hover:no-underline">
+            Call
+          </Link>
+        ) : null}
         {extra}
         {task.status === "done" ? (
           onReopen ? (
@@ -249,10 +263,33 @@ export function TaskRowItem({
             Mark done
           </Button>
         ) : null}
+        {menu}
       </div>
     </div>
   );
 }
+
+/** Bolt for an app's own task, arrows for a routine, a person for one given or added. */
+export function KindGlyph({ kind }: { kind: TaskRow["kind"] }) {
+  const d =
+    kind === "auto"
+      ? "M13 2 3 14h9l-1 8 10-12h-9l1-8z"
+      : kind === "routine"
+        ? "m17 1 4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"
+        : "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z";
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="flex-none">
+      <path d={d} />
+    </svg>
+  );
+}
+
+export const KIND_LABEL: Record<TaskRow["kind"], string> = {
+  auto: "Raised by an app",
+  routine: "From a routine",
+  assigned: "Given to you",
+  self: "Added by you",
+};
 
 /** A card of rows under a heading — "Late 2". */
 export function TaskListCard({ heading, count, tone, children, empty }: { heading?: string; count?: number; tone?: "danger"; children: React.ReactNode; empty?: string }) {

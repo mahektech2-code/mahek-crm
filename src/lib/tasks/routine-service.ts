@@ -56,6 +56,8 @@ export type RoutineRow = {
   startsOn: string;
   /** Whether this viewer may edit, pause or delete it. */
   canManage: boolean;
+  /** How many people it reaches today. */
+  reach: number;
 };
 
 /**
@@ -76,7 +78,7 @@ export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
   const team = await teamOf(viewer);
   const ids = [viewer.id, ...team];
   const rows = await db.execute<Record<string, unknown>>(sql`
-    select r.id, r.title, r.note, r.app, r.assignee_id, a.name as assignee_name, r.audience, r.created_by_id, c.name as created_by_name,
+    select r.id, r.title, r.note, r.app, r.assignee_id, a.name as assignee_name, r.audience, r.created_by_id, c.name as created_by_name, c.role as created_by_role,
            r.priority, r.proof_required, r.remark_required, r.checklist, r.frequency, r.weekdays, r.day_of_month, r.complete_by_day,
            r.start_time, r.due_time, r.active, r.starts_on::text as starts_on
       from task_routines r
@@ -85,7 +87,7 @@ export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
      where r.assignee_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
         or (r.assignee_id is null and r.created_by_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}))
      order by a.name nulls first, r.active desc, r.frequency, r.start_time nulls last, r.title`);
-  return rows.map((r) => {
+  const list = rows.map((r) => {
     const assigneeId = r.assignee_id == null ? null : String(r.assignee_id);
     const createdById = String(r.created_by_id);
     const audience = readAudience(r.audience);
@@ -113,8 +115,16 @@ export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
       active: Boolean(r.active),
       startsOn: String(r.starts_on),
       canManage: createdById === viewer.id || (assigneeId ? team.has(assigneeId) : team.has(createdById)),
+      reach: 1,
+      creatorRole: String(r.created_by_role ?? "associate"),
     };
   });
+  // A routine given by rules reaches whoever matches today — counted the way the job will count it.
+  return Promise.all(
+    list.map(async ({ creatorRole, ...row }) =>
+      row.audience ? { ...row, reach: (await resolveFor({ id: row.createdById, role: creatorRole }, row.app, row.audience)).length } : row,
+    ),
+  );
 }
 
 export async function getRoutine(id: string) {

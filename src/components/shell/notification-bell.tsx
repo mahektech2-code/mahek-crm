@@ -10,6 +10,7 @@ import type { Notification } from "@/db/schema";
 import { appFor } from "@/lib/app-routes";
 import { notificationAppName, notificationAppOf, unreadElsewhere } from "@/lib/notification-apps";
 import { SpeakerIcon, readAll, readOne, useNotificationFeed, useNotifyPrefs } from "./notification-center";
+import { TasksTray } from "./tasks-tray";
 
 /**
  * The bell in an app's header, and the list it opens.
@@ -84,7 +85,10 @@ export function NotificationBell({
       : "Notifications";
 
   return (
-    <div ref={notifRef} className="relative">
+    <>
+      {/* The tasks tray rides with the bell, so every app's header has it from this one place. */}
+      <TasksTray />
+      <div ref={notifRef} className="relative">
       <button
         onClick={() => {
           setNotifOpen((o) => !o);
@@ -229,7 +233,8 @@ export function NotificationBell({
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
 

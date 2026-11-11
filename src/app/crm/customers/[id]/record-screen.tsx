@@ -15,7 +15,7 @@ import {
 } from "@/lib/customer-contacts";
 import type { CustomerRecordDetail } from "@/lib/services/customer-record-service";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
@@ -389,7 +389,9 @@ export function RecordScreen({
   const { run } = useToast();
 
   const [filter, setFilter] = React.useState("All");
-  const [calling, setCalling] = React.useState(false);
+  // `?call=1` opens the call panel straight away — how a Tasks row's Call button lands here.
+  const params = useSearchParams();
+  const [calling, setCalling] = React.useState(() => params.get("call") === "1");
   const [remOpen, setRemOpen] = React.useState(false);
   const [cmpOpen, setCmpOpen] = React.useState(false);
   const [converting, setConverting] = React.useState(false);

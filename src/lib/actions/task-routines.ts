@@ -121,7 +121,7 @@ export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id:
           userId,
           title: `${first(user.name)} set you a routine`,
           body: `${r.title} — ${scheduleWords({ ...r, frequency: r.frequency as RoutineFrequency })}`,
-          href: "/tasks/routines",
+          href: "/tasks/setup/routines",
         })),
       );
     } else if (r.assigneeId && r.assigneeId !== user.id) {
@@ -130,7 +130,7 @@ export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id:
           userId: r.assigneeId,
           title: `${first(user.name)} set you a routine`,
           body: `${r.title} — ${scheduleWords({ ...r, frequency: r.frequency as RoutineFrequency })}`,
-          href: "/tasks/routines",
+          href: "/tasks/setup/routines",
         },
       ]);
     }

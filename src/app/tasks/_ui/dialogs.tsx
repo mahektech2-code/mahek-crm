@@ -10,6 +10,7 @@ import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog, StepBar
 import {
   addTaskNote,
   closeTask,
+  closeTasks,
   createTask,
   decideTransfer,
   deleteTask,
@@ -41,7 +42,8 @@ import {
   type TaskPriority,
 } from "@/lib/tasks/rules";
 import type { TaskDetail } from "@/lib/tasks/service";
-import { AppChip, Avatar, PriorityMark, StatusBadge } from "./kit";
+import { AppChip, Avatar, KIND_LABEL, KindGlyph, PriorityMark, StatusBadge } from "./kit";
+import { taskOpenHref } from "@/lib/tasks/automations";
 import { AudienceBuilder, CloseRules, RepeatPicker, ScheduleFields, closeWords, type Repeat, type ScheduleState } from "./fields";
 import { saveRoutine } from "@/lib/actions/task-routines";
 import { EMPTY_AUDIENCE, audienceProblems, audienceWords, type Audience } from "@/lib/tasks/audience";
@@ -61,6 +63,8 @@ type Ctx = {
   openNew: (defaults?: { app?: TaskApp; assigneeId?: string }) => void;
   openClose: (id: string) => void;
   openTransfer: (id: string) => void;
+  /** Close several with one confirmation and one remark — the selection bar's Mark done. */
+  openCloseMany: (ids: string[]) => void;
 };
 
 const TaskDialogContext = React.createContext<Ctx | null>(null);
@@ -75,7 +79,8 @@ type Open =
   | { kind: "task"; id: string; key: number }
   | { kind: "new"; app?: TaskApp; assigneeId?: string; key: number }
   | { kind: "close"; id: string; key: number }
-  | { kind: "transfer"; id: string; key: number };
+  | { kind: "transfer"; id: string; key: number }
+  | { kind: "closeMany"; ids: string[]; key: number };
 
 export function TaskDialogs({ children, defaultApp = "tasks" }: { children: React.ReactNode; defaultApp?: TaskApp }) {
   const params = useSearchParams();
@@ -93,6 +98,7 @@ export function TaskDialogs({ children, defaultApp = "tasks" }: { children: Reac
       openNew: (d) => push({ kind: "new", app: d?.app ?? defaultApp, assigneeId: d?.assigneeId }),
       openClose: (id) => push({ kind: "close", id }),
       openTransfer: (id) => push({ kind: "transfer", id }),
+      openCloseMany: (ids) => (ids.length === 1 ? push({ kind: "close", id: ids[0] }) : ids.length ? push({ kind: "closeMany", ids }) : undefined),
     }),
     [push, defaultApp],
   );
@@ -108,6 +114,7 @@ export function TaskDialogs({ children, defaultApp = "tasks" }: { children: Reac
           {top.kind === "new" ? <NewTaskDialog app={top.app ?? defaultApp} assigneeId={top.assigneeId} onClose={pop} /> : null}
           {top.kind === "close" ? <CloseDialog id={top.id} onClose={pop} onDone={() => dropTask(top.id)} /> : null}
           {top.kind === "transfer" ? <TransferDialog id={top.id} onClose={pop} onDone={() => dropTask(top.id)} /> : null}
+          {top.kind === "closeMany" ? <CloseManyDialog ids={top.ids} onClose={pop} /> : null}
         </React.Fragment>
       ) : null}
     </TaskDialogContext.Provider>
@@ -325,6 +332,7 @@ function RecordDialog({ id, onClose, ctx }: { id: string; onClose: () => void; c
 function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promise<{ ok: boolean; message?: string; error?: string }>) => Promise<unknown> }) {
   const t = d.task;
   const edit = d.can.edit && !busy;
+  const href = taskOpenHref(t);
   return (
     <>
       {t.status === "done" ? (
@@ -350,15 +358,30 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
         </div>
       ) : null}
 
-      {t.customerName ? (
-        <div className="flex items-center gap-3 rounded-card border border-line px-4 py-3">
+      {d.origin.auto && t.status !== "done" ? (
+        <div className="flex items-center gap-2.5 rounded-card bg-brand-soft px-4 py-2.5 text-[13.5px] text-body">
+          <KindGlyph kind="auto" />
+          <span>
+            Raised by {t.app === "tasks" ? "Tasks" : TASK_APP_LABEL[t.app]} when {d.origin.auto.when.charAt(0).toLowerCase() + d.origin.auto.when.slice(1)}. It closes itself when {d.origin.auto.closes.charAt(0).toLowerCase() + d.origin.auto.closes.slice(1)}.
+          </span>
+        </div>
+      ) : null}
+
+      {t.customerName || (href && t.app !== "tasks") ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-card border border-line px-4 py-3">
+          <AppChip app={t.app} />
           <div className="min-w-0 flex-1">
-            <div className="font-semibold text-ink">{t.customerName}</div>
-            <div className="text-xs text-muted">The customer this task is about</div>
+            <div className="font-semibold text-ink">{t.customerName ?? (t.app === "tasks" ? "Personal" : TASK_APP_LABEL[t.app])}</div>
+            <div className="text-xs text-muted">{t.customerName ? `The record this task is about, in ${t.app === "tasks" ? "TeleCRM" : TASK_APP_LABEL[t.app]}` : "Where this work is done"}</div>
           </div>
-          {t.app === "crm" && t.customerId ? (
-            <Link href={`/crm/customers/${t.customerId}`} className="text-sm font-medium text-brand">
-              Open in TeleCRM
+          {t.app === "crm" && t.customerId && t.status !== "done" && t.assigneeId === d.viewerId ? (
+            <Link href={`/crm/customers/${t.customerId}?call=1`} className="inline-flex h-8 items-center rounded-control border border-brand bg-brand px-3 text-[13px] font-semibold text-white no-underline hover:bg-brand-hover hover:no-underline">
+              Call
+            </Link>
+          ) : null}
+          {href ? (
+            <Link href={href} className="text-sm font-medium text-brand">
+              Open in {t.app === "tasks" ? "TeleCRM" : TASK_APP_LABEL[t.app]}
             </Link>
           ) : null}
         </div>
@@ -413,7 +436,9 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
             <Avatar name={t.assigneeName} /> {t.assigneeName}
           </span>
         </Item>
-        <Item label="Given by">{t.createdById === t.assigneeId ? `Added by ${t.createdByName.split(" ")[0]}` : t.createdByName}</Item>
+        <Item label="Given by">
+          {t.kind === "auto" ? `${t.app === "tasks" ? "Tasks" : TASK_APP_LABEL[t.app]}, automatically` : t.createdById === t.assigneeId ? `Added by ${t.createdByName.split(" ")[0]}` : t.createdByName}
+        </Item>
         <Item label="App">
           <span className="inline-flex items-center gap-2">
             <AppChip app={t.app} /> {TASK_APP_LABEL[t.app]}
@@ -438,6 +463,17 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
             </span>
           )}
         </Item>
+        <Item label="Where from">
+          <span className="inline-flex items-center gap-1.5">
+            <KindGlyph kind={t.kind} /> {KIND_LABEL[t.kind]}
+          </span>
+        </Item>
+        {d.origin.repeats ? <Item label="Repeats">{d.origin.repeats}</Item> : null}
+        {d.origin.partOf ? (
+          <Item label="Part of">
+            {d.origin.partOf.audience} · {d.origin.partOf.done} of {d.origin.partOf.total} done
+          </Item>
+        ) : null}
       </div>
 
       {t.note ? (
@@ -679,6 +715,102 @@ function CloseDialog({ id, onClose, onDone }: { id: string; onClose: () => void;
 }
 
 /* ------------------------------------------------------------- transfers */
+
+/* ------------------------------------------------------- close several */
+
+/**
+ * Closing several at once: one "it is done" and one remark for all of them.
+ * A task that needs a screenshot cannot be in the batch — a screenshot is
+ * evidence about one task — and the dialog says so before anything is sent.
+ */
+function CloseManyDialog({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [rows, setRows] = React.useState<Detail[] | null>(null);
+  const [step, setStep] = React.useState(0);
+  const [confirmed, setConfirmed] = React.useState(false);
+  const [remark, setRemark] = React.useState("");
+  const [problems, setProblems] = React.useState<Record<string, string>>({});
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all(ids.map((id) => loadTaskDetail(id))).then((rs) => {
+      if (live) setRows(rs.filter((r) => r.ok).map((r) => (r as { ok: true; data: Detail }).data));
+    });
+    return () => {
+      live = false;
+    };
+  }, [ids]);
+  const proof = rows?.filter((r) => r.task.proofRequired) ?? [];
+  const needRemark = rows?.some((r) => r.task.remarkRequired) ?? true;
+  const finish = async () => {
+    const local = closeProblems({ confirmed, remark, proofs: 0, proofRequired: false, remarkRequired: needRemark });
+    if (local.length) return setProblems(Object.fromEntries(local.map((p) => [p.field, p.message])));
+    setBusy(true);
+    const r = await toast.run(closeTasks(ids, { confirmed, remark })).finally(() => setBusy(false));
+    if (r.ok) {
+      router.refresh();
+      onClose();
+    }
+  };
+  return (
+    <ErpDialog onClose={onClose} label="Close tasks" size="sm" tall={false}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>Close {ids.length} tasks</DialogTitle>
+      </DialogHeader>
+      <StepBar steps={["Is it done?", "Proof"]} active={step} reached={step} onChange={(i) => i < step && setStep(i)} />
+      <DialogBody>
+        {!rows ? <p className="text-sm text-muted">One moment.</p> : null}
+        {rows && proof.length ? (
+          <div className="rounded-card border border-warn-line bg-warn-soft px-4 py-3 text-sm text-body">
+            {proof.length === 1 ? "One of these needs" : `${proof.length} of these need`} a screenshot: <b className="text-ink">{proof.map((p) => p.task.title).join(", ")}</b>. Close {proof.length === 1 ? "it" : "those"} on {proof.length === 1 ? "its" : "their"} own — untick {proof.length === 1 ? "it" : "them"} and try again.
+          </div>
+        ) : null}
+        {rows && !proof.length && step === 0 ? (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-card border border-line px-4 py-3 text-sm text-ink">{rows.map((r) => r.task.title).join(" · ")}</div>
+            <Field label="Have you finished these?" required error={problems.confirmed || null} group>
+              <label className={cx("flex cursor-pointer items-center gap-2.5 rounded-card border px-3.5 py-3 text-sm", confirmed ? "border-brand bg-brand-soft" : "border-line")}>
+                <input type="checkbox" className="h-4 w-4 accent-brand" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+                Yes — all of these are done and can be closed.
+              </label>
+            </Field>
+          </div>
+        ) : null}
+        {rows && !proof.length && step === 1 ? (
+          <Field label="Remarks" required={needRemark} optional={!needRemark} error={problems.remark || null} hint="Written on every one of them." hintShown>
+            <Textarea rows={4} value={remark} invalid={Boolean(problems.remark)} onChange={(e) => setRemark(e.target.value)} placeholder="What was done" />
+          </Field>
+        ) : null}
+      </DialogBody>
+      <DialogFooter left={`Step ${step + 1} of 2`}>
+        {step === 0 ? (
+          <>
+            <Button onClick={onClose}>Not yet</Button>
+            <Button
+              variant="primary"
+              disabled={!rows || proof.length > 0}
+              onClick={() => {
+                if (!confirmed) return setProblems({ confirmed: "Tick the box to say they are done." });
+                setProblems({});
+                setStep(1);
+              }}
+            >
+              Yes, they&apos;re done
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={() => setStep(0)}>Back</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void finish()}>
+              Close {ids.length} tasks
+            </Button>
+          </>
+        )}
+      </DialogFooter>
+    </ErpDialog>
+  );
+}
 
 function TransferDialog({ id, onClose, onDone }: { id: string; onClose: () => void; onDone: () => void }) {
   const router = useRouter();

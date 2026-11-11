@@ -92,7 +92,7 @@ describe("Who gets a task", () => {
     const r = await loadAudienceOptions("crm");
     assert.ok(r.ok);
     const names = r.data.people.map((p) => p.name).sort();
-    assert.ok(!names.includes("Neha Kapoor"), "no CRM, not offered for a CRM task");
+    assert.ok(!names.includes("Neha Kapoor") && !r.data.people.some((p) => p.id === noCrm.id), "no CRM, not offered for a CRM task");
     assert.deepEqual(r.data.choices.designation.find((d) => d.label === "Telecaller")?.count, 3);
     assert.ok(r.data.choices.team.some((t) => t.value === rahul.id));
   });

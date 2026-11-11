@@ -14,6 +14,7 @@ import { AudienceBuilder, CloseRules, RepeatPicker, ScheduleFields, type Schedul
 import type { RoutineRow } from "@/lib/tasks/routine-service";
 import type { TeamPerson } from "@/lib/tasks/service";
 import { AppChip, PriorityMark, TaskListCard } from "./kit";
+import { Switch } from "./screens-more";
 
 /* ---------------------------------------------------------------------------
  * Routines: what comes back, for whom, and when. One card per person, a row per
@@ -87,8 +88,9 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
         return (
           <TaskListCard key={pid} heading={pid === RULES ? "Given by rules — to teams and roles" : pid === viewerId ? "Mine" : (list[0].assigneeName ?? "")} count={live}>
             {list.map((r) => (
-              <div key={r.id} className={cx("flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-divider px-4 py-3 last:border-b-0", !r.active && "opacity-60")}>
-                <div className="min-w-[260px] flex-1">
+              <div key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-divider px-4 py-3 last:border-b-0">
+                <Switch on={r.active} disabled={!r.canManage || busy === r.id} label={`${r.active ? "Pause" : "Resume"} ${r.title}`} onClick={() => void toggle(r)} />
+                <div className={cx("min-w-[260px] flex-1", !r.active && "opacity-60")}>
                   <div className="flex items-center gap-2 text-[14.5px] font-medium text-ink">
                     <PriorityMark priority={r.priority} />
                     <span className="truncate">{r.title}</span>
@@ -99,6 +101,7 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
                     <span>{scheduleWords(r)}</span>
                     {windowWords(r.startTime, r.dueTime) ? <span>· {windowWords(r.startTime, r.dueTime)}</span> : null}
                     {r.audience ? <span>· for {r.forWords}</span> : null}
+                    <span>· {r.reach === 1 ? "1 person" : `${r.reach} people`}</span>
                     {r.proofRequired ? <span>· screenshot to close</span> : null}
                     {!r.remarkRequired ? <span>· remark optional</span> : null}
                     {r.createdById !== r.assigneeId ? <span>· set by {r.createdById === viewerId ? "you" : r.createdByName}</span> : null}
@@ -108,9 +111,6 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
                   <div className="flex flex-none gap-1.5">
                     <Button size="sm" onClick={() => setEditing(r)}>
                       Edit
-                    </Button>
-                    <Button size="sm" onClick={() => void toggle(r)} disabled={busy === r.id}>
-                      {r.active ? "Pause" : "Resume"}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setDeleting(r)}>
                       Delete

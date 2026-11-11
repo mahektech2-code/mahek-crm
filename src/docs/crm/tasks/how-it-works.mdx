@@ -41,7 +41,26 @@ A **routine** is a task that comes back: daily or weekly on the weekdays it name
 - A routine is changed, paused or deleted by **whoever set it** or **anybody above its person**. The person it belongs to sees it but cannot switch off one their manager set.
 - Changing a routine changes the days to come. Pausing adds nothing until it is resumed, and the paused days are not owed. Deleting keeps every task it already added.
 
+## Automatic tasks
+
+Each app raises some tasks on its own, from its own records, and closes them itself when the work is done there. Nobody types them and nobody has to tick them off.
+
+| App | When | Who gets it | Closes when |
+|---|---|---|---|
+| TeleCRM | A callback is promised (a reminder is set) | Whoever the reminder is for | The reminder is completed or dismissed |
+| TeleCRM | A lead's next action is set | Whoever owes it | The next action changes, or it stops being a lead |
+| TeleCRM | A complaint passes its SLA | Whoever logged it | The complaint is resolved |
+| Accounts | A payment is reported | The Accounts managers | It is confirmed, rejected or reversed |
+| Accounts | An order waits for approval | The Accounts managers | It is approved or declined |
+| ERP | A PO waits for approval | Whoever may approve POs, except who raised it | It is approved, sent back or cancelled |
+| HRMS | Somebody asks for leave | Their reporting manager | The leave is decided |
+
+- They are checked every hour. Each one is raised once per record, so a task you close by hand is not raised again while the record is still open.
+- A dated record raises a task only within a month either side of today.
+- An automatic task cannot be handed over or deleted — the app decides who holds it.
+- **Set up → Automatic tasks** lists them with how many are open. Only a Tasks administrator (or a platform administrator) switches one on or off; switching one off closes what it raised. The rule is <Code file="src/lib/tasks/automations.ts" symbol="planAutoSync" collapsed />.
+
 ## Where the code and the intent disagree today
 
-- Reminders and the CRM's own automatic follow-ups are not tasks yet. They stay on the Reminders screen and the Call Log.
+- The rest of the CRM's follow-up engine (payment chasing, stock checks) is not a task; it stays on the Call Log and Collections.
 - A routine task nobody closes stays open and shows as late; nothing closes or skips it automatically.

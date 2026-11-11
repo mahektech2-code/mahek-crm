@@ -1033,7 +1033,8 @@ export const APP_MODULES: AppModule[] = [
    * developer is, and splitting it would make two versions of one answer.
    */
   /*
-   * TASKS is two modules: a person's own work, and the team view. The team
+   * TASKS is three modules: a person's own work, the team view, and Set up
+   * (routines and automatic tasks). The team
    * screens show only the people under somebody on the org chart, so for
    * somebody nobody reports to they are empty rather than wrong — withholding
    * them is a courtesy, never the thing that keeps a task private.
@@ -1053,6 +1054,14 @@ export const APP_MODULES: AppModule[] = [
     group: "Tasks",
     href: "/tasks/team",
     note: "The tasks of the people under them on the org chart, and what they have given out.",
+  },
+  {
+    key: "tasks.setup",
+    app: "tasks",
+    label: "Set up",
+    group: "Tasks",
+    href: "/tasks/setup",
+    note: "Routines, and the automatic tasks each app raises. Switching an automatic task on or off is a Tasks administrator's.",
   },
   {
     key: "docs.app",

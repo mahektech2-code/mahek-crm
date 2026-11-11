@@ -29,12 +29,16 @@ Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under o
 
 <DbTable name="task_transfers" />
 
+<DbTable name="task_automations" />
+
 ## Access
 
 - **Module:** <ModuleRef k="crm.tasks" />.
-- The Tasks app is its own grant: <ModuleRef k="tasks.my-work" /> and <ModuleRef k="tasks.team" />.
+- The Tasks app is its own grant: <ModuleRef k="tasks.my-work" />, <ModuleRef k="tasks.team" /> and <ModuleRef k="tasks.setup" />.
+- Switching an automatic task is checked in `canManageAutomations` (`src/lib/tasks/setup-access.ts`): a Tasks administrator or a platform administrator.
 
 ## Tests that pin this
 
 - `src/lib/tasks/rules.test.ts` — closing, transfers, the org chart walk, quick add.
+- `src/lib/tasks/automations.test.ts` and `automations.integration.test.ts` — the sync plan, a callback raised once and closed by the app, payments to Accounts managers only, and who may switch a rule.
 - `src/lib/tasks/tasks.integration.test.ts` — the actions against a database: close with and without proof, request and accept, reject, a manager's move.

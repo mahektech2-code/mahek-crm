@@ -7,7 +7,8 @@ import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { listNotifications } from "@/lib/queries";
 import { today } from "@/lib/recompute";
-import { taskCounts, teamOf } from "@/lib/tasks/service";
+import { openByApp, taskCounts, teamOf } from "@/lib/tasks/service";
+import { TASK_APP_LABEL, type TaskApp } from "@/lib/tasks/rules";
 import { writeRoutineTasks } from "@/lib/tasks/routine-service";
 import "@/styles/v4-theme.css";
 import { TasksShell, type TasksNav } from "./_ui/tasks-shell";
@@ -43,20 +44,21 @@ export default async function TasksLayout({ children }: { children: React.ReactN
   } catch (e) {
     console.error("Routine tasks on open failed:", e instanceof Error ? e.message : e);
   }
-  const counts = await taskCounts(user.id, day);
+  const [counts, byApp] = await Promise.all([taskCounts(user.id, day), openByApp(user.id, day)]);
 
   const nav: TasksNav = {
     pinned: held.has("tasks.my-work")
       ? [
           { href: "/tasks", label: "My day", icon: "clock", exact: true },
           { href: "/tasks/all", label: "All my tasks", icon: "clipboard" },
-          { href: "/tasks/board", label: "Board", icon: "grid" },
-          { href: "/tasks/transfers", label: "Transfers", icon: "history" },
-          { href: "/tasks/routines", label: "Routines", icon: "tick" },
+          { href: "/tasks/board", label: "Board", icon: "board" },
+          { href: "/tasks/calendar", label: "Calendar", icon: "calendar" },
+          { href: "/tasks/done", label: "Done", icon: "checkCircle" },
+          { href: "/tasks/transfers", label: "Transfers", icon: "swap" },
         ]
       : [],
-    groups:
-      held.has("tasks.team") && team.size
+    groups: [
+      ...(held.has("tasks.team") && team.size
         ? [
             {
               label: "My team",
@@ -67,7 +69,29 @@ export default async function TasksLayout({ children }: { children: React.ReactN
               ],
             },
           ]
-        : [],
+        : []),
+      ...(held.has("tasks.setup")
+        ? [
+            {
+              label: "Set up",
+              icon: "settings",
+              items: [
+                { href: "/tasks/setup/routines", label: "Routines", icon: "repeat" },
+                { href: "/tasks/setup/automatic", label: "Automatic tasks", icon: "bolt" },
+              ],
+            },
+          ]
+        : []),
+      ...(held.has("tasks.my-work") && byApp.length
+        ? [
+            {
+              label: "By app",
+              icon: "grid",
+              items: byApp.map((a) => ({ href: `/tasks/app/${a.app}`, label: a.app === "tasks" ? "Personal" : (TASK_APP_LABEL[a.app as TaskApp] ?? a.app), icon: "grid" })),
+            },
+          ]
+        : []),
+    ],
   };
 
   return (
@@ -78,7 +102,11 @@ export default async function TasksLayout({ children }: { children: React.ReactN
         nav={nav}
         counts={{
           "/tasks": { n: counts.dueNow, late: counts.late > 0 },
+          "/tasks/all": { n: counts.open },
           "/tasks/transfers": { n: counts.offered },
+          "/tasks/team": { n: counts.teamLate, late: counts.teamLate > 0 },
+          "/tasks/team/assigned": { n: counts.givenOpen },
+          ...Object.fromEntries(byApp.map((a) => [`/tasks/app/${a.app}`, { n: a.open, late: a.late > 0 }])),
         }}
         user={{ name: user.name, email: user.email, phone: user.phone, initials: initialsOf(user.name), role: hat.label }}
         hat={hat}

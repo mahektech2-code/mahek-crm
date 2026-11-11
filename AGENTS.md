@@ -9649,13 +9649,39 @@ anybody above them; its person reads it. A change reaches the days to come
 and never rewrites a task already written. Nobody is notified per day — a
 bell for fifteen daily tasks is a bell nobody reads.
 
+**AUTOMATIC TASKS ARE RAISED BY EACH APP AND CLOSED BY IT.** `lib/tasks/automations.ts`
+(pure) lists the rules — a callback promised, a lead's next action, a complaint
+past its SLA, a payment reported, an order or a PO waiting for approval, a
+leave request — and `automation-service.ts` has one read per rule turning the
+records that need somebody into the tasks that should exist; `planAutoSync`
+says what to insert, bring in step (a reassignment, a new day) and close. A
+task names its rule and record in `auto_rule`/`auto_key` (unique together), so
+the hourly and nightly runs, a switch and "Run now" are all idempotent; a task
+somebody closed by hand is never raised again for the same record. The rule
+closes its own task with `closed_by_id` null and a remark, which the check
+constraint allows only for an automatic task. A dated record raises a task
+only within a month either side of today. Switching a rule on or off
+(`task_automations`, no row = the rule's default) is a Tasks administrator's or
+a platform administrator's (`setup-access.ts`); off closes what it raised. An
+automatic task cannot be transferred or deleted — the app decides who holds it.
+
+**THE SIDEBAR IS THE DESIGN'S.** My day, All my tasks, Board, Calendar (a week,
+late work on today), Done (everything finished, by day), Transfers; My team
+(Team workload with Nudge, Assigned by me); Set up (Routines, Automatic tasks —
+module `tasks.setup`, at `/tasks/setup/…`; `/tasks/routines` redirects); By app
+(`/tasks/app/<app>`, one per app the person has open work in). Each task says
+where it came from (`TaskRow.kind`: auto, routine, assigned, self). The ✓ tasks
+tray beside the bell (`components/shell/tasks-tray.tsx`, drawn by
+`NotificationBell`) puts the next six open tasks in every app's header.
+
 **The old AppSheet "Task EMP 2.0" workbook came in through
 `npm run tasks:import-task-emp`** — the To Do List as tasks
 (`tsk_taskemp_<id>`), the Task List as routines (`source = task-emp:<Sr. No>`),
 people matched by name to LOGINS. Re-runnable; it never overwrites a row.
 
 **Not built yet, and said so in the docs:** reminders and the CRM's automatic
-follow-ups are not tasks; a tasks icon in every app's header; each other app's own My tasks screen.
+follow-ups are not tasks (callbacks now arrive as automatic tasks; the rest
+of the follow-up engine does not); each other app's own My tasks screen.
 
 ## Hire — hiring and onboarding
 

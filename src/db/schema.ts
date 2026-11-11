@@ -17135,10 +17135,19 @@ export const tasks = pgTable(
     /** The routine that wrote this task, and the day it was written for — one task per routine per day. */
     routineId: text("routine_id").references(() => taskRoutines.id, { onDelete: "set null" }),
     routineDay: date("routine_day"),
+    /**
+     * An AUTOMATIC task: the rule that raised it (lib/tasks/automations.ts)
+     * and the record it is about, as that rule keys it. The rule keeps it in
+     * step and closes it — closed_by_id null — when the record no longer
+     * needs anybody.
+     */
+    autoRule: text("auto_rule"),
+    autoKey: text("auto_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("tasks_auto_key").on(t.autoRule, t.autoKey).where(sql`auto_rule is not null`),
     uniqueIndex("tasks_routine_person_day_key").on(t.routineId, t.assigneeId, t.routineDay).where(sql`routine_id is not null`),
     index("tasks_assignee_idx").on(t.assigneeId, t.status, t.dueDate),
     index("tasks_created_by_idx").on(t.createdById),
@@ -17149,10 +17158,21 @@ export const tasks = pgTable(
     check("tasks_due_time", sql`${t.dueTime} is null or ${t.dueTime} ~ '^[0-2][0-9]:[0-5][0-9]$'`),
     check(
       "tasks_closed_with_remark",
-      sql`(${t.status} = 'done') = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closedById} is not null and ${t.closeRemark} is not null))`,
+      sql`(${t.status} = 'done') = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closeRemark} is not null and (${t.closedById} is not null or ${t.autoRule} is not null)))`,
     ),
   ],
 );
+
+/**
+ * Whether each automatic-task rule is on. No row is the rule's own default
+ * (lib/tasks/automations.ts), so a rule added in code needs no migration.
+ */
+export const taskAutomations = pgTable("task_automations", {
+  rule: text("rule").primaryKey(),
+  enabled: boolean("enabled").notNull(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /** What happened to a task, in order — append-only, the task's Activity tab. */
 export const taskEvents = pgTable(

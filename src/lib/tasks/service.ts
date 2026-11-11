@@ -6,6 +6,8 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 import { isPlatformAdmin } from "@/lib/access-control";
 import { listAttachments, type AttachmentView } from "@/lib/services/attachment-service";
 import { managesBoth, teamBelow, type TaskApp, type TaskPriority, type TaskStatus } from "./rules";
+import { AUTOMATION_BY_ID } from "./automations";
+import { scheduleWords, windowWords, type RoutineFrequency } from "./routines";
 
 /* ---------------------------------------------------------------------------
  * THE TASKS APP'S READS, and who may see what.
@@ -56,7 +58,14 @@ export type TaskRow = {
   closeRemark: string | null;
   createdAt: string;
   transfer: TaskTransferView | null;
+  /** Where it came from: an app raised it, a routine, somebody gave it, or the person added it. */
+  kind: TaskKind;
+  routineId: string | null;
+  /** The automatic rule that raised it, by id (lib/tasks/automations.ts). */
+  autoRule: string | null;
 };
+
+export type TaskKind = "auto" | "routine" | "assigned" | "self";
 
 type Viewer = { id: string; role: string };
 
@@ -121,7 +130,7 @@ const SELECT = sql`
   select t.id, t.title, t.note, t.app, t.customer_id, c.name as customer_name,
          t.assignee_id, a.name as assignee_name, t.created_by_id, cb.name as created_by_name,
          t.batch_id, t.status, t.priority, t.due_date::text as due_date, t.due_time,
-         t.proof_required, t.remark_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at,
+         t.proof_required, t.remark_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at, t.routine_id, t.auto_rule,
          tr.id as tr_id, tr.from_id as tr_from, fu.name as tr_from_name, tr.to_id as tr_to, tu.name as tr_to_name,
          tr.requested_by_id as tr_by, tr.reason as tr_reason, tr.created_at as tr_at
     from tasks t
@@ -161,6 +170,9 @@ function toRow(r: Raw): TaskRow {
     closedByName: (r.closed_by_name as string) ?? null,
     closeRemark: (r.close_remark as string) ?? null,
     createdAt: iso(r.created_at)!,
+    routineId: (r.routine_id as string) ?? null,
+    autoRule: (r.auto_rule as string) ?? null,
+    kind: r.auto_rule ? "auto" : r.routine_id ? "routine" : r.created_by_id !== r.assignee_id ? "assigned" : "self",
     transfer: r.tr_id
       ? {
           id: String(r.tr_id),
@@ -197,6 +209,23 @@ export async function getTaskRow(id: string): Promise<TaskRow | null> {
 export async function myTasks(userId: string, opts: { apps?: string[] } = {}): Promise<TaskRow[]> {
   const apps = opts.apps?.length ? sql` and t.app in (${sql.join(opts.apps.map((a) => sql`${a}`), sql`, `)})` : sql``;
   return query(sql`t.assignee_id = ${userId}${apps}`);
+}
+
+/** Everything this person has finished, newest first — the Done screen, which reaches past the fortnight the lists keep. */
+export async function doneTasks(userId: string, limit = 500): Promise<TaskRow[]> {
+  const rows = await db.execute<Raw>(sql`${SELECT} where t.assignee_id = ${userId} and t.status = 'done' order by t.closed_at desc limit ${limit}`);
+  return rows.map(toRow);
+}
+
+/** This person's tasks due in a span of days (and, for the span holding today, what is late) — the Calendar. */
+export async function tasksBetween(userId: string, from: string, to: string): Promise<TaskRow[]> {
+  const rows = await db.execute<Raw>(sql`
+    ${SELECT}
+    where t.assignee_id = ${userId}
+      and (t.due_date between ${from}::date and ${to}::date or (t.status <> 'done' and t.due_date < ${from}::date))
+    order by t.due_date, t.due_time nulls last
+    limit 2000`);
+  return rows.map(toRow);
 }
 
 /** Tasks other people are offering this person. They are not theirs yet. */
@@ -314,6 +343,12 @@ export type TaskDetail = {
   task: TaskRow;
   events: TaskEventView[];
   proofs: AttachmentView[];
+  /** Where it came from, in words: a routine's schedule, the group it was given to, the rule that raised it. */
+  origin: {
+    repeats: string | null;
+    partOf: { audience: string; done: number; total: number } | null;
+    auto: { when: string; closes: string } | null;
+  };
   /** What this viewer may do — the screen draws exactly these, the actions ask again. */
   can: {
     edit: boolean;
@@ -331,14 +366,24 @@ export type TaskDetail = {
 export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail | null> {
   const task = await getTaskRow(id);
   if (!task || !(await canSeeTask(viewer, task))) return null;
-  const [events, proofs, team] = await Promise.all([
+  const [events, proofs, team, routine, batch] = await Promise.all([
     db.execute<Raw>(sql`
       select e.id, e.kind, e.body, u.name as actor_name, e.created_at
         from task_events e left join users u on u.id = e.actor_id
        where e.task_id = ${id} order by e.created_at, e.id`),
     listAttachments("task", id),
     teamOf(viewer),
+    task.routineId
+      ? db.execute<Raw>(sql`select frequency, weekdays, day_of_month, complete_by_day, start_time, due_time from task_routines where id = ${task.routineId}`)
+      : Promise.resolve([] as Raw[]),
+    task.batchId
+      ? db.execute<Raw>(sql`
+          select b.audience, count(t.id)::int as total, count(t.id) filter (where t.status = 'done')::int as done
+            from task_batches b join tasks t on t.batch_id = b.id where b.id = ${task.batchId} group by b.audience`)
+      : Promise.resolve([] as Raw[]),
   ]);
+  const r0 = routine[0];
+  const rule = task.autoRule ? AUTOMATION_BY_ID.get(task.autoRule) : undefined;
   const mine = task.assigneeId === viewer.id;
   const above = team.has(task.assigneeId);
   const creator = task.createdById === viewer.id;
@@ -347,15 +392,28 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
     task,
     events: events.map((e) => ({ id: String(e.id), kind: String(e.kind), body: (e.body as string) ?? null, actorName: (e.actor_name as string) ?? null, at: iso(e.created_at)! })),
     proofs,
+    origin: {
+      repeats: r0
+        ? [
+            scheduleWords({ frequency: r0.frequency as RoutineFrequency, weekdays: ((r0.weekdays as number[]) ?? []).map(Number), dayOfMonth: r0.day_of_month == null ? null : Number(r0.day_of_month), completeByDay: r0.complete_by_day == null ? null : Number(r0.complete_by_day) }),
+            windowWords((r0.start_time as string) ?? null, (r0.due_time as string) ?? null),
+          ]
+            .filter(Boolean)
+            .join(", ")
+        : null,
+      partOf: batch[0] ? { audience: String(batch[0].audience), done: Number(batch[0].done), total: Number(batch[0].total) } : null,
+      auto: rule ? { when: rule.when, closes: rule.closes } : null,
+    },
     can: {
       edit: open && (mine || above || creator),
       setProof: open && (creator || above),
       close: open && (mine || above),
       reopen: !open && (mine || above || creator),
-      transfer: open && !task.transfer && (mine || above),
+      // An automatic task follows its record: the app that raised it decides who holds it.
+      transfer: open && !task.transfer && !task.autoRule && (mine || above),
       decideTransfer: Boolean(task.transfer && task.transfer.toId === viewer.id),
       withdrawTransfer: Boolean(task.transfer && (task.transfer.requestedById === viewer.id || task.transfer.fromId === viewer.id)),
-      delete: creator && (task.assigneeId === viewer.id || open),
+      delete: !task.autoRule && creator && (task.assigneeId === viewer.id || open),
       note: mine || above || creator || Boolean(task.transfer && task.transfer.toId === viewer.id),
     },
   };
@@ -363,13 +421,41 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
 
 /* --------------------------------------------------------------- counts */
 
-/** The launcher's and the sidebar's number: open tasks due today or late, and tasks offered to them. */
-export async function taskCounts(userId: string, today: string): Promise<{ dueNow: number; late: number; offered: number }> {
-  const rows = await db.execute<{ due_now: number; late: number; offered: number }>(sql`
+/** The launcher's and the sidebar's numbers: due now and late, everything open, offers, the team's late work, what they gave out still open. */
+export async function taskCounts(
+  userId: string,
+  today: string,
+): Promise<{ dueNow: number; late: number; offered: number; open: number; teamLate: number; givenOpen: number }> {
+  const team = [...(await teamOf({ id: userId, role: (await roleOf(userId)) ?? "associate" }))];
+  const teamIn = team.length ? sql`assignee_id in (${sql.join(team.map((id) => sql`${id}`), sql`, `)})` : sql`false`;
+  const rows = await db.execute<Record<string, number>>(sql`
     select
       (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and due_date <= ${today}::date) as due_now,
       (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and due_date < ${today}::date) as late,
-      (select count(*)::int from task_transfers where to_id = ${userId} and status = 'pending') as offered`);
-  const r = rows[0];
-  return { dueNow: Number(r?.due_now ?? 0), late: Number(r?.late ?? 0), offered: Number(r?.offered ?? 0) };
+      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done') as open,
+      (select count(*)::int from task_transfers where to_id = ${userId} and status = 'pending') as offered,
+      (select count(*)::int from tasks where ${teamIn} and status <> 'done' and due_date < ${today}::date) as team_late,
+      (select count(*)::int from tasks where created_by_id = ${userId} and assignee_id <> ${userId} and status <> 'done' and auto_rule is null) as given_open`);
+  const r = rows[0] ?? {};
+  return {
+    dueNow: Number(r.due_now ?? 0),
+    late: Number(r.late ?? 0),
+    offered: Number(r.offered ?? 0),
+    open: Number(r.open ?? 0),
+    teamLate: Number(r.team_late ?? 0),
+    givenOpen: Number(r.given_open ?? 0),
+  };
+}
+
+async function roleOf(userId: string): Promise<string | null> {
+  const rows = await db.execute<{ role: string }>(sql`select role from users where id = ${userId}`);
+  return rows[0]?.role ?? null;
+}
+
+/** This person's open tasks per app, for the sidebar's By app list. */
+export async function openByApp(userId: string, today: string): Promise<{ app: string; open: number; late: number }[]> {
+  const rows = await db.execute<{ app: string; open: number; late: number }>(sql`
+    select app, count(*)::int as open, count(*) filter (where due_date < ${today}::date)::int as late
+      from tasks where assignee_id = ${userId} and status <> 'done' group by app order by count(*) desc, app`);
+  return rows.map((r) => ({ app: r.app, open: Number(r.open), late: Number(r.late) }));
 }

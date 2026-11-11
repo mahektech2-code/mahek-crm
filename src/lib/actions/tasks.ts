@@ -567,3 +567,79 @@ export async function loadTransferCandidates(id: string): Promise<Result<Transfe
       .sort((a, b) => (a.route === b.route ? a.name.localeCompare(b.name) : a.route === "move" ? -1 : 1)),
   );
 }
+
+/* ------------------------------------------------------------ many at once */
+
+/**
+ * Start, park or move several tasks — the All tasks selection bar. Each goes
+ * through `updateTask`, so each is checked exactly as one would be; a task this
+ * person may not change is counted and named rather than stopping the rest.
+ */
+export async function bulkUpdateTasks(ids: string[], op: "doing" | "waiting" | "todo" | "tomorrow"): Promise<Result<{ done: number; skipped: number }>> {
+  await requireUser();
+  const day = await today();
+  const tomorrow = new Date(Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10) + 1));
+  const next = `${tomorrow.getUTCFullYear()}-${String(tomorrow.getUTCMonth() + 1).padStart(2, "0")}-${String(tomorrow.getUTCDate()).padStart(2, "0")}`;
+  let done = 0;
+  let skipped = 0;
+  for (const id of [...new Set(ids)].slice(0, 200)) {
+    const r = await updateTask(id, op === "tomorrow" ? { dueDate: next } : { status: op });
+    if (r.ok) done++;
+    else skipped++;
+  }
+  refresh();
+  const verb = op === "tomorrow" ? "Moved to tomorrow" : op === "doing" ? "Started" : op === "waiting" ? "Marked waiting" : "Moved to To do";
+  return ok({ done, skipped }, `${verb}: ${done}${skipped ? ` · ${skipped} you can't change` : ""}`);
+}
+
+/**
+ * Close several tasks with one confirmation and one remark. A task that needs
+ * a screenshot is closed on its own — a screenshot is evidence about ONE task.
+ */
+export async function closeTasks(ids: string[], input: { confirmed: boolean; remark: string }): Promise<Result<{ closed: number }>> {
+  const user = await requireUser();
+  const list = [...new Set(ids)].slice(0, 200);
+  const details = await Promise.all(list.map((id) => taskDetail(user, id)));
+  if (details.some((d) => !d || !d.can.close)) return err("One of them is not yours to close any more. Refresh and try again.", "not_permitted");
+  if (details.some((d) => d!.task.proofRequired)) return err("Some of these need a screenshot — close those one at a time.", "validation", [{ field: "proof", message: "Needs a screenshot." }]);
+  const needRemark = details.some((d) => d!.task.remarkRequired);
+  const problems = closeProblems({ confirmed: input.confirmed, remark: input.remark, proofs: 0, proofRequired: false, remarkRequired: needRemark });
+  if (problems.length) return fieldsErr(problems);
+  let closed = 0;
+  for (const id of list) {
+    const r = await closeTask(id, { confirmed: true, remark: input.remark, attachmentIds: [] });
+    if (r.ok) closed++;
+  }
+  refresh();
+  return ok({ closed }, `Closed ${closed} task${closed === 1 ? "" : "s"}`);
+}
+
+/**
+ * A manager's reminder to somebody under them that something is late: one
+ * notification naming how many and the oldest. Only above the person.
+ */
+export async function nudgePerson(personId: string): Promise<Result> {
+  const user = await requireUser();
+  const team = await teamOf(user);
+  if (!team.has(personId)) return err("You can nudge only the people under you on the org chart.", "not_permitted");
+  const day = await today();
+  const late = await db
+    .select({ id: tasks.id, title: tasks.title, app: tasks.app, dueDate: tasks.dueDate })
+    .from(tasks)
+    .where(and(eq(tasks.assigneeId, personId), ne(tasks.status, "done"), sql`${tasks.dueDate} < ${day}::date`))
+    .orderBy(tasks.dueDate)
+    .limit(50);
+  if (!late.length) return err("Nothing of theirs is late.");
+  const oldest = late[0];
+  await notifyUsers([
+    {
+      userId: personId,
+      title: `${first(user.name)} nudged you: ${late.length} late task${late.length === 1 ? "" : "s"}`,
+      body: `Oldest: ${oldest.title}`,
+      kind: "warn",
+      href: late.length === 1 ? taskHref({ id: oldest.id, app: oldest.app }) : "/tasks/all",
+    },
+  ]);
+  await db.insert(auditLog).values({ id: newId("aud"), actorId: user.id, action: "task.nudged", entityType: "user", entityId: personId, afterState: { late: late.length } as never });
+  return ok(undefined, "Nudged — they have been told.");
+}
