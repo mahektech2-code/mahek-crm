@@ -17032,6 +17032,67 @@ export const taskBatches = pgTable("task_batches", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * A ROUTINE IS A TASK THAT COMES BACK. It belongs to one person and writes an
+ * ordinary `tasks` row on each day it falls due — daily or weekly on the
+ * weekdays it names, monthly on a day of the month with an optional day it
+ * must be done by. The rule is pure in lib/tasks/routines.ts.
+ *
+ * Changing a routine changes the days still to come; a task it already wrote
+ * is that day's work and keeps the words it was written with.
+ */
+export const taskRoutines = pgTable(
+  "task_routines",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    note: text("note"),
+    app: text("app").notNull().default("tasks"),
+    assigneeId: text("assignee_id")
+      .notNull()
+      .references(() => users.id),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    priority: text("priority").notNull().default("normal"),
+    proofRequired: boolean("proof_required").notNull().default(false),
+    checklist: jsonb("checklist").$type<TaskChecklistItem[]>().notNull().default([]),
+    /** daily · weekly · monthly. */
+    frequency: text("frequency").notNull(),
+    /** 0 = Sunday … 6 = Saturday — the days a daily or weekly routine runs. Empty for monthly. */
+    weekdays: jsonb("weekdays").$type<number[]>().notNull().default([]),
+    /** Monthly: the day it appears — the 31st lands on a short month's last day. */
+    dayOfMonth: integer("day_of_month"),
+    /** Monthly: the day it is due by; the same day where empty. */
+    completeByDay: integer("complete_by_day"),
+    /** "HH:MM" — when the work should start; the task's own time is `due_time`. */
+    startTime: text("start_time"),
+    dueTime: text("due_time"),
+    /** Paused routines write nothing; their past tasks stay. */
+    active: boolean("active").notNull().default(true),
+    /** Nothing is written for a day before this one. */
+    startsOn: date("starts_on").notNull(),
+    /** Where an imported routine came from (`task-emp:433`) — what keeps an import from adding it twice. */
+    source: text("source"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("task_routines_assignee_idx").on(t.assigneeId, t.active),
+    uniqueIndex("task_routines_source_key").on(t.source).where(sql`source is not null`),
+    check("task_routines_frequency", sql`${t.frequency} in ('daily','weekly','monthly')`),
+    check("task_routines_priority", sql`${t.priority} in ('urgent','high','normal','low')`),
+    check(
+      "task_routines_times",
+      sql`(${t.startTime} is null or ${t.startTime} ~ '^[0-2][0-9]:[0-5][0-9]$') and (${t.dueTime} is null or ${t.dueTime} ~ '^[0-2][0-9]:[0-5][0-9]$')`,
+    ),
+    check(
+      "task_routines_days",
+      sql`case when ${t.frequency} = 'monthly' then ${t.dayOfMonth} between 1 and 31 and (${t.completeByDay} is null or (${t.completeByDay} > ${t.dayOfMonth} and ${t.completeByDay} <= 31)) else jsonb_array_length(${t.weekdays}) > 0 and ${t.dayOfMonth} is null and ${t.completeByDay} is null end`,
+    ),
+  ],
+);
+
 export const tasks = pgTable(
   "tasks",
   {
@@ -17060,10 +17121,14 @@ export const tasks = pgTable(
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
     closeRemark: text("close_remark"),
+    /** The routine that wrote this task, and the day it was written for — one task per routine per day. */
+    routineId: text("routine_id").references(() => taskRoutines.id, { onDelete: "set null" }),
+    routineDay: date("routine_day"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("tasks_routine_day_key").on(t.routineId, t.routineDay).where(sql`routine_id is not null`),
     index("tasks_assignee_idx").on(t.assigneeId, t.status, t.dueDate),
     index("tasks_created_by_idx").on(t.createdById),
     index("tasks_batch_idx").on(t.batchId),

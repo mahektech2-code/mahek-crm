@@ -8,6 +8,7 @@ import { hatForHeader } from "@/lib/hat-for-header";
 import { listNotifications } from "@/lib/queries";
 import { today } from "@/lib/recompute";
 import { taskCounts, teamOf } from "@/lib/tasks/service";
+import { writeRoutineTasks } from "@/lib/tasks/routine-service";
 import "@/styles/v4-theme.css";
 import { TasksShell, type TasksNav } from "./_ui/tasks-shell";
 
@@ -33,6 +34,15 @@ export default async function TasksLayout({ children }: { children: React.ReactN
   ]);
   if (!modules.length) redirect("/apps");
   const held = new Set(modules.map((m) => m.key));
+  /* Today's routine tasks, before anything is counted. The hourly job writes
+     them for everybody; asking again here is what makes the screen right on a
+     morning the job has not run yet. Idempotent, and never allowed to stop the
+     page from opening. */
+  try {
+    await writeRoutineTasks(day, { assigneeId: user.id });
+  } catch (e) {
+    console.error("Routine tasks on open failed:", e instanceof Error ? e.message : e);
+  }
   const counts = await taskCounts(user.id, day);
 
   const nav: TasksNav = {
@@ -42,6 +52,7 @@ export default async function TasksLayout({ children }: { children: React.ReactN
           { href: "/tasks/all", label: "All my tasks", icon: "clipboard" },
           { href: "/tasks/board", label: "Board", icon: "grid" },
           { href: "/tasks/transfers", label: "Transfers", icon: "history" },
+          { href: "/tasks/routines", label: "Routines", icon: "tick" },
         ]
       : [],
     groups:
