@@ -23,7 +23,17 @@ The org chart is `users.reports_to_id`, then the HRMS reporting line. A platform
 
 A manager above both people **moves** a task. Anybody else **asks**: the task stays with them until the other person accepts. Rejecting needs a reason. One request can be open per task at a time, and closing a task withdraws any request still open on it.
 
+## Routines
+
+A **routine** is a task that comes back: daily or weekly on the weekdays it names, or monthly on a day of the month with an optional day it must be done by. On each day it falls due it adds one ordinary task, closed like any other with a remark. The rule for which days is <Code file="src/lib/tasks/routines.ts" symbol="occurrenceOn" collapsed />.
+
+- A routine for the 31st lands on a short month's last day rather than skipping the month.
+- Each task names its routine and its day, and the database holds that pair to one row — so the hourly job, the nightly one and somebody opening the app can all ask for today, and only the first copy lands.
+- A routine is changed, paused or deleted by **whoever set it** or **anybody above its person**. The person it belongs to sees it but cannot switch off one their manager set.
+- Changing a routine changes the days to come. Pausing adds nothing until it is resumed, and the paused days are not owed. Deleting keeps every task it already added.
+
 ## Where the code and the intent disagree today
 
 - Reminders and the CRM's own automatic follow-ups are not tasks yet. They stay on the Reminders screen and the Call Log.
-- Routines (a task set for a role on a schedule) are not built yet.
+- A routine belongs to one person, not to a role: giving the same routine to a whole team is one routine each.
+- A routine task nobody closes stays open and shows as late; nothing closes or skips it automatically.

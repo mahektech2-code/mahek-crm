@@ -356,6 +356,11 @@ const DESCRIBE: Record<string, Describer> = {
   "task.transfer.accepted": () => ["accepted a task a colleague handed over"],
   "task.transfer.rejected": () => ["rejected a task a colleague tried to hand over"],
   "task.transfer.withdrawn": () => ["withdrew a request to hand a task over"],
+  "task.routine.created": () => ["set a routine"],
+  "task.routine.edited": () => ["changed a routine"],
+  "task.routine.paused": () => ["paused a routine"],
+  "task.routine.resumed": () => ["resumed a routine"],
+  "task.routine.deleted": () => ["deleted a routine"],
   /* ---- customer order tracking */
   "erp.order.hold": () => ["put an order on hold"],
   "erp.order.holdResolved": () => ["resolved an order's hold"],

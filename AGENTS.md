@@ -9618,9 +9618,27 @@ they move without asking; the Tasks app's level is not read. Giving a task to
 somebody who holds neither Tasks nor its app is refused, because they would
 never see it.
 
+**A ROUTINE IS A TASK THAT COMES BACK, and it writes ordinary tasks.**
+`task_routines` holds the schedule — daily or weekly on named weekdays, or
+monthly on a day with an optional done-by day — and on each day it falls due
+`writeRoutineTasks` adds one `tasks` row naming the routine and the day. A
+partial unique index on (`routine_id`, `routine_day`) is the whole of the
+idempotency, which is what lets the hourly job, the nightly one and the Tasks
+layout (for whoever opens it) all ask for today safely. The day rule is pure
+in `lib/tasks/routines.ts` (`occurrenceOn`); a routine for the 31st lands on a
+short month's last day. Whoever set it, or anybody above its person, manages
+it (`canManageFor`); its person reads it. A change reaches the days to come
+and never rewrites a task already written. Nobody is notified per day — a
+bell for fifteen daily tasks is a bell nobody reads.
+
+**The old AppSheet "Task EMP 2.0" workbook came in through
+`npm run tasks:import-task-emp`** — the To Do List as tasks
+(`tsk_taskemp_<id>`), the Task List as routines (`source = task-emp:<Sr. No>`),
+people matched by name to LOGINS. Re-runnable; it never overwrites a row.
+
 **Not built yet, and said so in the docs:** reminders and the CRM's automatic
-follow-ups are not tasks; routines (a task set for a role on a schedule); a
-tasks icon in every app's header; each other app's own My tasks screen.
+follow-ups are not tasks; routines for a role rather than a person; a tasks
+icon in every app's header; each other app's own My tasks screen.
 
 ## Hire — hiring and onboarding
 

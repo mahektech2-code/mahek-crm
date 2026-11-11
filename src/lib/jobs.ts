@@ -83,6 +83,7 @@ import {
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
+import { writeRoutineTasks } from "./tasks/routine-service";
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
  *
@@ -96,6 +97,7 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 export type JobName =
   | "nightly"
   | "hourly"
+  | "task-routines"
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
@@ -239,6 +241,16 @@ async function run(
   }
 }
 
+/**
+ * Today's task from every routine that falls due today. Idempotent — each task
+ * names its routine and its day, and the pair is unique — so it rides both the
+ * hourly and the nightly, and the Tasks app asks again for whoever opens it.
+ */
+async function taskRoutinesStep(): Promise<{ recordsAffected: number; detail: string }> {
+  const n = await writeRoutineTasks(await today());
+  return { recordsAffected: n, detail: `${n} routine tasks written` };
+}
+
 /* ---------------------------------------------------------------- nightly */
 
 export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
@@ -248,6 +260,13 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+  /* Routine tasks first, so they are there for the first shift — and guarded,
+     because `run` rethrows and a step put first must never stop the rest. */
+  try {
+    results.push(await run("task-routines", taskRoutinesStep, triggeredById));
+  } catch (e) {
+    console.error("Routine tasks failed:", e instanceof Error ? e.message : e);
+  }
 
   /* Old price lists whose successor has taken over — the hourly does this
      too; the nightly is the net on a deployment whose hourly is not called. */
@@ -860,6 +879,13 @@ async function orderHoldsStep() {
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
+  /* Routine tasks first, so they are there for the first shift — and guarded,
+     because `run` rethrows and a step put first must never stop the rest. */
+  try {
+    results.push(await run("task-routines", taskRoutinesStep, triggeredById));
+  } catch (e) {
+    console.error("Routine tasks failed:", e instanceof Error ? e.message : e);
+  }
   results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
   results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
@@ -1106,6 +1132,8 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "task-routines":
+      return [await run("task-routines", taskRoutinesStep, triggeredById)];
     case "top-customers-report":
       return [await run("top-customers-report", topCustomersReportStep, triggeredById)];
     case "punch-out-reminders":

@@ -44,6 +44,8 @@ const files = [
   "src/lib/journeys.test.ts",
   // The Tasks app: closing with proof, transfers with consent, a manager's move.
   "src/lib/tasks/tasks.integration.test.ts",
+  // Routines: one task a day per routine, changed only by its setter or a manager.
+  "src/lib/tasks/routines.integration.test.ts",
   "src/lib/crm-accounts-impact.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
