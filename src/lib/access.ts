@@ -340,6 +340,19 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
+    /* Tasks: what is due now and what colleagues are offering. The badge is the
+       sum of exactly the parts the sentence names. */
+    if (app.id === "tasks") {
+      const [{ taskCounts }, { today }] = await Promise.all([import("./tasks/service"), import("./recompute")]);
+      const c = await taskCounts(user.id, await today());
+      const parts: string[] = [];
+      if (c.late) parts.push(`${c.late} late`);
+      if (c.dueNow - c.late) parts.push(`${c.dueNow - c.late} due today`);
+      if (c.offered) parts.push(`${c.offered} offered to you`);
+      out.push({ ...app, count: c.dueNow + c.offered, status: parts.length ? parts.join(" · ") : "Nothing due today" });
+      continue;
+    }
+
     if (app.id !== "crm") {
       out.push({
         ...app,

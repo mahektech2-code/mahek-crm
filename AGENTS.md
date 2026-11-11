@@ -9583,6 +9583,45 @@ happens out-for-delivery is not waited on either. "Dispatched from godown" is no
 a stage — it saves In Transit plus the godown, and a corrected godown replaces
 the old start on the route rather than adding a second.
 
+## Tasks — every task a person has, from every app
+
+**A TASK BELONGS TO ONE PERSON AND NAMES ONE APP.** `tasks.assignee_id` is
+who owes it and `tasks.app` is where its work happens (`crm`, `accounts`…, or
+`tasks` for a personal one), so one row is on the Tasks app (`/tasks`) and on
+that app's own My tasks screen — TeleCRM's first (`/crm/tasks`, module
+`crm.tasks`). Rules are pure in `lib/tasks/rules.ts`, reads in
+`lib/tasks/service.ts`, every write in `lib/actions/tasks.ts`; each action asks
+`taskDetail` — the answer the screen drew its buttons from — before it writes.
+
+**CLOSING IS A STATEMENT WITH EVIDENCE.** Mark done is two steps: tick "it is
+done", then a remark (always) and a screenshot where the task asks for one
+(`proof_required`, the creator's choice, editable by the creator or a manager
+above the assignee). `closeProblems` is asked on the screen and again in
+`closeTask`, and a check constraint holds `closed_at`, `closed_by_id` and
+`close_remark` to the status. A screenshot counts only if THIS person uploaded
+it (`/api/tasks/proof`, a route because an action's body stops at 1 MB) and it
+is not bound to anything else; `closeTask` binds it under parent `task`, and
+`canRead` lets whoever can see the task open it.
+
+**A TRANSFER IS A REQUEST UNTIL SOMEBODY ACCEPTS IT.** The assignee asks, with
+a reason; the task stays theirs while a `task_transfers` row is pending (one per
+task, a partial unique index); the other person reviews it and accepts, or
+rejects with a reason. A manager ABOVE BOTH PEOPLE moves it at once
+(`managesBoth`) — written as a row already decided, `moved`. Closing a task
+withdraws any request still open on it.
+
+**THE TEAM IS THE ORG CHART, not a capability.** `teamOf` is everybody below a
+person: `users.reports_to_id`, then the HRMS line through `users.employee_id`,
+then the HRMS line by name. A platform administrator is above everybody. That
+one set decides who a manager can give tasks to, whose tasks they see, and what
+they move without asking; the Tasks app's level is not read. Giving a task to
+somebody who holds neither Tasks nor its app is refused, because they would
+never see it.
+
+**Not built yet, and said so in the docs:** reminders and the CRM's automatic
+follow-ups are not tasks; routines (a task set for a role on a schedule); a
+tasks icon in every app's header; each other app's own My tasks screen.
+
 ## Hire — hiring and onboarding
 
 `/hire`, its own app. The PRD and functional spec are the client's; the

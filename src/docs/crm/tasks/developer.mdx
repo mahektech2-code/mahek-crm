@@ -1,0 +1,40 @@
+Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under one app (`app`). The CRM screen and the Tasks app read the same functions in `lib/tasks/service.ts`; every write is in `lib/actions/tasks.ts`; the rules are pure in `lib/tasks/rules.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/tasks/layout.tsx` | `requireModule(user.id, "crm.tasks")` |
+| Page (server) | `src/app/crm/tasks/page.tsx` | `myTasks`, `incomingTransfers`, filtered to `crm` and personal |
+| Screens (client) | `src/app/tasks/_ui/screens.tsx` | `CrmTasksScreen` and the Tasks app's screens |
+| Dialogs (client) | `src/app/tasks/_ui/dialogs.tsx` | the record, New task, Close, Transfer |
+| Actions | `src/lib/actions/tasks.ts` | `createTask`, `updateTask`, `closeTask`, `reopenTask`, `transferTask`, `decideTransfer`, `withdrawTransfer`, `deleteTask` |
+| Service | `src/lib/tasks/service.ts` | `myTasks`, `teamOf`, `taskDetail`, `canSeeTask`, `taskCounts` |
+| Rules (pure) | `src/lib/tasks/rules.ts` | `closeProblems`, `transferRoute`, `managesBoth`, `teamBelow` |
+| Upload | `src/app/api/tasks/proof/route.ts` | one screenshot, stored unparented until `closeTask` binds it |
+
+## Closing
+
+<Code file="src/lib/actions/tasks.ts" symbol="closeTask" collapsed />
+
+## Permissions
+
+<Code file="src/lib/tasks/service.ts" symbol="taskDetail" collapsed />
+
+<Code file="src/lib/tasks/rules.ts" symbol="managesBoth" />
+
+## The tables
+
+<DbTable name="tasks" />
+
+<DbTable name="task_transfers" />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.tasks" />.
+- The Tasks app is its own grant: <ModuleRef k="tasks.my-work" /> and <ModuleRef k="tasks.team" />.
+
+## Tests that pin this
+
+- `src/lib/tasks/rules.test.ts` — closing, transfers, the org chart walk, quick add.
+- `src/lib/tasks/tasks.integration.test.ts` — the actions against a database: close with and without proof, request and accept, reject, a manager's move.

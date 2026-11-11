@@ -22,6 +22,7 @@ export const APP_IDS = [
   "hire",
   "docs",
   "factory",
+  "tasks",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -284,6 +285,24 @@ export const APPS: AppDefinition[] = [
     description:
       "The floor's phone app: mixing, filling, packing and dispatch, by scanning — with the Production Head's live view.",
     href: "/factory",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "tasks",
+    /*
+     * Every task a person has, from every app, in one place. A task names the
+     * app its work happens in, so the same row is also on that app's own
+     * "My tasks" screen (TeleCRM's first). Closing one is confirmed with a
+     * remark and, where its creator asked, a screenshot; handing one to a
+     * colleague waits for them to accept, and a manager over both moves it.
+     * Rules in lib/tasks/rules.ts; reads and writes in lib/tasks/service.ts.
+     */
+    name: "Tasks",
+    initials: "TA",
+    description:
+      "Every task you have, from every app — what is late, what is due today, and what your team owes. Close with proof, hand over with consent.",
+    href: "/tasks",
     tone: "neutral",
     built: true,
   },

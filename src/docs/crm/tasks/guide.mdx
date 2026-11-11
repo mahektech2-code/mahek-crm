@@ -1,0 +1,55 @@
+**My tasks** is everything you have to do in the CRM: tasks your manager gave you and tasks you added for yourself. The same tasks are in the **Tasks** app, beside the ones you have in other apps.
+
+## The screen at a glance
+
+<Wireframe url="/crm/tasks" nav={["Dashboard", "#Daily calling", "My tasks", "Call Log", "Reminders", "Call History"]} active="My tasks" caption="My tasks, on the Needs action tab">
+  <WfBar>
+    <WfTitle>My tasks</WfTitle>
+    <WfSpacer />
+    <WfButton primary>New task</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Due today"><WfText>3</WfText></WfCard>
+    <WfCard title="Late"><WfText>2 · oldest by 2 days</WfText></WfCard>
+    <WfCard title="Upcoming"><WfText>6</WfText></WfCard>
+    <WfCard title="From your manager"><WfText>4</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTabs items={["Needs action 5", "Late 2", "Upcoming 6", "Done 3", "All 14"]} active="Needs action 5" />
+  <WfTable highlight={0} columns={["Due", "Task", ""]} rows={[
+    [<span key="a"><WfPill tone="danger">2 days late</WfPill></span>, <span key="b"><b>Get the GST number before the review</b><br/>Customer A · From your manager · Screenshot needed <Hotspot n={3} /></span>, <span key="c"><WfButton>Mark done</WfButton> <Hotspot n={4} /></span>],
+    [<span key="d">Today · 1 PM</span>, <span key="e"><b>Qualify the website leads from yesterday</b><br/>From your manager · 1 of 3 steps</span>, <span key="f"><WfButton>Mark done</WfButton></span>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New task.</b> Add one for yourself. A manager can give one to people in their team.</span>,
+  <span key="2"><b>The counts.</b> Click one to open its tab.</span>,
+  <span key="3"><b>What it needs.</b> Who it is from, the customer, the checklist, and whether closing it needs a screenshot.</span>,
+  <span key="4"><b>Mark done.</b> Asks you to confirm and say what was done — see below.</span>,
+]} />
+
+## Closing a task
+
+Pressing **Mark done** opens two steps:
+
+1. **Is it done?** Tick "Yes — I have done this". If checklist steps are not ticked, it says so.
+2. **Proof.** Write what was done — always. Add a screenshot if the task needs one: choose a file or paste with Ctrl+V. The person who gave you the task reads your remark.
+
+The task then shows who closed it, when, the remark and the screenshots.
+
+## Handing a task to somebody else
+
+Open the task and press **Transfer**. Pick the person and say why.
+
+- **A colleague** gets a request. They review the task, then accept or reject it, with a reason. It stays yours until they accept, and you can withdraw the request.
+- **Your manager**, or anybody above you, can move a task between people in their team straight away. Both of you are told.
+
+Requests waiting for you appear at the top of this screen and in **Tasks → Transfers**.
+
+## Questions
+
+**I can't see a task my manager says they gave me.** It may belong to another app — the banner here counts tasks in other apps. Open the Tasks app to see them all.
+
+**Why can't I change "To close it"?** Only whoever gave the task, or a manager above whoever holds it, decides whether it needs a screenshot.
