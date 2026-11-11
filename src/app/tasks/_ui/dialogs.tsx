@@ -42,6 +42,10 @@ import {
 } from "@/lib/tasks/rules";
 import type { TaskDetail } from "@/lib/tasks/service";
 import { AppChip, Avatar, PriorityMark, StatusBadge } from "./kit";
+import { AudienceBuilder, CloseRules, RepeatPicker, ScheduleFields, closeWords, type Repeat, type ScheduleState } from "./fields";
+import { saveRoutine } from "@/lib/actions/task-routines";
+import { EMPTY_AUDIENCE, audienceProblems, audienceWords, type Audience } from "@/lib/tasks/audience";
+import { WORKING_WEEK, routineProblems, scheduleWords, windowWords } from "@/lib/tasks/routines";
 
 /* ---------------------------------------------------------------------------
  * EVERY TASKS DIALOG, opened from any screen through one context.
@@ -416,14 +420,20 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
           </span>
         </Item>
         <Item label="To close it">
-          {d.can.setProof && !busy ? (
-            <Select value={t.proofRequired ? "1" : "0"} onChange={(e) => void act(updateTask(t.id, { proofRequired: e.target.value === "1" }))} aria-label="To close it">
-              <option value="0">Remarks only</option>
-              <option value="1">Screenshot required</option>
-            </Select>
+          {d.can.setProof ? (
+            <span className="flex flex-wrap gap-2">
+              <Select value={t.proofRequired ? "1" : "0"} disabled={busy} onChange={(e) => void act(updateTask(t.id, { proofRequired: e.target.value === "1" }))} aria-label="Screenshot when closing" className="w-auto">
+                <option value="1">Screenshot required</option>
+                <option value="0">Screenshot optional</option>
+              </Select>
+              <Select value={t.remarkRequired ? "1" : "0"} disabled={busy} onChange={(e) => void act(updateTask(t.id, { remarkRequired: e.target.value === "1" }))} aria-label="Remarks when closing" className="w-auto">
+                <option value="1">Remarks required</option>
+                <option value="0">Remarks optional</option>
+              </Select>
+            </span>
           ) : (
             <span>
-              {t.proofRequired ? "Screenshot required" : "Remarks only"}
+              {closeWords(t.proofRequired, t.remarkRequired)}
               {t.createdById !== d.viewerId && t.createdById !== t.assigneeId ? <span className="text-muted"> · set by {t.createdByName.split(" ")[0]}</span> : null}
             </span>
           )}
@@ -455,7 +465,7 @@ type Proof = { key: number; name: string; preview: string; id: string | null; er
 
 /**
  * Closing is two steps, and the first one is a question: is it done? Only
- * then the evidence — a remark always, and a screenshot where the task asks.
+ * then the evidence — a remark and a screenshot, each where the task asks.
  * The server asks the same things again (`closeProblems`).
  */
 function CloseDialog({ id, onClose, onDone }: { id: string; onClose: () => void; onDone: () => void }) {
@@ -525,7 +535,7 @@ function CloseDialog({ id, onClose, onDone }: { id: string; onClose: () => void;
     setStep(1);
   };
   const submit = async () => {
-    const local = closeProblems({ confirmed, remark, proofs: ready.length, proofRequired: t.proofRequired });
+    const local = closeProblems({ confirmed, remark, proofs: ready.length, proofRequired: t.proofRequired, remarkRequired: t.remarkRequired });
     if (local.length) return setProblems(Object.fromEntries(local.map((p) => [p.field, p.message])));
     setBusy(true);
     const r = await closeTask(t.id, { confirmed, remark, attachmentIds: ready.map((p) => p.id!) }).finally(() => setBusy(false));
@@ -575,7 +585,8 @@ function CloseDialog({ id, onClose, onDone }: { id: string; onClose: () => void;
               </label>
             </Field>
             <p className="text-[13px] text-muted">
-              Next you write what was done{t.proofRequired ? " and add a screenshot — this task needs one" : ". A screenshot is optional"}.
+              Next {t.remarkRequired ? "you write what was done" : "you can say what was done"}
+              {t.proofRequired ? " and add a screenshot — this task needs one" : ". A screenshot is optional"}.
             </p>
           </>
         ) : (
@@ -629,7 +640,7 @@ function CloseDialog({ id, onClose, onDone }: { id: string; onClose: () => void;
                 </div>
               ) : null}
             </Field>
-            <Field label="Remarks" required error={problems.remark || null} hint={t.createdById !== d.viewerId ? `${t.createdByName.split(" ")[0]} reads this.` : undefined} hintShown>
+            <Field label="Remarks" required={t.remarkRequired} optional={!t.remarkRequired} error={problems.remark || null} hint={t.createdById !== d.viewerId ? `${t.createdByName.split(" ")[0]} reads this.` : undefined} hintShown>
               <Textarea
                 rows={4}
                 value={remark}
@@ -771,8 +782,11 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
   const [checklist, setChecklist] = React.useState("");
   const [note, setNote] = React.useState("");
   const [proof, setProof] = React.useState(false);
-  const [who, setWho] = React.useState<"me" | "people">(assigneeId ? "people" : "me");
-  const [picked, setPicked] = React.useState<string[]>(assigneeId ? [assigneeId] : []);
+  const [remarkReq, setRemarkReq] = React.useState(true);
+  const [who, setWho] = React.useState<"me" | "rules">(assigneeId ? "rules" : "me");
+  const [audience, setAudience] = React.useState<Audience>(() => (assigneeId ? { include: [{ kind: "person", value: assigneeId, label: "" }], exclude: [] } : EMPTY_AUDIENCE));
+  const [repeat, setRepeat] = React.useState<Repeat>("once");
+  const [sched, setSched] = React.useState<ScheduleState>({ weekdays: WORKING_WEEK, dayOfMonth: "1", completeByDay: "", startTime: "", dueTime: "" });
   const [dueDate, setDueDate] = React.useState("");
   const [dueTime, setDueTime] = React.useState("");
   const [priority, setPriority] = React.useState<TaskPriority>("normal");
@@ -792,7 +806,19 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
     };
   }, []);
 
-  const team = (opts?.team ?? []).filter((p) => app === "tasks" || p.apps.includes("tasks") || p.apps.includes(app));
+  const hasTeam = Boolean(opts?.team.length);
+  const routineInput = () => ({
+    title,
+    app,
+    priority,
+    frequency: repeat === "once" ? "daily" : repeat,
+    weekdays: sched.weekdays,
+    dayOfMonth: repeat === "monthly" && sched.dayOfMonth ? Number(sched.dayOfMonth) : null,
+    completeByDay: repeat === "monthly" && sched.completeByDay ? Number(sched.completeByDay) : null,
+    startTime: sched.startTime || null,
+    dueTime: sched.dueTime || null,
+    note,
+  });
   const steps = ["Task", "Who and when", "Review"];
   const go = (i: number) => {
     if (i > step && step === 0) {
@@ -800,10 +826,9 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
       if (p.length) return setProblems(Object.fromEntries(p.map((x) => [x.field, x.message])));
     }
     if (i > step && step === 1) {
-      const p = newTaskProblems({ title, app, dueDate, dueTime, priority });
-      const out = Object.fromEntries(p.map((x) => [x.field, x.message]));
-      if (who === "people" && !picked.length) out.assignees = "Pick at least one person.";
-      if (Object.keys(out).length) return setProblems(out);
+      const p = repeat === "once" ? newTaskProblems({ title, app, dueDate, dueTime, priority }) : routineProblems(routineInput());
+      if (who === "rules") p.push(...audienceProblems(audience));
+      if (p.length) return setProblems(Object.fromEntries(p.map((x) => [x.field, x.message])));
     }
     setProblems({});
     setStep(i);
@@ -811,21 +836,34 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
   };
   const save = async () => {
     setBusy(true);
-    const r = await createTask({
-      title,
-      app,
-      customerId: customer?.id ?? null,
-      dueDate,
-      dueTime: dueTime || null,
-      priority,
-      note,
-      checklist,
-      proofRequired: proof,
-      assigneeIds: who === "me" ? [] : picked,
-    }).finally(() => setBusy(false));
+    const rules = who === "rules" ? audience : null;
+    const r =
+      repeat === "once"
+        ? await createTask({
+            title,
+            app,
+            customerId: customer?.id ?? null,
+            dueDate,
+            dueTime: dueTime || null,
+            priority,
+            note,
+            checklist,
+            proofRequired: proof,
+            remarkRequired: remarkReq,
+            assigneeIds: [],
+            audience: rules,
+          }).finally(() => setBusy(false))
+        : await saveRoutine({
+            ...routineInput(),
+            assigneeId: rules ? null : (opts?.me.id ?? null),
+            audience: rules,
+            proofRequired: proof,
+            remarkRequired: remarkReq,
+            checklist,
+          }).finally(() => setBusy(false));
     if (!r.ok) {
       setProblems(Object.fromEntries((r.fieldErrors ?? [{ field: "title", message: r.error }]).map((f) => [f.field, f.message])));
-      setStep(r.fieldErrors?.some((f) => ["assignees", "dueDate", "dueTime", "priority"].includes(f.field)) ? 1 : 0);
+      setStep(r.fieldErrors?.some((f) => ["assignees", "assignee", "audience", "dueDate", "dueTime", "priority", "weekdays", "dayOfMonth", "completeByDay", "startTime"].includes(f.field)) ? 1 : 0);
       return;
     }
     toast.push(r.message ?? "Saved");
@@ -833,7 +871,13 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
     onClose();
   };
 
-  const toWords = who === "me" ? "You" : picked.length === 1 ? (team.find((p) => p.id === picked[0])?.name ?? "1 person") : `${picked.length} people — each gets their own copy`;
+  const appLabel = isTaskApp(app) ? (app === "tasks" ? "Personal — no app" : TASK_APP_LABEL[app]) : app;
+  const whenWords =
+    repeat === "once"
+      ? `${dueDate && opts ? dueWords(dueDate, opts.today) : "—"}${dueTime ? ` · ${clock12(dueTime)}` : ""}`
+      : `${scheduleWords({ frequency: repeat, weekdays: sched.weekdays, dayOfMonth: Number(sched.dayOfMonth) || 1, completeByDay: sched.completeByDay ? Number(sched.completeByDay) : null })}${
+          windowWords(sched.startTime || null, sched.dueTime || null) ? `, ${windowWords(sched.startTime || null, sched.dueTime || null)}` : ""
+        } — starting today`;
 
   return (
     <ErpDialog onClose={onClose} label="New task" size="lg">
@@ -848,7 +892,7 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
             <Field label="What needs doing" required error={problems.title || null} className="col-span-3 max-md:col-span-1">
               <Input autoFocus value={title} invalid={Boolean(problems.title)} onChange={(e) => setTitle(e.target.value)} placeholder="Call Hari Om Paints about the 20 L rate" maxLength={200} />
             </Field>
-            <Field label="App" required hint="The app this work happens in. The task also shows on that app's My tasks." error={problems.app || null}>
+            <Field label="App" required hint="The app this work happens in. Only people who hold it can be given the task." error={problems.app || null}>
               <Select value={app} onChange={(e) => setApp(e.target.value)}>
                 {opts.apps.filter(isTaskApp).map((a) => (
                   <option key={a} value={a}>
@@ -860,23 +904,8 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
             <div className="col-span-2 max-md:col-span-1">
               <CustomerPicker value={customer} onChange={setCustomer} />
             </div>
-            <Field label="To close it" required hint="Closing always asks the person to confirm and write a remark. You can ask for a screenshot as well, and change this later." group className="col-span-3 max-md:col-span-1">
-              <span className="inline-flex gap-0.5 rounded-lg bg-canvas p-[3px]">
-                {[
-                  [false, "Remarks only"],
-                  [true, "Screenshot required"],
-                ].map(([v, l]) => (
-                  <button
-                    key={String(v)}
-                    type="button"
-                    onClick={() => setProof(v as boolean)}
-                    className={cx("h-7.5 cursor-pointer rounded-md px-3 text-[13.5px] font-medium", proof === v ? "bg-surface text-brand-hover shadow-sm" : "text-body")}
-                  >
-                    {l as string}
-                  </button>
-                ))}
-              </span>
-            </Field>
+            <CloseRules proof={proof} remark={remarkReq} onProof={setProof} onRemark={setRemarkReq} />
+            <div />
             <Field label="Checklist" optional hint="One step per line." className="col-span-3 max-md:col-span-1">
               <Textarea rows={3} value={checklist} onChange={(e) => setChecklist(e.target.value)} placeholder="One step per line" />
             </Field>
@@ -887,59 +916,46 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
         ) : null}
         {opts && step === 1 ? (
           <div className="grid grid-cols-3 gap-4 rounded-card border border-line p-4 max-md:grid-cols-1">
-            <Field label="Give it to" required group error={problems.assignees || null} className="col-span-3 max-md:col-span-1">
+            <Field label="Give it to" required group error={who === "me" ? problems.assignees || problems.assignee || null : null} className="col-span-3 max-md:col-span-1">
               <span className="inline-flex gap-0.5 rounded-lg bg-canvas p-[3px]">
                 {(
                   [
                     ["me", "Me"],
-                    ...(team.length ? [["people", "People in my team"]] : []),
+                    ...(hasTeam ? [["rules", "People, teams or roles"]] : []),
                   ] as [string, string][]
                 ).map(([v, l]) => (
                   <button
                     key={v}
                     type="button"
-                    onClick={() => setWho(v as "me" | "people")}
+                    onClick={() => setWho(v as "me" | "rules")}
                     className={cx("h-7.5 cursor-pointer rounded-md px-3 text-[13.5px] font-medium", who === v ? "bg-surface text-brand-hover shadow-sm" : "text-body")}
                   >
                     {l}
                   </button>
                 ))}
               </span>
-              {!team.length ? <span className="mt-1.5 block text-[13px] text-muted">Nobody reports to you on the org chart, so tasks you add are yours.</span> : null}
-              {who === "people" ? (
-                <div className="mt-2.5 rounded-card border border-line">
-                  <label className="flex items-center gap-2.5 border-b border-divider px-3 py-2 text-sm font-medium text-ink">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-brand"
-                      checked={picked.length === team.length && team.length > 0}
-                      onChange={(e) => setPicked(e.target.checked ? team.map((p) => p.id) : [])}
-                    />
-                    Everybody ({team.length}) — each gets their own copy
-                  </label>
-                  <div className="max-h-[220px] overflow-y-auto">
-                    {team.map((p) => (
-                      <label key={p.id} className="flex items-center gap-2.5 px-3 py-1.5 text-sm text-ink hover:bg-canvas">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-brand"
-                          checked={picked.includes(p.id)}
-                          onChange={(e) => setPicked((s) => (e.target.checked ? [...s, p.id] : s.filter((x) => x !== p.id)))}
-                        />
-                        <Avatar name={p.name} size={20} />
-                        {p.name}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+              {!hasTeam ? <span className="mt-1.5 block text-[13px] text-muted">Nobody reports to you on the org chart, so tasks you add are yours.</span> : null}
             </Field>
-            <Field label="Due" required error={problems.dueDate || null}>
-              <Input type="date" value={dueDate} min={opts.today} onChange={(e) => setDueDate(e.target.value)} />
+            {who === "rules" ? (
+              <div className="col-span-3 max-md:col-span-1">
+                <AudienceBuilder app={app} value={audience} onChange={setAudience} error={problems.audience || problems.assignees || null} />
+              </div>
+            ) : null}
+            <Field label="Repeats" required group className="col-span-3 max-md:col-span-1" hint="A repeating task is added afresh on each day it runs. Given by rules, it reaches whoever matches on that day — a new joiner included.">
+              <RepeatPicker value={repeat} onChange={setRepeat} />
             </Field>
-            <Field label="Time" optional error={problems.dueTime || null}>
-              <Input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
-            </Field>
+            {repeat === "once" ? (
+              <>
+                <Field label="Due" required error={problems.dueDate || null}>
+                  <Input type="date" value={dueDate} min={opts.today} onChange={(e) => setDueDate(e.target.value)} />
+                </Field>
+                <Field label="Time" optional error={problems.dueTime || null}>
+                  <Input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
+                </Field>
+              </>
+            ) : (
+              <ScheduleFields frequency={repeat} s={sched} set={(p) => setSched((s) => ({ ...s, ...p }))} problems={problems} />
+            )}
             <Field label="Priority" required>
               <Select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}>
                 {TASK_PRIORITIES.map((p) => (
@@ -955,18 +971,15 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
           <>
             <Review title="Task" onChange={() => setStep(0)}>
               <ReviewItem label="What">{title}</ReviewItem>
-              <ReviewItem label="App">{isTaskApp(app) ? TASK_APP_LABEL[app] : app}</ReviewItem>
+              <ReviewItem label="App">{appLabel}</ReviewItem>
               <ReviewItem label="About">{customer?.name ?? "—"}</ReviewItem>
-              <ReviewItem label="To close it">{proof ? "Screenshot required" : "Remarks only"}</ReviewItem>
+              <ReviewItem label="To close it">{closeWords(proof, remarkReq)}</ReviewItem>
               <ReviewItem label="Checklist">{checklist.split("\n").filter((s) => s.trim()).join(", ") || "—"}</ReviewItem>
               <ReviewItem label="Note">{note || "—"}</ReviewItem>
             </Review>
             <Review title="Who and when" onChange={() => setStep(1)}>
-              <ReviewItem label="Given to">{toWords}</ReviewItem>
-              <ReviewItem label="Due">
-                {dueDate ? dueWords(dueDate, opts.today) : "—"}
-                {dueTime ? ` · ${clock12(dueTime)}` : ""}
-              </ReviewItem>
+              <ReviewItem label="Given to">{who === "me" ? "You" : audienceWords(audience)}</ReviewItem>
+              <ReviewItem label={repeat === "once" ? "Due" : "Repeats"}>{whenWords}</ReviewItem>
               <ReviewItem label="Priority">{PRIORITY_LABEL[priority]}</ReviewItem>
             </Review>
           </>
@@ -985,7 +998,7 @@ function NewTaskDialog({ app: startApp, assigneeId, onClose }: { app: TaskApp; a
           </Button>
         ) : (
           <Button variant="primary" onClick={() => void save()} disabled={busy}>
-            {who === "me" ? "Add task" : picked.length > 1 ? "Give to everybody" : "Give the task"}
+            {repeat !== "once" ? "Set the routine" : who === "me" ? "Add task" : "Give the task"}
           </Button>
         )}
       </DialogFooter>

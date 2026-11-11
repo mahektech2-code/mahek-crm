@@ -80,7 +80,8 @@ async function main() {
     .select({ id: taskRoutines.id, source: taskRoutines.source, assigneeId: taskRoutines.assigneeId, title: taskRoutines.title, frequency: taskRoutines.frequency, weekdays: taskRoutines.weekdays, dayOfMonth: taskRoutines.dayOfMonth, startTime: taskRoutines.startTime })
     .from(taskRoutines);
   const bySource = new Set(existingRoutines.map((r) => r.source).filter(Boolean));
-  const byKey = new Map(existingRoutines.map((r) => [routineKey({ ...r, frequency: r.frequency as never }), r.id]));
+  // Routines given by rules belong to no one person, so they never match an imported row.
+  const byKey = new Map(existingRoutines.flatMap((r) => (r.assigneeId ? [[routineKey({ ...r, assigneeId: r.assigneeId, frequency: r.frequency as never }), r.id] as const] : [])));
   // This month's monthly tasks already imported from the To Do List — in the
   // database, or arriving in this same run.
   const month = day.slice(0, 7);

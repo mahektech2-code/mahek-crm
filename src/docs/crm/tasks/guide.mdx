@@ -26,16 +26,25 @@
 <Hotspots items={[
   <span key="1"><b>New task.</b> Add one for yourself. A manager can give one to people in their team.</span>,
   <span key="2"><b>The counts.</b> Click one to open its tab.</span>,
-  <span key="3"><b>What it needs.</b> Who it is from, the customer, the checklist, and whether closing it needs a screenshot.</span>,
+  <span key="3"><b>What it needs.</b> Who it is from, the customer, the checklist, and whether closing it needs a screenshot or a remark.</span>,
   <span key="4"><b>Mark done.</b> Asks you to confirm and say what was done — see below.</span>,
 ]} />
+
+## Giving a task
+
+**New task** asks what needs doing, the app it belongs to, and whether closing it needs a **screenshot** and a **remark** — each *Required* or *Optional*. Then who gets it and when:
+
+- **Me**, or **People, teams or roles**. Add rules to **Include** and **Exclude**: a person, everyone under a manager, a designation, a department, or a level in the app. Only people who hold the app you picked are listed.
+- A person you name on their own wins over a group — exclude a whole team and include one person from it, and that person still gets it.
+- The list under the rules shows exactly who it comes to, and why.
+- **Repeats**: *Once* with a due day, or *Daily*, *Weekly* or *Monthly*. A repeating task is added afresh each day it runs, to whoever matches the rules that day.
 
 ## Closing a task
 
 Pressing **Mark done** opens two steps:
 
 1. **Is it done?** Tick "Yes — I have done this". If checklist steps are not ticked, it says so.
-2. **Proof.** Write what was done — always. Add a screenshot if the task needs one: choose a file or paste with Ctrl+V. The person who gave you the task reads your remark.
+2. **Proof.** Write what was done, and add a screenshot — each is marked required or optional, as whoever gave you the task chose: choose a file or paste with Ctrl+V. The person who gave you the task reads your remark.
 
 The task then shows who closed it, when, the remark and the screenshots.
 
@@ -52,4 +61,4 @@ Requests waiting for you appear at the top of this screen and in **Tasks → Tra
 
 **I can't see a task my manager says they gave me.** It may belong to another app — the banner here counts tasks in other apps. Open the Tasks app to see them all.
 
-**Why can't I change "To close it"?** Only whoever gave the task, or a manager above whoever holds it, decides whether it needs a screenshot.
+**Why can't I change "To close it"?** Only whoever gave the task, or a manager above whoever holds it, decides whether it needs a screenshot or a remark.

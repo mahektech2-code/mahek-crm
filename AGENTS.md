@@ -9594,9 +9594,10 @@ that app's own My tasks screen — TeleCRM's first (`/crm/tasks`, module
 `taskDetail` — the answer the screen drew its buttons from — before it writes.
 
 **CLOSING IS A STATEMENT WITH EVIDENCE.** Mark done is two steps: tick "it is
-done", then a remark (always) and a screenshot where the task asks for one
-(`proof_required`, the creator's choice, editable by the creator or a manager
-above the assignee). `closeProblems` is asked on the screen and again in
+done" (always), then a remark and a screenshot, each REQUIRED OR OPTIONAL as
+the creator chose (`remark_required`, default required, and `proof_required`),
+both editable by the creator or a manager above the assignee. An optional
+remark left empty is stored as `''`, so the check constraint still holds. `closeProblems` is asked on the screen and again in
 `closeTask`, and a check constraint holds `closed_at`, `closed_by_id` and
 `close_remark` to the status. A screenshot counts only if THIS person uploaded
 it (`/api/tasks/proof`, a route because an action's body stops at 1 MB) and it
@@ -9618,16 +9619,33 @@ they move without asking; the Tasks app's level is not read. Giving a task to
 somebody who holds neither Tasks nor its app is refused, because they would
 never see it.
 
+**WHO GETS IT IS AN AUDIENCE: INCLUDE AND EXCLUDE RULES.** A rule names a
+person, a team (everybody under a manager), an HRMS designation or department,
+a level in the task's app, an ERP designation, or everybody.
+`lib/tasks/audience.ts` is the rule, pure, run by the builder's live preview and
+again on the server (`resolveFor`, never the screen's list): a person EXCLUDED
+by name never gets it, a person INCLUDED by name always does — even where their
+team or designation is excluded — and everybody else gets it when a group
+includes them and no group excludes them. The candidates
+(`audience-service.ts`) are the giver and their team who HOLD THE TASK'S APP
+(Tasks itself for a personal task), so the builder offers only those people and
+only the designations, departments, teams and levels found among them. A
+one-off task resolves once and stores the rules on its `task_batches` row.
+
 **A ROUTINE IS A TASK THAT COMES BACK, and it writes ordinary tasks.**
 `task_routines` holds the schedule — daily or weekly on named weekdays, or
 monthly on a day with an optional done-by day — and on each day it falls due
-`writeRoutineTasks` adds one `tasks` row naming the routine and the day. A
-partial unique index on (`routine_id`, `routine_day`) is the whole of the
-idempotency, which is what lets the hourly job, the nightly one and the Tasks
+`writeRoutineTasks` adds one `tasks` row per person naming the routine and the
+day. A routine is for ONE PERSON (`assignee_id`) or for an AUDIENCE
+(`audience`, re-resolved on every day it runs against whoever its creator can
+reach that day — a new joiner with the designation picks it up, a creator who
+left reaches nobody). A partial unique index on (`routine_id`, `assignee_id`,
+`routine_day`) is the whole of the idempotency, which is what lets the hourly job, the nightly one and the Tasks
 layout (for whoever opens it) all ask for today safely. The day rule is pure
 in `lib/tasks/routines.ts` (`occurrenceOn`); a routine for the 31st lands on a
 short month's last day. Whoever set it, or anybody above its person, manages
-it (`canManageFor`); its person reads it. A change reaches the days to come
+it (`canManageFor`) — a routine given by rules belongs to whoever set it and
+anybody above them; its person reads it. A change reaches the days to come
 and never rewrites a task already written. Nobody is notified per day — a
 bell for fifteen daily tasks is a bell nobody reads.
 
@@ -9637,8 +9655,7 @@ bell for fifteen daily tasks is a bell nobody reads.
 people matched by name to LOGINS. Re-runnable; it never overwrites a row.
 
 **Not built yet, and said so in the docs:** reminders and the CRM's automatic
-follow-ups are not tasks; routines for a role rather than a person; a tasks
-icon in every app's header; each other app's own My tasks screen.
+follow-ups are not tasks; a tasks icon in every app's header; each other app's own My tasks screen.
 
 ## Hire — hiring and onboarding
 

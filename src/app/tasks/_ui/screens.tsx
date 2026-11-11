@@ -163,7 +163,7 @@ export function MyDayScreen({ tasks, incoming, today, viewerId, greeting, dateLi
           </div>
           <div className="rounded-card border border-line bg-surface px-4 py-3 text-[13px] text-muted">
             <div className="mb-1.5 font-semibold text-ink">Closing a task</div>
-            Mark done asks you to confirm it is done and to write what was done. Where whoever gave it asked, it also needs a screenshot.
+            Mark done asks you to confirm it is done, then for a remark and a screenshot — each required or optional, as whoever gave it chose.
           </div>
         </aside>
       </div>
@@ -673,7 +673,7 @@ export function CrmTasksScreen({ tasks, incoming, elsewhere, today, viewerId, ha
     <div>
       <PageHeader
         title="My tasks"
-        subtitle="Everything you have to do in the CRM — tasks your manager gave you and ones you added. Closing one asks you to confirm it and say what was done."
+        subtitle="Everything you have to do in the CRM — tasks your manager gave you and ones you added. Closing one asks you to confirm it, and for whatever proof the task needs."
         actions={
           <Button variant="primary" onClick={() => openNew({ app: "crm" })}>
             New task

@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { taskEvents, taskRoutines, tasks, users } from "@/db/schema";
+import { alias } from "drizzle-orm/pg-core";
 import { occurrenceOn, windowWords, type RoutineFrequency } from "./routines";
+import { audienceWords, readAudience, type Audience } from "./audience";
+import { resolveFor } from "./audience-service";
 import type { TaskApp, TaskPriority } from "./rules";
 import { teamOf } from "./service";
 
@@ -30,12 +33,18 @@ export type RoutineRow = {
   title: string;
   note: string | null;
   app: TaskApp;
-  assigneeId: string;
-  assigneeName: string;
+  /** The one person it is for; null for a routine given by rules. */
+  assigneeId: string | null;
+  assigneeName: string | null;
+  /** The include/exclude rules, where it is given by rules — re-read each day it runs. */
+  audience: Audience | null;
+  /** "Every Telecaller — except Rahul's team", or the person's name. */
+  forWords: string;
   createdById: string;
   createdByName: string;
   priority: TaskPriority;
   proofRequired: boolean;
+  remarkRequired: boolean;
   checklist: { text: string; done: boolean }[];
   frequency: RoutineFrequency;
   weekdays: number[];
@@ -54,9 +63,12 @@ export type RoutineRow = {
  * them? With no `createdById` the question is about a NEW one: for themselves,
  * or for anybody below them.
  */
-export async function canManageFor(viewer: Viewer, assigneeId: string, createdById?: string): Promise<boolean> {
+export async function canManageFor(viewer: Viewer, assigneeId: string | null, createdById?: string): Promise<boolean> {
   if (createdById === undefined ? assigneeId === viewer.id : createdById === viewer.id) return true;
-  return (await teamOf(viewer)).has(assigneeId);
+  const team = await teamOf(viewer);
+  // A routine given by rules belongs to whoever set it — and so to anybody above them.
+  if (assigneeId === null) return createdById !== undefined && team.has(createdById);
+  return team.has(assigneeId);
 }
 
 /** Everybody's routines this viewer may see: their own and their team's. */
@@ -64,28 +76,33 @@ export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
   const team = await teamOf(viewer);
   const ids = [viewer.id, ...team];
   const rows = await db.execute<Record<string, unknown>>(sql`
-    select r.id, r.title, r.note, r.app, r.assignee_id, a.name as assignee_name, r.created_by_id, c.name as created_by_name,
-           r.priority, r.proof_required, r.checklist, r.frequency, r.weekdays, r.day_of_month, r.complete_by_day,
+    select r.id, r.title, r.note, r.app, r.assignee_id, a.name as assignee_name, r.audience, r.created_by_id, c.name as created_by_name,
+           r.priority, r.proof_required, r.remark_required, r.checklist, r.frequency, r.weekdays, r.day_of_month, r.complete_by_day,
            r.start_time, r.due_time, r.active, r.starts_on::text as starts_on
       from task_routines r
-      join users a on a.id = r.assignee_id
+      left join users a on a.id = r.assignee_id
       join users c on c.id = r.created_by_id
      where r.assignee_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
-     order by a.name, r.active desc, r.frequency, r.start_time nulls last, r.title`);
+        or (r.assignee_id is null and r.created_by_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}))
+     order by a.name nulls first, r.active desc, r.frequency, r.start_time nulls last, r.title`);
   return rows.map((r) => {
-    const assigneeId = String(r.assignee_id);
+    const assigneeId = r.assignee_id == null ? null : String(r.assignee_id);
     const createdById = String(r.created_by_id);
+    const audience = readAudience(r.audience);
     return {
       id: String(r.id),
       title: String(r.title),
       note: (r.note as string) ?? null,
       app: r.app as TaskApp,
       assigneeId,
-      assigneeName: String(r.assignee_name),
+      assigneeName: r.assignee_name == null ? null : String(r.assignee_name),
+      audience,
+      forWords: audience ? audienceWords(audience) : String(r.assignee_name ?? ""),
       createdById,
       createdByName: String(r.created_by_name),
       priority: r.priority as TaskPriority,
       proofRequired: Boolean(r.proof_required),
+      remarkRequired: r.remark_required == null ? true : Boolean(r.remark_required),
       checklist: (r.checklist as { text: string; done: boolean }[]) ?? [],
       frequency: r.frequency as RoutineFrequency,
       weekdays: ((r.weekdays as number[]) ?? []).map(Number),
@@ -95,7 +112,7 @@ export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
       dueTime: (r.due_time as string) ?? null,
       active: Boolean(r.active),
       startsOn: String(r.starts_on),
-      canManage: createdById === viewer.id || team.has(assigneeId),
+      canManage: createdById === viewer.id || (assigneeId ? team.has(assigneeId) : team.has(createdById)),
     };
   });
 }
@@ -106,48 +123,63 @@ export async function getRoutine(id: string) {
 }
 
 /**
- * Write `day`'s task for every active routine that falls due on it — every
- * routine, or one person's. Returns how many tasks were written; asking again
- * for the same day writes none.
+ * Write `day`'s tasks for every active routine that falls due on it — all of
+ * them, one person's, or one routine's. A routine given by rules is resolved
+ * afresh against whoever matches today, as its creator could reach them today
+ * (a creator who has left reaches nobody). Returns how many tasks were
+ * written; asking again for the same day writes none.
  */
-export async function writeRoutineTasks(day: string, opts: { assigneeId?: string } = {}): Promise<number> {
-  const where = opts.assigneeId
-    ? and(eq(taskRoutines.active, true), eq(users.active, true), eq(taskRoutines.assigneeId, opts.assigneeId))
-    : and(eq(taskRoutines.active, true), eq(users.active, true));
-  const routines = await db
-    .select({ r: taskRoutines })
-    .from(taskRoutines)
-    .innerJoin(users, eq(users.id, taskRoutines.assigneeId))
-    .where(where);
+const creator = alias(users, "creator");
+const person = alias(users, "person");
 
-  const due = routines
-    .map(({ r }) => ({ r, at: occurrenceOn({ ...r, frequency: r.frequency as RoutineFrequency }, day) }))
-    .filter((x): x is { r: typeof x.r; at: { dueDate: string } } => x.at !== null);
-  if (!due.length) return 0;
+export async function writeRoutineTasks(day: string, opts: { assigneeId?: string; routineId?: string } = {}): Promise<number> {
+  const routines = (
+    await db
+      .select({ r: taskRoutines, creatorActive: creator.active, creatorRole: creator.role, assigneeActive: person.active })
+      .from(taskRoutines)
+      .innerJoin(creator, eq(creator.id, taskRoutines.createdById))
+      .leftJoin(person, eq(person.id, taskRoutines.assigneeId))
+      .where(opts.routineId ? and(eq(taskRoutines.active, true), eq(taskRoutines.id, opts.routineId)) : eq(taskRoutines.active, true))
+  ).filter(({ r, assigneeActive }) => (r.assigneeId ? assigneeActive === true && (!opts.assigneeId || r.assigneeId === opts.assigneeId) : true));
 
-  const rows = due.map(({ r, at }) => {
+  const rows: (typeof tasks.$inferInsert)[] = [];
+  for (const { r, creatorActive, creatorRole } of routines) {
+    const at = occurrenceOn({ ...r, frequency: r.frequency as RoutineFrequency }, day);
+    if (!at) continue;
+    let people: string[];
+    if (r.assigneeId) people = [r.assigneeId];
+    else {
+      const audience = readAudience(r.audience);
+      if (!audience || !creatorActive) continue;
+      people = await resolveFor({ id: r.createdById, role: creatorRole }, r.app, audience);
+      if (opts.assigneeId) people = people.filter((p) => p === opts.assigneeId);
+    }
     const window = windowWords(r.startTime, r.dueTime);
     const note = [r.note, window ? `Time: ${window}.` : null].filter(Boolean).join("\n") || null;
-    return {
-      id: `tsk_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-      title: r.title,
-      note,
-      app: r.app,
-      assigneeId: r.assigneeId,
-      createdById: r.createdById,
-      priority: r.priority,
-      dueDate: at.dueDate,
-      dueTime: r.dueTime,
-      proofRequired: r.proofRequired,
-      checklist: r.checklist.map((c) => ({ text: c.text, done: false })),
-      routineId: r.id,
-      routineDay: day,
-    };
-  });
+    for (const assigneeId of people) {
+      rows.push({
+        id: `tsk_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        title: r.title,
+        note,
+        app: r.app,
+        assigneeId,
+        createdById: r.createdById,
+        priority: r.priority,
+        dueDate: at.dueDate,
+        dueTime: r.dueTime,
+        proofRequired: r.proofRequired,
+        remarkRequired: r.remarkRequired,
+        checklist: r.checklist.map((c) => ({ text: c.text, done: false })),
+        routineId: r.id,
+        routineDay: day,
+      });
+    }
+  }
+  if (!rows.length) return 0;
 
   let written = 0;
   for (let i = 0; i < rows.length; i += 200) {
-    const landed = await db.insert(tasks).values(rows.slice(i, i + 200)).onConflictDoNothing().returning({ id: tasks.id, title: tasks.title });
+    const landed = await db.insert(tasks).values(rows.slice(i, i + 200)).onConflictDoNothing().returning({ id: tasks.id });
     if (!landed.length) continue;
     written += landed.length;
     await db.insert(taskEvents).values(

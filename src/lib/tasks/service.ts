@@ -47,6 +47,7 @@ export type TaskRow = {
   dueDate: string;
   dueTime: string | null;
   proofRequired: boolean;
+  remarkRequired: boolean;
   checklist: { text: string; done: boolean }[];
   closedAt: string | null;
   /** The day it closed, in India — what "Done today" compares against. */
@@ -120,7 +121,7 @@ const SELECT = sql`
   select t.id, t.title, t.note, t.app, t.customer_id, c.name as customer_name,
          t.assignee_id, a.name as assignee_name, t.created_by_id, cb.name as created_by_name,
          t.batch_id, t.status, t.priority, t.due_date::text as due_date, t.due_time,
-         t.proof_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at,
+         t.proof_required, t.remark_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at,
          tr.id as tr_id, tr.from_id as tr_from, fu.name as tr_from_name, tr.to_id as tr_to, tu.name as tr_to_name,
          tr.requested_by_id as tr_by, tr.reason as tr_reason, tr.created_at as tr_at
     from tasks t
@@ -153,6 +154,7 @@ function toRow(r: Raw): TaskRow {
     dueDate: String(r.due_date),
     dueTime: (r.due_time as string) ?? null,
     proofRequired: Boolean(r.proof_required),
+    remarkRequired: r.remark_required == null ? true : Boolean(r.remark_required),
     checklist: (r.checklist as { text: string; done: boolean }[]) ?? [],
     closedAt: iso(r.closed_at),
     closedOn: (r.closed_on as string) ?? null,

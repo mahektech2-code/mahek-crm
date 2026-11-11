@@ -166,6 +166,8 @@ export type CloseInput = {
   /** Screenshots that arrived and are theirs. */
   proofs: number;
   proofRequired: boolean;
+  /** Whether a remark must be written. Optional where the creator said so; true when not said. */
+  remarkRequired?: boolean;
 };
 
 /**
@@ -177,7 +179,8 @@ export function closeProblems(input: CloseInput): FieldProblem[] {
   const out: FieldProblem[] = [];
   if (!input.confirmed) out.push({ field: "confirmed", message: "Tick the box to say it is done." });
   const remark = input.remark.trim();
-  if (remark.length < REMARK_MIN) out.push({ field: "remark", message: "Write what was done." });
+  const remarkRequired = input.remarkRequired ?? true;
+  if (remarkRequired && remark.length < REMARK_MIN) out.push({ field: "remark", message: "Write what was done." });
   else if (remark.length > REMARK_MAX) out.push({ field: "remark", message: `Keep the remark under ${REMARK_MAX} characters.` });
   if (input.proofRequired && input.proofs < 1) out.push({ field: "proof", message: "Add a screenshot — this task needs one to close." });
   if (input.proofs > MAX_PROOFS) out.push({ field: "proof", message: `Up to ${MAX_PROOFS} screenshots.` });
