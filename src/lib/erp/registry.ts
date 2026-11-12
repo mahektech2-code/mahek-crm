@@ -18,7 +18,7 @@
 export type ErpIcon =
   | "home" | "bell" | "db" | "cart" | "flask" | "beaker" | "can" | "box"
   | "swap" | "refresh" | "receipt" | "file" | "truck" | "chat" | "phone"
-  | "wallet" | "people" | "play" | "gear";
+  | "wallet" | "people" | "play" | "gear" | "check";
 
 /**
  * A TAB of a screen. Mahek Plus drew a separate view for every filter of one
@@ -322,6 +322,12 @@ export const ERP_GROUPS: ErpGroup[] = [
     screens: [s("videos", "videos", "Help videos", "Short walkthroughs, newest first.", true)],
   },
   {
+    id: "myTasks",
+    label: "My tasks",
+    icon: "check",
+    screens: [s("myTasks", "my-tasks", "My tasks", "Your MahekOne tasks that belong to the ERP — given to you, raised by the app, or added by you.", true)],
+  },
+  {
     id: "settings",
     label: "Settings",
     icon: "gear",
@@ -395,4 +401,4 @@ export function erpGroupOf(key: string): ErpGroup | undefined {
  * dashboard (it only shows tiles for screens they hold) and their own
  * settings. Withholding either would leave somebody an app with no front door.
  */
-export const ERP_ALWAYS_OPEN = new Set(["dashboard", "settings"]);
+export const ERP_ALWAYS_OPEN = new Set(["dashboard", "settings", "myTasks"]);

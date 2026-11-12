@@ -36,6 +36,8 @@ export default async function Page({
   const wanted: SectionKey = isSectionKey(params.s) ? params.s : "company";
   const section = access.allowed.includes(wanted) ? wanted : access.allowed[0]!;
   if (section !== wanted && params.s) redirect(`/founder?s=${section}`);
+  /* My tasks is a desk of its own too. */
+  if (section === "tasks") redirect("/founder/my-tasks");
   /* Margins is a desk with its own page; an address naming it as a section goes there, period kept. */
   if (section === "margins") {
     const q = new URLSearchParams();

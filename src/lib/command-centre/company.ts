@@ -581,6 +581,7 @@ export const SECTION_TITLE: Record<import("./types").SectionKey, string> = {
   whatsapp: "WhatsApp",
   people: "People & organisation",
   system: "Data operations & health",
+  tasks: "My tasks",
 };
 
 /** Up to eight of the records behind a Company figure. */

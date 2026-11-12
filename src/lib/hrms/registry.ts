@@ -117,6 +117,7 @@ export const HRMS_GROUPS: HrmsGroup[] = [
           t("templates", "Templates", "Your daily, weekly and monthly tasks. Take my task copies today’s into your checklist."),
         ],
       }),
+      s("myTasks", "my-tasks", "My tasks", "check", "Your MahekOne tasks that belong to HRMS — given to you, raised by the app, or added by you.", { view: "custom" }),
       s("payroll", "pay", "Pay", "wallet", "", {
         views: [
           t("payroll", "Salaries", "Salaries prepared, approved and paid, by month. Everyone sees their own payslips once paid."),
@@ -268,7 +269,7 @@ export function hrmsKeysOf(screen: HrmsScreen): string[] {
  * Screens every HRMS user reaches whatever they were narrowed to: checking in
  * is the reason almost everybody holds the app at all.
  */
-export const HRMS_ALWAYS_OPEN = new Set(["home"]);
+export const HRMS_ALWAYS_OPEN = new Set(["home", "myTasks"]);
 
 /**
  * The first build's URLs, and the list each now lives on. `next.config.ts`

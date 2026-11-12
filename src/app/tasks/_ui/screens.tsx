@@ -845,7 +845,20 @@ export function AssignedScreen({ tasks, today, viewerId }: Base & { tasks: TaskR
 
 /* ---------------------------------------------------------- TeleCRM's own */
 
-export function CrmTasksScreen({ tasks, incoming, elsewhere, today, viewerId, hasTasksApp }: Base & { tasks: TaskRow[]; incoming: TaskRow[]; elsewhere: { count: number; apps: string[] }; hasTasksApp: boolean }) {
+/**
+ * AN APP'S OWN MY TASKS — TeleCRM's first, now every app's. The same rows as
+ * the Tasks app, narrowed to the work that happens in this app and personal
+ * tasks; what waits in other apps is counted and named, never hidden.
+ */
+export function AppTasksScreen({
+  app,
+  tasks,
+  incoming,
+  elsewhere,
+  today,
+  viewerId,
+  hasTasksApp,
+}: Base & { app: TaskApp; tasks: TaskRow[]; incoming: TaskRow[]; elsewhere: { count: number; apps: string[] }; hasTasksApp: boolean }) {
   const { openNew } = useTaskDialogs();
   const [tab, setTab] = React.useState<"now" | "late" | "upcoming" | "done" | "all">("now");
   const open = tasks.filter(isOpen);
@@ -868,16 +881,16 @@ export function CrmTasksScreen({ tasks, incoming, elsewhere, today, viewerId, ha
     <div>
       <PageHeader
         title="My tasks"
-        subtitle="Everything you have to do in the CRM — tasks your manager gave you and ones you added. Closing one asks you to confirm it, and for whatever proof the task needs."
+        subtitle={`Everything you have to do in ${TASK_APP_LABEL[app]} — tasks your manager gave you, ones the app raised, and ones you added. Closing one asks you to confirm it, and for whatever proof the task needs.`}
         actions={
-          <Button variant="primary" onClick={() => openNew({ app: "crm" })}>
+          <Button variant="primary" onClick={() => openNew({ app })}>
             New task
           </Button>
         }
       />
       <div className="mb-4 flex flex-wrap gap-8 rounded-card border border-line bg-surface px-5 py-3.5">
         {[
-          ["Due today", open.filter((t) => t.dueDate === today).length, plural(open.filter((t) => t.dueDate === today && t.autoRule === "crm.callback").length, "callback") + " promised", "now"],
+          ["Due today", open.filter((t) => t.dueDate === today).length, app === "crm" ? plural(open.filter((t) => t.dueDate === today && t.autoRule === "crm.callback").length, "callback") + " promised" : "", "now"],
           ["Late", lists.late.length, lists.late.length ? `oldest by ${-daysUntil(lists.late[0].dueDate, today)} days` : "nothing late", "late"],
           ["Upcoming", lists.upcoming.length, "", "upcoming"],
           ["From your manager", fromManager, "", null],

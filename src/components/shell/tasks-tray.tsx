@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { loadTray, type Tray } from "@/lib/actions/task-tray";
-import { TASK_APP_LABEL, clock12, dueWords } from "@/lib/tasks/rules";
+import { TASK_APP_LABEL, clock12, dueWords, taskLink, isTaskApp, APP_TASKS_PATH } from "@/lib/tasks/rules";
 
 /**
  * MY TASKS IN EVERY APP — the ✓ in each app's header, beside the bell. A count
@@ -43,7 +43,10 @@ export function TasksTray() {
   }, [open]);
 
   if (!tray || (!tray.holdsTasks && !tray.open)) return null;
-  const href = (t: Tray["next"][number]) => (t.app === "crm" ? `/crm/tasks?task=${t.id}` : tray.holdsTasks ? `/tasks?task=${t.id}` : `/crm/tasks?task=${t.id}`);
+  /* The app this header belongs to, read off the address, and its own My tasks. */
+  const seg = pathname.split("/")[1] ?? "";
+  const here = isTaskApp(seg) && APP_TASKS_PATH[seg] ? { app: seg, path: APP_TASKS_PATH[seg]! } : null;
+  const href = (t: Tray["next"][number]) => taskLink(t, { tasks: tray.holdsTasks, apps: tray.apps });
 
   return (
     <div ref={ref} className="relative">
@@ -95,6 +98,14 @@ export function TasksTray() {
           ) : (
             <div className="px-2.5 py-3 text-sm text-muted">Nothing open. Well done.</div>
           )}
+          {here && tray.apps.includes(here.app) ? (
+            <>
+              <div className="mx-1 my-1.5 h-px bg-divider" />
+              <Link href={here.path} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-[7px] px-2.5 py-2 text-[13.5px] font-semibold text-brand no-underline hover:bg-[#f1f4f9] hover:no-underline">
+                My tasks in {TASK_APP_LABEL[here.app]}
+              </Link>
+            </>
+          ) : null}
           {tray.holdsTasks ? (
             <>
               <div className="mx-1 my-1.5 h-px bg-divider" />

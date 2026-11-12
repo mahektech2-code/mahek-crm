@@ -23,7 +23,7 @@ import type { NavCounts, SectionKey, Tone } from "@/lib/command-centre/types";
  * ------------------------------------------------------------------------- */
 
 export const NAV: { label: string; items: [SectionKey, string, string][] }[] = [
-  { label: "Today", items: [["company", "Company", "home"], ["inbox", "Needs you", "bell"]] },
+  { label: "Today", items: [["company", "Company", "home"], ["inbox", "Needs you", "bell"], ["tasks", "My tasks", "check"]] },
   {
     label: "Sell",
     items: [
@@ -65,6 +65,7 @@ export const TITLES: Record<SectionKey, [string, string]> = {
   whatsapp: ["WhatsApp", "The switch, templates, automation, sends, replies and the tracker"],
   people: ["People & organisation", "Headcount, the employee master, reporting lines and the business calendar"],
   system: ["Data operations & health", "Every sync, import, repair and recompute, and how fresh the data is"],
+  tasks: ["My tasks", "Your own tasks that belong to the Founder app — given to you, raised by an app, or added by you"],
 };
 
 /** "Command Centre · Founder desks" — the group a section sits in. */

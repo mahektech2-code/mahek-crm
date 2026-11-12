@@ -1,0 +1,15 @@
+## The rule
+
+Every app that people do work in has its own **My tasks**: TeleCRM's at `/crm/tasks`, and the others at `/<app>/my-tasks`. Each one shows the signed-in person's tasks whose work happens in that app, plus personal tasks — the same rows the Tasks app shows, never a copy.
+
+## Why it is always open
+
+A task somebody was given in an app has to be reachable in that app. A grant narrowed to a few screens was never meant to hide the list of work a person owes, so **My tasks** is an always-open module, like HRMS's check-in and the ERP's dashboard and settings. It is drawn on the Access screen as always on, and it can show nobody's work but the viewer's own.
+
+## Where links go
+
+A notification about a task opens the My tasks of the app the task belongs to, which also files it under that app's bell. A personal task opens in the Tasks app. The ✓ tray in every header has a link to the app's own My tasks.
+
+## What it does not do
+
+The Factory floor has no web My tasks — it works from its phone app. TeleCRM's `crm.tasks` came first and is still an ordinary module: it can be withheld on the Access screen.

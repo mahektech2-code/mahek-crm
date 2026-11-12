@@ -58,7 +58,7 @@ test("a designation with no screens is not the whole app", () => {
 
 test("picking a designation drafts exactly what it holds, always-open screens included", () => {
   const draft = draftFor(TESTER, ALL);
-  assert.deepEqual(draft.modules.sort(), ["erp.dashboard", "erp.expenses", "erp.settings", "erp.testing", "erp.videos"]);
+  assert.deepEqual(draft.modules.sort(), ["erp.dashboard", "erp.expenses", "erp.myTasks", "erp.settings", "erp.testing", "erp.videos"]);
   assert.equal(draft.level, "associate");
   assert.deepEqual(draftFor({ level: "admin", allScreens: true, modules: [], powers: ["viewCost"] }, ALL), { level: "admin", modules: [...ALL], powers: [] });
   /* What the dialog writes is what then matches. */

@@ -530,6 +530,15 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "my-tasks",
+        title: "My tasks",
+        summary: "Your own tasks that belong to the Sales Dashboard — given to you, raised by an app, or added by you — always open to whoever holds the app.",
+        group: "Field work",
+        modules: ["sales.my-tasks"],
+        screen: "/sales/my-tasks",
+        written: ALL,
+      },
+      {
         slug: "journeys",
         title: "Journeys and visits",
         summary: "Proposing a city, the salesman agreeing and picking shops, the day's route, and the visits it produced.",
@@ -786,6 +795,15 @@ export const DOC_APPS: DocApp[] = [
         summary: "Who can open which ERP screen, what a designation grants, working location, and the help videos.",
         group: "Start here",
         modules: ["erp.settings", "erp.videos"],
+        written: ALL,
+      },
+      {
+        slug: "my-tasks",
+        title: "My tasks",
+        summary: "Your own tasks that belong to the ERP — given to you, raised by an app, or added by you — always open to whoever holds the ERP.",
+        group: "Start here",
+        modules: ["erp.myTasks"],
+        screen: "/erp/my-tasks",
         written: ALL,
       },
       {

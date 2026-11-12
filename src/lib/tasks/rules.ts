@@ -54,6 +54,42 @@ export const TASK_APP_LABEL: Record<TaskApp, string> = {
 
 export const isTaskApp = (v: string): v is TaskApp => (TASK_APPS as readonly string[]).includes(v);
 
+/**
+ * EVERY APP HAS ITS OWN MY TASKS, and this is where each one lives. It shows
+ * the tasks whose work happens in that app, plus personal ones. The CRM's came
+ * first, at `/crm/tasks`; the rest are at `/<app>/my-tasks`, because the Sales
+ * Dashboard and Hire already had a `tasks` of their own meaning something else.
+ * The Factory has none here: the floor works from its phone app.
+ */
+export const APP_TASKS_PATH: Partial<Record<TaskApp, string>> = {
+  crm: "/crm/tasks",
+  accounts: "/accounts/my-tasks",
+  sales: "/sales/my-tasks",
+  erp: "/erp/my-tasks",
+  hrms: "/hrms/my-tasks",
+  founder: "/founder/my-tasks",
+  enquiries: "/enquiries/my-tasks",
+  website: "/website/my-tasks",
+  hire: "/hire/my-tasks",
+};
+
+/** Does an app's own My tasks show this task: its own app's work, and personal tasks. */
+export const shownInApp = (taskApp: string, app: TaskApp) => taskApp === app || taskApp === "tasks";
+
+/**
+ * Where a link to one task goes: the Tasks app for somebody who holds it, else
+ * the My tasks of the app the work belongs to, else the first app they hold
+ * that has one (a personal task belongs to no app).
+ */
+export function taskLink(task: { id: string; app: string }, holds: { tasks: boolean; apps?: readonly string[] }): string {
+  const own = isTaskApp(task.app) ? APP_TASKS_PATH[task.app] : undefined;
+  if (task.app === "crm" && own) return `${own}?task=${task.id}`;
+  if (holds.tasks) return `/tasks?task=${task.id}`;
+  if (own && (!holds.apps || holds.apps.includes(task.app))) return `${own}?task=${task.id}`;
+  const fallback = (holds.apps ?? []).map((a) => (isTaskApp(a) ? APP_TASKS_PATH[a] : undefined)).find(Boolean);
+  return `${fallback ?? own ?? "/tasks"}?task=${task.id}`;
+}
+
 /** The shortest a remark may be: a word, not a keystroke. */
 export const REMARK_MIN = 3;
 export const REMARK_MAX = 2000;

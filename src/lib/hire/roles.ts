@@ -73,7 +73,7 @@ export const lockedWhy = (cap: HireCap) => `Needs ${whoCan(cap)}.`;
 /* ------------------------------------------------------------- navigation */
 
 export type HireNavKey =
-  | "board" | "candidates" | "calendar" | "tasks"
+  | "board" | "candidates" | "calendar" | "tasks" | "myTasks"
   | "interviews" | "review" | "decisions" | "compare"
   | "offers" | "documents" | "induction" | "provision"
   | "blueprints" | "questions" | "library"
@@ -94,6 +94,7 @@ export const HIRE_NAV: HireNavGroup[] = [
       { key: "candidates", label: "Candidates", href: "/hire/candidates", icon: "people" },
       { key: "calendar", label: "Calendar", href: "/hire/calendar", icon: "cal" },
       { key: "tasks", label: "Tasks", href: "/hire/tasks", icon: "check" },
+      { key: "myTasks", label: "My tasks", href: "/hire/my-tasks", icon: "list" },
     ],
   },
   {

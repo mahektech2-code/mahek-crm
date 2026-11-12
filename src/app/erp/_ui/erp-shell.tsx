@@ -101,6 +101,7 @@ const SCREEN_ICON: Record<string, string> = {
   credits: "wallet",
   expenses: "rupee",
   videos: "play",
+  myTasks: "check",
   settings: "settings",
 };
 

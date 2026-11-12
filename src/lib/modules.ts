@@ -1164,6 +1164,25 @@ export const APP_MODULES: AppModule[] = [
   ),
 ];
 
+/**
+ * MY TASKS, ONE PER APP — except TeleCRM's, which came first and is the
+ * ordinary module `crm.tasks`, and Hire's and the ERP's and HRMS's, which come
+ * from their own registries (Hire is one module, and its My tasks sits under
+ * it). Each is ALWAYS OPEN to whoever holds the app: a task somebody was given
+ * in an app has to be reachable in that app, and a narrowed grant that quietly
+ * hid the list of work owed would be a narrowing nobody meant. Last in each
+ * app's order, so the "first screen they hold" landing never lands here.
+ */
+const myTasks = (app: "accounts" | "sales" | "founder" | "enquiries" | "website", group: string): AppModule => ({
+  key: `${app}.my-tasks`,
+  app,
+  label: "My tasks",
+  group,
+  href: `/${app}/my-tasks`,
+  note: "Always open: their own tasks that belong to this app, the same rows as in the Tasks app.",
+});
+APP_MODULES.push(myTasks("accounts", "Overview"), myTasks("sales", "Field work"), myTasks("founder", "Today"), myTasks("enquiries", "Website Enquiries"), myTasks("website", "Website"));
+
 const BY_KEY = new Map(APP_MODULES.map((m) => [m.key, m]));
 
 /**
@@ -1208,6 +1227,7 @@ export const REMOVED_MODULES: Readonly<Record<string, AppId>> = {
 export const ALWAYS_OPEN_MODULES: ReadonlySet<string> = new Set([
   ...[...HRMS_ALWAYS_OPEN].map((k) => `hrms.${k}`),
   ...[...ERP_ALWAYS_OPEN].map((k) => `erp.${k}`),
+  ...["accounts", "sales", "founder", "enquiries", "website"].map((a) => `${a}.my-tasks`),
 ]);
 
 export function isAlwaysOpen(key: string): boolean {
@@ -1380,6 +1400,9 @@ export function moduleAllowed(
      nothing but its own row, not to "no rows means everything" and not to the
      administrator bypass either. */
   if (getModule(key)?.explicitOnly) return forApp.includes(key);
+  /* Always open is always open, whatever was ticked (a person's own tasks,
+     HRMS's check-in, the ERP's dashboard and settings). */
+  if (ALWAYS_OPEN_MODULES.has(key)) return true;
   /* A write level is a narrowing of its screen, never a way onto it: a row
      for the companion beside no row for the screen opens nothing. */
   const parent = getModule(key)?.writeOf;
