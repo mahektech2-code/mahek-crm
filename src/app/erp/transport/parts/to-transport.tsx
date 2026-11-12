@@ -111,7 +111,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{b.party}</span>
-                  <span className="block truncate text-meta text-muted">{b.area ?? b.partyCity ?? "—"}</span>
+                  <span className="block truncate text-meta text-muted">{b.area ?? b.partyCity ?? "—"}{b.deliveryParty !== b.party ? ` · delivered to ${b.deliveryParty}` : ""}</span>
                 </span>
                 <span className="text-meta text-body">{b.billDate ? shortDay(b.billDate) : "—"}</span>
                 <span>{canWrite ? <BoxInput id={b.id} value={b.packages} /> : (b.packages ?? "—")}</span>

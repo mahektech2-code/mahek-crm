@@ -268,6 +268,7 @@ function BillRow({ b, tick, share = false, onRemove }: { b: TripBill; tick?: { o
       </span>
       <span className="min-w-0">
         <span className="block truncate font-medium text-ink">{b.party}</span>
+        {b.deliveryParty !== b.party ? <span className="block truncate text-meta text-muted">delivered to {b.deliveryParty}</span> : null}
       </span>
       <span className={cx("tabular-nums text-meta", !b.litres && "text-warn")}>{b.litres ? nf(b.litres) : "none"}</span>
       <span className="min-w-0 truncate text-meta">
