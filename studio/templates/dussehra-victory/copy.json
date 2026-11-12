@@ -1,0 +1,26 @@
+{
+  "en": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "May the victory of good over evil bring new strength and success to you and the team at {company}."
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "Warm Dussehra wishes to you and everyone at {company}."
+    },
+    {
+      "id": "short",
+      "label": "Short",
+      "text": "Happy Dussehra, {contact}!"
+    }
+  ],
+  "hi": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "बुराई पर अच्छाई की जीत का यह पर्व आपको और {company} की टीम को नई ऊर्जा और सफलता दे।"
+    }
+  ]
+}

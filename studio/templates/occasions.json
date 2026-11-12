@@ -1,0 +1,38 @@
+[
+  {
+    "id": "dussehra",
+    "label": "Dussehra",
+    "date": "2026-10-20",
+    "color": "#E8832A"
+  },
+  {
+    "id": "diwali",
+    "label": "Diwali",
+    "date": "2026-11-08",
+    "color": "#C9962E"
+  },
+  {
+    "id": "newyear",
+    "label": "New Year",
+    "date": "2027-01-01",
+    "color": "#2B3A8F"
+  },
+  {
+    "id": "holi",
+    "label": "Holi",
+    "date": "2027-03-22",
+    "color": "#C23B7A"
+  },
+  {
+    "id": "independence",
+    "label": "Independence Day",
+    "date": "2027-08-15",
+    "color": "#138808"
+  },
+  {
+    "id": "anytime",
+    "label": "Any time",
+    "date": null,
+    "color": "#0F3460"
+  }
+]

@@ -121,6 +121,12 @@ export const AUDIT_GROUPS = [
     prefixes: ["task."],
   },
   {
+    slug: "studio",
+    label: "Studio",
+    hint: "Uploaded poster designs approved or sent back, and the shared birthdays and anniversaries",
+    prefixes: ["studio."],
+  },
+  {
     slug: "access",
     label: "People & access",
     hint: "Accounts created, apps granted, passwords, refusals and signing in as somebody",
@@ -346,6 +352,12 @@ const DESCRIBE: Record<string, Describer> = {
   "website.review.published": () => ["published approved website changes"],
   "website.review.enforcement_changed": () => ["changed whether website assignments are enforced"],
   "website.access.denied": () => ["was refused a website action"],
+  /* ---- the Studio */
+  "studio.design.approved": () => ["approved an uploaded poster design for everybody"],
+  "studio.design.sent_back": () => ["sent an uploaded poster design back with a note"],
+  "studio.date.created": () => ["added a shared birthday or anniversary"],
+  "studio.date.edited": () => ["changed a shared birthday or anniversary"],
+  "studio.date.deleted": () => ["deleted a shared birthday or anniversary"],
   /* ---- the Tasks app */
   "task.created": () => ["gave out a task"],
   "task.closed": () => ["closed a task"],

@@ -112,29 +112,26 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# THE IMAGE OPTIMISER'S BINARIES, WHICH NOTHING HERE ASKS FOR.
+# SHARP SHIPS NOW, AND THAT REVERSES THE REMOVAL THAT USED TO BE HERE. It
+# was deleted from the runtime image as 18 MB kept only for an image optimiser
+# that is switched off — true, and still true of the optimiser. What changed is
+# the Studio: its poster renderer IS sharp (libvips and Pango drawing Hindi and
+# Gujarati text onto a design), so the binaries are the app's own dependency
+# now, traced in by `src/lib/studio/renderer` rather than copied in by Next.
+# The optimiser stays off; `images.unoptimized` in next.config.ts still says
+# why.
 #
-# `next/image` is imported nowhere in this app and `images.unoptimized` is set,
-# so the resizing endpoint does not exist — see the note in next.config.ts for
-# why the one `<img>` this product renders is a plain tag pointing at
-# `/api/attachments/[id]`.
-#
-# Next copies `sharp` and its platform libvips build into `standalone` anyway,
-# OUTSIDE the file trace: `images.unoptimized` does not stop it and neither
-# does `outputFileTracingExcludes` — both were tried and the directory survived
-# both. So it is removed here, where it is visible to whoever reads the
-# Dockerfile, rather than hidden behind a config flag that does not do it.
-#
-# 18.3 MB of a 62 MB application layer, for an optimiser with nothing to
-# optimise. The registry this pushes to holds 500 MB in total and keeps several
-# tags for rolling back — deploys have already failed on that quota, so this is
-# a constraint rather than tidiness.
-#
-# VERIFIED, not assumed: the standalone server was started with these removed
-# and serves `/login` at 200 with nothing in its log. If it were needed it
-# would fail at the first request to the optimiser, and no request reaches an
-# optimiser that is switched off.
-RUN rm -rf ./node_modules/@img ./node_modules/sharp
+# The Studio's designs and fonts are read from disk by path, which no file
+# trace can see, so they are copied beside server.js by hand. fontconfig gives
+# Pango the configuration file it looks for; the fonts themselves are always
+# named by file, never found on the system.
+RUN apk add --no-cache fontconfig
+COPY --from=builder --chown=nextjs:nodejs /app/studio ./studio
+
+# A render that cannot draw Indic text must fail the BUILD, not the first
+# person to make a Hindi poster. This draws one line in each script with the
+# fonts the designs use and refuses an empty result.
+RUN node -e "const s=require('sharp');const f='/app/studio/assets/fonts/';Promise.all([['Noto Sans','NotoSans-Regular.ttf','Mahek'],['Noto Sans Devanagari','NotoSansDevanagari-Regular.ttf','शुभ दीपावली'],['Noto Sans Gujarati','NotoSansGujarati-Regular.ttf','શુભ દિવાળી']].map(([n,file,t])=>s({text:{text:t,font:n+' 40',fontfile:f+file}}).png().toBuffer({resolveWithObject:true}).then(r=>{if(r.info.width<40)throw new Error(n+' drew nothing');}))).then(()=>console.log('studio: text renders')).catch(e=>{console.error(e);process.exit(1);})"
 
 USER nextjs
 EXPOSE 3000

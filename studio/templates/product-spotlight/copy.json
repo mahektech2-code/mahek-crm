@@ -1,0 +1,21 @@
+{
+  "en": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Here is {product} from Mahek. We would be glad to share details with {company}."
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "{contact}, sharing {product} from Mahek. Happy to answer any questions from {company}."
+    }
+  ],
+  "hi": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Mahek का {product} आपके सामने है। {company} को इसकी जानकारी देने में हमें खुशी होगी।"
+    }
+  ]
+}

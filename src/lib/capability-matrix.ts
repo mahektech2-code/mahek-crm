@@ -823,6 +823,10 @@ export const MATRIX: Record<AppId, AppMatrix> = {
      company is a Tasks PERMISSION granted to a named person on the Access
      screen (`lib/tasks/permissions.ts`); the admin level holds every one. */
   tasks: { associate: [], manager: [] },
+  /* The Studio decides by MODULE, not by capability: approving an uploaded
+     design is the `studio.approve` module, ticked on the Access screen. What a
+     poster may be made FOR is scope — a person's own book, or their team's. */
+  studio: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the

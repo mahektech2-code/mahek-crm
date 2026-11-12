@@ -1,0 +1,33 @@
+{
+  "en": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Thank you for your interest in Mahek. We look forward to working with {company}."
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "Thank you for reaching out, {contact}. Our team is ready to help {company}."
+    },
+    {
+      "id": "short",
+      "label": "Short",
+      "text": "Welcome to Mahek, {contact}!"
+    }
+  ],
+  "hi": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Mahek में रुचि दिखाने के लिए धन्यवाद। हमें {company} के साथ काम करने की प्रतीक्षा है।"
+    }
+  ],
+  "gu": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Mahek માં રસ દાખવવા બદલ આભાર. અમે {company} સાથે કામ કરવા આતુર છીએ."
+    }
+  ]
+}

@@ -1,0 +1,178 @@
+{
+  "occasions": [
+    "dussehra",
+    "diwali",
+    "newyear",
+    "holi",
+    "independence",
+    "anytime"
+  ],
+  "designs": [
+    {
+      "id": "dussehra-victory",
+      "occasion": "dussehra",
+      "category": "festival",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm",
+          "short"
+        ],
+        "hi": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "diwali-classic",
+      "occasion": "diwali",
+      "category": "festival",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm"
+        ],
+        "hi": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "diwali-premium",
+      "occasion": "diwali",
+      "category": "festival",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi",
+        "gu"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm",
+          "short"
+        ],
+        "hi": [
+          "formal",
+          "warm"
+        ],
+        "gu": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "newyear-gold",
+      "occasion": "newyear",
+      "category": "festival",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm"
+        ],
+        "hi": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "holi-colour",
+      "occasion": "holi",
+      "category": "festival",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm"
+        ],
+        "hi": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "independence-salute",
+      "occasion": "independence",
+      "category": "festival",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm"
+        ],
+        "hi": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "product-spotlight",
+      "occasion": "anytime",
+      "category": "promotion",
+      "requires": [
+        "product"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm"
+        ],
+        "hi": [
+          "formal"
+        ]
+      }
+    },
+    {
+      "id": "welcome-note",
+      "occasion": "anytime",
+      "category": "greeting",
+      "requires": [],
+      "languages": [
+        "en",
+        "hi",
+        "gu"
+      ],
+      "wording": {
+        "en": [
+          "formal",
+          "warm",
+          "short"
+        ],
+        "hi": [
+          "formal"
+        ],
+        "gu": [
+          "formal"
+        ]
+      }
+    }
+  ]
+}

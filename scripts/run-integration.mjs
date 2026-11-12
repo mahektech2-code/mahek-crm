@@ -44,6 +44,9 @@ const files = [
   "src/lib/journeys.test.ts",
   // The Tasks app: closing with proof, transfers with consent, a manager's move.
   "src/lib/tasks/tasks.integration.test.ts",
+  // The Studio: posters only for your own book, recipes that redraw, bulk skips
+  // said in words, and an upload published only by somebody given approval.
+  "src/lib/studio/studio.integration.test.ts",
   // Routines: one task a day per routine, changed only by its setter or a manager.
   "src/lib/tasks/routines.integration.test.ts",
   "src/lib/tasks/audiences.integration.test.ts",

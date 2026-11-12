@@ -311,7 +311,7 @@ jobs:
       # what it needs to start at all, and says so in one line rather than as
       # a container that never comes up.
       - name: It has a server to run
-        run: docker run --rm --entrypoint sh mahekone:ci -c 'test -f server.js && test -d .next/static && test -d public'
+        run: docker run --rm --entrypoint sh mahekone:ci -c 'test -f server.js && test -d .next/static && test -d public && test -f studio/templates/occasions.json && test -f studio/assets/fonts/fonts.json'
 
       - name: Lay it out the way the droplet is
         run: |

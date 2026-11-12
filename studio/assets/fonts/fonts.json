@@ -1,0 +1,29 @@
+{
+  "_note": "Font registry read by the renderer and the template validator. Fonts load from these files, never from fonts installed on the host. STATUS: the fonts below are INTERIM. They are the Phase 0 proof fonts (Noto, SIL OFL 1.1) and are not Mahek's final poster fonts; the final choice and licence are decision D-7 / D-30. Swapping a font means editing this file and the template font roles, not renderer code.",
+  "families": [
+    {
+      "id": "noto-sans",
+      "family": "Noto Sans",
+      "scripts": ["latin"],
+      "licence": "SIL Open Font License 1.1 (OFL-latin.txt)",
+      "source": "notofonts/latin-greek-cyrillic release NotoSans-v2.015",
+      "files": { "400": "NotoSans-Regular.ttf", "700": "NotoSans-Bold.ttf" }
+    },
+    {
+      "id": "noto-sans-devanagari",
+      "family": "Noto Sans Devanagari",
+      "scripts": ["devanagari"],
+      "licence": "SIL Open Font License 1.1 (OFL-devanagari.txt)",
+      "source": "notofonts/devanagari release NotoSansDevanagari-v2.007",
+      "files": { "400": "NotoSansDevanagari-Regular.ttf", "700": "NotoSansDevanagari-Bold.ttf" }
+    },
+    {
+      "id": "noto-sans-gujarati",
+      "family": "Noto Sans Gujarati",
+      "scripts": ["gujarati"],
+      "licence": "SIL Open Font License 1.1 (OFL-gujarati.txt)",
+      "source": "notofonts/gujarati release NotoSansGujarati-v2.106",
+      "files": { "400": "NotoSansGujarati-Regular.ttf", "700": "NotoSansGujarati-Bold.ttf" }
+    }
+  ]
+}

@@ -36,6 +36,7 @@ const SHELLS: Partial<Record<AppId, string[]>> = {
   hire: ["src/app/hire/_ui/hire-shell.tsx"],
   docs: ["src/app/docs/docs-shell.tsx"],
   tasks: ["src/app/tasks/_ui/tasks-shell.tsx"],
+  studio: ["src/app/studio/_ui/studio-shell.tsx"],
 };
 
 /*
