@@ -52,7 +52,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const attentionAt = (href: string) => attention.find((a) => a.href === href)?.n ?? 0;
   const counts: Record<string, number> = {
     [ADMIN.home]: attention.filter((a) => a.tone === "danger").length,
-    [ADMIN.feedback()]: feedback.new,
+    [ADMIN.feedback()]: feedback.reply,
     [ADMIN.catalogue()]: attentionAt(ADMIN.catalogue("duplicates")),
     [ADMIN.sheets()]: attentionAt(ADMIN.sheets("issues")),
   };

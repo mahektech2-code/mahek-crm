@@ -1,0 +1,64 @@
+# CLAUDE WRITES A FIX FOR A FEEDBACK REPORT, AND A PERSON MERGES IT.
+#
+# MahekOne's Admin Console turns a report that needs a code change into an
+# issue here, and "Ask Claude to fix" — a platform administrator's button —
+# puts the `ai-fix` label on it (the label is the `feedbackFix.aiFixLabel`
+# setting; the two must match). This workflow starts on that label, or on a
+# comment mentioning @claude from somebody with write access, and runs Claude
+# Code on the issue: it reads AGENTS.md, makes the change with a test, and
+# opens a pull request against main whose description says `Fixes #<issue>`
+# and `Feedback: FB-<n>`.
+#
+# Nothing here merges. The pull request goes through CI and review like any
+# other; once it is merged and deployed, MahekOne's hourly `feedback-fixes`
+# step sees the commit in the serving build and closes the report.
+#
+# Needs the ANTHROPIC_API_KEY repository secret, and the Claude GitHub App on
+# the repository (it is what lets the pull request run CI).
+name: Claude fix
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-fix-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: >-
+      (github.event_name == 'issues' && github.event.label.name == 'ai-fix') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          label_trigger: ai-fix
+          trigger_phrase: "@claude"
+          branch_prefix: claude/fb-
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(npm run test*),Bash(npx tsc*),Bash(npx eslint*),Bash(git status*),Bash(git diff*),Bash(git log*),Bash(gh pr create*),Bash(gh pr view*)"
+            --append-system-prompt "This issue was opened by MahekOne from a staff feedback report. Follow AGENTS.md. Make the smallest change that fixes what the reporter saw and add a test. Run npm run test and npx tsc --noEmit (with NODE_OPTIONS=--max-old-space-size=7000). Then open a pull request against main with gh pr create whose body contains 'Fixes #<this issue number>' and the 'Feedback: FB-<n>' line from the issue. If the report does not say enough, comment with your question instead of guessing. Never merge."

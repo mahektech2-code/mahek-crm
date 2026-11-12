@@ -157,6 +157,32 @@ export default async function IntegrationsPage() {
       </Section>
 
       <Section
+        id="github"
+        title="Fixing feedback (GitHub)"
+        hint="Lets the console send a feedback report to the developer as a GitHub issue, ask Claude to fix it, and close the report itself once the fix is live. Without it, Copy for developer still works."
+      >
+        <Card>
+          <div className="divide-y divide-divider">
+            {secrets
+              .filter((s) => s.name === "github.token")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "GitHub token",
+                    env: "GITHUB_FEEDBACK_TOKEN",
+                    what: "Opens an issue for a report, adds the label that starts Claude's fix, and reads which pull request fixed it and whether that is in the build now serving. Which repository is a setting under Settings → AI assistants → Fixing feedback.",
+                    where: "github.com → Settings → Developer settings → Fine-grained tokens. Only the MahekOne repository, with Issues: read and write, Pull requests: read, Contents: read, Metadata: read.",
+                  }}
+                />
+              ))}
+          </div>
+        </Card>
+      </Section>
+
+      <Section
         id="sign-in-codes"
         title="Sign-in codes"
         hint="The key MiniMoth sends one-time sign-in codes with — for the MahekOne web sign-in, the MBOS handset, and password resets. Setting it is what switches codes on."

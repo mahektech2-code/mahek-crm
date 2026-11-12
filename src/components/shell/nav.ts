@@ -363,6 +363,9 @@ export const NAV: NavGroup[] = [
     icon: "book",
     items: [
       { href: at("/help"), label: "Help Center", icon: "book" },
+      // Your own feedback — what you sent from any app and what came back.
+      // Always open (`crm.feedback`), like every app's Feedback page.
+      { href: at("/feedback"), label: "Feedback", icon: "chat" },
       // Configuration is not here. Every setting in MahekOne is changed in the
       // Admin Console, so an app that also offered them would be a second place
       // for the same fact to live.

@@ -1,0 +1,27 @@
+A report is a **conversation**, not a ticket. Both sides write to the same thread and each side's message notifies the other, because silence is what teaches a team to stop reporting things.
+
+## The rules
+
+- **Anybody signed in may report.** Answering is a manager's, or whoever holds the Admin Console — checked on the server, not by hiding a button.
+- **Where it happened is captured, never typed.** The path, the app it belongs to and the browser go with every report.
+- **One box.** The first line becomes the heading, so nobody has to write a summary before they have written the thing.
+- **How much it is in the way** is asked of a fault only, and orders the team's queue: can't-work first, then slows-down, then whoever has waited longest.
+- **Same problem, one conversation.** A report can point at another. It keeps its own words and screenshots and reads the other's status and conversation; every reply there reaches everybody who reported it. Only one level deep — joining a report that itself points elsewhere joins the one it points at.
+- **Team notes** are lines of the same thread that the reporter never reads and is never told about.
+- **Done closes a report.** Nobody waits for the reporter to confirm. They are asked; **Still happening** reopens it into the team's **Needs a reply** queue.
+- **Nothing is deleted.** A declined report stands, with its reason.
+
+## Which queue a report is in
+
+<Flow caption="triageQueue" chart={`
+flowchart TD
+  S{"Status"} -- "Done or Not doing" --> C["Closed"]
+  S -- "New or Being looked at" --> L{"The last line the reporter can read"}
+  L -- "is theirs, or there is none" --> R["Needs a reply"]
+  L -- "is a written reply from the team" --> W["Waiting on them"]
+  L -- "is only a status change" --> B["Being looked at"]
+`} />
+
+## Where it is read
+
+The Feedback page is inside every app that has a sidebar to put it in — the CRM, Accounts, the Sales Dashboard, the ERP, HRMS and the Founder Command Centre — and it is **always open**: a narrowed grant never hides it. A notification links to `/feedback`, which forwards to the first of those apps the person holds, so the link works from any app's bell.

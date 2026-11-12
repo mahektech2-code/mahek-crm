@@ -5,6 +5,7 @@ import {
   smallint,
   bigint,
   bigserial,
+  serial,
   numeric,
   boolean,
   doublePrecision,
@@ -4669,6 +4670,35 @@ export const feedback = pgTable(
     userAgent: text("user_agent"),
     status: feedbackStatusEnum("status").notNull().default("new"),
     /**
+     * The number people say out loud — "FB-1042". The id is for joins; this is
+     * what goes in a notification, a GitHub issue and a conversation in the
+     * corridor. A sequence, so it is never reused.
+     */
+    number: serial("number").notNull(),
+    /**
+     * How much it is getting in the way, in the reporter's own judgement:
+     * `blocking` (cannot work), `slows`, `minor`. Null for anything that is not
+     * a fault, and for reports sent before it was asked.
+     */
+    impact: text("impact"),
+    /** Who on the team is holding it. Null is nobody — said in words on the list. */
+    assigneeId: text("assignee_id").references(() => users.id),
+    /**
+     * "Same problem as" another report. Set by the reporter pressing "add mine
+     * to it", or by triage merging. The report keeps its own words and files;
+     * its status and conversation are read off the one it points at, and
+     * every reply there is told to its reporter too. One level only — the
+     * actions never point at a report that is itself a duplicate.
+     */
+    duplicateOfId: text("duplicate_of_id").references((): AnyPgColumn => feedback.id),
+    /**
+     * The reporter's answer once triage said Done: `fixed` or
+     * `still_happening`. Null while nobody has asked or they have not said.
+     * "Done" is triage's word; this is the only proof the fix reached them.
+     */
+    verdict: text("verdict"),
+    verdictAt: timestamp("verdict_at", { withTimezone: true }),
+    /**
      * Who last said something on the thread from the triage side, and when.
      * The reply itself is a row in `feedback_messages` — this pair is what the
      * list needs to say "answered by X" without reading every message.
@@ -4687,6 +4717,20 @@ export const feedback = pgTable(
   (t) => [
     index("feedback_status_idx").on(t.status, t.createdAt),
     index("feedback_user_idx").on(t.userId, t.createdAt),
+    uniqueIndex("feedback_number_key").on(t.number),
+    index("feedback_duplicate_idx").on(t.duplicateOfId),
+    check(
+      "feedback_impact_check",
+      sql`${t.impact} is null or ${t.impact} in ('blocking', 'slows', 'minor')`,
+    ),
+    check(
+      "feedback_verdict_check",
+      sql`${t.verdict} is null or ${t.verdict} in ('fixed', 'still_happening')`,
+    ),
+    check(
+      "feedback_not_own_duplicate",
+      sql`${t.duplicateOfId} is null or ${t.duplicateOfId} <> ${t.id}`,
+    ),
   ],
 );
 
@@ -4723,6 +4767,12 @@ export const feedbackMessages = pgTable(
     body: text("body"),
     /** Set where this line also moved the report along. */
     statusTo: feedbackStatusEnum("status_to"),
+    /**
+     * A team note: read by whoever triages, never by the reporter, and never
+     * notified to them. Kept in the same thread so the reasoning sits beside
+     * the reply it led to.
+     */
+    internal: boolean("internal").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -4730,6 +4780,67 @@ export const feedbackMessages = pgTable(
     check(
       "feedback_messages_say_something",
       sql`${t.body} is not null or ${t.statusTo} is not null`,
+    ),
+  ],
+);
+
+/**
+ * Fixing a report. One row per ROOT report, written as it moves from "what
+ * does this need" to "the fix is live".
+ *
+ * `need` is the answer to the first question, and it decides what the console
+ * offers: only `code_change` reaches GitHub; every other need is something the
+ * team does itself, and `diagnosis.steps` says how. The AI proposes it
+ * (`diagnosed_*`); a triager may overrule it (`need_decided_by_id`), and the
+ * AI never writes over a person's answer.
+ *
+ * The issue, the pull request and the deploy are read back from GitHub by the
+ * hourly check: a merged PR whose commit is in the build now serving closes
+ * the report and tells everybody who reported it.
+ */
+export const feedbackFixes = pgTable(
+  "feedback_fixes",
+  {
+    feedbackId: text("feedback_id")
+      .primaryKey()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    need: text("need"),
+    /** `{ summary, steps[], where, confidence }` — see `lib/feedback-fix.ts`. */
+    diagnosis: jsonb("diagnosis"),
+    diagnosisModel: text("diagnosis_model"),
+    diagnosedAt: timestamp("diagnosed_at", { withTimezone: true }),
+    diagnosedById: text("diagnosed_by_id").references(() => users.id),
+    /** A person chose `need`, so the AI does not answer it again. */
+    needDecidedById: text("need_decided_by_id").references(() => users.id),
+    issueNumber: integer("issue_number"),
+    issueUrl: text("issue_url"),
+    issueCreatedAt: timestamp("issue_created_at", { withTimezone: true }),
+    issueCreatedById: text("issue_created_by_id").references(() => users.id),
+    aiFixRequestedAt: timestamp("ai_fix_requested_at", { withTimezone: true }),
+    aiFixRequestedById: text("ai_fix_requested_by_id").references(() => users.id),
+    prNumber: integer("pr_number"),
+    prUrl: text("pr_url"),
+    prState: text("pr_state"),
+    prMergedSha: text("pr_merged_sha"),
+    prMergedAt: timestamp("pr_merged_at", { withTimezone: true }),
+    deployedBuild: text("deployed_build"),
+    deployedAt: timestamp("deployed_at", { withTimezone: true }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("feedback_fixes_issue_key").on(t.issueNumber).where(sql`${t.issueNumber} is not null`),
+    index("feedback_fixes_waiting_idx")
+      .on(t.issueNumber)
+      .where(sql`${t.issueNumber} is not null and ${t.deployedAt} is null`),
+    check(
+      "feedback_fixes_need_check",
+      sql`${t.need} is null or ${t.need} in ('code_change','data_fix','setting','access','how_to','not_a_fault')`,
+    ),
+    check(
+      "feedback_fixes_pr_state_check",
+      sql`${t.prState} is null or ${t.prState} in ('open','merged','closed')`,
     ),
   ],
 );

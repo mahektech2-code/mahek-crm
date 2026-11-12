@@ -582,6 +582,7 @@ export const SECTION_TITLE: Record<import("./types").SectionKey, string> = {
   people: "People & organisation",
   system: "Data operations & health",
   tasks: "My tasks",
+  feedback: "Feedback",
 };
 
 /** Up to eight of the records behind a Company figure. */

@@ -130,8 +130,8 @@ describe("the founder app grant", () => {
     const modules = await listUserModules(founderUser.id, "founder");
     assert.deepEqual(
       modules.map((m) => m.key),
-      /* …except My tasks, which is always open. */
-      ["founder.overview", "founder.my-tasks"],
+      /* …except My tasks and Feedback, which are always open. */
+      ["founder.overview", "founder.my-tasks", "founder.feedback"],
     );
   });
 });

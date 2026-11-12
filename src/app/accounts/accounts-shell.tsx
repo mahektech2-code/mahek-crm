@@ -228,6 +228,10 @@ export function AccountsShell({
         { href: "/accounts/audit", label: "Audit log", icon: "audit" },
       ],
     },
+    {
+      label: "Support",
+      items: [{ href: "/accounts/feedback", label: "Feedback", icon: "chat" }],
+    },
   ];
 
   const permitted = new Set(allowed);
