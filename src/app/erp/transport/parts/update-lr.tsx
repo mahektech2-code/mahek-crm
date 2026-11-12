@@ -134,7 +134,7 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
       <DialogBody className="gap-4">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-body">
           <span>
-            <span className="font-medium text-ink">{[...new Set(group.map((b) => b.deliveryParty))].join(", ")}</span> · {plural(group.length, "bill")} · {own ? [c.vehicleNo ?? MAHEK_VEHICLE, c.driver].filter(Boolean).join(" · ") : (c.transporter ?? "No transporter")}
+            <span className="font-medium text-ink">{[...new Set(group.map((b) => b.party))].join(", ")}</span> · {plural(group.length, "bill")} · {own ? [c.vehicleNo ?? MAHEK_VEHICLE, c.driver].filter(Boolean).join(" · ") : (c.transporter ?? "No transporter")}
           </span>
           {own ? <CallLink phone={driverPhone(c.driver)} name={c.driver ?? "Driver"} /> : <CallLink phone={c.transporterPhone} name={c.transporter} />}
         </div>

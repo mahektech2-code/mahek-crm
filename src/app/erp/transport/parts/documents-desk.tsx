@@ -323,10 +323,10 @@ export function DocumentsDesk({
                 >
                   <Thumb fileId={r.l.fileId} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-ink">{titleOf(r.l)}</span>
+                    <span className="block truncate text-sm font-semibold text-ink">{titleOf(r)}</span>
                     <span className="flex items-center gap-1 truncate text-meta text-muted">
                       <Icon n={r.l.fromPhone ? "phone" : "file"} s={12} />
-                      {[r.l.uploadedBy, clock(new Date(r.l.uploadedAt)), subOf(r.l)].filter(Boolean).join(" · ")}
+                      {[r.l.uploadedBy, clock(new Date(r.l.uploadedAt)), subOf(r)].filter(Boolean).join(" · ")}
                     </span>
                   </span>
                   <StateIcon state={r.state} />
@@ -443,7 +443,7 @@ function PendingDesk({
                 className={cx("flex w-full cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-left last:border-0", sel?.b.key === p.b.key ? "bg-brand-soft" : "hover:bg-canvas")}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-ink">{p.b.c.deliveryParty}</span>
+                  <span className="block truncate text-sm font-semibold text-ink">{p.b.c.party}</span>
                   <span className="block truncate text-meta text-muted">
                     {[p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? "Mahek Vehicle") : p.b.c.transporter].filter(Boolean).join(" · ")}
                   </span>
@@ -515,7 +515,7 @@ function PendingDetail({
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-start gap-3 border-b border-divider px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-lg font-semibold text-ink">{c.deliveryParty}</div>
+          <div className="truncate text-lg font-semibold text-ink">{c.party}</div>
           <div className="flex flex-wrap items-center gap-2 text-meta text-muted">
             <BillRef c={c} />
             {[c.billDate ? shortDay(c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, c.ownVehicle ? (c.vehicleNo ? `Mahek Vehicle ${c.vehicleNo}` : "Mahek Vehicle") : c.transporter].filter(Boolean).join(" · ")}
@@ -565,8 +565,8 @@ function PendingDetail({
                 <div key={r.l.id} className="flex flex-wrap items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0">
                   <Thumb fileId={r.l.fileId} size={36} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-ink">{titleOf(r.l)}</span>
-                    <span className="block truncate text-meta text-muted">{[subOf(r.l), `uploaded ${clock(new Date(r.l.uploadedAt))}`].filter(Boolean).join(" · ")}</span>
+                    <span className="block truncate font-medium text-ink">{titleOf(r)}</span>
+                    <span className="block truncate text-meta text-muted">{[subOf(r), `uploaded ${clock(new Date(r.l.uploadedAt))}`].filter(Boolean).join(" · ")}</span>
                   </span>
                   {copyKind === "lr" && r.l.kind === "signed_copy" ? <Badge label="Signed copy" tone="brand" /> : null}
                   {reasons.slice(0, 2).map((x) => (
@@ -588,16 +588,37 @@ function PendingDetail({
   );
 }
 
-function titleOf(l: UploadedLr): string {
+/*
+ * A COPY IS NAMED BY ITS BILLING PARTY, DETECTED. The AI reads the consignee
+ * off the photo — the delivery party, and sometimes our own name misread from
+ * the consignor box — so the desk names a copy by who is BILLED on the bill it
+ * belongs to: the bill whose number the copy names, else the one the desk is
+ * sure of, else the best bill whose party matches the consignee. Only where no
+ * bill can be found does it fall back to what was read, then the transporter.
+ */
+function billOf(r: Row): Bill | null {
+  const hit =
+    r.ranked.find((x) => x.reasons.includes("same bill no.")) ??
+    (r.pick ? r.ranked.find((x) => x.b.key === r.pick) : undefined) ??
+    r.ranked.find((x) => x.reasons.includes("same party") && x.score > 0);
+  return hit?.b ?? null;
+}
+
+function titleOf(r: Row): string {
+  const l = r.l;
+  const billed = billOf(r)?.c.party;
+  if (billed) return billed;
   if (l.kind === "signed_copy") return l.partyHint ?? (l.billHint ? `Bill ${l.billHint}` : "Not read");
   return l.partyHint ?? l.transporter ?? (l.lrNo ? lrLabel(l.lrNo) : "Not read");
 }
 
-function subOf(l: UploadedLr): string | null {
-  if (l.kind === "signed_copy") return l.billHint && l.partyHint ? l.billHint : null;
+function subOf(r: Row): string | null {
+  const l = r.l;
+  const named = billOf(r) != null || !!l.partyHint;
+  if (l.kind === "signed_copy") return named && l.billHint ? l.billHint : null;
   const no = l.lrNo ?? (l.readLrNo ? `${l.readLrNo}?` : null);
-  /* The consignee is the title once it is read, so the transporter moves down beside the number. */
-  return l.partyHint && l.transporter ? [l.transporter, no].filter(Boolean).join(" ") : no;
+  /* A party is the title once one is known, so the transporter moves down beside the number. */
+  return named && l.transporter ? [l.transporter, no].filter(Boolean).join(" ") : no;
 }
 
 function Tally({ icon, tone, n, label }: { icon: string; tone: string; n: number; label: string }) {
@@ -942,7 +963,7 @@ function Detail({
                       className={checkboxClass}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-ink">{b.c.deliveryParty}</span>
+                      <span className="block truncate font-medium text-ink">{b.c.party}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
                         {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? "Mahek Vehicle")].filter(Boolean).join(" · ")}
@@ -999,7 +1020,7 @@ function Detail({
               <span className="flex-1 text-meta text-muted">
                 {selIds.length ? `${plural(selBills.length, "bill")}${boxes != null ? ` · ${plural(boxes, "box", "boxes")}` : ""}` : ""}
                 {lr && l.packages != null && boxes != null && boxes !== l.packages ? <span className="ml-2 text-warn-ink">The LR says {l.packages}</span> : null}
-                {otherParty ? <span className="ml-2 text-warn-ink">The LR is for {l.partyHint}, not {otherParty.b.c.deliveryParty}</span> : null}
+                {otherParty ? <span className="ml-2 text-warn-ink">The LR is for {l.partyHint}, not {otherParty.b.c.party}</span> : null}
               </span>
               <Button variant="primary" disabled={pending || !!blocked} title={blocked ?? undefined} onClick={attach}>
                 {lr ? `Attach${selBills.length ? ` to ${plural(selBills.length, "bill")}` : ""}` : "Attach & mark delivered"}

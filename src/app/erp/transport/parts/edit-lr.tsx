@@ -222,7 +222,7 @@ function EditForm({ lr, group, today, transporters, notifyOn, onClose }: { lr: U
               {group.map((c) => (
                 <li key={c.id} className="flex items-center gap-3 px-3 py-2 text-sm">
                   <BillRef c={c} />
-                  <span className="min-w-0 flex-1 truncate text-body">{c.deliveryParty}</span>
+                  <span className="min-w-0 flex-1 truncate text-body">{c.party}</span>
                   {c.phase === "delivered" ? (
                     <span className="text-meta text-muted">Delivered — keeps its LR</span>
                   ) : (

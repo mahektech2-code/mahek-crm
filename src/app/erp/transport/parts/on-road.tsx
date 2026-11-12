@@ -98,7 +98,7 @@ export function OnRoad({
         const late = isLate(bills);
         const issue = bills.find((b) => b.issue);
         const boxes = sumPackages(bills);
-        const parties = [...new Set(bills.map((b) => b.deliveryParty))];
+        const parties = [...new Set(bills.map((b) => b.party))];
         const since = c.lrDate ?? c.billDate;
         const online = trackingLink(c.transporterTrackUrl, c.lrNo);
         const waiting = bills.reduce((a, b) => Math.max(a, b.messagesWaiting), 0);
@@ -268,7 +268,7 @@ function ActionDialog({ dialog, today, notifyOn, onClose }: { dialog: { kind: "i
       </DialogHeader>
       <DialogBody className="gap-3">
         <div className="text-sm text-body">
-          {[...new Set(dialog.group.map((b) => b.deliveryParty))].join(", ")} · {plural(dialog.group.length, "bill")} · {c.transporter ?? "—"}
+          {[...new Set(dialog.group.map((b) => b.party))].join(", ")} · {plural(dialog.group.length, "bill")} · {c.transporter ?? "—"}
         </div>
         {dialog.kind === "issue" ? (
           <>
@@ -348,7 +348,7 @@ export function DeliveredByDialog({ group, transporters, onClose }: { group: Con
       </DialogHeader>
       <DialogBody className="gap-3">
         <div className="text-sm text-body">
-          {[...new Set(group.map((b) => b.deliveryParty))].join(", ")} · {plural(group.length, "bill")}
+          {[...new Set(group.map((b) => b.party))].join(", ")} · {plural(group.length, "bill")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {[false, true].map((o) => (
@@ -425,7 +425,7 @@ function SignedDeliveredDialog({ group, today, notifyOn, waiting, onClose }: { g
   return (
     <ErpDialog onClose={onClose} label="Delivered" size="sm" tall={false}>
       <DialogHeader onClose={onClose}>
-        <DialogTitle>Delivered · {c.deliveryParty}</DialogTitle>
+        <DialogTitle>Delivered · {c.party}</DialogTitle>
       </DialogHeader>
       <DialogBody className="gap-3">
         <div className="flex items-center gap-2 text-meta text-body">
