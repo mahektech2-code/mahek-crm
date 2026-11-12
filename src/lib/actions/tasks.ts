@@ -14,7 +14,7 @@ import { bindAttachments } from "@/lib/services/attachment-service";
 import {
   checklistFrom,
   closeProblems,
-  isTaskApp,
+  isTaskApp, canFileUnder,
   managesBoth,
   newTaskProblems,
   parseQuickAdd,
@@ -185,7 +185,7 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
 export async function quickAddTask(text: string, app = "tasks"): Promise<Result<{ ids: string[] }>> {
   const parsed = parseQuickAdd(text, await today());
   if (!parsed.title) return err("Type what needs doing.");
-  return createTask({ ...parsed, app: isTaskApp(app) ? app : "tasks", proofRequired: false, assigneeIds: [], priority: parsed.priority });
+  return createTask({ ...parsed, app: canFileUnder(app) ? app : "tasks", proofRequired: false, assigneeIds: [], priority: parsed.priority });
 }
 
 /* -------------------------------------------------------------- editing */
@@ -540,7 +540,7 @@ export type TaskOptions = {
 export async function loadTaskOptions(): Promise<Result<TaskOptions>> {
   const user = await requireUser();
   const [held, team, day] = await Promise.all([listUserApps(user.id), teamPeople(user, "give"), today()]);
-  const apps = ["tasks", ...held.filter((a) => isTaskApp(a) && a !== "tasks")];
+  const apps = ["tasks", ...held.filter((a) => canFileUnder(a) && a !== "tasks")];
   return ok({ today: day, me: { id: user.id, name: user.name }, apps, team });
 }
 

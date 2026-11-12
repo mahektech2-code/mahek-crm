@@ -9700,8 +9700,11 @@ of the follow-up engine does not); a My tasks on the Factory phone app.
 **EVERY APP HAS ITS OWN MY TASKS, AND IT IS ALWAYS OPEN.** `APP_TASKS_PATH` in
 `lib/tasks/rules.ts` is where each lives — `/crm/tasks`, and `/<app>/my-tasks`
 for Accounts, Sales, ERP, HRMS and Founder, and for now no other app (`my-tasks`
-because Sales already had a `tasks` meaning something else). A task of another
-app is seen in the Tasks app. Each is
+because Sales already had a `tasks` meaning something else). A NEW task or
+routine may be filed only under Personal or one of those apps (`canFileUnder`,
+`TASK_FILE_APPS`), on the pickers and in the actions; a task or routine filed
+under Hire, Enquiries, Website or Factory earlier keeps its app and is seen in
+the Tasks app. Each is
 `AppTasksPage` for its app: the viewer's own tasks of that app plus personal
 ones (`shownInApp`), with what waits in other apps counted. Except TeleCRM's,
 every one is in `ALWAYS_OPEN_MODULES` — `<app>.my-tasks`, and `erp.myTasks` /

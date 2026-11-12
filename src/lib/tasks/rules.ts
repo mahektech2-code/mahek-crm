@@ -71,6 +71,16 @@ export const APP_TASKS_PATH: Partial<Record<TaskApp, string>> = {
   founder: "/founder/my-tasks",
 };
 
+/**
+ * The apps a NEW task or routine may be filed under: Personal, and the apps
+ * that have their own My tasks. Hire, Website Enquiries, Website and Factory
+ * are still `TASK_APPS` so a task already filed there reads as it did, but
+ * nothing new is put in them, because nobody there has a screen to see it on.
+ */
+export const TASK_FILE_APPS: readonly TaskApp[] = ["tasks", ...(Object.keys(APP_TASKS_PATH) as TaskApp[])];
+export const canFileUnder = (v: string): v is TaskApp => (TASK_FILE_APPS as readonly string[]).includes(v);
+
+
 /** Does an app's own My tasks show this task: its own app's work, and personal tasks. */
 export const shownInApp = (taskApp: string, app: TaskApp) => taskApp === app || taskApp === "tasks";
 
@@ -173,7 +183,7 @@ export function newTaskProblems(input: NewTaskInput): FieldProblem[] {
   const title = input.title.trim();
   if (!title) out.push({ field: "title", message: "Say what needs doing." });
   else if (title.length > TITLE_MAX) out.push({ field: "title", message: `Keep it under ${TITLE_MAX} characters — put the detail in the note.` });
-  if (!isTaskApp(input.app)) out.push({ field: "app", message: "Pick the app this work happens in." });
+  if (!canFileUnder(input.app)) out.push({ field: "app", message: "Pick the app this work happens in." });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) out.push({ field: "dueDate", message: "Pick the day it is due." });
   if (input.dueTime && !/^[0-2]\d:[0-5]\d$/.test(input.dueTime)) out.push({ field: "dueTime", message: "Use a time like 15:30." });
   if (!(TASK_PRIORITIES as readonly string[]).includes(input.priority)) out.push({ field: "priority", message: "Pick a priority." });

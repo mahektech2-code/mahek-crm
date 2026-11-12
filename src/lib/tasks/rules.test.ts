@@ -4,6 +4,7 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import {
   APP_TASKS_PATH,
+  canFileUnder,
   shownInApp,
   taskLink,
   checklistFrom,
@@ -129,6 +130,12 @@ describe("every app's own My tasks", () => {
       assert.ok(existsSync(page), `${path} has no page`);
       assert.match(readFileSync(page, "utf8"), new RegExp(`<AppTasksPage app="${app}"`), `${path} must render AppTasksPage for ${app}`);
     }
+  });
+
+  it("a new task can be filed only under Personal and the apps with a My tasks", () => {
+    for (const a of ["tasks", "crm", "accounts", "sales", "erp", "hrms", "founder"]) assert.equal(canFileUnder(a), true, a);
+    for (const a of ["hire", "enquiries", "website", "factory"]) assert.equal(canFileUnder(a), false, a);
+    assert.equal(newTaskProblems({ title: "Call", app: "hire", dueDate: "2026-11-12", priority: "normal" })[0]?.field, "app");
   });
 
   it("an app shows its own tasks and personal ones, nothing else", () => {

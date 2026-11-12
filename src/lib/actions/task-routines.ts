@@ -62,12 +62,12 @@ export type SaveRoutineInput = {
 
 export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id: string }>> {
   const user = await requireUser();
-  const problems = routineProblems(input);
+  const before = input.id ? await getRoutine(input.id) : null;
+  if (input.id && !before) return err("That routine no longer exists.", "not_found");
+  const problems = routineProblems(input, { keepApp: before?.app });
   if (problems.length) return fieldsErr(problems);
   const r = normaliseRoutine(input);
 
-  const before = input.id ? await getRoutine(input.id) : null;
-  if (input.id && !before) return err("That routine no longer exists.", "not_found");
   if (before && !(await canManageFor(user, before.assigneeId, before.createdById))) return err("Only whoever set this routine, or a manager above its person, can change it.", "not_permitted");
 
   const audience = input.audience ?? null;
