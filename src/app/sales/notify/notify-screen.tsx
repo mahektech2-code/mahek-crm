@@ -125,7 +125,7 @@ export function NotifyScreen({
             className={
               "h-8.5 rounded-[4px] border px-3.5 text-[13px] " +
               (audience === "all"
-                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                ? "border-brand bg-brand-soft font-medium text-brand-hover"
                 : "border-line bg-surface text-body hover:bg-canvas")
             }
           >
@@ -137,7 +137,7 @@ export function NotifyScreen({
             className={
               "h-8.5 rounded-[4px] border px-3.5 text-[13px] " +
               (audience === "ids"
-                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                ? "border-brand bg-brand-soft font-medium text-brand-hover"
                 : "border-line bg-surface text-body hover:bg-canvas")
             }
           >

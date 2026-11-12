@@ -45,7 +45,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
               className={cx(
                 "h-8 rounded-[4px] border px-2.5 text-[13px] leading-8 no-underline",
                 s.id === shown?.id
-                  ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                  ? "border-brand bg-brand-soft font-medium text-brand-hover"
                   : "border-line bg-surface text-body hover:bg-canvas",
               )}
             >

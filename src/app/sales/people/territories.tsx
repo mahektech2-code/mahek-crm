@@ -710,15 +710,15 @@ function DistrictSection({
 /** A picked place, said back with a way to take it off. */
 function Chip({ label, meta, onRemove }: { label: string; meta?: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft pr-1 pl-2.5 text-[13px] font-medium text-[#5223E0]">
+    <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft pr-1 pl-2.5 text-[13px] font-medium text-brand-hover">
       <span className="truncate">{label}</span>
-      {meta ? <span className="text-[#5223E0]/70">{meta}</span> : null}
+      {meta ? <span className="text-brand-hover/70">{meta}</span> : null}
       <button
         type="button"
         onClick={onRemove}
         aria-label={`Take off ${label}`}
         title={`Take off ${label}`}
-        className="flex size-6 items-center justify-center rounded-[3px] text-[#5223E0]/70 hover:bg-[#5223E0]/10 hover:text-[#5223E0]"
+        className="flex size-6 items-center justify-center rounded-[3px] text-brand-hover/70 hover:bg-[#5223E0]/10 hover:text-brand-hover"
       >
         ×
       </button>

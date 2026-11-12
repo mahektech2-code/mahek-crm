@@ -479,7 +479,7 @@ function Mode({
       aria-current={on ? "page" : undefined}
       className={
         "inline-flex items-center rounded-[3px] px-3 text-[13px] whitespace-nowrap no-underline hover:no-underline " +
-        (on ? "bg-brand-soft font-medium text-[#5223E0]" : "text-body hover:bg-canvas")
+        (on ? "bg-brand-soft font-medium text-brand-hover" : "text-body hover:bg-canvas")
       }
     >
       {label}

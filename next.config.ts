@@ -72,12 +72,13 @@ const nextConfig: NextConfig = {
    * runners that is 71 of the build's 170 seconds. It was being paid three
    * times per change: CI's `build` job, the deploy's `test` job, and again
    * inside the Docker build, which then pushes and swaps nothing until it is
-   * done. Only the Dockerfile sets this, and only for the build inside it.
+   * done. The Dockerfile and CI's `build` job set this.
    *
-   * Nothing goes unchecked. CI's `build` job is a plain `npm run build` with
-   * this unset, and the deploy's `test` job runs `next typegen && tsc
-   * --noEmit` — the route types included — beside the image build, with
-   * `deploy` needing both. A type error still stops a deploy; it just no
+   * Nothing goes unchecked. CI's `build` job and the deploy's `test` job both
+   * run `next typegen && tsc --noEmit` — the route types included — as a step
+   * of its own; in CI that is also what stopped the runner being shut down
+   * mid-build, with the compile and the checker in memory together. The
+   * deploy's `deploy` needs its test job. A type error still stops a deploy; it just no
    * longer makes the image wait for the answer.
    */
   typescript: { ignoreBuildErrors: process.env.NEXT_BUILD_SKIP_TYPECHECK === "1" },

@@ -143,7 +143,7 @@ export function OlaMapsStyleSwitcher({
           className={
             "px-2.5 py-1 text-[12px] font-medium capitalize " +
             (mode === option
-              ? "bg-brand-soft text-[#5223E0]"
+              ? "bg-brand-soft text-brand-hover"
               : "bg-surface text-body hover:bg-canvas")
           }
         >

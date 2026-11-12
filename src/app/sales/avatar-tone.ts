@@ -7,7 +7,7 @@
  * has the name.
  */
 const TONES = [
-  "bg-[#EEE9FF] text-[#5223E0]",
+  "bg-[#EEE9FF] text-brand-hover",
   "bg-[#E6F4EC] text-[#1D7A45]",
   "bg-[#E8F0FC] text-[#2B5CBF]",
   "bg-[#FDF1E2] text-[#9A5B00]",

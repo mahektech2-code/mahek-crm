@@ -12,6 +12,8 @@ import { consoleCounts } from "@/lib/services/sales-service";
 import { listNotifications } from "@/lib/queries";
 import { leadSidebarCounts } from "@/lib/services/lead-sidebar-service";
 import { SalesShell } from "./sales-shell";
+// The ERP's look, shared — see styles/v4-theme.css. The shell carries the marker.
+import "@/styles/v4-theme.css";
 
 /**
  * The Manager Console's own shell.
@@ -60,10 +62,20 @@ export default async function SalesLayout({
   const hat = await hatForHeader(user, "sales");
 
   return (
+    <>
+    {/* The v4 look is set in Geist, as the ERP's and the CRM's are. React
+        hoists a precedence stylesheet into the head once. */}
+    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <ToastProvider>
       <SalesShell
         user={{
           name: user.name,
+          email: user.email,
+          phone: user.phone,
+          /* The account menu's own field; `title` beside it is the level
+             held HERE, which is what the menu draws. */
+          role: user.role,
           /*
            * THE LEVEL HELD ON THIS APP, not a rank derived from the scope.
            *
@@ -119,5 +131,6 @@ export default async function SalesLayout({
         {children}
       </SalesShell>
     </ToastProvider>
+    </>
   );
 }

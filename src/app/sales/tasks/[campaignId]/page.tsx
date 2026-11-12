@@ -157,7 +157,7 @@ export default async function Page({
               <Link
                 key={s}
                 href={q({ status: s })}
-                className={`rounded-[4px] border px-2.5 py-1 no-underline ${status === s ? "border-brand bg-brand-soft text-[#5223E0]" : "border-line text-body"}`}
+                className={`rounded-[4px] border px-2.5 py-1 no-underline ${status === s ? "border-brand bg-brand-soft text-brand-hover" : "border-line text-body"}`}
               >
                 {s === "all" ? "Everything" : s === "done" ? "Answered" : "Waiting"}
               </Link>

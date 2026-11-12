@@ -1975,6 +1975,18 @@ slow payers and month-end view. Never write "· required" or
 (claude.ai artifact "Tele CRM — ERP design system and less text") is the
 board-by-board plan, and it lists, per screen, everything that was kept.
 
+**THE SALES DASHBOARD WEARS IT TOO (Nov 2026).** Its own shell
+(`app/sales/sales-shell.tsx`) is the ERP's frame — the sidebar the full height
+under the Mahek mark with "Live now" at its foot, the lavender header beside it
+with the switcher, the scope line, the search, Ask, the bell and the account
+menu — and carries `data-v4 data-v4-app="sales"`; the layout imports the sheet
+and Geist. The console's own parts (`components/console/parts.tsx`) are drawn
+in the ERP's forms: `MetricRow` is figure cards, `Pill` is a sentence-case
+`ui-badge`, `Button` carries the `ui-btn` markers, cards are `rounded-card`.
+The sheet's sentence-case label rule answers to `sales` as it does to `crm`,
+and a head cell with `aria-sort="none"` is no longer drawn as the sorted one.
+Nothing about what any screen shows or does moved.
+
 **AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
 The screens had drifted into twenty-two spellings of the small uppercase
 label, four heading sizes, three checkbox looks, ten text-link buttons and

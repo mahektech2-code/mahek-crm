@@ -266,7 +266,7 @@ export function SalesmanScreen({
             onClick={() => setTab(t)}
             className={
               tab === t
-                ? "-mb-px cursor-pointer border-b-2 border-brand px-3 py-2 text-sm font-medium text-[#5223E0]"
+                ? "-mb-px cursor-pointer border-b-2 border-brand px-3 py-2 text-sm font-medium text-brand-hover"
                 : "-mb-px cursor-pointer border-b-2 border-transparent px-3 py-2 text-sm text-muted hover:text-body"
             }
           >
