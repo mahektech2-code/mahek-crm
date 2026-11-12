@@ -14,7 +14,6 @@
  *  - what counts as ARRIVED (new since the last answer, unread, never popped);
  *  - what a reload may still pop (fresh, and not already announced anywhere);
  *  - which tone a kind is drawn and chimed in;
- *  - how long a pop-up stays before it tidies itself away.
  * ------------------------------------------------------------------------- */
 
 export type FeedItem = {
@@ -66,18 +65,6 @@ export function toneOf(kind: string | null | undefined): NotifyTone {
 /** On a fresh page, how old an unread notification may be and still pop. */
 export const FRESH_ON_LOAD_MS = 10 * 60_000;
 
-/** Never more than this many fly in at once; the rest are summarised. */
-export const MAX_POPUPS_AT_ONCE = 3;
-
-/**
- * How long a pop-up sits in the corner before tidying itself away. Bad news
- * stays longer, because "your order was declined" is the one a telecaller
- * most needs to have read before the customer rings.
- */
-export function dwellMs(tone: NotifyTone): number {
-  return tone === "danger" ? 30_000 : tone === "warn" ? 20_000 : 12_000;
-}
-
 /**
  * What arrived in this answer, oldest first.
  *
@@ -108,19 +95,59 @@ export function arrivals(
   return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
-/** How long "Remind me later" waits. */
+/** The default "Remind me" — what Escape, a click outside and "Remind me about all" use. */
 export const REMIND_AFTER_MINUTES = 30;
 
 /**
- * THE APPS WHOSE NOTIFICATIONS ARE A POP-UP RATHER THAN THE CORNER.
+ * WHAT "REMIND ME" CAN BE ASKED FOR, one choice per notification.
  *
- * In the ERP the corner cards stacked up and slid away unanswered, and most of
- * them ask somebody to do something. There, one notification at a time stops the
- * screen and is answered: take action, or be reminded. Every other app keeps its
- * corner.
+ * A code rather than a number of minutes, so the server reads the choice and
+ * works out the instant itself: a client that could post any number of minutes
+ * could put a notification to sleep for a year, which is dismissing it without
+ * saying so. `tomorrow` is 10:00 the next morning in Asia/Kolkata — the start
+ * of the working day, rather than the same wall-clock time tomorrow.
+ */
+export const SNOOZE_CHOICES = [
+  { code: "15m", label: "In 15 minutes", minutes: 15 },
+  { code: "30m", label: "In 30 minutes", minutes: 30 },
+  { code: "1h", label: "In 1 hour", minutes: 60 },
+  { code: "3h", label: "In 3 hours", minutes: 180 },
+  { code: "tomorrow", label: "Tomorrow morning", minutes: null },
+] as const;
+
+export type SnoozeCode = (typeof SNOOZE_CHOICES)[number]["code"];
+
+export function isSnoozeCode(v: unknown): v is SnoozeCode {
+  return SNOOZE_CHOICES.some((c) => c.code === v);
+}
+
+/** India keeps no daylight saving, so the offset is a constant. */
+const IST_OFFSET_MS = 330 * 60_000;
+const TOMORROW_HOUR_IST = 10;
+
+/** The instant a snooze ends. Pure: the caller passes the server's clock. */
+export function remindAtFor(code: SnoozeCode, nowMs: number): Date {
+  const choice = SNOOZE_CHOICES.find((c) => c.code === code)!;
+  if (choice.minutes !== null) return new Date(nowMs + choice.minutes * 60_000);
+  const ist = new Date(nowMs + IST_OFFSET_MS);
+  const next = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1, TOMORROW_HOUR_IST);
+  return new Date(next - IST_OFFSET_MS);
+}
+
+/**
+ * THE APPS WHOSE NOTIFICATIONS ARE A POP-UP RATHER THAN THE CORNER: all of them.
+ *
+ * The ERP went first, because there the corner cards stacked up and slid away
+ * unanswered while most of them asked somebody to do something. The same was
+ * true everywhere else — a declined order in the CRM, a leave request in HRMS —
+ * so every web app now stops the screen and asks for an answer: take action,
+ * mark it done, or be reminded. `field` is the handset's and never reaches a
+ * browser. The factory phone and the print pages are kept clear by the
+ * centre itself, by path, because there a pop-up covers the one button that
+ * matters.
  */
 export function popsUpIn(app: string | null): boolean {
-  return app === "erp";
+  return app !== "field";
 }
 
 /**
@@ -141,13 +168,6 @@ export function nextPopups(current: readonly FeedItem[], answer: Pick<FeedAnswer
     out.set(n.id, seen);
   }
   return [...out.values()];
-}
-
-/** The pops to fly, and how many more there were behind them. */
-export function splitForDisplay(items: readonly FeedItem[], max = MAX_POPUPS_AT_ONCE) {
-  if (items.length <= max) return { show: [...items], more: 0 };
-  // The NEWEST are the ones flown; the older ones are counted.
-  return { show: items.slice(items.length - max), more: items.length - max };
 }
 
 /** "just now", "4 min ago", "2 h ago" — a pop-up is always about recently. */
@@ -175,4 +195,10 @@ export const ANNOUNCED_KEY = "mahek.notify.announced";
 
 export function soundOn(stored: string | null): boolean {
   return stored !== "off";
+}
+
+/** Which card of the pop-up's stack is on screen, kept inside it after an answer. */
+export function clampIndex(index: number, length: number): number {
+  if (length <= 0) return 0;
+  return Math.min(Math.max(0, index), length - 1);
 }

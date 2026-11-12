@@ -5,12 +5,13 @@ import { join } from "node:path";
 import {
   ago,
   arrivals,
-  dwellMs,
   nextPopups,
   popsUpIn,
+  clampIndex,
+  isSnoozeCode,
+  remindAtFor,
   pruneAnnounced,
   soundOn,
-  splitForDisplay,
   toneOf,
   type FeedItem,
 } from "./notification-feed";
@@ -44,13 +45,10 @@ test("a notification already read is never popped", () => {
   assert.equal(arrivals(answer, new Set(), new Set()).length, 0);
 });
 
-test("arrivals come oldest first, and the newest are the ones flown", () => {
+test("arrivals come oldest first", () => {
   const answer = { now: NOW, items: [item("n3", 0), item("n1", 4), item("n2", 2), item("n4", 0.5)] };
   const got = arrivals(answer, new Set(), new Set());
   assert.deepEqual(got.map((n) => n.id), ["n1", "n2", "n4", "n3"]);
-  const { show, more } = splitForDisplay(got, 3);
-  assert.deepEqual(show.map((n) => n.id), ["n2", "n4", "n3"]);
-  assert.equal(more, 1);
 });
 
 test("kinds fold onto four tones, and anything unknown is ordinary news", () => {
@@ -61,7 +59,6 @@ test("kinds fold onto four tones, and anything unknown is ordinary news", () => 
   assert.equal(toneOf("success"), "success");
   assert.equal(toneOf("lead"), "info");
   assert.equal(toneOf(null), "info");
-  assert.ok(dwellMs("danger") > dwellMs("info"));
 });
 
 test("sound is on unless somebody turned it off", () => {
@@ -94,9 +91,48 @@ test("marking one notification read is limited to the caller's own", () => {
   assert.match(fn.slice(0, 600), /eq\(notifications\.userId, ctx\.user\.id\)/);
 });
 
-test("only the ERP pops up; every other app keeps its corner", () => {
-  assert.equal(popsUpIn("erp"), true);
-  for (const app of ["crm", "accounts", "sales", null]) assert.equal(popsUpIn(app), false);
+test("every web app pops up; only the handset's notifications never reach a browser", () => {
+  for (const app of ["erp", "crm", "accounts", "sales", "hrms", "tasks", "founder", null]) assert.equal(popsUpIn(app), true);
+  assert.equal(popsUpIn("field"), false);
+});
+
+test("the reminder choices are codes, and the server works out the instant", () => {
+  const now = Date.parse("2026-11-13T06:00:00Z"); // 11:30 IST
+  assert.equal(remindAtFor("15m", now).toISOString(), "2026-11-13T06:15:00.000Z");
+  assert.equal(remindAtFor("30m", now).toISOString(), "2026-11-13T06:30:00.000Z");
+  assert.equal(remindAtFor("1h", now).toISOString(), "2026-11-13T07:00:00.000Z");
+  assert.equal(remindAtFor("3h", now).toISOString(), "2026-11-13T09:00:00.000Z");
+  assert.equal(remindAtFor("tomorrow", now).toISOString(), "2026-11-14T04:30:00.000Z", "10:00 IST the next day");
+  /* 23:00 UTC on the 13th is already 04:30 on the 14th in India: tomorrow is the 15th. */
+  assert.equal(remindAtFor("tomorrow", Date.parse("2026-11-13T23:00:00Z")).toISOString(), "2026-11-15T04:30:00.000Z");
+  assert.equal(isSnoozeCode("1h"), true);
+  assert.equal(isSnoozeCode("525600m"), false, "a year is not a choice");
+  assert.equal(isSnoozeCode(60), false);
+});
+
+test("the stack keeps its place after an answer", () => {
+  assert.equal(clampIndex(2, 3), 2);
+  assert.equal(clampIndex(3, 3), 2, "the last one answered: the one before it shows");
+  assert.equal(clampIndex(-1, 3), 0);
+  assert.equal(clampIndex(4, 0), 0);
+});
+
+test("the pop-up says which of how many, and a shown one comes back until it is answered", () => {
+  const modal = readFileSync(join(import.meta.dirname, "../components/shell/notification-modal.tsx"), "utf8");
+  assert.match(modal, /Notification \{index \+ 1\} of \{total\}/);
+  assert.match(modal, /SNOOZE_CHOICES\.map/);
+  const centre = readFileSync(join(import.meta.dirname, "../components/shell/notification-center.tsx"), "utf8");
+  assert.match(centre, /answerNotifications\(unanswered, "shown"\)/);
+});
+
+test("answering checks the snooze choice on the server, and only touches your own unread rows", () => {
+  const src = readFileSync(join(import.meta.dirname, "actions/crm.ts"), "utf8");
+  const fn = src.slice(src.indexOf("export async function answerNotifications("));
+  const body = fn.slice(0, fn.indexOf("\n}\n"));
+  assert.match(body, /isSnoozeCode\(snooze\)/);
+  assert.match(body, /eq\(notifications\.userId, ctx\.user\.id\)/);
+  assert.match(body, /eq\(notifications\.read, false\)/);
+  assert.match(body, /isNull\(notifications\.remindAt\)/, "showing never overwrites a reminder");
 });
 
 test("the pop-up queue keeps who is waiting, then what came due, then what arrived", () => {

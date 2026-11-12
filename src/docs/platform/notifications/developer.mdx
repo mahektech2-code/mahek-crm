@@ -10,8 +10,8 @@ A notification's app is **derived from its link**, never stored. `notificationAp
 | The feed | `src/lib/queries.ts` | `notificationFeed(userId, app)` — this app's newest 30, the newest 30 overall, unread per app |
 | The endpoint | `src/app/api/notifications/route.ts` | `GET ?app=<id>`; an unknown app is "every app" |
 | Mark all read | `src/lib/actions/crm.ts` | `markNotificationsRead(app)` — narrows to the app and general ones |
-| Polling, pop-ups | `src/components/shell/notification-center.tsx` | Asks for the tab's app (from the path), starts `known` again when the app changes |
-| The ERP pop-up | `src/components/shell/notification-modal.tsx` | One notification at a time over the screen, answered with Take action now, Remind me in 30 minutes or Dismiss |
+| Polling, the stack | `src/components/shell/notification-center.tsx` | Asks for the tab's app (from the path), starts `known` again when the app changes, marks arrivals `shown`, holds the stack after Take action now |
+| The pop-up | `src/components/shell/notification-modal.tsx` | "Notification 1 of N" with arrows; each answered with Take action now, Mark as done or a Remind me choice |
 | The bell | `src/components/shell/notification-bell.tsx` | Badge for this app, "This app" / "All apps" tabs, "Unread in other apps" |
 
 <Code file="src/lib/notification-apps.ts" symbol="notificationAppOf" />
@@ -26,9 +26,15 @@ A notification's app is **derived from its link**, never stored. `notificationAp
 - `notificationAppSql` refuses a route whose prefix or app id is not plain lower-case letters, slashes and hyphens, because it is spliced into SQL.
 - An answer that arrives after the tab moved to another app is dropped (`asked !== appRef.current`), so the ERP header never paints the CRM's list.
 
-## The ERP pop-up
+## The pop-up
 
-`popsUpIn(app)` decides which apps use the pop-up instead of the corner; only the ERP does. `nextPopups` keeps the queue. Remind me writes `notifications.remind_at` through `answerNotifications`, on the server's clock, for your own unread rows. There is no scheduled job: `notificationFeed` returns what has come due as `due`, only for an app that pops up, and the polling above brings it back. The row stays unread while it waits, so the bell still counts it. Taking action on one reminds the rest of the queue, so they do not land on the page it opened. The pop-up does not open over another dialog or while the cursor is in a field.
+`popsUpIn(app)` is true for every app except `field`, which never reaches a browser; the centre itself keeps the pop-up off `/factory`, `/login` and `/erp/print`. `nextPopups` keeps the stack: who was waiting, then what came due, then what arrived.
+
+Remind me sends a code from `SNOOZE_CHOICES` (`15m`, `30m`, `1h`, `3h`, `tomorrow`), never a number of minutes. `answerNotifications` rejects any other code and works out the instant with `remindAtFor` on the server's clock; `tomorrow` is 10:00 IST the next day. It only touches your own unread rows.
+
+**Shown means due.** When a notification first enters the stack, the centre calls `answerNotifications(ids, "shown")`, which sets `remind_at = now()` where it is still null. `notificationFeed` returns unread rows with `remind_at <= now()` as `due`, so a shown-but-unanswered notification comes back after a reload, in another tab or on another machine until it is done or snoozed. Older unread rows that were never shown have no `remind_at` and do not flood the screen. There is no scheduled job: the polling brings reminders back.
+
+Take action now marks that one read, goes to its link, and holds the rest (`HOLD_ON_ACTION_MS`, ten minutes) until the path leaves the page it opened. Nothing about the rest is written; they are still due. The pop-up does not open over another dialog or while the cursor is in a field.
 
 ## Tests
 
@@ -36,7 +42,7 @@ A notification's app is **derived from its link**, never stored. `notificationAp
 |---|---|
 | `src/lib/notification-apps.test.ts` | The rule: prefixes, handset-only, general, what is shown where, unread elsewhere |
 | `src/lib/notification-apps.db.test.ts` | SQL and browser agree on every link; the feed filters and counts per app; mark-all-read stays inside the app |
-| `src/lib/notification-feed.test.ts` | What pops, tones, dwell |
+| `src/lib/notification-feed.test.ts` | What pops, tones, the snooze choices and their instants, the stack position, the server-side checks in `answerNotifications` |
 
 ## Where a notification goes
 

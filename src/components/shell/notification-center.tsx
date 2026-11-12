@@ -7,25 +7,21 @@ import {
   ANNOUNCED_KEY,
   PREF_DESKTOP,
   PREF_SOUND,
-  ago,
   arrivals,
-  dwellMs,
   nextPopups,
   popsUpIn,
   pruneAnnounced,
   soundOn,
-  splitForDisplay,
   toneOf,
   type FeedAnswer,
   type FeedItem,
   type NotifyTone,
+  type SnoozeCode,
 } from "@/lib/notification-feed";
 import { playChime, primeAudio } from "@/lib/notification-sound";
 import { appFor } from "@/lib/app-routes";
 import { shownIn, type AppUnread } from "@/lib/notification-apps";
-import { cx } from "@/components/ui/primitives";
-import { Icon } from "./icons";
-import { NotificationModal, TONE_STYLE } from "./notification-modal";
+import { NotificationModal } from "./notification-modal";
 
 /* ---------------------------------------------------------------------------
  * THE LIVE BELL — one per tab, mounted in the root layout so every app gets
@@ -34,19 +30,17 @@ import { NotificationModal, TONE_STYLE } from "./notification-modal";
  * It asks `/api/notifications` on a cadence, keeps the answer in a small store
  * the header bells read, and for whatever is NEW:
  *
- *   1. slides a pop-up in from the right edge into the bottom right-hand
- *      corner, where it waits a few seconds — for as long as the pointer is
- *      on it — and then slides back out to the right;
+ *   1. puts it in the pop-up over the screen (`notification-modal.tsx`) —
+ *      "Notification 1 of 4" when several are waiting — where each one is
+ *      answered: take action now, mark it done, or remind me in a while. A
+ *      reminder needs no scheduled job: the time is stored on the row and this
+ *      polling brings it back. It used to be a card in the corner that slid
+ *      away after a few seconds, unanswered, everywhere but the ERP;
  *   2. chimes — on by default, one switch to turn it off, remembered per
  *      browser;
  *   3. where the tab is in the background and the person has allowed it,
  *      raises a desktop notification, so a telecaller on another tab still
  *      hears about the declined order.
- *
- * IN THE ERP the first of those is different: `popsUpIn` makes it a pop-up over
- * the screen, one notification at a time, answered by taking action or by being
- * reminded in half an hour (`notification-modal.tsx`). That reminder needs no
- * scheduled job: the time is stored on the row and this polling brings it back.
  *
  * The chime and the desktop alert are CLAIMED once per notification across
  * every tab of the browser (`ANNOUNCED_KEY`), so four open tabs are one
@@ -113,10 +107,10 @@ function markLocal(hits: (n: FeedItem) => boolean) {
   setFeed({ ...state, items, all: mark(state.all), byApp, unread: Math.max(0, (state.unread ?? 0) - dropped) });
 }
 
-/** Answers a pop-up: read now, or back in half an hour. Keeps the badge honest at once. */
-async function answerPopups(ids: string[], answer: "read" | "later") {
+/** Answers a pop-up: done now, or back after the time picked. Keeps the badge honest at once. */
+async function answerPopups(ids: string[], answer: "read" | "later", snooze?: SnoozeCode) {
   if (answer === "read") markLocal((n) => ids.includes(n.id));
-  const res = await answerNotifications(ids, answer);
+  const res = await answerNotifications(ids, answer, snooze);
   refreshNotifications();
   return res;
 }
@@ -261,16 +255,12 @@ const VISIBLE_EVERY_MS = 15_000;
 const HIDDEN_EVERY_MS = 30_000;
 const SIGNED_OUT_EVERY_MS = 60_000;
 
-type Pop = {
-  key: string;
-  item: FeedItem;
-  tone: NotifyTone;
-  /** How many more arrived with it and were not flown separately. */
-  more: number;
-  /** Arrived while the tab was hidden: fly it in when they come back. */
-  waiting: boolean;
-  delayMs: number;
-};
+/**
+ * How long "Take action now" keeps the rest of the stack off the page it opened.
+ * They come back when somebody leaves that page, or after this long on it — a
+ * person who stays on one screen all afternoon must still be told things.
+ */
+const HOLD_ON_ACTION_MS = 10 * 60_000;
 
 export function NotificationCenter() {
   const router = useRouter();
@@ -279,8 +269,9 @@ export function NotificationCenter() {
      app's (and the general ones); a CRM decision does not pop over the ERP. */
   const viewApp = pathname ? appFor(pathname) : null;
   const appRef = React.useRef(viewApp);
-  const [pops, setPops] = React.useState<Pop[]>([]);
   const [popups, setPopups] = React.useState<FeedItem[]>([]);
+  /* After "Take action now": the page it opened, and until when the rest wait. */
+  const [hold, setHold] = React.useState<{ path: string; until: number; arrived: boolean } | null>(null);
   const known = React.useRef<Set<string> | null>(null);
   const signedOut = React.useRef(false);
   const inFlight = React.useRef(false);
@@ -297,7 +288,13 @@ export function NotificationCenter() {
       forApp: appRef.current,
     });
     const popsUp = popsUpIn(appRef.current);
-    if (popsUp) setPopups((current) => nextPopups(current, answer, fresh));
+    if (popsUp) {
+      setPopups((current) => nextPopups(current, answer, fresh));
+      /* Shown and not yet answered is due NOW on the server, so it comes back
+         after a reload or on another machine until somebody answers it. */
+      const unanswered = fresh.filter((n) => !n.remindAt).map((n) => n.id);
+      if (unanswered.length) void answerNotifications(unanswered, "shown").catch(() => undefined);
+    }
     /* A reminder chimes each time it comes back, so its claim names the reminder. */
     const toAnnounce = [
       ...fresh.map((n) => ({ n, key: n.id })),
@@ -306,7 +303,6 @@ export function NotificationCenter() {
     if (!toAnnounce.length) return;
 
     const hidden = document.visibilityState === "hidden";
-    const { show, more } = splitForDisplay(fresh);
     const sound = soundOn(readPref(PREF_SOUND));
     const desktop =
       typeof Notification !== "undefined" &&
@@ -335,23 +331,6 @@ export function NotificationCenter() {
       }
     }
     if (chimeTone && sound) playChime(chimeTone);
-
-    if (popsUp) return;
-    setPops((current) => {
-      const already = new Set(current.map((p) => p.item.id));
-      const added = show
-        .filter((n) => !already.has(n.id))
-        .map((n, i, arr) => ({
-          key: `${n.id}`,
-          item: n,
-          tone: toneOf(n.kind),
-          more: i === arr.length - 1 ? more : 0,
-          waiting: hidden,
-          delayMs: i * 450,
-        }));
-      // At most five in the corner; the oldest make room.
-      return [...current, ...added].slice(-5);
-    });
   }, [router]);
 
   const poll = React.useCallback(async () => {
@@ -399,10 +378,7 @@ export function NotificationCenter() {
     void poll().then(schedule);
     const now = () => void poll();
     const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        setPops((p) => (p.some((x) => x.waiting) ? p.map((x) => ({ ...x, waiting: false })) : p));
-        void poll();
-      }
+      if (document.visibilityState === "visible") void poll();
     };
     window.addEventListener("mahek:notifications-refresh", now);
     window.addEventListener("focus", now);
@@ -442,221 +418,56 @@ export function NotificationCenter() {
     };
   }, []);
 
-  const dismiss = React.useCallback((key: string) => {
-    setPops((p) => p.filter((x) => x.key !== key));
-  }, []);
+  /* The hold ends when they leave the page "Take action now" opened, or when it times out. */
+  const onHoldPage = hold !== null && (pathname === hold.path || Boolean(pathname?.startsWith(hold.path + "/")));
+  if (hold && onHoldPage && !hold.arrived) setHold({ ...hold, arrived: true });
+  else if (hold && !onHoldPage && hold.arrived) setHold(null);
+  React.useEffect(() => {
+    if (!hold) return;
+    const t = setTimeout(() => setHold(null), Math.max(0, hold.until - Date.now()));
+    return () => clearTimeout(t);
+  }, [hold]);
 
   /* The factory app is a phone screen of its own, with its own toasts; a
-     desktop pop-up over a scan screen covers the one button that matters. */
+     pop-up over a scan screen covers the one button that matters. */
   const onSignIn = pathname?.startsWith("/login") || pathname?.startsWith("/factory");
-  /* A label or an invoice being printed is not to be stopped by a pop-up. */
-  const onPrint = pathname?.startsWith("/erp/print");
-  const showPopups = !onSignIn && !onPrint && popsUpIn(viewApp) && popups.length > 0;
+  /* A label or an invoice being printed is not to be stopped by a pop-up:
+     the ERP's print-labels and print-invoices, and any page that is a print. */
+  const onPrint = Boolean(pathname && (pathname.startsWith("/erp/print") || /\/print(\/|$)/.test(pathname)));
+  const showPopups = !onSignIn && !onPrint && !hold && popsUpIn(viewApp) && popups.length > 0;
   const leave = (ids: string[]) => setPopups((q) => q.filter((n) => !ids.includes(n.id)));
   /* Taken off the screen at once; if the save fails it goes back, rather than being lost. */
-  const answer = async (items: FeedItem[], how: "read" | "later") => {
+  const answer = async (items: FeedItem[], how: "read" | "later", snooze?: SnoozeCode) => {
     const ids = items.map((n) => n.id);
     leave(ids);
     try {
-      const res = await answerPopups(ids, how);
+      const res = await answerPopups(ids, how, snooze);
       if (!res.ok) setPopups((q) => [...items, ...q]);
     } catch {
       setPopups((q) => [...items, ...q]);
     }
   };
-  const popupModal = showPopups ? (
+  if (!showPopups) return null;
+  return (
     <NotificationModal
       queue={popups}
       onAct={(n) => {
         void answer([n], "read");
-        /* The page they are sent to is the job; the rest wait rather than landing on top of it. */
-        const rest = popups.filter((x) => x.id !== n.id);
-        if (rest.length) void answer(rest, "later");
-        if (n.href) router.push(n.href);
+        /* The page they are sent to is the job: the rest stay in the stack, and
+           wait until they leave it rather than landing on top of it. */
+        if (n.href) {
+          const path = n.href.split(/[?#]/)[0] || "/";
+          if (popups.some((x) => x.id !== n.id)) setHold({ path, until: Date.now() + HOLD_ON_ACTION_MS, arrived: false });
+          router.push(n.href);
+        }
       }}
       onRead={(items) => void answer(items, "read")}
-      onLater={(items) => void answer(items, "later")}
+      onLater={(items, snooze) => void answer(items, "later", snooze)}
     />
-  ) : null;
-  if (onSignIn || !pops.length) return popupModal;
-
-  return (
-    <>
-    {popupModal}
-    <div
-      role="region"
-      aria-label="New notifications"
-      aria-live="polite"
-      className="pointer-events-none fixed right-4 bottom-4 z-[95] flex w-[380px] max-w-[calc(100vw-32px)] flex-col gap-2.5"
-    >
-      {pops.map((p) => (
-        <NotificationPopup
-          key={p.key}
-          pop={p}
-          onDismiss={dismiss}
-          onOpen={async () => {
-            dismiss(p.key);
-            await readOne(p.item.id);
-            if (p.item.href) router.push(p.item.href);
-          }}
-          onRead={async () => {
-            dismiss(p.key);
-            await readOne(p.item.id);
-          }}
-          onReadAll={async () => {
-            setPops([]);
-            await readAll(appRef.current);
-          }}
-        />
-      ))}
-    </div>
-    </>
   );
 }
 
-/* ------------------------------------------------------------------- popup */
-
-function NotificationPopup({
-  pop,
-  onDismiss,
-  onOpen,
-  onRead,
-  onReadAll,
-}: {
-  pop: Pop;
-  /** Stable, and takes the key — a fresh closure per render would re-arm every card's clock. */
-  onDismiss: (key: string) => void;
-  onOpen: () => void;
-  onRead: () => void;
-  onReadAll: () => void;
-}) {
-  const [hover, setHover] = React.useState(false);
-  const [landed, setLanded] = React.useState(false);
-  const [leaving, setLeaving] = React.useState(false);
-  const [nowMs, setNowMs] = React.useState<number | null>(null);
-  const prefs = useNotifyPrefs();
-  const style = TONE_STYLE[pop.tone];
-  const dwell = dwellMs(pop.tone);
-  // It slides in from the right edge straight into its slot in the corner.
-  const SLIDE_IN_MS = 420;
-  const SLIDE_OUT_MS = 320;
-
-  // Out to the right, then gone. A timer rather than `animationend`, because
-  // under reduced motion there is no animation to end and the card would stay.
-  const leave = React.useCallback(
-    (then?: () => void) => {
-      setLeaving(true);
-      setTimeout(() => {
-        onDismiss(pop.key);
-        then?.();
-      }, SLIDE_OUT_MS);
-    },
-    [onDismiss, pop.key],
-  );
-
-  // Landed once the slide is over; the dwell clock starts there.
-  React.useEffect(() => {
-    if (pop.waiting) return;
-    const t = setTimeout(() => setLanded(true), SLIDE_IN_MS + pop.delayMs);
-    return () => clearTimeout(t);
-  }, [pop.waiting, pop.delayMs]);
-
-  // After its dwell it slides back out to the right — never while the
-  // pointer is on it; leaving the card starts the clock again.
-  React.useEffect(() => {
-    if (!landed || hover || leaving) return;
-    const t = setTimeout(() => leave(), dwell);
-    return () => clearTimeout(t);
-  }, [landed, hover, leaving, dwell, leave]);
-
-  // "just now" moves on while it sits there.
-  React.useEffect(() => {
-    const tick = () => setNowMs(Date.now());
-    tick();
-    const t = setInterval(tick, 30_000);
-    return () => clearInterval(t);
-  }, []);
-
-  const n = pop.item;
-  return (
-    <div
-      role="status"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{ animationDelay: `${pop.delayMs}ms` }}
-      className={cx(
-        "notify-popup pointer-events-auto relative overflow-hidden rounded-[8px] border border-line bg-surface",
-        pop.waiting ? "invisible" : leaving ? "notify-out" : "notify-in",
-        "shadow-[0_8px_24px_rgba(22,22,22,0.16)]",
-      )}
-    >
-      <span className={cx("absolute inset-y-0 left-0 w-1", style.bar)} aria-hidden />
-      <div className="flex items-start gap-3 py-3 pr-3 pl-4">
-        <span className={cx("mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full", style.chip)}>
-          <Icon name={pop.tone === "danger" || pop.tone === "warn" ? "alert" : "bell"} size={16} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className={cx("rounded-[3px] px-1.5 py-px text-[11px] font-medium", style.chip)}>{style.label}</span>
-            <span className="text-[11px] text-muted">{nowMs === null ? "" : ago(n.createdAt, nowMs)}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => leave(onOpen)}
-            className="mt-1 block w-full cursor-pointer text-left"
-          >
-            <span className="block text-[15px] leading-5 font-medium text-ink">{n.title}</span>
-            {n.body ? (
-              <span className="mt-0.5 line-clamp-3 block text-[13px] leading-[18px] text-body">{n.body}</span>
-            ) : null}
-          </button>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
-            {n.href ? (
-              <button type="button" onClick={() => leave(onOpen)} className="cursor-pointer font-medium text-brand hover:underline">
-                Open
-              </button>
-            ) : null}
-            <button type="button" onClick={() => leave(onRead)} className="cursor-pointer text-muted hover:text-body">
-              Mark read
-            </button>
-            {pop.more > 0 ? (
-              <button type="button" onClick={onReadAll} className="cursor-pointer text-muted hover:text-body">
-                +{pop.more} more · mark all read
-              </button>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex flex-none flex-col items-center gap-1">
-          <button
-            type="button"
-            onClick={() => leave()}
-            aria-label="Dismiss"
-            title="Dismiss — it stays in the bell"
-            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-          >
-            <Icon name="close" size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => prefs.setSound(!prefs.sound)}
-            aria-label={prefs.sound ? "Turn notification sound off" : "Turn notification sound on"}
-            title={prefs.sound ? "Sound on — click to mute" : "Sound off — click to turn on"}
-            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-          >
-            <SpeakerIcon on={prefs.sound} />
-          </button>
-        </div>
-      </div>
-      {landed ? (
-        <span
-          aria-hidden
-          className={cx("notify-dwell absolute bottom-0 left-0 h-[2px] opacity-60", style.bar)}
-          style={{ animationDuration: `${dwell}ms`, animationPlayState: hover ? "paused" : "running" }}
-        />
-      ) : null}
-    </div>
-  );
-}
+/* --------------------------------------------------------------------- icon */
 
 export function SpeakerIcon({ on, size = 14 }: { on: boolean; size?: number }) {
   return (
