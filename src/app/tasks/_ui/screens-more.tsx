@@ -8,10 +8,12 @@ import { useToast } from "@/components/ui/toast";
 import { runAutomationsNow, setAutomation } from "@/lib/actions/task-automations";
 import type { AutomationRule } from "@/lib/tasks/automations";
 import type { TaskRow } from "@/lib/tasks/service";
-import { TASK_APP_LABEL, clock12, daysUntil, type TaskApp } from "@/lib/tasks/rules";
-import { AppChip, TaskListCard } from "./kit";
+import type { CalendarWeek, TaskListPage } from "@/lib/tasks/list-service";
+import { DONE_LIST, type TaskListQuery } from "@/lib/tasks/list-query";
+import { TASK_APP_LABEL, clock12, daysUntil } from "@/lib/tasks/rules";
+import { AppChip } from "./kit";
 import { useTaskDialogs } from "./dialogs";
-import { Rows } from "./screens";
+import { TaskListView } from "./task-list";
 
 /* ---------------------------------------------------------------------------
  * Calendar, Done and the automatic tasks — the three screens the design adds
@@ -33,12 +35,10 @@ const weekdayOf = (day: string) => new Date(Date.UTC(+day.slice(0, 4), +day.slic
 
 /* -------------------------------------------------------------- Calendar */
 
-export function CalendarScreen({ tasks, days, today, week, rangeWords }: { tasks: TaskRow[]; days: string[]; today: string; week: number; rangeWords: string }) {
+export function CalendarScreen({ data, days, today, week, rangeWords }: { data: CalendarWeek; days: string[]; today: string; week: number; rangeWords: string }) {
   const { openTask, openNew } = useTaskDialogs();
-  const holdsToday = days.includes(today);
-  // Late open work sits on today, wherever in the week it was due — it is today's to do.
-  const isLate = (t: TaskRow) => holdsToday && t.status !== "done" && t.dueDate < today;
-  const late = tasks.filter(isLate);
+  // Late open work sits on today, wherever it was due — it is today's to do. The server has already left it off its own day.
+  const late = data.late;
   return (
     <div className="mx-auto max-w-[1560px] px-6 pt-6 pb-14">
       <div className="mb-0.5 text-[13.5px] text-muted">{rangeWords}</div>
@@ -64,7 +64,9 @@ export function CalendarScreen({ tasks, days, today, week, rangeWords }: { tasks
       <div className="grid grid-cols-[repeat(7,minmax(140px,1fr))] gap-2 overflow-x-auto pb-2">
         {days.map((day) => {
           const isToday = day === today;
-          const list = [...(isToday ? late : []), ...tasks.filter((t) => t.dueDate === day && !isLate(t))].sort((a, b) => (a.dueTime ?? "99").localeCompare(b.dueTime ?? "99"));
+          const own = data.byDay[day] ?? { rows: [], total: 0 };
+          const list: TaskRow[] = [...(isToday ? late.rows : []), ...own.rows];
+          const hidden = (isToday ? late.total - late.rows.length : 0) + (own.total - own.rows.length);
           const wd = weekdayOf(day);
           return (
             <div key={day} className={cx("flex min-h-[380px] flex-col rounded-card border", isToday ? "border-brand shadow-[0_0_0_3px_var(--color-brand-soft)]" : "border-line", wd === 0 ? "bg-page" : "bg-surface")}>
@@ -95,6 +97,11 @@ export function CalendarScreen({ tasks, days, today, week, rangeWords }: { tasks
                     </button>
                   );
                 })}
+                {hidden > 0 ? (
+                  <Link href={isToday ? "/tasks/all?tab=now&group=due" : "/tasks/all?tab=upcoming&group=due"} className="px-1 text-[12.5px] font-medium text-brand">
+                    + {hidden.toLocaleString("en-IN")} more
+                  </Link>
+                ) : null}
                 {!list.length && wd === 0 ? <span className="px-1 text-[12.5px] text-muted">Sunday</span> : null}
               </div>
             </div>
@@ -107,43 +114,24 @@ export function CalendarScreen({ tasks, days, today, week, rangeWords }: { tasks
 
 /* ------------------------------------------------------------------ Done */
 
-export function DoneScreen({ tasks, today, viewerId }: { tasks: TaskRow[]; today: string; viewerId: string }) {
-  const [app, setApp] = React.useState("all");
-  const apps = [...new Set(tasks.map((t) => t.app))];
-  const list = app === "all" ? tasks : tasks.filter((t) => t.app === app);
-  const groups = new Map<string, TaskRow[]>();
-  for (const t of list) {
-    const day = t.closedOn ?? "";
-    const label = day === today ? "Today" : daysUntil(day, today) === -1 ? "Yesterday" : day ? new Date(`${day}T00:00:00Z`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : "Earlier";
-    groups.set(label, [...(groups.get(label) ?? []), t]);
-  }
+/** Everything this person finished, newest first, grouped by the day it closed — a page at a time. */
+export function DoneScreen({ page, query, today, viewerId }: { page: TaskListPage; query: TaskListQuery; today: string; viewerId: string }) {
   return (
     <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
       <PageHeader title="Done" />
-      {apps.length > 1 ? (
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {["all", ...apps].map((a) => (
-            <button
-              key={a}
-              type="button"
-              onClick={() => setApp(a)}
-              className={cx("h-7.5 cursor-pointer rounded-control border px-3 text-[13px]", app === a ? "border-brand bg-brand-soft font-semibold text-brand-hover" : "border-line bg-surface text-body")}
-            >
-              {a === "all" ? "Every app" : a === "tasks" ? "Personal" : TASK_APP_LABEL[a as TaskApp]}
-              <span className="ml-1.5 text-muted">{a === "all" ? tasks.length : tasks.filter((t) => t.app === a).length}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {list.length ? (
-        [...groups.entries()].map(([label, rows]) => (
-          <TaskListCard key={label} heading={label} count={rows.length}>
-            <Rows list={rows} today={today} viewerId={viewerId} />
-          </TaskListCard>
-        ))
-      ) : (
-        <TaskListCard empty="Nothing finished yet. Tasks you close land here, with the remark you wrote.">{null}</TaskListCard>
-      )}
+      <TaskListView
+        page={page}
+        query={query}
+        defaults={DONE_LIST}
+        scope={{ kind: "mine" }}
+        tabs={[]}
+        today={today}
+        viewerId={viewerId}
+        look="rows"
+        showKindFilter={false}
+        bulk={false}
+        empty="Nothing finished yet. Tasks you close land here, with the remark you wrote."
+      />
     </div>
   );
 }

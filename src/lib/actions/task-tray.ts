@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { today } from "@/lib/recompute";
 import { ok, type Result } from "@/lib/result";
-import { myTasks } from "@/lib/tasks/service";
+import { trayTasks } from "@/lib/tasks/list-service";
 import type { TaskApp } from "@/lib/tasks/rules";
 
 export type TrayTask = { id: string; title: string; app: TaskApp; customerName: string | null; dueDate: string; dueTime: string | null };
@@ -17,11 +17,8 @@ export type Tray = { holdsTasks: boolean; apps: string[]; open: number; late: nu
  */
 export async function loadTray(): Promise<Result<Tray>> {
   const user = await requireUser();
-  const [apps, tasks, day] = await Promise.all([listUserApps(user.id), myTasks(user.id), today()]);
-  const open = tasks.filter((t) => t.status !== "done");
-  const next = [...open]
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.dueTime ?? "99").localeCompare(b.dueTime ?? "99"))
-    .slice(0, 6)
-    .map((t) => ({ id: t.id, title: t.title, app: t.app, customerName: t.customerName, dueDate: t.dueDate, dueTime: t.dueTime }));
-  return ok({ holdsTasks: apps.includes("tasks" as never), apps: [...apps], open: open.length, late: open.filter((t) => t.dueDate < day).length, next, today: day });
+  const day = await today();
+  const [apps, tray] = await Promise.all([listUserApps(user.id), trayTasks(user.id, day, 6)]);
+  const next = tray.next.map((t) => ({ id: t.id, title: t.title, app: t.app, customerName: t.customerName, dueDate: t.dueDate, dueTime: t.dueTime }));
+  return ok({ holdsTasks: apps.includes("tasks" as never), apps: [...apps], open: tray.open, late: tray.late, next, today: day });
 }

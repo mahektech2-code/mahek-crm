@@ -17020,19 +17020,23 @@ export type PlanSnapshotLine = {
 export type TaskChecklistItem = { text: string; done: boolean };
 
 /** One "give this to several people" — each of them gets their own `tasks` row. */
-export const taskBatches = pgTable("task_batches", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull(),
-  app: text("app").notNull(),
-  givenById: text("given_by_id")
-    .notNull()
-    .references(() => users.id),
-  /** Who it went to, in words — "Everybody in your team", "4 people". */
-  audience: text("audience").notNull(),
-  /** The include/exclude rules it was given by (lib/tasks/audience.ts), where it was. */
-  rules: jsonb("rules"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const taskBatches = pgTable(
+  "task_batches",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    app: text("app").notNull(),
+    givenById: text("given_by_id")
+      .notNull()
+      .references(() => users.id),
+    /** Who it went to, in words — "Everybody in your team", "4 people". */
+    audience: text("audience").notNull(),
+    /** The include/exclude rules it was given by (lib/tasks/audience.ts), where it was. */
+    rules: jsonb("rules"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("task_batches_given_by_idx").on(t.givenById, t.createdAt.desc())],
+);
 
 /**
  * A ROUTINE IS A TASK THAT COMES BACK. It belongs to one person and writes an
@@ -17151,6 +17155,10 @@ export const tasks = pgTable(
     uniqueIndex("tasks_routine_person_day_key").on(t.routineId, t.assigneeId, t.routineDay).where(sql`routine_id is not null`),
     index("tasks_assignee_idx").on(t.assigneeId, t.status, t.dueDate),
     index("tasks_created_by_idx").on(t.createdById),
+    index("tasks_open_assignee_due_idx").on(t.assigneeId, t.dueDate).where(sql`status <> 'done'`),
+    index("tasks_done_assignee_closed_idx").on(t.assigneeId, t.closedAt.desc()).where(sql`status = 'done'`),
+    index("tasks_created_by_created_idx").on(t.createdById, t.createdAt.desc()),
+    // tasks_title_trgm_idx (gin, gin_trgm_ops) lives in 0323_tasks_scale.sql: Drizzle cannot express an operator class.
     index("tasks_batch_idx").on(t.batchId),
     index("tasks_customer_idx").on(t.customerId),
     check("tasks_status", sql`${t.status} in ('todo','doing','waiting','done')`),
@@ -17237,6 +17245,7 @@ export const taskTransfers = pgTable(
     uniqueIndex("task_transfers_one_pending").on(t.taskId).where(sql`status = 'pending'`),
     index("task_transfers_to_idx").on(t.toId, t.status),
     index("task_transfers_from_idx").on(t.fromId, t.status),
+    index("task_transfers_requested_by_idx").on(t.requestedById, t.status),
     check("task_transfers_status", sql`${t.status} in ('pending','accepted','rejected','withdrawn','moved')`),
     check("task_transfers_rejection_says_why", sql`${t.status} <> 'rejected' or ${t.decisionNote} is not null`),
     check("task_transfers_not_to_self", sql`${t.fromId} <> ${t.toId}`),

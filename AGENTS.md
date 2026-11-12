@@ -9619,6 +9619,27 @@ whose tasks they see, and what they move without asking. Giving a task to
 somebody who holds neither Tasks nor its app is refused, because they would
 never see it.
 
+**A TASK LIST IS READ ONE PAGE AT A TIME, AND THE PAGE IS IN THE URL.**
+Every screen used to fetch everything a person could see — capped at 500 to
+2,000 rows, silently — and count, search, group and page in the browser, so
+past the cap the counts were wrong and nothing said so. Now a list is a scope,
+the URL's reading (tab, app, source, search, grouping, page, per page —
+`lib/tasks/list-query.ts`, pure) and the date, and `taskListPage`
+(`lib/tasks/list-service.ts`) counts every tab, counts each group on the page
+across EVERY page, and returns one page; `TaskListView` (`_ui/task-list.tsx`)
+draws it and writes the next URL. `groupKeyOf` is `groupKeySql` in the
+browser, and a test holds the two together. My day, the Board and the
+Calendar draw a capped preview (`PREVIEW_ROWS`, 50 a column, 20 a day) with
+the real count beside it and a link to the list; Team workload is figures per
+person from one grouped read, a page of people at a time; Assigned by me pages
+its groups and shows two dozen faces per group. "Select every match" asks the
+server (`taskIdsMatching`, `BULK_CAP`), and Export streams the whole filtered
+list from `/api/tasks/export` (`EXPORT_CAP`). A team is asked through
+`teamInSql` — one array parameter, or `users` itself for somebody whose
+permission reaches everybody — never an `in (…)` of every id. `0323` adds the
+indexes these reads lean on. A new list reads through `taskListPage`; never
+fetch a person's tasks whole.
+
 **AND FOUR PERMISSIONS WIDEN IT, one reach each.** The org chart cannot say
 "the office coordinator chases everybody", and the only way to say it was
 platform administrator, which grants every app in the building. So
