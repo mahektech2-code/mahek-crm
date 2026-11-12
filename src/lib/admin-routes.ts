@@ -23,13 +23,14 @@ export type AdminTab = { slug: string; label: string };
 /** The tabs of the sections that have them, in order. The first is where the section lands. */
 export const ADMIN_TABS = {
   feedback: [
-    { slug: "new", label: "New" },
-    // The one tab about an obligation rather than a state: somebody wrote
-    // something and nobody has answered it.
-    { slug: "awaiting", label: "Waiting on us" },
-    { slug: "in-progress", label: "Being looked at" },
-    { slug: "requests", label: "Feature requests" },
+    // The queues in the order they are worked — `TRIAGE_QUEUES` in
+    // feedback-labels.ts decides which one a report is in.
+    { slug: "reply", label: "Needs a reply" },
+    { slug: "waiting", label: "Waiting on them" },
+    { slug: "looking", label: "Being looked at" },
+    { slug: "closed", label: "Closed" },
     { slug: "all", label: "Everything" },
+    { slug: "overview", label: "Overview" },
   ],
   signIns: [
     { slug: "now", label: "Signed in now" },

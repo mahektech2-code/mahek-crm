@@ -38,6 +38,7 @@ export default async function Page({
   if (section !== wanted && params.s) redirect(`/founder?s=${section}`);
   /* My tasks is a desk of its own too. */
   if (section === "tasks") redirect("/founder/my-tasks");
+  if (section === "feedback") redirect("/founder/feedback");
   /* Margins is a desk with its own page; an address naming it as a section goes there, period kept. */
   if (section === "margins") {
     const q = new URLSearchParams();

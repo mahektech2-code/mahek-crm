@@ -1,7 +1,7 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, feedback, feedbackMessages, type User } from "@/db/schema";
+import { appAccess, feedback, feedbackMessages, users, type User } from "@/db/schema";
 import { isManager } from "@/lib/auth";
 
 /* ---------------------------------------------------------------------------
@@ -51,7 +51,34 @@ export async function canSeeFeedback(
     .limit(1);
   if (!row) return false;
   if (row.userId === user.id) return true;
+  // Somebody who said "same problem" is on the reporter side of this thread:
+  // every reply here is a reply to them too, so they may read it and answer.
+  const [follower] = await db
+    .select({ id: feedback.id })
+    .from(feedback)
+    .where(and(eq(feedback.duplicateOfId, feedbackId), eq(feedback.userId, user.id)))
+    .limit(1);
+  if (follower) return true;
   return canTriageFeedback(user);
+}
+
+/**
+ * Every active person who may triage — exactly the set `canTriageFeedback`
+ * lets in: managers and administrators by level, and whoever holds the Admin
+ * app. Notified of new reports, and offered as the person to hand one to.
+ */
+export async function triagerIds(): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ id: users.id })
+    .from(users)
+    .leftJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "admin")))
+    .where(
+      and(
+        eq(users.active, true),
+        or(sql`${users.role} in ('manager', 'admin')`, sql`${appAccess.id} is not null`),
+      ),
+    );
+  return rows.map((r) => r.id);
 }
 
 /** The thread one message belongs to — for deciding who may open its files. */

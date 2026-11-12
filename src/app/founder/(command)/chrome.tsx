@@ -45,7 +45,7 @@ export const NAV: { label: string; items: [SectionKey, string, string][] }[] = [
     ],
   },
   { label: "Founder desks", items: [["prices", "Price lists", "tag"], ["whatsapp", "WhatsApp", "msg"]] },
-  { label: "Organisation", items: [["people", "People & organisation", "id"], ["system", "Data operations & health", "pulse"]] },
+  { label: "Organisation", items: [["people", "People & organisation", "id"], ["system", "Data operations & health", "pulse"], ["feedback", "Feedback", "chat"]] },
 ];
 
 export const TITLES: Record<SectionKey, [string, string]> = {
@@ -66,6 +66,7 @@ export const TITLES: Record<SectionKey, [string, string]> = {
   people: ["People & organisation", "Headcount, the employee master, reporting lines and the business calendar"],
   system: ["Data operations & health", "Every sync, import, repair and recompute, and how fresh the data is"],
   tasks: ["My tasks", "Your own tasks that belong to the Founder app — given to you, raised by an app, or added by you"],
+  feedback: ["Feedback", "What you sent in from any app with the Feedback button, and the replies"],
 };
 
 /** "Command Centre · Founder desks" — the group a section sits in. */

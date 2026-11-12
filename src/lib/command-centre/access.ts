@@ -35,6 +35,7 @@ export const SECTION_MODULE: Record<SectionKey, string> = {
   system: "founder.system",
   /* Last, so it is never the section somebody lands on: it is always open. */
   tasks: "founder.my-tasks",
+  feedback: "founder.feedback",
 };
 
 export class NotAllowedHere extends Error {}

@@ -1,0 +1,24 @@
+Feedback is two tables, one pure vocabulary file, one service of reads, one file of actions, and three screens: the header button and Tell us dialog, the reporter's page inside each app, and the console's triage inbox.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Tables | `src/db/schema.ts`, `drizzle/0325_feedback_v2.sql` | `feedback` (number, impact, assignee, duplicate_of, verdict), `feedback_messages` (internal) |
+| Vocabulary | `src/lib/feedback-labels.ts` | kinds, impacts, stages, queues, `triageQueue`, `feedbackStage`, `titleFromBody`, `FEEDBACK_APP_PATHS` |
+| Who may | `src/lib/services/feedback-access.ts` | `canTriageFeedback`, `canSeeFeedback`, `triagerIds` |
+| Reads | `src/lib/services/feedback-service.ts` | `listFeedback`, `listMyFeedback`, `similarFeedback`, `feedbackCounts`, `feedbackOverview` |
+| Writes | `src/lib/actions/feedback.ts` | `submitFeedback`, `replyToFeedback`, `setFeedbackStatus`, `assignFeedback`, `mergeFeedback`, `answerFix` |
+| Header | `src/components/shell/feedback-button.tsx` | the menu, `TellUsDialog` |
+| Screenshots | `src/components/feedback/shots.tsx` | capture, paste, pick |
+| Reporter page | `src/components/feedback/my-feedback-page.tsx`, `my-feedback-screen.tsx` | mounted at each app's `/feedback` |
+| Thread | `src/components/feedback/feedback-thread.tsx` | one component, `view="reporter"` or `"team"` |
+| Console | `src/app/admin/feedback/[[...tab]]/page.tsx`, `src/app/admin/feedback-section.tsx` | queues, filters, detail, overview |
+
+## The queue rule
+
+<Code file="src/lib/feedback-labels.ts" symbol="triageQueue" />
+
+## The modules
+
+`crm.feedback`, `accounts.feedback`, `sales.feedback`, `founder.feedback`, `erp.feedback` and `hrms.feedback` are all in `ALWAYS_OPEN_MODULES` — the reporter's Feedback page must be reachable in every app whatever was ticked.

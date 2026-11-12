@@ -5,6 +5,7 @@ import {
   smallint,
   bigint,
   bigserial,
+  serial,
   numeric,
   boolean,
   doublePrecision,
@@ -4669,6 +4670,35 @@ export const feedback = pgTable(
     userAgent: text("user_agent"),
     status: feedbackStatusEnum("status").notNull().default("new"),
     /**
+     * The number people say out loud — "FB-1042". The id is for joins; this is
+     * what goes in a notification, a GitHub issue and a conversation in the
+     * corridor. A sequence, so it is never reused.
+     */
+    number: serial("number").notNull(),
+    /**
+     * How much it is getting in the way, in the reporter's own judgement:
+     * `blocking` (cannot work), `slows`, `minor`. Null for anything that is not
+     * a fault, and for reports sent before it was asked.
+     */
+    impact: text("impact"),
+    /** Who on the team is holding it. Null is nobody — said in words on the list. */
+    assigneeId: text("assignee_id").references(() => users.id),
+    /**
+     * "Same problem as" another report. Set by the reporter pressing "add mine
+     * to it", or by triage merging. The report keeps its own words and files;
+     * its status and conversation are read off the one it points at, and
+     * every reply there is told to its reporter too. One level only — the
+     * actions never point at a report that is itself a duplicate.
+     */
+    duplicateOfId: text("duplicate_of_id").references((): AnyPgColumn => feedback.id),
+    /**
+     * The reporter's answer once triage said Done: `fixed` or
+     * `still_happening`. Null while nobody has asked or they have not said.
+     * "Done" is triage's word; this is the only proof the fix reached them.
+     */
+    verdict: text("verdict"),
+    verdictAt: timestamp("verdict_at", { withTimezone: true }),
+    /**
      * Who last said something on the thread from the triage side, and when.
      * The reply itself is a row in `feedback_messages` — this pair is what the
      * list needs to say "answered by X" without reading every message.
@@ -4687,6 +4717,20 @@ export const feedback = pgTable(
   (t) => [
     index("feedback_status_idx").on(t.status, t.createdAt),
     index("feedback_user_idx").on(t.userId, t.createdAt),
+    uniqueIndex("feedback_number_key").on(t.number),
+    index("feedback_duplicate_idx").on(t.duplicateOfId),
+    check(
+      "feedback_impact_check",
+      sql`${t.impact} is null or ${t.impact} in ('blocking', 'slows', 'minor')`,
+    ),
+    check(
+      "feedback_verdict_check",
+      sql`${t.verdict} is null or ${t.verdict} in ('fixed', 'still_happening')`,
+    ),
+    check(
+      "feedback_not_own_duplicate",
+      sql`${t.duplicateOfId} is null or ${t.duplicateOfId} <> ${t.id}`,
+    ),
   ],
 );
 
@@ -4723,6 +4767,12 @@ export const feedbackMessages = pgTable(
     body: text("body"),
     /** Set where this line also moved the report along. */
     statusTo: feedbackStatusEnum("status_to"),
+    /**
+     * A team note: read by whoever triages, never by the reporter, and never
+     * notified to them. Kept in the same thread so the reasoning sits beside
+     * the reply it led to.
+     */
+    internal: boolean("internal").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

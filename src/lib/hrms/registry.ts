@@ -190,6 +190,7 @@ export const HRMS_GROUPS: HrmsGroup[] = [
       }),
       s("documents", "documents", "Documents", "doc", "Policies, forms and videos. You see what is meant for you."),
       s("notifications", "announcements", "Announcements", "bell", "Messages sent to one person or to everyone. Each one also arrives in the bell.", { bottom: true, short: "Notices" }),
+      s("feedback", "feedback", "Feedback", "help", "What you sent in from any app with the Feedback button, and the replies.", { view: "custom" }),
     ],
   },
   {
@@ -269,7 +270,7 @@ export function hrmsKeysOf(screen: HrmsScreen): string[] {
  * Screens every HRMS user reaches whatever they were narrowed to: checking in
  * is the reason almost everybody holds the app at all.
  */
-export const HRMS_ALWAYS_OPEN = new Set(["home", "myTasks"]);
+export const HRMS_ALWAYS_OPEN = new Set(["home", "myTasks", "feedback"]);
 
 /**
  * The first build's URLs, and the list each now lives on. `next.config.ts`

@@ -137,7 +137,7 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       detail: "Sent from inside the apps by somebody waiting for an answer.",
       tone: "warn",
       cta: "Open feedback",
-      href: ADMIN.feedback("new"),
+      href: ADMIN.feedback("reply"),
     },
     {
       n: sheetIssues,

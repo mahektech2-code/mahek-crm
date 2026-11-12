@@ -1,297 +1,602 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import {
-  Badge,
-  Card,
-  EmptyState,
-  Select,
-  Th,
-  Td,
-  Tr,
-  cx,
-  type Tone,
-} from "@/components/ui/primitives";
-import { useToast } from "@/components/ui/toast";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { Button, cx } from "@/components/ui/primitives";
+import { CardGrid } from "@/components/ui/card-grid";
 import { FeedbackThread } from "@/components/feedback/feedback-thread";
 import { stamp } from "@/lib/format";
+import { APPS } from "@/lib/apps";
 import {
+  FEEDBACK_IMPACTS,
+  FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
+  IMPACT_SHORT,
   KIND_SHORT,
+  QUEUE_LABELS,
   STATUS_LABELS,
-  type FeedbackKind,
+  type FeedbackImpact,
   type FeedbackStatus,
+  type TriageQueue,
 } from "@/lib/feedback-labels";
-import type { FeedbackRow } from "@/lib/services/feedback-service";
-import { setFeedbackStatus } from "@/lib/actions/feedback";
-import { ADMIN_TABS } from "@/lib/admin-routes";
+import type { FeedbackOverview, FeedbackRow } from "@/lib/services/feedback-service";
+import { assignFeedback, mergeFeedback, setFeedbackStatus } from "@/lib/actions/feedback";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
- * Feedback → what the team has sent in.
+ * Feedback → the triage inbox.
  *
  * A section rather than a settings tab, because none of it is configuration:
  * these are rows written by colleagues, and the work here is answering them.
  *
- * The tabs are the statuses in the order they are worked — New first, because
- * an unread report is the only kind that costs anything. `Everything` exists
- * so a report that was declined months ago can still be found; nothing here
- * is ever deleted.
+ * The tabs are QUEUES, worked in order — Needs a reply first, because somebody
+ * waiting on an answer is the only state that costs anything. Inside a queue
+ * the list is worst first: can't-work before slows-down, then whoever has
+ * waited longest. One report at a time is open on the right, with everything
+ * needed to answer it: the conversation (team notes included), everybody who
+ * reported the same thing, where it happened, who is holding it, and its
+ * status. Filters and the open report ride in the URL.
  * ------------------------------------------------------------------------- */
 
-/** The tabs live where every other platform section's do — one registry. */
-const TABS = ADMIN_TABS.feedback;
+const APP_NAME = new Map<string, string>([...APPS.map((a) => [a.id, a.name] as [string, string]), ["launcher", "Launcher"]]);
+const appName = (id: string | null) => (id ? (APP_NAME.get(id) ?? id) : "—");
 
-export type FeedbackData = {
+const IMPACT_BAR: Record<FeedbackImpact | "none", string> = {
+  blocking: "bg-danger",
+  slows: "bg-warn",
+  minor: "bg-line-strong",
+  none: "bg-line-strong",
+};
+
+function age(at: string, now: number) {
+  const h = Math.max(0, (now - Date.parse(at)) / 3_600_000);
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`;
+  if (h < 24) return `${Math.round(h)}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+type Filters = { app: string; kind: string; impact: string; who: string; q: string };
+
+export function FeedbackSection({
+  rows,
+  selected,
+  filters,
+  assignees,
+  viewerId,
+  maxImages,
+  queue,
+  now,
+}: {
+  /** The server's clock, read once — a component may not read it in render. */
+  now: number;
   rows: FeedbackRow[];
-  counts: {
-    new: number;
-    in_progress: number;
-    done: number;
-    declined: number;
-    total: number;
-    awaitingReply: number;
-  };
-  /** Whether this person may move a report along, or only read them. */
-  canTriage: boolean;
-  /** Who is reading — their own lines in a thread sit on the right. */
+  selected: FeedbackRow | null;
+  filters: Filters;
+  assignees: { id: string; name: string }[];
   viewerId: string;
-  /** `attachments.maxPerFeedback`, from configuration. */
   maxImages: number;
-};
+  queue: TriageQueue;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [q, setQ] = React.useState(filters.q);
 
-const KIND_TONE: Record<FeedbackKind, Tone> = {
-  bug: "danger",
-  suggestion: "neutral",
-  feature: "brand",
-  question: "neutral",
-};
-
-const STATUS_TONE: Record<FeedbackStatus, Tone> = {
-  new: "warn",
-  in_progress: "brand",
-  done: "success",
-  declined: "neutral",
-};
-
-export function FeedbackSection({ data, tab }: { data: FeedbackData; tab: number }) {
-  const slug = TABS[Math.min(tab, TABS.length - 1)].slug;
-
-  const rows = data.rows.filter((r) => {
-    if (slug === "new") return r.status === "new";
-    if (slug === "awaiting") {
-      // Answered-and-closed threads are excluded: a thank-you left on a done
-      // report is not work, and a list that counts it stops being a list of
-      // what is owed.
-      return r.awaitingReply && (r.status === "new" || r.status === "in_progress");
+  const hrefWith = React.useCallback(
+    (patch: Partial<Filters & { r: string }>) => {
+      const p = new URLSearchParams();
+      const next = { ...filters, r: selected?.id ?? "", ...patch };
+      for (const [k, v] of Object.entries(next)) if (v) p.set(k, v);
+      const s = p.toString();
+      return s ? `${pathname}?${s}` : pathname;
+    },
+    [filters, pathname, selected],
+  );
+  // Pin the open report in the address the first time one is shown, so an
+  // answer that moves it to another queue does not take it off the screen.
+  const selectedId = selected?.id ?? null;
+  const pinned = React.useRef(false);
+  React.useEffect(() => {
+    if (!selectedId || pinned.current) return;
+    pinned.current = true;
+    if (!new URLSearchParams(window.location.search).get("r")) {
+      router.replace(hrefWith({ r: selectedId }), { scroll: false });
     }
-    if (slug === "in-progress") return r.status === "in_progress";
-    // Both kinds are somebody asking for something MahekOne does not do; the
-    // line between them is finer than anybody triaging wants to care about.
-    if (slug === "requests") return r.kind === "feature" || r.kind === "suggestion";
-    return true;
-  });
+  }, [selectedId, router, hrefWith]);
+  const setFilter = (patch: Partial<Filters>) => router.push(hrefWith({ ...patch, r: "" }), { scroll: false });
+
+  const apps = [...new Set(rows.map((r) => r.app).filter((a): a is string => !!a)), filters.app]
+    .filter(Boolean)
+    .filter((a, i, all) => all.indexOf(a) === i);
 
   return (
-    <div className="mt-5">
-      <div className="mb-4 flex flex-wrap gap-2.5">
-        <Count label="New" value={data.counts.new} tone={data.counts.new ? "warn" : "neutral"} />
-        <Count
-          label="Waiting on us"
-          value={data.counts.awaitingReply}
-          tone={data.counts.awaitingReply ? "warn" : "neutral"}
-        />
-        <Count label="Being looked at" value={data.counts.in_progress} tone="brand" />
-        <Count label="Done" value={data.counts.done} tone="success" />
-        <Count label="Not doing" value={data.counts.declined} tone="neutral" />
+    <div className="mt-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setFilter({ q });
+          }}
+          className="flex h-9 min-w-[240px] flex-1 items-center gap-2 rounded-[7px] border border-line bg-surface px-2.5 sm:max-w-[340px]"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-none text-muted" aria-hidden>
+            <circle cx="11" cy="11" r="7" />
+            <path d="m21 21-4-4" />
+          </svg>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search words, FB-number or person"
+            aria-label="Search feedback"
+            className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+          />
+        </form>
+        <FilterSelect label="App" value={filters.app} onChange={(v) => setFilter({ app: v })}
+          options={apps.map((a) => [a, appName(a)])} />
+        <FilterSelect label="Kind" value={filters.kind} onChange={(v) => setFilter({ kind: v })}
+          options={FEEDBACK_KINDS.map((k) => [k, KIND_SHORT[k]])} />
+        <FilterSelect label="Impact" value={filters.impact} onChange={(v) => setFilter({ impact: v })}
+          options={FEEDBACK_IMPACTS.map((i) => [i, IMPACT_SHORT[i]])} />
+        <FilterSelect label="Holding it" value={filters.who} onChange={(v) => setFilter({ who: v })}
+          options={[["mine-or-none", "Me + nobody"], ["me", "Me"], ["none", "Nobody"], ...assignees.map((a) => [a.id, a.name] as [string, string])]} />
+        {filters.app || filters.kind || filters.impact || filters.who || filters.q ? (
+          <button type="button" onClick={() => { setQ(""); setFilter({ app: "", kind: "", impact: "", who: "", q: "" }); }}
+            className="cursor-pointer text-[13px] font-medium text-brand">
+            Clear
+          </button>
+        ) : null}
       </div>
 
-      {rows.length === 0 ? (
-        <Card>
-          <EmptyState
-            title={
-              slug === "new"
-                ? "Nothing new to read"
-                : slug === "awaiting"
-                  ? "Nobody is waiting on an answer"
-                  : slug === "in-progress"
-                  ? "Nothing is being worked on"
-                  : slug === "requests"
-                    ? "Nobody has asked for anything yet"
-                    : "No feedback has been sent yet"
-            }
-            body={
-              data.counts.total === 0
-                ? "The Feedback button sits in the header of every app. Anything the team sends from it lands here."
-                : "Everything sent in is under Everything — this tab is simply empty."
-            }
-          />
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {rows.map((r) => (
-            <Report
-              key={r.id}
-              row={r}
-              canTriage={data.canTriage}
-              viewerId={data.viewerId}
-              maxImages={data.maxImages}
-            />
-          ))}
-        </div>
-      )}
+      <div className="flex flex-wrap items-start gap-4">
+        <section className="min-w-0 flex-[1_1_320px] overflow-hidden rounded-[8px] border border-line bg-surface xl:max-w-[400px]">
+          {rows.length === 0 ? (
+            <div className="px-5 py-10 text-center">
+              <div className="text-sm font-semibold text-ink">
+                {queue === "reply" ? "Nobody is waiting on an answer" : `Nothing in ${QUEUE_LABELS[queue]}`}
+              </div>
+              <div className="mt-1 text-[13px] text-muted">
+                {filters.app || filters.kind || filters.impact || filters.who || filters.q
+                  ? "Nothing matches these filters."
+                  : "The Feedback button sits in the header of every app; what the team sends lands here."}
+              </div>
+            </div>
+          ) : (
+            rows.map((r) => (
+              <Link
+                key={r.id}
+                href={hrefWith({ r: r.id })}
+                scroll={false}
+                aria-current={selected?.id === r.id ? "true" : undefined}
+                className={cx(
+                  "flex gap-2.5 border-b border-divider px-3.5 py-3 no-underline hover:no-underline",
+                  selected?.id === r.id ? "bg-brand-soft" : "hover:bg-page",
+                )}
+              >
+                <span className={cx("w-1 flex-none rounded-full", IMPACT_BAR[r.impact ?? "none"])} aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-start gap-2">
+                    <span className={cx("min-w-0 flex-1 text-sm leading-[19px] text-ink", r.queue === "reply" ? "font-semibold" : "font-medium")}>
+                      {r.title}
+                    </span>
+                    <span
+                      className={cx(
+                        "flex-none text-xs tabular-nums",
+                        r.queue === "reply" && now - Date.parse(r.lastActivityAt) > 86_400_000
+                          ? "font-semibold text-danger"
+                          : r.queue === "reply"
+                            ? "font-semibold text-warn-ink"
+                            : "text-muted",
+                      )}
+                      title={`Last activity ${stamp(r.lastActivityAt)}`}
+                    >
+                      {age(r.lastActivityAt, now)}
+                    </span>
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-muted">
+                    {r.ref} · {r.byName} · {appName(r.app)}
+                    {r.alsoReported.length ? ` · ${1 + r.alsoReported.length} people` : ""}
+                    {r.kind !== "bug" ? ` · ${KIND_SHORT[r.kind]}` : ""}
+                  </span>
+                  {r.assigneeName ? <span className="mt-0.5 block text-[11px] text-faint">With {r.assigneeName}</span> : null}
+                </span>
+              </Link>
+            ))
+          )}
+          <div className="px-3.5 py-2.5 text-[11px] leading-4 text-muted">
+            Red bar: can&apos;t work. Amber: slows them down. Age turns red past a day without an answer.
+          </div>
+        </section>
 
-      {!data.canTriage && rows.length ? (
-        <div className="mt-4 text-[13px] text-muted">
-          Read-only. Answering feedback is a manager&apos;s to do — the person who
-          wrote it is told what you decide, so it is not a decision to leave to
-          whoever happens to have this screen open.
-        </div>
-      ) : null}
+        {selected ? (
+          <Detail key={selected.id} row={selected} assignees={assignees} viewerId={viewerId} maxImages={maxImages} now={now} />
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function Count({ label, value, tone }: { label: string; value: number; tone: Tone }) {
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: [string, string][];
+  onChange: (v: string) => void;
+}) {
   return (
-    <Card className="flex min-w-[150px] flex-col gap-1 px-4 py-3">
-      <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        {label}
-      </span>
-      <span className="flex items-center gap-2">
-        <span className="text-[22px] leading-7 font-semibold text-ink">{value}</span>
-        {value && tone === "warn" ? <Badge tone={tone}>waiting</Badge> : null}
-      </span>
-    </Card>
+    <label
+      className={cx(
+        "flex h-9 items-center gap-1 rounded-[7px] border pr-1 pl-2.5 text-[13px]",
+        value ? "border-brand bg-brand-soft text-brand-deep" : "border-line bg-surface text-body",
+      )}
+    >
+      <span className="font-medium whitespace-nowrap">{label}:</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="cursor-pointer bg-transparent py-1 pr-1 font-medium outline-none"
+      >
+        <option value="">All</option>
+        {options.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
-function Report({
+function Detail({
   row,
-  canTriage,
+  assignees,
   viewerId,
   maxImages,
+  now,
 }: {
   row: FeedbackRow;
-  canTriage: boolean;
+  assignees: { id: string; name: string }[];
   viewerId: string;
   maxImages: number;
+  now: number;
 }) {
   const router = useRouter();
-  const { run } = useToast();
-  const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [note, setNote] = React.useState<{ ok: boolean; text: string } | null>(null);
+  const [merging, setMerging] = React.useState(false);
+  const [mergeInto, setMergeInto] = React.useState("");
 
-  const files = row.attachments.length + row.messages.reduce((n, m) => n + m.attachments.length, 0);
-  const replies = row.messages.filter((m) => m.body !== null).length;
-
-  async function changeStatus(status: FeedbackStatus) {
+  async function run(fn: () => Promise<{ ok: boolean; error?: string; message?: string }>) {
     setBusy(true);
+    setNote(null);
+    const r = await fn();
+    setBusy(false);
+    setNote(r.ok ? { ok: true, text: r.message ?? "Done." } : { ok: false, text: r.error ?? "That did not work." });
+    if (r.ok) router.refresh();
+  }
+
+  const waited = row.queue === "reply" ? age(row.lastActivityAt, now) : null;
+
+  async function copyBrief() {
+    const lines = [
+      `${row.ref} — ${row.title}`,
+      `${KIND_SHORT[row.kind]}${row.impact ? ` · ${IMPACT_SHORT[row.impact]}` : ""} · ${appName(row.app)} · ${row.path ?? "no screen"}`,
+      `Reported by ${row.byName} on ${stamp(row.createdAt)}${row.alsoReported.length ? ` (+${row.alsoReported.length} more)` : ""}`,
+      `Browser: ${row.userAgent ?? "not recorded"}`,
+      "",
+      row.body,
+      ...row.alsoReported.map((a) => `\n${a.byName}: ${a.body}`),
+      ...row.messages.filter((m) => m.body).map((m) => `\n${m.internal ? "[team note] " : ""}${m.authorName}: ${m.body}`),
+    ];
     try {
-      const result = await run(setFeedbackStatus(row.id, status));
-      if (result.ok) router.refresh();
-    } finally {
-      setBusy(false);
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setNote({ ok: true, text: "Copied — paste it into the issue or a message to the developer." });
+    } catch {
+      setNote({ ok: false, text: "The browser would not copy it." });
     }
   }
 
   return (
-    <Card className="overflow-hidden">
-      <div className="flex items-start gap-3 px-5 py-3.5">
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="min-w-0 flex-1 cursor-pointer border-none bg-transparent text-left"
-        >
-          <span className="flex flex-wrap items-center gap-2">
-            <Badge tone={KIND_TONE[row.kind]}>{KIND_SHORT[row.kind]}</Badge>
-            <Badge tone={STATUS_TONE[row.status]}>{STATUS_LABELS[row.status]}</Badge>
-            <span
-              className={cx(
-                "text-sm text-ink",
-                row.status === "new" ? "font-semibold" : "font-medium",
-              )}
-            >
-              {row.title}
-            </span>
-          </span>
-          <span className="mt-1 block text-[13px] text-muted">
-            {row.byName} · {row.byRole} · {stamp(row.createdAt)}
-            {row.path ? (
+    <section className="min-w-0 flex-[999_1_560px] overflow-hidden rounded-[8px] border border-line bg-surface">
+      <div className="flex flex-wrap items-start gap-2 border-b border-divider px-4.5 py-3.5">
+        <div className="min-w-[260px] flex-1">
+          <div className="text-xs text-muted">
+            {row.ref} · {KIND_SHORT[row.kind]}
+            {row.impact ? (
               <>
                 {" · "}
-                <span className="font-mono">{row.path}</span>
+                <span className={cx("font-semibold", row.impact === "blocking" ? "text-danger" : row.impact === "slows" ? "text-warn-ink" : "")}>
+                  {IMPACT_SHORT[row.impact]}
+                </span>
               </>
             ) : null}
-            {/* Both counted on the closed row, because a screenshot nobody
-                knows is there is a screenshot nobody opens. */}
-            {files ? ` · ${files} screenshot${files === 1 ? "" : "s"}` : ""}
-            {replies ? ` · ${replies} repl${replies === 1 ? "y" : "ies"}` : ""}
-          </span>
-        </button>
-
-        {canTriage ? (
-          <Select
+            {waited ? ` · waiting ${waited}` : ""}
+          </div>
+          <h2 className="mt-0.5 text-lg leading-6 font-bold text-ink">{row.title}</h2>
+        </div>
+        <label className="flex h-8 items-center gap-1 rounded-[7px] border border-line bg-surface pl-2.5 text-[13px]">
+          <span className="text-muted">Holding it:</span>
+          <select
+            value={row.assigneeId ?? ""}
+            disabled={busy}
+            onChange={(e) => run(() => assignFeedback(row.id, e.target.value || null))}
+            className="cursor-pointer bg-transparent py-1 pr-1 font-medium text-ink outline-none"
+          >
+            <option value="">Nobody</option>
+            {assignees.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.id === viewerId ? `${a.name} (me)` : a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex h-8 items-center gap-1 rounded-[7px] border border-line bg-surface pl-2.5 text-[13px]">
+          <span className="text-muted">Status:</span>
+          <select
             value={row.status}
             disabled={busy}
-            onChange={(e) => changeStatus(e.target.value as FeedbackStatus)}
-            title="Move this report along — the person who wrote it is told"
+            onChange={(e) => run(() => setFeedbackStatus(row.id, e.target.value as FeedbackStatus))}
+            className="cursor-pointer bg-transparent py-1 pr-1 font-medium text-ink outline-none"
           >
             {FEEDBACK_STATUSES.map((s) => (
               <option key={s} value={s}>
                 {STATUS_LABELS[s]}
               </option>
             ))}
-          </Select>
-        ) : null}
+          </select>
+        </label>
       </div>
 
-      {open ? (
-        <div className="border-t border-divider bg-canvas px-5 py-4">
-          {/* Where they were standing, first — a bug report is the words plus
-              the screen, and reading them apart is reading half of it. */}
-          <table className="w-auto">
-            <tbody>
-              <Tr>
-                <Th>Screen</Th>
-                <Td className="font-mono">{row.path ?? "—"}</Td>
-              </Tr>
-              <Tr>
-                <Th>App</Th>
-                <Td>{row.app ?? "—"}</Td>
-              </Tr>
-              <Tr>
-                <Th>Browser</Th>
-                <Td className="max-w-[520px] truncate" title={row.userAgent ?? undefined}>
-                  {row.userAgent ?? "—"}
-                </Td>
-              </Tr>
-              {row.handledByName ? (
-                <Tr>
-                  <Th>Last answered</Th>
-                  <Td>
-                    {row.handledByName} · {stamp(row.handledAt)}
-                  </Td>
-                </Tr>
-              ) : null}
-            </tbody>
-          </table>
-
-          <div className="mt-4">
-            <span className="mb-2 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-              The conversation
-            </span>
-            {/* The same component the reporter sees on their own screen, with
-                the same messages in the same order. Two renderings of one
-                conversation is how the two ends stop agreeing about it. */}
-            <FeedbackThread
-              report={row}
-              viewerId={viewerId}
-              maxImages={maxImages}
-              canReply={canTriage}
-            />
-          </div>
+      {note ? (
+        <div className={cx("border-b border-divider px-4.5 py-2 text-[13px]", note.ok ? "bg-success-soft text-success" : "bg-danger-soft text-danger")}>
+          {note.text}
         </div>
       ) : null}
-    </Card>
+
+      <div className="flex flex-wrap">
+        <div className="min-w-0 flex-[999_1_360px] px-4.5 py-4">
+          {row.verdict === "still_happening" ? (
+            <div className="mb-3 rounded-[8px] border border-danger bg-danger-soft px-3.5 py-2 text-[13px] font-medium text-danger">
+              {row.byName.split(" ")[0]} says it is still happening — it was reopened.
+            </div>
+          ) : null}
+          <FeedbackThread report={row} viewerId={viewerId} maxImages={maxImages} view="team" />
+        </div>
+
+        <aside className="min-w-0 flex-[1_1_220px] border-l border-divider bg-page px-4 py-4">
+          <SideTitle>Where it happened</SideTitle>
+          <Fact k="App">{appName(row.app)}</Fact>
+          <Fact k="Screen">
+            {row.path ? (
+              <a href={row.path} target="_blank" rel="noreferrer" className="font-mono text-[11px] break-all">
+                {row.path} ↗
+              </a>
+            ) : (
+              "—"
+            )}
+          </Fact>
+          <Fact k="Browser">{browserOf(row.userAgent)}</Fact>
+          <Fact k="Sent">{stamp(row.createdAt)}</Fact>
+          <div className="my-3 h-px bg-divider" />
+          <SideTitle>Who sent it</SideTitle>
+          <Fact k="Person">{row.byName}</Fact>
+          {row.alsoReported.length ? (
+            <Fact k="Also">{row.alsoReported.map((a) => a.byName).join(", ")}</Fact>
+          ) : null}
+          {row.verdict === "fixed" ? <Fact k="Answer">Confirmed fixed</Fact> : null}
+          <div className="my-3 h-px bg-divider" />
+          <div className="flex flex-col gap-1.5">
+            {merging ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  run(() => mergeFeedback(row.id, mergeInto));
+                }}
+                className="flex flex-col gap-1.5"
+              >
+                <label className="text-xs text-body" htmlFor="merge-into">
+                  Same problem as which report?
+                </label>
+                <input
+                  id="merge-into"
+                  autoFocus
+                  value={mergeInto}
+                  onChange={(e) => setMergeInto(e.target.value)}
+                  placeholder="FB-1038"
+                  className="h-8 rounded-[7px] border border-line-strong bg-surface px-2.5 text-[13px] outline-none focus:border-brand"
+                />
+                <div className="flex gap-1.5">
+                  <Button size="sm" variant="primary" disabled={busy || !mergeInto.trim()} className="flex-1">
+                    Merge
+                  </Button>
+                  <Button size="sm" variant="secondary" type="button" onClick={() => setMerging(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={() => setMerging(true)}>
+                Merge into another…
+              </Button>
+            )}
+            {row.path ? (
+              <a
+                href={row.path}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 items-center justify-center rounded-[7px] border border-line-strong bg-surface px-2.5 text-[13px] font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+              >
+                Open the screen
+              </a>
+            ) : null}
+            <Button size="sm" variant="secondary" onClick={copyBrief}>
+              Copy for developer
+            </Button>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function browserOf(ua: string | null) {
+  if (!ua) return "—";
+  const name = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "";
+  const v = ua.match(/(?:Edg|Chrome|Firefox|Version)\/(\d+)/)?.[1];
+  return [name, v, os ? `· ${os}` : ""].filter(Boolean).join(" ");
+}
+
+function SideTitle({ children }: { children: React.ReactNode }) {
+  return <div className="mb-1.5 text-xs font-semibold text-ink">{children}</div>;
+}
+
+function Fact({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 py-1 text-xs text-body">
+      <span className="w-14 flex-none text-muted">{k}</span>
+      <span className="min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- overview */
+
+export function FeedbackOverviewScreen({ overview: o }: { overview: FeedbackOverview }) {
+  const max = Math.max(1, ...o.openByApp.map((a) => a.n));
+  const hours = o.medianFirstReplyHours;
+  return (
+    <div className="mt-4 flex flex-col gap-4">
+      <div className="flex justify-end">
+        <div className="flex overflow-hidden rounded-[7px] border border-line bg-surface text-xs font-medium">
+          {[30, 90].map((d) => (
+            <Link
+              key={d}
+              href={`${ADMIN.feedback("overview")}${d === 90 ? "?p=90" : ""}`}
+              className={cx(
+                "px-3 py-1.5 no-underline hover:no-underline",
+                o.periodDays === d ? "bg-brand-soft font-semibold text-brand-deep" : "text-body",
+              )}
+            >
+              Last {d} days
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      <CardGrid min={200} gap="gap-3">
+        <Figure
+          label="Needs a first reply"
+          value={String(o.needsFirstReply)}
+          sub={o.firstReplyOverdue ? `${o.firstReplyOverdue} waiting more than a day` : "none waiting more than a day"}
+          href={ADMIN.feedback("reply")}
+          alarm={o.firstReplyOverdue > 0}
+        />
+        <Figure label="Open" value={String(o.open)} sub={`${o.beingLookedAt} being looked at`} />
+        <Figure
+          label="Time to first reply"
+          value={hours === null ? "—" : hours < 1 ? `${Math.round(hours * 60)} min` : `${Math.round(hours)} h`}
+          sub="median, from the report to the team's first line"
+        />
+        <Figure
+          label="Confirmed fixed by the reporter"
+          value={String(o.confirmedFixed)}
+          sub={o.stillHappening ? `${o.stillHappening} said “still happening”` : "nobody said “still happening”"}
+        />
+      </CardGrid>
+
+      <div className="flex flex-wrap gap-4">
+        <section className="min-w-0 flex-[1_1_360px] rounded-[8px] border border-line bg-surface px-4.5 py-4">
+          <h2 className="mb-2 text-[15px] font-semibold text-ink">Open, by app</h2>
+          {o.openByApp.length ? (
+            o.openByApp.map((a) => (
+              <Link key={a.app} href={`${ADMIN.feedback("all")}?app=${a.app}`} className="flex items-center gap-2.5 py-1.5 text-[13px] text-body no-underline hover:no-underline">
+                <span className="w-[130px] flex-none truncate">{appName(a.app)}</span>
+                <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-brand-soft">
+                  <span className="block h-full rounded-full bg-brand" style={{ width: `${(a.n / max) * 100}%` }} />
+                </span>
+                <span className="w-7 text-right font-semibold tabular-nums">{a.n}</span>
+              </Link>
+            ))
+          ) : (
+            <div className="text-[13px] text-muted">Nothing open.</div>
+          )}
+        </section>
+        <section className="min-w-0 flex-[1_1_360px] rounded-[8px] border border-line bg-surface px-4.5 py-4">
+          <h2 className="mb-1 text-[15px] font-semibold text-ink">Screens reported most</h2>
+          {o.topScreens.length ? (
+            o.topScreens.map((s) => (
+              <div key={s.path} className="flex items-center gap-2.5 border-b border-divider py-2 text-[13px] last:border-0">
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{s.path}</span>
+                <span className="flex-none text-muted">
+                  {s.reports} report{s.reports === 1 ? "" : "s"}
+                  {s.issues !== s.reports ? ` · ${s.issues} issue${s.issues === 1 ? "" : "s"}` : ""}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="text-[13px] text-muted">Nothing reported in this period.</div>
+          )}
+        </section>
+      </div>
+
+      <section className="rounded-[8px] border border-line bg-surface px-4.5 py-4">
+        <h2 className="mb-1 text-[15px] font-semibold text-ink">Waiting longest without a reply</h2>
+        {o.waitingLongest.length ? (
+          o.waitingLongest.map((r) => (
+            <Link
+              key={r.id}
+              href={`${ADMIN.feedback("reply")}?r=${r.id}`}
+              className="flex items-center gap-2.5 border-b border-divider py-2.5 text-[13px] text-ink no-underline last:border-0 hover:no-underline"
+            >
+              <span className={cx("h-7 w-1 flex-none rounded-full", IMPACT_BAR[r.impact ?? "none"])} aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">{r.title}</span>
+                <span className="block text-xs text-muted">
+                  {r.ref} · {r.byName}
+                  {r.alsoReported.length ? ` + ${r.alsoReported.length}` : ""} · {appName(r.app)}
+                </span>
+              </span>
+              <span className="flex-none text-xs text-muted">since {stamp(r.lastActivityAt)}</span>
+            </Link>
+          ))
+        ) : (
+          <div className="text-[13px] text-muted">Nobody is waiting on an answer.</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Figure({
+  label,
+  value,
+  sub,
+  href,
+  alarm,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  href?: string;
+  alarm?: boolean;
+}) {
+  const body = (
+    <>
+      <div className="text-xs font-medium text-muted">{label}</div>
+      <div className={cx("mt-1.5 text-[28px] leading-8 font-semibold", alarm ? "text-danger" : "text-ink")}>{value}</div>
+      <div className="mt-1 text-xs text-muted">{sub}</div>
+    </>
+  );
+  const cls = cx("rounded-[8px] border bg-surface px-4.5 py-4", alarm ? "border-danger" : "border-line");
+  return href ? (
+    <Link href={href} className={cx(cls, "no-underline hover:no-underline")}>
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>{body}</div>
   );
 }

@@ -681,3 +681,13 @@ table.table-fixed td {
   white-space: normal;
   overflow-wrap: break-word;
 }
+
+/*
+ * "Capture this screen" in the feedback dialog: while the browser's share
+ * prompt is open and the one frame is taken, every dialog steps out of the way
+ * so the picture is of the screen being reported. `components/feedback/shots.tsx`
+ * adds the class for those few hundred milliseconds and always takes it off.
+ */
+body.fb-capturing .ui-scrim {
+  visibility: hidden;
+}
