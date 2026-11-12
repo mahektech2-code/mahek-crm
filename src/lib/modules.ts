@@ -1063,6 +1063,34 @@ export const APP_MODULES: AppModule[] = [
     href: "/tasks/setup",
     note: "Routines, and the automatic tasks each app raises. Switching an automatic task on or off needs the Run automatic tasks permission.",
   },
+  /*
+   * STUDIO is six screens, and one of them is a decision rather than a place
+   * to work. Approving an uploaded design publishes it to everybody holding
+   * the app, so it is off by default: the Access screen starts it unticked
+   * and somebody has to choose to give it.
+   */
+  { key: "studio.home", app: "studio", label: "Home", group: "Studio", href: "/studio", exact: true, note: "What is coming up and the posters made lately." },
+  {
+    key: "studio.make",
+    app: "studio",
+    label: "Make a poster",
+    group: "Studio",
+    href: "/studio/make",
+    note: "Pick a lead, a customer or a lost lead from their own book and make one poster. Without it there is nothing to make posters for.",
+  },
+  { key: "studio.bulk", app: "studio", label: "Bulk posters", group: "Studio", href: "/studio/bulk", note: "Up to fifty posters of one design at once, downloaded as a ZIP." },
+  { key: "studio.posters", app: "studio", label: "My posters", group: "Studio", href: "/studio/posters", note: "Every poster they made, to open, download or share again." },
+  { key: "studio.dates", app: "studio", label: "Dates", group: "Studio", href: "/studio/dates", note: "The festival calendar, and the birthdays and anniversaries everybody shares." },
+  { key: "studio.designs", app: "studio", label: "Designs", group: "Designs", href: "/studio/designs", note: "The approved designs, and uploading their own artwork as a private draft." },
+  {
+    key: "studio.approve",
+    app: "studio",
+    label: "Approve designs",
+    group: "Designs",
+    href: "/studio/approvals",
+    offByDefault: true,
+    note: "Publishing somebody's uploaded design to everybody holding the Studio. An approved design can never be edited again.",
+  },
   {
     key: "docs.app",
     app: "docs",

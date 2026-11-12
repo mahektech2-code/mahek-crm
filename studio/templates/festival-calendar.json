@@ -1,0 +1,620 @@
+{
+  "_comment": "Dates are listed per year because festival dates move; NOTHING here is extrapolated to another year. An entry with source null would be shown as UNVERIFIED. Update only from an official or panchang source, and record it under sources.",
+  "sources": {
+    "dopt-2026": {
+      "title": "Government of India DoP&T holidays for 2026 (Delhi / New Delhi central offices)",
+      "reference": "O.M. F.No.12/2/2023-JCA dated 03.07.2025, Annexure-I (gazetted) and Annexure-II (restricted)",
+      "transcribedFrom": "https://cdnbbsr.s3waas.gov.in/s32d2ca7eedf739ef4c3800713ec482e1a/uploads/2025/10/2025103171.pdf (Kendriya Vidyalaya Sangathan circular dated 29.10.2025 on a government-hosted site, enclosing the DoP&T O.M. and both annexures as scanned pages, read by eye)",
+      "retrievedOn": "2026-10-22",
+      "verification": "official-list",
+      "caveat": "Read from the scanned O.M. itself and all 31 festival entries compared one by one with Annexure-I and II (an earlier version of this file was copied from a news site). It is the Delhi / New Delhi list; the O.M. lets Id-ul-Fitr, Id-ul-Zuha, Muharram and Id-e-Milad move with the moon, and offices outside Delhi follow state lists. Later amendments are listed as separate sources. Not independently checked against a state panchang."
+    },
+    "dopt-2027": {
+      "title": "Government of India DoP&T holidays for 2027 (Delhi / New Delhi central offices)",
+      "reference": "O.M. F.No.12/2/2023-JCA dated 16.07.2026, Annexure-I (gazetted) and Annexure-II (restricted)",
+      "transcribedFrom": "https://utilities.cept.gov.in/dop/pdfbind.ashx?id=15435 (Department of Posts letter No. Y-21/2/2026-PE-II-DOP dated 08-09-2026, which encloses the DoP&T O.M.; government-hosted, scanned pages read by eye)",
+      "retrievedOn": "2026-10-22",
+      "verification": "official-list",
+      "caveat": "Read from the scanned O.M. itself and all 31 dates compared one by one. It is the Delhi / New Delhi list; the O.M. lets Id-ul-Fitr, Id-ul-Zuha, Muharram and Id-e-Milad move with the moon, and offices outside Delhi follow state lists. Not independently checked against a state panchang."
+    },
+    "pib-2026-05-22": {
+      "title": "PIB release, Ministry of Personnel, Public Grievances & Pensions: change in date of holiday on account of Id-ul-Zuha (Bakrid)",
+      "reference": "Posted 22 May 2026, Release ID 2264022: Delhi / New Delhi central offices closed on 28 May 2026 in place of 27 May 2026",
+      "transcribedFrom": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2264022&reg=3&lang=2",
+      "retrievedOn": "2026-10-22",
+      "verification": "official-list",
+      "caveat": "Applies to central offices in Delhi / New Delhi. Offices elsewhere follow their state decision."
+    },
+    "dopt-2026-04-09": {
+      "title": "Holiday on 14 April 2026, birth anniversary of Dr. B.R. Ambedkar",
+      "reference": "DoP&T O.M. No. 12/4/2020-JCA dated 09.04.2026, as conveyed in Ministry of Jal Shakti O.M. F.No. A-50013/122/2024-Admn dated 09.04.2026",
+      "transcribedFrom": "https://mowr.nic.in/core/Circulars/2026/Admin_09-04-2026_1156.pdf (government-hosted; the Ministry's own memorandum, read by eye; the enclosed DoP&T O.M. was not read separately)",
+      "retrievedOn": "2026-10-22",
+      "verification": "official-list",
+      "caveat": "Declared as a holiday for central offices; it is in the past and is kept only for completeness."
+    }
+  },
+  "coverage": {
+    "from": "2026-01-01",
+    "to": "2027-12-31"
+  },
+  "entries": [
+    {
+      "id": "new-year-2026",
+      "label": "New Year's Day",
+      "date": "2026-01-01",
+      "category": "other",
+      "occasionId": "newyear",
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "makar-sankranti-2026",
+      "label": "Makar Sankranti",
+      "date": "2026-01-14",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "republic-day-2026",
+      "label": "Republic Day",
+      "date": "2026-01-26",
+      "category": "national",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "maha-shivratri-2026",
+      "label": "Maha Shivratri",
+      "date": "2026-02-15",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "holika-dahan-2026",
+      "label": "Holika Dahan",
+      "date": "2026-03-03",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "holi-2026",
+      "label": "Holi",
+      "date": "2026-03-04",
+      "category": "hindu",
+      "occasionId": "holi",
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "ugadi-2026",
+      "label": "Ugadi / Gudi Padwa",
+      "date": "2026-03-19",
+      "category": "regional",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "id-ul-fitr-2026",
+      "label": "Id-ul-Fitr",
+      "date": "2026-03-21",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "ram-navami-2026",
+      "label": "Ram Navami",
+      "date": "2026-03-26",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "mahavir-jayanti-2026",
+      "label": "Mahavir Jayanti",
+      "date": "2026-03-31",
+      "category": "jain-buddhist",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "good-friday-2026",
+      "label": "Good Friday",
+      "date": "2026-04-03",
+      "category": "christian",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "easter-2026",
+      "label": "Easter Sunday",
+      "date": "2026-04-05",
+      "category": "christian",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "ambedkar-jayanti-2026",
+      "label": "Dr. B.R. Ambedkar Jayanti",
+      "date": "2026-04-14",
+      "category": "national",
+      "occasionId": null,
+      "source": "dopt-2026-04-09",
+      "list": "gazetted"
+    },
+    {
+      "id": "baisakhi-2026",
+      "label": "Vaisakhi / Baisakhi",
+      "date": "2026-04-14",
+      "category": "regional",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "buddha-purnima-2026",
+      "label": "Buddha Purnima",
+      "date": "2026-05-01",
+      "category": "jain-buddhist",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "id-ul-zuha-2026",
+      "label": "Id-ul-Zuha (Bakrid)",
+      "date": "2026-05-28",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "pib-2026-05-22",
+      "list": "gazetted",
+      "note": "Moved from 27 May (the date in the 03.07.2025 order) to 28 May by a later order, confirmed by a PIB release of 22 May 2026. Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "muharram-2026",
+      "label": "Muharram",
+      "date": "2026-06-26",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "independence-day-2026",
+      "label": "Independence Day",
+      "date": "2026-08-15",
+      "category": "national",
+      "occasionId": "independence",
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "milad-un-nabi-2026",
+      "label": "Milad-un-Nabi",
+      "date": "2026-08-26",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "onam-2026",
+      "label": "Onam",
+      "date": "2026-08-26",
+      "category": "regional",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "raksha-bandhan-2026",
+      "label": "Raksha Bandhan",
+      "date": "2026-08-28",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "janmashtami-2026",
+      "label": "Janmashtami",
+      "date": "2026-09-04",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "ganesh-chaturthi-2026",
+      "label": "Ganesh Chaturthi",
+      "date": "2026-09-14",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "gandhi-jayanti-2026",
+      "label": "Gandhi Jayanti",
+      "date": "2026-10-02",
+      "category": "national",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "dussehra-2026",
+      "label": "Dussehra",
+      "date": "2026-10-20",
+      "category": "hindu",
+      "occasionId": "dussehra",
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "karwa-chauth-2026",
+      "label": "Karwa Chauth",
+      "date": "2026-10-29",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "diwali-2026",
+      "label": "Diwali",
+      "date": "2026-11-08",
+      "category": "hindu",
+      "occasionId": "diwali",
+      "source": "dopt-2026",
+      "list": "gazetted",
+      "note": "Some states observe the previous day (Naraka Chaturdasi)."
+    },
+    {
+      "id": "govardhan-puja-2026",
+      "label": "Govardhan Puja",
+      "date": "2026-11-09",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "bhai-dooj-2026",
+      "label": "Bhai Dooj",
+      "date": "2026-11-11",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "chhath-puja-2026",
+      "label": "Chhath Puja",
+      "date": "2026-11-15",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "restricted"
+    },
+    {
+      "id": "guru-nanak-jayanti-2026",
+      "label": "Guru Nanak Jayanti",
+      "date": "2026-11-24",
+      "category": "sikh",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "christmas-2026",
+      "label": "Christmas",
+      "date": "2026-12-25",
+      "category": "christian",
+      "occasionId": null,
+      "source": "dopt-2026",
+      "list": "gazetted"
+    },
+    {
+      "id": "new-year-2027",
+      "label": "New Year's Day",
+      "date": "2027-01-01",
+      "category": "other",
+      "occasionId": "newyear",
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "makar-sankranti-2027",
+      "label": "Makar Sankranti",
+      "date": "2027-01-14",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "republic-day-2027",
+      "label": "Republic Day",
+      "date": "2027-01-26",
+      "category": "national",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "maha-shivratri-2027",
+      "label": "Maha Shivratri",
+      "date": "2027-03-06",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "id-ul-fitr-2027",
+      "label": "Id-ul-Fitr",
+      "date": "2027-03-10",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "holika-dahan-2027",
+      "label": "Holika Dahan",
+      "date": "2027-03-22",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "holi-2027",
+      "label": "Holi",
+      "date": "2027-03-23",
+      "category": "hindu",
+      "occasionId": "holi",
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "good-friday-2027",
+      "label": "Good Friday",
+      "date": "2027-03-26",
+      "category": "christian",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "easter-2027",
+      "label": "Easter Sunday",
+      "date": "2027-03-28",
+      "category": "christian",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "ugadi-2027",
+      "label": "Ugadi / Gudi Padwa",
+      "date": "2027-04-07",
+      "category": "regional",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "baisakhi-2027",
+      "label": "Vaisakhi / Baisakhi",
+      "date": "2027-04-14",
+      "category": "regional",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "ram-navami-2027",
+      "label": "Ram Navami",
+      "date": "2027-04-15",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "mahavir-jayanti-2027",
+      "label": "Mahavir Jayanti",
+      "date": "2027-04-19",
+      "category": "jain-buddhist",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "id-ul-zuha-2027",
+      "label": "Id-ul-Zuha (Bakrid)",
+      "date": "2027-05-17",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "buddha-purnima-2027",
+      "label": "Buddha Purnima",
+      "date": "2027-05-20",
+      "category": "jain-buddhist",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "muharram-2027",
+      "label": "Muharram",
+      "date": "2027-06-16",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "independence-day-2027",
+      "label": "Independence Day",
+      "date": "2027-08-15",
+      "category": "national",
+      "occasionId": "independence",
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "milad-un-nabi-2027",
+      "label": "Milad-un-Nabi",
+      "date": "2027-08-15",
+      "category": "muslim",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted",
+      "note": "Depends on moon sighting; can move by a day."
+    },
+    {
+      "id": "raksha-bandhan-2027",
+      "label": "Raksha Bandhan",
+      "date": "2027-08-17",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "janmashtami-2027",
+      "label": "Janmashtami",
+      "date": "2027-08-25",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "ganesh-chaturthi-2027",
+      "label": "Ganesh Chaturthi",
+      "date": "2027-09-04",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "onam-2027",
+      "label": "Onam",
+      "date": "2027-09-12",
+      "category": "regional",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "gandhi-jayanti-2027",
+      "label": "Gandhi Jayanti",
+      "date": "2027-10-02",
+      "category": "national",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "dussehra-2027",
+      "label": "Dussehra",
+      "date": "2027-10-09",
+      "category": "hindu",
+      "occasionId": "dussehra",
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "karwa-chauth-2027",
+      "label": "Karwa Chauth",
+      "date": "2027-10-18",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "diwali-2027",
+      "label": "Diwali",
+      "date": "2027-10-29",
+      "category": "hindu",
+      "occasionId": "diwali",
+      "source": "dopt-2027",
+      "list": "gazetted",
+      "note": "Some states observe the previous day (Naraka Chaturdasi)."
+    },
+    {
+      "id": "govardhan-puja-2027",
+      "label": "Govardhan Puja",
+      "date": "2027-10-30",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "bhai-dooj-2027",
+      "label": "Bhai Dooj",
+      "date": "2027-10-31",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "chhath-puja-2027",
+      "label": "Chhath Puja",
+      "date": "2027-11-04",
+      "category": "hindu",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "restricted"
+    },
+    {
+      "id": "guru-nanak-jayanti-2027",
+      "label": "Guru Nanak Jayanti",
+      "date": "2027-11-14",
+      "category": "sikh",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    },
+    {
+      "id": "christmas-2027",
+      "label": "Christmas",
+      "date": "2027-12-25",
+      "category": "christian",
+      "occasionId": null,
+      "source": "dopt-2027",
+      "list": "gazetted"
+    }
+  ]
+}

@@ -23,6 +23,7 @@ export const APP_IDS = [
   "docs",
   "factory",
   "tasks",
+  "studio",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -303,6 +304,23 @@ export const APPS: AppDefinition[] = [
     description:
       "Every task you have, from every app — what is late, what is due today, and what your team owes. Close with proof, hand over with consent.",
     href: "/tasks",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "studio",
+    /*
+     * Personalised festival and promotional posters for a lead or a customer,
+     * from approved designs — one at a time or up to fifty at once. Ported
+     * from the standalone mahek-promotional-studio so it reads the book
+     * directly, through scope, instead of through a feed. Rules and renderer
+     * in lib/studio; reads and writes in lib/studio/service.ts.
+     */
+    name: "Studio",
+    initials: "ST",
+    description:
+      "Festival and promotional posters for your leads and customers — their name, their company, an approved greeting, ready to download or send on WhatsApp.",
+    href: "/studio",
     tone: "neutral",
     built: true,
   },

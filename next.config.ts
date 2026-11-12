@@ -58,9 +58,9 @@ const nextConfig: NextConfig = {
    * than assumed: the build was run with and without this, and with
    * `outputFileTracingExcludes` aimed at it, and `standalone/node_modules/@img`
    * survived all three — Next copies the optimiser's binaries into standalone
-   * outside the file trace. The Dockerfile removes them in the runtime stage,
-   * and the comment there explains why that is safe. The two belong together:
-   * this setting is what makes the removal correct rather than a gamble.
+   * outside the file trace. The Dockerfile used to remove them; it no longer
+   * does, because the Studio's poster renderer is sharp (see the Dockerfile).
+   * The optimiser itself stays off, which is what this setting is for.
    */
   images: { unoptimized: true },
 

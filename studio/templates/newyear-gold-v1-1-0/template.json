@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 1,
+  "id": "newyear-gold-v1-1-0",
+  "versionOf": "newyear-gold",
+  "name": "New Year 2027: Midnight Gold",
+  "description": "Midnight navy with gold fireworks and a large year mark.",
+  "version": "1.1.0",
+  "status": "archived",
+  "approval": {
+    "approvedBy": "Owner (prototype baseline; named approver pending, D-21)",
+    "approvedAt": "2026-10-07"
+  },
+  "occasion": "newyear",
+  "category": "festival",
+  "audiences": [
+    "lead",
+    "customer"
+  ],
+  "languages": [
+    "en",
+    "hi"
+  ],
+  "requires": [],
+  "tags": [],
+  "canvas": {
+    "width": 1080,
+    "height": 1080,
+    "defaultFormat": "png",
+    "jpegQuality": 90
+  },
+  "background": "background.png",
+  "fonts": {
+    "display": {
+      "en": "noto-sans",
+      "hi": "noto-sans-devanagari"
+    },
+    "body": {
+      "en": "noto-sans",
+      "hi": "noto-sans-devanagari"
+    },
+    "name": {
+      "en": "noto-sans",
+      "hi": "noto-sans-devanagari"
+    }
+  },
+  "layers": [],
+  "fields": [
+    {
+      "key": "logo",
+      "type": "image",
+      "source": "asset",
+      "asset": "logo",
+      "variant": "light",
+      "box": {
+        "x": 64,
+        "y": 50,
+        "w": 380,
+        "h": 64
+      },
+      "fit": "contain",
+      "missing": "hide"
+    },
+    {
+      "key": "occasion_title",
+      "type": "text",
+      "source": "static",
+      "text": {
+        "en": "Happy New Year",
+        "hi": "नववर्ष की शुभकामनाएँ"
+      },
+      "font": "display",
+      "weight": 400,
+      "box": {
+        "x": 70,
+        "y": 140,
+        "w": 940,
+        "h": 170
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#FFFFFF",
+      "maxFont": 112,
+      "minFont": 56,
+      "step": 4,
+      "maxLines": 2,
+      "lh": 1.05,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "year_mark",
+      "type": "text",
+      "source": "static",
+      "text": {
+        "en": "2027"
+      },
+      "font": "display",
+      "weight": 400,
+      "box": {
+        "x": 200,
+        "y": 350,
+        "w": 680,
+        "h": 220
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#F6D58A",
+      "maxFont": 210,
+      "minFont": 120,
+      "step": 6,
+      "maxLines": 1,
+      "lh": 1,
+      "overflow": "ellipsis",
+      "shadow": true
+    },
+    {
+      "key": "customer_name",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.contact",
+      "fallback": "lead.company",
+      "required": true,
+      "prefix": {
+        "en": "Dear ",
+        "hi": "प्रिय ",
+        "gu": "પ્રિય "
+      },
+      "font": "name",
+      "weight": 700,
+      "box": {
+        "x": 90,
+        "y": 622,
+        "w": 900,
+        "h": 72
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#FFFFFF",
+      "maxFont": 56,
+      "minFont": 32,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "company_name",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.company",
+      "required": true,
+      "font": "name",
+      "weight": 600,
+      "box": {
+        "x": 90,
+        "y": 694,
+        "w": 900,
+        "h": 58
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#F6D58A",
+      "maxFont": 38,
+      "minFont": 22,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "greeting",
+      "type": "text",
+      "source": "copy",
+      "font": "body",
+      "weight": 500,
+      "box": {
+        "x": 120,
+        "y": 762,
+        "w": 840,
+        "h": 156
+      },
+      "align": "center",
+      "vAlign": "top",
+      "color": "#E6ECFA",
+      "maxFont": 38,
+      "minFont": 22,
+      "step": 2,
+      "maxLines": 3,
+      "lh": 1.28,
+      "maxChars": 220,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "product_line",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.product_name",
+      "optional": true,
+      "font": "body",
+      "weight": 700,
+      "box": {
+        "x": 220,
+        "y": 928,
+        "w": 640,
+        "h": 46
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#F6D58A",
+      "maxFont": 28,
+      "minFont": 18,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis",
+      "pill": "rgba(246,213,138,0.15)"
+    },
+    {
+      "key": "footer_site",
+      "type": "text",
+      "source": "static",
+      "text": {
+        "en": "mahekindia.com"
+      },
+      "font": "name",
+      "weight": 600,
+      "box": {
+        "x": 64,
+        "y": 1006,
+        "w": 360,
+        "h": 40
+      },
+      "align": "left",
+      "vAlign": "middle",
+      "color": "#A9B8D8",
+      "maxFont": 24,
+      "minFont": 18,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "salesperson",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.owner",
+      "prefix": {
+        "en": "Your Mahek contact · ",
+        "hi": "आपके Mahek संपर्क · ",
+        "gu": "તમારા Mahek સંપર્ક · "
+      },
+      "font": "name",
+      "weight": 500,
+      "box": {
+        "x": 430,
+        "y": 1006,
+        "w": 586,
+        "h": 40
+      },
+      "align": "right",
+      "vAlign": "middle",
+      "color": "#A9B8D8",
+      "maxFont": 24,
+      "minFont": 16,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    }
+  ],
+  "sample": {
+    "contact": "Rajesh Shah",
+    "company": "ABC Industries",
+    "product": "M1433 Thinner",
+    "language": "en"
+  }
+}

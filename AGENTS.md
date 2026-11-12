@@ -10492,6 +10492,78 @@ revalidate every app, not just the console and the CRM, and drop the
 reference cache. What deliberately does NOT move: fills, stock, orders and
 bills already made keep what they were made against.
 
+## The Studio
+
+**THE STUDIO WAS A SEPARATE APP, AND IS ONE OF THESE NOW.** It began as
+`mahek-promotional-studio`: its own repository, its own sign-in, SQLite files,
+and a read-only HTTP feed out of this repo to learn who the leads and
+customers were. Deploying it meant a second Node process on a droplet with one
+CPU and a gigabyte already half a gigabyte into swap, plus a second copy of
+MahekOne to serve the feed, plus a tunnel. Inside MahekOne all three go away:
+the book is read through `scopedToUsers` like every other list, the grant is
+`app_access`, and the only new process is none. `lib/studio/domain`,
+`lib/studio/renderer` and `lib/studio/templates` are that repository's code,
+carried over with their tests; what was rewritten is where things are stored
+and who may see them.
+
+**A POSTER IS STORED AS ITS RECIPE, never as its pixels.** `studio_posters`
+holds the design id AND VERSION, the language, the wording, the poster-only
+edits, the sender's name and a snapshot of the recipient as they stood. A
+design version is immutable once published — a refresh is a new version and
+the old one is kept as an archived folder — so the row redraws the same
+picture next year, a CRM edit cannot repaint an old poster, and the database
+does not grow by a megabyte every time somebody wishes a shop a happy Diwali.
+The image routes draw on request and keep a small in-process cache.
+
+**THE RENDERER DRAWS ONE POSTER AT A TIME.** `render-service.ts` sets sharp to
+one thread and a small cache and runs every render through a limiter of one,
+because the box is shared with the CRM, the ERP and Postgres. A bulk run
+therefore stores recipes and draws nothing; the ZIP and the poster pages draw
+when somebody asks, queued. Fifty posters in a ZIP take a minute; fifty
+renders in parallel would push the CRM into swap.
+
+**WHO A POSTER CAN BE MADE FOR is scope, and three lists.** Leads, customers
+and LOST leads — a lost lead is greeted with the lead designs, because it has
+never bought anything, and is listed apart because winning somebody back is a
+different conversation from welcoming them. Do Not Contact still lets a
+poster be made and downloaded and says in red not to send it; the WhatsApp
+button is withheld for it and for `whatsapp_dnd`. Nothing is ever sent by
+MahekOne: WhatsApp opens a chat with the message written, the phone's share
+sheet takes the picture, and every way out is recorded in
+`studio_poster_shares`.
+
+**APPROVING A DESIGN IS A MODULE, OFF BY DEFAULT.** Anybody holding Designs
+may upload artwork and place fields on it; the draft is theirs alone.
+Publishing it to everybody is `studio.approve`, which the Access screen
+starts unticked and `npm run app:grant` leaves out too — both write the
+default modules as rows. Somebody has to tick it; a Studio administrator
+holds it regardless, as every `offByDefault` module is held. Approval draws the design twice (sample
+text, where anything not fitting is an ERROR; deliberately long names, where
+shortening is a WARNING), stores the preview, and writes the manifest once.
+An approved upload is never edited; a change is a new upload.
+
+**An uploaded design lives in file storage and the database, and is read from
+a folder.** The renderer and loader read files, so `registry-service.ts`
+writes each approved upload out as the same folder format the shipped
+designs use, under the OS temp directory, and rebuilds the registry when the
+set of approved ids and versions changes. The folder is a cache; a wiped
+`/tmp` or a second process rebuilds it from the row.
+
+**SHARP IS IN THE IMAGE AGAIN, AND `studio/` IS COPIED BESIDE `server.js`.**
+The Dockerfile used to delete sharp as weight for a switched-off image
+optimiser; the renderer is sharp, so it stays, with fontconfig for Pango. The
+designs and fonts are read by path, which no file trace sees, so they are
+copied by hand — and the image build draws one line of Latin, Devanagari and
+Gujarati and FAILS if any of them comes back empty, because the first person
+to find out otherwise would be making a Hindi poster.
+
+**The festival calendar is data, and it says what it does not know.**
+`studio/templates/festival-calendar.json` lists dates per year with their
+source; an entry with no source is drawn "Unverified date", and nothing is
+extrapolated past its coverage. Birthdays and anniversaries are one shared
+list, edited by version so two people cannot silently overwrite each other.
+There is no birthday design yet, so those remind and do not make a poster.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the

@@ -1,0 +1,21 @@
+{
+  "en": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Wishing you and everyone at {company} a Holi full of colour, joy and good health."
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "May Holi fill your days with colour and happiness, {contact}!"
+    }
+  ],
+  "hi": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "आपको और {company} परिवार को होली की रंग-बिरंगी शुभकामनाएँ।"
+    }
+  ]
+}

@@ -176,6 +176,13 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   tick: <path d="m5 13 4 4L19 7" />,
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-5-5L5 21" />
+    </>
+  ),
   calendar: (
     <>
       <rect x="3" y="5" width="18" height="16" rx="2" />

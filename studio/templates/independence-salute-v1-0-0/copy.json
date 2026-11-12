@@ -1,0 +1,21 @@
+{
+  "en": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Proud to grow together. Wishing you and {company} a happy Independence Day."
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "Happy Independence Day to you and everyone at {company}."
+    }
+  ],
+  "hi": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "आपको और {company} को स्वतंत्रता दिवस की हार्दिक शुभकामनाएँ।"
+    }
+  ]
+}

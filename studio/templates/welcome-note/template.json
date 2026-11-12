@@ -1,0 +1,254 @@
+{
+  "schemaVersion": 1,
+  "id": "welcome-note",
+  "name": "Welcome: Thank You for Your Enquiry",
+  "description": "A first follow-up for any new lead. Light and friendly. Optional product line.",
+  "version": "1.1.0",
+  "status": "approved",
+  "approval": {
+    "approvedBy": "Owner (prototype baseline; named approver pending, D-21)",
+    "approvedAt": "2026-10-07"
+  },
+  "occasion": "anytime",
+  "category": "greeting",
+  "audiences": [
+    "lead"
+  ],
+  "languages": [
+    "en",
+    "hi",
+    "gu"
+  ],
+  "requires": [],
+  "tags": [],
+  "canvas": {
+    "width": 1080,
+    "height": 1080,
+    "defaultFormat": "png",
+    "jpegQuality": 90
+  },
+  "background": "background.png",
+  "fonts": {
+    "display": {
+      "en": "noto-sans",
+      "hi": "noto-sans-devanagari",
+      "gu": "noto-sans-gujarati"
+    },
+    "body": {
+      "en": "noto-sans",
+      "hi": "noto-sans-devanagari",
+      "gu": "noto-sans-gujarati"
+    },
+    "name": {
+      "en": "noto-sans",
+      "hi": "noto-sans-devanagari",
+      "gu": "noto-sans-gujarati"
+    }
+  },
+  "layers": [],
+  "fields": [
+    {
+      "key": "logo",
+      "type": "image",
+      "source": "asset",
+      "asset": "logo",
+      "variant": "dark",
+      "box": {
+        "x": 64,
+        "y": 50,
+        "w": 380,
+        "h": 64
+      },
+      "fit": "contain",
+      "missing": "hide"
+    },
+    {
+      "key": "occasion_title",
+      "type": "text",
+      "source": "static",
+      "text": {
+        "en": "Welcome to Mahek",
+        "hi": "Mahek में आपका स्वागत है",
+        "gu": "Mahek માં આપનું સ્વાગત છે"
+      },
+      "font": "display",
+      "weight": 400,
+      "box": {
+        "x": 70,
+        "y": 150,
+        "w": 940,
+        "h": 210
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#0B2545",
+      "maxFont": 112,
+      "minFont": 56,
+      "step": 4,
+      "maxLines": 2,
+      "lh": 1.05,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "customer_name",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.contact",
+      "fallback": "lead.company",
+      "required": true,
+      "prefix": {
+        "en": "Dear ",
+        "hi": "प्रिय ",
+        "gu": "પ્રિય "
+      },
+      "font": "name",
+      "weight": 700,
+      "box": {
+        "x": 90,
+        "y": 572,
+        "w": 900,
+        "h": 72
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#0B2545",
+      "maxFont": 56,
+      "minFont": 32,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "company_name",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.company",
+      "required": true,
+      "font": "name",
+      "weight": 600,
+      "box": {
+        "x": 90,
+        "y": 644,
+        "w": 900,
+        "h": 58
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#A85A16",
+      "maxFont": 38,
+      "minFont": 22,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "greeting",
+      "type": "text",
+      "source": "copy",
+      "font": "body",
+      "weight": 500,
+      "box": {
+        "x": 120,
+        "y": 712,
+        "w": 840,
+        "h": 156
+      },
+      "align": "center",
+      "vAlign": "top",
+      "color": "#27405F",
+      "maxFont": 38,
+      "minFont": 22,
+      "step": 2,
+      "maxLines": 3,
+      "lh": 1.28,
+      "maxChars": 220,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "product_line",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.product_name",
+      "optional": true,
+      "font": "body",
+      "weight": 700,
+      "box": {
+        "x": 220,
+        "y": 870,
+        "w": 640,
+        "h": 46
+      },
+      "align": "center",
+      "vAlign": "middle",
+      "color": "#FFFFFF",
+      "maxFont": 28,
+      "minFont": 18,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis",
+      "pill": "#0B2545"
+    },
+    {
+      "key": "footer_site",
+      "type": "text",
+      "source": "static",
+      "text": {
+        "en": "mahekindia.com"
+      },
+      "font": "name",
+      "weight": 600,
+      "box": {
+        "x": 64,
+        "y": 1006,
+        "w": 360,
+        "h": 40
+      },
+      "align": "left",
+      "vAlign": "middle",
+      "color": "#E8EEF8",
+      "maxFont": 24,
+      "minFont": 18,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    },
+    {
+      "key": "salesperson",
+      "type": "text",
+      "source": "crm",
+      "crmPath": "lead.owner",
+      "prefix": {
+        "en": "Your Mahek contact · ",
+        "hi": "आपके Mahek संपर्क · ",
+        "gu": "તમારા Mahek સંપર્ક · "
+      },
+      "font": "name",
+      "weight": 500,
+      "box": {
+        "x": 430,
+        "y": 1006,
+        "w": 586,
+        "h": 40
+      },
+      "align": "right",
+      "vAlign": "middle",
+      "color": "#E8EEF8",
+      "maxFont": 24,
+      "minFont": 16,
+      "step": 2,
+      "maxLines": 1,
+      "lh": 1.1,
+      "overflow": "ellipsis"
+    }
+  ],
+  "sample": {
+    "contact": "Rajesh Shah",
+    "company": "ABC Industries",
+    "product": "M1433 Thinner",
+    "language": "en"
+  }
+}

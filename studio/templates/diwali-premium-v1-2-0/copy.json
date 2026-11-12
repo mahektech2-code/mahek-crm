@@ -1,0 +1,38 @@
+{
+  "en": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "Wishing you and your team at {company} a prosperous and joyful Diwali."
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "May the lights of Diwali bring happiness, good health and success to you, your family and everyone at {company}."
+    },
+    {
+      "id": "short",
+      "label": "Short",
+      "text": "Happy Diwali from all of us at Mahek to you and {company}."
+    }
+  ],
+  "hi": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "आपको और {company} की पूरी टीम को दीपावली की हार्दिक शुभकामनाएँ। यह पर्व आपके लिए समृद्धि और खुशियाँ लाए।"
+    },
+    {
+      "id": "warm",
+      "label": "Warm",
+      "text": "दीपावली की रोशनी आपके और {company} के जीवन में सुख, स्वास्थ्य और सफलता लेकर आए।"
+    }
+  ],
+  "gu": [
+    {
+      "id": "formal",
+      "label": "Professional",
+      "text": "તમને અને {company} ની આખી ટીમને દિવાળીની હાર્દિક શુભેચ્છાઓ. આ તહેવાર તમારા માટે સમૃદ્ધિ અને ખુશીઓ લાવે."
+    }
+  ]
+}

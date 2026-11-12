@@ -711,6 +711,8 @@ export const appIdEnum = pgEnum("app_id", [
   "docs",
   /** Tasks — every task a person has, from every app, in one place. */
   "tasks",
+  /** Studio — personalised festival and promotional posters for leads and customers. */
+  "studio",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -17251,3 +17253,201 @@ export const taskTransfers = pgTable(
     check("task_transfers_not_to_self", sql`${t.fromId} <> ${t.toId}`),
   ],
 );
+
+/* ---------------------------------------------------------------- STUDIO */
+/*
+ * The Studio: a personalised festival or promotional poster for a lead or a
+ * customer, drawn by the renderer in lib/studio/renderer from an approved
+ * design. See the STUDIO section of AGENTS.md.
+ *
+ * A POSTER IS STORED AS ITS RECIPE, never as its pixels. A design version is
+ * immutable once published, and the recipe carries everything else the
+ * drawing read — the recipient as it stood, the sender's name, the wording,
+ * the language — so the same row draws the same picture next year, and the
+ * database does not grow by a megabyte every time somebody wishes a shop a
+ * happy Diwali.
+ */
+
+/** What the poster said about the recipient when it was made. A snapshot, so a later CRM edit cannot redraw an old poster. */
+export type StudioRecipientSnapshot = {
+  contact: string | null;
+  company: string;
+  city: string;
+  state: string;
+  product: { id: string; code: string; name: string } | null;
+};
+
+/** Poster-only edits: what somebody typed for this one poster. Never written back to the record. */
+export type StudioPersonal = { name?: string; company?: string; message?: string; phone?: string; product?: string };
+
+export const studioBatches = pgTable(
+  "studio_batches",
+  {
+    id: text("id").primaryKey(),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    audience: text("audience").notNull(),
+    templateId: text("template_id").notNull(),
+    templateVersion: text("template_version").notNull(),
+    templateName: text("template_name").notNull(),
+    language: text("language").notNull(),
+    variantId: text("variant_id"),
+    showProduct: boolean("show_product").notNull().default(true),
+    /** How many recipients were asked for. Posters made are the rows pointing here. */
+    requested: integer("requested").notNull(),
+    /** The recipients that could not be made into a poster, each with the reason said in words. */
+    skipped: jsonb("skipped").$type<{ customerId: string; name: string; reason: string }[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_batches_created_by_idx").on(t.createdById, t.createdAt),
+    check("studio_batches_audience", sql`${t.audience} in ('lead','customer')`),
+  ],
+);
+
+export const studioPosters = pgTable(
+  "studio_posters",
+  {
+    id: text("id").primaryKey(),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    /** The lead or customer it was made for. Null once that record is gone; the snapshot still draws it. */
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    /** Which wording and designs it was offered from — a lead and a customer are greeted differently. */
+    audience: text("audience").notNull(),
+    recipient: jsonb("recipient").$type<StudioRecipientSnapshot>().notNull(),
+    /** The sender's poster name as it stood. */
+    senderName: text("sender_name"),
+    templateId: text("template_id").notNull(),
+    templateVersion: text("template_version").notNull(),
+    templateName: text("template_name").notNull(),
+    occasion: text("occasion").notNull(),
+    language: text("language").notNull(),
+    variantId: text("variant_id"),
+    wordingLabel: text("wording_label"),
+    showProduct: boolean("show_product").notNull().default(true),
+    personal: jsonb("personal").$type<StudioPersonal>().notNull().default({}),
+    batchId: text("batch_id").references(() => studioBatches.id, { onDelete: "cascade" }),
+    shareCount: integer("share_count").notNull().default(0),
+    lastSharedAt: timestamp("last_shared_at", { withTimezone: true }),
+    /** Taken off somebody's list. The row stays, because a share already recorded against it is a fact. */
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_posters_created_by_idx").on(t.createdById, t.createdAt),
+    index("studio_posters_customer_idx").on(t.customerId, t.createdAt),
+    index("studio_posters_batch_idx").on(t.batchId),
+    check("studio_posters_audience", sql`${t.audience} in ('lead','customer')`),
+  ],
+);
+
+export const studioPosterShares = pgTable(
+  "studio_poster_shares",
+  {
+    id: text("id").primaryKey(),
+    posterId: text("poster_id")
+      .notNull()
+      .references(() => studioPosters.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** download — saved to the device; whatsapp — a chat opened with the image to attach; device — the phone's own share sheet. */
+    channel: text("channel").notNull(),
+    format: text("format"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_poster_shares_poster_idx").on(t.posterId, t.createdAt),
+    index("studio_poster_shares_user_idx").on(t.userId, t.createdAt),
+    check("studio_poster_shares_channel", sql`${t.channel} in ('download','whatsapp','device')`),
+  ],
+);
+
+/**
+ * A design somebody UPLOADED: their own artwork with the fields placed on it.
+ * A draft is private to whoever made it; approving publishes it to everybody
+ * holding the Studio, and an approved design is never edited again — a
+ * change is a new design, so a poster made from it draws the same for ever.
+ * The artwork lives in file storage; this row holds references to it.
+ */
+export const studioDesigns = pgTable(
+  "studio_designs",
+  {
+    /** custom-<name>-<random>, the template id the renderer knows it by. */
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("draft"),
+    canvas: text("canvas").notNull(),
+    /** The placement as the editor holds it (lib/studio/domain/template-upload.ts). */
+    placement: jsonb("placement").notNull(),
+    /** Written once, at approval: the template.json and copy.json the renderer reads. */
+    manifest: jsonb("manifest"),
+    copy: jsonb("copy"),
+    version: text("version").notNull().default("1.0.0"),
+    backgroundRef: text("background_ref").notNull(),
+    previewRef: text("preview_ref"),
+    sourceSha256: text("source_sha256").notNull(),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_designs_created_by_idx").on(t.createdById, t.updatedAt),
+    index("studio_designs_status_idx").on(t.status),
+    check("studio_designs_status", sql`${t.status} in ('draft','approved','archived')`),
+    check("studio_designs_approved_has_manifest", sql`${t.status} = 'draft' or (${t.manifest} is not null and ${t.previewRef} is not null and ${t.approvedAt} is not null)`),
+  ],
+);
+
+/** A birthday or anniversary somebody wants reminded of — shared by everybody holding the Studio. */
+export const studioPeopleDates = pgTable(
+  "studio_people_dates",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    personName: text("person_name").notNull(),
+    company: text("company"),
+    /** "YYYY-MM-DD" where the year is known, "--MM-DD" where it is not. */
+    date: text("date").notNull(),
+    note: text("note"),
+    leadDays: integer("lead_days").notNull().default(3),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    version: integer("version").notNull().default(1),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    updatedById: text("updated_by_id")
+      .notNull()
+      .references(() => users.id),
+    deletedById: text("deleted_by_id").references(() => users.id),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_people_dates_live_idx").on(t.deletedAt),
+    check("studio_people_dates_kind", sql`${t.kind} in ('birthday','anniversary')`),
+    check("studio_people_dates_lead_days", sql`${t.leadDays} in (1,3,7)`),
+  ],
+);
+
+/** What one person has read or dismissed among the Studio's reminders. */
+export const studioReminderState = pgTable("studio_reminder_state", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  state: jsonb("state").$type<{ read: Record<string, string>; dismissed: Record<string, string> }>().notNull().default({ read: {}, dismissed: {} }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type StudioPoster = typeof studioPosters.$inferSelect;
+export type StudioDesign = typeof studioDesigns.$inferSelect;
+export type StudioPeopleDate = typeof studioPeopleDates.$inferSelect;

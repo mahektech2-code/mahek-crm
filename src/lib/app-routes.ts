@@ -39,6 +39,10 @@ export const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/api/factory", "factory"],
   ["/docs", "docs"],
   ["/tasks", "tasks"],
+  ["/studio", "studio"],
+  /* The Studio's images, uploads and ZIPs: named by the path so scope is
+     resolved for the Studio grant rather than guessed from a Referer. */
+  ["/api/studio", "studio"],
 ];
 
 export function appFor(pathname: string): string | null {

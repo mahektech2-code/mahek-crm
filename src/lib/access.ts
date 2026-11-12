@@ -353,6 +353,22 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
+    /* Studio: what is coming up that is worth a poster. The badge counts the
+       unread reminders, which are exactly the things the sentence names. */
+    if (app.id === "studio") {
+      try {
+        const [{ dueFor }, { istDateKey }] = await Promise.all([import("./studio/service"), import("./studio/date")]);
+        const due = await dueFor(user.id, istDateKey(new Date()));
+        const unread = due.filter((r) => r.unread).length;
+        const next = due.find((r) => r.kind === "festival" && r.hasDesign);
+        const when = next ? (next.daysUntil === 0 ? "today" : next.daysUntil === 1 ? "tomorrow" : `in ${next.daysUntil} days`) : null;
+        out.push({ ...app, count: unread, status: next ? `${next.title} ${when}` : due.length ? `${due.length} coming up` : "Nothing coming up this week" });
+      } catch {
+        out.push({ ...app, count: 0, status: "Posters for your leads and customers" });
+      }
+      continue;
+    }
+
     if (app.id !== "crm") {
       out.push({
         ...app,
