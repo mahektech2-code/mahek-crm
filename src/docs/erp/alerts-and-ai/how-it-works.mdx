@@ -43,7 +43,7 @@ The checks run in the hourly job and in the nightly one; a manager or ERP admini
 | Slow fulfilment | More than <Setting k="erp.ai.alerts.fulfilDays" /> days from order to dispatch |
 | Ready but not billed | Ready and allocated in full, no Tally bill number, for more than <Setting k="erp.ai.alerts.readyUnbilledHours" /> hours |
 | Test unverified | A test undecided for more than <Setting k="erp.ai.alerts.stuckTestHours" /> hours |
-| LR missing | A bill without an LR more than <Setting k="erp.ai.alerts.stuckLrDays" /> days after it left |
+| LR missing | A bill without an LR more than <Setting k="erp.ai.alerts.stuckLrDays" /> days after it left, and not yet received by the party |
 | Credit note not issued | Accepted more than <Setting k="erp.ai.alerts.stuckCnDays" /> days ago and not issued |
 | Packing batch incomplete | Cans short or over for more than <Setting k="erp.ai.alerts.stuckPackDays" /> days |
 | Duplicate-looking expense | The same amount to the same payee for the same category, twice within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days — an expense saved as *a different invoice* is not counted |

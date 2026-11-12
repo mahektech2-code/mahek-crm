@@ -63,6 +63,10 @@ test("losses above their share, write-offs piling up, and thin or negative margi
 test("stuck work is measured from when it started", () => {
   assert.equal(lrsMissing([{ id: "x", billNo: "B1", party: "P", billDate: "2026-09-20", lr: null }], "2026-09-24", T).length, 1);
   assert.equal(lrsMissing([{ id: "x", billNo: "B1", party: "P", billDate: "2026-09-22", lr: null }], "2026-09-24", T).length, 0);
+  assert.equal(lrsMissing([{ id: "x", billNo: "B1", party: "P", billDate: "2026-09-20", lr: null, stage: "Close - Received to Party" }], "2026-09-24", T).length, 0, "received by the party: nothing is missing");
+  assert.equal(lrsMissing([{ id: "x", billNo: "B1", party: "P", billDate: "2026-09-20", lr: null, signedCopyId: "lr1", transporter: "Mahek Vehicle" }], "2026-09-24", T).length, 0, "its signed copy is attached");
+  assert.equal(lrsMissing([{ id: "x", billNo: "B1", party: "P", billDate: "2026-09-20", lr: "  " }], "2026-09-24", T).length, 1, "a blank LR is no LR");
+  assert.equal(lrsMissing([{ id: "x", billNo: "B1", party: "P", billDate: "2026-09-20", lr: null, transporter: " Mahek Vehicle " }], "2026-09-24", T)[0].kind, "signedCopyMissing");
   const now = at("2026-09-25");
   assert.equal(readyUnbilled([{ id: "o", orderNo: 5, party: "P", readySince: at("2026-09-23"), allocatedInFull: true, billed: false, ready: true }], now, T).length, 1);
   assert.equal(readyUnbilled([{ id: "o", orderNo: 5, party: "P", readySince: at("2026-09-23"), allocatedInFull: false, billed: false, ready: true }], now, T).length, 0);

@@ -8,6 +8,7 @@
  * subject is the same alert, so a rule that fires every hour raises it once.
  * ------------------------------------------------------------------------- */
 
+import { CLOSED, isMahekVehicle } from "./logistics";
 import { daysBetween } from "./sales";
 
 export type AlertKind =
@@ -268,15 +269,22 @@ export function readyUnbilled(lines: { id: string; orderNo: number; party: strin
  * A bill out longer than `stuckLrDays` with no proof of how it went: an LR for
  * a transporter, or — for our own vehicle (0301) — the customer-signed copy,
  * which is what closes that delivery.
+ *
+ * A bill the party has RECEIVED is never missing anything. Marking it
+ * delivered by hand closes it without an LR or a signed copy, and this used
+ * to go on alerting about it for ever — the Pending tab on the documents desk
+ * (`pendingOf`) already left those out, so the alert and the tab it opens
+ * disagreed about the same bill. Own vehicle is `isMahekVehicle`, the desk's
+ * own test, so a stray space in the name cannot turn one alert into the other.
  */
 export function lrsMissing(
   transports: { id: string; billNo: string | null; party: string; billDate: string | null; lr: string | null; transporter?: string | null; stage?: string | null; signedCopyId?: string | null }[],
   today: string,
   t: Thresholds,
 ): Candidate[] {
-  const own = (x: { transporter?: string | null }) => (x.transporter ?? "").trim().toLowerCase() === "mahek vehicle";
+  const own = (x: { transporter?: string | null }) => isMahekVehicle(x.transporter);
   return transports
-    .filter((x) => !x.lr && !x.signedCopyId && x.billDate && daysBetween(x.billDate, today) > t.stuckLrDays)
+    .filter((x) => x.stage !== CLOSED && !x.lr?.trim() && !x.signedCopyId && x.billDate && daysBetween(x.billDate, today) > t.stuckLrDays)
     .map((x) =>
       own(x)
         ? {
