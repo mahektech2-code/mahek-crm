@@ -171,7 +171,24 @@ jobs:
       - name: Import the catalogue
         run: npm run catalogue:deploy
 
+      # THE TYPE CHECK IS ITS OWN STEP, as it is on the deploy path. Inside
+      # `next build` it ran straight after the compile, in the same job, and
+      # from #1041 on the runner was shut down part-way through it on every
+      # run — the compile and the checker together outgrew the runner's
+      # memory. Run apart, each has the machine to itself. Nothing is checked
+      # less: `next typegen` writes the route types `next build` would have
+      # checked, `tsc` checks all of it, and the build below then skips only
+      # the repeat (see `typescript` in next.config.ts).
+      - name: Docs index
+        run: node scripts/docs-index.mjs
+      - name: Route types
+        run: npx next typegen
+      - name: Type check
+        run: npx tsc --noEmit
+
       - run: npm run build
+        env:
+          NEXT_BUILD_SKIP_TYPECHECK: "1"
 
   # THE SIX §11 JOURNEYS AND EVERYTHING ELSE THAT NEEDS A REAL POSTGRES.
   #
