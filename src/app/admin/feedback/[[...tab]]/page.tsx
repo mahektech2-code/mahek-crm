@@ -16,6 +16,7 @@ import {
   type FeedbackKind,
   type TriageQueue,
 } from "@/lib/feedback-labels";
+import { getFix, githubConnected } from "@/lib/services/feedback-fix-service";
 import { AdminPage } from "../../_shell/admin-page";
 import { adminContext, firstPageFor } from "../../_shell/context";
 import { FeedbackOverviewScreen, FeedbackSection } from "../../feedback-section";
@@ -79,6 +80,8 @@ export default async function FeedbackPage({
     selected = hit?.duplicateOfId ? await getFeedback(hit.duplicateOfId) : hit;
   }
 
+  const [fix, connected] = await Promise.all([selected ? getFix(selected.id) : null, githubConnected()]);
+
   return (
     <AdminPage title="Feedback" tabs={tabs}>
       <FeedbackSection
@@ -90,6 +93,7 @@ export default async function FeedbackPage({
         maxImages={config["attachments.maxPerFeedback"]}
         queue={slug as TriageQueue}
         now={nowMs()}
+        fixing={{ fix, connected, platformAdmin: ctx.isPlatformAdmin, aiEnabled: config["feedbackFix.enabled"] }}
       />
     </AdminPage>
   );

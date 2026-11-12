@@ -250,6 +250,7 @@ const RULES: Rule[] = [
   { test: /^callIntel\./, page: "ai", tab: "call-assistant" },
   { test: /^docsAsk\./, page: "ai", tab: "assistants", group: "Ask the docs" },
   { test: /^crmAsk\./, page: "ai", tab: "assistants", group: "Ask the CRM" },
+  { test: /^feedbackFix\./, page: "ai", tab: "assistants", group: "Fixing feedback" },
   {
     test: /^(taskIntel|visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|leadScan|leadVoice|mbos\.ai)\./,
     page: "ai",

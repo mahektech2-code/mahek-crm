@@ -23,6 +23,8 @@ import {
 import type { FeedbackOverview, FeedbackRow } from "@/lib/services/feedback-service";
 import { assignFeedback, mergeFeedback, setFeedbackStatus } from "@/lib/actions/feedback";
 import { ADMIN } from "@/lib/admin-routes";
+import type { FixView } from "@/lib/services/feedback-fix-service";
+import { FixCard } from "./feedback-fix-card";
 
 /* ---------------------------------------------------------------------------
  * Feedback → the triage inbox.
@@ -58,6 +60,8 @@ function age(at: string, now: number) {
 
 type Filters = { app: string; kind: string; impact: string; who: string; q: string };
 
+export type FixContext = { fix: FixView | null; platformAdmin: boolean; connected: boolean; aiEnabled: boolean };
+
 export function FeedbackSection({
   rows,
   selected,
@@ -67,9 +71,12 @@ export function FeedbackSection({
   maxImages,
   queue,
   now,
+  fixing,
 }: {
   /** The server's clock, read once — a component may not read it in render. */
   now: number;
+  /** The open report's "Fix it" state, and who is looking. */
+  fixing: FixContext;
   rows: FeedbackRow[];
   selected: FeedbackRow | null;
   filters: Filters;
@@ -208,7 +215,7 @@ export function FeedbackSection({
         </section>
 
         {selected ? (
-          <Detail key={selected.id} row={selected} assignees={assignees} viewerId={viewerId} maxImages={maxImages} now={now} />
+          <Detail key={selected.id} row={selected} assignees={assignees} viewerId={viewerId} maxImages={maxImages} now={now} fixing={fixing} />
         ) : null}
       </div>
     </div>
@@ -256,12 +263,14 @@ function Detail({
   viewerId,
   maxImages,
   now,
+  fixing,
 }: {
   row: FeedbackRow;
   assignees: { id: string; name: string }[];
   viewerId: string;
   maxImages: number;
   now: number;
+  fixing: FixContext;
 }) {
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
@@ -387,6 +396,15 @@ function Detail({
             <Fact k="Also">{row.alsoReported.map((a) => a.byName).join(", ")}</Fact>
           ) : null}
           {row.verdict === "fixed" ? <Fact k="Answer">Confirmed fixed</Fact> : null}
+          <div className="my-3 h-px bg-divider" />
+          <FixCard
+            reportId={row.id}
+            reportRef={row.ref}
+            fix={fixing.fix}
+            platformAdmin={fixing.platformAdmin}
+            connected={fixing.connected}
+            aiEnabled={fixing.aiEnabled}
+          />
           <div className="my-3 h-px bg-divider" />
           <div className="flex flex-col gap-1.5">
             {merging ? (

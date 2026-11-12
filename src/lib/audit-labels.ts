@@ -978,6 +978,7 @@ const SECRET_LABEL: Record<string, string> = {
   "minimoth.apiKey": "sign-in codes (MiniMoth)",
   "wati.apiKey": "WhatsApp (Wati)",
   "resend.apiKey": "email (Resend)",
+  "github.token": "GitHub",
 };
 function secretLabel(name: string): string {
   return SECRET_LABEL[name] ?? cap(words(name.replace(/\.?api_?key$/i, "")));

@@ -5886,6 +5886,41 @@ export const SETTINGS = [
     min: 10,
     max: 240,
   },
+  {
+    key: "feedbackFix.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Fixing feedback · AI check",
+    description:
+      "Read each new report and say whether it needs a change to the code or can be solved by the team — a record to correct, a setting, somebody's access, or how to use a screen — with the steps. Off: nothing is read, and the console offers only the manual buttons.",
+    default: true,
+  },
+  {
+    key: "feedbackFix.model",
+    type: "text",
+    category: "voice",
+    label: "Fixing feedback · model",
+    description: "The OpenAI model that reads a report and writes the brief for the developer.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "feedbackFix.githubRepo",
+    type: "text",
+    category: "voice",
+    label: "Fixing feedback · GitHub repository",
+    description:
+      "Where a report becomes an issue, as owner/name. Its pull requests are what the hourly check reads to close a report once the fix is live.",
+    default: "mahektech2-code/mahek-crm",
+  },
+  {
+    key: "feedbackFix.aiFixLabel",
+    type: "text",
+    category: "voice",
+    label: "Fixing feedback · label that asks Claude",
+    description:
+      "The issue label \"Ask Claude to fix\" puts on an issue. The repository's Claude fix workflow starts on exactly this label, so the two must match.",
+    default: "ai-fix",
+  },
   /* ------------------------------------------------------------------ hire */
   {
     key: "hire.ai.enabled",
@@ -6997,6 +7032,10 @@ export type Config = {
   "docsAsk.reasoningEffort": string;
   "docsAsk.maxLookups": number;
   "docsAsk.timeoutSeconds": number;
+  "feedbackFix.enabled": boolean;
+  "feedbackFix.model": string;
+  "feedbackFix.githubRepo": string;
+  "feedbackFix.aiFixLabel": string;
   "hire.ai.enabled": boolean;
   "hire.ai.reasoningModel": string;
   "hire.ai.fastModel": string;

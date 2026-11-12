@@ -6496,6 +6496,27 @@ the last line the REPORTER can read, and `feedbackCounts` counts through the
 same function so a tab and its number cannot disagree. `assignFeedback` hands a
 report only to somebody `triagerIds` names.
 
+**A REPORT IS ASKED WHAT IT NEEDS BEFORE IT IS FIXED, and only code reaches
+GitHub.** Most of what the team sends in is a wrong record, a setting, an
+access grant or a question, fixed in minutes by the team; a developer handed
+one finds there is nothing to change. `feedback_fixes` (`0326`) keeps, per
+root report, its `need` — code_change, data_fix, setting, access, how_to,
+not_a_fault — read by the AI after every new report (`after()` in
+`submitFeedback`, `feedbackFix.*` settings) and overrulable by anybody
+triaging (`need_decided_by_id`; the AI never writes over a person). Anything
+but a code change opens "How the team can fix it" with the steps. A code
+change is "Send to developer" (a GitHub issue through the `github.token`
+credential) and "Ask Claude to fix", which only a PLATFORM ADMINISTRATOR may
+press (checked in `askClaudeToFix`): it puts `feedbackFix.aiFixLabel` on the
+issue and `.github/workflows/claude-fix.yml` runs Claude Code, which opens a
+pull request a person reviews and merges. `lib/feedback-fix.ts` is the rule,
+pure: what may be offered (`fixActions`), and `redact`, which takes phones,
+emails, GSTIN, PAN and Aadhaar out of what goes to GitHub — customer names
+stay, Mahek's call. The hourly `feedback-fixes` step reads each issue's
+timeline for the pull request that mentions it and closes the report only
+once GitHub's compare says the merge commit is in `MAHEK_BUILD`, the build
+now serving — never at the merge — and tells everybody who reported it.
+
 **A SHOP MASTER IS NOT AN ORDER HISTORY, so the kind is read off evidence.**
 The EMP 2.0 workbook's `Customer Details` tab is 5,292 shops and the only
 place a phone number for any of them exists — the Activity tab has twelve

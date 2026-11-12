@@ -22,3 +22,21 @@ Feedback is two tables, one pure vocabulary file, one service of reads, one file
 ## The modules
 
 `crm.feedback`, `accounts.feedback`, `sales.feedback`, `founder.feedback`, `erp.feedback` and `hrms.feedback` are all in `ALWAYS_OPEN_MODULES` — the reporter's Feedback page must be reachable in every app whatever was ticked.
+
+## Fixing a report
+
+| Layer | File | What lives there |
+|---|---|---|
+| Table | `drizzle/0326_feedback_fixes.sql` | `feedback_fixes`, one row per root report: need, diagnosis, issue, PR, deploy |
+| Rules | `src/lib/feedback-fix.ts` | needs, `redact`, `routeHint`, `issueBody`, `fixStage`, `fixActions`, `commitIsInBuild` |
+| Wiring | `src/lib/services/feedback-fix-service.ts` | `diagnoseFeedback`, `createIssue`, `requestAiFix`, `syncFeedbackFixes` |
+| Actions | `src/lib/actions/feedback-fix.ts` | triage reads, chooses and sends; `askClaudeToFix` checks `isPlatformAdmin` |
+| Card | `src/app/admin/feedback-fix-card.tsx` | Fix it, How the team can fix it, the Claude confirm |
+| Workflow | `.github/workflows/claude-fix.yml` | `anthropics/claude-code-action` on the `ai-fix` label or an `@claude` comment |
+| Job | `feedback-fixes` in `src/lib/jobs.ts` | hourly; `npm run jobs -- feedback-fixes` by hand |
+
+What is offered is one pure function, read by the card and enforced again in the actions:
+
+<Code file="src/lib/feedback-fix.ts" symbol="fixActions" />
+
+The token is the `github.token` credential (Admin Console → Integrations, or `GITHUB_FEEDBACK_TOKEN`). The workflow needs the `ANTHROPIC_API_KEY` repository secret. A report is live when GitHub's compare of the merge commit against `MAHEK_BUILD` says `ahead` or `identical`.

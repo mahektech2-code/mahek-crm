@@ -371,6 +371,14 @@ export async function integrationStatus(): Promise<Integration[]> {
           ? "The public site can read published content and a publish can tell it to refresh. Whether the site itself is switched on is checked from the Website dashboard."
           : "One or both Website secrets are missing, so the public site cannot read content from here and a publish cannot refresh it. Set them below and give the same values to the website.",
     },
+    {
+      name: "GitHub (fixing feedback)",
+      state: held("github.token") ? "Healthy" : "Not connected",
+      last: "—",
+      note: held("github.token")
+        ? "Feedback can be sent to the developer as an issue, Claude can be asked to fix it, and a fixed report closes itself once the fix is live."
+        : "No token, so feedback cannot become a GitHub issue and fixed reports do not close themselves. Copy for developer still works.",
+    },
   ];
 
   return list;

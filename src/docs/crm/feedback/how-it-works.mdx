@@ -25,3 +25,37 @@ flowchart TD
 ## Where it is read
 
 The Feedback page is inside every app that has a sidebar to put it in — the CRM, Accounts, the Sales Dashboard, the ERP, HRMS and the Founder Command Centre — and it is **always open**: a narrowed grant never hides it. A notification links to `/feedback`, which forwards to the first of those apps the person holds, so the link works from any app's bell.
+
+## Fixing a report
+
+Most reports do not need a developer. The console reads every new report and says what it **needs**:
+
+| It needs | Who fixes it |
+|---|---|
+| A change to the code | A developer — or Claude, asked from the console |
+| A record to correct | The team, on the record's own screen |
+| A setting to change | An administrator, on a settings page |
+| Somebody's access | Admin Console → Access |
+| How to use it | A reply saying how |
+| Not a fault | A reply saying why, or Not doing |
+
+Anybody triaging can change the answer, and a person's answer is never written over by the AI. For anything but a code change, **How the team can fix it** opens the steps and what to ask the reporter. Only a code change can go to GitHub:
+
+<Flow caption="From report to live fix" chart={`
+flowchart LR
+  A["Report"] --> B{"What it needs"}
+  B -- "anything but code" --> T["The team fixes it, replies, marks Done"]
+  B -- "a code change" --> I["Send to developer: a GitHub issue"]
+  I -- "platform administrator" --> C["Ask Claude to fix: Claude opens a pull request"]
+  I --> P["A developer opens a pull request"]
+  C --> M["A person reviews and merges"]
+  P --> M
+  M --> L["Hourly check: the merge is in the live build"]
+  L --> D["Report closed, everybody who reported it told"]
+`} />
+
+- **Ask Claude to fix** is a platform administrator's alone. It labels the issue, which starts the repository's Claude workflow; Claude's pull request is reviewed and merged by a person like any other.
+- What goes to GitHub carries **no phone number, email, GSTIN, PAN or Aadhaar**. Customer and shop names stay, so the fix can be checked against the right account.
+- The report closes itself only when the merged commit is in the build **now serving** — not at the merge.
+
+The check is <Setting k="feedbackFix.enabled"/>, with the model <Setting k="feedbackFix.model"/>; issues go to <Setting k="feedbackFix.githubRepo"/>, and the label that asks Claude is <Setting k="feedbackFix.aiFixLabel"/>.

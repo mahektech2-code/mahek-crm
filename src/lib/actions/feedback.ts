@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
@@ -240,6 +241,17 @@ export async function submitFeedback(
       alsoUserId: sameAs.assigneeId,
     });
   } else {
+    // What it needs is read while triage is still opening the bell, so the
+    // console already says "the team can fix this" or "needs code". After the
+    // answer, never in the way of it; a failure leaves the manual buttons.
+    try {
+      after(async () => {
+        const { diagnoseFeedback } = await import("@/lib/services/feedback-fix-service");
+        await diagnoseFeedback(id, null).catch(() => null);
+      });
+    } catch {
+      /* outside a request — a test, a script */
+    }
     await notifyTriagers({
       title: `${KIND_SHORT[value.kind]} from ${user.name}`,
       body: files.attached

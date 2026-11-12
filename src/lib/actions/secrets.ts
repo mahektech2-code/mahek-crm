@@ -152,6 +152,7 @@ const LABELS: Record<SecretName, string> = {
   "enquiries.ingestSecret": "The website enquiry ingest secret",
   "website.cmsReadSecret": "The website content read secret",
   "website.cmsPublishSecret": "The website publish secret",
+  "github.token": "The GitHub token",
 };
 
 /**
@@ -189,4 +190,6 @@ const USED_FROM: Record<SecretName, string> = {
     "The public site's next read of published content or an uploaded image is accepted or refused based on this value — it must match CMS_READ_SECRET on the website.",
   "website.cmsPublishSecret":
     "The next publish tells the live site to refresh with this value, and preview links are signed with it — it must match CMS_PUBLISH_SECRET on the website.",
+  "github.token":
+    "Feedback can be sent to GitHub from the next report opened in the console, and the hourly check starts closing reports whose fix is live.",
 };

@@ -4784,6 +4784,67 @@ export const feedbackMessages = pgTable(
   ],
 );
 
+/**
+ * Fixing a report. One row per ROOT report, written as it moves from "what
+ * does this need" to "the fix is live".
+ *
+ * `need` is the answer to the first question, and it decides what the console
+ * offers: only `code_change` reaches GitHub; every other need is something the
+ * team does itself, and `diagnosis.steps` says how. The AI proposes it
+ * (`diagnosed_*`); a triager may overrule it (`need_decided_by_id`), and the
+ * AI never writes over a person's answer.
+ *
+ * The issue, the pull request and the deploy are read back from GitHub by the
+ * hourly check: a merged PR whose commit is in the build now serving closes
+ * the report and tells everybody who reported it.
+ */
+export const feedbackFixes = pgTable(
+  "feedback_fixes",
+  {
+    feedbackId: text("feedback_id")
+      .primaryKey()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    need: text("need"),
+    /** `{ summary, steps[], where, confidence }` — see `lib/feedback-fix.ts`. */
+    diagnosis: jsonb("diagnosis"),
+    diagnosisModel: text("diagnosis_model"),
+    diagnosedAt: timestamp("diagnosed_at", { withTimezone: true }),
+    diagnosedById: text("diagnosed_by_id").references(() => users.id),
+    /** A person chose `need`, so the AI does not answer it again. */
+    needDecidedById: text("need_decided_by_id").references(() => users.id),
+    issueNumber: integer("issue_number"),
+    issueUrl: text("issue_url"),
+    issueCreatedAt: timestamp("issue_created_at", { withTimezone: true }),
+    issueCreatedById: text("issue_created_by_id").references(() => users.id),
+    aiFixRequestedAt: timestamp("ai_fix_requested_at", { withTimezone: true }),
+    aiFixRequestedById: text("ai_fix_requested_by_id").references(() => users.id),
+    prNumber: integer("pr_number"),
+    prUrl: text("pr_url"),
+    prState: text("pr_state"),
+    prMergedSha: text("pr_merged_sha"),
+    prMergedAt: timestamp("pr_merged_at", { withTimezone: true }),
+    deployedBuild: text("deployed_build"),
+    deployedAt: timestamp("deployed_at", { withTimezone: true }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("feedback_fixes_issue_key").on(t.issueNumber).where(sql`${t.issueNumber} is not null`),
+    index("feedback_fixes_waiting_idx")
+      .on(t.issueNumber)
+      .where(sql`${t.issueNumber} is not null and ${t.deployedAt} is null`),
+    check(
+      "feedback_fixes_need_check",
+      sql`${t.need} is null or ${t.need} in ('code_change','data_fix','setting','access','how_to','not_a_fault')`,
+    ),
+    check(
+      "feedback_fixes_pr_state_check",
+      sql`${t.prState} is null or ${t.prState} in ('open','merged','closed')`,
+    ),
+  ],
+);
+
 export const eodReports = pgTable(
   "eod_reports",
   {
