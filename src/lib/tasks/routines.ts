@@ -16,7 +16,7 @@
  * the month — a missed month is a missed GST payment.
  * ------------------------------------------------------------------------- */
 
-import { TASK_PRIORITIES, TITLE_MAX, NOTE_MAX, isTaskApp, clock12, type FieldProblem } from "./rules";
+import { TASK_PRIORITIES, TITLE_MAX, NOTE_MAX, canFileUnder, clock12, type FieldProblem } from "./rules";
 
 export const ROUTINE_FREQUENCIES = ["daily", "weekly", "monthly"] as const;
 export type RoutineFrequency = (typeof ROUTINE_FREQUENCIES)[number];
@@ -114,12 +114,13 @@ export type RoutineInput = {
 const TIME = /^[0-2]\d:[0-5]\d$/;
 
 /** Everything wrong with a routine, field by field. Empty means it can be saved. */
-export function routineProblems(r: RoutineInput): FieldProblem[] {
+export function routineProblems(r: RoutineInput, opts: { keepApp?: string | null } = {}): FieldProblem[] {
   const out: FieldProblem[] = [];
   const title = r.title.trim();
   if (!title) out.push({ field: "title", message: "Say what needs doing." });
   else if (title.length > TITLE_MAX) out.push({ field: "title", message: `Keep it under ${TITLE_MAX} characters — put the detail in the note.` });
-  if (!isTaskApp(r.app)) out.push({ field: "app", message: "Pick the app this work happens in." });
+  // A routine filed under an app before it closed to new tasks keeps it on an edit.
+  if (!canFileUnder(r.app) && r.app !== opts.keepApp) out.push({ field: "app", message: "Pick the app this work happens in." });
   if (!(TASK_PRIORITIES as readonly string[]).includes(r.priority)) out.push({ field: "priority", message: "Pick a priority." });
   if ((r.note ?? "").length > NOTE_MAX) out.push({ field: "note", message: `Keep the note under ${NOTE_MAX} characters.` });
   if (!(ROUTINE_FREQUENCIES as readonly string[]).includes(r.frequency)) {

@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { isTaskApp } from "@/lib/tasks/rules";
+import { canFileUnder } from "@/lib/tasks/rules";
 import { routinesFor } from "@/lib/tasks/routine-service";
 import { teamPeople } from "@/lib/tasks/service";
 import { RoutinesScreen } from "../../_ui/routines";
@@ -16,7 +16,7 @@ export const metadata = { title: "Routines" };
 export default async function RoutinesPage() {
   const user = await requireUser();
   const [routines, team, held] = await Promise.all([routinesFor(user), teamPeople(user, "give"), listUserApps(user.id)]);
-  const apps = ["tasks", ...held.filter((a) => isTaskApp(a) && a !== "tasks")];
+  const apps = ["tasks", ...held.filter((a) => canFileUnder(a) && a !== "tasks")];
   return (
     <RoutinesScreen
       routines={routines}

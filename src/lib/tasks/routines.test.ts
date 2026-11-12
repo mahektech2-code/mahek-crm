@@ -51,6 +51,9 @@ test("a routine is checked field by field", () => {
   const ok = { title: "Bank statement", app: "tasks", priority: "normal", frequency: "daily", weekdays: [1], dayOfMonth: null, completeByDay: null, startTime: "14:00", dueTime: "16:00" };
   assert.deepEqual(routineProblems(ok), []);
   assert.equal(routineProblems({ ...ok, weekdays: [] })[0].field, "weekdays");
+  // Hire is closed to new routines, but one already filed there keeps it on an edit.
+  assert.equal(routineProblems({ ...ok, app: "hire" })[0].field, "app");
+  assert.deepEqual(routineProblems({ ...ok, app: "hire" }, { keepApp: "hire" }), []);
   assert.equal(routineProblems({ ...ok, dueTime: "13:00" })[0].field, "dueTime");
   assert.equal(routineProblems({ ...ok, frequency: "monthly", dayOfMonth: null })[0].field, "dayOfMonth");
   assert.equal(routineProblems({ ...ok, frequency: "monthly", dayOfMonth: 10, completeByDay: 10 })[0].field, "completeByDay");

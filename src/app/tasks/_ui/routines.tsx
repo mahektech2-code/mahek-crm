@@ -182,7 +182,7 @@ function RoutineDialog({ routine, people, apps, viewerId, onClose }: { routine: 
   const forId = who === "me" ? viewerId : assigneeId;
   // The apps it can be filed under: Personal, and the viewer's own apps — given to one person, only those they hold too.
   const one = people.find((p) => p.id === forId);
-  const appChoices = apps.filter((a) => a === "tasks" || who === "rules" || (one?.apps ?? []).includes(a) || a === routine?.app);
+  const appChoices = (routine?.app && !apps.includes(routine.app) ? [...apps, routine.app] : apps).filter((a) => a === "tasks" || who === "rules" || (one?.apps ?? []).includes(a) || a === routine?.app);
   const input = {
     id: routine?.id,
     assigneeId: who === "rules" ? null : forId,
