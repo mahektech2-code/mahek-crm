@@ -40,6 +40,7 @@ import { LEVEL_LABELS } from "@/lib/hat-labels";
 import { getApp, type AppId } from "@/lib/apps";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { HRMS_POWERS, HRMS_POWER_LABEL } from "@/lib/hrms/powers";
+import { TASK_POWERS, TASK_POWER_LABEL } from "@/lib/tasks/permissions";
 import { HIRE_ROLES, LEVEL_FOR_ROLE, ROLE_LABEL as HIRE_ROLE_LABEL, ROLE_SENTENCE as HIRE_ROLE_SENTENCE, defaultRoleFor, type HireRole } from "@/lib/hire/roles";
 import {
   candidatesForGrant,
@@ -870,6 +871,11 @@ function AccessDialog({
      payroll. Unticking HRMS takes them with it. */
   const hrmsPowersBefore = React.useMemo(() => basis?.hrmsPowers ?? [], [basis]);
   const [hrmsPowers, setHrmsPowers] = React.useState<string[]>(hrmsPowersBefore);
+  /* THE TASKS PERMISSIONS: who reaches past the org chart — sees, gives to or
+     manages anybody's tasks — and who runs the automatic tasks. Unticking
+     Tasks takes them with it. */
+  const taskPowersBefore = React.useMemo(() => basis?.taskPowers ?? [], [basis]);
+  const [taskPowers, setTaskPowers] = React.useState<string[]>(taskPowersBefore);
   /* HIRE'S ROLE — their job inside Hire. Null means the level decides.
      Unticking Hire takes it with it, like the powers above. */
   const hireRoleBefore = basis?.hireRole ?? null;
@@ -917,6 +923,7 @@ function AccessDialog({
     setRoleDraft(levelsOf(existing));
     setPowers(existing?.erpPowers ?? []);
     setHrmsPowers(existing?.hrmsPowers ?? []);
+    setTaskPowers(existing?.taskPowers ?? []);
     setHireRole(existing?.hireRole ?? null);
     setFactoryPlace(existing?.factoryPlace ?? null);
     setDesignationId(existing?.erpDesignation?.id ?? null);
@@ -954,6 +961,7 @@ function AccessDialog({
       })),
       erpPowers: draft.erp ? powers : [],
       hrmsPowers: draft.hrms ? hrmsPowers : [],
+      taskPowers: draft.tasks ? taskPowers : [],
       hireRole: draft.hire ? hireRole : null,
       factoryPlace: draft.factory ? factoryPlace : null,
       erpDesignationId: draft.erp ? designationId : null,
@@ -1000,6 +1008,9 @@ function AccessDialog({
   const hrmsPowersAfter = draft.hrms ? hrmsPowers : [];
   const hrmsPowersChanged =
     hrmsPowersAfter.length !== hrmsPowersBefore.length || hrmsPowersAfter.some((p) => !hrmsPowersBefore.includes(p));
+  const taskPowersAfter = draft.tasks ? taskPowers : [];
+  const taskPowersChanged =
+    taskPowersAfter.length !== taskPowersBefore.length || taskPowersAfter.some((p) => !taskPowersBefore.includes(p));
   const designationAfter = draft.erp ? designationId : null;
   const designationChanged = designationAfter !== designationBefore;
   const designationName = (id: string | null) => (id ? (designations.find((d) => d.id === id)?.name ?? "a removed designation") : null);
@@ -1009,7 +1020,7 @@ function AccessDialog({
   const hireRoleChanged = hireRoleAfter !== hireRoleBefore;
   const placeAfter = draft.factory ? factoryPlace : null;
   const placeChanged = JSON.stringify(placeAfter) !== JSON.stringify(placeBefore);
-  const changes = { ...moduleChanges, any: moduleChanges.any || freshInDraft.length > 0 || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged || placeChanged };
+  const changes = { ...moduleChanges, any: moduleChanges.any || freshInDraft.length > 0 || powersChanged || hrmsPowersChanged || taskPowersChanged || designationChanged || hireRoleChanged || placeChanged };
 
   return (
     <>
@@ -1083,6 +1094,8 @@ function AccessDialog({
             onPowers={setPowers}
             hrmsPowers={hrmsPowers}
             onHrmsPowers={setHrmsPowers}
+            taskPowers={taskPowers}
+            onTaskPowers={setTaskPowers}
             hireRole={hireRole}
             onHireRole={setHireRole}
             factoryPlace={factoryPlace}
@@ -1103,6 +1116,7 @@ function AccessDialog({
             levels={levelsAfter}
             powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
             hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
+            taskPowerChange={taskPowersChanged ? { before: taskPowersBefore, after: taskPowersAfter } : null}
             hireRoleChange={hireRoleChanged && draft.hire ? { before: hireRoleBefore, after: hireRoleAfter, level: levelOf("hire") } : null}
             placeChange={placeChanged && draft.factory ? { before: placeBefore, after: placeAfter, level: levelOf("factory") } : null}
             fresh={Object.fromEntries(freshInDraft.map((a) => [a, fresh[a]]))}
@@ -1440,6 +1454,8 @@ function AccessStep({
   onPowers,
   hrmsPowers,
   onHrmsPowers,
+  taskPowers,
+  onTaskPowers,
   hireRole,
   onHireRole,
   factoryPlace,
@@ -1469,6 +1485,9 @@ function AccessStep({
   /** HRMS's special powers, drawn under HRMS while it is ticked. */
   hrmsPowers: string[];
   onHrmsPowers: (next: string[]) => void;
+  /** The Tasks permissions, drawn under Tasks while it is ticked. */
+  taskPowers: string[];
+  onTaskPowers: (next: string[]) => void;
   /** Their job inside Hire; null lets the level decide. */
   hireRole: string | null;
   onHireRole: (role: string | null) => void;
@@ -1638,7 +1657,18 @@ function AccessStep({
                 ? { held: powers, onChange: onPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power." }
                 : app.id === "hrms"
                   ? { held: hrmsPowers, onChange: onHrmsPowers, error: fieldError.hrmsPowers, list: HRMS_POWERS, labels: HRMS_POWER_LABEL, adminLine: "An HRMS administrator holds every power." }
-                  : undefined
+                  : app.id === "tasks"
+                    ? {
+                        held: taskPowers,
+                        onChange: onTaskPowers,
+                        error: fieldError.taskPowers,
+                        list: TASK_POWERS,
+                        labels: TASK_POWER_LABEL,
+                        adminLine: "A Tasks administrator holds every permission: sees, gives to and manages anybody's tasks, and runs the automatic tasks.",
+                        heading: "Permissions",
+                        note: "Without any, they reach only the people under them on the org chart.",
+                      }
+                    : undefined
             }
           />
         ))}
@@ -1693,6 +1723,10 @@ function AppBlock({
     list: readonly string[];
     labels: Record<string, { label: string; source: string }>;
     adminLine: string;
+    /** The word down the left; "Powers" where unsaid. */
+    heading?: string;
+    /** A line under the boxes saying what holding none of them means. */
+    note?: string;
   };
   /** Hire's role picker — their job inside Hire — drawn under Hire once it is ticked. */
   hireRole?: { value: string | null; onPick: (role: string | null) => void; level: string; error?: string };
@@ -2017,22 +2051,25 @@ function AppBlock({
       {on && powers ? (
         <div className="flex items-start gap-2 border-t border-divider bg-surface px-2.5 py-1.5">
           <span className="w-[132px] flex-none pt-[3px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-            Powers
+            {powers.heading ?? "Powers"}
           </span>
           {role === "admin" ? (
             <span className="text-[13px] text-muted">{powers.adminLine}</span>
           ) : (
-            <span className="grid min-w-0 flex-1 grid-cols-3 gap-x-3">
-              {powers.list.map((p) => (
-                <Checkbox
-                  key={p}
-                  checked={powers.held.includes(p)}
-                  title={powers.labels[p]?.source}
-                  onChange={() => powers.onChange(powers.held.includes(p) ? powers.held.filter((x) => x !== p) : [...powers.held, p])}
-                  className="min-w-0 py-[1px]"
-                  label={<span className="truncate text-[13px] text-body">{powers.labels[p]?.label ?? p}</span>}
-                />
-              ))}
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="grid min-w-0 grid-cols-3 gap-x-3">
+                {powers.list.map((p) => (
+                  <Checkbox
+                    key={p}
+                    checked={powers.held.includes(p)}
+                    title={powers.labels[p]?.source}
+                    onChange={() => powers.onChange(powers.held.includes(p) ? powers.held.filter((x) => x !== p) : [...powers.held, p])}
+                    className="min-w-0 py-[1px]"
+                    label={<span className="truncate text-[13px] text-body">{powers.labels[p]?.label ?? p}</span>}
+                  />
+                ))}
+              </span>
+              {powers.note ? <span className="text-[12px] text-muted">{powers.note}</span> : null}
             </span>
           )}
         </div>
@@ -2118,6 +2155,7 @@ function ReviewStep({
   levels,
   powerChange,
   hrmsPowerChange,
+  taskPowerChange,
   hireRoleChange,
   placeChange,
   designationChange,
@@ -2135,6 +2173,8 @@ function ReviewStep({
   powerChange: { before: string[]; after: string[] } | null;
   /** The HRMS powers before and after, where they change. */
   hrmsPowerChange: { before: string[]; after: string[] } | null;
+  /** The Tasks permissions before and after, where they change. */
+  taskPowerChange: { before: string[]; after: string[] } | null;
   /** Their Hire role before and after, where it changes. */
   hireRoleChange: { before: string | null; after: string | null; level: string } | null;
   /** Their factory floor place before and after, where it changes. */
@@ -2307,6 +2347,19 @@ function ReviewStep({
             detail: hrmsPowerChange.after.length
               ? `${hrmsPowerChange.after.map((p) => HRMS_POWER_LABEL[p as keyof typeof HRMS_POWER_LABEL]?.label ?? p).join(", ")}.`
               : "no HRMS powers.",
+          },
+        ]
+      : []),
+    ...(taskPowerChange
+      ? [
+          {
+            key: "task-powers",
+            tone: (taskPowerChange.after.length < taskPowerChange.before.length ? "warn" : "success") as "warn" | "success",
+            tag: "Permissions",
+            what: "Tasks",
+            detail: taskPowerChange.after.length
+              ? `${taskPowerChange.after.map((p) => TASK_POWER_LABEL[p as keyof typeof TASK_POWER_LABEL]?.label ?? p).join(", ")}.`
+              : "only the people under them on the org chart.",
           },
         ]
       : []),

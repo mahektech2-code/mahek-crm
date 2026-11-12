@@ -1,13 +1,13 @@
 import "server-only";
-import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
+import { taskPowersOf } from "./powers-service";
 
 /**
- * Who changes the automatic tasks: a Tasks administrator, or a platform
- * administrator. Everybody holding Set up may READ the rules — what raises a
- * task on somebody's list should never be a mystery — but switching one off
- * stops work reaching people in every app.
+ * Who changes the automatic tasks: whoever holds "Run automatic tasks" — every
+ * Tasks administrator and platform administrator, and anybody it was ticked
+ * for on the Access screen. Everybody holding Set up may READ the rules — what
+ * raises a task on somebody's list should never be a mystery — but switching
+ * one off stops work reaching people in every app.
  */
 export async function canManageAutomations(user: { id: string; role: string }): Promise<boolean> {
-  if (await isPlatformAdmin(user)) return true;
-  return (await levelInApp(user, "tasks")) === "admin";
+  return (await taskPowersOf(user)).has("automations");
 }

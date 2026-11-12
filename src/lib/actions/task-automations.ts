@@ -12,8 +12,8 @@ import { canManageAutomations } from "@/lib/tasks/setup-access";
 
 /* ---------------------------------------------------------------------------
  * Switching an automatic task on or off, and running them now. Both decide
- * work for other people across apps, so both are the Tasks administrator's
- * (or a platform administrator's) — asked here, not only by hiding a switch.
+ * work for other people across apps, so both need the Run automatic tasks permission (every Tasks
+ * and platform administrator holds it) — asked here, not only by hiding a switch.
  * ------------------------------------------------------------------------- */
 
 function refresh() {
@@ -27,7 +27,7 @@ function refresh() {
 
 export async function setAutomation(ruleId: string, enabled: boolean): Promise<Result<{ raised: number; closed: number }>> {
   const user = await requireUser();
-  if (!(await canManageAutomations(user))) return err("Only a Tasks administrator switches automatic tasks on or off.", "not_permitted");
+  if (!(await canManageAutomations(user))) return err("Only somebody holding Run automatic tasks switches them on or off. It is set on the Access screen.", "not_permitted");
   const rule = AUTOMATION_BY_ID.get(ruleId);
   if (!rule) return err("That automatic task does not exist.", "not_found");
   await db
@@ -52,7 +52,7 @@ export async function setAutomation(ruleId: string, enabled: boolean): Promise<R
 
 export async function runAutomationsNow(): Promise<Result<{ raised: number; closed: number }>> {
   const user = await requireUser();
-  if (!(await canManageAutomations(user))) return err("Only a Tasks administrator runs automatic tasks by hand.", "not_permitted");
+  if (!(await canManageAutomations(user))) return err("Only somebody holding Run automatic tasks runs them by hand. It is set on the Access screen.", "not_permitted");
   const r = await syncAutomations();
   const raised = r.reduce((a, x) => a + x.raised, 0);
   const closed = r.reduce((a, x) => a + x.closed, 0);

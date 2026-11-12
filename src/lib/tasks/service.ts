@@ -3,18 +3,22 @@ import { cache } from "react";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "@/lib/business-date";
-import { isPlatformAdmin } from "@/lib/access-control";
 import { listAttachments, type AttachmentView } from "@/lib/services/attachment-service";
 import { managesBoth, teamBelow, type TaskApp, type TaskPriority, type TaskStatus } from "./rules";
 import { AUTOMATION_BY_ID } from "./automations";
 import { scheduleWords, windowWords, type RoutineFrequency } from "./routines";
+import { reachesEverybody, type TaskReach } from "./permissions";
+import { taskPowersOf } from "./powers-service";
 
 /* ---------------------------------------------------------------------------
  * THE TASKS APP'S READS, and who may see what.
  *
  * WHO SEES A TASK is its assignee, its creator, the person a pending transfer
  * is offered to, and anybody above the assignee on the org chart — a manager
- * reads their team's tasks in every app. A platform administrator sees all.
+ * reads their team's tasks in every app. The Tasks permissions widen that to
+ * the whole company, one question at a time (lib/tasks/permissions.ts): seeing,
+ * giving and managing are three reaches, and a Tasks or platform administrator
+ * holds all three.
  *
  * THE ORG CHART is `users.reports_to_id` first, then the HRMS reporting line
  * through `users.employee_id`, then the HRMS line matched by name — the same
@@ -107,16 +111,25 @@ export const orgManagerMap = cache(async (): Promise<Map<string, string>> => {
   return out;
 });
 
+/** Every active person but this one. Request-memoised. */
+const everybodyBut = cache(async (id: string): Promise<Set<string>> => {
+  const all = await db.execute<{ id: string }>(sql`select id from users where active = true and id <> ${id}`);
+  return new Set(all.map((r) => r.id));
+});
+
 /**
- * The people this person may give tasks to, see the tasks of, and move tasks
- * between: everybody below them on the org chart. Everybody, for a platform
- * administrator.
+ * The people this person reaches, for one of three questions: whose tasks they
+ * may SEE, who they may GIVE a task or routine to, and whose tasks they may
+ * MANAGE as if above them (and move tasks between). Everybody below them on the
+ * org chart; everybody, where a Tasks permission widens that reach — which a
+ * Tasks administrator and a platform administrator hold for all three.
+ *
+ * `manage` is the default because it is the narrowest of the three: a caller
+ * that forgot to say which question it is asking gets the answer that grants
+ * the least.
  */
-export const teamOf = cache(async (viewer: Viewer): Promise<Set<string>> => {
-  if (await isPlatformAdmin(viewer)) {
-    const all = await db.execute<{ id: string }>(sql`select id from users where active = true and id <> ${viewer.id}`);
-    return new Set(all.map((r) => r.id));
-  }
+export const teamOf = cache(async (viewer: Viewer, reach: TaskReach = "manage"): Promise<Set<string>> => {
+  if (reachesEverybody(await taskPowersOf(viewer), reach)) return everybodyBut(viewer.id);
   return teamBelow(await orgManagerMap(), viewer.id);
 });
 
@@ -278,7 +291,7 @@ export async function transferHistory(userId: string): Promise<TransferHistoryRo
 
 /** The tasks of the people under this person — `personId` narrows it to one of them. */
 export async function teamTasks(viewer: Viewer, personId?: string): Promise<TaskRow[]> {
-  const team = [...(await teamOf(viewer))];
+  const team = [...(await teamOf(viewer, "see"))];
   const ids = personId ? team.filter((id) => id === personId) : team;
   if (!ids.length) return [];
   return query(sql`t.assignee_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`, 2000);
@@ -289,18 +302,28 @@ export async function givenByMe(userId: string): Promise<TaskRow[]> {
   return query(sql`t.created_by_id = ${userId} and t.assignee_id <> ${userId}`, 1000);
 }
 
-export type TeamPerson = { id: string; name: string; apps: string[] };
+export type TeamPerson = {
+  id: string;
+  name: string;
+  apps: string[];
+  /** Whether the viewer manages this person's tasks — false for somebody they only SEE through a permission. */
+  manage?: boolean;
+};
 
-/** The people under this person, with the apps each holds, for the pickers and the workload table. */
-export async function teamPeople(viewer: Viewer): Promise<TeamPerson[]> {
-  const team = [...(await teamOf(viewer))];
+/**
+ * The people this person reaches, with the apps each holds: whose work they
+ * SEE for the workload table, whom they may GIVE to for the pickers.
+ */
+export async function teamPeople(viewer: Viewer, reach: TaskReach = "see"): Promise<TeamPerson[]> {
+  const [reached, manages] = await Promise.all([teamOf(viewer, reach), teamOf(viewer, "manage")]);
+  const team = [...reached];
   if (!team.length) return [];
   const rows = await db.execute<{ id: string; name: string; apps: string[] | null }>(sql`
     select u.id, u.name, array_remove(array_agg(distinct a.app::text), null) as apps
       from users u left join app_access a on a.user_id = u.id
      where u.id in (${sql.join(team.map((id) => sql`${id}`), sql`, `)}) and u.active = true
      group by u.id, u.name order by u.name`);
-  return rows.map((r) => ({ id: r.id, name: r.name, apps: r.apps ?? [] }));
+  return rows.map((r) => ({ id: r.id, name: r.name, apps: r.apps ?? [], manage: manages.has(r.id) }));
 }
 
 /** Everybody who could be handed a task in this app: they hold Tasks, or the app itself. */
@@ -326,7 +349,7 @@ export async function canReceive(userId: string, app: string): Promise<boolean> 
 export async function canSeeTask(viewer: Viewer, t: Pick<TaskRow, "assigneeId" | "createdById" | "transfer">): Promise<boolean> {
   if (t.assigneeId === viewer.id || t.createdById === viewer.id) return true;
   if (t.transfer && (t.transfer.toId === viewer.id || t.transfer.requestedById === viewer.id)) return true;
-  return (await teamOf(viewer)).has(t.assigneeId);
+  return (await teamOf(viewer, "see")).has(t.assigneeId);
 }
 
 /** For the attachment endpoint: may this person open a screenshot filed under this task. */
@@ -366,7 +389,7 @@ export type TaskDetail = {
 export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail | null> {
   const task = await getTaskRow(id);
   if (!task || !(await canSeeTask(viewer, task))) return null;
-  const [events, proofs, team, routine, batch] = await Promise.all([
+  const [events, proofs, team, routine, batch, powers] = await Promise.all([
     db.execute<Raw>(sql`
       select e.id, e.kind, e.body, u.name as actor_name, e.created_at
         from task_events e left join users u on u.id = e.actor_id
@@ -381,6 +404,7 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
           select b.audience, count(t.id)::int as total, count(t.id) filter (where t.status = 'done')::int as done
             from task_batches b join tasks t on t.batch_id = b.id where b.id = ${task.batchId} group by b.audience`)
       : Promise.resolve([] as Raw[]),
+    taskPowersOf(viewer),
   ]);
   const r0 = routine[0];
   const rule = task.autoRule ? AUTOMATION_BY_ID.get(task.autoRule) : undefined;
@@ -413,7 +437,8 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
       transfer: open && !task.transfer && !task.autoRule && (mine || above),
       decideTransfer: Boolean(task.transfer && task.transfer.toId === viewer.id),
       withdrawTransfer: Boolean(task.transfer && (task.transfer.requestedById === viewer.id || task.transfer.fromId === viewer.id)),
-      delete: !task.autoRule && creator && (task.assigneeId === viewer.id || open),
+      // Whoever gave it, while it is open or it is their own; and whoever manages anybody's tasks.
+      delete: !task.autoRule && ((creator && (task.assigneeId === viewer.id || open)) || powers.has("manageAnyone")),
       note: mine || above || creator || Boolean(task.transfer && task.transfer.toId === viewer.id),
     },
   };
@@ -426,7 +451,7 @@ export async function taskCounts(
   userId: string,
   today: string,
 ): Promise<{ dueNow: number; late: number; offered: number; open: number; teamLate: number; givenOpen: number }> {
-  const team = [...(await teamOf({ id: userId, role: (await roleOf(userId)) ?? "associate" }))];
+  const team = [...(await teamOf({ id: userId, role: (await roleOf(userId)) ?? "associate" }, "see"))];
   const teamIn = team.length ? sql`assignee_id in (${sql.join(team.map((id) => sql`${id}`), sql`, `)})` : sql`false`;
   const rows = await db.execute<Record<string, number>>(sql`
     select

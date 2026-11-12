@@ -14,8 +14,23 @@ A screenshot counts only if the person closing the task uploaded it and it is no
 | The person who gave it | yes | edits; deletes it while it is open | yes |
 | Anybody above the assignee on the org chart | yes | yes, and moves it without asking | yes |
 | The person a transfer is offered to | yes, to review it | accepts or rejects | no |
+| Anybody holding **Manage anyone's tasks** | yes | yes, as if above the assignee, and deletes it | yes |
+| Anybody holding **See everyone's tasks** | yes, read-only | no | no |
 
-The org chart is `users.reports_to_id`, then the HRMS reporting line. A platform administrator is above everybody.
+The org chart is `users.reports_to_id`, then the HRMS reporting line.
+
+## Permissions
+
+The org chart is the baseline, and four permissions widen it. They are ticked per person in **Admin Console → Access**, under Tasks, once the app is granted:
+
+| Permission | What it adds |
+|---|---|
+| See everyone's tasks | My team lists every person, and any task opens read-only. |
+| Give tasks to anyone | Give tasks and set routines for anybody who holds Tasks or the task's app. |
+| Manage anyone's tasks | Edit, close, reopen, hand over, nudge and delete anybody's tasks. Includes seeing them. |
+| Run automatic tasks | Switch automatic tasks on and off on Set up, and run them now. |
+
+A **Tasks administrator** (the admin level on the Tasks grant) and a platform administrator hold all four without a tick. Taking Tasks away takes the permissions with it. The rule is <Code file="src/lib/tasks/permissions.ts" symbol="reachesEverybody" collapsed />.
 
 ## Transfers
 
@@ -58,7 +73,7 @@ Each app raises some tasks on its own, from its own records, and closes them its
 - They are checked every hour. Each one is raised once per record, so a task you close by hand is not raised again while the record is still open.
 - A dated record raises a task only within a month either side of today.
 - An automatic task cannot be handed over or deleted — the app decides who holds it.
-- **Set up → Automatic tasks** lists them with how many are open. Only a Tasks administrator (or a platform administrator) switches one on or off; switching one off closes what it raised. The rule is <Code file="src/lib/tasks/automations.ts" symbol="planAutoSync" collapsed />.
+- **Set up → Automatic tasks** lists them with how many are open. Only somebody holding **Run automatic tasks** — every Tasks administrator and platform administrator holds it — switches one on or off; switching one off closes what it raised. The rule is <Code file="src/lib/tasks/automations.ts" symbol="planAutoSync" collapsed />.
 
 ## Where the code and the intent disagree today
 

@@ -14,6 +14,7 @@ import {
   erpUserDesignations,
   erpUserPowers,
   hrmsUserPowers,
+  taskUserPowers,
   passwordResets,
   sessions,
   users,
@@ -32,6 +33,7 @@ import type { ImpactConfirmation } from "@/lib/impact/types";
 import { ACCESS_REVOKE_KIND, accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import { ERP_POWERS } from "@/lib/erp/powers";
 import { HRMS_POWERS } from "@/lib/hrms/powers";
+import { TASK_POWERS } from "@/lib/tasks/permissions";
 import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
 import { CREW_ROLES, cleanDepts, crewLabel, isProc, placeFromRow, placeProblem, placeWords, procsOf, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 import type { Proc } from "@/lib/factory/types";
@@ -171,6 +173,11 @@ export type SetAccessInput = {
   /** HRMS's special powers, the whole list, on the same terms as the ERP's. */
   hrmsPowers?: string[] | null;
   /**
+   * The Tasks permissions — see everyone's tasks, give to anyone, manage
+   * anyone's, run the automatic tasks — the whole list, on the same terms.
+   */
+  taskPowers?: string[] | null;
+  /**
    * Their job inside Hire — recruiter, interviewer, hiring manager,
    * onboarding, HR head, admin. Absent leaves it as it is; null means the
    * level decides. It goes with Hire, like the powers go with their apps.
@@ -302,6 +309,21 @@ function wantedHrmsPowers(input: SetAccessInput, keepsHrms: boolean, current: st
   const next = HRMS_POWERS.filter((p) => input.hrmsPowers!.includes(p));
   const same = next.length === current.length && next.every((p) => current.includes(p));
   return same ? null : next;
+}
+
+function wantedTaskPowers(input: SetAccessInput, keepsTasks: boolean, current: string[]): string[] | null {
+  if (!keepsTasks) return current.length ? [] : null;
+  if (input.taskPowers == null) return null;
+  const next = TASK_POWERS.filter((p) => input.taskPowers!.includes(p));
+  const same = next.length === current.length && next.every((p) => current.includes(p));
+  return same ? null : next;
+}
+
+async function writeTaskPowers(userId: string, powers: string[], by: string) {
+  await db.transaction(async (tx) => {
+    await tx.delete(taskUserPowers).where(eq(taskUserPowers.userId, userId));
+    if (powers.length) await tx.insert(taskUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
+  });
 }
 
 async function writeHrmsPowers(userId: string, powers: string[], by: string) {
@@ -611,6 +633,8 @@ export async function setAccess(
     if (newPowers?.length) await writeErpPowers(userId!, newPowers, me.id);
     const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
     if (newHrmsPowers?.length) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
+    const newTaskPowers = wantedTaskPowers(input, wanted.has("tasks"), []);
+    if (newTaskPowers?.length) await writeTaskPowers(userId!, newTaskPowers, me.id);
     if (newDesignation.next) await writeDesignation(userId!, newDesignation.next, me.id);
     if (newHireRole.next) await writeHireRole(userId!, newHireRole.next, me.id);
     if (newPlace.next) await writeFactoryPlace(userId!, newPlace.next);
@@ -625,6 +649,7 @@ export async function setAccess(
           .join(", ")}`,
         newPowers?.length ? `ERP powers (${newPowers.join(", ")})` : "",
         newHrmsPowers?.length ? `HRMS powers (${newHrmsPowers.join(", ")})` : "",
+        newTaskPowers?.length ? `Tasks permissions (${newTaskPowers.join(", ")})` : "",
         newDesignation.next ? `ERP designation ${newDesignation.name}` : "",
         newHireRole.next ? `Hire role ${hireRoleWord(newHireRole.next)}` : "",
         newPlace.next ? `Factory ${factoryPlaceWord(newPlace.next)}` : "",
@@ -760,6 +785,11 @@ export async function setAccess(
   ).map((r) => r.power);
   const hrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), currentHrmsPowers);
 
+  const currentTaskPowers = (
+    await db.select({ power: taskUserPowers.power }).from(taskUserPowers).where(eq(taskUserPowers.userId, userId))
+  ).map((r) => r.power);
+  const taskPowers = wantedTaskPowers(input, wanted.has("tasks"), currentTaskPowers);
+
   const [currentDesignationRow] = await db
     .select({ id: erpUserDesignations.designationId, name: erpDesignations.name })
     .from(erpUserDesignations)
@@ -785,6 +815,7 @@ export async function setAccess(
     !releveled.length &&
     !powers &&
     !hrmsPowers &&
+    !taskPowers &&
     designation.next === undefined &&
     hireRole.next === undefined &&
     place.next === undefined
@@ -886,6 +917,10 @@ export async function setAccess(
   const hrmsPowerDetail = hrmsPowers
     ? `HRMS powers ${currentHrmsPowers.length} → ${hrmsPowers.length}${hrmsPowers.length ? ` (${hrmsPowers.join(", ")})` : ""}`
     : "";
+  if (taskPowers) await writeTaskPowers(userId, taskPowers, me.id);
+  const taskPowerDetail = taskPowers
+    ? `Tasks permissions ${currentTaskPowers.length} → ${taskPowers.length}${taskPowers.length ? ` (${taskPowers.join(", ")})` : ""}`
+    : "";
 
   if (designation.next !== undefined) await writeDesignation(userId, designation.next, me.id);
   const designationDetail =
@@ -899,7 +934,7 @@ export async function setAccess(
   if (place.next !== undefined) await writeFactoryPlace(userId, place.next);
   const placeDetail = place.next === undefined ? "" : `Factory ${factoryPlaceWord(placeBefore)} → ${factoryPlaceWord(place.next)}`;
 
-  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "));
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, taskPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [
@@ -923,6 +958,7 @@ export async function setAccess(
       : "",
     powers && wanted.has("erp") ? `holds ${powers.length} ERP power${powers.length === 1 ? "" : "s"}` : "",
     hrmsPowers && wanted.has("hrms") ? `holds ${hrmsPowers.length} HRMS power${hrmsPowers.length === 1 ? "" : "s"}` : "",
+    taskPowers && wanted.has("tasks") ? `holds ${taskPowers.length} Tasks permission${taskPowers.length === 1 ? "" : "s"}` : "",
     designation.next ? `is ${designation.name} in the ERP` : designation.next === null && wanted.has("erp") ? "holds no ERP designation" : "",
   ].filter(Boolean);
 

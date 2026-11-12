@@ -99,7 +99,7 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
   }
 
   let ids = [...new Set(input.assigneeIds.length ? input.assigneeIds : [user.id])];
-  const team = await teamOf(user);
+  const team = await teamOf(user, "give");
   if (input.audience) {
     const problems = audienceProblems(input.audience);
     if (problems.length) return fieldsErr(problems);
@@ -107,7 +107,7 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
     if (!ids.length) return err("Those rules reach nobody who holds this app today.", "validation", [{ field: "audience", message: "Nobody matches." }]);
   }
   for (const id of ids) {
-    if (id !== user.id && !team.has(id)) return err("You can give tasks only to the people under you on the org chart.", "not_permitted", [{ field: input.audience ? "audience" : "assignees", message: "Not in your team." }]);
+    if (id !== user.id && !team.has(id)) return err("You can give tasks only to the people under you on the org chart. Giving them to anyone is a Tasks permission, set on the Access screen.", "not_permitted", [{ field: input.audience ? "audience" : "assignees", message: "Not in your team." }]);
     if (id !== user.id && !(await canReceive(id, input.app))) {
       return err(`One of them can't open ${TASK_APP_LABEL[input.app as keyof typeof TASK_APP_LABEL]} or Tasks, so they would never see it.`, "validation", [{ field: "assignees", message: "Can't see it." }]);
     }
@@ -127,7 +127,7 @@ export async function createTask(input: CreateTaskInput): Promise<Result<{ ids: 
       title,
       app: input.app,
       givenById: user.id,
-      audience: input.audience ? audienceWords(input.audience) : ids.length === team.size ? "Everybody in your team" : `${ids.length} people`,
+      audience: input.audience ? audienceWords(input.audience) : `${ids.length} people`,
       rules: input.audience ?? null,
     });
   }
@@ -533,7 +533,7 @@ export type TaskOptions = {
 
 export async function loadTaskOptions(): Promise<Result<TaskOptions>> {
   const user = await requireUser();
-  const [held, team, day] = await Promise.all([listUserApps(user.id), teamPeople(user), today()]);
+  const [held, team, day] = await Promise.all([listUserApps(user.id), teamPeople(user, "give"), today()]);
   const apps = ["tasks", ...held.filter((a) => isTaskApp(a) && a !== "tasks")];
   return ok({ today: day, me: { id: user.id, name: user.name }, apps, team });
 }
@@ -615,21 +615,29 @@ export async function closeTasks(ids: string[], input: { confirmed: boolean; rem
 }
 
 /**
- * A manager's reminder to somebody under them that something is late: one
- * notification naming how many and the oldest. Only above the person.
+ * A reminder to somebody that something is late: one notification naming how
+ * many and the oldest. Whoever manages their tasks nudges about all of it;
+ * whoever only GAVE them work nudges about the late tasks they gave, and
+ * nothing else of theirs.
  */
 export async function nudgePerson(personId: string): Promise<Result> {
   const user = await requireUser();
-  const team = await teamOf(user);
-  if (!team.has(personId)) return err("You can nudge only the people under you on the org chart.", "not_permitted");
+  const manages = (await teamOf(user)).has(personId);
   const day = await today();
   const late = await db
     .select({ id: tasks.id, title: tasks.title, app: tasks.app, dueDate: tasks.dueDate })
     .from(tasks)
-    .where(and(eq(tasks.assigneeId, personId), ne(tasks.status, "done"), sql`${tasks.dueDate} < ${day}::date`))
+    .where(
+      and(
+        eq(tasks.assigneeId, personId),
+        ne(tasks.status, "done"),
+        sql`${tasks.dueDate} < ${day}::date`,
+        manages ? undefined : eq(tasks.createdById, user.id),
+      ),
+    )
     .orderBy(tasks.dueDate)
     .limit(50);
-  if (!late.length) return err("Nothing of theirs is late.");
+  if (!late.length) return err(manages ? "Nothing of theirs is late." : "Nothing you gave them is late.", manages ? undefined : "not_permitted");
   const oldest = late[0];
   await notifyUsers([
     {

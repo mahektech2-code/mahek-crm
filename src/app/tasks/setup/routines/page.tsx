@@ -15,7 +15,7 @@ export const metadata = { title: "Routines" };
  */
 export default async function RoutinesPage() {
   const user = await requireUser();
-  const [routines, team, held] = await Promise.all([routinesFor(user), teamPeople(user), listUserApps(user.id)]);
+  const [routines, team, held] = await Promise.all([routinesFor(user), teamPeople(user, "give"), listUserApps(user.id)]);
   const apps = ["tasks", ...held.filter((a) => isTaskApp(a) && a !== "tasks")];
   return (
     <RoutinesScreen

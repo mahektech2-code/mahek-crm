@@ -67,7 +67,8 @@ export type RoutineRow = {
  */
 export async function canManageFor(viewer: Viewer, assigneeId: string | null, createdById?: string): Promise<boolean> {
   if (createdById === undefined ? assigneeId === viewer.id : createdById === viewer.id) return true;
-  const team = await teamOf(viewer);
+  // A new routine is giving work; changing somebody else's is managing it.
+  const team = await teamOf(viewer, createdById === undefined ? "give" : "manage");
   // A routine given by rules belongs to whoever set it — and so to anybody above them.
   if (assigneeId === null) return createdById !== undefined && team.has(createdById);
   return team.has(assigneeId);
@@ -75,7 +76,7 @@ export async function canManageFor(viewer: Viewer, assigneeId: string | null, cr
 
 /** Everybody's routines this viewer may see: their own and their team's. */
 export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
-  const team = await teamOf(viewer);
+  const [team, manages] = await Promise.all([teamOf(viewer, "see"), teamOf(viewer, "manage")]);
   const ids = [viewer.id, ...team];
   const rows = await db.execute<Record<string, unknown>>(sql`
     select r.id, r.title, r.note, r.app, r.assignee_id, a.name as assignee_name, r.audience, r.created_by_id, c.name as created_by_name, c.role as created_by_role,
@@ -114,7 +115,7 @@ export async function routinesFor(viewer: Viewer): Promise<RoutineRow[]> {
       dueTime: (r.due_time as string) ?? null,
       active: Boolean(r.active),
       startsOn: String(r.starts_on),
-      canManage: createdById === viewer.id || (assigneeId ? team.has(assigneeId) : team.has(createdById)),
+      canManage: createdById === viewer.id || (assigneeId ? manages.has(assigneeId) : manages.has(createdById)),
       reach: 1,
       creatorRole: String(r.created_by_role ?? "associate"),
     };

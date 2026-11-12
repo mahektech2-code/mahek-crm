@@ -676,7 +676,7 @@ export function TeamScreen({ tasks, people, today, viewerId, person }: Base & { 
     <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
       <PageHeader
         title="Team workload"
-        subtitle="Everybody below you on the org chart, and every task they have in every app."
+        subtitle="Everybody whose tasks you can see — below you on the org chart, or everyone if you hold the permission — and every task they have in every app."
         actions={
           <Button variant="primary" onClick={() => openNew()}>
             + Give a task
@@ -728,7 +728,7 @@ export function TeamScreen({ tasks, people, today, viewerId, person }: Base & { 
                   </span>
                 </td>
                 <td className="border-t border-divider px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
-                  {r.late ? <NudgeButton personId={r.p.id} /> : null}
+                  {r.late && r.p.manage !== false ? <NudgeButton personId={r.p.id} /> : null}
                 </td>
               </tr>
             ))}

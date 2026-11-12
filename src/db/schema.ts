@@ -17174,6 +17174,24 @@ export const taskAutomations = pgTable("task_automations", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Tasks permissions granted to a person (lib/tasks/permissions.ts). A Tasks
+ * administrator holds every one without a row; the org chart is the baseline
+ * these widen.
+ */
+export const taskUserPowers = pgTable(
+  "task_user_powers",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+    grantedById: text("granted_by_id").references(() => users.id),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "task_user_powers_pk", columns: [t.userId, t.power] })],
+);
+
 /** What happened to a task, in order — append-only, the task's Activity tab. */
 export const taskEvents = pgTable(
   "task_events",

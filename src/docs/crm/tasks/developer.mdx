@@ -31,11 +31,14 @@ Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under o
 
 <DbTable name="task_automations" />
 
+<DbTable name="task_user_powers" />
+
 ## Access
 
 - **Module:** <ModuleRef k="crm.tasks" />.
 - The Tasks app is its own grant: <ModuleRef k="tasks.my-work" />, <ModuleRef k="tasks.team" /> and <ModuleRef k="tasks.setup" />.
-- Switching an automatic task is checked in `canManageAutomations` (`src/lib/tasks/setup-access.ts`): a Tasks administrator or a platform administrator.
+- The Tasks permissions are `src/lib/tasks/permissions.ts` (pure) and `taskPowersOf` in `src/lib/tasks/powers-service.ts`; a Tasks administrator or a platform administrator holds all of them. They are granted in `setAccess` (`taskPowers`) and drawn under Tasks in the Access dialog.
+- Every reach goes through `teamOf(viewer, reach)` — `see`, `give` or `manage`, defaulting to the narrowest. Switching an automatic task is checked in `canManageAutomations` (`src/lib/tasks/setup-access.ts`): whoever holds Run automatic tasks.
 
 ## Tests that pin this
 

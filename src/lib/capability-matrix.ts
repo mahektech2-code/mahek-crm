@@ -819,7 +819,9 @@ export const MATRIX: Record<AppId, AppMatrix> = {
   docs: { associate: [], manager: [] },
   /* Tasks decides by the ORG CHART, not by a capability: a manager may give
      tasks to, see and move the tasks of the people under them, and nobody
-     else's (`lib/tasks/service.ts`, `teamOf`). The Tasks level is not read. */
+     else's (`lib/tasks/service.ts`, `teamOf`). What widens that to the whole
+     company is a Tasks PERMISSION granted to a named person on the Access
+     screen (`lib/tasks/permissions.ts`); the admin level holds every one. */
   tasks: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,

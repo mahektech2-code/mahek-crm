@@ -179,7 +179,7 @@ export function AutomaticScreen({ rules, states, counts, canManage }: { rules: A
       />
       <p className="-mt-2 mb-5 max-w-[820px] text-sm text-muted">
         Each app raises these on its own, from its own records. They go to whoever the app&apos;s rules name, and close themselves when the work is done in that app — nobody types them and nobody has to tick them off. They are checked every hour.
-        {canManage ? "" : " Only a Tasks administrator switches one on or off."}
+        {canManage ? "" : " Only somebody holding Run automatic tasks switches one on or off."}
       </p>
       {apps.map((a) => (
         <div key={a} className="mb-6">
