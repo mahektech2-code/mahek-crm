@@ -167,8 +167,6 @@ export const MODULE_SINCE: Readonly<Record<string, string>> = {
   "accounts.my-tasks": "2026-11-12",
   "sales.my-tasks": "2026-11-12",
   "founder.my-tasks": "2026-11-12",
-  "enquiries.my-tasks": "2026-11-12",
-  "website.my-tasks": "2026-11-12",
   "erp.myTasks": "2026-11-12",
   "hrms.myTasks": "2026-11-12",
   "factory.app": "2026-10-10",

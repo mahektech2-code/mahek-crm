@@ -39,10 +39,10 @@ const screens = websiteModules.filter((m) => !m.writeOf);
 const slugOf = (key: string) => key.replace(/^website\./, "");
 
 describe("the Website module registry", () => {
-  it("has the 13 screens, dashboard first, My tasks last, and two separate rights: to publish and to review", () => {
+  it("has the 12 screens, dashboard first, and two separate rights: to publish and to review", () => {
     assert.deepEqual(
       screens.map((m) => slugOf(m.key)),
-      ["dashboard", "products", "industries", "pages", "gallery", "media", "careers", "testimonials", "milestones", "navigation", "seo", "settings", "my-tasks"],
+      ["dashboard", "products", "industries", "pages", "gallery", "media", "careers", "testimonials", "milestones", "navigation", "seo", "settings"],
     );
     assert.deepEqual(websiteModules.filter((m) => m.writeOf).map((m) => m.key), ["website.publish", "website.review"]);
   });
@@ -176,13 +176,12 @@ describe("what the review screens may call", () => {
 describe("what a narrowed grant opens", () => {
   const granted = ["website.dashboard", "website.products"];
   for (const m of websiteModules) {
-    /* My tasks is always open: a person's own work is never narrowed away. */
-    const expected = granted.includes(m.key) || m.key === "website.my-tasks";
+    const expected = granted.includes(m.key);
     it(`${m.key}: ${expected ? "open" : "closed"} to a Dashboard + Products grant`, () => {
       assert.equal(moduleAllowed(m.key, granted, "website"), expected);
     });
   }
-  it("a grant with no module rows opens all 13 screens but not the right to publish or to review", () => {
+  it("a grant with no module rows opens all 12 screens but not the right to publish or to review", () => {
     for (const m of screens) assert.equal(moduleAllowed(m.key, [], "website"), true, m.key);
     for (const right of ["website.publish", "website.review"]) {
       assert.equal(moduleAllowed(right, [], "website"), false, right);

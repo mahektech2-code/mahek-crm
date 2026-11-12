@@ -132,8 +132,7 @@ test("a partial pick stores exactly that pick", async () => {
   const u = await person("Pia Partial", "9820011005");
   const pick = ["website.dashboard", "website.products", REV];
   await save(u, pick);
-  /* My tasks is always open, whatever the pick. */
-  assert.deepEqual((await held(u)).keys, [...pick, "website.my-tasks"].sort());
+  assert.deepEqual((await held(u)).keys, [...pick].sort());
 });
 
 test("removing a right removes only that right", async () => {
@@ -151,7 +150,7 @@ test("removing a right removes only that right", async () => {
 test("a right posted without its Dashboard is not held — the server's rule the screen now mirrors", async () => {
   const u = await person("Dee Dash", "9820011007");
   await save(u, ["website.products", REV, PUB]);
-  assert.deepEqual((await held(u)).keys, ["website.my-tasks", "website.products"]);
+  assert.deepEqual((await held(u)).keys, ["website.products"]);
 });
 
 test("granting one person changes nobody else", async () => {

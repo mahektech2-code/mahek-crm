@@ -1166,14 +1166,14 @@ export const APP_MODULES: AppModule[] = [
 
 /**
  * MY TASKS, ONE PER APP — except TeleCRM's, which came first and is the
- * ordinary module `crm.tasks`, and Hire's and the ERP's and HRMS's, which come
- * from their own registries (Hire is one module, and its My tasks sits under
- * it). Each is ALWAYS OPEN to whoever holds the app: a task somebody was given
+ * ordinary module `crm.tasks`, and the ERP's and HRMS's, which come from their
+ * own registries. Only Accounts, Sales, Founder, the ERP and HRMS have one, for
+ * now. Each is ALWAYS OPEN to whoever holds the app: a task somebody was given
  * in an app has to be reachable in that app, and a narrowed grant that quietly
  * hid the list of work owed would be a narrowing nobody meant. Last in each
  * app's order, so the "first screen they hold" landing never lands here.
  */
-const myTasks = (app: "accounts" | "sales" | "founder" | "enquiries" | "website", group: string): AppModule => ({
+const myTasks = (app: "accounts" | "sales" | "founder", group: string): AppModule => ({
   key: `${app}.my-tasks`,
   app,
   label: "My tasks",
@@ -1181,7 +1181,7 @@ const myTasks = (app: "accounts" | "sales" | "founder" | "enquiries" | "website"
   href: `/${app}/my-tasks`,
   note: "Always open: their own tasks that belong to this app, the same rows as in the Tasks app.",
 });
-APP_MODULES.push(myTasks("accounts", "Overview"), myTasks("sales", "Field work"), myTasks("founder", "Today"), myTasks("enquiries", "Website Enquiries"), myTasks("website", "Website"));
+APP_MODULES.push(myTasks("accounts", "Overview"), myTasks("sales", "Field work"), myTasks("founder", "Today"));
 
 const BY_KEY = new Map(APP_MODULES.map((m) => [m.key, m]));
 
@@ -1227,7 +1227,7 @@ export const REMOVED_MODULES: Readonly<Record<string, AppId>> = {
 export const ALWAYS_OPEN_MODULES: ReadonlySet<string> = new Set([
   ...[...HRMS_ALWAYS_OPEN].map((k) => `hrms.${k}`),
   ...[...ERP_ALWAYS_OPEN].map((k) => `erp.${k}`),
-  ...["accounts", "sales", "founder", "enquiries", "website"].map((a) => `${a}.my-tasks`),
+  ...["accounts", "sales", "founder"].map((a) => `${a}.my-tasks`),
 ]);
 
 export function isAlwaysOpen(key: string): boolean {
