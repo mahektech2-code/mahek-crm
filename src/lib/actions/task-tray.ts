@@ -8,7 +8,7 @@ import { myTasks } from "@/lib/tasks/service";
 import type { TaskApp } from "@/lib/tasks/rules";
 
 export type TrayTask = { id: string; title: string; app: TaskApp; customerName: string | null; dueDate: string; dueTime: string | null };
-export type Tray = { holdsTasks: boolean; open: number; late: number; next: TrayTask[]; today: string };
+export type Tray = { holdsTasks: boolean; apps: string[]; open: number; late: number; next: TrayTask[]; today: string };
 
 /**
  * The header's tasks tray, in every app: how many tasks are open and the next
@@ -23,5 +23,5 @@ export async function loadTray(): Promise<Result<Tray>> {
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.dueTime ?? "99").localeCompare(b.dueTime ?? "99"))
     .slice(0, 6)
     .map((t) => ({ id: t.id, title: t.title, app: t.app, customerName: t.customerName, dueDate: t.dueDate, dueTime: t.dueTime }));
-  return ok({ holdsTasks: apps.includes("tasks" as never), open: open.length, late: open.filter((t) => t.dueDate < day).length, next, today: day });
+  return ok({ holdsTasks: apps.includes("tasks" as never), apps: [...apps], open: open.length, late: open.filter((t) => t.dueDate < day).length, next, today: day });
 }

@@ -111,7 +111,10 @@ export function AccountsShell({
   const all: Array<{ label: string; items: Item[] }> = [
     {
       label: "Overview",
-      items: [{ href: "/accounts", label: "Today", icon: "today", exact: true }],
+      items: [
+        { href: "/accounts", label: "Today", icon: "today", exact: true },
+        { href: "/accounts/my-tasks", label: "My tasks", icon: "check" },
+      ],
     },
     {
       label: "Decisions",

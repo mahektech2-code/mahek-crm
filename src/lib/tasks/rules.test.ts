@@ -1,6 +1,11 @@
-import { describe, test } from "node:test";
+import { describe, it, test } from "node:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import {
+  APP_TASKS_PATH,
+  shownInApp,
+  taskLink,
   checklistFrom,
   closeProblems,
   dueState,
@@ -111,5 +116,31 @@ describe("dates", () => {
       priority: "high",
     });
     assert.deepEqual(parseQuickAdd("Send 20 L rate", "2026-11-11"), { title: "Send 20 L rate", dueDate: "2026-11-11", dueTime: null, priority: "normal" });
+  });
+});
+
+/* ---------------------------------------------------------------- My tasks in every app */
+
+describe("every app's own My tasks", () => {
+  it("each path has a page that renders the shared screen for its own app", () => {
+    for (const [app, path] of Object.entries(APP_TASKS_PATH)) {
+      const dir = app === "founder" ? join("src", "app", "founder", "(desks)", "my-tasks") : join("src", "app", ...path!.split("/").filter(Boolean));
+      const page = join(process.cwd(), dir, "page.tsx");
+      assert.ok(existsSync(page), `${path} has no page`);
+      assert.match(readFileSync(page, "utf8"), new RegExp(`<AppTasksPage app="${app}"`), `${path} must render AppTasksPage for ${app}`);
+    }
+  });
+
+  it("an app shows its own tasks and personal ones, nothing else", () => {
+    assert.equal(shownInApp("erp", "erp"), true);
+    assert.equal(shownInApp("tasks", "erp"), true);
+    assert.equal(shownInApp("crm", "erp"), false);
+  });
+
+  it("a link goes to the Tasks app for its holders, else to the task's own app", () => {
+    assert.equal(taskLink({ id: "t1", app: "crm" }, { tasks: true }), "/crm/tasks?task=t1");
+    assert.equal(taskLink({ id: "t1", app: "erp" }, { tasks: true }), "/tasks?task=t1");
+    assert.equal(taskLink({ id: "t1", app: "erp" }, { tasks: false, apps: ["erp"] }), "/erp/my-tasks?task=t1");
+    assert.equal(taskLink({ id: "t1", app: "tasks" }, { tasks: false, apps: ["accounts"] }), "/accounts/my-tasks?task=t1");
   });
 });

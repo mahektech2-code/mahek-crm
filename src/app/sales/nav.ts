@@ -112,6 +112,7 @@ export const SALES_NAV: NavGroup[] = [
     label: "Field work",
     icon: "route",
     items: [
+      { href: "/sales/my-tasks", label: "My tasks", icon: "task" },
       { href: "/sales/tasks", label: "Tasks", icon: "task" },
       { href: "/sales/journeys", label: "Journeys & visits", icon: "route" },
       { href: "/sales/field-reports", label: "Field reports", icon: "doc" },

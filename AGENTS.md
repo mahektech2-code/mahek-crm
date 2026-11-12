@@ -9588,8 +9588,8 @@ the old start on the route rather than adding a second.
 **A TASK BELONGS TO ONE PERSON AND NAMES ONE APP.** `tasks.assignee_id` is
 who owes it and `tasks.app` is where its work happens (`crm`, `accounts`…, or
 `tasks` for a personal one), so one row is on the Tasks app (`/tasks`) and on
-that app's own My tasks screen — TeleCRM's first (`/crm/tasks`, module
-`crm.tasks`). Rules are pure in `lib/tasks/rules.ts`, reads in
+that app's own My tasks screen — TeleCRM's at `/crm/tasks` (module
+`crm.tasks`), every other web app's at `/<app>/my-tasks`. Rules are pure in `lib/tasks/rules.ts`, reads in
 `lib/tasks/service.ts`, every write in `lib/actions/tasks.ts`; each action asks
 `taskDetail` — the answer the screen drew its buttons from — before it writes.
 
@@ -9681,7 +9681,21 @@ people matched by name to LOGINS. Re-runnable; it never overwrites a row.
 
 **Not built yet, and said so in the docs:** reminders and the CRM's automatic
 follow-ups are not tasks (callbacks now arrive as automatic tasks; the rest
-of the follow-up engine does not); each other app's own My tasks screen.
+of the follow-up engine does not); a My tasks on the Factory phone app.
+
+**EVERY APP HAS ITS OWN MY TASKS, AND IT IS ALWAYS OPEN.** `APP_TASKS_PATH` in
+`lib/tasks/rules.ts` is where each lives — `/crm/tasks`, and `/<app>/my-tasks`
+for Accounts, Sales, ERP, HRMS, Founder, Hire, Enquiries and Website (`my-tasks`
+because Sales and Hire already had a `tasks` meaning something else). Each is
+`AppTasksPage` for its app: the viewer's own tasks of that app plus personal
+ones (`shownInApp`), with what waits in other apps counted. Except TeleCRM's,
+every one is in `ALWAYS_OPEN_MODULES` — `<app>.my-tasks`, and `erp.myTasks` /
+`hrms.myTasks` from their registries; Hire's sits under `hire.app` — and
+`moduleAllowed` now answers yes to an always-open module whatever was ticked,
+because a narrowed grant must never hide work somebody owes. Each is placed
+last in its app's order so the "first screen they hold" landing never lands
+there. A task's notification opens its app's My tasks (and so lands in that
+app's bell); the header tray links to the current app's.
 
 ## Hire — hiring and onboarding
 

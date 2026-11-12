@@ -9,6 +9,7 @@ import { err, ok, type Result } from "@/lib/result";
 import { AUTOMATION_BY_ID } from "@/lib/tasks/automations";
 import { syncAutomation, syncAutomations } from "@/lib/tasks/automation-service";
 import { canManageAutomations } from "@/lib/tasks/setup-access";
+import { APP_TASKS_PATH } from "@/lib/tasks/rules";
 
 /* ---------------------------------------------------------------------------
  * Switching an automatic task on or off, and running them now. Both decide
@@ -19,7 +20,7 @@ import { canManageAutomations } from "@/lib/tasks/setup-access";
 function refresh() {
   try {
     revalidatePath("/tasks", "layout");
-    revalidatePath("/crm/tasks");
+    for (const path of Object.values(APP_TASKS_PATH)) revalidatePath(path);
   } catch {
     /* no request context */
   }

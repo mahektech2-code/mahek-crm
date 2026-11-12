@@ -22,6 +22,7 @@ import {
   transferProblems,
   transferRoute,
   TASK_APP_LABEL,
+  APP_TASKS_PATH,
   NOTE_MAX,
   type FieldProblem,
   type TaskPriority,
@@ -52,15 +53,20 @@ async function event(taskId: string, actorId: string | null, kind: string, body:
   await db.insert(taskEvents).values({ id: newId("tev"), taskId, actorId, kind, body });
 }
 
-/** Where a notification about a task takes somebody: TeleCRM's own screen for CRM work, the Tasks app otherwise. */
+/**
+ * Where a notification about a task takes somebody: the My tasks of the app the
+ * work belongs to — which also files it under that app's bell — and the Tasks
+ * app for a personal task.
+ */
 function taskHref(t: { id: string; app: string }) {
-  return t.app === "crm" ? `/crm/tasks?task=${t.id}` : `/tasks?task=${t.id}`;
+  const own = isTaskApp(t.app) ? APP_TASKS_PATH[t.app] : undefined;
+  return `${own ?? "/tasks"}?task=${t.id}`;
 }
 
 function refresh() {
   try {
     revalidatePath("/tasks", "layout");
-    revalidatePath("/crm/tasks");
+    for (const path of Object.values(APP_TASKS_PATH)) revalidatePath(path);
   } catch {
     /* no request context (tests, scripts) — nothing cached to invalidate */
   }
@@ -370,7 +376,7 @@ export async function deleteTask(id: string): Promise<Result> {
   await audit(user.id, "task.deleted", id, { title: d.task.title, assigneeId: d.task.assigneeId });
   await db.delete(tasks).where(eq(tasks.id, id));
   if (d.task.assigneeId !== user.id && d.task.status !== "done") {
-    await notifyUsers([{ userId: d.task.assigneeId, title: `${first(user.name)} took back a task`, body: d.task.title, href: d.task.app === "crm" ? "/crm/tasks" : "/tasks" }]);
+    await notifyUsers([{ userId: d.task.assigneeId, title: `${first(user.name)} took back a task`, body: d.task.title, href: taskHref(d.task) }]);
   }
   refresh();
   return ok(undefined, "Deleted");

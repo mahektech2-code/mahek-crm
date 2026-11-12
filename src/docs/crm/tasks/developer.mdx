@@ -6,7 +6,7 @@ Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under o
 |---|---|---|
 | Route guard | `src/app/crm/tasks/layout.tsx` | `requireModule(user.id, "crm.tasks")` |
 | Page (server) | `src/app/crm/tasks/page.tsx` | `myTasks`, `incomingTransfers`, filtered to `crm` and personal |
-| Screens (client) | `src/app/tasks/_ui/screens.tsx` | `CrmTasksScreen` and the Tasks app's screens |
+| Screens (client) | `src/app/tasks/_ui/screens.tsx` | `AppTasksScreen` and the Tasks app's screens |
 | Dialogs (client) | `src/app/tasks/_ui/dialogs.tsx` | the record, New task, Close, Transfer |
 | Actions | `src/lib/actions/tasks.ts` | `createTask`, `updateTask`, `closeTask`, `reopenTask`, `transferTask`, `decideTransfer`, `withdrawTransfer`, `deleteTask` |
 | Service | `src/lib/tasks/service.ts` | `myTasks`, `teamOf`, `taskDetail`, `canSeeTask`, `taskCounts` |

@@ -33,6 +33,8 @@ export const SECTION_MODULE: Record<SectionKey, string> = {
   whatsapp: "founder.whatsapp",
   people: "founder.people",
   system: "founder.system",
+  /* Last, so it is never the section somebody lands on: it is always open. */
+  tasks: "founder.my-tasks",
 };
 
 export class NotAllowedHere extends Error {}

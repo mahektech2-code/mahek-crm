@@ -17,7 +17,11 @@ import { EnquiriesShell } from "./enquiries-shell";
  * still two modules to GRANT, and this page opens for whoever holds either,
  * so the one entry is drawn for anybody who got past the guard below.
  */
-const MODULES = [{ href: "/enquiries", label: "Enquiries", icon: "mail", exact: true }];
+const MODULES = [
+  { href: "/enquiries", label: "Enquiries", icon: "mail", exact: true },
+  /* Always open: the person's own tasks that belong to this app. */
+  { href: "/enquiries/my-tasks", label: "My tasks", icon: "check" },
+];
 
 export default async function EnquiriesLayout({
   children,

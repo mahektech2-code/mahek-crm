@@ -156,12 +156,15 @@ describe("retired and always-open modules", () => {
     assert.equal(modulesForApp("people").length, 1);
   });
 
-  it("the always-open set names real modules of HRMS and the ERP", () => {
+  it("the always-open set names real modules: HRMS's and the ERP's own, and every app's My tasks", () => {
     assert.ok(ALWAYS_OPEN_MODULES.size > 0);
     for (const key of ALWAYS_OPEN_MODULES) {
       const mod = APP_MODULES.find((m) => m.key === key);
       assert.ok(mod, `${key} is always open and is not a module`);
-      assert.ok(mod.app === "hrms" || mod.app === "erp", `${key} is not an HRMS or ERP module`);
+      assert.ok(mod.app === "hrms" || mod.app === "erp" || key.endsWith(".my-tasks"), `${key} is not an HRMS or ERP module, nor a My tasks`);
+      /* Always open means open to a grant narrowed to something else entirely. */
+      const other = APP_MODULES.find((x) => x.app === mod.app && !isAlwaysOpen(x.key) && !x.writeOf)!.key;
+      assert.equal(moduleAllowed(key, [other], mod.app), true, `${key} must open whatever was ticked`);
       assert.equal(isAlwaysOpen(key), true);
     }
     assert.equal(isAlwaysOpen("crm.dashboard"), false);

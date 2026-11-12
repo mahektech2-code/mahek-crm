@@ -27,7 +27,9 @@ export type SectionKey =
   | "prices"
   | "whatsapp"
   | "people"
-  | "system";
+  | "system"
+  /** The founder's own My tasks — a desk at /founder/my-tasks, always open. */
+  | "tasks";
 
 export const SECTION_KEYS: readonly SectionKey[] = [
   "company",
@@ -46,6 +48,7 @@ export const SECTION_KEYS: readonly SectionKey[] = [
   "whatsapp",
   "people",
   "system",
+  "tasks",
 ];
 
 export function isSectionKey(v: unknown): v is SectionKey {
