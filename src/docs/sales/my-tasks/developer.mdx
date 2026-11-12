@@ -2,7 +2,7 @@
 |---|---|---|
 | Route | `src/app/sales/my-tasks/page.tsx` | Renders `AppTasksPage` with this app |
 | Module | `sales.my-tasks` | Always open — in `ALWAYS_OPEN_MODULES`, which `moduleAllowed` honours |
-| Shared page (server) | `src/app/tasks/_ui/app-tasks-page.tsx` | `myTasks` and `incomingTransfers`, narrowed by `shownInApp` |
+| Shared page (server) | `src/app/tasks/_ui/app-tasks-page.tsx` | `taskListPage`, `appSummary`, `incomingSummary` and `openElsewhere` (`list-service.ts`), over this app and personal tasks — one page at a time |
 | Screen (client) | `src/app/tasks/_ui/screens.tsx` | `AppTasksScreen` |
 | Paths | `src/lib/tasks/rules.ts` | `APP_TASKS_PATH`, `shownInApp`, `taskLink` |
 

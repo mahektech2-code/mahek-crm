@@ -71,7 +71,7 @@ export type TaskRow = {
 
 export type TaskKind = "auto" | "routine" | "assigned" | "self";
 
-type Viewer = { id: string; role: string };
+export type Viewer = { id: string; role: string };
 
 /* ------------------------------------------------------------- the team */
 
@@ -133,19 +133,42 @@ export const teamOf = cache(async (viewer: Viewer, reach: TaskReach = "manage"):
   return teamBelow(await orgManagerMap(), viewer.id);
 });
 
+/** A list of ids as ONE bind parameter. An `in (…)` of a thousand people is a thousand parameters, and Postgres stops at 65,535. */
+export function idList(ids: readonly string[]): SQL {
+  return sql`string_to_array(${ids.join(",")}, ',')`;
+}
+
+/**
+ * "Is this column one of the people this viewer reaches", as SQL. Somebody
+ * whose permission reaches everybody is asked against `users` directly rather
+ * than through a list of every id in the company; everybody else through one
+ * array parameter.
+ */
+export async function teamInSql(viewer: Viewer, reach: TaskReach, column: SQL): Promise<SQL> {
+  if (reachesEverybody(await taskPowersOf(viewer), reach)) {
+    return sql`${column} in (select u2.id from users u2 where u2.active = true and u2.id <> ${viewer.id})`;
+  }
+  const ids = [...teamBelow(await orgManagerMap(), viewer.id)];
+  return ids.length ? sql`${column} = any(${idList(ids)})` : sql`false`;
+}
+
 export async function viewerManagesBoth(viewer: Viewer, fromId: string, toId: string): Promise<boolean> {
   return managesBoth(await teamOf(viewer), viewer.id, fromId, toId);
 }
 
 /* ---------------------------------------------------------------- reads */
 
-const SELECT = sql`
+/** The columns of a `TaskRow`. Paired with TASK_FROM so a count can share the joins a page reads through. */
+export const TASK_COLUMNS = sql`
   select t.id, t.title, t.note, t.app, t.customer_id, c.name as customer_name,
          t.assignee_id, a.name as assignee_name, t.created_by_id, cb.name as created_by_name,
          t.batch_id, t.status, t.priority, t.due_date::text as due_date, t.due_time,
          t.proof_required, t.remark_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at, t.routine_id, t.auto_rule,
          tr.id as tr_id, tr.from_id as tr_from, fu.name as tr_from_name, tr.to_id as tr_to, tu.name as tr_to_name,
-         tr.requested_by_id as tr_by, tr.reason as tr_reason, tr.created_at as tr_at
+         tr.requested_by_id as tr_by, tr.reason as tr_reason, tr.created_at as tr_at`;
+
+/** The joins a task is read through: who it is for, who gave it, who closed it, the customer, a pending transfer. */
+export const TASK_FROM = sql`
     from tasks t
     join users a on a.id = t.assignee_id
     join users cb on cb.id = t.created_by_id
@@ -155,10 +178,12 @@ const SELECT = sql`
     left join users fu on fu.id = tr.from_id
     left join users tu on tu.id = tr.to_id`;
 
-type Raw = Record<string, unknown>;
+const SELECT = sql`${TASK_COLUMNS} ${TASK_FROM}`;
+
+export type Raw = Record<string, unknown>;
 const iso = (v: unknown) => (v == null ? null : v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString());
 
-function toRow(r: Raw): TaskRow {
+export function toRow(r: Raw): TaskRow {
   return {
     id: String(r.id),
     title: String(r.title),
@@ -201,105 +226,9 @@ function toRow(r: Raw): TaskRow {
   };
 }
 
-/** Open first, then by day, time and priority. Done tasks only from the last fortnight. */
-async function query(where: SQL, limit = 500): Promise<TaskRow[]> {
-  const rows = await db.execute<Raw>(sql`
-    ${SELECT}
-    where (${where})
-      and (t.status <> 'done' or t.closed_at > now() - interval '14 days')
-    order by (t.status = 'done'), t.due_date, t.due_time nulls last,
-             array_position(array['urgent','high','normal','low'], t.priority), t.created_at
-    limit ${limit}`);
-  return rows.map(toRow);
-}
-
 export async function getTaskRow(id: string): Promise<TaskRow | null> {
   const rows = await db.execute<Raw>(sql`${SELECT} where t.id = ${id}`);
   return rows[0] ? toRow(rows[0]) : null;
-}
-
-/** Everything assigned to this person; `app` narrows it to one app's work (TeleCRM's My tasks). */
-export async function myTasks(userId: string, opts: { apps?: string[] } = {}): Promise<TaskRow[]> {
-  const apps = opts.apps?.length ? sql` and t.app in (${sql.join(opts.apps.map((a) => sql`${a}`), sql`, `)})` : sql``;
-  return query(sql`t.assignee_id = ${userId}${apps}`);
-}
-
-/** Everything this person has finished, newest first — the Done screen, which reaches past the fortnight the lists keep. */
-export async function doneTasks(userId: string, limit = 500): Promise<TaskRow[]> {
-  const rows = await db.execute<Raw>(sql`${SELECT} where t.assignee_id = ${userId} and t.status = 'done' order by t.closed_at desc limit ${limit}`);
-  return rows.map(toRow);
-}
-
-/** This person's tasks due in a span of days (and, for the span holding today, what is late) — the Calendar. */
-export async function tasksBetween(userId: string, from: string, to: string): Promise<TaskRow[]> {
-  const rows = await db.execute<Raw>(sql`
-    ${SELECT}
-    where t.assignee_id = ${userId}
-      and (t.due_date between ${from}::date and ${to}::date or (t.status <> 'done' and t.due_date < ${from}::date))
-    order by t.due_date, t.due_time nulls last
-    limit 2000`);
-  return rows.map(toRow);
-}
-
-/** Tasks other people are offering this person. They are not theirs yet. */
-export async function incomingTransfers(userId: string): Promise<TaskRow[]> {
-  return query(sql`tr.to_id = ${userId}`);
-}
-
-export async function outgoingTransfers(userId: string): Promise<TaskRow[]> {
-  return query(sql`tr.from_id = ${userId} or tr.requested_by_id = ${userId}`);
-}
-
-export type TransferHistoryRow = {
-  id: string;
-  taskId: string;
-  title: string;
-  fromName: string;
-  toName: string;
-  status: "accepted" | "rejected" | "withdrawn" | "moved";
-  decidedByName: string | null;
-  note: string | null;
-  reason: string | null;
-  decidedAt: string;
-};
-
-export async function transferHistory(userId: string): Promise<TransferHistoryRow[]> {
-  const rows = await db.execute<Raw>(sql`
-    select tr.id, tr.task_id, t.title, f.name as from_name, u.name as to_name, tr.status, d.name as decided_by_name,
-           tr.decision_note, tr.reason, coalesce(tr.decided_at, tr.created_at) as decided_at
-      from task_transfers tr
-      join tasks t on t.id = tr.task_id
-      join users f on f.id = tr.from_id
-      join users u on u.id = tr.to_id
-      left join users d on d.id = tr.decided_by_id
-     where tr.status <> 'pending' and (tr.from_id = ${userId} or tr.to_id = ${userId} or tr.requested_by_id = ${userId})
-     order by coalesce(tr.decided_at, tr.created_at) desc
-     limit 100`);
-  return rows.map((r) => ({
-    id: String(r.id),
-    taskId: String(r.task_id),
-    title: String(r.title),
-    fromName: String(r.from_name),
-    toName: String(r.to_name),
-    status: r.status as TransferHistoryRow["status"],
-    decidedByName: (r.decided_by_name as string) ?? null,
-    note: (r.decision_note as string) ?? null,
-    reason: (r.reason as string) ?? null,
-    decidedAt: iso(r.decided_at)!,
-  }));
-}
-
-/** The tasks of the people under this person — `personId` narrows it to one of them. */
-export async function teamTasks(viewer: Viewer, personId?: string): Promise<TaskRow[]> {
-  const team = [...(await teamOf(viewer, "see"))];
-  const ids = personId ? team.filter((id) => id === personId) : team;
-  if (!ids.length) return [];
-  return query(sql`t.assignee_id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`, 2000);
-}
-
-/** What this person gave other people, one row each. */
-export async function givenByMe(userId: string): Promise<TaskRow[]> {
-  return query(sql`t.created_by_id = ${userId} and t.assignee_id <> ${userId}`, 1000);
 }
 
 export type TeamPerson = {
@@ -315,13 +244,11 @@ export type TeamPerson = {
  * SEE for the workload table, whom they may GIVE to for the pickers.
  */
 export async function teamPeople(viewer: Viewer, reach: TaskReach = "see"): Promise<TeamPerson[]> {
-  const [reached, manages] = await Promise.all([teamOf(viewer, reach), teamOf(viewer, "manage")]);
-  const team = [...reached];
-  if (!team.length) return [];
+  const [reached, manages] = await Promise.all([teamInSql(viewer, reach, sql`u.id`), teamOf(viewer, "manage")]);
   const rows = await db.execute<{ id: string; name: string; apps: string[] | null }>(sql`
     select u.id, u.name, array_remove(array_agg(distinct a.app::text), null) as apps
       from users u left join app_access a on a.user_id = u.id
-     where u.id in (${sql.join(team.map((id) => sql`${id}`), sql`, `)}) and u.active = true
+     where ${reached} and u.active = true
      group by u.id, u.name order by u.name`);
   return rows.map((r) => ({ id: r.id, name: r.name, apps: r.apps ?? [], manage: manages.has(r.id) }));
 }
@@ -451,8 +378,7 @@ export async function taskCounts(
   userId: string,
   today: string,
 ): Promise<{ dueNow: number; late: number; offered: number; open: number; teamLate: number; givenOpen: number }> {
-  const team = [...(await teamOf({ id: userId, role: (await roleOf(userId)) ?? "associate" }, "see"))];
-  const teamIn = team.length ? sql`assignee_id in (${sql.join(team.map((id) => sql`${id}`), sql`, `)})` : sql`false`;
+  const teamIn = await teamInSql({ id: userId, role: (await roleOf(userId)) ?? "associate" }, "see", sql`assignee_id`);
   const rows = await db.execute<Record<string, number>>(sql`
     select
       (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and due_date <= ${today}::date) as due_now,

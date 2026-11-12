@@ -7,6 +7,6 @@ export const metadata = { title: "My tasks - MahekOne CRM" };
  * whose work happens in the CRM (and personal ones). What is waiting in other
  * apps is counted and named, so nothing is invisible from here.
  */
-export default function CrmTasksPage() {
-  return <AppTasksPage app="crm" />;
+export default function CrmTasksPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  return <AppTasksPage app="crm" searchParams={searchParams} />;
 }

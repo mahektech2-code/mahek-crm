@@ -49,6 +49,7 @@ const files = [
   "src/lib/tasks/audiences.integration.test.ts",
   "src/lib/tasks/automations.integration.test.ts",
   "src/lib/tasks/permissions.integration.test.ts",
+  "src/lib/tasks/lists.integration.test.ts",
   "src/lib/crm-accounts-impact.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",

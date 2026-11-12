@@ -1,17 +1,26 @@
-Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under one app (`app`). The CRM screen and the Tasks app read the same functions in `lib/tasks/service.ts`; every write is in `lib/actions/tasks.ts`; the rules are pure in `lib/tasks/rules.ts`.
+Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under one app (`app`). The CRM screen and the Tasks app read the same functions in `lib/tasks/list-service.ts` (a page at a time) and `lib/tasks/service.ts` (one task, and who may see it); every write is in `lib/actions/tasks.ts`; the rules are pure in `lib/tasks/rules.ts`.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
 | Route guard | `src/app/crm/tasks/layout.tsx` | `requireModule(user.id, "crm.tasks")` |
-| Page (server) | `src/app/crm/tasks/page.tsx` | `myTasks`, `incomingTransfers`, filtered to `crm` and personal |
+| Page (server) | `src/app/crm/tasks/page.tsx` | `AppTasksPage`: one page of the URL's reading, filtered to `crm` and personal |
 | Screens (client) | `src/app/tasks/_ui/screens.tsx` | `AppTasksScreen` and the Tasks app's screens |
 | Dialogs (client) | `src/app/tasks/_ui/dialogs.tsx` | the record, New task, Close, Transfer |
 | Actions | `src/lib/actions/tasks.ts` | `createTask`, `updateTask`, `closeTask`, `reopenTask`, `transferTask`, `decideTransfer`, `withdrawTransfer`, `deleteTask` |
-| Service | `src/lib/tasks/service.ts` | `myTasks`, `teamOf`, `taskDetail`, `canSeeTask`, `taskCounts` |
+| Lists | `src/lib/tasks/list-service.ts` | `taskListPage`, `myDay`, `boardColumns`, `calendarWeek`, `teamWorkload`, `givenBatches` |
+| The URL | `src/lib/tasks/list-query.ts` | `readTaskQuery`, `taskQueryHref` — the tab, app, source, search, grouping and page (pure) |
+| Service | `src/lib/tasks/service.ts` | `teamOf`, `teamInSql`, `taskDetail`, `canSeeTask`, `taskCounts` |
+| Export | `src/app/api/tasks/export/route.ts` | the whole filtered list as CSV, a slice at a time, up to 20,000 rows |
 | Rules (pure) | `src/lib/tasks/rules.ts` | `closeProblems`, `transferRoute`, `managesBoth`, `teamBelow` |
 | Upload | `src/app/api/tasks/proof/route.ts` | one screenshot, stored unparented until `closeTask` binds it |
+
+## Lists are read a page at a time
+
+No screen fetches everything a person can see. A list is a scope (whose tasks), the URL's reading, and the date; `taskListPage` counts every tab, counts each group on the page across every page, and returns one page. My day, the Board and the Calendar draw a capped preview with the real count beside it and link to the full list. A team is asked through `teamInSql` — one array parameter, or `users` itself for somebody whose permission reaches everybody — never a list of every id.
+
+<Code file="src/lib/tasks/list-service.ts" symbol="taskListPage" collapsed />
 
 ## Closing
 
@@ -45,3 +54,4 @@ Tasks are rows in `tasks`, owned by one person (`assignee_id`) and filed under o
 - `src/lib/tasks/rules.test.ts` — closing, transfers, the org chart walk, quick add.
 - `src/lib/tasks/automations.test.ts` and `automations.integration.test.ts` — the sync plan, a callback raised once and closed by the app, payments to Accounts managers only, and who may switch a rule.
 - `src/lib/tasks/tasks.integration.test.ts` — the actions against a database: close with and without proof, request and accept, reject, a manager's move.
+- `src/lib/tasks/lists.integration.test.ts` — thousands of tasks: a page is a page, every count is the whole truth, every row is reached once, a search for `100%` is literal, the browser's grouping agrees with the server's, and a team of hundreds is counted in SQL.

@@ -1,20 +1,23 @@
 import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
 import { today } from "@/lib/recompute";
-import { isTaskApp } from "@/lib/tasks/rules";
-import { myTasks } from "@/lib/tasks/service";
+import { ALL_TASKS_LIST, readTaskQuery } from "@/lib/tasks/list-query";
+import { taskListPage } from "@/lib/tasks/list-service";
 import { TaskDialogs } from "../_ui/dialogs";
 import { AllTasksScreen } from "../_ui/screens";
 
 export const metadata = { title: "All my tasks" };
 
-export default async function AllTasksPage({ searchParams }: { searchParams: Promise<{ app?: string }> }) {
+/** Every task of this person's, a page at a time; the tab, filters, search, grouping and page are the URL. */
+export default async function AllTasksPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireUser();
   await requireModule(user.id, "tasks.my-work");
-  const [{ app }, tasks, day] = await Promise.all([searchParams, myTasks(user.id), today()]);
+  const [sp, day] = await Promise.all([searchParams, today()]);
+  const query = readTaskQuery(sp, ALL_TASKS_LIST);
+  const page = await taskListPage({ kind: "mine", userId: user.id }, query, day);
   return (
     <TaskDialogs>
-      <AllTasksScreen tasks={tasks} today={day} viewerId={user.id} startApp={app && isTaskApp(app) ? app : null} />
+      <AllTasksScreen page={page} query={query} today={day} viewerId={user.id} />
     </TaskDialogs>
   );
 }
