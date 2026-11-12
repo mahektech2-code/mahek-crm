@@ -31,7 +31,7 @@ export default async function TasksLayout({ children }: { children: React.ReactN
     hatForHeader(user, "tasks"),
     listNotifications(user.id),
     today(),
-    teamOf(user),
+    teamOf(user, "see"),
   ]);
   if (!modules.length) redirect("/apps");
   const held = new Set(modules.map((m) => m.key));

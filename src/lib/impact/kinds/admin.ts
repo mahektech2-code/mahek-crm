@@ -414,7 +414,7 @@ export const accessRevokeImpact: ImpactSource = {
     const has = (app: string) => going.some((g) => g.app === app);
     const list = sql.join(apps.map((a) => sql`${a}`), sql`, `);
 
-    const [[modules], [erpPowers], designation, [hrmsPowers], [hire], [floor], [phones], [sessions], admins] = await Promise.all([
+    const [[modules], [erpPowers], designation, [hrmsPowers], [taskPowers], [hire], [floor], [phones], [sessions], admins] = await Promise.all([
       db.execute<{ n: number }>(sql`select count(*)::int as n from app_module_access where user_id = ${userId} and app::text in (${list})`),
       has("erp")
         ? db.execute<{ n: number }>(sql`select count(*)::int as n from erp_user_powers where user_id = ${userId}`)
@@ -426,6 +426,9 @@ export const accessRevokeImpact: ImpactSource = {
         : Promise.resolve([] as { name: string }[]),
       has("hrms")
         ? db.execute<{ n: number }>(sql`select count(*)::int as n from hrms_user_powers where user_id = ${userId}`)
+        : Promise.resolve([{ n: 0 }]),
+      has("tasks")
+        ? db.execute<{ n: number }>(sql`select count(*)::int as n from task_user_powers where user_id = ${userId}`)
         : Promise.resolve([{ n: 0 }]),
       has("hire")
         ? db.execute<{ role: string }>(sql`select role from hire_user_roles where user_id = ${userId}`)
@@ -481,6 +484,13 @@ export const accessRevokeImpact: ImpactSource = {
         label: Number(hrmsPowers?.n) === 1 ? "HRMS power" : "HRMS powers",
         effect: "deleted",
         count: Number(hrmsPowers?.n ?? 0),
+      },
+      {
+        app: "Tasks",
+        label: Number(taskPowers?.n) === 1 ? "Tasks permission" : "Tasks permissions",
+        effect: "deleted",
+        count: Number(taskPowers?.n ?? 0),
+        note: "Given Tasks back, they reach only the people under them on the org chart until somebody ticks them again.",
       },
       {
         app: "Hire",

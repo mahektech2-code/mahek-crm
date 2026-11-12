@@ -9614,11 +9614,24 @@ withdraws any request still open on it.
 
 **THE TEAM IS THE ORG CHART, not a capability.** `teamOf` is everybody below a
 person: `users.reports_to_id`, then the HRMS line through `users.employee_id`,
-then the HRMS line by name. A platform administrator is above everybody. That
-one set decides who a manager can give tasks to, whose tasks they see, and what
-they move without asking; the Tasks app's level is not read. Giving a task to
+then the HRMS line by name. That set decides who a manager can give tasks to,
+whose tasks they see, and what they move without asking. Giving a task to
 somebody who holds neither Tasks nor its app is refused, because they would
 never see it.
+
+**AND FOUR PERMISSIONS WIDEN IT, one reach each.** The org chart cannot say
+"the office coordinator chases everybody", and the only way to say it was
+platform administrator, which grants every app in the building. So
+`lib/tasks/permissions.ts` names four, ticked per person under Tasks on Admin
+Console → Access and stored in `task_user_powers`: see everyone's tasks, give
+tasks to anyone, manage anyone's tasks, run the automatic tasks. `teamOf` takes
+the QUESTION — `see`, `give` or `manage` — because reading somebody's list,
+putting work on it and changing what is there are three different kinds of
+trust; it defaults to `manage`, the narrowest, so a caller that forgets to say
+which it means grants the least. Manage implies see and nothing else implies
+anything. A Tasks ADMINISTRATOR (the admin level on the grant) and a platform
+administrator hold all four without a row — the rule HRMS and the ERP follow
+for their powers — and taking Tasks away takes the rows with it.
 
 **WHO GETS IT IS AN AUDIENCE: INCLUDE AND EXCLUDE RULES.** A rule names a
 person, a team (everybody under a manager), an HRMS designation or department,

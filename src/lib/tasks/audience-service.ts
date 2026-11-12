@@ -22,7 +22,7 @@ import { orgManagerMap, teamOf } from "./service";
 type Giver = { id: string; role: string };
 
 export async function audienceCandidates(giver: Giver, app: string): Promise<{ people: AudiencePerson[]; names: Map<string, string> }> {
-  const [team, managerOf] = await Promise.all([teamOf(giver), orgManagerMap()]);
+  const [team, managerOf] = await Promise.all([teamOf(giver, "give"), orgManagerMap()]);
   const reach = [giver.id, ...team];
   const rows = await db.execute<{
     id: string;

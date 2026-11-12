@@ -1061,7 +1061,7 @@ export const APP_MODULES: AppModule[] = [
     label: "Set up",
     group: "Tasks",
     href: "/tasks/setup",
-    note: "Routines, and the automatic tasks each app raises. Switching an automatic task on or off is a Tasks administrator's.",
+    note: "Routines, and the automatic tasks each app raises. Switching an automatic task on or off needs the Run automatic tasks permission.",
   },
   {
     key: "docs.app",
