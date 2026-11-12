@@ -136,7 +136,7 @@ export function Trips({ trips, unassigned, today, transporters, canWrite }: { tr
                   {t.litresMissing ? <Badge label="Litres missing" tone="warn" /> : null}
                 </div>
                 <div className="text-meta text-muted">
-                  {shortDay(t.tripDate)} · {t.driver ? `Driver ${t.driver}` : "No driver named"} · {t.transporter ?? "No transporter named"} · {plural(t.bills.length, "bill")} for {plural(new Set(t.bills.map((b) => b.deliveryParty)).size, "party", "parties")} · {nf(t.totalLitres)} L
+                  {shortDay(t.tripDate)} · {t.driver ? `Driver ${t.driver}` : "No driver named"} · {t.transporter ?? "No transporter named"} · {plural(t.bills.length, "bill")} for {plural(new Set(t.bills.map((b) => b.party)).size, "party", "parties")} · {nf(t.totalLitres)} L
                 </div>
                 {t.note ? <div className="mt-0.5 text-meta text-body">{t.note}</div> : null}
               </div>
@@ -267,8 +267,7 @@ function BillRow({ b, tick, share = false, onRemove }: { b: TripBill; tick?: { o
         </span>
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-medium text-ink">{b.deliveryParty}</span>
-        {b.deliveryParty !== b.party ? <span className="block truncate text-meta text-muted">billed to {b.party}</span> : null}
+        <span className="block truncate font-medium text-ink">{b.party}</span>
       </span>
       <span className={cx("tabular-nums text-meta", !b.litres && "text-warn")}>{b.litres ? nf(b.litres) : "none"}</span>
       <span className="min-w-0 truncate text-meta">
@@ -371,7 +370,7 @@ function AddBillsDialog({ trip, trips, unassigned, onClose }: { trip: TripView; 
               <label key={b.id} className={cx("flex cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0", ticked.has(b.id) && "bg-brand-soft/40")}>
                 <input type="checkbox" checked={ticked.has(b.id)} onChange={() => toggle(b.id)} className={checkboxClass} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium text-ink">{b.deliveryParty}</span>
+                  <span className="block truncate font-medium text-ink">{b.party}</span>
                   <span className="block truncate text-meta text-muted">
                     {b.billNo ?? `Order ${b.orderNo}`} · order {b.orderNo} · {b.litres ? `${nf(b.litres)} L` : "no litres"} · {from}
                   </span>
@@ -461,7 +460,7 @@ function PaymentDialog({ trip, today, onClose }: { trip: TripView; today: string
               <label key={b.id} className={cx("grid cursor-pointer grid-cols-[28px_minmax(0,1.6fr)_80px_110px] items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0", picked.has(b.id) && "bg-brand-soft/40")}>
                 <input type="checkbox" checked={picked.has(b.id)} onChange={() => flip(b.id)} className={checkboxClass} />
                 <span className="min-w-0">
-                  <span className="block truncate font-medium text-ink">{b.deliveryParty}</span>
+                  <span className="block truncate font-medium text-ink">{b.party}</span>
                   <span className="block truncate text-meta text-muted">{b.billNo ?? `Order ${b.orderNo}`} · order {b.orderNo}</span>
                 </span>
                 <span className={cx("tabular-nums text-meta", bad && "text-danger")}>{bad ? "none" : nf(b.litres)}</span>
