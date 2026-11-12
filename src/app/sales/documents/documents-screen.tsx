@@ -231,7 +231,7 @@ export function DocumentsScreen({
                   className={cx(
                     "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[4px] border px-3 text-[13px] whitespace-nowrap",
                     view === key
-                      ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
                       : "border-line bg-surface text-body hover:bg-canvas",
                   )}
                 >
@@ -472,7 +472,7 @@ function FilePicker({
           onChange={(e) => void choose(e.target.files?.[0])}
           className="sr-only"
         />
-        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
+        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-brand-hover">
           {file ? extensionBadge(file.filename) : "PDF"}
         </span>
         <span className="min-w-0 flex-1">
@@ -852,7 +852,7 @@ function DetailsDrawer({
               rel="noreferrer"
               className="flex items-center gap-3 rounded-[6px] border border-line px-3 py-2.5 no-underline hover:border-brand hover:bg-canvas"
             >
-              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-brand-hover">
                 {extensionBadge(doc.filename)}
               </span>
               <span className="min-w-0 flex-1">

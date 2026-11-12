@@ -565,7 +565,7 @@ function visitCard(
   if (customerId) {
     const open = document.createElement("button");
     open.type = "button";
-    open.className = "mt-1.5 text-[12px] font-medium text-[#5223E0] hover:underline";
+    open.className = "mt-1.5 text-[12px] font-medium text-brand-hover hover:underline";
     open.textContent = "Open record \u2192";
     open.addEventListener("click", () => onOpenRecord(customerId));
     el.append(open);

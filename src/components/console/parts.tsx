@@ -7,15 +7,17 @@ import { Modal } from "@/components/ui/overlays";
 import { SalesIcon } from "@/components/console/icons";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { HintTip } from "@/components/ui/hint-tip";
+import { CardGrid } from "@/components/ui/card-grid";
 
 /* ---------------------------------------------------------------------------
  * The pieces every Sales Dashboard screen is built from.
  *
- * Deliberately the Accounts app's visual language rather than a second one:
- * both are office screens read at a desk by somebody scanning a list, and two
- * different tables in one product is how a company ends up with two products.
- * They are a separate file because they are a separate app — Accounts' own
- * parts carry an aging strip and a pager that mean nothing here.
+ * THEY ARE DRAWN IN THE ERP'S LANGUAGE (Nov 2026): figure cards, a navy
+ * table head, 8px cards, sentence-case badges and the shared buttons' marker
+ * classes, so `styles/v4-theme.css` draws this app exactly as it draws the
+ * ERP and the CRM. They are still a separate file because they are a separate
+ * app — Accounts' own parts carry an aging strip and a pager that mean
+ * nothing here — but there is one look, not two.
  * ------------------------------------------------------------------------- */
 
 export function ScreenHeader({
@@ -87,16 +89,33 @@ export type Metric = {
  * numbers that only read together.
  */
 export function MetricRow({ metrics }: { metrics: Metric[] }) {
+  /*
+   * THE ERP'S FIGURE CARDS. Each figure is its own card with a tone dot
+   * beside its label — the shape every ERP list opens on — laid out by
+   * `CardGrid` so four cards are four at 1280 and do not stretch at 1920.
+   */
   return (
-    <div className="mb-4 flex flex-wrap items-start gap-x-8 gap-y-3.5 rounded-[6px] border border-line bg-surface px-5 py-3.5">
+    <CardGrid min={176} gap="gap-3" className="mb-4">
       {metrics.map((m) => (
-        <span key={m.label} className="block">
-          <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-            {m.label}
+        <div key={m.label} className="flex min-w-0 flex-col gap-1 rounded-card border border-line bg-surface px-4 pt-3.5 pb-3">
+          <span className="flex min-w-0 items-center gap-2 text-meta font-semibold text-muted">
+            <span
+              className={cx(
+                "h-1.75 w-1.75 flex-none rounded-full",
+                m.tone === "danger"
+                  ? "bg-danger"
+                  : m.tone === "warn"
+                    ? "bg-warn"
+                    : m.tone === "success"
+                      ? "bg-success"
+                      : "bg-ink",
+              )}
+            />
+            <span className="truncate">{m.label}</span>
           </span>
           <span
             className={cx(
-              "block text-[22px] leading-7 font-semibold whitespace-nowrap tabular-nums",
+              "truncate text-2xl leading-7.5 font-bold tracking-tight tabular-nums",
               m.tone === "danger"
                 ? "text-danger"
                 : m.tone === "warn"
@@ -108,12 +127,10 @@ export function MetricRow({ metrics }: { metrics: Metric[] }) {
           >
             {m.value}
           </span>
-          {m.sub ? (
-            <span className="block text-xs whitespace-nowrap text-muted">{m.sub}</span>
-          ) : null}
-        </span>
+          {m.sub ? <span className="truncate text-xs text-muted">{m.sub}</span> : null}
+        </div>
       ))}
-    </div>
+    </CardGrid>
   );
 }
 
@@ -138,13 +155,13 @@ export function Banner({
   const skin = {
     warn: "border-warn bg-warn-soft",
     danger: "border-danger bg-danger-soft",
-    info: "border-line bg-surface",
+    info: "border-info bg-info-soft",
   }[tone];
 
   return (
     <div
       className={cx(
-        "mb-4 flex items-start justify-between gap-4 rounded-[6px] border-l-[3px] px-4 py-3",
+        "mb-4 flex items-start justify-between gap-4 rounded-card border-l-[3px] px-4 py-3",
         skin,
       )}
     >
@@ -187,10 +204,10 @@ export function FilterChips({
             key={o.key}
             href={o.href}
             className={cx(
-              "inline-flex h-8 items-center gap-1.5 rounded-[4px] border px-3 text-[13px] whitespace-nowrap no-underline hover:no-underline",
+              "inline-flex h-8 items-center gap-1.5 rounded-control border px-3 text-[13px] whitespace-nowrap no-underline hover:no-underline",
               on
-                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                : "border-line bg-surface text-body hover:bg-canvas",
+                ? "border-brand bg-brand-soft font-semibold text-brand-hover"
+                : "border-line-strong bg-surface font-medium text-ink hover:bg-canvas",
             )}
           >
             {o.label}
@@ -245,7 +262,7 @@ export function Table({
       aria-label="Table, scrolls sideways"
       className={cx(
         "min-w-0 overflow-auto",
-        chrome ? "rounded-[6px] border border-line bg-surface" : "bg-surface",
+        chrome ? "rounded-card border border-line bg-surface" : "bg-surface",
       )}
     >
       <table style={{ minWidth }} className="w-full table-fixed border-collapse">
@@ -343,7 +360,7 @@ function Arrow({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
   return (
     <span
       aria-hidden
-      className={cx("text-[9px] leading-none", active ? "text-[#5223E0]" : "text-line-strong")}
+      className={cx("text-[9px] leading-none", active ? "text-brand-hover" : "text-line-strong")}
     >
       {active && dir === "asc" ? "\u25B2" : "\u25BC"}
     </span>
@@ -473,14 +490,16 @@ export function Pill({
     danger: "bg-danger-soft text-danger",
     warn: "bg-warn-soft text-warn-ink",
     success: "bg-success-soft text-success",
-    brand: "bg-brand-soft text-[#5223E0]",
+    brand: "bg-brand-soft text-brand-hover",
     neutral: "bg-divider text-body",
   }[tone];
 
   return (
     <span
       className={cx(
-        "inline-flex items-center rounded-[9px] px-2 py-[3px] text-[11px] leading-[14px] font-medium tracking-[0.03em] whitespace-nowrap uppercase",
+        // `ui-badge` is what the v4 sheet draws as the ERP's badge: 22px,
+        // a 5px corner, sentence case.
+        "ui-badge inline-flex items-center rounded-[5px] px-2 py-[3px] text-xs leading-[14px] font-semibold whitespace-nowrap",
         skin,
       )}
     >
@@ -622,7 +641,7 @@ export function RowMenu({
           ref={menuRef}
           onClick={(e) => e.stopPropagation()}
           style={{ position: "fixed", top: pos.top, right: pos.right }}
-          className="z-50 w-[200px] rounded-[6px] border border-line bg-surface py-1 text-left shadow-lg"
+          className="z-50 w-[200px] rounded-card border border-line bg-surface py-1 text-left shadow-pop"
         >
           {items.map((it, i) => {
             const itemClass = cx(
@@ -674,7 +693,7 @@ export function Empty({
 }) {
   const inHub = useInLeadHub();
   return (
-    <div className="rounded-[6px] border border-line bg-surface px-6 py-14 text-center">
+    <div className="rounded-card border border-line bg-surface px-6 py-14 text-center">
       <div className="text-lg font-semibold text-ink">{title}</div>
       {inHub ? null : (
         <p className="mx-auto mt-1.5 max-w-[480px] text-[15px] text-pretty text-muted">{body}</p>
@@ -735,6 +754,9 @@ export function Button({
    * deliberate. Both were 12px here, which is the design's SMALL padding.
    */
   const pad = size === "sm" ? "px-3" : tone === "primary" ? "px-4" : "px-3.5";
+  /* The shared buttons' marker classes, so the v4 sheet draws these as it
+     draws every other button in the ERP and the CRM. */
+  const marker = tone === "primary" ? "ui-btn ui-btn-primary" : tone === "quiet" ? "ui-btn" : tone === "danger" ? "ui-btn ui-btn-danger" : "ui-btn ui-btn-secondary";
 
   return (
     <button
@@ -743,7 +765,8 @@ export function Button({
       title={title}
       onClick={onClick}
       className={cx(
-        "inline-flex flex-none cursor-pointer items-center justify-center gap-1.5 rounded-[4px] font-medium whitespace-nowrap transition-colors duration-100",
+        marker,
+        "inline-flex flex-none cursor-pointer items-center justify-center gap-1.5 rounded-control font-semibold whitespace-nowrap transition-colors duration-100",
         // 36px and 30px, the design's two heights. They were 34 and 28.
         size === "sm" ? "h-[30px] text-[13px]" : "h-9 text-sm",
         pad,

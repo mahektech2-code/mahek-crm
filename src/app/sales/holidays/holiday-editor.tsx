@@ -166,7 +166,7 @@ export function HolidayEditor({
                 onClick={() => pickLevel(l)}
                 className={cx(
                   "h-8 cursor-pointer rounded-[4px] border px-3 text-[13px]",
-                  level === l ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:border-brand",
+                  level === l ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:border-brand",
                 )}
               >
                 {HOLIDAY_LEVEL_LABEL[l]}
@@ -304,7 +304,7 @@ function PlaceSearch({
       {chosen.length ? (
         <div className="mb-2 flex flex-wrap gap-1">
           {chosen.map((p) => (
-            <span key={p.id} className="inline-flex items-center gap-1 rounded-[9px] bg-brand-soft px-2 py-0.5 text-[12px] text-[#5223E0]">
+            <span key={p.id} className="inline-flex items-center gap-1 rounded-[9px] bg-brand-soft px-2 py-0.5 text-[12px] text-brand-hover">
               {p.label}
               <button
                 type="button"
@@ -332,7 +332,7 @@ function PlaceSearch({
                 key={p.id}
                 type="button"
                 onClick={() => onChange((ps) => (on ? ps.filter((x) => x.id !== p.id) : [...ps, p]))}
-                className={cx("flex w-full cursor-pointer items-center justify-between px-2 py-1 text-left text-[13px] hover:bg-canvas", on ? "text-[#5223E0]" : "text-ink")}
+                className={cx("flex w-full cursor-pointer items-center justify-between px-2 py-1 text-left text-[13px] hover:bg-canvas", on ? "text-brand-hover" : "text-ink")}
               >
                 {p.label}
                 {on ? <SalesIcon name="tick" size={13} /> : null}

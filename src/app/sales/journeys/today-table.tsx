@@ -65,7 +65,7 @@ export function TodayTable({ rows, today }: { rows: TodayRow[]; today: string })
           <Row key={r.id} striped={i % 2 === 1} onClick={() => openPerson(r.id)}>
             <Cell>
               <span className="flex items-center gap-2.5">
-                <span className="flex size-7 flex-none items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
+                <span className="flex size-7 flex-none items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand-hover">
                   {r.initials}
                 </span>
                 <span className="truncate font-medium text-ink">{r.name}</span>

@@ -140,7 +140,7 @@ export default async function Page({
           title={`${plural(unsetCount, "salesman", "salesmen")} with no hometown`}
           body="Meals are paid only on days away from home. Until a hometown is picked, every day they record as away is paid as away."
           action={
-            <Link href="/sales/people?hometown=unset" className="text-[13px] text-[#5223E0] no-underline">
+            <Link href="/sales/people?hometown=unset" className="text-[13px] text-brand-hover no-underline">
               Show only them
             </Link>
           }
@@ -248,7 +248,7 @@ export default async function Page({
                   <Territories salesman={t} places={places} />
                   <Link
                     href={`/sales/journeys?salesman=${t.id}`}
-                    className="text-[13px] text-[#5223E0] no-underline"
+                    className="text-[13px] text-brand-hover no-underline"
                   >
                     Plan a route
                   </Link>

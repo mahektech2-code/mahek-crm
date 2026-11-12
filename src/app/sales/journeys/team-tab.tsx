@@ -291,7 +291,7 @@ function WaitingChips({ r }: { r: TeamRow }) {
   const chips: Array<{ n: number; cls: string; title: string }> = [
     { n: r.refused.length, cls: "bg-danger-soft text-danger", title: "refused — yours to answer" },
     { n: r.proposed.length, cls: "bg-warn-soft text-warn-ink", title: "proposed — his to answer" },
-    { n: r.agreed.length, cls: "bg-brand-soft text-[#5223E0]", title: "agreed — shops not picked" },
+    { n: r.agreed.length, cls: "bg-brand-soft text-brand-hover", title: "agreed — shops not picked" },
   ].filter((c) => c.n > 0);
   if (!chips.length) {
     return r.bareTomorrow ? (
@@ -356,7 +356,7 @@ function Avatar({ initials, size = "md" }: { initials: string; size?: "md" | "lg
   return (
     <span
       className={cx(
-        "flex flex-none items-center justify-center rounded-full bg-brand-soft font-semibold text-[#5223E0]",
+        "flex flex-none items-center justify-center rounded-full bg-brand-soft font-semibold text-brand-hover",
         size === "lg" ? "size-10 text-[13px]" : "size-7 text-[11px]",
       )}
     >
@@ -424,7 +424,7 @@ function cellSkin(p: TeamPlanDay | undefined, leave: boolean, holiday: boolean, 
     case "planned":
       return ring + "bg-success-soft text-success";
     case "agreed":
-      return ring + "bg-brand-soft text-[#5223E0]";
+      return ring + "bg-brand-soft text-brand-hover";
     case "proposed":
       return ring + "bg-warn-soft text-warn-ink";
     case "refused":

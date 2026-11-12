@@ -235,7 +235,7 @@ function CalendarView({
               onClick={() => setFilter(l)}
               className={cx(
                 "h-7 cursor-pointer rounded-[14px] border px-3 text-[13px]",
-                filter === l ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body",
+                filter === l ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body",
               )}
             >
               {l === "all" ? "All" : HOLIDAY_LEVEL_LABEL[l]} <span className="text-muted tabular-nums">{count}</span>
@@ -293,7 +293,7 @@ function CalendarView({
                     <button
                       type="button"
                       onClick={() => setOpen(expanded ? null : h.id)}
-                      className="cursor-pointer text-[13px] text-[#5223E0] hover:underline"
+                      className="cursor-pointer text-[13px] text-brand-hover hover:underline"
                     >
                       {h.members.length} of {people.length} {expanded ? "▴" : "▾"}
                     </button>
@@ -539,7 +539,7 @@ function DayList({
             {h.name}
             {extra?.(h) ? <span className="text-muted"> — {extra(h)}</span> : null}
           </span>
-          <button type="button" onClick={() => onEdit(h)} className="cursor-pointer text-[12px] text-[#5223E0] hover:underline">
+          <button type="button" onClick={() => onEdit(h)} className="cursor-pointer text-[12px] text-brand-hover hover:underline">
             Edit
           </button>
         </li>
@@ -646,7 +646,7 @@ function PeopleView({
         {rows.map((r, i) => (
           <Row key={r.p.id} striped={i % 2 === 1} selected={r.p.id === person}>
             <Cell>
-              <Link href={personHref(r.p.id === person ? null : r.p.id)} scroll={false} className="font-medium text-ink hover:text-[#5223E0]">
+              <Link href={personHref(r.p.id === person ? null : r.p.id)} scroll={false} className="font-medium text-ink hover:text-brand-hover">
                 {r.p.name}
               </Link>
               {!r.p.active ? <span className="ml-1.5 text-[12px] text-muted">(inactive)</span> : null}
@@ -747,7 +747,7 @@ function PersonYear({
               onClick={() => setShow(k)}
               className={cx(
                 "h-7 cursor-pointer rounded-[14px] border px-3 text-[13px]",
-                show === k ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line text-body",
+                show === k ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line text-body",
               )}
             >
               {label}
