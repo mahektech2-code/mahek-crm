@@ -355,6 +355,10 @@ const DESCRIBE: Record<string, Describer> = {
   /* ---- the Studio */
   "studio.design.approved": () => ["approved an uploaded poster design for everybody"],
   "studio.design.sent_back": () => ["sent an uploaded poster design back with a note"],
+  "studio.design.published": () => ["published a poster design for everybody in the Studio"],
+  "studio.design.archived": () => ["archived a poster design so it is no longer offered for new posters"],
+  "studio.design.restored": () => ["restored an archived poster design to the library"],
+  "studio.design.revision_started": () => ["started a new version of a published poster design"],
   "studio.date.created": () => ["added a shared birthday or anniversary"],
   "studio.date.edited": () => ["changed a shared birthday or anniversary"],
   "studio.date.deleted": () => ["deleted a shared birthday or anniversary"],

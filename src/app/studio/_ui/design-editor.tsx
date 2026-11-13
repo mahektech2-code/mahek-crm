@@ -2,8 +2,10 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LANGUAGE_NAMES } from "@/lib/studio/domain/language";
 import {
   canvasById,
+  EXTRA_LANGUAGES,
   FONT_LIMITS,
   MAX_MESSAGES,
   MESSAGE_MAX_CHARS,
@@ -11,13 +13,15 @@ import {
   PLACEABLE_KEYS,
   checkPlacement,
   defaultPlacement,
+  type ExtraLanguage,
+  type LangContent,
   type PlaceableKey,
   type PlacedField,
   type PlacementDraft,
 } from "@/lib/studio/domain/template-upload";
 import { Button, Card } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { approveDesign, deleteDraft, saveDraftPlacement, sendDesignBack } from "@/lib/actions/studio";
+import { approveDesign, deleteDraft, publishDesign, saveDraftPlacement, sendDesignBack } from "@/lib/actions/studio";
 
 /* ---------------------------------------------------------------------------
  * THE PLACEMENT EDITOR, carried over from the standalone Studio. The uploader
@@ -32,9 +36,11 @@ type Mode = "move" | "resize";
 type Issue = { field?: string | null; message: string };
 type ServerPreview = { image: string; errors: Issue[]; warnings: Issue[] };
 
-type Props = { draftId: string; initial: PlacementDraft; occasions: { id: string; label: string }[]; approved: boolean; owner: boolean; canApprove: boolean };
+type Props = { draftId: string; initial: PlacementDraft; occasions: { id: string; label: string }[]; approved: boolean; owner: boolean; canApprove: boolean; /** The owner may publish their own draft: the library publishes immediately. */ canPublish?: boolean };
 
-export function DesignEditor({ draftId, initial, occasions, approved, owner, canApprove }: Props) {
+const EMPTY_CONTENT: LangContent = { messages: [], statics: {} };
+
+export function DesignEditor({ draftId, initial, occasions, approved, owner, canApprove, canPublish = false }: Props) {
   const router = useRouter();
   const toast = useToast();
   const [note, setNote] = useState("");
@@ -42,7 +48,7 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
   const [selected, setSelected] = useState<PlaceableKey | null>(initial.fields[0]?.key ?? null);
   const [preview, setPreview] = useState<ServerPreview | null>(null);
   const [showPreview, setShowPreview] = useState(false);
-  const [busy, setBusy] = useState<"save" | "preview" | "approve" | "back" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"save" | "preview" | "approve" | "publish" | "back" | "delete" | null>(null);
   const [status, setStatus] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
@@ -152,6 +158,15 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
     router.push("/studio/designs");
     router.refresh();
   }
+  async function publish() {
+    if (dirty && !(await save())) return;
+    setBusy("publish");
+    const r = await toast.run(publishDesign(draftId));
+    setBusy(null);
+    if (!r.ok) return setStatus({ tone: "err", text: r.error });
+    router.push("/studio/designs");
+    router.refresh();
+  }
   async function sendBack() {
     setBusy("back");
     const r = await toast.run(sendDesignBack(draftId, note));
@@ -174,6 +189,19 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
     </label>
   );
   const missingMessage = draft.fields.some((f) => f.key === "greeting");
+  const extra = EXTRA_LANGUAGES.filter((l) => draft.languages?.includes(l));
+  const statics = draft.fields.filter((f) => PLACEABLE[f.key].kind === "static");
+  const toggleLanguage = (l: ExtraLanguage, on: boolean) => {
+    const languages = EXTRA_LANGUAGES.filter((x) => (x === l ? on : draft.languages?.includes(x)));
+    change({ ...draft, languages, i18n: withContent(l, draft.i18n?.[l] ?? EMPTY_CONTENT) });
+  };
+  const content = (l: ExtraLanguage): LangContent => draft.i18n?.[l] ?? EMPTY_CONTENT;
+  const withContent = (l: ExtraLanguage, next: LangContent): NonNullable<PlacementDraft["i18n"]> => {
+    const all: NonNullable<PlacementDraft["i18n"]> = { ...draft.i18n };
+    all[l] = next;
+    return all;
+  };
+  const setContent = (l: ExtraLanguage, next: LangContent) => change({ ...draft, i18n: withContent(l, next) });
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]" data-testid="template-editor">
@@ -275,7 +303,56 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
               ))}
             </select>
           </label>
-          <p className="mt-2 text-xs text-muted">Size: {canvas.label} (from your image). Font: Noto Sans, regular or bold. Language: English.</p>
+          <p className="mt-2 text-xs text-muted">Size: {canvas.label} (from your image). Font: Noto Sans, regular or bold.</p>
+        </Card>
+
+        <Card className="p-4">
+          <h3 className="mb-1 text-sm font-semibold text-ink">Languages</h3>
+          <p className="mb-2 text-xs text-muted">English is always included. Add Hindi or Gujarati and give each its own wording — nothing is translated for you, and a language with anything missing stops the design being published.</p>
+          <div className="flex flex-wrap gap-3">
+            <label className="flex items-center gap-1.5 text-sm text-ink">
+              <input type="checkbox" checked disabled /> English
+            </label>
+            {EXTRA_LANGUAGES.map((l) => (
+              <label key={l} className="flex items-center gap-1.5 text-sm text-ink">
+                <input type="checkbox" data-testid={`lang-${l}`} checked={extra.includes(l)} disabled={locked} onChange={(e) => toggleLanguage(l, e.target.checked)} />
+                {LANGUAGE_NAMES[l]}
+              </label>
+            ))}
+          </div>
+          {extra.map((l) => (
+            <div key={l} className="mt-3 border-t border-divider pt-3" data-testid={`lang-panel-${l}`}>
+              <h4 className="mb-1 text-xs font-semibold text-ink">{LANGUAGE_NAMES[l]}</h4>
+              {statics.map((f) => (
+                <label key={f.key} className="mb-2 flex flex-col gap-0.5 text-xs font-medium text-muted">
+                  {PLACEABLE[f.key].label} in {LANGUAGE_NAMES[l]}
+                  <input
+                    className={inputClass}
+                    lang={l}
+                    data-testid={`static-${l}-${f.key}`}
+                    value={content(l).statics[f.key] ?? ""}
+                    maxLength={120}
+                    disabled={locked}
+                    onChange={(e) => setContent(l, { ...content(l), statics: { ...content(l).statics, [f.key]: e.target.value } })}
+                  />
+                </label>
+              ))}
+              {missingMessage ? (
+                <label className="flex flex-col gap-0.5 text-xs font-medium text-muted">
+                  Promotional messages in {LANGUAGE_NAMES[l]} (one per line, up to {MAX_MESSAGES})
+                  <textarea
+                    className={`${inputClass} h-auto py-2`}
+                    lang={l}
+                    rows={4}
+                    data-testid={`messages-${l}`}
+                    disabled={locked}
+                    value={content(l).messages.join("\n")}
+                    onChange={(e) => setContent(l, { ...content(l), messages: e.target.value.split("\n").slice(0, MAX_MESSAGES + 2) })}
+                  />
+                </label>
+              ) : null}
+            </div>
+          ))}
         </Card>
 
         <Card className="p-4">
@@ -403,7 +480,12 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
                 Back to the boxes
               </Button>
             ) : null}
-            {canApprove && !approved ? (
+            {canPublish && owner && !approved ? (
+              <Button variant="primary" onClick={publish} disabled={busy !== null || blocking || (!preview && local.errors.length > 0)} data-testid="publish">
+                {busy === "publish" ? "Publishing…" : "Publish to the library"}
+              </Button>
+            ) : null}
+            {canApprove && !approved && !(canPublish && owner) ? (
               <Button variant="primary" onClick={approve} disabled={busy !== null || blocking || (!preview && local.errors.length > 0)}>
                 {busy === "approve" ? "Approving…" : "Approve and publish"}
               </Button>
@@ -411,8 +493,10 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
           </div>
           <p className="mt-2 text-xs text-muted">
             {approved
-              ? "Approved designs never change, so every poster made from one draws the same for ever."
-              : canApprove
+              ? "A published design never changes, so every poster made from one draws the same for ever. To change it, archive it and upload a revised version."
+              : canPublish && owner
+                ? "Publishing checks it in every language it declares and offers it to everybody in the Studio at once. Only a design that passes can be published."
+                : canApprove
                 ? "Approving checks it with sample values and publishes it to everybody in the Studio. It can never be changed afterwards."
                 : "This draft is private to you. Save it as you go — Preview does not save. Somebody who approves designs will publish it."}
           </p>

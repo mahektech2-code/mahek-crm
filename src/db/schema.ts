@@ -17396,15 +17396,54 @@ export const studioDesigns = pgTable(
     approvedById: text("approved_by_id").references(() => users.id),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /** Who archived it: the uploader may restore only what they archived themselves. */
+    archivedById: text("archived_by_id").references(() => users.id),
+    /** The ORIGINAL uploaded file, kept beside the normalised background. Null for a design uploaded before originals were kept. */
+    sourceRef: text("source_ref"),
+    sourceFormat: text("source_format"),
+    /** Set on a DRAFT that is a new version of this published design; publishing moves that design to its next version. */
+    revisesId: text("revises_id").references((): AnyPgColumn => studioDesigns.id, { onDelete: "set null" }),
+    /** On such a draft: the exact version of that design it was created from. Publishing is refused if the design has moved on since. */
+    revisesVersion: text("revises_version"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    index("studio_designs_revises_idx").on(t.revisesId),
+    /** One open new version per design per person, held by the database so two requests at once cannot make two. */
+    uniqueIndex("studio_designs_one_open_revision").on(t.revisesId, t.createdById).where(sql`${t.status} = 'draft'`),
     index("studio_designs_created_by_idx").on(t.createdById, t.updatedAt),
     index("studio_designs_status_idx").on(t.status),
     check("studio_designs_status", sql`${t.status} in ('draft','approved','archived')`),
     check("studio_designs_approved_has_manifest", sql`${t.status} = 'draft' or (${t.manifest} is not null and ${t.previewRef} is not null and ${t.approvedAt} is not null)`),
   ],
+);
+
+/**
+ * Every SUPERSEDED version of a design, whole, so a poster made from 1.0.0 draws
+ * the same after the design moves to 1.0.1. The current version stays on
+ * studio_designs.
+ */
+export const studioDesignVersions = pgTable(
+  "studio_design_versions",
+  {
+    designId: text("design_id")
+      .notNull()
+      .references(() => studioDesigns.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    copy: jsonb("copy"),
+    placement: jsonb("placement").notNull(),
+    backgroundRef: text("background_ref").notNull(),
+    previewRef: text("preview_ref").notNull(),
+    sourceRef: text("source_ref"),
+    sourceFormat: text("source_format"),
+    publishedById: text("published_by_id").references(() => users.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    supersededById: text("superseded_by_id").references(() => users.id),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.designId, t.version] })],
 );
 
 /** A birthday or anniversary somebody wants reminded of — shared by everybody holding the Studio. */

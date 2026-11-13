@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, studioBatches, studioDesigns, studioPeopleDates, studioPosters, studioPosterShares, studioReminderState, users, type StudioPoster } from "@/db/schema";
+import { customers, studioBatches, studioDesignVersions, studioDesigns, studioPeopleDates, studioPosters, studioPosterShares, studioReminderState, users, type StudioPoster } from "@/db/schema";
 import { resolveScope } from "@/lib/access-control";
 import { customerCaption, suggestedCaption, type TemplateCategory } from "./domain/caption";
 import { festivalCalendarSchema, selectEntries, type CalendarEntry, type DatedEntry, type EntryDesigns, type FestivalCalendar } from "./domain/festival-calendar";
@@ -15,6 +15,7 @@ import { fillPlaceholders } from "./domain/copy";
 import { upcomingShared, type SharedReminder } from "./domain/shared-reminder";
 import { dueReminders, DEFAULT_REMINDER_PREFS, type Reminder, type ReminderCandidate, type ReminderState } from "./domain/reminder";
 import { TEMPLATES_DIR } from "./paths";
+import type { LibraryItem } from "./library";
 import { getStudioRegistry } from "./registry-service";
 import type { PosterRecipe } from "./render-service";
 import type { LoadedTemplate } from "./templates/loader";
@@ -62,6 +63,36 @@ export function designCard(registry: TemplateRegistry, t: LoadedTemplate, audien
     custom: m.tags.includes("custom"),
     preview: designPreviewUrl(m.versionOf ?? m.id, m.version),
   };
+}
+
+/**
+ * THE SHARED LIBRARY: every approved design with who uploaded it, and — kept
+ * apart — the uploaded designs that have been archived. Both lists carry the
+ * same tile; whether somebody may SEE the archived ones is the caller's call.
+ */
+export async function libraryItems(): Promise<{ live: LibraryItem[]; archived: (LibraryItem & { createdById: string })[] }> {
+  const registry = await getStudioRegistry();
+  const rows = await db
+    .select({ id: studioDesigns.id, status: studioDesigns.status, version: studioDesigns.version, createdById: studioDesigns.createdById, createdByName: users.name })
+    .from(studioDesigns)
+    .innerJoin(users, eq(users.id, studioDesigns.createdById))
+    .where(inArray(studioDesigns.status, ["approved", "archived"]));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const item = (t: LoadedTemplate, archived: boolean): LibraryItem => {
+    const c = designCard(registry, t);
+    const owner = byId.get(c.id);
+    return { id: c.id, version: c.version, name: c.name, description: c.description, occasion: t.manifest.occasion, occasionLabel: c.occasionLabel, occasionColor: c.occasionColor, languages: c.languages, preview: c.preview, custom: c.custom, uploaderId: owner?.createdById ?? null, uploaderName: owner?.createdByName ?? null, archived };
+  };
+  const live = registry.list().map((t) => item(t, false));
+  const archived = registry
+    .archivedVersions()
+    /* An archived DESIGN is its current version; the earlier versions of a design are kept for posters and are not tiles of their own. */
+    .filter((t) => {
+      const d = byId.get(t.manifest.versionOf ?? "");
+      return d?.status === "archived" && d.version === t.manifest.version;
+    })
+    .map((t) => ({ ...item(t, true), createdById: byId.get(t.manifest.versionOf ?? "")!.createdById }));
+  return { live, archived };
 }
 
 /** The approved designs offered to an audience, festival-calendar order first. */
@@ -280,7 +311,7 @@ export async function getBatch(id: string) {
 
 export async function myDesignDrafts(userId: string) {
   return db
-    .select({ id: studioDesigns.id, name: studioDesigns.name, status: studioDesigns.status, canvas: studioDesigns.canvas, updatedAt: studioDesigns.updatedAt, approvedAt: studioDesigns.approvedAt })
+    .select({ id: studioDesigns.id, name: studioDesigns.name, status: studioDesigns.status, canvas: studioDesigns.canvas, updatedAt: studioDesigns.updatedAt, approvedAt: studioDesigns.approvedAt, revisesId: studioDesigns.revisesId, version: studioDesigns.version })
     .from(studioDesigns)
     .where(and(eq(studioDesigns.createdById, userId), inArray(studioDesigns.status, ["draft", "approved"])))
     .orderBy(desc(studioDesigns.updatedAt));
@@ -302,6 +333,23 @@ export async function approvedUploads() {
     .innerJoin(users, eq(users.id, studioDesigns.createdById))
     .where(eq(studioDesigns.status, "approved"))
     .orderBy(desc(studioDesigns.approvedAt));
+}
+
+/** Every version of a design, newest first: the current one, then each it superseded. */
+export async function designVersions(id: string): Promise<{ version: string; current: boolean; at: Date | null; by: string | null }[]> {
+  const [current] = await db
+    .select({ version: studioDesigns.version, at: studioDesigns.approvedAt, by: users.name })
+    .from(studioDesigns)
+    .leftJoin(users, eq(users.id, studioDesigns.approvedById))
+    .where(eq(studioDesigns.id, id))
+    .limit(1);
+  const earlier = await db
+    .select({ version: studioDesignVersions.version, at: studioDesignVersions.publishedAt, by: users.name })
+    .from(studioDesignVersions)
+    .leftJoin(users, eq(users.id, studioDesignVersions.publishedById))
+    .where(eq(studioDesignVersions.designId, id))
+    .orderBy(desc(studioDesignVersions.supersededAt));
+  return [...(current ? [{ ...current, current: true }] : []), ...earlier.map((e) => ({ ...e, current: false }))];
 }
 
 export async function getDesignRow(id: string) {

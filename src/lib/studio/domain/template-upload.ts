@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { templateSchema, type Template } from "./template";
-import { textProblem } from "./personalization";
+import { checkCopyText, checkCustomerWording } from "./copy";
+import { LANGUAGE_NAMES, type Language } from "./language";
+import { messageScriptProblem, textProblem } from "./personalization";
 import { normalizeText } from "./text";
 
 // Custom poster templates, Phase 1: an admin uploads a finished design (an image) and places text fields on it by hand.
@@ -99,6 +101,14 @@ export type PlacedField = {
   logoVariant?: "light" | "dark";
 };
 
+/** Languages an uploaded design can add to English. English is always declared and is the base (`messages`, a field's `text`). */
+export const EXTRA_LANGUAGES = ["hi", "gu"] as const;
+export type ExtraLanguage = (typeof EXTRA_LANGUAGES)[number];
+export const isExtraLanguage = (v: unknown): v is ExtraLanguage => v === "hi" || v === "gu";
+
+/** What a design says in one added language: its approved messages and the fixed text of each fixed field, by field key. */
+export type LangContent = { messages: string[]; statics: Record<string, string> };
+
 export type PlacementDraft = {
   name: string;
   canvas: CanvasId;
@@ -107,9 +117,36 @@ export type PlacementDraft = {
   fields: PlacedField[];
   /** Approved promotional messages (English) for the "Promotional message" field. */
   messages: string[];
+  /** Added languages. Absent or empty is an English-only design, which is every design uploaded before languages existed. */
+  languages?: ExtraLanguage[] | undefined;
+  /** The wording of each added language. Content for a language that is not in `languages` is ignored. */
+  i18n?: Partial<Record<ExtraLanguage, LangContent>> | undefined;
 };
 
+/** Every language the design declares: English first, then the added ones in a fixed order, each once. */
+export function declaredLanguages(draft: Pick<PlacementDraft, "languages">): Language[] {
+  const extra = EXTRA_LANGUAGES.filter((l) => draft.languages?.includes(l));
+  return ["en", ...extra];
+}
+
 export const MAX_FIELDS = 12;
+
+/** The next version of a published design: the patch number up by one. Anything that is not major.minor.patch starts again from 1.0.1. */
+export function nextVersion(version: string): string {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : "1.0.1";
+}
+
+/**
+ * The wording rules the template LOADER applies to every line of copy, run here
+ * so a placement that the registry would reject is refused with a reason a
+ * person can act on, in any language: no digits, prices, links or claims, the
+ * language's own script, and nothing that reads like a new-lead welcome (an
+ * uploaded design is offered to customers as well as leads).
+ */
+function copyIssues(text: string, lang: Language): string[] {
+  return [...checkCopyText(text, lang), ...checkCustomerWording(text)].map((i) => i.message);
+}
 export const MAX_MESSAGES = 5;
 export const MESSAGE_MAX_CHARS = 160;
 export const NAME_MAX = 60;
@@ -202,13 +239,41 @@ export function checkPlacement(draft: PlacementDraft): PlacementCheck {
       if (!n) return err("greeting", `Message ${i + 1} is empty.`);
       if (Array.from(n).length > MESSAGE_MAX_CHARS) err("greeting", `Message ${i + 1} is too long (at most ${MESSAGE_MAX_CHARS} characters).`);
       const p = textProblem(n, "message");
-      if (p) err("greeting", `Message ${i + 1} ${p}.`);
+      if (p) return err("greeting", `Message ${i + 1} ${p}.`);
+      for (const m of copyIssues(n, "en")) err("greeting", `Message ${i + 1}: ${m}.`);
     });
   } else if (draft.messages.length > 0) warnings.push({ field: null, message: "Messages are saved but unused: no promotional message field is placed." });
+
+  // Added languages: every one declared must be complete, or the design is not publishable. Nothing is ever filled in from English.
+  for (const lang of declaredLanguages(draft).filter((l): l is ExtraLanguage => isExtraLanguage(l))) {
+    const name = LANGUAGE_NAMES[lang];
+    const content = draft.i18n?.[lang];
+    for (const f of draft.fields) {
+      if (PLACEABLE[f.key].kind !== "static") continue;
+      const t = normalizeText(content?.statics?.[f.key] ?? "");
+      const p = t ? (textProblem(t, "message") ?? messageScriptProblem(t, lang)) : "cannot be empty";
+      if (p) err(f.key, `${PLACEABLE[f.key].label} in ${name}: the fixed text ${p}.`);
+    }
+    if (hasGreeting) {
+      const msgs = content?.messages ?? [];
+      if (msgs.length === 0) err("greeting", `Add at least one approved promotional message in ${name}, or remove ${name} from this design.`);
+      if (msgs.length > MAX_MESSAGES) err("greeting", `At most ${MAX_MESSAGES} messages in ${name}.`);
+      msgs.forEach((m, i) => {
+        const n = normalizeText(m);
+        if (!n) return err("greeting", `${name} message ${i + 1} is empty.`);
+        if (Array.from(n).length > MESSAGE_MAX_CHARS) return err("greeting", `${name} message ${i + 1} is too long (at most ${MESSAGE_MAX_CHARS} characters).`);
+        const p = textProblem(n, "message");
+        if (p) return err("greeting", `${name} message ${i + 1} ${p}.`);
+        for (const m of copyIssues(n, lang)) err("greeting", `${name} message ${i + 1}: ${m}.`);
+      });
+    }
+  }
   return { errors, warnings };
 }
 
 export const FONT_FAMILY_ID = "noto-sans";
+/** The font family each language is drawn in. Every one is in assets/fonts/fonts.json and the loader checks it covers the language's script. */
+export const FONT_FAMILY_BY_LANGUAGE: Readonly<Record<Language, string>> = { en: "noto-sans", hi: "noto-sans-devanagari", mr: "noto-sans-devanagari", gu: "noto-sans-gujarati" };
 
 const slug = (s: string) =>
   s
@@ -232,6 +297,12 @@ export const PREVIEW_SAMPLE = { contact: "Sample Customer", company: "Sample Tra
 /** Turns a placement into a template manifest (unvalidated shape; callers run `buildManifest`). */
 export function manifestFromDraft(draft: PlacementDraft, meta: ManifestMeta): unknown {
   const canvas = canvasById(draft.canvas)!;
+  const langs = declaredLanguages(draft);
+  const staticText = (f: PlacedField): Record<string, string> => {
+    const text: Record<string, string> = { en: normalizeText(f.text ?? "") };
+    for (const l of langs) if (l !== "en") text[l] = normalizeText(draft.i18n?.[l as ExtraLanguage]?.statics?.[f.key] ?? "");
+    return text;
+  };
   const fields = draft.fields.map((f) => {
     const def = PLACEABLE[f.key];
     const box = { x: f.x, y: f.y, w: f.w, h: f.h };
@@ -270,10 +341,10 @@ export function manifestFromDraft(draft: PlacementDraft, meta: ManifestMeta): un
       case "state":
         return { ...common, source: "crm", crmPath: "lead.state" };
       default:
-        return { ...common, source: "static", text: { en: normalizeText(f.text ?? "") } };
+        return { ...common, source: "static", text: staticText(f) };
     }
   });
-  const font = { en: FONT_FAMILY_ID };
+  const font = Object.fromEntries(langs.map((l) => [l, FONT_FAMILY_BY_LANGUAGE[l]]));
   return {
     schemaVersion: 1,
     id: meta.id,
@@ -285,7 +356,7 @@ export function manifestFromDraft(draft: PlacementDraft, meta: ManifestMeta): un
     occasion: draft.occasion,
     category: "promotion",
     audiences: ["lead", "customer"],
-    languages: ["en"],
+    languages: langs,
     requires: [],
     tags: ["custom"],
     canvas: { width: canvas.width, height: canvas.height, defaultFormat: "png", jpegQuality: 90 },
@@ -306,7 +377,10 @@ export function buildManifest(draft: PlacementDraft, meta: ManifestMeta): { ok: 
 /** The copy.json for a draft: the approved messages, in English. */
 export function copyFromDraft(draft: PlacementDraft): Record<string, { id: string; label: string; text: string }[]> {
   if (!draft.fields.some((f) => f.key === "greeting")) return {};
-  return { en: draft.messages.map((text, i) => ({ id: `message-${i + 1}`, label: `Message ${i + 1}`, text: normalizeText(text) })) };
+  const option = (text: string, i: number) => ({ id: `message-${i + 1}`, label: `Message ${i + 1}`, text: normalizeText(text) });
+  const copy: Record<string, { id: string; label: string; text: string }[]> = { en: draft.messages.map(option) };
+  for (const l of declaredLanguages(draft)) if (l !== "en") copy[l] = (draft.i18n?.[l as ExtraLanguage]?.messages ?? []).map(option);
+  return copy;
 }
 
 /** A box for a freshly added field: the default size, centred horizontally, below the fields already placed. */
@@ -372,6 +446,13 @@ const placedFieldSchema = z
   })
   .strict();
 
+const langContentSchema = z
+  .object({
+    messages: z.array(z.string().max(1_000)).max(MAX_MESSAGES + 4),
+    statics: z.record(z.string().max(40), z.string().max(200)).refine((o) => Object.keys(o).length <= MAX_FIELDS, "too many fixed texts"),
+  })
+  .strict();
+
 export const placementDraftSchema = z
   .object({
     name: z.string().max(400),
@@ -379,8 +460,30 @@ export const placementDraftSchema = z
     occasion: z.string().regex(/^[a-z][a-z0-9-]*$/).max(40),
     fields: z.array(placedFieldSchema).max(MAX_FIELDS + 4),
     messages: z.array(z.string().max(1_000)).max(MAX_MESSAGES + 4),
+    languages: z.array(z.enum(EXTRA_LANGUAGES)).max(EXTRA_LANGUAGES.length).optional(),
+    i18n: z.object({ hi: langContentSchema.optional(), gu: langContentSchema.optional() }).strict().optional(),
   })
   .strict();
+
+/**
+ * A placement as it is STORED: languages in their fixed order, each once; content only for a language that is declared, only for a
+ * fixed field that is actually placed, and messages only where a message field is placed. Content left behind by unticking a
+ * language or removing a field is dropped, so it can never reappear later. An English-only design comes out exactly as it always
+ * did (no `languages`, no `i18n`).
+ */
+export function normalizeDraft(draft: PlacementDraft): PlacementDraft {
+  const extra = EXTRA_LANGUAGES.filter((l) => draft.languages?.includes(l));
+  const base: PlacementDraft = { name: draft.name, canvas: draft.canvas, occasion: draft.occasion, fields: draft.fields, messages: draft.messages };
+  if (extra.length === 0) return base;
+  const staticKeys = new Set<string>(draft.fields.filter((f) => PLACEABLE[f.key].kind === "static").map((f) => f.key));
+  const hasGreeting = draft.fields.some((f) => f.key === "greeting");
+  const i18n: Partial<Record<ExtraLanguage, LangContent>> = {};
+  for (const l of extra) {
+    const c = draft.i18n?.[l];
+    i18n[l] = { messages: hasGreeting ? (c?.messages ?? []) : [], statics: Object.fromEntries(Object.entries(c?.statics ?? {}).filter(([k]) => staticKeys.has(k))) };
+  }
+  return { ...base, languages: extra, i18n };
+}
 
 export function parsePlacement(raw: unknown): { ok: true; draft: PlacementDraft } | { ok: false; message: string } {
   const parsed = placementDraftSchema.safeParse(raw);
