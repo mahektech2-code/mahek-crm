@@ -8,7 +8,8 @@ import { completeRenewal, startRenewal, updateRenewal, type RenewalPatch } from 
 import { CRIT, RENEWAL_STEPS, daysLabel, endFromValidity } from "@/lib/locker/engine";
 import type { TimeModel } from "@/lib/locker/catalogue";
 import type { AssetLite } from "@/lib/locker/lite";
-import { BTN_OFF, Btn, C, LBL, PageHead, Pill, btnStyle, fd, inr, nf, useModal, useToast } from "../../../_ui/kit";
+import { Button, Card, buttonClass, controlClass, cx } from "@/components/ui/primitives";
+import { Btn, C, PageHead, Pill, fd, inr, nf, useModal, useToast } from "../../../_ui/kit";
 import { Alert, ListBlock, Stat, StatGrid, type ListItem } from "../../../_ui/register-parts";
 
 /* ---------------------------------------------------------------------------
@@ -68,13 +69,13 @@ export function RenewalScreen(p: {
       return (
         <>
           <PageHead crumb="Locker · Renewals" title={`Renewal complete · ${a.title}`} />
-          <div style={{ padding: "0 24px 48px 24px" }}>
+          <div className="px-6 pb-12">
             <Alert
               tone="green"
               t="The new document replaces the old one"
               m={`The renewed ${p.typeName.toLowerCase()} is now the current version${p.newer.endDate ? `, valid until ${fd(p.newer.endDate)}` : ""}. The previous one is marked replaced and stays in the chain, so an audit can show continuous validity.`}
               actions={
-                <Link href={`/locker/assets/${p.newer.id}`} style={{ ...btnStyle("s", true) }}>
+                <Link href={`/locker/assets/${p.newer.id}`} className={buttonClass({ size: "sm" })}>
                   Open the new version
                 </Link>
               }
@@ -86,7 +87,7 @@ export function RenewalScreen(p: {
     return (
       <>
         <PageHead crumb="Locker · Renewals" title={`Renewal task · ${a.title}`} sub="No renewal is under way for this asset." />
-        <div style={{ padding: "0 24px 48px 24px" }}>
+        <div className="px-6 pb-12">
           <Alert
             t="Nothing started yet"
             m={`Starting copies the ${p.typeName} steps into a checklist and puts the asset in “Renewal in progress”.`}
@@ -134,7 +135,9 @@ export function RenewalScreen(p: {
     setFileName(f.name);
   };
 
-  const inp = { width: "100%", height: 36, padding: "0 10px", border: "1px solid #C2C8D2", borderRadius: 4, fontSize: 14, background: "#FFFFFF" } as const;
+  const inp = controlClass({ className: "h-8.5" });
+  const lbl = "ui-field-label mb-1 block text-xs font-medium tracking-label text-muted uppercase";
+  const cardTitle = "text-base font-semibold text-ink";
 
   return (
     <>
@@ -144,23 +147,23 @@ export function RenewalScreen(p: {
         sub={`RC-${a.code.slice(4)} · ${daysLabel(a.d)} · ${CRIT[a.crit].label}${a.consequence ? ` · If this runs out: ${a.consequence}` : ""}`}
         actions={<Btn onClick={() => router.push(`/locker/assets/${a.id}?tab=renewal`)}>Open asset</Btn>}
       />
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="flex flex-col gap-5 px-6 pb-12">
         <StatGrid n={4}>
           <Stat l={(a.d ?? 0) < 0 ? "Overdue by" : "Days remaining"} v={a.d == null ? "—" : nf(Math.abs(a.d))} s={fd(a.endDate)} red={a.d != null && a.d < 30} />
           <Stat l="Estimated cost" v={inr(r.costPaise || p.typicalCost)} s={r.costPaise ? "recorded on this task" : "typical fee"} />
           <Stat l="Approver" v={p.approverName ?? "—"} s={p.approverName ? "authorises the spend" : "none named on the asset"} />
           <Stat l="Stage" v={`${at + 1} of 9`} s={RENEWAL_STEPS[at]} bar={(at / 8) * 100} />
         </StatGrid>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 16, alignItems: "start" }}>
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
           <ListBlock
             title="Status"
             sub="Advance one step at a time. Each move is recorded."
             items={RENEWAL_STEPS.map((x, i): ListItem => ({
               t: x,
               strong: i === at,
-              badge: i < at ? <Pill label="Done" bg={C.greenSoft} fg={C.green} /> : i === at ? <Pill label="Current" bg={C.brandSoft} fg={C.brandInk} /> : undefined,
+              badge: i < at ? <Pill tone="success" label="Done" /> : i === at ? <Pill tone="brand" label="Current" /> : undefined,
               edge: i === at ? C.brand : null,
-              bg: i === at ? "#F7F4FF" : undefined,
+              bg: i === at ? "brand" : undefined,
             })).concat(
               ro
                 ? ([] as ListItem[])
@@ -179,7 +182,7 @@ export function RenewalScreen(p: {
                           strong: false,
                           sub: at + 1 >= 3 && !r.appliedOn ? "Record the date it was applied for first (Case details)." : "",
                           badge: (
-                            <span style={{ display: "flex", gap: 6 }}>
+                            <span className="flex gap-1.5">
                               {at > 1 ? (
                                 <Btn small onClick={() => save({ step: at - 1 })}>
                                   Back
@@ -202,11 +205,11 @@ export function RenewalScreen(p: {
             items={r.checklist.map((c, i) => ({
               t: c.text,
               sub: c.done && c.by ? `Ticked by ${c.by}` : undefined,
-              lead: <input type="checkbox" checked={c.done} disabled={ro || busy} onChange={() => save({ toggle: i })} style={{ width: 18, height: 18, accentColor: C.brand, flex: "none", marginTop: 1 }} />,
+              lead: <input type="checkbox" checked={c.done} disabled={ro || busy} onChange={() => save({ toggle: i })} className="mt-px h-[18px] w-[18px] flex-none cursor-pointer accent-brand disabled:cursor-not-allowed" />,
             }))}
           />
-          <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-            <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.line2}`, fontSize: 15, fontWeight: 600, color: C.ink }}>Case details</div>
+          <Card className="overflow-hidden">
+            <div className={cx(cardTitle, "border-b border-divider px-5 py-3")}>Case details</div>
             {[
               { t: "Assigned to", v: r.assignedName ?? "Unassigned", edit: () => modal({ title: "Assign the renewal", sub: a.title, fields: [{ k: "p", l: "Person", type: "select", opts: [{ v: "", l: "Nobody" }].concat(p.people.map((x) => ({ v: x.id, l: x.name }))), init: r.assignedToId ?? "" }], okL: "Save", done: async (v) => void (await save({ assignedToId: v.p || null })) }) },
               { t: "Applied on", v: r.appliedOn ? fd(r.appliedOn) : "Recorded when submitted", edit: () => modal({ title: "When was it applied for?", sub: "Applying on time is what keeps you safe in law — it moves the asset to “Renewal applied”.", fields: [{ k: "d", l: "Applied on", type: "date", req: true, init: r.appliedOn ?? p.today }], okL: "Save", done: async (v) => void (await save({ appliedOn: v.d })) }) },
@@ -216,10 +219,10 @@ export function RenewalScreen(p: {
               { t: "Approver", v: p.approverName ?? "Department head", edit: null },
               { t: "External contact", v: p.externalContact ?? "None recorded", edit: null },
             ].map((row) => (
-              <div key={row.t} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderTop: `1px solid ${C.line3}` }}>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink }}>{row.t}</span>
-                  <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 2 }}>{row.v}</span>
+              <div key={row.t} className="flex items-center gap-3 border-t border-divider px-5 py-3 first:border-t-0">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-ink">{row.t}</span>
+                  <span className="mt-0.5 block text-xs text-muted">{row.v}</span>
                 </span>
                 {row.edit && !ro ? (
                   <Btn small onClick={row.edit}>
@@ -228,26 +231,26 @@ export function RenewalScreen(p: {
                 ) : null}
               </div>
             ))}
-          </div>
-          <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-            <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.line2}` }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>Notes</div>
-              <div style={{ fontSize: 12, color: C.muted }}>{r.notes.length} notes</div>
+          </Card>
+          <Card className="overflow-hidden">
+            <div className="border-b border-divider px-5 py-3">
+              <div className={cardTitle}>Notes</div>
+              <div className="text-xs text-muted">{r.notes.length} notes</div>
             </div>
-            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="flex flex-col gap-3 px-5 py-4">
               {r.notes.slice(-6).map((n, i) => (
-                <div key={i} style={{ fontSize: 13, color: C.body }}>
-                  <span style={{ fontWeight: 600, color: C.ink }}>{n.who}</span> <span style={{ color: C.muted }}>{n.at}</span>
+                <div key={i} className="text-[13px] text-body">
+                  <span className="font-semibold text-ink">{n.who}</span> <span className="text-muted">{n.at}</span>
                   <div>{n.t}</div>
                 </div>
               ))}
               {!ro ? (
                 <>
-                  <label style={{ display: "block" }}>
-                    <span style={{ ...LBL, display: "block", marginBottom: 4 }}>Add a note</span>
-                    <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="What happened, who you spoke to, what is next" style={{ width: "100%", padding: "8px 10px", border: "1px solid #C2C8D2", borderRadius: 4, fontSize: 14, lineHeight: "20px" }} />
+                  <label className="block">
+                    <span className={lbl}>Add a note</span>
+                    <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="What happened, who you spoke to, what is next" className={controlClass({ className: "resize-y py-2 leading-[21px]" })} />
                   </label>
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <div className="flex justify-end">
                     <Btn
                       small
                       kind="p"
@@ -264,28 +267,28 @@ export function RenewalScreen(p: {
                 </>
               ) : null}
             </div>
-          </div>
+          </Card>
           {at >= 7 && !ro ? (
-            <div style={{ gridColumn: "1 / -1", background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.line2}` }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>Complete the renewal</div>
-                <div style={{ fontSize: 12, color: C.muted }}>From the renewed document in your hand. The new version replaces this one; this one stays in the chain.</div>
+            <Card className="col-span-full overflow-hidden">
+              <div className="border-b border-divider px-5 py-3">
+                <div className={cardTitle}>Complete the renewal</div>
+                <div className="text-xs text-muted">From the renewed document in your hand. The new version replaces this one; this one stays in the chain.</div>
               </div>
-              <div style={{ padding: "16px 20px", display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 14, alignItems: "end" }}>
+              <div className="grid grid-cols-1 items-end gap-3.5 px-5 py-4 md:grid-cols-3">
                 <label>
-                  <span style={{ ...LBL, display: "block", marginBottom: 4 }}>New end date {p.model === "perpetual" ? "· optional" : ""}</span>
-                  <input type="date" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} style={inp} />
+                  <span className={lbl}>New end date {p.model === "perpetual" ? "· optional" : ""}</span>
+                  <input type="date" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} className={inp} />
                 </label>
                 <label>
-                  <span style={{ ...LBL, display: "block", marginBottom: 4 }}>New document number</span>
-                  <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} placeholder={a.docNo} style={inp} />
+                  <span className={lbl}>New document number</span>
+                  <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} placeholder={a.docNo} className={inp} />
                 </label>
                 <div>
                   <input
                     ref={fileRef}
                     type="file"
                     accept="application/pdf,image/png,image/jpeg,image/webp"
-                    style={{ display: "none" }}
+                    className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) void upload(f);
@@ -293,16 +296,22 @@ export function RenewalScreen(p: {
                     }}
                   />
                   <Btn onClick={() => fileRef.current?.click()}>{fileId ? "Replace the scan" : "Upload the renewed document"}</Btn>
-                  <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{fileName || "Optional · its SHA-256 is recorded"}</div>
+                  <div className="mt-1 text-xs text-muted">{fileName || "Optional · its SHA-256 is recorded"}</div>
                 </div>
               </div>
-              <div style={{ padding: "0 20px 16px 20px", display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
-                {!all ? <span style={{ fontSize: 13, color: C.amber }}>Tick every step first.</span> : null}
-                <button type="button" onClick={complete} title={!all ? "Tick every step first" : ""} style={all && !busy && (newEnd || p.model === "perpetual") ? btnStyle("p") : BTN_OFF}>
+              <div className="flex items-center justify-end gap-2 px-5 pb-4">
+                {!all ? <span className="text-[13px] text-warn-ink">Tick every step first.</span> : null}
+                <Button
+                  variant={all && !busy && (newEnd || p.model === "perpetual") ? "primary" : "secondary"}
+                  onClick={complete}
+                  title={!all ? "Tick every step first" : ""}
+                  aria-disabled={!(all && !busy && (newEnd || p.model === "perpetual")) || undefined}
+                  className={cx(!(all && !busy && (newEnd || p.model === "perpetual")) && "cursor-not-allowed bg-canvas text-faint")}
+                >
                   {busy ? "Completing…" : "Complete renewal"}
-                </button>
+                </Button>
               </div>
-            </div>
+            </Card>
           ) : null}
         </div>
       </div>

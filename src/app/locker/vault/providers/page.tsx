@@ -13,7 +13,7 @@ export default async function ProvidersPage() {
   const list = await providersView();
   return (
     <>
-      <PageHead vault crumb="Locker · ◈ Vault" title="Providers" sub="One screen for “how many DigitalOcean accounts do we have”: every account, login, subscription and its cost." />
+      <PageHead vault crumb="Locker · Vault" title="Providers" sub="One screen for “how many DigitalOcean accounts do we have”: every account, login, subscription and its cost." />
       <ProvidersScreen
         list={list.map((p) => ({
           name: p.name,

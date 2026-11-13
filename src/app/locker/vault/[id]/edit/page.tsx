@@ -21,8 +21,8 @@ export default async function EditLoginPage({ params }: { params: Promise<{ id: 
   const opts = await formOptions();
   return (
     <>
-      <PageHead vault crumb="Locker · ◈ Vault" title={`Edit · ${c.title}`} sub="Only the fields around the secret. To change the secret itself, use Change on the login — the old value is kept, encrypted." />
-      <div style={{ padding: "0 24px 48px 24px", maxWidth: 1080 }}>
+      <PageHead vault crumb="Locker · Vault" title={`Edit · ${c.title}`} sub="Only the fields around the secret. To change the secret itself, use Change on the login — the old value is kept, encrypted." />
+      <div className="max-w-[1080px] px-6 pb-12">
         <CredentialForm
           id={id}
           {...opts}

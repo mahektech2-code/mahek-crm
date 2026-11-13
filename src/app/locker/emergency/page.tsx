@@ -18,7 +18,7 @@ export default async function EmergencyPage() {
   for (const r of fields) (F[r.c] ??= []).push(r.f);
   return (
     <>
-      <PageHead vault crumb="Locker · ◈ Vault" title="Emergency access" sub="Emergency access when the normal path is unavailable. Time-boxed, scoped, approved by a second person, and visible to everyone." />
+      <PageHead vault crumb="Locker · Vault" title="Emergency access" sub="Emergency access when the normal path is unavailable. Time-boxed, scoped, approved by a second person, and visible to everyone." />
       <EmergencyScreen
         me={user.id}
         canInvoke={access.vault && access.has("locker.approvals")}

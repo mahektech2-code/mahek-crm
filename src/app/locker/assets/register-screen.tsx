@@ -7,7 +7,9 @@ import { recordExport } from "@/lib/actions/locker-assets";
 import { CATEGORIES, CATEGORY } from "@/lib/locker/catalogue";
 import { CRIT, STATUS, daysColour, daysLabel } from "@/lib/locker/engine";
 import type { AssetLite } from "@/lib/locker/lite";
-import { Btn, C, PageHead, Picker, SearchBox, Segmented, StatusPill, Tabs, fd, nf, useDensity, usePager, useToast } from "../_ui/kit";
+import { CardGrid } from "@/components/ui/card-grid";
+import { Button, Card, EmptyState, SortableTh, Td, Tr, cx } from "@/components/ui/primitives";
+import { Btn, PageHead, Picker, SearchBox, Segmented, StatusPill, Tabs, fd, nf, useDensity, usePager, useToast } from "../_ui/kit";
 import { countdown } from "../_ui/register-parts";
 
 /* ---------------------------------------------------------------------------
@@ -31,6 +33,9 @@ const VIEWS: [View, string][] = [
 ];
 type Filters = { type?: string; ent?: string; loc?: string; crit?: string; st?: string; owner?: string; cat?: string };
 type SortKey = "title" | "loc" | "d" | "st" | "owner" | "ver";
+
+/** The six columns as shares of the table — the design's 2.6 : 1.3 : 1.1 : 1.2 : 1 : 0.75. */
+const COL_W = ["26.5%", "13.3%", "11.2%", "12.2%", "10.2%", "7.6%"].map((w, i, all) => (i === all.length - 1 ? "auto" : w));
 
 const inView = (a: AssetLite, v: View, me: string) => {
   switch (v) {
@@ -161,7 +166,6 @@ export function RegisterScreen({
     toast(r.message ?? "Exported");
   };
 
-  const tpl = "minmax(0,2.6fr) minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,0.75fr)";
   const ths: [SortKey, string][] = [
     ["title", "Asset"],
     ["loc", "Where"],
@@ -185,7 +189,7 @@ export function RegisterScreen({
           </>
         }
       />
-      <div style={{ padding: "0 24px 40px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="flex flex-col gap-3 px-6 pb-10">
         <Tabs
           tabs={VIEWS.map(([k, l]) => ({ key: k, label: l, n: nf(base.filter((a) => inView(a, k, me)).length) }))}
           value={view}
@@ -194,7 +198,7 @@ export function RegisterScreen({
             pager.reset();
           }}
         />
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div className="flex flex-wrap items-center gap-2">
           <SearchBox value={q} onChange={setQ} placeholder="Title, code or document number" />
           {!cat ? (
             <Picker
@@ -254,103 +258,115 @@ export function RegisterScreen({
             ph={`Search ${oC.size} owners`}
           />
           {hasF ? (
-            <button type="button" onClick={() => { setF({}); setQ(""); }} style={{ height: 34, padding: "0 10px", border: "none", background: "transparent", color: C.brandInk, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+            <button type="button" onClick={() => { setF({}); setQ(""); }} className="h-8 cursor-pointer px-2.5 text-[13px] font-medium text-brand-hover hover:underline">
               Clear all
             </button>
           ) : null}
-          <span style={{ flex: 1 }} />
-          <span style={{ fontSize: 13, color: C.muted }}>
+          <span className="flex-1" />
+          <span className="text-[13px] text-muted">
             {nf(sorted.length)} of {nf(base.length)} assets
           </span>
           <Segmented opts={[{ key: "table", label: "Table" }, { key: "cards", label: "Cards" }]} value={mode} onPick={setMode} />
         </div>
 
         {!sorted.length ? (
-          <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, padding: "56px 24px", textAlign: "center" }}>
-            <div style={{ fontSize: 15, color: C.muted }}>{base.length ? "No assets match these filters." : "Nothing is registered in this category yet. Add the first asset to start tracking it."}</div>
-            {hasF ? (
-              <button type="button" onClick={() => { setF({}); setQ(""); }} style={{ marginTop: 12, height: 34, padding: "0 14px", border: "1px solid #C2C8D2", background: "#FFFFFF", borderRadius: 4, fontSize: 14, cursor: "pointer" }}>
-                Clear filters
-              </button>
-            ) : null}
-          </div>
+          <Card>
+            <EmptyState
+              title={base.length ? "No assets match these filters." : "Nothing is registered in this category yet. Add the first asset to start tracking it."}
+              action={
+                hasF ? (
+                  <Button onClick={() => { setF({}); setQ(""); }}>Clear filters</Button>
+                ) : undefined
+              }
+            />
+          </Card>
         ) : mode === "table" ? (
-          <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, alignItems: "center", padding: "0 16px 0 19px", height: 36, background: C.canvas, borderBottom: `1px solid ${C.line}` }}>
-              {ths.map(([k, l]) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setSort([k, sort[0] === k ? ((-sort[1]) as 1 | -1) : 1])}
-                  style={{ border: "none", background: "transparent", padding: 0, fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: sort[0] === k ? C.ink : C.muted, cursor: "pointer", textAlign: "left", whiteSpace: "nowrap" }}
-                >
-                  {l}
-                  {sort[0] === k ? (sort[1] > 0 ? " ↑" : " ↓") : ""}
-                </button>
-              ))}
-            </div>
-            {pager.slice(sorted).map((a, i) => {
-              const { cd, date } = countdown(a);
-              return (
-                <Link
-                  key={a.id}
-                  href={`/locker/assets/${a.id}`}
-                  className="lk-row"
-                  style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, alignItems: "center", padding: "0 16px", minHeight: compact ? 36 : 44, borderTop: `1px solid ${C.line3}`, borderLeft: `3px solid ${CRIT[a.crit].edge}`, background: i % 2 ? C.canvas : "#FFFFFF", fontSize: 14, color: C.body, textDecoration: "none" }}
-                >
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontWeight: 500, color: C.ink, lineHeight: "19px", overflowWrap: "anywhere" }}>{a.title}</span>
-                    <span style={{ display: "block", fontSize: 12, lineHeight: "16px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {a.code} · {a.typeName}
-                    </span>
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.siteName ?? "Company-wide"}</span>
-                    <span style={{ display: "block", fontSize: 12, lineHeight: "16px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(a.entityName ?? "").replace(" Pvt Ltd", "").replace(" LLP", "")}</span>
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontWeight: 600, color: daysColour(a.d, a.status), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.model === "term_contract" && a.noticeDays ? cd.replace(" days to notice", "d to notice") : cd}</span>
-                    <span style={{ display: "block", fontSize: 12, lineHeight: "16px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.model === "subscription" ? date : a.model === "term_contract" ? date : fd(a.actionDate)}</span>
-                  </span>
-                  <span style={{ minWidth: 0, overflow: "hidden" }}>
-                    <StatusPill status={a.status} />
-                  </span>
-                  <span style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...(a.ownerName ? {} : { color: C.red, fontWeight: 600 }) }}>{a.ownerName ?? "Unassigned"}</span>
-                  <span style={{ minWidth: 0, color: a.unchecked ? C.amber : C.muted, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.unchecked ? (a.checkedAgo == null ? "Never" : "Overdue") : `${nf(a.checkedAgo ?? 0)}d ago`}</span>
-                </Link>
-              );
-            })}
+          <Card className="overflow-hidden">
+            <table className="w-full table-fixed border-collapse">
+              <colgroup>
+                {COL_W.map((w, k) => (
+                  <col key={k} style={{ width: w }} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  {ths.map(([k, l]) => (
+                    <SortableTh key={k} active={sort[0] === k} direction={sort[0] === k && sort[1] < 0 ? "desc" : "asc"} onSort={() => setSort([k, sort[0] === k ? ((-sort[1]) as 1 | -1) : 1])}>
+                      {l}
+                    </SortableTh>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pager.slice(sorted).map((a) => {
+                  const { cd, date } = countdown(a);
+                  const cell = cx("align-middle", compact ? "py-1" : "py-2");
+                  return (
+                    <Tr key={a.id} onClick={() => router.push(`/locker/assets/${a.id}`)} className="cursor-pointer hover:bg-canvas">
+                      <Td className={cx(cell, "border-l-[3px] whitespace-normal")} style={{ borderLeftColor: CRIT[a.crit].edge }}>
+                        <Link href={`/locker/assets/${a.id}`} onClick={(e) => e.stopPropagation()} className="block leading-[19px] font-medium text-ink no-underline [overflow-wrap:anywhere] hover:underline">
+                          {a.title}
+                        </Link>
+                        <span className="block truncate text-xs leading-4 text-muted">
+                          {a.code} · {a.typeName}
+                        </span>
+                      </Td>
+                      <Td className={cell}>
+                        <span className="block truncate">{a.siteName ?? "Company-wide"}</span>
+                        <span className="block truncate text-xs leading-4 text-muted">{(a.entityName ?? "").replace(" Pvt Ltd", "").replace(" LLP", "")}</span>
+                      </Td>
+                      <Td className={cell}>
+                        <span className="block truncate font-semibold" style={{ color: daysColour(a.d, a.status) }}>
+                          {a.model === "term_contract" && a.noticeDays ? cd.replace(" days to notice", "d to notice") : cd}
+                        </span>
+                        <span className="block truncate text-xs leading-4 text-muted">{a.model === "subscription" ? date : a.model === "term_contract" ? date : fd(a.actionDate)}</span>
+                      </Td>
+                      <Td className={cell}>
+                        <StatusPill status={a.status} />
+                      </Td>
+                      <Td className={cx(cell, "truncate", !a.ownerName && "font-semibold text-danger")}>{a.ownerName ?? "Unassigned"}</Td>
+                      <Td className={cx(cell, "truncate text-[13px]", a.unchecked ? "text-warn-ink" : "text-muted")}>{a.unchecked ? (a.checkedAgo == null ? "Never" : "Overdue") : `${nf(a.checkedAgo ?? 0)}d ago`}</Td>
+                    </Tr>
+                  );
+                })}
+              </tbody>
+            </table>
             {pager.footer}
-          </div>
+          </Card>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <div className="flex flex-col gap-6">
             {groups.map(({ c, list }) => (
               <div key={c.slug}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
-                  <span style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>{c.name}</span>
-                  <span style={{ fontSize: 13, color: C.muted }}>{nf(list.length)}</span>
-                  <span style={{ flex: 1 }} />
+                <div className="mb-2.5 flex items-baseline gap-2.5">
+                  <span className="text-[15px] font-semibold text-ink">{c.name}</span>
+                  <span className="text-[13px] text-muted">{nf(list.length)}</span>
+                  <span className="flex-1" />
                   {list.length > 8 ? (
-                    <button type="button" onClick={() => { setF({ ...f, cat: c.slug }); setMode("table"); }} style={{ border: "none", background: "transparent", color: C.brandInk, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+                    <button type="button" onClick={() => { setF({ ...f, cat: c.slug }); setMode("table"); }} className="cursor-pointer text-[13px] font-medium text-brand-hover hover:underline">
                       View all {nf(list.length)} in the table →
                     </button>
                   ) : null}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
+                <CardGrid min={260} gap="gap-3">
                   {list.slice(0, 8).map((a) => (
-                    <Link key={a.id} href={`/locker/assets/${a.id}`} className="lk-card-hover" style={{ display: "block", background: "#FFFFFF", border: `1px solid ${C.line}`, borderLeft: `3px solid ${CRIT[a.crit].edge}`, borderRadius: 6, padding: "14px 16px", textAlign: "left", textDecoration: "none" }}>
-                      <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink, lineHeight: "19px", minHeight: 38 }}>{a.title}</span>
-                      <span style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 10 }}>
-                        <span style={{ fontSize: 26, lineHeight: "30px", fontWeight: 600, color: a.d != null && a.d < 0 ? C.red : C.ink }}>{daysLabel(a.actionIn)}</span>
-                        <span style={{ fontSize: 12, color: C.muted }}>{fd(a.actionDate)}</span>
+                    <Link
+                      key={a.id}
+                      href={`/locker/assets/${a.id}`}
+                      className="block rounded-card border border-l-[3px] border-line bg-surface px-4 py-3.5 text-left no-underline transition-colors duration-100 hover:border-line-strong hover:no-underline"
+                      style={{ borderLeftColor: CRIT[a.crit].edge }}
+                    >
+                      <span className="block min-h-[38px] text-sm leading-[19px] font-medium text-ink">{a.title}</span>
+                      <span className="mt-2.5 flex items-baseline gap-2">
+                        <span className={cx("text-[26px] leading-[30px] font-semibold", a.d != null && a.d < 0 ? "text-danger" : "text-ink")}>{daysLabel(a.actionIn)}</span>
+                        <span className="text-xs text-muted">{fd(a.actionDate)}</span>
                       </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                      <span className="mt-2 flex items-center gap-2">
                         <StatusPill status={a.status} />
-                        <span style={{ fontSize: 12, color: a.ownerName ? C.muted : C.red, fontWeight: a.ownerName ? 400 : 600 }}>{a.ownerName ?? "No owner"}</span>
+                        <span className={cx("text-xs", a.ownerName ? "text-muted" : "font-semibold text-danger")}>{a.ownerName ?? "No owner"}</span>
                       </span>
                     </Link>
                   ))}
-                </div>
+                </CardGrid>
               </div>
             ))}
           </div>

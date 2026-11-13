@@ -20,7 +20,7 @@ export default async function ChangeDuePage() {
   const due = rows.filter((r) => r.changeDue).sort((a, b) => ord[a.tier] - ord[b.tier] || b.overBy - a.overBy);
   return (
     <>
-      <PageHead vault crumb="Locker · ◈ Vault" title="Passwords to change" sub="Passwords & keys past their change date." />
+      <PageHead vault crumb="Locker · Vault" title="Passwords to change" sub="Passwords & keys past their change date." />
       <ChangeDueScreen due={due.map((d) => ({ ...d, fields: F.get(d.id) ?? [] }))} policy={{ restricted: s.tiers.restricted.rotateDays, sensitive: s.tiers.sensitive.rotateDays, standard: s.tiers.standard.rotateDays }} />
     </>
   );

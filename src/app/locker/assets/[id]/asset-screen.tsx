@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, daysBetween } from "@/lib/format";
 import { markChecked, setAssetText, setSeat, setStage, startRenewal, type Seat } from "@/lib/actions/locker-assets";
 import { DEFAULT_STEPS, type TimeModel } from "@/lib/locker/catalogue";
 import { CRIT, MODEL_LABEL, RENEWAL_STEPS, checkIntervalDays, daysColour, daysLabel, type Stage } from "@/lib/locker/engine";
 import type { AssetLite } from "@/lib/locker/lite";
-import { Btn, C, CritPill, LBL, MONO, Pill, StatusPill, Tabs, TierPill, fd, initials, inr, nf, useModal, useToast } from "../../_ui/kit";
+import { Card, buttonClass, cx } from "@/components/ui/primitives";
+import { Btn, CritPill, Pill, StatusPill, Tabs, TierPill, fd, initials, inr, nf, useModal, useToast } from "../../_ui/kit";
+import { LkIcon } from "../../_ui/icons";
 import { AssetForm, type PersonOpt, type PmOpt, type TypeOpt } from "../asset-form";
 
 /* ---------------------------------------------------------------------------
@@ -61,7 +63,8 @@ export type AssetVM = {
 };
 
 type TabKey = "details" | "ownership" | "renewal" | "documents" | "credentials" | "dependencies" | "activity";
-const card: CSSProperties = { background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" };
+const LBL = "text-xs font-medium tracking-label text-muted uppercase";
+const cardHead = "text-base font-semibold text-ink";
 
 export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: string }) {
   const router = useRouter();
@@ -86,7 +89,7 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
 
   if (editing) {
     return (
-      <div style={{ padding: "20px 24px 48px 24px" }}>
+      <div className="px-6 pt-5 pb-12">
         <AssetForm
           type={vm.type}
           categoryName={vm.categoryName}
@@ -231,12 +234,12 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
       });
     const bad = miss && required;
     return (
-      <div key={role} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderTop: `1px solid ${C.line3}`, background: bad ? C.redSoft : "#FFFFFF", boxShadow: bad ? `inset 3px 0 0 ${C.red}` : "none" }}>
-        <span style={{ width: 36, height: 36, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 600, background: bad ? C.red : seat ? C.brandSoft : C.line2, color: bad ? "#FFFFFF" : seat ? C.brandInk : C.body }}>{miss ? "!" : seat ? initials(name) : "EX"}</span>
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ ...LBL, display: "block" }}>{role}</span>
-          <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: bad ? C.red : C.ink, marginTop: 2 }}>{miss ? (required ? "Unassigned — this is a problem" : "Not set") : name}</span>
-          <span style={{ display: "block", fontSize: 12, color: C.muted }}>
+      <div key={role} className={cx("flex items-center gap-3.5 border-t border-divider px-5 py-3.5 first:border-t-0", bad ? "border-l-[3px] border-l-danger bg-danger-soft" : "bg-surface")}>
+        <span className={cx("flex h-9 w-9 flex-none items-center justify-center rounded-full text-[13px] font-semibold", bad ? "bg-danger text-white" : seat ? "bg-brand-soft text-brand-hover" : "bg-divider text-body")}>{miss ? "!" : seat ? initials(name) : "EX"}</span>
+        <span className="min-w-0 flex-1">
+          <span className={cx(LBL, "block")}>{role}</span>
+          <span className={cx("mt-0.5 block text-[15px] font-semibold", bad ? "text-danger" : "text-ink")}>{miss ? (required ? "Unassigned — this is a problem" : "Not set") : name}</span>
+          <span className="block text-xs text-muted">
             {sub ?? (miss ? (required ? `Every ${role === "Primary owner" ? "asset" : CRIT[a.crit].label.toLowerCase() + " asset"} must have one. Reminders have nowhere to go.` : "Optional") : [person?.title, person?.code].filter(Boolean).join(" · "))}
           </span>
         </span>
@@ -299,18 +302,18 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
   add("Department", vm.department);
 
   const doc = (x: AssetVM["docs"][number]) => (
-    <a key={x.id} href={`/api/locker/assets/${x.assetId}/documents/${x.id}`} target="_blank" rel="noreferrer" className="lk-row" style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 20px", borderTop: `1px solid ${C.line3}`, background: "#FFFFFF", textAlign: "left", textDecoration: "none" }}>
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 500, color: C.ink }}>{x.filename}</span>
-          {x.current ? <Pill label="Current" bg={C.greenSoft} fg={C.green} /> : <Pill label="Replaced" bg={C.soft} fg={C.muted} />}
+    <a key={x.id} href={`/api/locker/assets/${x.assetId}/documents/${x.id}`} target="_blank" rel="noreferrer" className="flex w-full items-center gap-3 border-t border-divider bg-surface px-5 py-3 text-left no-underline first:border-t-0 hover:bg-canvas hover:no-underline">
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="text-sm font-medium text-ink">{x.filename}</span>
+          {x.current ? <Pill tone="success" label="Current" /> : <Pill tone="muted" label="Replaced" />}
         </span>
-        <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 2 }}>
+        <span className="mt-0.5 block text-xs text-muted">
           {x.contentType === "application/pdf" ? "PDF" : x.contentType.replace("image/", "").toUpperCase()} · {(x.sizeBytes / 1048576).toFixed(1)} MB · uploaded {x.uploadedAt}
           {x.by ? ` by ${x.by}` : ""}
         </span>
       </span>
-      <span style={{ fontSize: 12, color: x.hash ? C.green : C.muted, whiteSpace: "nowrap", fontFamily: MONO }} title={x.hash ? `SHA-256 ${x.hash}` : "Uploaded before hashing"}>
+      <span className={cx("font-mono text-xs whitespace-nowrap", x.hash ? "text-success" : "text-muted")} title={x.hash ? `SHA-256 ${x.hash}` : "Uploaded before hashing"}>
         {x.hash ? `✓ SHA-256 ${x.hash.slice(0, 8)}…` : "no hash"}
       </span>
     </a>
@@ -342,182 +345,186 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
   const leadStart = a.endDate && vm.type.leadDays ? addDays(a.endDate, -vm.type.leadDays) : null;
   const leadIn = leadStart ? daysBetween(vm.today, leadStart) : null;
 
+  const row = "flex w-full items-center gap-2.5 border-t border-divider bg-surface px-5 py-2.5 no-underline first:border-t-0";
+  const emptyCls = "p-5 text-sm text-muted";
   return (
     <div>
-      <div style={{ padding: "20px 24px 0 24px" }}>
-        <div style={{ ...card, borderLeft: `3px solid ${CRIT[a.crit].edge}` }}>
-          <div style={{ display: "flex", gap: 20, alignItems: "flex-start", padding: "20px 24px" }}>
-            <button type="button" onClick={() => router.back()} title="Back" style={{ width: 32, height: 32, border: `1px solid ${C.line}`, background: "#FFFFFF", borderRadius: 4, cursor: "pointer", color: C.body, flex: "none" }}>
+      <div className="px-6 pt-5">
+        <Card className="overflow-hidden border-l-[3px]" style={{ borderLeftColor: CRIT[a.crit].edge }}>
+          <div className="flex items-start gap-5 px-6 py-5">
+            <button type="button" onClick={() => router.back()} title="Back" aria-label="Back" className="flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-body hover:bg-canvas">
               ‹
             </button>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-2">
                 <CritPill crit={a.crit} />
                 <StatusPill status={a.status} />
-                <span style={{ fontSize: 12, color: C.muted, fontFamily: MONO }}>{a.code}</span>
-                {a.unchecked ? <span style={{ fontSize: 12, color: C.amber, fontWeight: 500 }}>{a.checkedAgo == null ? "Never checked against the document" : `Not checked for ${nf(a.checkedAgo)} days`}</span> : null}
+                <span className="font-mono text-xs text-muted">{a.code}</span>
+                {a.unchecked ? <span className="text-xs font-medium text-warn-ink">{a.checkedAgo == null ? "Never checked against the document" : `Not checked for ${nf(a.checkedAgo)} days`}</span> : null}
               </span>
-              <span style={{ display: "block", fontSize: 22, lineHeight: "28px", fontWeight: 600, color: C.ink, marginTop: 8 }}>{a.title}</span>
-              <span style={{ display: "block", fontSize: 13, color: C.muted, marginTop: 4 }}>{[vm.type.name, a.entityName, a.siteName ? `${a.siteName}${a.siteState ? `, ${a.siteState}` : ""}` : null, a.docNo].filter(Boolean).join(" · ")}</span>
+              <span className="mt-2 block text-[22px] leading-7 font-semibold text-ink">{a.title}</span>
+              <span className="mt-1 block text-[13px] text-muted">{[vm.type.name, a.entityName, a.siteName ? `${a.siteName}${a.siteState ? `, ${a.siteState}` : ""}` : null, a.docNo].filter(Boolean).join(" · ")}</span>
               {a.crit >= 3 && a.consequence ? (
-                <span style={{ display: "block", fontSize: 13, lineHeight: "19px", color: C.redInk, marginTop: 10, maxWidth: 760 }}>
-                  <span style={{ fontWeight: 600 }}>If this runs out: </span>
+                <span className="mt-2.5 block max-w-[760px] text-[13px] leading-[19px] text-danger">
+                  <span className="font-semibold">If this runs out: </span>
                   {a.consequence}
                 </span>
               ) : null}
-              {superseded && vm.newer ? <span style={{ display: "block", fontSize: 13, color: C.muted, marginTop: 10 }}>Replaced by {vm.newer.code}. This version stays in the chain.</span> : null}
+              {superseded && vm.newer ? <span className="mt-2.5 block text-[13px] text-muted">Replaced by {vm.newer.code}. This version stays in the chain.</span> : null}
             </span>
-            <span style={{ textAlign: "right", flex: "none" }}>
-              <span style={{ ...LBL, display: "block" }}>{cdLabel}</span>
-              <span style={{ display: "block", fontSize: 40, lineHeight: "44px", fontWeight: 600, color: a.d != null && a.d < 0 ? daysColour(a.d, a.status) : C.ink, whiteSpace: "nowrap" }}>{cd}</span>
-              <span style={{ display: "block", fontSize: 13, color: C.muted }}>{cdDate}</span>
-              {secondary ? <span style={{ display: "block", fontSize: 12, color: C.body, marginTop: 4 }}>{secondary}</span> : null}
+            <span className="flex-none text-right">
+              <span className={cx(LBL, "block")}>{cdLabel}</span>
+              <span className="block text-[40px] leading-[44px] font-semibold whitespace-nowrap text-ink" style={a.d != null && a.d < 0 ? { color: daysColour(a.d, a.status) } : undefined}>
+                {cd}
+              </span>
+              <span className="block text-[13px] text-muted">{cdDate}</span>
+              {secondary ? <span className="mt-1 block text-xs text-body">{secondary}</span> : null}
             </span>
           </div>
-          {acts.length ? <div style={{ display: "flex", gap: 8, padding: "0 24px 16px 76px", flexWrap: "wrap" }}>{acts}</div> : null}
-        </div>
+          {acts.length ? <div className="flex flex-wrap gap-2 pr-6 pb-4 pl-[76px]">{acts}</div> : null}
+        </Card>
       </div>
 
-      <div style={{ padding: "16px 24px 48px 24px" }}>
-        <div style={{ marginBottom: 20 }}>
+      <div className="px-6 pt-4 pb-12">
+        <div className="mb-5">
           <Tabs tabs={tabs} value={tab} onPick={setTab} />
         </div>
 
         {tab === "details" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 16, alignItems: "start" }}>
-            <div style={card}>
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <Card className="overflow-hidden">
               {F.map(([l, v, mono]) => (
-                <div key={l} style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 16, padding: "12px 20px", borderTop: `1px solid ${C.line3}` }}>
-                  <span style={LBL}>{l}</span>
-                  <span style={{ fontSize: 14, color: C.ink, fontFamily: mono ? MONO : "inherit" }}>{v}</span>
+                <div key={l} className="grid grid-cols-[220px_minmax(0,1fr)] gap-4 border-t border-divider px-5 py-3 first:border-t-0">
+                  <span className={LBL}>{l}</span>
+                  <span className={cx("text-sm text-ink", mono && "font-mono")}>{v}</span>
                 </div>
               ))}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            </Card>
+            <div className="flex flex-col gap-4">
               {vm.conditions ? (
-                <div style={{ ...card, padding: "16px 20px" }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>Conditions imposed</div>
-                  <div style={{ fontSize: 13, lineHeight: "20px", color: C.body, marginTop: 6, whiteSpace: "pre-wrap" }}>{vm.conditions}</div>
-                </div>
+                <Card className="px-5 py-4">
+                  <div className={cardHead}>Conditions imposed</div>
+                  <div className="mt-1.5 text-[13px] leading-5 whitespace-pre-wrap text-body">{vm.conditions}</div>
+                </Card>
               ) : null}
-              <div style={{ ...card, padding: "16px 20px" }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>Reminder schedule</div>
-                <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{CRIT[a.crit].label} schedule · moves up owner → backup → department head → management</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              <Card className="px-5 py-4">
+                <div className={cardHead}>Reminder schedule</div>
+                <div className="mt-0.5 text-xs text-muted">{CRIT[a.crit].label} schedule · moves up owner → backup → department head → management</div>
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {vm.ladder.map((x) => {
                     const done = ad != null && ad <= -x;
                     return (
-                      <span key={x} title={a.actionDate ? fd(addDays(a.actionDate, x)) : undefined} style={{ fontSize: 12, fontWeight: 500, padding: "3px 8px", borderRadius: 4, background: done ? C.ink : C.soft, color: done ? "#FFFFFF" : C.body, border: `1px solid ${done ? C.ink : C.line}` }}>
+                      <span key={x} title={a.actionDate ? fd(addDays(a.actionDate, x)) : undefined} className={cx("rounded-[4px] border px-2 py-[3px] text-xs font-medium", done ? "border-ink bg-ink text-white" : "border-line bg-canvas text-body")}>
                         {(x > 0 ? `+${x}` : x === 0 ? "Day 0" : String(x)) + (x === Math.max(...vm.ladder) && x > 0 ? " daily" : "")}
                       </span>
                     );
                   })}
                 </div>
-              </div>
+              </Card>
             </div>
           </div>
         ) : null}
 
         {tab === "ownership" ? (
-          <div style={{ ...card, maxWidth: 900 }}>
+          <Card className="max-w-[900px] overflow-hidden">
             {seatRow("Primary owner", "owner", a.ownerId, a.ownerName, true)}
             {seatRow("Backup owner", "backup", a.backupId, vm.backupName, a.crit >= 3)}
             {seatRow("Approver", "approver", vm.approverId, vm.approverName, false, vm.approverId ? undefined : "Who authorises the renewal spend. Optional.")}
             {seatRow("Executor", "executor", vm.executorId, vm.executorName ?? (vm.executorId ? null : null), false, vm.executorId ? undefined : `Who does the renewal work. Not set — it falls to the owner${a.ownerName ? `, ${a.ownerName}` : ""}.`)}
-            <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderTop: `1px solid ${C.line3}` }}>
-              <span style={{ width: 36, height: 36, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, background: C.line2, color: C.body }}>EX</span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ ...LBL, display: "block" }}>External contact</span>
-                <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: C.ink, marginTop: 2 }}>{vm.externalContact || "None recorded"}</span>
-                <span style={{ display: "block", fontSize: 12, color: C.muted }}>Part of the renewal path — their absence is a single point of failure too</span>
+            <div className="flex items-center gap-3.5 border-t border-divider px-5 py-3.5">
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-divider text-xs font-semibold text-body">EX</span>
+              <span className="min-w-0 flex-1">
+                <span className={cx(LBL, "block")}>External contact</span>
+                <span className="mt-0.5 block text-[15px] font-semibold text-ink">{vm.externalContact || "None recorded"}</span>
+                <span className="block text-xs text-muted">Part of the renewal path — their absence is a single point of failure too</span>
               </span>
               {!ro ? <Btn small onClick={() => textModal("externalContact", "External contact", vm.externalContact ?? "")}>{vm.externalContact ? "Change" : "Add"}</Btn> : null}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderTop: `1px solid ${C.line3}` }}>
-              <span style={{ width: 36, height: 36, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, background: C.line2, color: C.body }}>DP</span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ ...LBL, display: "block" }}>Department</span>
-                <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: C.ink, marginTop: 2 }}>{vm.department || "Not set"}</span>
-                <span style={{ display: "block", fontSize: 12, color: C.muted }}>Cost and accountability are attributed here</span>
+            <div className="flex items-center gap-3.5 border-t border-divider px-5 py-3.5">
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-divider text-xs font-semibold text-body">DP</span>
+              <span className="min-w-0 flex-1">
+                <span className={cx(LBL, "block")}>Department</span>
+                <span className="mt-0.5 block text-[15px] font-semibold text-ink">{vm.department || "Not set"}</span>
+                <span className="block text-xs text-muted">Cost and accountability are attributed here</span>
               </span>
               {!ro ? <Btn small onClick={() => textModal("department", "Department", vm.department)}>{vm.department ? "Change" : "Add"}</Btn> : null}
             </div>
-          </div>
+          </Card>
         ) : null}
 
         {tab === "renewal" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980 }}>
-            <div style={{ padding: "14px 18px", background: C.soft, border: `1px solid ${C.line}`, borderRadius: 6, fontSize: 14, color: C.ink }}>
-              <span style={{ fontWeight: 600 }}>{vm.type.leadDays ? `Apply at least ${vm.type.leadDays} days before end date.` : "No time needed to renew — this type never ends."}</span>{" "}
-              <span style={{ color: C.body }}>{leadStart && leadIn != null ? (leadIn <= 0 ? `That date has passed — ${fd(leadStart)}.` : `Start by ${fd(leadStart)}, in ${nf(leadIn)} days.`) : ""}</span>
+          <div className="flex max-w-[980px] flex-col gap-4">
+            <div className="rounded-card border border-line bg-canvas px-[18px] py-3.5 text-sm text-ink">
+              <span className="font-semibold">{vm.type.leadDays ? `Apply at least ${vm.type.leadDays} days before end date.` : "No time needed to renew — this type never ends."}</span>{" "}
+              <span className="text-body">{leadStart && leadIn != null ? (leadIn <= 0 ? `That date has passed — ${fd(leadStart)}.` : `Start by ${fd(leadStart)}, in ${nf(leadIn)} days.`) : ""}</span>
             </div>
             {vm.openRenewal ? (
-              <div style={{ ...card, padding: "16px 20px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: C.ink }}>
+              <Card className="px-5 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className={cx(cardHead, "flex-1")}>
                     RC-{a.code.slice(4)} · {RENEWAL_STEPS[at]}
                   </span>
                   <Btn small kind="p" onClick={() => router.push(`/locker/assets/${a.id}/renewal`)}>
                     Open renewal task
                   </Btn>
                 </div>
-                <div style={{ display: "flex", gap: 4, marginTop: 14 }}>
+                <div className="mt-3.5 flex gap-1">
                   {RENEWAL_STEPS.map((l, i) => (
-                    <span key={l} title={l} style={{ flex: 1, height: 6, borderRadius: 3, background: i <= at ? C.brand : C.line2 }} />
+                    <span key={l} title={l} className={cx("h-1.5 flex-1 rounded-full", i <= at ? "bg-brand" : "bg-divider")} />
                   ))}
                 </div>
-                <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
+                <div className="mt-1.5 text-xs text-muted">
                   Assigned to {vm.openRenewal.assignedName ?? "—"} · {vm.openRenewal.ackNo ? `acknowledgement ${vm.openRenewal.ackNo}` : `${vm.openRenewal.done} of ${vm.openRenewal.total} checklist items done`}
                 </div>
-              </div>
+              </Card>
             ) : null}
-            <div style={{ ...card, padding: "16px 20px" }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>Steps · {vm.type.name}</div>
-              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+            <Card className="px-5 py-4">
+              <div className={cardHead}>Steps · {vm.type.name}</div>
+              <div className="mt-0.5 text-xs text-muted">
                 Issued by: {issuedBy} · typical fee {vm.type.typicalCostPaise ? inr(vm.type.typicalCostPaise) : "nil"} · typical timeline {Math.max(14, Math.round(vm.type.leadDays * 0.6))} days
               </div>
               {steps.map((p, i) => (
-                <div key={i} style={{ display: "flex", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.line3}`, marginTop: 6, fontSize: 14, color: C.ink }}>
-                  <span style={{ color: C.muted, width: 20, flex: "none" }}>{i + 1}</span>
+                <div key={i} className="mt-1.5 flex gap-2.5 border-t border-divider py-2 text-sm text-ink">
+                  <span className="w-5 flex-none text-muted">{i + 1}</span>
                   <span>{p}</span>
                 </div>
               ))}
-            </div>
-            <div style={card}>
-              <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.line2}`, fontSize: 15, fontWeight: 600, color: C.ink }}>Renewal history</div>
+            </Card>
+            <Card className="overflow-hidden">
+              <div className={cx(cardHead, "border-b border-divider px-5 py-3")}>Renewal history</div>
               {vm.history.map((h, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "160px minmax(0,1fr) 120px 140px", gap: 12, padding: "10px 20px", borderTop: `1px solid ${C.line3}`, fontSize: 14 }}>
+                <div key={i} className="grid grid-cols-[160px_minmax(0,1fr)_120px_140px] gap-3 border-t border-divider px-5 py-2.5 text-sm first:border-t-0">
                   <span>{h.when}</span>
-                  <span style={{ color: C.ink }}>Renewed · {h.docNo || a.docNo}</span>
-                  <span style={{ textAlign: "right" }}>{h.cost ? inr(h.cost) : "—"}</span>
+                  <span className="text-ink">Renewed · {h.docNo || a.docNo}</span>
+                  <span className="text-right">{h.cost ? inr(h.cost) : "—"}</span>
                   <span>{h.by || "—"}</span>
                 </div>
               ))}
               {vm.older.map((o) => (
-                <Link key={o.id} href={`/locker/assets/${o.id}`} className="lk-row" style={{ display: "grid", gridTemplateColumns: "160px minmax(0,1fr) 120px 140px", gap: 12, padding: "10px 20px", borderTop: `1px solid ${C.line3}`, fontSize: 14, textDecoration: "none", color: C.body }}>
+                <Link key={o.id} href={`/locker/assets/${o.id}`} className="grid grid-cols-[160px_minmax(0,1fr)_120px_140px] gap-3 border-t border-divider px-5 py-2.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline">
                   <span>{fd(o.endDate)}</span>
-                  <span style={{ color: C.ink }}>Earlier version · {o.docNo || o.code}</span>
-                  <span style={{ textAlign: "right" }}>—</span>
+                  <span className="text-ink">Earlier version · {o.docNo || o.code}</span>
+                  <span className="text-right">—</span>
                   <span>{o.code}</span>
                 </Link>
               ))}
-              {!vm.history.length && !vm.older.length ? <div style={{ padding: "12px 20px", fontSize: 13, color: C.muted }}>No renewal recorded in the Locker yet.</div> : null}
-            </div>
+              {!vm.history.length && !vm.older.length ? <div className="px-5 py-3 text-[13px] text-muted">No renewal recorded in the Locker yet.</div> : null}
+            </Card>
           </div>
         ) : null}
 
         {tab === "documents" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", gap: 16, alignItems: "start" }}>
-            <div style={card}>
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <Card className="overflow-hidden">
               {vm.docs.map(doc)}
-              {!vm.docs.length ? <div style={{ padding: 20, fontSize: 14, color: C.muted }}>No document uploaded yet. Upload the scan of the current certificate — its SHA-256 is recorded, and any later change to the stored file is caught and refused.</div> : null}
+              {!vm.docs.length ? <div className={emptyCls}>No document uploaded yet. Upload the scan of the current certificate — its SHA-256 is recorded, and any later change to the stored file is caught and refused.</div> : null}
               {!ro && !superseded ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 20px", borderTop: `1px solid ${C.line2}`, background: C.canvas }}>
+                <div className="flex items-center gap-2.5 border-t border-divider bg-page px-5 py-3">
                   <input
                     ref={fileRef}
                     type="file"
                     accept="application/pdf,image/png,image/jpeg,image/webp"
-                    style={{ display: "none" }}
+                    className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) void upload(f);
@@ -527,16 +534,16 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
                   <Btn small kind="p" onClick={() => fileRef.current?.click()}>
                     Upload a document
                   </Btn>
-                  <span style={{ fontSize: 12, color: C.muted }}>{upBusy || "PDF, JPG or PNG · up to 20 MB"}</span>
+                  <span className="text-xs text-muted">{upBusy || "PDF, JPG or PNG · up to 20 MB"}</span>
                 </div>
               ) : null}
-            </div>
-            <div style={{ ...card, padding: "16px 20px" }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>Physical original</div>
-              <div style={{ fontSize: 14, color: C.ink, marginTop: 8 }}>{vm.physicalLocation || (m === "subscription" ? "Digital only — no physical original" : "Not recorded")}</div>
-              <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>Held by {vm.custodianName || a.ownerName || "nobody recorded"}</div>
+            </Card>
+            <Card className="px-5 py-4">
+              <div className={cardHead}>Physical original</div>
+              <div className="mt-2 text-sm text-ink">{vm.physicalLocation || (m === "subscription" ? "Digital only — no physical original" : "Not recorded")}</div>
+              <div className="mt-1 text-xs text-muted">Held by {vm.custodianName || a.ownerName || "nobody recorded"}</div>
               {!ro ? (
-                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <div className="mt-3 flex gap-2">
                   <Btn small onClick={() => textModal("physicalLocation", "Where the original is", vm.physicalLocation ?? "")}>Where it is</Btn>
                   <Btn
                     small
@@ -554,55 +561,57 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
                   </Btn>
                 </div>
               ) : null}
-            </div>
+            </Card>
           </div>
         ) : null}
 
         {tab === "credentials" && vm.vault ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 900 }}>
-            {!vm.creds.length ? <div style={{ ...card, padding: 24, fontSize: 14, color: C.muted }}>No vault items are linked to this asset.</div> : null}
+          <div className="flex max-w-[900px] flex-col gap-3">
+            {!vm.creds.length ? <Card className="p-6 text-sm text-muted">No vault items are linked to this asset.</Card> : null}
             {vm.creds.map((v) => (
-              <div key={v.id} style={{ background: "#FFFFFF", border: `1px solid ${C.v100}`, borderRadius: 6, overflow: "hidden", boxShadow: `inset 3px 0 0 ${C.v700}` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 20px", background: C.v50, borderBottom: `1px solid ${C.v100}` }}>
-                  <span style={{ color: C.v700 }}>◈</span>
-                  <Link href={`/locker/vault/${v.id}`} style={{ flex: 1, fontSize: 14, fontWeight: 600, color: C.v900, textDecoration: "none" }}>
+              <Card key={v.id} className="overflow-hidden border-l-[3px] border-l-ink">
+                <div className="flex items-center gap-2.5 border-b border-divider bg-page px-5 py-3">
+                  <span className="flex text-muted">
+                    <LkIcon name="key" size={14} />
+                  </span>
+                  <Link href={`/locker/vault/${v.id}`} className="flex-1 text-sm font-semibold text-ink no-underline hover:underline">
                     {v.title}
                   </Link>
                   <TierPill tier={v.tier as "standard" | "sensitive" | "restricted"} />
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "120px minmax(0,1fr) auto", gap: 12, alignItems: "center", minHeight: 48, padding: "0 20px" }}>
-                  <span style={LBL}>Secret</span>
-                  <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, overflow: "hidden" }}>
-                    <span style={{ fontFamily: MONO, fontSize: 15, lineHeight: "20px", letterSpacing: "0.08em", color: C.v700, whiteSpace: "nowrap" }}>••••••••••••</span>
-                    <span style={{ fontSize: 12, lineHeight: "16px", color: C.muted, fontFamily: MONO }}>ends ····{v.hint ?? "··"}</span>
+                <div className="grid min-h-12 grid-cols-[120px_minmax(0,1fr)_auto] items-center gap-3 px-5">
+                  <span className={LBL}>Secret</span>
+                  <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
+                    <span className="font-mono text-[15px] leading-5 tracking-[0.08em] whitespace-nowrap text-ink">••••••••••••</span>
+                    <span className="font-mono text-xs leading-4 text-muted">ends ····{v.hint ?? "··"}</span>
                   </span>
-                  <Link href={`/locker/vault/${v.id}`} style={{ height: 32, padding: "0 14px", border: "none", background: C.v700, borderRadius: 4, color: "#FFFFFF", fontSize: 13, fontWeight: 500, display: "inline-flex", alignItems: "center", textDecoration: "none" }}>
+                  <Link href={`/locker/vault/${v.id}`} className={buttonClass({ variant: "primary", size: "sm" })}>
                     Reveal
                   </Link>
                 </div>
-                <div style={{ padding: "0 20px 12px 20px", fontSize: 12, color: C.muted }}>
+                <div className="px-5 pb-3 text-xs text-muted">
                   {v.rotated ? `Changed ${v.rotated}` : "Never changed in the Locker"} · {v.lastReveal ? `last revealed ${v.lastReveal}` : "never revealed"}
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         ) : null}
 
         {tab === "dependencies" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 16, maxWidth: 1080 }}>
+          <div className="grid max-w-[1080px] grid-cols-1 gap-4 lg:grid-cols-2">
             {[
               {
                 l: "This relies on",
                 sub: "Passwords & keys, payment methods and sign-in accounts it needs",
                 items: [
-                  ...vm.creds.map((c) => ({ key: c.id, t: c.title, m: c.auth === "federated_sso" ? `Signs in via ${c.viaEmail ?? "—"}` : "Direct login", b: c.sole ? <Pill label="Only way in" bg={C.redSoft} fg={C.red} /> : <Pill label="Login" bg={C.v50} fg={C.v700} />, href: `/locker/vault/${c.id}` })),
+                  ...vm.creds.map((c) => ({ key: c.id, t: c.title, m: c.auth === "federated_sso" ? `Signs in via ${c.viaEmail ?? "—"}` : "Direct login", b: c.sole ? <Pill tone="danger" label="Only way in" /> : <Pill tone="neutral" label="Login" />, href: `/locker/vault/${c.id}` })),
                   ...(vm.paymentMethod
                     ? [
                         {
                           key: vm.paymentMethod.id,
                           t: `${vm.paymentMethod.label} ····${vm.paymentMethod.last4}`,
                           m: `Pays this subscription${vm.paymentMethod.expiresOn ? ` · expires ${fd(vm.paymentMethod.expiresOn)}` : ""}`,
-                          b: vm.paymentMethod.expiresOn && a.endDate && vm.paymentMethod.expiresOn < a.endDate ? <Pill label="Expires first" bg={C.amberSoft} fg={C.amber} /> : <Pill label="Payment" bg={C.soft} fg={C.body} />,
+                          b: vm.paymentMethod.expiresOn && a.endDate && vm.paymentMethod.expiresOn < a.endDate ? <Pill tone="warn" label="Expires first" /> : <Pill tone="muted" label="Payment" />,
                           href: undefined as string | undefined,
                         },
                       ]
@@ -611,49 +620,48 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
               },
               { l: "Relies on this", sub: "What stops or becomes invalid if this runs out", items: vm.reliesOnThis.map((x) => ({ key: x.id, t: x.title, m: "Assumes this licence is valid", b: <StatusPill status={x.status} />, href: `/locker/assets/${x.id}` as string | undefined })) },
             ].map((g) => (
-              <div key={g.l} style={card}>
-                <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.line2}` }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>{g.l}</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>{g.sub}</div>
+              <Card key={g.l} className="overflow-hidden">
+                <div className="border-b border-divider px-5 py-3">
+                  <div className={cardHead}>{g.l}</div>
+                  <div className="text-xs text-muted">{g.sub}</div>
                 </div>
                 {g.items.map((i) => {
                   const inner = (
                     <>
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink }}>{i.t}</span>
-                        <span style={{ display: "block", fontSize: 12, color: C.muted }}>{i.m}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-ink">{i.t}</span>
+                        <span className="block text-xs text-muted">{i.m}</span>
                       </span>
                       {i.b}
                     </>
                   );
-                  const st: CSSProperties = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 20px", borderTop: `1px solid ${C.line3}`, background: "#FFFFFF", textDecoration: "none" };
                   return i.href ? (
-                    <Link key={i.key} href={i.href} className="lk-row" style={st}>
+                    <Link key={i.key} href={i.href} className={cx(row, "hover:bg-canvas hover:no-underline")}>
                       {inner}
                     </Link>
                   ) : (
-                    <div key={i.key} style={st}>
+                    <div key={i.key} className={row}>
                       {inner}
                     </div>
                   );
                 })}
-                {!g.items.length ? <div style={{ padding: "14px 20px", fontSize: 13, color: C.muted }}>Nothing recorded.</div> : null}
-              </div>
+                {!g.items.length ? <div className="px-5 py-3.5 text-[13px] text-muted">Nothing recorded.</div> : null}
+              </Card>
             ))}
           </div>
         ) : null}
 
         {tab === "activity" ? (
-          <div style={{ ...card, maxWidth: 1080 }}>
+          <Card className="max-w-[1080px] overflow-hidden">
             {vm.activity.map((x, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "170px 170px minmax(0,1fr)", gap: 12, padding: "10px 20px", borderTop: `1px solid ${C.line3}`, fontSize: 13 }}>
-                <span style={{ color: C.muted }}>{x.at}</span>
-                <span style={{ color: C.ink, fontWeight: 500 }}>{x.who}</span>
-                <span style={{ color: C.body }}>{x.t}</span>
+              <div key={i} className="grid grid-cols-[170px_170px_minmax(0,1fr)] gap-3 border-t border-divider px-5 py-2.5 text-[13px] first:border-t-0">
+                <span className="text-muted">{x.at}</span>
+                <span className="font-medium text-ink">{x.who}</span>
+                <span className="text-body">{x.t}</span>
               </div>
             ))}
-            {!vm.activity.length ? <div style={{ padding: 20, fontSize: 14, color: C.muted }}>Nothing recorded yet.</div> : null}
-          </div>
+            {!vm.activity.length ? <div className={emptyCls}>Nothing recorded yet.</div> : null}
+          </Card>
         ) : null}
       </div>
     </div>

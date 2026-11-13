@@ -23,7 +23,7 @@ export function ApprovalsScreen({ data }: { data: Data }) {
       key: `bg${b.id}`,
       t: `Emergency access · ${b.by}`,
       sub: `${b.items} items · “${b.reason}”`,
-      badge: <Pill label="Emergency access" bg="#FCECEC" fg="#B3261E" />,
+      badge: <Pill label="Emergency access" tone="danger" />,
       edge: C.red,
       btn: b.mine ? "Yours — waiting" : "Approve",
       btnKind: "d" as const,
@@ -42,7 +42,7 @@ export function ApprovalsScreen({ data }: { data: Data }) {
             toast(r.ok ? "Declined" : r.error);
             router.refresh();
           }}
-          style={{ marginTop: 6, border: "none", background: "transparent", color: C.red, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: 0 }}
+          className="mt-1.5 cursor-pointer p-0 text-[13px] font-medium text-danger hover:underline"
         >
           Decline
         </button>
@@ -52,8 +52,8 @@ export function ApprovalsScreen({ data }: { data: Data }) {
       key: r.id,
       t: `Reveal · ${r.title} · ${r.field}${r.previous ? " (previous value)" : ""}`,
       sub: `${r.who} · “${r.reason}” · lapses in ${mins(r.leftMs)}`,
-      badge: <Pill label={r.mine ? "Your request" : (r.tier as Tier) === "restricted" ? "Restricted reveal" : "Reveal"} bg={C.v100} fg={C.v900} />,
-      edge: C.v700,
+      badge: <Pill label={r.mine ? "Your request" : (r.tier as Tier) === "restricted" ? "Restricted reveal" : "Reveal"} tone="brand" />,
+      edge: C.ink,
       btn: r.mine ? "Waiting for someone else" : "Decide",
       btnKind: "v" as const,
       off: r.mine,
@@ -82,14 +82,14 @@ export function ApprovalsScreen({ data }: { data: Data }) {
         key: `m${m.id}`,
         t: `Your reveal is approved · ${m.title}`,
         sub: `Approved by ${m.decidedBy ?? "—"} · open the login and reveal ${m.field} before the approval lapses`,
-        badge: <Pill label="Approved" bg="#E9F5EE" fg="#1D7A45" />,
+        badge: <Pill label="Approved" tone="success" />,
         btn: "Open",
         btnKind: "v" as const,
         run: () => router.push(`/locker/vault/${m.credId}`),
       })),
   ];
   return (
-    <div style={{ padding: "0 24px 48px 24px" }}>
+    <div className="px-6 pb-12">
       <Block title="Waiting on you" sub={`${nf(items.length)} requests`}>
         <LList items={items} empty="Nothing is waiting for a decision." />
       </Block>

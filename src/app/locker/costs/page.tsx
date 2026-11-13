@@ -9,7 +9,8 @@ import { addMonthsIso, istDay } from "@/lib/locker/engine";
 import { cardRisks, monthlyPaise } from "@/lib/locker/register-service";
 import { lockerPaymentMethodsList, registerFor, today } from "@/lib/locker/service";
 import { C, MONTHS, fd, inr, nf } from "@/lib/locker/style";
-import { PageHead, Pill } from "../_ui/kit";
+import { Badge } from "@/components/ui/primitives";
+import { PageHead } from "../_ui/kit";
 import { Alert, Bars, GenTable, Grid, ListBlock, ShareBar, Stat, StatGrid } from "../_ui/register-parts";
 import { PaymentMethods } from "./payment-methods";
 
@@ -40,7 +41,7 @@ export default async function CostsPage() {
   const months = Array.from({ length: 12 }, (_, i) => addMonthsIso(yearAgo, i).slice(0, 7));
   const spent = months.map((mk, i) => {
     const v = done.filter((r) => r.at && istDay(r.at).slice(0, 7) === mk).reduce((s, r) => s + r.cost, 0);
-    return { l: MONTHS[Number(mk.slice(5)) - 1], v, tip: inr(v), c: i === 11 ? C.brand : "#B9A5FF" };
+    return { l: MONTHS[Number(mk.slice(5)) - 1], v, tip: inr(v), c: i === 11 ? C.brand : "var(--color-brand-softer)" };
   });
 
   /* Forecast: monthly subscriptions every month; everything else in the month somebody must act, at its own amount or its type's typical fee. */
@@ -74,7 +75,7 @@ export default async function CostsPage() {
   return (
     <>
       <PageHead crumb="Locker · Operations" title="Costs" sub="Subscription spend by provider and department, the next 12 months of renewals, and cards that will fail first." />
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="flex flex-col gap-5 px-6 pb-12">
         {cards.map((x) => (
           <Alert
             key={x.pm.id}
@@ -106,7 +107,7 @@ export default async function CostsPage() {
           <ListBlock
             title="Possible duplicate subscriptions"
             sub="The same provider billed more than once. Only a suggestion — a person decides."
-            items={dupProviders.map((x) => ({ t: x.p, sub: `${x.list.length} subscriptions: ${x.list.map((a) => `${a.title} (${inr(Math.round(monthlyPaise(a) * 12))}/yr)`).join(", ")}`, badge: <Pill label="Check" bg="#EEF0FB" fg="#343E96" /> }))}
+            items={dupProviders.map((x) => ({ t: x.p, sub: `${x.list.length} subscriptions: ${x.list.map((a) => `${a.title} (${inr(Math.round(monthlyPaise(a) * 12))}/yr)`).join(", ")}`, badge: <Badge tone="brand">Check</Badge> }))}
             emptyLine="No provider is billed twice."
           />
           <GenTable

@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonClass, cx } from "@/components/ui/primitives";
 import { useState } from "react";
 import { checkAuditChain } from "@/lib/actions/locker-admin";
 import { C, Chip, Pill, nf, SearchBox } from "../_ui/kit";
@@ -38,14 +39,14 @@ export function AuditScreen({ rows }: { rows: Row[] }) {
   const needle = q.trim().toLowerCase();
   const shown = rows.filter((r) => (!sec || r.security) && (!rev || r.action === "locker.secret.revealed") && (!needle || `${r.actor} ${r.entity} ${r.summary} ${r.reason ?? ""}`.toLowerCase().includes(needle)));
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex flex-col gap-5 px-6 pb-12">
       {chain ? <Alert tone={chain.ok ? "green" : "red"} t={chain.ok ? "The audit log is intact" : "The audit log has been tampered with"} m={chain.line} /> : null}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <div className="flex flex-wrap items-center gap-2">
         <SearchBox value={q} onChange={setQ} placeholder="Person, item or reason" />
         <Chip label="Security events only" on={sec} onFlip={() => setSec(!sec)} />
         <Chip vault label="Reveals only" on={rev} onFlip={() => setRev(!rev)} />
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 13, color: C.muted }}>{nf(shown.length)} events</span>
+        <span className="flex-1" />
+        <span className="text-[13px] text-muted">{nf(shown.length)} events</span>
         <button
           type="button"
           disabled={busy}
@@ -55,7 +56,7 @@ export function AuditScreen({ rows }: { rows: Row[] }) {
             setBusy(false);
             setChain(r.ok ? { ok: r.data.ok, line: r.data.line } : { ok: false, line: r.error });
           }}
-          style={{ height: 30, padding: "0 12px", border: "1px solid #C2C8D2", background: "#FFFFFF", borderRadius: 4, fontSize: 13, cursor: "pointer" }}
+          className={buttonClass({ variant: "secondary", size: "sm" })}
         >
           {busy ? "Checking…" : "Check for changes"}
         </button>
@@ -74,14 +75,14 @@ export function AuditScreen({ rows }: { rows: Row[] }) {
             const isRev = e.action === "locker.secret.revealed";
             return {
               key: String(e.seq),
-              edge: e.security ? (isRev ? C.v700 : C.red) : null,
-              bg: e.security ? (isRev ? "#FAF9FC" : "#FFFAFA") : null,
+              edge: e.security ? (isRev ? C.ink : C.red) : null,
+              bg: e.security ? (isRev ? "var(--color-page)" : "var(--color-danger-soft)") : null,
               cells: [
-                <Cell key="a" t={when(e.at, true)} style={{ fontSize: 13, color: C.muted }} />,
-                <Cell key="b" t={e.actor || "System"} sub={e.ip ?? undefined} style={{ fontWeight: 500, color: C.ink }} />,
-                e.security ? <Pill key="c" label={eventOf(e.action)} bg={isRev ? C.v100 : "#FCECEC"} fg={isRev ? C.v900 : C.red} /> : <Pill key="c" label={eventOf(e.action)} bg="#F7F8FA" fg="#3D4453" />,
+                <Cell key="a" t={when(e.at, true)} className="text-[13px] text-muted" />,
+                <Cell key="b" t={e.actor || "System"} sub={e.ip ?? undefined} className="font-medium text-ink" />,
+                e.security ? <Pill key="c" label={eventOf(e.action)} tone={isRev ? "brand" : "danger"} /> : <Pill key="c" label={eventOf(e.action)} tone="neutral" />,
                 <Cell key="d" t={e.summary} sub={e.entity !== e.summary ? e.entity : undefined} />,
-                <Cell key="e" t={e.reason ? `“${e.reason}”` : "—"} style={{ fontSize: 13, color: e.reason ? C.ink : C.faint }} />,
+                <Cell key="e" t={e.reason ? `“${e.reason}”` : "—"} className={cx("text-[13px]", e.reason ? "text-ink" : "text-faint")} />,
               ],
             };
           })}

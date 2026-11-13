@@ -1,10 +1,10 @@
+import { buttonClass } from "@/components/ui/primitives";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
 import { lockerAccess } from "@/lib/locker/access";
 import { pendingApprovals } from "@/lib/locker/vault-service";
 import { PageHead } from "../_ui/kit";
-import { btnStyle } from "@/lib/locker/style";
 import { ApprovalsScreen } from "./approvals-screen";
 
 export const metadata = { title: "Approvals" };
@@ -21,7 +21,7 @@ export default async function ApprovalsPage() {
         sub="Requests that need your decision. Restricted reveals and emergency access always need a second person — never the one who asked."
         actions={
           access.vault ? (
-            <Link href="/locker/emergency" style={btnStyle("d")}>
+            <Link href="/locker/emergency" className={buttonClass({ variant: "danger" })}>
               Start emergency access
             </Link>
           ) : null

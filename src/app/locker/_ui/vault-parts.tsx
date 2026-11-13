@@ -2,49 +2,48 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { C, LBL, btnStyle, BTN_OFF, Pill, useDensity, usePager, type BtnKind } from "./kit";
+import { Button, Callout, Card, Td, Th, Tr, checkboxClass, cx } from "@/components/ui/primitives";
+import { Pill, useDensity, usePager, type BtnKind } from "./kit";
+import { LkIcon } from "./icons";
 
 /* ---------------------------------------------------------------------------
- * The design's generic screen blocks — alert, stat strip, table, list, block —
- * used by the vault, operations and admin screens. Same colours and spacing
- * as `blk`, `table`, `list`, `stat` and `alert` in the design.
+ * The generic screen blocks the vault, operations and admin screens are built
+ * from — alert, stat strip, table, list, block — drawn in the ERP's v4 design
+ * system: the shared `Callout`, `Card`, `Th`/`Td`/`Tr`, `Button` and the v4
+ * token classes. Props are the ones the screens were written against.
  * ------------------------------------------------------------------------- */
 
-const TONE = {
-  red: ["#FCECEC", "#8E1F1F", "#F6CFCF"],
-  amber: ["#FDF6E7", "#8A5C05", "#F9E9C4"],
-  vault: [C.v50, C.v900, C.v100],
-  green: ["#E9F5EE", "#1D7A45", "#C7E6D3"],
-  grey: ["#F7F8FA", "#3D4453", "#DDE1E8"],
-} as const;
-export type Tone = keyof typeof TONE;
+export type Tone = "red" | "amber" | "vault" | "green" | "grey";
+const CALLOUT: Record<Tone, "danger" | "warn" | "neutral" | "success"> = { red: "danger", amber: "warn", vault: "neutral", green: "success", grey: "neutral" };
 
 export function Alert({ t, m, tone = "grey", children }: { t: ReactNode; m?: ReactNode; tone?: Tone; children?: ReactNode }) {
-  const T = TONE[tone];
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderRadius: 6, background: T[0], color: T[1], border: `1px solid ${T[2]}`, flexWrap: "wrap" }}>
-      <span style={{ flex: 1, minWidth: 240 }}>
-        <span style={{ display: "block", fontSize: 14, fontWeight: 600 }}>{t}</span>
-        {m ? <span style={{ display: "block", fontSize: 13, lineHeight: "19px", marginTop: 2 }}>{m}</span> : null}
+    <Callout tone={CALLOUT[tone]} className="mb-0 flex-wrap">
+      <span className="min-w-[240px] flex-1">
+        <span className="block text-sm font-semibold text-ink">{t}</span>
+        {m ? <span className="mt-0.5 block text-[13px] leading-[19px] text-body">{m}</span> : null}
       </span>
       {children}
-    </div>
+    </Callout>
   );
 }
 
 export type StatSpec = { l: string; v: ReactNode; s?: ReactNode; red?: boolean; bar?: number | null };
 
+const STAT_COLS = ["grid-cols-1", "grid-cols-1", "grid-cols-2", "grid-cols-3", "grid-cols-4", "grid-cols-5"];
+
+/** The v4 stat strip: StatCard's shape, one card per figure. */
 export function Stats({ items }: { items: StatSpec[] }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(5, Math.max(1, items.length))},minmax(0,1fr))`, gap: 16 }}>
+    <div className={cx("grid gap-4", STAT_COLS[Math.min(5, Math.max(1, items.length))])}>
       {items.map((k) => (
-        <div key={k.l} style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, padding: "16px 20px" }}>
-          <span style={{ display: "block", ...LBL }}>{k.l}</span>
-          <span style={{ display: "block", fontSize: 32, lineHeight: "36px", fontWeight: 600, color: k.red ? C.red : C.ink, marginTop: 6 }}>{k.v}</span>
-          {k.s ? <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 2 }}>{k.s}</span> : null}
+        <div key={k.l} className="rounded-card border border-line bg-surface p-5">
+          <span className="block text-xs font-medium tracking-label text-muted uppercase">{k.l}</span>
+          <span className={cx("mt-2 block text-[32px] leading-9 font-semibold", k.red ? "text-danger" : "text-ink")}>{k.v}</span>
+          {k.s ? <span className="mt-1 block text-[13px] text-muted">{k.s}</span> : null}
           {k.bar != null ? (
-            <span style={{ display: "block", height: 6, borderRadius: 3, background: C.line2, marginTop: 10, overflow: "hidden" }}>
-              <span style={{ display: "block", height: 6, width: `${Math.max(0, Math.min(100, k.bar))}%`, background: C.brand }} />
+            <span className="mt-3 block h-1.5 overflow-hidden rounded-full bg-divider">
+              <span className="block h-1.5 bg-brand" style={{ width: `${Math.max(0, Math.min(100, k.bar))}%` }} />
             </span>
           ) : null}
         </div>
@@ -53,43 +52,51 @@ export function Stats({ items }: { items: StatSpec[] }) {
   );
 }
 
+/** A titled card. A vault block carries an ink left edge and the key glyph. */
 export function Block({ title, sub, vault, acts, wide, children, style }: { title?: ReactNode; sub?: ReactNode; vault?: boolean; acts?: ReactNode; wide?: boolean; children: ReactNode; style?: CSSProperties }) {
   return (
-    <div style={{ background: "#FFFFFF", border: `1px solid ${vault ? C.v100 : C.line}`, borderRadius: 6, overflow: "hidden", boxShadow: vault ? `inset 3px 0 0 ${C.v700}` : "none", gridColumn: wide ? "1 / -1" : "auto", minWidth: 0, ...style }}>
+    <Card className={cx("min-w-0 overflow-hidden", wide && "col-span-full", vault && "shadow-[inset_3px_0_0_var(--color-ink)]")} style={style}>
       {title ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 20px", background: vault ? C.v50 : "#FFFFFF", borderBottom: `1px solid ${vault ? C.v100 : C.line2}`, color: vault ? C.v900 : C.ink, flexWrap: "wrap" }}>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 15, fontWeight: 600 }}>{title}</span>
-            {sub ? <span style={{ display: "block", fontSize: 12, fontWeight: 400, opacity: 0.8, marginTop: 2 }}>{sub}</span> : null}
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-5 py-3.5">
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2 text-base font-semibold text-ink">
+              {vault ? (
+                <span className="flex text-muted">
+                  <LkIcon name="key" size={15} />
+                </span>
+              ) : null}
+              {title}
+            </span>
+            {sub ? <span className="mt-0.5 block text-[13px] font-normal text-muted">{sub}</span> : null}
           </span>
           {acts}
         </div>
       ) : null}
       {children}
-    </div>
+    </Card>
   );
 }
 
 export function Grid({ cols = 1, children }: { cols?: 1 | 2; children: ReactNode }) {
-  return <div style={{ display: "grid", gridTemplateColumns: cols === 2 ? "repeat(2,minmax(0,1fr))" : "minmax(0,1fr)", gap: 16, alignItems: "start" }}>{children}</div>;
+  return <div className={cx("grid items-start gap-4", cols === 2 ? "grid-cols-2" : "grid-cols-1")}>{children}</div>;
 }
 
 /** A cell: a line and an optional muted second line. */
-export function Cell({ t, sub, style }: { t: ReactNode; sub?: ReactNode; style?: CSSProperties }) {
+export function Cell({ t, sub, style, className }: { t: ReactNode; sub?: ReactNode; style?: CSSProperties; className?: string }) {
   return (
-    <span style={{ minWidth: 0, overflowWrap: "anywhere", lineHeight: "19px", ...style }}>
-      <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis" }}>{t == null || t === "" ? "—" : t}</span>
-      {sub ? <span style={{ display: "block", fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", fontWeight: 400 }}>{sub}</span> : null}
+    <span className={cx("block min-w-0 leading-[19px] [overflow-wrap:anywhere]", className)} style={style}>
+      <span className="block truncate">{t == null || t === "" ? "—" : t}</span>
+      {sub ? <span className="block truncate text-xs font-normal text-muted">{sub}</span> : null}
     </span>
   );
 }
 
 export function BarCell({ t, pct, col }: { t: ReactNode; pct: number; col?: string }) {
   return (
-    <span style={{ minWidth: 0 }}>
-      <span style={{ display: "block" }}>{t}</span>
-      <span style={{ display: "block", height: 6, borderRadius: 3, background: C.line2, marginTop: 4, overflow: "hidden" }}>
-        <span style={{ display: "block", height: 6, width: `${Math.max(0, Math.min(100, pct))}%`, background: col ?? C.brand }} />
+    <span className="block min-w-0">
+      <span className="block">{t}</span>
+      <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-divider">
+        <span className={cx("block h-1.5", col ? undefined : "bg-brand")} style={{ width: `${Math.max(0, Math.min(100, pct))}%`, ...(col ? { background: col } : {}) }} />
       </span>
     </span>
   );
@@ -97,64 +104,64 @@ export function BarCell({ t, pct, col }: { t: ReactNode; pct: number; col?: stri
 
 export type GRow = { key: string; cells: ReactNode[]; href?: string; onClick?: () => void; edge?: string | null; bg?: string | null };
 
-/** The design's table block: fluid grid columns, striped rows, an edge colour, paging past 25. */
-export function GTable({ cols, rows, vault, emptyLine = "Nothing to show.", page = true }: { cols: [string, string][]; rows: GRow[]; vault?: boolean; emptyLine?: string; page?: boolean }) {
+/** The relative width of a column spec ("minmax(200px,2fr)", "120px", "1fr") as a weight. */
+function weight(t: string): number {
+  const m = /^minmax\((\d+)px,\s*([\d.]+)fr\)$/.exec(t);
+  if (m) return Math.max(+m[1], +m[2] * 130);
+  const p = /^(\d+)px$/.exec(t);
+  if (p) return +p[1];
+  const f = /^([\d.]+)fr$/.exec(t);
+  if (f) return +f[1] * 130;
+  return 130;
+}
+
+/** The shared table — Th/Td/Tr in a scrolling box, the row's edge colour where one is given, paging past 25. */
+export function GTable({ cols, rows, emptyLine = "Nothing to show.", page = true }: { cols: [string, string][]; rows: GRow[]; vault?: boolean; emptyLine?: string; page?: boolean }) {
   const router = useRouter();
   const compact = useDensity() === "compact";
   const P = usePager(rows.length);
-  const fluid = (t: string) => {
-    const m = /^minmax\((\d+)px,\s*([\d.]+)fr\)$/.exec(t);
-    if (m) return `minmax(0,${Math.max(+m[1], +m[2] * 130)}fr)`;
-    const p = /^(\d+)px$/.exec(t);
-    if (p) return `minmax(0,${p[1]}fr)`;
-    return t;
-  };
-  const tpl = cols.map((c) => fluid(c[1])).join(" ");
+  const total = cols.reduce((s, c) => s + weight(c[1]), 0) || 1;
   const shown = page && rows.length > 25 ? P.slice(rows) : rows;
   return (
     <div>
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, padding: "0 20px", height: 34, alignItems: "center", background: vault ? C.v50 : C.canvas, borderBottom: `1px solid ${vault ? C.v100 : C.line2}`, fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: vault ? C.v500 : C.muted }}>
-            {cols.map(([h], i) => (
-              <span key={i} title={h} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {h}
-              </span>
+      <div className="overflow-x-auto">
+        <table className="w-full table-fixed border-collapse">
+          <colgroup>
+            {cols.map(([h, w], i) => (
+              <col key={i + h} style={{ width: `${((weight(w) / total) * 100).toFixed(2)}%` }} />
             ))}
-          </div>
-          {shown.map((r, i) => {
-            const click = r.onClick ?? (r.href ? () => router.push(r.href!) : undefined);
-            return (
-              <div
-                key={r.key}
-                onClick={click}
-                className={click ? "lk-row" : undefined}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: tpl,
-                  gap: 12,
-                  padding: compact ? "6px 20px" : "10px 20px",
-                  minHeight: compact ? 36 : 44,
-                  borderTop: `1px solid ${C.line3}`,
-                  alignItems: "center",
-                  fontSize: 14,
-                  color: C.body,
-                  background: r.bg ?? (i % 2 ? C.canvas : "#FFFFFF"),
-                  boxShadow: r.edge ? `inset 3px 0 0 ${r.edge}` : "none",
-                  cursor: click ? "pointer" : "default",
-                }}
-              >
-                {r.cells.map((c, k) => (
-                  <span key={k} style={{ minWidth: 0 }}>
-                    {c}
-                  </span>
-                ))}
-              </div>
-            );
-          })}
-        </div>
+          </colgroup>
+          <thead>
+            <tr>
+              {cols.map(([h], i) => (
+                <Th key={i} title={h} className="truncate">
+                  {h}
+                </Th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r) => {
+              const click = r.onClick ?? (r.href ? () => router.push(r.href!) : undefined);
+              return (
+                <Tr
+                  key={r.key}
+                  onClick={click}
+                  className={cx(click && "cursor-pointer hover:bg-canvas")}
+                  style={{ ...(r.bg ? { background: r.bg } : {}), ...(r.edge ? { boxShadow: `inset 3px 0 0 ${r.edge}` } : {}) }}
+                >
+                  {r.cells.map((c, k) => (
+                    <Td key={k} className={cx("whitespace-normal align-middle", compact ? "py-1.5" : "py-2.5")}>
+                      {c}
+                    </Td>
+                  ))}
+                </Tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      {!rows.length ? <div style={{ padding: 20, fontSize: 14, color: C.muted }}>{emptyLine}</div> : null}
+      {!rows.length ? <div className="p-5 text-sm text-muted">{emptyLine}</div> : null}
       {page && rows.length > 25 ? P.footer : null}
     </div>
   );
@@ -162,32 +169,38 @@ export function GTable({ cols, rows, vault, emptyLine = "Nothing to show.", page
 
 export type LItem = { key: string; t: ReactNode; sub?: ReactNode; check?: boolean; on?: boolean; flip?: () => void; ro?: boolean; badge?: ReactNode; btn?: string; btnKind?: BtnKind; off?: boolean; why?: string; run?: () => void; red?: boolean; strong?: boolean; edge?: string; bg?: string; extra?: ReactNode };
 
+const LIST_VARIANT: Record<BtnKind, "primary" | "secondary" | "danger" | "ghost"> = { p: "primary", s: "secondary", d: "danger", v: "primary", g: "ghost" };
+
 export function LList({ items, empty }: { items: LItem[]; empty?: string }) {
   return (
     <div>
       {items.map((i) => (
-        <div key={i.key} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 20px", borderTop: `1px solid ${C.line3}`, background: i.bg ?? "#FFFFFF", boxShadow: i.edge ? `inset 3px 0 0 ${i.edge}` : "none", flexWrap: "wrap" }}>
-          {i.check ? <input type="checkbox" checked={!!i.on} onChange={() => i.flip?.()} disabled={i.ro} style={{ width: 18, height: 18, accentColor: C.brand, flex: "none", marginTop: 1 }} /> : null}
-          <span style={{ flex: 1, minWidth: 180 }}>
-            <span style={{ display: "block", fontSize: 14, fontWeight: i.strong ? 600 : 500, color: i.red ? C.red : C.ink, lineHeight: "20px" }}>{i.t}</span>
-            {i.sub ? <span style={{ display: "block", fontSize: 12, lineHeight: "17px", color: C.muted, marginTop: 2 }}>{i.sub}</span> : null}
+        <div
+          key={i.key}
+          className="flex flex-wrap items-start gap-3 border-t border-divider bg-surface px-5 py-3 first:border-t-0"
+          style={{ ...(i.bg ? { background: i.bg } : {}), ...(i.edge ? { boxShadow: `inset 3px 0 0 ${i.edge}` } : {}) }}
+        >
+          {i.check ? <input type="checkbox" checked={!!i.on} onChange={() => i.flip?.()} disabled={i.ro} className={cx(checkboxClass, "mt-0.5")} /> : null}
+          <span className="min-w-[180px] flex-1">
+            <span className={cx("block text-sm leading-5", i.strong ? "font-semibold" : "font-medium", i.red ? "text-danger" : "text-ink")}>{i.t}</span>
+            {i.sub ? <span className="mt-0.5 block text-xs leading-[17px] text-muted">{i.sub}</span> : null}
             {i.extra}
           </span>
           {i.badge}
           {i.btn ? (
-            <button type="button" onClick={i.off ? undefined : i.run} title={i.off ? i.why : undefined} style={i.off ? { ...BTN_OFF, height: 30, fontSize: 13, padding: "0 10px" } : btnStyle(i.btnKind ?? "s", true)}>
+            <Button size="sm" variant={LIST_VARIANT[i.btnKind ?? "s"]} disabled={i.off} title={i.off ? i.why : undefined} onClick={i.off ? undefined : i.run}>
               {i.btn}
-            </button>
+            </Button>
           ) : null}
         </div>
       ))}
-      {!items.length && empty ? <div style={{ padding: "14px 20px", fontSize: 13, color: C.muted }}>{empty}</div> : null}
+      {!items.length && empty ? <div className="px-5 py-3.5 text-[13px] text-muted">{empty}</div> : null}
     </div>
   );
 }
 
 export function Yes({ on, yes = "On", no = "Off", noTone = "red" }: { on: boolean; yes?: string; no?: string; noTone?: "red" | "amber" }) {
-  return on ? <Pill label={yes} bg="#E9F5EE" fg="#1D7A45" /> : <Pill label={no} bg={noTone === "red" ? "#FCECEC" : "#FDF6E7"} fg={noTone === "red" ? "#B3261E" : "#8A5C05"} />;
+  return on ? <Pill label={yes} tone="success" /> : <Pill label={no} tone={noTone === "red" ? "danger" : "warn"} />;
 }
 
 /** Said plainly on every vault screen when the deployment cannot encrypt. */
