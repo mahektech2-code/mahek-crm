@@ -3,7 +3,6 @@ import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { hrmsAttendance, hrmsExpenses, hrmsGrievances, hrmsHelp, hrmsLeaveRequests } from "@/db/schema";
 import { decidesLeave, hrmsContext, scopeOf } from "@/lib/hrms/access";
-import { checkInState } from "@/lib/hrms/check-in-state";
 import { approvedLeave, attendanceRows } from "@/lib/hrms/services/attendance";
 import { allPeople, isActive, markableStaff, staffInReach, visibleIds } from "@/lib/hrms/services/people";
 import { hrmsLink } from "@/lib/hrms/registry";
@@ -38,7 +37,7 @@ export default async function HrmsHome() {
   const t = today();
   const me = ctx.employee;
   const scope = scopeOf(ctx, "hr", "markStaff");
-  const [state, people] = await Promise.all([checkInState(ctx), allPeople()]);
+  const people = await allPeople();
 
   /* ---------------------------------------------------------- the figures */
   type Fig = { l: string; v: string; tone?: Tone };
@@ -141,7 +140,7 @@ export default async function HrmsHome() {
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <div className="self-start">
-          <LauncherCheckIn state={state} canHelp={ctx.screens.has("help")} ask={false} />
+          <LauncherCheckIn />
         </div>
 
         <section className="rounded-[8px] border border-line bg-surface p-5">

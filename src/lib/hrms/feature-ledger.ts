@@ -119,7 +119,11 @@ export const MOVED: Partial<Record<HandlerRef, Destination>> = Object.fromEntrie
  * is a decision somebody wrote down, and so the test can tell an addition from
  * a typo in a move.
  */
-export const ADDED: Partial<Record<HandlerRef, string>> = {};
+export const ADDED: Partial<Record<HandlerRef, string>> = {
+  /* The workday clock (Nov 2026): a manager decides "I was working away from the screen". */
+  "workdayClaims.actions.approve": "A manager counts an automatic break as work",
+  "workdayClaims.actions.decline": "A manager keeps an automatic break as a break, with a reason",
+};
 
 /**
  * Everything that is not a handler: rules, views, documents, jobs and the

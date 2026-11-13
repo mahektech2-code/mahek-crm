@@ -515,6 +515,9 @@ export function CallPanel(props: CallPanelProps) {
 
   return (
     <>
+      {/* A telecaller on a long call is working with the mouse still: while the
+          call drawer is open the workday clock counts it as activity. */}
+      {props.target ? <span hidden data-workday-busy="call" /> : null}
       {props.target ? (
         <CallPanelForm
           key={props.target.customerId}

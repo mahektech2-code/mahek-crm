@@ -14774,6 +14774,9 @@ export const hrmsStaffTimings = pgTable(
     weekday: text("weekday").notNull(),
     inTime: text("in_time").notNull(),
     outTime: text("out_time").notNull(),
+    /** Minutes worked to be Present / a Half day on this weekday; null = the settings. */
+    presentMin: integer("present_min"),
+    halfMin: integer("half_min"),
     ...hrmsStamps(),
   },
   (t) => [uniqueIndex("hrms_staff_timings_key").on(t.employeeId, t.weekday)],
@@ -14820,9 +14823,67 @@ export const hrmsAttendance = pgTable(
     reportToStamp: text("report_to_stamp"),
     /** The QR record's "Edit Help Button" flag. */
     editHelp: boolean("edit_help").notNull().default(false),
+    /**
+     * THE WORKDAY CLOCK (Nov 2026): the day as a list of working stretches,
+     * the MBOS handset's own shape — `[{ in, out, end, reason }]`, instants
+     * in epoch ms. A break is the gap between two stretches. `check_in`,
+     * `check_out` and `stoppage_min` are kept as MIRRORS of this list
+     * (first in, last out, the gaps) so the register, the monthly summary and
+     * payroll read the same row they always did. Empty on a row written before
+     * it, which is read as one stretch from check-in to check-out.
+     */
+    sessions: jsonb("sessions").$type<WorkdaySessionJson[]>().notNull().default([]),
+    /** The last time this person did anything in MahekOne. Idle is measured from it. */
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    /** week_off · holiday · leave: a day off somebody worked anyway — extra work, never Present or Absent. */
+    offDay: text("off_day"),
+    /** Hours needed to be Present and to be a Half day, stamped at punch-in from the weekday's timing or the settings. */
+    presentMin: integer("present_min"),
+    halfMin: integer("half_min"),
     ...hrmsStamps(),
   },
   (t) => [uniqueIndex("hrms_attendance_day_key").on(t.employeeId, t.date), index("hrms_attendance_date_idx").on(t.date)],
+);
+
+/** One working stretch of an office day. `end` says how it ended. */
+export type WorkdaySessionJson = {
+  in: number;
+  out: number | null;
+  end?: "break" | "idle" | "auto_out" | "punch_out" | null;
+  /** The break reason picked when it ended on a break. */
+  reason?: string | null;
+};
+
+/**
+ * "I WAS WORKING AWAY FROM THE SCREEN": a claim that an automatic break or an
+ * automatic punch-out was really work. Decided by the person's manager; an
+ * approved claim is counted as worked time, a declined one stays a break.
+ */
+export const hrmsWorkdayClaims = pgTable(
+  "hrms_workday_claims",
+  {
+    id: text("id").primaryKey(),
+    attendanceId: text("attendance_id")
+      .notNull()
+      .references(() => hrmsAttendance.id, { onDelete: "cascade" }),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    fromAt: timestamp("from_at", { withTimezone: true }).notNull(),
+    toAt: timestamp("to_at", { withTimezone: true }).notNull(),
+    /** auto_break · auto_out */
+    kind: text("kind").notNull(),
+    category: text("category").notNull(),
+    note: text("note").notNull(),
+    /** pending · approved · declined */
+    status: text("status").notNull().default("pending"),
+    decidedById: text("decided_by_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedNote: text("decided_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date), index("hrms_workday_claims_status_idx").on(t.status)],
 );
 
 /** A leave or half-day request (spec §7.1). */

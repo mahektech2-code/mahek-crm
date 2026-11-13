@@ -12,7 +12,7 @@ import { allPeople, byId, isActive, markableStaff, staffInReach, timingMap, visi
 import { attendanceCfg, attendanceRows, fieldLeave, holidays, isFieldDay, type DayRow } from "../services/attendance";
 import { minutesBetween, timeRemark } from "../engines/attendance";
 import { holidayApplies } from "../engines/leave";
-import { addDaysISO, distanceLabel, hm, tmin, weekdayOf, fdShort, datesBetween } from "../time";
+import { addDaysISO, distanceLabel, hm, tmin, weekdayOf, fdShort, datesBetween, nowHM } from "../time";
 import { hrmsLink } from "../registry";
 import type { HrmsExtras } from "../extras";
 
@@ -131,7 +131,11 @@ export function attendanceRow(ctx: HrmsContext, r: DayRow, p: Person | undefined
     { l: "Employee ID", v: p?.code ?? "" },
     { l: "Official in – out", v: r.officialIn ? `${r.officialIn} – ${r.officialOut ?? ""}` : "No timing set for this weekday" },
     { l: "Target duration", v: hm(r.targetMin), der: true },
-    { l: "Unplanned stoppage", v: r.stoppageMin ? hm(r.stoppageMin) : "—" },
+    { l: "Breaks and time away", v: r.stoppageMin ? hm(r.stoppageMin) : "—" },
+    /* The workday clock's stretches, where the day had more than one. */
+    ...(Array.isArray(r.sessions) && r.sessions.length > 1
+      ? [{ l: "Working stretches", v: r.sessions.map((x) => `${nowHM(new Date(x.in))}–${x.out ? nowHM(new Date(x.out)) : "now"}${x.end === "break" ? ` break${x.reason ? ` (${x.reason})` : ""}` : x.end === "idle" ? " no activity" : x.end === "auto_out" ? " closed automatically" : ""}`).join(" · ") }]
+      : []),
     { l: "Working hours", v: hm(r.fig.workedMin), der: true },
     { l: "Working hour difference", v: hm(r.fig.differenceMin), der: true },
     { l: "Time remark", v: timeRemark(r.fig, name, r.method), der: true },

@@ -7,7 +7,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { feedback, feedbackMessages, users } from "@/db/schema";
-import { requireUser } from "@/lib/auth";
+import { requireReader, requireUser } from "@/lib/auth";
 import { APP_IDS, type AppId } from "@/lib/apps";
 import {
   bindAttachments,
@@ -686,7 +686,7 @@ export type FeedbackSummaryItem = {
 export async function myFeedbackSummary(): Promise<
   Result<{ total: number; unreadReplies: number; recent: FeedbackSummaryItem[] }>
 > {
-  const user = await requireUser();
+  const user = await requireReader();
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(feedback)

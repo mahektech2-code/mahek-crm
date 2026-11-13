@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cx } from "@/components/ui/primitives";
+import { WorkdayProvider } from "@/components/workday/workday-context";
 
 /* ---------------------------------------------------------------------------
  * ONE FRAME, for every app in MahekOne.
@@ -102,7 +103,10 @@ export function AppFrame({
       )}
     </main>
   );
+  /* THE WORKDAY CLOCK rides with the frame, so every app has the timer, the
+     idle watch and the lock without knowing they exist. */
   return (
+    <WorkdayProvider>
     <div
       className={cx(
         "flex h-screen flex-col overflow-hidden bg-canvas print:block print:h-auto print:min-w-0 print:overflow-visible print:bg-white",
@@ -125,5 +129,6 @@ export function AppFrame({
         )}
       </div>
     </div>
+    </WorkdayProvider>
   );
 }

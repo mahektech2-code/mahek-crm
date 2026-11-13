@@ -2290,6 +2290,13 @@
       "when": 1793731060000,
       "tag": "0331_erp_freight_bills",
       "breakpoints": true
+    },
+    {
+      "idx": 327,
+      "version": "7",
+      "when": 1793800000000,
+      "tag": "0332_workday_clock",
+      "breakpoints": true
     }
   ]
 }

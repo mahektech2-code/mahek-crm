@@ -16,6 +16,9 @@ import { getConfig } from "@/lib/config/store";
 import { HELP } from "@/lib/hrms/values";
 import { tellPowerHolders } from "@/lib/hrms/services/notify";
 import { hrmsLink } from "@/lib/hrms/registry";
+import { approvedSpans, forgetLock, mirrorPatch, offDayFor, sessionsOf, thresholdsFor } from "@/lib/hrms/services/workday";
+import { endSession, phaseOf } from "@/lib/hrms/engines/workday";
+import { punchInAgain, punchOutFromBreak } from "@/lib/hrms/workday-ops";
 
 /** Outside a request (a script, a test) nothing is cached, so there is nothing to invalidate — the CRM's rule. */
 function refresh() {
@@ -65,8 +68,20 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
   if (onHandset) return refusal("already", `You checked in on the field app at ${onHandset.checkIn} today`, "Check out on the field app at the end of the day.");
   const office = await officeFor(me.office);
   const timings = await timingMap();
-  const tm = timings.get(`${me.id}|${weekdayOf(t)}`);
+  /* A DAY OFF HAS NO OFFICE HOURS: somebody who works a Sunday, a holiday or
+     a day of leave is recorded as extra work, and is never late for it. */
+  const off = await offDayFor(me.id, me.office, t);
+  const tm = off.offDay ? undefined : timings.get(`${me.id}|${weekdayOf(t)}`);
   const privileged = has(ctx, "hr") || ctx.administrator;
+
+  /* BACK AT WORK the same day: after a break, after an automatic punch-out or
+     after punching out. A new working stretch on the same record, never a
+     second day — the gap between them is not counted as work. */
+  if (existing) {
+    const s = sessionsOf(existing);
+    const phase = phaseOf(s);
+    if (phase !== "working") return punchInAgain(ctx, existing, s, phase, input, office);
+  }
 
   const qr = !!input.code;
   if (qr) {
@@ -94,6 +109,8 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
   }
 
   const id = hrmsId("hatt");
+  const startedAt = Date.now();
+  const th = await thresholdsFor(me.id, t, off.halfLeave);
   const distanceM =
     !qr && input.lat != null && input.lng != null && office?.lat != null && office?.lng != null
       ? metresBetween({ lat: input.lat, lng: input.lng }, { lat: office.lat, lng: office.lng })
@@ -117,6 +134,11 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
       inPhotoId: input.photoId ?? null,
       reportToStamp: me.position,
       createdById: ctx.user.id,
+      sessions: [{ in: startedAt, out: null, end: null, reason: null }],
+      lastActivityAt: new Date(startedAt),
+      offDay: off.offDay,
+      presentMin: th.presentMin,
+      halfMin: th.halfMin,
     });
     if (input.photoId) await bindHrmsFiles(tx, [input.photoId], "hrms_attendance", id, ctx.user.id);
   });
@@ -126,8 +148,10 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
     cfg,
     t,
   );
+  forgetLock(ctx.user.id);
   refresh();
-  return ok({}, `Checked in at ${nowT} · ${fig.lateTxt}${fig.lateBeyondGrace ? "" : fig.lateMin != null && fig.lateMin > 0 ? `, within the ${cfg.graceMinutes}-minute grace` : ""}`);
+  if (off.offDay) return ok({}, `Punched in at ${nowT} · today is a day off, so this is recorded as extra work`);
+  return ok({}, `Punched in at ${nowT} · ${fig.lateTxt}${fig.lateBeyondGrace ? "" : fig.lateMin != null && fig.lateMin > 0 ? `, within the ${cfg.graceMinutes}-minute grace` : ""}`);
 }
 
 export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Promise<CheckResult> {
@@ -139,9 +163,18 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
   const t = today();
   const nowT = now();
   const [row] = await db.select().from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me.id), eq(hrmsAttendance.date, t)));
-  if (!row) return err("You have not checked in today.");
-  if (row.checkOut) return err(`You already checked out at ${row.checkOut}.`);
-  if (minutesBetween(row.checkIn, nowT) == null) return err(`Check-out must be after your check-in at ${row.checkIn}`);
+  if (!row) return err("You have not punched in today.");
+  const sessions = sessionsOf(row);
+  const phase = phaseOf(sessions);
+  if (phase === "done" || phase === "auto_out") return err(`You already punched out at ${row.checkOut ?? "the end of your last stretch"}.`);
+  /* From a break the day ends where the break began, and nobody is asked
+     where they are: they left the desk when the break started. */
+  if (phase === "break" || phase === "auto_break") {
+    const r = await punchOutFromBreak(ctx);
+    refresh();
+    return r;
+  }
+  /* The stretch being ended is the guard now: it can only end at or after it began. */
   const office = await officeFor(me.office);
   const privileged = has(ctx, "hr") || ctx.administrator;
   const hasPin = office?.lat != null && office?.lng != null;
@@ -150,17 +183,20 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
     const d = decideCheckOut({ distanceM, officeHasPin: hasPin, officeName: office?.name ?? me.office ?? "your office", radiusM: office?.radiusM ?? 200, privileged, privilegedRangeM: cfg.privilegedRangeM, name: me.name });
     if (!d.ok) return refusal(d.reason, d.message, d.detail);
   }
+  const endedAt = Date.now();
+  const patch = mirrorPatch(endSession(sessions, endedAt, "punch_out") ?? sessions, endedAt, await approvedSpans(row.id));
   await db.transaction(async (tx) => {
     await tx
       .update(hrmsAttendance)
-      .set({ checkOut: nowT, outLat: input.lat ?? null, outLng: input.lng ?? null, outDistanceM: distanceM, outPhotoId: input.photoId ?? null, updatedAt: new Date(), updatedById: ctx.user.id })
+      .set({ ...patch, outLat: input.lat ?? null, outLng: input.lng ?? null, outDistanceM: distanceM, outPhotoId: input.photoId ?? null, updatedAt: new Date(), updatedById: ctx.user.id })
       .where(eq(hrmsAttendance.id, row.id));
     if (input.photoId) await bindHrmsFiles(tx, [input.photoId], "hrms_attendance", row.id, ctx.user.id);
   });
   await hrmsAudit(ctx, "hrms.attendance.checkOut", "hrms_attendance", row.id, null, { at: nowT });
-  const fig = dayFigures({ ...row, checkOut: nowT }, cfg, t);
+  const fig = dayFigures({ ...row, ...patch, checkOut: patch.checkOut ?? nowT, stoppageMin: patch.stoppageMin ?? row.stoppageMin }, cfg, t);
+  forgetLock(ctx.user.id);
   refresh();
-  return ok({}, `Checked out at ${nowT} · ${hm(fig.workedMin)} · ${fig.workDay}`);
+  return ok({}, `Punched out at ${nowT} · ${hm(fig.workedMin)} worked · ${fig.workDay === "Full Day" ? "Present" : fig.workDay}`);
 }
 
 /** "Running late today", raised from the refusal itself so nobody has to find the help screen first. */

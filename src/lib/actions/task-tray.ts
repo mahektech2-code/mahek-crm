@@ -1,6 +1,6 @@
 "use server";
 
-import { requireUser } from "@/lib/auth";
+import { requireReader } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { today } from "@/lib/recompute";
 import { ok, type Result } from "@/lib/result";
@@ -16,7 +16,7 @@ export type Tray = { holdsTasks: boolean; apps: string[]; open: number; late: nu
  * it is a pointer to the Tasks app, never a second copy of it.
  */
 export async function loadTray(): Promise<Result<Tray>> {
-  const user = await requireUser();
+  const user = await requireReader();
   const day = await today();
   const [apps, tray] = await Promise.all([listUserApps(user.id), trayTasks(user.id, day, 6)]);
   const next = tray.next.map((t) => ({ id: t.id, title: t.title, app: t.app, customerName: t.customerName, dueDate: t.dueDate, dueTime: t.dueTime }));

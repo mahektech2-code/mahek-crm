@@ -6,6 +6,7 @@ import { PAY_SCREENS } from "./pay";
 import { PERF_SCREENS } from "./perf";
 import { PEOPLE_SCREENS } from "./people";
 import { MISC_SCREENS } from "./misc";
+import { WORKDAY_SCREENS } from "./workday";
 
 /* ---------------------------------------------------------------------------
  * Every HRMS list screen's server module, by screen key. A registry key with
@@ -19,6 +20,7 @@ const ALL: HrmsScreenModule[] = [
   ...PERF_SCREENS,
   ...PEOPLE_SCREENS,
   ...MISC_SCREENS,
+  ...WORKDAY_SCREENS,
 ];
 
 const BY_KEY = new Map(ALL.map((m) => [m.key, m]));

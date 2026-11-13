@@ -1208,6 +1208,18 @@ const officesScreen: HrmsScreenModule = {
 /** Monday first — the working week the way people read it. */
 const WEEK: string[] = [...WEEKDAYS.slice(1), WEEKDAYS[0]];
 export const canTimings = (ctx: HrmsContext) => has(ctx, "timings") || has(ctx, "hr");
+
+/** "7.5" from 450 minutes; blank for none. */
+const hoursText = (min: number | null) => (min == null ? "" : String(Math.round((min / 60) * 100) / 100));
+
+/** Minutes from typed hours: null for blank, undefined for something that is not a number of hours. */
+function minutesFromHours(v: string | undefined): number | null | undefined {
+  const t = (v ?? "").trim();
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n <= 0 || n > 24) return undefined;
+  return Math.round(n * 60);
+}
 const dutyHours = (i: string, o: string) => {
   const a = tmin(i);
   const b = tmin(o);
@@ -1243,7 +1255,8 @@ async function addTiming(ctx: HrmsContext, employeeId: string, weekday: string, 
 const timings: HrmsScreenModule = {
   key: "timings",
   async load(ctx, q) {
-    const [rows, people] = await Promise.all([db.select().from(hrmsStaffTimings), allPeople()]);
+    const [rows, people, config] = await Promise.all([db.select().from(hrmsStaffTimings), allPeople(), getConfig()]);
+    const settingHours = { present: config["hrms.attendance.presentHours"], half: config["hrms.attendance.halfDayHours"] };
     const { scope, options } = scopeFor(ctx, q, "timings", "hr");
     const ids = visibleIds(ctx, scope);
     const pb = byId(people);
@@ -1262,6 +1275,8 @@ const timings: HrmsScreenModule = {
           { k: "in", l: "In", t: "t" },
           { k: "out", l: "Out", t: "t" },
           { k: "duty", l: "Duty (h)", t: "n" },
+          { k: "present", l: "Present at", t: "t" },
+          { k: "half", l: "Half day at", t: "t" },
         ],
         hidden: [],
         groups: ["emp"],
@@ -1311,10 +1326,12 @@ const timings: HrmsScreenModule = {
               title: "Edit timing",
               sub: `${p?.name ?? ""} · ${r.weekday}`,
               submit: "Save",
-              init: { in: r.inTime, out: r.outTime },
+              init: { in: r.inTime, out: r.outTime, present: hoursText(r.presentMin), half: hoursText(r.halfMin) },
               fields: [
                 { k: "in", l: "In time", t: "time", req: true },
                 { k: "out", l: "Out time", t: "time", req: true },
+                { k: "present", l: "Present when worked at least, hours", t: "text", hint: `Leave blank for the setting (${settingHours.present} hours). Breaks are not counted.` },
+                { k: "half", l: "Half day when worked at least, hours", t: "text", hint: `Leave blank for the setting (${settingHours.half} hours). Below it the day is Absent.` },
               ],
             },
           },
@@ -1323,7 +1340,16 @@ const timings: HrmsScreenModule = {
         if (can) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-timing", id: r.id } });
         return {
           id: r.id,
-          v: { emp: p?.name ?? "", weekday: r.weekday, in: r.inTime, out: r.outTime, duty: dutyHours(r.inTime, r.outTime), office: p?.office ?? "" },
+          v: {
+            emp: p?.name ?? "",
+            weekday: r.weekday,
+            in: r.inTime,
+            out: r.outTime,
+            duty: dutyHours(r.inTime, r.outTime),
+            present: r.presentMin != null ? `${hoursText(r.presentMin)} h` : `${settingHours.present} h · setting`,
+            half: r.halfMin != null ? `${hoursText(r.halfMin)} h` : `${settingHours.half} h · setting`,
+            office: p?.office ?? "",
+          },
           flags: [],
           title: `${p?.name ?? ""} · ${r.weekday}`,
           header: `${r.inTime} – ${r.outTime}`,
@@ -1364,11 +1390,16 @@ const timings: HrmsScreenModule = {
       if (bad) return bad;
       const [r] = await db.select().from(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id)).limit(1);
       if (!r) return err("That timing no longer exists.", "not_found");
+      const present = minutesFromHours(v.present);
+      const half = minutesFromHours(v.half);
+      if (present === undefined) return fieldErr("present", "Hours, like 8 or 7.5 — or leave it blank");
+      if (half === undefined) return fieldErr("half", "Hours, like 4 or 3.5 — or leave it blank");
+      if (present != null && half != null && half >= present) return fieldErr("half", "A half day has to be fewer hours than present");
       await db
         .update(hrmsStaffTimings)
-        .set({ inTime: v.in, outTime: v.out, updatedAt: new Date(), updatedById: ctx.user.id })
+        .set({ inTime: v.in, outTime: v.out, presentMin: present, halfMin: half, updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(hrmsStaffTimings.id, id));
-      await hrmsAudit(ctx, "hrms.timing.edit", "hrms_staff_timings", id, { in: r.inTime, out: r.outTime }, { in: v.in, out: v.out });
+      await hrmsAudit(ctx, "hrms.timing.edit", "hrms_staff_timings", id, { in: r.inTime, out: r.outTime, presentMin: r.presentMin, halfMin: r.halfMin }, { in: v.in, out: v.out, presentMin: present, halfMin: half });
       return okVoid("Timing updated · days already recorded keep the timing they were stamped with");
     },
     async delete(ctx, id, values) {

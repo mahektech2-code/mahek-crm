@@ -97,9 +97,9 @@ export async function offices() {
 }
 
 /** Every timing row, keyed "employeeId|Weekday". */
-export async function timingMap(): Promise<Map<string, { inTime: string; outTime: string }>> {
+export async function timingMap(): Promise<Map<string, { inTime: string; outTime: string; presentMin: number | null; halfMin: number | null }>> {
   const rows = await db.select().from(hrmsStaffTimings);
-  return new Map(rows.map((r) => [`${r.employeeId}|${r.weekday}`, { inTime: r.inTime, outTime: r.outTime }]));
+  return new Map(rows.map((r) => [`${r.employeeId}|${r.weekday}`, { inTime: r.inTime, outTime: r.outTime, presentMin: r.presentMin, halfMin: r.halfMin }]));
 }
 
 /** One editable value list (spec §3), e.g. "Bank names". */

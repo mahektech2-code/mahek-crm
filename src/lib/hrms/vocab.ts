@@ -58,7 +58,7 @@ export const HRMS_TONES: Record<string, Tone> = {
   "Pending deactivation": "warn", Deactive: "muted", "Call Not Pick Up": "warn", "Order Received": "success",
   "No Requirement": "neutral", "Reminder Call Back": "info", "To call": "brand", "Follow-ups due": "warn",
   History: "neutral", Solve: "success", Assigned: "info", Restored: "success", Stationery: "neutral",
-  Equipment: "info", Other: "neutral", Yes: "brand", No: "neutral", "24 hours": "info", Absent: "danger",
+  Equipment: "info", Other: "neutral", Yes: "brand", No: "neutral", "24 hours": "info", Absent: "danger", Extra: "brand", "Auto-break": "warn",
   Good: "success", Happy: "success", Normal: "neutral", Neutral: "neutral", Upset: "warn",
   "Not done this week": "warn", Today: "brand", Earlier: "neutral", "Shared with me today": "brand",
   Field: "brand", Sales: "brand", Office: "neutral", OfficeStaff: "neutral", Management: "info",
