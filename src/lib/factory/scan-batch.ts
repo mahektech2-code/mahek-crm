@@ -27,6 +27,20 @@ import type { FactoryData, LorryBatch, LorryBatchResult, LorryBoard, LorryHalf, 
  * The pair rule carries across the batch: what one scan leaves held is what
  * the next is judged with, as the phone would have sent it one at a time.
  *
+ * FOLLOW MODE IS THE OFFLINE-FIRST PHONE, and there a refusal does NOT stop.
+ * A phone holding the lorry's loading pack judges each label itself, sounds the
+ * answer at once and keeps the scan on disk until this has it — so by the time a
+ * batch arrives the loader is long past every label in it, and stopping at a
+ * refusal would throw away boxes already counted on the phone and already on
+ * the lorry. So every scan is judged, in order, each with the half the PHONE
+ * held when it read it (`held` on the scan) — a scan the phone refused never
+ * reaches the server's pair chain, so the phone's own sequence is the only
+ * truthful one. A scan the phone REFUSED is recorded and never judged: the
+ * loader was told "not counted" and set the box aside, and the server counting
+ * it now would put on paper a box that is on the floor. Anything else is judged
+ * here as always, and where the server refuses what the phone took, the phone
+ * says so loudly when the answer lands — the server still has the last word.
+ *
  * SHADOW MODE: a phone with a loading pack judges each scan itself first
  * (`lorry-judge.ts`) and sends that answer as `local`. It changes nothing here
  * — the server still decides — but both are stored with whether they agreed,
@@ -70,10 +84,18 @@ export async function lorryScanBatch(
   scans: LorryScanIn[],
   timings: { id: string; ms: number }[] = [],
   build: string | null = null,
+  follow = false,
 ): Promise<LorryBatch> {
   key = String(key ?? "");
   const list = (Array.isArray(scans) ? scans : [])
-    .map((s) => ({ id: String(s?.id ?? "").slice(0, 80), code: String(s?.code ?? "").slice(0, 200), at: s?.at ? String(s.at) : null, local: localOf(s?.local) }))
+    .map((s) => ({
+      id: String(s?.id ?? "").slice(0, 80),
+      code: String(s?.code ?? "").slice(0, 200),
+      at: s?.at ? String(s.at) : null,
+      local: localOf(s?.local),
+      /* Follow mode: the half the phone held when it read this label. Absent is "nothing held", never "keep the last". */
+      held: s?.held ? String(s.held).slice(0, 200) : null,
+    }))
     .filter((s) => s.id);
   await recordWaits(fc, timings);
 
@@ -89,6 +111,7 @@ export async function lorryScanBatch(
     const s = list[i];
     const at = s.at && !Number.isNaN(Date.parse(s.at)) ? s.at : null;
     const l = s.local;
+    if (follow) heldCode = s.held;
     await db.execute(sql`
       insert into factory_scan_events (id, user_id, godown_id, lorry_key, task_id, code, held, scanned_at, app_build, local_result, local_line, local_why, local_us, pack_at)
       values (${s.id}, ${fc.user.id}, ${fc.godown.id}, ${key}, ${task}, ${s.code}, ${heldCode}, ${at}::timestamptz, ${build},
@@ -104,6 +127,11 @@ export async function lorryScanBatch(
     } else if (row.result && (row.status === "accepted" || row.status === "repeat" || row.status === "refused")) {
       /* Sent before and judged: the same answer, and nothing written twice. */
       r = row.result;
+    } else if (follow && l?.result === "refused") {
+      /* The phone refused it and the loader set it aside: on record, never counted here. */
+      r = { ok: false, id: s.id, code: s.code, title: "Not counted", text: "Refused on the phone (" + l.why + ").", fix: "Keep it aside.", task, override: null, half: null };
+      await db.execute(sql`
+        update factory_scan_events set status = 'refused', result = ${JSON.stringify(r)}::jsonb, judged_at = now(), judge_ms = 0 where id = ${s.id}`);
     } else {
       const t0 = performance.now();
       try {
@@ -131,7 +159,7 @@ export async function lorryScanBatch(
     if (r.task && /^T-/.test(r.task)) task = r.task;
     half = r.half ?? null;
     heldCode = half?.code ?? null;
-    if (halts(r)) {
+    if (!follow && halts(r)) {
       stop = i + 1;
       break;
     }

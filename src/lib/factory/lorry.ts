@@ -5,6 +5,8 @@ import { decideOverride, loadingLines, lotInfo, requestOverride, scanOntoOrder, 
 import { looksLikeUnitId, normaliseCode } from "@/lib/erp/engines/trace";
 import { stickerInfo, stickerPlaces, stickeredLines, type StickerInfo } from "@/lib/erp/dispatch-stickers";
 import { lorryKeyOf, lorryLeft, lorryName, stickerCode } from "./rules";
+import { LORRY_VERDICT, lorryWords } from "./lorry-judge";
+export { lorryWords };
 import { bootstrap, erpCtxFor, factoryAudit, inList, nextTaskId, nowHM, teamDefaults, today, writeTeam, type FactoryCtx } from "./server";
 import type { Lorry, LorryBoard, LorryFind, LorryHalf, LorryItem, LorryScan, LorryStickers, Team } from "./types";
 
@@ -206,20 +208,8 @@ async function jobFor(fc: FactoryCtx, key: string, asked: string | null): Promis
 }
 
 /** The desk speaks of one order; a loader is loading a lorry and is never shown an order. */
-export function lorryWords(m: string): string {
-  return m
-    .replace(/\border \d+ leaves from\b/g, "this lorry leaves from")
-    .replace(/\b(on|onto) order \d+/g, "$1 another order")
-    .replace(/\bthis order\b/g, "this lorry")
-    .replace(/\bThis order\b/g, "This lorry");
-}
 
-const VERDICT: Record<string, [string, string]> = {
-  unknown: ["We do not know this label", "Scan it again, closer. If it is torn, tell the dispatch head."],
-  duplicate: ["Already on the lorry", "Scan the next box."],
-  mismatch: ["Wrong stock — do not load", "Keep it aside. Load only what this lorry shows, or ask for an override."],
-  blocked: ["Do not load this", "Keep it aside. Ask the dispatch head."],
-};
+const VERDICT = LORRY_VERDICT;
 
 /** The order a box goes onto: an approved override's line, then one whose lot it is from, then the soonest due. */
 async function orderForBox(lines: LoadingLine[], code: string): Promise<number> {

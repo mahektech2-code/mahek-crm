@@ -16,7 +16,7 @@ export type ScanMoment = {
   open: boolean;
   route: string;
   res: { ok: boolean } | null | undefined;
-  feed: { tone: "ok" | "warn"; at: number } | null | undefined;
+  feed: { tone: "ok" | "warn" | "bad"; at: number } | null | undefined;
   lorryRes: object | null | undefined;
   half: object | null | undefined;
 };
