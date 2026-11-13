@@ -15,7 +15,7 @@ export default async function AccountsPage() {
     <>
       <PageHead
         vault
-        crumb="Locker · ◈ Vault"
+        crumb="Locker · Vault"
         title="Sign-in accounts"
         sub="Every Google, Microsoft, GitHub and Apple account the company relies on. A personal account rooting company services stays red until it is resolved."
       />

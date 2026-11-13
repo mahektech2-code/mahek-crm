@@ -14,8 +14,8 @@ export default async function AddLoginPage() {
   const opts = await formOptions();
   return (
     <>
-      <PageHead vault crumb="Locker · ◈ Vault" title="Add login" sub="Secrets are encrypted with a key of their own, never logged, and never sent to an AI model." />
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16, maxWidth: 1080 }}>
+      <PageHead vault crumb="Locker · Vault" title="Add login" sub="Secrets are encrypted with a key of their own, never logged, and never sent to an AI model." />
+      <div className="flex max-w-[1080px] flex-col gap-4 px-6 pb-12">
         {vaultReady() ? <CredentialForm {...opts} /> : <NoVaultKey />}
       </div>
     </>

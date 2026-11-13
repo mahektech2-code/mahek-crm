@@ -5,16 +5,17 @@ import { useRouter } from "next/navigation";
 import { saveSettings } from "@/lib/actions/locker-admin";
 import type { Tier } from "@/lib/locker/engine";
 import type { LockerSettings, TierRules } from "@/lib/locker/settings";
-import { C, LBL, TierPill, btnStyle, useToast } from "../../_ui/kit";
+import { Button, Td, Th, Tr, checkboxClass, controlClass } from "@/components/ui/primitives";
+import { TierPill, useToast } from "../../_ui/kit";
 import { Alert, Block, LList } from "../../_ui/vault-parts";
 
-const num: React.CSSProperties = { width: 80, height: 32, padding: "0 8px", border: "1px solid #C2C8D2", borderRadius: 4, fontSize: 14 };
+const num = controlClass({ className: "h-8 w-20 disabled:bg-canvas" });
 
 function N({ v, on, disabled }: { v: number; on: (n: number) => void; disabled?: boolean }) {
-  return <input type="number" value={v} disabled={disabled} onChange={(e) => on(Number(e.target.value))} style={{ ...num, background: disabled ? "#F7F8FA" : "#FFFFFF" }} />;
+  return <input type="number" value={v} disabled={disabled} onChange={(e) => on(Number(e.target.value))} className={num} />;
 }
 function B({ v, on, disabled }: { v: boolean; on: (b: boolean) => void; disabled?: boolean }) {
-  return <input type="checkbox" checked={v} disabled={disabled} onChange={(e) => on(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.v700 }} />;
+  return <input type="checkbox" checked={v} disabled={disabled} onChange={(e) => on(e.target.checked)} className={checkboxClass} />;
 }
 
 export function SecurityScreen({ settings, vault }: { settings: LockerSettings; vault: { ready: boolean; kekVersion: number; explicit: boolean } }) {
@@ -25,52 +26,69 @@ export function SecurityScreen({ settings, vault }: { settings: LockerSettings; 
   const dirty = JSON.stringify(s) !== JSON.stringify(settings);
   const tier = (t: Tier, k: keyof TierRules, v: number | boolean) => setS({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], [k]: v } } });
   const top = (k: keyof LockerSettings, v: number) => setS({ ...s, [k]: v });
-  const cols = "110px 130px 110px 120px 120px 120px 100px";
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="flex flex-col gap-4 px-6 pb-12">
       {vault.ready ? (
         <Alert tone="vault" t={`The vault is encrypting · key version ${vault.kekVersion}`} m={`Every value has its own data key, wrapped by a key-encryption key held in the server's environment (${vault.explicit ? "LOCKER_KEK" : "derived from the app signing secret"}) — never in the database, so a database copy opens nothing. Keep the key's recovery material offline with two officers; the Locker's own hosting and domain logins belong in that sealed envelope too, not in the Locker.`} />
       ) : (
         <Alert tone="red" t="The vault has no key on this deployment" m="Set LOCKER_KEK (or the app signing secret) on the server. Until then nothing can be stored or revealed." />
       )}
       <Block vault title="Secret levels" sub="What each level asks for before showing a value, and how long it stays on screen.">
-        <div style={{ overflowX: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "0 20px", height: 34, alignItems: "center", background: C.v50, borderBottom: `1px solid ${C.v100}`, ...LBL, color: C.v500 }}>
-            <span>Level</span>
-            <span>Password re-entry</span>
-            <span>Reason</span>
-            <span>On screen (s)</span>
-            <span>Clipboard (s)</span>
-            <span>Watermark</span>
-            <span>Change (days)</span>
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <Th>Level</Th>
+                <Th>Password re-entry</Th>
+                <Th>Reason</Th>
+                <Th>On screen (s)</Th>
+                <Th>Clipboard (s)</Th>
+                <Th>Watermark</Th>
+                <Th>Change (days)</Th>
+              </tr>
+            </thead>
+            <tbody>
           {(["standard", "sensitive", "restricted"] as Tier[]).map((t) => {
             const r = s.tiers[t];
             const fixed = t === "restricted";
             return (
-              <div key={t} style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "10px 20px", alignItems: "center", borderTop: `1px solid ${C.line3}`, boxShadow: `inset 3px 0 0 ${C.v700}` }}>
-                <TierPill tier={t} />
-                <B v={r.stepUp} disabled={fixed} on={(b) => tier(t, "stepUp", b)} />
-                <B v={r.reason} disabled={fixed} on={(b) => tier(t, "reason", b)} />
-                <N v={r.showSeconds} on={(n) => tier(t, "showSeconds", n)} />
-                {fixed ? <span style={{ fontSize: 13, color: C.muted }}>Copy disabled</span> : <N v={r.clipboardSeconds} on={(n) => tier(t, "clipboardSeconds", n)} />}
-                <B v={r.watermark} on={(b) => tier(t, "watermark", b)} />
-                <N v={r.rotateDays} on={(n) => tier(t, "rotateDays", n)} />
-              </div>
+              <Tr key={t}>
+                <Td>
+                  <TierPill tier={t} />
+                </Td>
+                <Td>
+                  <B v={r.stepUp} disabled={fixed} on={(b) => tier(t, "stepUp", b)} />
+                </Td>
+                <Td>
+                  <B v={r.reason} disabled={fixed} on={(b) => tier(t, "reason", b)} />
+                </Td>
+                <Td>
+                  <N v={r.showSeconds} on={(n) => tier(t, "showSeconds", n)} />
+                </Td>
+                <Td>{fixed ? <span className="text-[13px] text-muted">Copy disabled</span> : <N v={r.clipboardSeconds} on={(n) => tier(t, "clipboardSeconds", n)} />}</Td>
+                <Td>
+                  <B v={r.watermark} on={(b) => tier(t, "watermark", b)} />
+                </Td>
+                <Td>
+                  <N v={r.rotateDays} on={(n) => tier(t, "rotateDays", n)} />
+                </Td>
+              </Tr>
             );
           })}
+            </tbody>
+          </table>
         </div>
       </Block>
       <Block title="Rules for everybody">
         <LList
           items={[
-            { key: "r", t: "Shortest reason (characters)", extra: <div style={{ marginTop: 6 }}><N v={s.reasonMin} on={(n) => top("reasonMin", n)} /></div> },
-            { key: "a", t: "A restricted request waits for its approver (minutes)", sub: "And an approval must be used within the same time.", extra: <div style={{ marginTop: 6 }}><N v={s.approvalMinutes} on={(n) => top("approvalMinutes", n)} /></div> },
-            { key: "h", t: "Reveals one person may make in an hour", sub: "Past it they are paused and the Locker admins are told.", extra: <div style={{ marginTop: 6 }}><N v={s.revealsPerHour} on={(n) => top("revealsPerHour", n)} /></div> },
-            { key: "w", t: "Working hours (24h clock, IST)", sub: "A reveal outside them is recorded as notable and the Locker admins are told.", extra: <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}><N v={s.workStartHour} on={(n) => top("workStartHour", n)} /> to <N v={s.workEndHour} on={(n) => top("workEndHour", n)} /></div> },
-            { key: "b", t: "Emergency access window (minutes)", extra: <div style={{ marginTop: 6 }}><N v={s.breakglassMinutes} on={(n) => top("breakglassMinutes", n)} /></div> },
-            { key: "br", t: "Review emergency access within (hours)", extra: <div style={{ marginTop: 6 }}><N v={s.breakglassReviewHours} on={(n) => top("breakglassReviewHours", n)} /></div> },
-            { key: "c", t: "Warn about a card expiring within (days)", sub: "Every subscription charged to it is named in the warning.", extra: <div style={{ marginTop: 6 }}><N v={s.cardWarnDays} on={(n) => top("cardWarnDays", n)} /></div> },
+            { key: "r", t: "Shortest reason (characters)", extra: <div className="mt-1.5"><N v={s.reasonMin} on={(n) => top("reasonMin", n)} /></div> },
+            { key: "a", t: "A restricted request waits for its approver (minutes)", sub: "And an approval must be used within the same time.", extra: <div className="mt-1.5"><N v={s.approvalMinutes} on={(n) => top("approvalMinutes", n)} /></div> },
+            { key: "h", t: "Reveals one person may make in an hour", sub: "Past it they are paused and the Locker admins are told.", extra: <div className="mt-1.5"><N v={s.revealsPerHour} on={(n) => top("revealsPerHour", n)} /></div> },
+            { key: "w", t: "Working hours (24h clock, IST)", sub: "A reveal outside them is recorded as notable and the Locker admins are told.", extra: <div className="mt-1.5 flex items-center gap-2"><N v={s.workStartHour} on={(n) => top("workStartHour", n)} /> to <N v={s.workEndHour} on={(n) => top("workEndHour", n)} /></div> },
+            { key: "b", t: "Emergency access window (minutes)", extra: <div className="mt-1.5"><N v={s.breakglassMinutes} on={(n) => top("breakglassMinutes", n)} /></div> },
+            { key: "br", t: "Review emergency access within (hours)", extra: <div className="mt-1.5"><N v={s.breakglassReviewHours} on={(n) => top("breakglassReviewHours", n)} /></div> },
+            { key: "c", t: "Warn about a card expiring within (days)", sub: "Every subscription charged to it is named in the warning.", extra: <div className="mt-1.5"><N v={s.cardWarnDays} on={(n) => top("cardWarnDays", n)} /></div> },
           ]}
         />
       </Block>
@@ -85,12 +103,12 @@ export function SecurityScreen({ settings, vault }: { settings: LockerSettings; 
           ]}
         />
       </Block>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <button type="button" disabled={!dirty} onClick={() => setS(settings)} style={btnStyle("s")}>
+      <div className="flex justify-end gap-2.5">
+        <Button disabled={!dirty} onClick={() => setS(settings)}>
           Undo changes
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="primary"
           disabled={!dirty || busy}
           onClick={async () => {
             setBusy(true);
@@ -99,10 +117,9 @@ export function SecurityScreen({ settings, vault }: { settings: LockerSettings; 
             toast(r.ok ? "Saved — the other Locker admins have been told" : r.error);
             if (r.ok) router.refresh();
           }}
-          style={dirty ? btnStyle("p") : { ...btnStyle("p"), opacity: 0.5, cursor: "not-allowed" }}
         >
           {busy ? "Saving…" : "Save settings"}
-        </button>
+        </Button>
       </div>
     </div>
   );

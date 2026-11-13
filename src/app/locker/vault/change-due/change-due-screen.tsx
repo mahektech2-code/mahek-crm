@@ -1,11 +1,12 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { recordChange } from "@/lib/actions/locker-vault";
 import type { CredRow } from "@/lib/locker/vault-service";
 import { TIER } from "@/lib/locker/engine";
-import { C, TierPill, btnStyle, nf, useModal, useToast } from "../../_ui/kit";
+import { C, TierPill, nf, useModal, useToast } from "../../_ui/kit";
 import { Block, Cell, GTable, LList, Stats } from "../../_ui/vault-parts";
 
 type Row = CredRow & { fields: string[] };
@@ -21,7 +22,7 @@ export function ChangeDueScreen({ due, policy }: { due: Row[]; policy: { restric
   const steps = sel ? [`Change it at ${sel.provider || "the provider"}`, "Record the new value in the Locker", "Check it works", `Tell whoever uses it${sel.identityId ? " — and the services that sign in through it" : ""}`] : [];
   const first3 = [0, 2, 3].every((i) => mine[i]);
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex flex-col gap-5 px-6 pb-12">
       <Stats
         items={[
           { l: "Overdue", v: nf(due.length), s: "past policy", red: due.length > 0 },
@@ -44,16 +45,16 @@ export function ChangeDueScreen({ due, policy }: { due: Row[]; policy: { restric
           ]}
           rows={due.map((x) => ({
             key: x.id,
-            edge: x === sel ? C.v700 : null,
-            bg: x === sel ? C.v50 : null,
+            edge: x === sel ? C.brand : null,
+            bg: x === sel ? "var(--color-brand-soft)" : null,
             onClick: () => setSel(x.id),
             cells: [
-              <Cell key="a" t={x.title} sub={x.provider} style={{ color: C.v900, fontWeight: 500 }} />,
+              <Cell key="a" t={x.title} sub={x.provider} className="text-ink font-medium" />,
               <TierPill key="b" tier={x.tier} />,
-              <Cell key="c" t={x.ageDays == null ? "Never set" : `${x.ageDays} days`} sub={`${nf(x.overBy)} over`} style={{ color: C.red, fontWeight: 600 }} />,
+              <Cell key="c" t={x.ageDays == null ? "Never set" : `${x.ageDays} days`} sub={`${nf(x.overBy)} over`} className="text-danger font-semibold" />,
               <Cell key="d" t={`${x.policyDays}d`} />,
               <Cell key="e" t={x.ownerName ?? "—"} />,
-              <button key="f" type="button" onClick={() => setSel(x.id)} style={{ ...btnStyle("v", true), height: 28, fontSize: 12 }}>
+              <button key="f" type="button" onClick={() => setSel(x.id)} className={buttonClass({ variant: "primary", size: "sm" })}>
                 Checklist
               </button>,
             ],

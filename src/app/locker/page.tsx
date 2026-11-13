@@ -6,15 +6,14 @@ import { lockerAccess } from "@/lib/locker/access";
 import { CRIT, daysLabel } from "@/lib/locker/engine";
 import { cardRisks, identityRisks, toLite } from "@/lib/locker/register-service";
 import { registerFor, today } from "@/lib/locker/service";
-import { C, LBL, fd, fds, nf } from "@/lib/locker/style";
+import { Card, Progress, cx } from "@/components/ui/primitives";
+import { fd, fds, nf } from "@/lib/locker/style";
 import { PageHead, Tag } from "./_ui/kit";
-import { AttentionRow } from "./_ui/register-parts";
+import { AttentionRow, Stat } from "./_ui/register-parts";
 
 export const metadata = { title: "Dashboard" };
 export const dynamic = "force-dynamic";
 
-const box = { background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" } as const;
-const h2 = { fontSize: 18, lineHeight: "24px", fontWeight: 600, color: C.ink } as const;
 
 export default async function LockerDashboard() {
   const user = await requireUser();
@@ -94,139 +93,122 @@ export default async function LockerDashboard() {
     },
   ];
 
+  const h2 = "text-lg leading-6 font-semibold text-ink";
+  const empty = "p-5 text-sm text-muted";
   return (
     <>
       <PageHead crumb="Locker · Overview" title="Dashboard" sub="What needs attention, most serious first." />
-      <div style={{ padding: "0 24px 40px 24px", display: "flex", flexDirection: "column", gap: 32 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr)) 260px", gap: 16 }}>
-          {strip.map((k) => {
-            const red = k.red && k.v > 0;
-            const inner = (
-              <>
-                <span style={{ ...LBL, display: "block" }}>{k.l}</span>
-                <span style={{ display: "block", fontSize: 32, lineHeight: "36px", fontWeight: 600, color: red ? C.red : C.ink, marginTop: 6 }}>{nf(k.v)}</span>
-                <span style={{ display: "block", fontSize: 12, color: red ? C.redInk : C.muted, marginTop: 2 }}>{k.s}</span>
-              </>
-            );
-            const st = { ...box, padding: "16px 20px", textAlign: "left" as const, textDecoration: "none", display: "block" };
-            return k.href ? (
-              <Link key={k.l} href={k.href} className="lk-card-hover" style={st}>
-                {inner}
-              </Link>
-            ) : (
-              <div key={k.l} style={st}>
-                {inner}
-              </div>
-            );
-          })}
-          <div style={{ ...box, padding: "16px 20px" }}>
-            <div style={LBL}>How complete the register is</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 6 }}>
-              <span style={{ fontSize: 32, lineHeight: "36px", fontWeight: 600, color: C.ink }}>{cp}%</span>
-              <span style={{ fontSize: 13, color: C.muted }}>filled in and checked</span>
+      <div className="flex flex-col gap-8 px-6 pb-10">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_260px]">
+          {strip.map((k) => (
+            <Stat key={k.l} l={k.l} v={nf(k.v)} s={k.s} href={k.href} red={k.red && k.v > 0} />
+          ))}
+          <Card className="p-5">
+            <div className="text-xs font-medium tracking-label text-muted uppercase">How complete the register is</div>
+            <div className="mt-2 flex items-baseline gap-1.5">
+              <span className="text-[32px] leading-9 font-semibold text-ink">{cp}%</span>
+              <span className="text-[13px] text-muted">filled in and checked</span>
             </div>
-            <div style={{ height: 6, borderRadius: 3, background: C.line2, marginTop: 10, overflow: "hidden" }}>
-              <div style={{ height: 6, width: `${cp}%`, background: C.brand, borderRadius: 3 }} />
-            </div>
-            <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
+            <Progress value={cp} className="mt-3" />
+            <div className="mt-1.5 text-xs text-muted">
               {nf(live.length - filled)} of {nf(live.length)} assets missing an owner, backup or check
             </div>
-          </div>
+          </Card>
         </div>
 
         <section>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-            <span style={h2}>Critical items needing attention</span>
-            <span style={{ fontSize: 13, color: C.muted }}>{nf(crit.length)} inside their time needed to renew · with what happens if each runs out</span>
+          <div className="mb-3 flex items-baseline gap-2.5">
+            <span className={h2}>Critical items needing attention</span>
+            <span className="text-[13px] text-muted">{nf(crit.length)} inside their time needed to renew · with what happens if each runs out</span>
           </div>
-          <div style={box}>
+          <Card className="overflow-hidden">
             {crit.slice(0, 8).map((a) => (
               <AttentionRow key={a.id} a={a} conseq />
             ))}
-            {!crit.length ? <div style={{ padding: 20, fontSize: 14, color: C.muted }}>No business-critical asset is inside its renewal window.</div> : null}
-          </div>
+            {!crit.length ? <div className={empty}>No business-critical asset is inside its renewal window.</div> : null}
+          </Card>
         </section>
 
         <section>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-            <span style={h2}>Overdue</span>
-            <span style={{ fontSize: 13, color: C.muted }}>{nf(ov.length)} past end date · grace, applied and expired shown separately</span>
+          <div className="mb-3 flex items-baseline gap-2.5">
+            <span className={h2}>Overdue</span>
+            <span className="text-[13px] text-muted">{nf(ov.length)} past end date · grace, applied and expired shown separately</span>
           </div>
-          <div style={box}>
+          <Card className="overflow-hidden">
             {ov.slice(0, 6).map((a) => (
               <AttentionRow key={a.id} a={a} />
             ))}
-            {!ov.length ? <div style={{ padding: 20, fontSize: 14, color: C.muted }}>Nothing is past its end date.</div> : null}
+            {!ov.length ? <div className={empty}>Nothing is past its end date.</div> : null}
             {ov.length > 6 && reg ? (
-              <Link href="/locker/assets?view=over" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 38, borderTop: `1px solid ${C.line2}`, background: C.canvas, color: C.brandInk, fontSize: 13, fontWeight: 500, textDecoration: "none" }}>
+              <Link href="/locker/assets?view=over" className="flex h-[38px] w-full items-center justify-center border-t border-divider bg-page text-[13px] font-medium text-brand-hover no-underline hover:underline">
                 All {nf(ov.length)} overdue in the register
               </Link>
             ) : null}
-          </div>
+          </Card>
         </section>
 
         <section>
-          <div style={{ ...h2, marginBottom: 12 }}>Hidden risks</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 16 }}>
+          <div className={cx(h2, "mb-3")}>Hidden risks</div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {risks.map((g) => (
-              <div key={g.l} style={box}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "14px 20px 10px 20px" }}>
-                  <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: C.ink }}>{g.l}</span>
-                  <span style={{ fontSize: 22, fontWeight: 600, color: g.red ? C.red : C.ink }}>{nf(g.n)}</span>
+              <Card key={g.l} className="overflow-hidden">
+                <div className="flex items-baseline gap-2 px-5 pt-3.5 pb-2.5">
+                  <span className="flex-1 text-[15px] font-semibold text-ink">{g.l}</span>
+                  <span className={cx("text-[22px] font-semibold", g.red ? "text-danger" : "text-ink")}>{nf(g.n)}</span>
                 </div>
-                <div style={{ fontSize: 13, color: C.muted, padding: "0 20px 10px 20px" }}>{g.sub}</div>
+                <div className="px-5 pb-2.5 text-[13px] text-muted">{g.sub}</div>
                 {g.items.map((i, k) => {
                   const inner = (
                     <>
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.t}</span>
-                        <span style={{ display: "block", fontSize: 12, color: C.muted }}>{i.m}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-ink">{i.t}</span>
+                        <span className="block text-xs text-muted">{i.m}</span>
                       </span>
                       {i.tag}
                     </>
                   );
-                  const st = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 20px", borderTop: `1px solid ${C.line3}`, background: "#FFFFFF", textDecoration: "none" } as const;
+                  const cls = "flex w-full items-center gap-2.5 border-t border-divider bg-surface px-5 py-2.5 no-underline";
                   return i.href ? (
-                    <Link key={k} href={i.href} className="lk-row" style={st}>
+                    <Link key={k} href={i.href} className={cx(cls, "hover:bg-canvas hover:no-underline")}>
                       {inner}
                     </Link>
                   ) : (
-                    <div key={k} style={st}>
+                    <div key={k} className={cls}>
                       {inner}
                     </div>
                   );
                 })}
-                {!g.items.length ? <div style={{ padding: "12px 20px 16px 20px", fontSize: 13, color: C.muted }}>{g.empty}</div> : null}
-              </div>
+                {!g.items.length ? <div className="px-5 pt-3 pb-4 text-[13px] text-muted">{g.empty}</div> : null}
+              </Card>
             ))}
           </div>
         </section>
 
         <section>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-            <span style={h2}>My work</span>
-            <span style={{ fontSize: 13, color: C.muted }}>
+          <div className="mb-3 flex items-baseline gap-2.5">
+            <span className={h2}>My work</span>
+            <span className="text-[13px] text-muted">
               {nf(mine.length)} assigned to {user.name} in the next 90 days
             </span>
           </div>
-          <div style={box}>
+          <Card className="overflow-hidden">
             {mine.slice(0, 6).map((a) => (
               <AttentionRow key={a.id} a={a} />
             ))}
-            {!mine.length ? <div style={{ padding: 20, fontSize: 14, color: C.muted }}>Nothing assigned to you needs attention in the next 90 days.</div> : null}
-          </div>
+            {!mine.length ? <div className={empty}>Nothing assigned to you needs attention in the next 90 days.</div> : null}
+          </Card>
         </section>
 
         <section>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-            <span style={h2}>Upcoming 90 days</span>
-            <span style={{ fontSize: 13, color: C.muted }}>{nf(up.length)} end dates · each dot one asset, sized by importance</span>
+          <div className="mb-3 flex items-baseline gap-2.5">
+            <span className={h2}>Upcoming 90 days</span>
+            <span className="text-[13px] text-muted">{nf(up.length)} end dates · each dot one asset, sized by importance</span>
           </div>
-          <div style={{ ...box, overflow: "visible", padding: "20px 24px" }}>
-            <div style={{ position: "relative", height: 120 }}>
+          <Card className="px-6 py-5">
+            <div className="relative h-[120px]">
               {Array.from({ length: 13 }, (_, i) => (
-                <span key={i} style={{ position: "absolute", left: `${((i * 7) / 90) * 100}%`, top: 0, bottom: 0, borderLeft: `1px dashed ${i === 0 ? C.faint : C.line2}` }}>
-                  <span style={{ position: "absolute", bottom: -20, left: 0, fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>{i === 0 ? "Today" : fds(addDays(day, i * 7))}</span>
+                <span key={i} className={cx("absolute top-0 bottom-0 border-l border-dashed", i === 0 ? "border-faint" : "border-divider")} style={{ left: `${((i * 7) / 90) * 100}%` }}>
+                  <span className="absolute -bottom-5 left-0 text-2xs whitespace-nowrap text-muted">{i === 0 ? "Today" : fds(addDays(day, i * 7))}</span>
                 </span>
               ))}
               {dots.map(({ a, x, y, sz }) => (
@@ -235,19 +217,20 @@ export default async function LockerDashboard() {
                   href={`/locker/assets/${a.id}`}
                   title={`${a.title} · ${daysLabel(a.d)}`}
                   aria-label={`${a.title} · ${daysLabel(a.d)}`}
-                  style={{ position: "absolute", left: `calc(${x}% - ${sz / 2}px)`, bottom: 4 + y * 15, width: sz, height: sz, borderRadius: "50%", border: "2px solid #FFFFFF", background: CRIT[a.crit].edge, padding: 0, boxShadow: "0 0 0 1px rgba(26,30,40,0.08)" }}
+                  className="absolute rounded-full border-2 border-surface p-0 shadow-[0_0_0_1px_rgba(15,27,51,0.08)]"
+                  style={{ left: `calc(${x}% - ${sz / 2}px)`, bottom: 4 + y * 15, width: sz, height: sz, background: CRIT[a.crit].edge }}
                 />
               ))}
             </div>
-            <div style={{ display: "flex", gap: 16, marginTop: 32, fontSize: 12, color: C.body }}>
+            <div className="mt-8 flex flex-wrap gap-4 text-xs text-body">
               {[4, 3, 2, 1].map((k) => (
-                <span key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: CRIT[k].edge }} />
+                <span key={k} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: CRIT[k].edge }} />
                   {CRIT[k].label}
                 </span>
               ))}
             </div>
-          </div>
+          </Card>
         </section>
       </div>
     </>

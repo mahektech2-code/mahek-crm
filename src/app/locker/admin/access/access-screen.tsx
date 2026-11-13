@@ -1,9 +1,10 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setLockerModules } from "@/lib/actions/locker-admin";
-import { C, Pill, btnStyle, nf, useModal, useToast } from "../../_ui/kit";
+import { C, Pill, nf, useModal, useToast } from "../../_ui/kit";
 import { Alert, Block, Cell, GTable, Grid, LList } from "../../_ui/vault-parts";
 
 type Holder = { id: string; name: string; role: string; modules: string[]; active: boolean };
@@ -31,7 +32,7 @@ export function AccessScreen({ me, holders, people, modules }: { me: string; hol
   };
   const vaultKeys = modules.filter((m) => m.group === "Vault").map((m) => m.key);
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="flex flex-col gap-4 px-6 pb-12">
       {sel && sel.id === me && !tabs.includes("locker.access") ? <Alert tone="amber" t="You are removing your own Access" m="Once saved you can no longer change access. Another Locker admin will have to restore it." /> : null}
       {sel && sel.role === "admin" ? <Alert tone="grey" t={`${sel.name} holds the Locker as an administrator`} m="An administrator always holds the vault and admin screens, ticked or not. Change their level on the MahekOne Access screen to narrow those." /> : null}
       <Grid cols={2}>
@@ -56,7 +57,7 @@ export function AccessScreen({ me, holders, people, modules }: { me: string; hol
                       },
                     })
                   }
-                  style={btnStyle("s", true)}
+                  className={buttonClass({ variant: "secondary", size: "sm" })}
                 >
                   Copy {sel.name.split(" ")[0]}’s access to…
                 </button>
@@ -80,7 +81,7 @@ export function AccessScreen({ me, holders, people, modules }: { me: string; hol
                     },
                   })
                 }
-                style={btnStyle("p", true)}
+                className={buttonClass({ variant: "primary", size: "sm" })}
               >
                 Add person
               </button>
@@ -93,13 +94,13 @@ export function AccessScreen({ me, holders, people, modules }: { me: string; hol
             rows={holders.map((h) => ({
               key: h.id,
               edge: h.id === selId ? C.brand : null,
-              bg: h.id === selId ? "#F7F4FF" : null,
+              bg: h.id === selId ? "var(--color-brand-soft)" : null,
               onClick: () => setSel(h.id),
               cells: [
                 <Cell key="a" t={h.name} sub={[h.role === "admin" ? "Administrator" : "", h.active ? "" : "Sign-in disabled"].filter(Boolean).join(" · ") || undefined} />,
                 <Cell key="b" t={`${h.modules.length} of ${modules.length}`} />,
-                h.modules.some((k) => vaultKeys.includes(k)) ? <Pill key="c" label="◈ Vault" bg={C.v100} fg={C.v900} /> : <Pill key="c" label="No vault" bg="#F7F8FA" fg="#6B7385" />,
-                <Cell key="d" t={groups.filter((g) => modules.some((m) => m.group === g && h.modules.includes(m.key))).join(", ")} style={{ fontSize: 13 }} />,
+                h.modules.some((k) => vaultKeys.includes(k)) ? <Pill key="c" label="Vault" tone="brand" /> : <Pill key="c" label="No vault" tone="muted" />,
+                <Cell key="d" t={groups.filter((g) => modules.some((m) => m.group === g && h.modules.includes(m.key))).join(", ")} className="text-[13px]" />,
               ],
             }))}
           />
@@ -126,11 +127,11 @@ export function AccessScreen({ me, holders, people, modules }: { me: string; hol
                       },
                     })
                   }
-                  style={btnStyle("s", true)}
+                  className={buttonClass({ variant: "secondary", size: "sm" })}
                 >
                   Remove from the Locker
                 </button>
-                <button type="button" disabled={!dirty} onClick={() => save(sel.id, tabs, "")} style={dirty ? btnStyle("p", true) : { ...btnStyle("s", true), opacity: 0.5, cursor: "not-allowed" }}>
+                <button type="button" disabled={!dirty} onClick={() => save(sel.id, tabs, "")} className={buttonClass({ variant: "primary", size: "sm" })}>
                   Save
                 </button>
               </>
@@ -149,10 +150,10 @@ export function AccessScreen({ me, holders, people, modules }: { me: string; hol
                 <Block
                   key={g}
                   vault={vault}
-                  title={vault ? "◈ Vault" : g}
+                  title={vault ? "Vault" : g}
                   sub={`${on} of ${items.length} screens${vault ? " · every screen here shows secrets, masked" : ""}`}
                   acts={
-                    <button type="button" onClick={() => setTabs(allOn ? tabs.filter((k) => !items.some((i) => i.key === k)) : [...new Set([...tabs, ...items.map((i) => i.key)])])} style={btnStyle("s", true)}>
+                    <button type="button" onClick={() => setTabs(allOn ? tabs.filter((k) => !items.some((i) => i.key === k)) : [...new Set([...tabs, ...items.map((i) => i.key)])])} className={buttonClass({ variant: "secondary", size: "sm" })}>
                       {allOn ? "Remove all" : "Grant all"}
                     </button>
                   }

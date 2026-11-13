@@ -12,7 +12,9 @@ import { lockerAccess } from "@/lib/locker/access";
 import { CATEGORIES } from "@/lib/locker/catalogue";
 import { registerFor } from "@/lib/locker/service";
 import { rotationDueCount } from "@/lib/locker/vault-counts";
-import { LockerShell, type NavGroup } from "./_ui/locker-shell";
+import { listNotifications } from "@/lib/queries";
+import "@/styles/v4-theme.css";
+import { LockerShell, type LockerNav } from "./_ui/locker-shell";
 import "./locker.css";
 
 export const metadata: Metadata = { title: { template: "%s · Locker · MahekOne", default: "Locker · MahekOne" } };
@@ -32,7 +34,8 @@ export default async function LockerLayout({ children }: { children: React.React
   if (!access.keys.size) redirect("/apps");
   const has = access.has;
 
-  const [hat, register, pendingReveals, awaitingBg, activeBg, uncontrolled, rotation, me] = await Promise.all([
+  const [notifications, hat, register, pendingReveals, awaitingBg, activeBg, uncontrolled, rotation, me] = await Promise.all([
+    listNotifications(user.id),
     hatForHeader(user, "locker"),
     registerFor(user.id),
     has("locker.approvals") ? db.select({ n: sql<number>`count(*)::int` }).from(lockerReveals).where(eq(lockerReveals.state, "waiting")) : Promise.resolve([{ n: 0 }]),
@@ -55,52 +58,65 @@ export default async function LockerLayout({ children }: { children: React.React
   const hazardousDue = live.filter((a) => a.category === "hazardous" && ["expired", "in_grace", "renewal_due"].includes(a.status)).length;
   const riskN = live.filter((a) => !a.ownerId).length + (uncontrolled[0]?.n ?? 0);
 
-  const item = (key: string, href: string, label: string, icon: string, extra: Partial<NavGroup["items"][number]> = {}) => (has(key) ? [{ href, label, icon, ...extra }] : []);
-  const nav: NavGroup[] = [
-    { label: "Overview", items: [...item("locker.dashboard", "/locker", "Dashboard", "grid"), ...item("locker.calendar", "/locker/calendar", "Calendar", "cal"), ...item("locker.risk", "/locker/risk", "Risk", "alert", { count: riskN, over: true })] },
-    {
-      label: "My work",
-      items: [
-        ...item("locker.myassets", "/locker/my-assets", "My assets", "user"),
-        ...item("locker.renewals", "/locker/renewals", "Renewals", "refresh", { count: mineDue.length, over: mineDue.some((a) => (a.d ?? 0) < 0) }),
-        ...item("locker.approvals", "/locker/approvals", "Approvals", "check", { count: approvals, match: ["/locker/emergency"] }),
-      ],
-    },
-    {
-      label: "Register",
-      items: [
-        ...(has("locker.assets") || access.categories.length ? [{ href: "/locker/assets", label: "All assets", icon: "box" }] : []),
-        ...CATEGORIES.filter((c) => c.inNav).flatMap((c) =>
-          item(`locker.cat.${c.slug}`, `/locker/assets/c/${c.slug}`, c.nav, c.icon, c.slug === "hazardous" ? { warn: true, count: hazardousDue, over: true } : {}),
-        ),
-      ],
-    },
-    {
-      label: "Vault",
-      vault: true,
-      items: [
-        ...item("locker.credentials", "/locker/vault", "Passwords & keys", "key"),
-        ...item("locker.identities", "/locker/vault/accounts", "Sign-in accounts", "id"),
-        ...item("locker.providers", "/locker/vault/providers", "Providers", "layers"),
-        ...item("locker.graph", "/locker/vault/connections", "Connections", "share"),
-        ...item("locker.rotation", "/locker/vault/change-due", "Change due", "rotate", { count: rotation, over: true }),
-      ],
-    },
-    {
-      label: "Operations",
-      items: [...item("locker.offboard", "/locker/offboard", "Offboard", "exit"), ...item("locker.review", "/locker/review", "Access review", "eye"), ...item("locker.costs", "/locker/costs", "Costs", "coin"), ...item("locker.audit", "/locker/audit", "Audit", "list")],
-    },
-    {
-      label: "Admin",
-      items: [
-        ...item("locker.types", "/locker/admin/types", "Types", "type"),
-        ...item("locker.ladders", "/locker/admin/reminders", "Reminders", "ladder"),
-        ...item("locker.entities", "/locker/admin/companies", "Companies", "pin"),
-        ...item("locker.access", "/locker/admin/access", "Access", "key"),
-        ...item("locker.settings", "/locker/admin/security", "Security", "cog"),
-      ],
-    },
-  ].filter((g) => g.items.length);
+  type Row = LockerNav["groups"][number]["items"][number];
+  const counts: Record<string, { n: number; over?: boolean }> = {};
+  const item = (key: string, href: string, label: string, icon: string, extra: Partial<Row> & { count?: number; over?: boolean } = {}): Row[] => {
+    if (!has(key)) return [];
+    const { count, over, ...rest } = extra;
+    if (count) counts[href] = { n: count, over };
+    return [{ href, label, icon, ...rest }];
+  };
+  const nav: LockerNav = {
+    groups: [
+      { label: "Overview", icon: "grid", items: [...item("locker.dashboard", "/locker", "Dashboard", "grid", { exact: true }), ...item("locker.calendar", "/locker/calendar", "Calendar", "cal"), ...item("locker.risk", "/locker/risk", "Risk", "alert", { count: riskN, over: true })] },
+      {
+        label: "My work",
+        icon: "user",
+        items: [
+          ...item("locker.myassets", "/locker/my-assets", "My assets", "user"),
+          ...item("locker.renewals", "/locker/renewals", "Renewals", "refresh", { count: mineDue.length, over: mineDue.some((a) => (a.d ?? 0) < 0) }),
+          ...item("locker.approvals", "/locker/approvals", "Approvals", "check", { count: approvals, match: ["/locker/emergency"] }),
+        ],
+      },
+      {
+        label: "Register",
+        icon: "box",
+        items: [
+          ...(has("locker.assets") || access.categories.length ? [{ href: "/locker/assets", label: "All assets", icon: "box", exact: true, match: ["/locker/assets/new"] }] : []),
+          ...CATEGORIES.filter((c) => c.inNav).flatMap((c) =>
+            item(`locker.cat.${c.slug}`, `/locker/assets/c/${c.slug}`, c.slug === "hazardous" ? "Hazardous ⚠" : c.nav, c.icon, c.slug === "hazardous" ? { count: hazardousDue, over: true } : {}),
+          ),
+        ],
+      },
+      {
+        label: "Vault",
+        icon: "key",
+        items: [
+          ...item("locker.credentials", "/locker/vault", "Passwords & keys", "key", { exact: true, match: ["/locker/vault/new"] }),
+          ...item("locker.identities", "/locker/vault/accounts", "Sign-in accounts", "id"),
+          ...item("locker.providers", "/locker/vault/providers", "Providers", "layers"),
+          ...item("locker.graph", "/locker/vault/connections", "Connections", "share"),
+          ...item("locker.rotation", "/locker/vault/change-due", "Change due", "rotate", { count: rotation, over: true }),
+        ],
+      },
+      {
+        label: "Operations",
+        icon: "list",
+        items: [...item("locker.offboard", "/locker/offboard", "Offboard", "exit"), ...item("locker.review", "/locker/review", "Access review", "eye"), ...item("locker.costs", "/locker/costs", "Costs", "coin"), ...item("locker.audit", "/locker/audit", "Audit", "list")],
+      },
+      {
+        label: "Admin",
+        icon: "cog",
+        items: [
+          ...item("locker.types", "/locker/admin/types", "Types", "type"),
+          ...item("locker.ladders", "/locker/admin/reminders", "Reminders", "ladder"),
+          ...item("locker.entities", "/locker/admin/companies", "Companies", "pin"),
+          ...item("locker.access", "/locker/admin/access", "Access", "key"),
+          ...item("locker.settings", "/locker/admin/security", "Security", "cog"),
+        ],
+      },
+    ].filter((g) => g.items.length),
+  };
 
   const bg = activeBg[0];
   const banner = bg?.until
@@ -110,13 +126,14 @@ export default async function LockerLayout({ children }: { children: React.React
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,300..700&family=JetBrains+Mono:wght@400;500&display=swap" precedence="default" />
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
       <LockerShell
         nav={nav}
+        counts={counts}
         user={{ name: user.name, email: user.email, phone: user.phone, initials: initialsOf(user.name), role: hat.label, title: me[0]?.position ?? "" }}
         hat={hat}
         apps={webApps(apps)}
-        bell={{ count: approvals, href: has("locker.approvals") ? "/locker/approvals" : (nav[0]?.items[0]?.href ?? "/locker") }}
+        notifications={notifications}
         vault={access.vault}
         banner={banner}
       >

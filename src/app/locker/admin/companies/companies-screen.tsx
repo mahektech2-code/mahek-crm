@@ -1,8 +1,9 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import { useRouter } from "next/navigation";
 import { saveEntity, saveSite } from "@/lib/actions/locker-admin";
-import { C, MONO, Pill, btnStyle, nf, useModal, useToast } from "../../_ui/kit";
+import { C, Pill, nf, useModal, useToast } from "../../_ui/kit";
 import { Block, Cell, GTable } from "../../_ui/vault-parts";
 
 type Ent = { id: string; name: string; gstin: string | null; isPrimary: boolean; active: boolean; n: number };
@@ -57,17 +58,17 @@ export function CompaniesScreen({ ents, sites }: { ents: Ent[]; sites: Site[] })
         e.stopPropagation();
         run();
       }}
-      style={{ ...btnStyle("s", true), height: 28, fontSize: 12 }}
+      className={buttonClass({ variant: "secondary", size: "sm" })}
     >
       Edit
     </button>
   );
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="flex flex-col gap-4 px-6 pb-12">
       <Block
         title="Companies"
         acts={
-          <button type="button" onClick={() => editEnt()} style={btnStyle("p", true)}>
+          <button type="button" onClick={() => editEnt()} className={buttonClass({ variant: "primary", size: "sm" })}>
             Add company
           </button>
         }
@@ -75,14 +76,14 @@ export function CompaniesScreen({ ents, sites }: { ents: Ent[]; sites: Site[] })
         <GTable
           emptyLine="No companies yet. Add the group's legal entities — every asset belongs to one."
           cols={[["Company", "minmax(240px,2fr)"], ["GSTIN", "200px"], ["Assets", "90px"], ["", "100px"]]}
-          rows={ents.map((e) => ({ key: e.id, cells: [<Cell key="a" t={e.name} sub={[e.isPrimary ? "Primary" : "", e.active ? "" : "Inactive"].filter(Boolean).join(" · ") || undefined} />, <Cell key="b" t={e.gstin ?? "—"} style={{ fontFamily: MONO, fontSize: 13 }} />, <Cell key="c" t={nf(e.n)} />, editBtn(() => editEnt(e))] }))}
+          rows={ents.map((e) => ({ key: e.id, cells: [<Cell key="a" t={e.name} sub={[e.isPrimary ? "Primary" : "", e.active ? "" : "Inactive"].filter(Boolean).join(" · ") || undefined} />, <Cell key="b" t={e.gstin ?? "—"} className="font-mono text-[13px]" />, <Cell key="c" t={nf(e.n)} />, editBtn(() => editEnt(e))] }))}
         />
       </Block>
       <Block
         title="Locations"
         sub={`${nf(sites.length)} premises`}
         acts={
-          <button type="button" onClick={() => editSite()} style={btnStyle("p", true)}>
+          <button type="button" onClick={() => editSite()} className={buttonClass({ variant: "primary", size: "sm" })}>
             Add site
           </button>
         }
@@ -93,7 +94,7 @@ export function CompaniesScreen({ ents, sites }: { ents: Ent[]; sites: Site[] })
           rows={sites.map((s) => ({
             key: s.id,
             edge: s.hazardous ? C.red : null,
-            cells: [<Cell key="a" t={s.name} sub={s.active ? undefined : "Inactive"} />, <Cell key="b" t={s.kind} />, <Cell key="c" t={s.state || "—"} />, s.hazardous ? <Pill key="d" label="⚠ Hazardous" bg="#FCECEC" fg="#B3261E" /> : <Pill key="d" label="No" bg="#F7F8FA" fg="#6B7385" />, <Cell key="e" t={nf(s.n)} />, editBtn(() => editSite(s))],
+            cells: [<Cell key="a" t={s.name} sub={s.active ? undefined : "Inactive"} />, <Cell key="b" t={s.kind} />, <Cell key="c" t={s.state || "—"} />, s.hazardous ? <Pill key="d" label="⚠ Hazardous" tone="danger" /> : <Pill key="d" label="No" tone="muted" />, <Cell key="e" t={nf(s.n)} />, editBtn(() => editSite(s))],
           }))}
         />
       </Block>

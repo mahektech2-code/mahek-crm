@@ -6,12 +6,23 @@
  * ------------------------------------------------------------------------- */
 import type { CSSProperties } from "react";
 
+/**
+ * THE LOCKER'S COLOURS ARE THE V4 THEME'S TOKENS — the ERP's look, read
+ * from `src/styles/v4-theme.css` through CSS variables, so a value here is
+ * never a hex of its own and the Locker cannot drift from the ERP's palette.
+ * The vault's own violet is gone: v4 has none, and the vault is marked by
+ * its lock glyph and the Restricted badge instead. The `v*` keys survive so
+ * the screens did not all have to change at once; they now mean ink and
+ * canvas.
+ */
+const v = (name: string) => `var(--color-${name})`;
 export const C = {
-  ink: "#1A1E28", body: "#3D4453", muted: "#6B7385", faint: "#9BA3B2", line: "#DDE1E8", line2: "#EDEFF3", line3: "#F3F4F7",
-  canvas: "#FCFCFD", soft: "#F7F8FA", brand: "#6835FB", brandInk: "#5223E0", brandSoft: "#F1ECFF",
-  red: "#B3261E", redInk: "#8E1F1F", redSoft: "#FCECEC", amber: "#8A5C05", amberSoft: "#FDF6E7",
-  green: "#1D7A45", greenSoft: "#E9F5EE", blue: "#2B5CBF", blueSoft: "#EDF2FC",
-  v50: "#F0EFF6", v100: "#DFDCEC", v500: "#5B5080", v700: "#3E3660", v900: "#262041",
+  ink: v("ink"), body: v("body"), muted: v("muted"), faint: v("faint"), line: v("line"), line2: v("divider"), line3: v("divider"),
+  canvas: v("page"), soft: v("canvas"), brand: v("brand"), brandInk: v("brand-hover"), brandSoft: v("brand-soft"),
+  red: v("danger"), redInk: v("danger"), redSoft: v("danger-soft"), amber: v("warn-ink"), amberSoft: v("warn-soft"),
+  green: v("success"), greenSoft: v("success-soft"), blue: v("info"), blueSoft: v("info-soft"),
+  v50: v("canvas"), v100: v("line"), v500: v("muted"), v700: v("ink"), v900: v("ink"),
+  surface: v("surface"), lineStrong: v("line-strong"),
 };
 export const LBL: CSSProperties = { fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted };
 export const nf = (n: number) => Number(n || 0).toLocaleString("en-IN");
@@ -39,22 +50,22 @@ export function stampIst(at: Date | string): string {
   return `${fd(day)}, ${t}`;
 }
 
-export const MONO = "'JetBrains Mono',ui-monospace,monospace";
+export const MONO = "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)";
 
 export type BtnKind = "p" | "s" | "d" | "v" | "g";
 /** The design's button, as a style — server-safe, so a server page can draw a link as a button. */
 export function btnStyle(k: BtnKind, small = false): CSSProperties {
   return {
-    height: small ? 30 : 36,
+    height: small ? 32 : 36,
     padding: small ? "0 10px" : "0 14px",
-    borderRadius: 4,
+    borderRadius: "var(--radius-control, 7px)",
     fontSize: small ? 13 : 14,
     fontWeight: 500,
     cursor: "pointer",
     whiteSpace: "nowrap",
-    border: k === "s" ? "1px solid #C2C8D2" : "none",
-    background: k === "p" ? C.brand : k === "d" ? C.red : k === "v" ? C.v700 : k === "g" ? "transparent" : "#FFFFFF",
-    color: k === "p" || k === "d" || k === "v" ? "#FFFFFF" : k === "g" ? C.brandInk : C.body,
+    border: k === "s" ? `1px solid ${C.lineStrong}` : k === "g" ? "none" : `1px solid ${k === "d" ? C.red : C.brand}`,
+    background: k === "p" || k === "v" ? C.brand : k === "d" ? C.red : k === "g" ? "transparent" : C.surface,
+    color: k === "p" || k === "d" || k === "v" ? C.surface : k === "g" ? C.brandInk : C.body,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",

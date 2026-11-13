@@ -6,7 +6,8 @@ import { addDays, daysBetween } from "@/lib/format";
 import { CATEGORIES } from "@/lib/locker/catalogue";
 import { CRIT, addMonthsIso } from "@/lib/locker/engine";
 import type { AssetLite } from "@/lib/locker/lite";
-import { C, Chip, PageHead, Segmented, fd, nf } from "../_ui/kit";
+import { Card, cx } from "@/components/ui/primitives";
+import { Chip, PageHead, Segmented, fd, nf } from "../_ui/kit";
 
 /* ---------------------------------------------------------------------------
  * THE END DATE CALENDAR. Days carry importance-coloured marks on the day
@@ -37,23 +38,23 @@ export function CalendarScreen({ rows, today, cats }: { rows: AssetLite[]; today
         title="End date calendar"
         sub="Days carry importance-coloured marks; a business-critical end date makes its day heavier. The timeline shows clustering — four licences in one month is a resourcing problem."
       />
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="flex flex-col gap-4 px-6 pb-12">
+        <div className="flex flex-wrap items-center gap-2">
           <Segmented opts={[{ key: "month", label: "Month" }, { key: "line", label: "12-month timeline" }]} value={mode} onPick={setMode} />
           {mode === "month" ? (
-            <span style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-              <button type="button" onClick={() => setMo(mo - 1)} style={{ width: 30, height: 30, border: `1px solid ${C.line}`, background: "#FFFFFF", borderRadius: 4, cursor: "pointer" }}>
+            <span className="ml-2 flex items-center gap-1.5">
+              <button type="button" aria-label="Previous month" onClick={() => setMo(mo - 1)} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-body hover:bg-canvas">
                 ‹
               </button>
-              <span style={{ fontSize: 15, fontWeight: 600, color: C.ink, minWidth: 130, textAlign: "center" }}>
+              <span className="min-w-[130px] text-center text-[15px] font-semibold text-ink">
                 {MON[m - 1]} {y}
               </span>
-              <button type="button" onClick={() => setMo(mo + 1)} style={{ width: 30, height: 30, border: `1px solid ${C.line}`, background: "#FFFFFF", borderRadius: 4, cursor: "pointer" }}>
+              <button type="button" aria-label="Next month" onClick={() => setMo(mo + 1)} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-body hover:bg-canvas">
                 ›
               </button>
             </span>
           ) : null}
-          <span style={{ flex: 1 }} />
+          <span className="flex-1" />
           {([
             [0, "All"],
             [3, "High and above"],
@@ -64,54 +65,54 @@ export function CalendarScreen({ rows, today, cats }: { rows: AssetLite[]; today
         </div>
 
         {mode === "month" ? (
-          <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", background: C.canvas, borderBottom: `1px solid ${C.line}` }}>
+          <Card className="overflow-hidden">
+            <div className="grid grid-cols-7 border-b border-line bg-page">
               {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((w) => (
-                <span key={w} style={{ padding: "8px 10px", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>
+                <span key={w} className="px-2.5 py-2 text-xs font-medium tracking-label text-muted uppercase">
                   {w}
                 </span>
               ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))" }}>
+            <div className="grid grid-cols-7">
               {Array.from({ length: Math.ceil((lead + days) / 7) * 7 }, (_, i) => {
                 const dn = i - lead + 1;
-                if (dn < 1 || dn > days) return <div key={i} style={{ minHeight: 104, borderTop: `1px solid ${C.line3}`, borderLeft: `1px solid ${C.line3}`, background: C.canvas }} />;
+                if (dn < 1 || dn > days) return <div key={i} className="min-h-[104px] border-t border-l border-divider bg-page" />;
                 const iso = `${y}-${String(m).padStart(2, "0")}-${String(dn).padStart(2, "0")}`;
                 const off = daysBetween(today, iso);
                 const its = (byDay.get(iso) ?? []).slice().sort((a, b) => b.crit - a.crit);
                 const heavy = its.some((a) => a.crit === 4);
                 return (
-                  <div key={i} style={{ minHeight: 104, padding: 6, borderTop: `1px solid ${C.line3}`, borderLeft: `1px solid ${C.line3}`, background: heavy ? "#FFF8F8" : "#FFFFFF", boxShadow: heavy ? `inset 0 3px 0 ${C.red}` : "none" }}>
-                    <span style={{ fontSize: 12, fontWeight: off === 0 ? 700 : 500, color: off === 0 ? "#FFFFFF" : off < 0 ? C.faint : C.ink, background: off === 0 ? C.brand : "transparent", borderRadius: 10, padding: off === 0 ? "1px 6px" : 0 }}>{dn}</span>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                  <div key={i} className={cx("min-h-[104px] border-t border-l border-divider p-1.5", heavy ? "bg-danger-soft/40 shadow-[inset_0_3px_0_var(--color-danger)]" : "bg-surface")}>
+                    <span className={cx("text-xs", off === 0 ? "rounded-full bg-brand px-1.5 py-px font-bold text-white" : off < 0 ? "font-medium text-faint" : "font-medium text-ink")}>{dn}</span>
+                    <div className="mt-1 flex flex-col gap-[3px]">
                       {its.slice(0, 3).map((a) => (
                         <Link
                           key={a.id}
                           href={`/locker/assets/${a.id}`}
                           title={`${a.title} · ${CRIT[a.crit].label}`}
-                          style={{ display: "flex", alignItems: "center", gap: 5, width: "100%", padding: "2px 4px", borderRadius: 3, background: a.crit === 4 ? "#FBEAEA" : "transparent", fontSize: 11, fontWeight: a.crit === 4 ? 600 : 400, color: a.crit === 4 ? C.redInk : C.body, textAlign: "left", textDecoration: "none" }}
+                          className={cx("flex w-full items-center gap-1.5 rounded-[3px] px-1 py-0.5 text-left text-2xs no-underline hover:underline", a.crit === 4 ? "bg-danger-soft font-semibold text-danger" : "text-body")}
                         >
-                          <span style={{ width: 7, height: 7, borderRadius: "50%", background: CRIT[a.crit].edge, flex: "none" }} />
-                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title}</span>
+                          <span className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: CRIT[a.crit].edge }} />
+                          <span className="min-w-0 flex-1 truncate">{a.title}</span>
                         </Link>
                       ))}
-                      {its.length > 3 ? <span style={{ fontSize: 11, color: C.muted, paddingLeft: 4 }}>+{its.length - 3} more</span> : null}
+                      {its.length > 3 ? <span className="pl-1 text-2xs text-muted">+{its.length - 3} more</span> : null}
                     </div>
                   </div>
                 );
               })}
             </div>
-          </div>
+          </Card>
         ) : (
-          <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "200px minmax(0,1fr)", borderBottom: `1px solid ${C.line}`, background: C.canvas }}>
+          <Card className="overflow-hidden">
+            <div className="grid grid-cols-[200px_minmax(0,1fr)] border-b border-line bg-page">
               <span />
-              <div style={{ position: "relative", height: 30 }}>
+              <div className="relative h-[30px]">
                 {Array.from({ length: 12 }, (_, i) => {
                   const ms = addMonthsIso(`${today.slice(0, 7)}-01`, i + 1);
                   const d0 = daysBetween(today, ms);
                   return (
-                    <span key={i} style={{ position: "absolute", left: `${Math.max(0, (d0 / W) * 100)}%`, top: 8, fontSize: 11, color: C.muted, paddingLeft: 4, borderLeft: `1px solid ${C.line}`, height: 22 }}>
+                    <span key={i} className="absolute top-2 h-[22px] border-l border-line pl-1 text-2xs text-muted" style={{ left: `${Math.max(0, (d0 / W) * 100)}%` }}>
                       {MON[Number(ms.slice(5, 7)) - 1]}
                       {ms.slice(5, 7) === "01" ? ` ${ms.slice(2, 4)}` : ""}
                     </span>
@@ -127,12 +128,12 @@ export function CalendarScreen({ rows, today, cats }: { rows: AssetLite[]; today
                 mc.set(k, (mc.get(k) ?? 0) + 1);
               });
               return (
-                <div key={c.slug} style={{ display: "grid", gridTemplateColumns: "200px minmax(0,1fr)", borderTop: `1px solid ${C.line3}` }}>
-                  <span style={{ padding: "10px 14px", fontSize: 13, fontWeight: 500, color: C.ink }}>
+                <div key={c.slug} className="grid grid-cols-[200px_minmax(0,1fr)] border-t border-divider">
+                  <span className="px-3.5 py-2.5 text-[13px] font-medium text-ink">
                     {c.name}
-                    <span style={{ display: "block", fontSize: 11, fontWeight: 400, color: C.muted }}>{nf(its.length)} in 12 months</span>
+                    <span className="block text-2xs font-normal text-muted">{nf(its.length)} in 12 months</span>
                   </span>
-                  <div style={{ position: "relative", height: 44, borderLeft: `1px solid ${C.line3}` }}>
+                  <div className="relative h-11 border-l border-divider">
                     {its.map((a) => {
                       const sz = ({ 4: 12, 3: 9, 2: 7, 1: 6 } as Record<number, number>)[a.crit];
                       return (
@@ -141,14 +142,15 @@ export function CalendarScreen({ rows, today, cats }: { rows: AssetLite[]; today
                           href={`/locker/assets/${a.id}`}
                           title={`${a.title} · ${fd(a.actionDate)}`}
                           aria-label={`${a.title} · ${fd(a.actionDate)}`}
-                          style={{ position: "absolute", left: `calc(${((a.actionIn ?? 0) / W) * 100}% - ${sz / 2}px)`, top: 22 - sz / 2, width: sz, height: sz, borderRadius: a.crit === 4 ? 2 : "50%", border: "1.5px solid #FFFFFF", background: CRIT[a.crit].edge, padding: 0 }}
+                          className={cx("absolute border-[1.5px] border-surface p-0", a.crit === 4 ? "rounded-[2px]" : "rounded-full")}
+                          style={{ left: `calc(${((a.actionIn ?? 0) / W) * 100}% - ${sz / 2}px)`, top: 22 - sz / 2, width: sz, height: sz, background: CRIT[a.crit].edge }}
                         />
                       );
                     })}
                     {[...mc.entries()]
                       .filter(([, n]) => n >= 3)
                       .map(([k, n]) => (
-                        <span key={k} style={{ position: "absolute", left: `${((k * 30.4) / W) * 100}%`, top: 2, fontSize: 10, fontWeight: 600, color: C.redInk, background: "#FBEAEA", padding: "0 4px", borderRadius: 3 }}>
+                        <span key={k} className="absolute top-0.5 rounded-[3px] bg-danger-soft px-1 text-[10px] font-semibold text-danger" style={{ left: `${((k * 30.4) / W) * 100}%` }}>
                           {n} in {MON[Number(addDays(today, Math.round(k * 30.4)).slice(5, 7)) - 1]}
                         </span>
                       ))}
@@ -156,7 +158,7 @@ export function CalendarScreen({ rows, today, cats }: { rows: AssetLite[]; today
                 </div>
               );
             })}
-          </div>
+          </Card>
         )}
       </div>
     </>

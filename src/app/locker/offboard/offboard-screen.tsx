@@ -1,10 +1,11 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import { useRouter } from "next/navigation";
 import { completeOffItem, signOffOffboarding, startOffboarding } from "@/lib/actions/locker-admin";
 import type { OffItem } from "@/lib/locker/ops-core";
 import type { Tier } from "@/lib/locker/engine";
-import { C, Pill, Picker, TierPill, btnStyle, BTN_OFF, useModal, useToast } from "../_ui/kit";
+import { Pill, Picker, TierPill, useModal, useToast } from "../_ui/kit";
 import { Alert, Block, Cell, GTable, Grid, LList, Stats, when } from "../_ui/vault-parts";
 
 type Case = { id: string; userId: string; name: string; by: string; startedAt: string; completedAt: string | null; items: OffItem[] };
@@ -29,9 +30,9 @@ export function OffboardScreen({ people, owners, cases, selId, revealed }: { peo
   const picker = <Picker k="Offboard" label="Choose a person" value="" options={people} onPick={start} ph="Search people" />;
   if (!sel)
     return (
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="flex flex-col gap-4 px-6 pb-12">
         <div>{picker}</div>
-        {cases.length ? <CaseList cases={cases} /> : <Block title="No offboarding yet"><div style={{ padding: 20, fontSize: 14, color: C.muted }}>Choose the person who is leaving. The list is built from what the Locker records against them.</div></Block>}
+        {cases.length ? <CaseList cases={cases} /> : <Block title="No offboarding yet"><div className="p-5 text-sm text-muted">Choose the person who is leaving. The list is built from what the Locker records against them.</div></Block>}
       </div>
     );
   const items = sel.items.map((it, idx) => ({ it, idx }));
@@ -67,7 +68,7 @@ export function OffboardScreen({ people, owners, cases, selId, revealed }: { peo
                 });
               return tick(idx, true);
             },
-            badge: it.done ? <Pill label="Done" bg="#E9F5EE" fg="#1D7A45" /> : undefined,
+            badge: it.done ? <Pill label="Done" tone="success" /> : undefined,
             btn: kind === "rotate" && !it.done ? "Open login" : kind === "asset" && !it.done ? "Open asset" : undefined,
             btnKind: "s" as const,
             run: () => router.push(kind === "rotate" ? `/locker/vault/${it.id}` : `/locker/assets/${it.id}`),
@@ -79,12 +80,12 @@ export function OffboardScreen({ people, owners, cases, selId, revealed }: { peo
   const personal = group("identity").filter((x) => !x.it.done && /personal/.test(x.it.action));
   const cards = group("payment").filter((x) => !x.it.done);
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+    <div className="flex flex-col gap-5 px-6 pb-12">
+      <div className="flex flex-wrap items-center gap-2">
         {picker}
-        <span style={{ flex: 1 }} />
+        <span className="flex-1" />
         {signed ? (
-          <Pill label={`Signed off ${when(sel.completedAt)}`} bg="#E9F5EE" fg="#1D7A45" />
+          <Pill label={`Signed off ${when(sel.completedAt)}`} tone="success" />
         ) : (
           <button
             type="button"
@@ -94,7 +95,8 @@ export function OffboardScreen({ people, owners, cases, selId, revealed }: { peo
               toast(r.ok ? "Offboarding signed off" : r.error);
               router.refresh();
             }}
-            style={done < sel.items.length ? BTN_OFF : btnStyle("p")}
+            className={buttonClass({ variant: "primary" })}
+            disabled={done < sel.items.length}
           >
             Sign off
           </button>
@@ -119,7 +121,7 @@ export function OffboardScreen({ people, owners, cases, selId, revealed }: { peo
         {block("Owned assets", "Reassign each to a new primary or backup owner.", "asset")}
         {block("Passwords & keys", "Change every one — remove is not enough.", "rotate")}
         <Block vault title="Revealed in the last 90 days" sub="Flagged for the offboarding report">
-          <GTable vault emptyLine="Nothing revealed in the last 90 days." cols={[["Login", "minmax(220px,2fr)"], ["Revealed", "140px"], ["Level", "100px"]]} rows={revealed.map((x, i) => ({ key: x.id + i, href: `/locker/vault/${x.id}`, cells: [<Cell key="a" t={x.title} style={{ color: C.v900 }} />, <Cell key="b" t={when(x.at)} />, <TierPill key="c" tier={x.tier as Tier} />] }))} />
+          <GTable vault emptyLine="Nothing revealed in the last 90 days." cols={[["Login", "minmax(220px,2fr)"], ["Revealed", "140px"], ["Level", "100px"]]} rows={revealed.map((x, i) => ({ key: x.id + i, href: `/locker/vault/${x.id}`, cells: [<Cell key="a" t={x.title} className="text-ink" />, <Cell key="b" t={when(x.at)} />, <TierPill key="c" tier={x.tier as Tier} />] }))} />
         </Block>
         {block("Sign-in accounts and payment methods", "Transfer before the last day — after it, it may be impossible.", "identity")}
         {block("Payment methods", "Move every subscription off a card in their name.", "payment")}
@@ -137,7 +139,7 @@ function CaseList({ cases }: { cases: Case[] }) {
         cols={[["Person", "minmax(200px,2fr)"], ["Started", "140px"], ["By", "150px"], ["Progress", "120px"], ["State", "120px"]]}
         rows={cases.map((c) => {
           const d = c.items.filter((i) => i.done).length;
-          return { key: c.id, href: `/locker/offboard?id=${c.id}`, cells: [<Cell key="a" t={c.name} />, <Cell key="b" t={when(c.startedAt)} />, <Cell key="c" t={c.by} />, <Cell key="d" t={`${d} of ${c.items.length}`} />, c.completedAt ? <Pill key="e" label="Signed off" bg="#E9F5EE" fg="#1D7A45" /> : <Pill key="e" label="Open" bg="#FDF6E7" fg="#8A5C05" />] };
+          return { key: c.id, href: `/locker/offboard?id=${c.id}`, cells: [<Cell key="a" t={c.name} />, <Cell key="b" t={when(c.startedAt)} />, <Cell key="c" t={c.by} />, <Cell key="d" t={`${d} of ${c.items.length}`} />, c.completedAt ? <Pill key="e" label="Signed off" tone="success" /> : <Pill key="e" label="Open" tone="warn" />] };
         })}
       />
     </Block>

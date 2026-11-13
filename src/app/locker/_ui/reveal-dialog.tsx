@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Button, Callout, Field, Input, Textarea, buttonClass, cx } from "@/components/ui/primitives";
 import Link from "next/link";
 import { noteCopied, planReveal, requestReveal, revealSecret, withdrawReveal } from "@/lib/actions/locker-vault";
 import type { RevealPlan } from "@/lib/locker/vault-core";
 import type { Tier } from "@/lib/locker/engine";
-import { C, LBL, MONO, TierPill, btnStyle } from "./kit";
+import { TierPill } from "./kit";
+import { LkIcon } from "./icons";
 
 
 /* ---------------------------------------------------------------------------
- * THE REVEAL, as the design draws it: a violet dialog that asks for exactly
+ * THE REVEAL, drawn in the v4 dialog's frame: a dialog that asks for exactly
  * what this login's level needs — nothing, a password and a reason, or a
  * second person's approval — then shows the value for a few seconds with the
  * viewer's name across it, and hides it. Every rule is the SERVER's
@@ -27,26 +29,43 @@ type Step =
 
 const RING = 94.25;
 
-export function RevealButton({ credentialId, title, tier, field, previousSecretId, label = "Reveal", style }: { credentialId: string; title: string; tier: Tier; field: string; previousSecretId?: string | null; label?: string; style?: CSSProperties }) {
+export function RevealButton({
+  credentialId,
+  title,
+  tier,
+  field,
+  previousSecretId,
+  label = "Reveal",
+  variant = "primary",
+  style,
+}: {
+  credentialId: string;
+  title: string;
+  tier: Tier;
+  field: string;
+  previousSecretId?: string | null;
+  label?: string;
+  variant?: "primary" | "secondary";
+  style?: CSSProperties;
+}) {
   const [open, setOpen] = useState(0);
   return (
     <>
-      <button type="button" onClick={() => setOpen(Date.now())} style={style ?? { height: 34, padding: "0 16px", border: "none", background: C.v700, borderRadius: 4, color: "#FFFFFF", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+      <Button size="sm" variant={variant} onClick={() => setOpen(Date.now())} style={style}>
         {label}
-      </button>
+      </Button>
       {open ? <RevealDialog key={open} credentialId={credentialId} title={title} tier={tier} field={field} previousSecretId={previousSecretId ?? null} onClose={() => setOpen(0)} /> : null}
     </>
   );
 }
 
+const MSG_TONE = { red: "danger", amber: "warn", green: "success", violet: "neutral" } as const;
 function Msg({ t, m, tone }: { t: string; m: React.ReactNode; tone: "red" | "amber" | "green" | "violet" }) {
-  const bg = tone === "red" ? "#FCECEC" : tone === "amber" ? "#FDF6E7" : tone === "green" ? "#E9F5EE" : C.v50;
-  const fg = tone === "red" ? "#8E1F1F" : tone === "amber" ? "#8A5C05" : tone === "green" ? "#1D7A45" : C.v900;
   return (
-    <div style={{ padding: "14px 16px", borderRadius: 6, background: bg, color: fg }}>
-      <div style={{ fontSize: 15, fontWeight: 600 }}>{t}</div>
-      <div style={{ fontSize: 14, lineHeight: "21px", marginTop: 4 }}>{m}</div>
-    </div>
+    <Callout tone={MSG_TONE[tone]} className="mb-0 block">
+      <div className="text-[15px] font-semibold text-ink">{t}</div>
+      <div className="mt-1 text-sm leading-[21px] text-body">{m}</div>
+    </Callout>
   );
 }
 
@@ -160,38 +179,26 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
   let head = "Reveal secret";
   let body: React.ReactNode = null;
   let btns: React.ReactNode = null;
-  const cancel = (
-    <button type="button" onClick={close} style={btnStyle("s")}>
-      Cancel
-    </button>
-  );
-  const closeB = (
-    <button type="button" onClick={close} style={btnStyle("s")}>
-      Close
-    </button>
-  );
+  const cancel = <Button onClick={close}>Cancel</Button>;
+  const closeB = <Button onClick={close}>Close</Button>;
   let ring: { off: number; label: string } | null = null;
 
   const whyBox = (
-    <label style={{ display: "block" }}>
-      <span style={{ display: "flex", justifyContent: "space-between", ...LBL, marginBottom: 6 }}>
-        <span>Why do you need this?</span>
-        <span>required</span>
-      </span>
-      <textarea
+    <Field label="Why do you need this?" required>
+      <Textarea
         value={why}
         onChange={(e) => setWhy(e.target.value)}
         rows={3}
+        invalid={whyErr && !whyOk}
         placeholder="For example: updating the payment webhook after the provider changed keys"
-        style={{ width: "100%", padding: "10px 12px", border: `1px solid ${whyErr && !whyOk ? C.red : "#C2C8D2"}`, borderRadius: 4, fontSize: 14, lineHeight: "20px", resize: "vertical" }}
       />
-      <span style={{ display: "block", fontSize: 12, marginTop: 4, color: whyErr && !whyOk ? C.red : C.muted }}>
+      <span className={cx("mt-1 block text-xs", whyErr && !whyOk ? "text-danger" : "text-muted")}>
         {whyOk ? "Recorded with your name, the time and this item." : `At least ${reasonMin} characters · ${Math.max(0, reasonMin - why.trim().length)} to go`}
       </span>
-    </label>
+    </Field>
   );
 
-  if (step.k === "loading") body = <div style={{ fontSize: 14, color: C.muted }}>Checking what this needs…</div>;
+  if (step.k === "loading") body = <div className="text-sm text-muted">Checking what this needs…</div>;
   else if (step.k === "error") {
     body = <Msg t="Not revealed" m={step.msg} tone="red" />;
     btns = closeB;
@@ -209,23 +216,23 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
     ring = { off: RING * (1 - left / step.total), label: `${Math.ceil(left / 1000)}s` };
     const wm = step.watermark;
     body = (
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ position: "relative", overflow: "hidden", border: `1px solid ${C.v100}`, borderRadius: 6, background: C.canvas, padding: "28px 20px", minHeight: 132, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ position: "relative", zIndex: 1, fontFamily: MONO, fontSize: 18, lineHeight: "28px", letterSpacing: "0.05em", color: C.v900, wordBreak: "break-all", textAlign: "center", userSelect: "all", fontVariantLigatures: "none", fontFeatureSettings: "'zero' 1", whiteSpace: "pre-wrap" }}>{step.value}</span>
+      <div className="flex flex-col gap-3">
+        <div className="relative flex min-h-[132px] items-center justify-center overflow-hidden rounded-card border border-line bg-page px-5 py-7">
+          <span className="relative z-[1] text-center font-mono text-lg leading-7 tracking-[0.05em] break-all whitespace-pre-wrap text-ink select-all [font-feature-settings:'zero'_1] [font-variant-ligatures:none]">{step.value}</span>
           {wm ? (
-            <div aria-hidden style={{ position: "absolute", inset: -40, zIndex: 2, pointerEvents: "none", display: "flex", flexDirection: "column", justifyContent: "center", gap: 22, transform: "rotate(-14deg)", opacity: 0.16 }}>
+            <div aria-hidden className="pointer-events-none absolute -inset-10 z-[2] flex flex-col justify-center gap-[22px] -rotate-[14deg] opacity-[0.16]">
               {[0, 1, 2, 3, 4].map((i) => (
-                <span key={i} style={{ display: "block", whiteSpace: "nowrap", fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", color: C.v900, textAlign: "center" }}>
+                <span key={i} className="block text-center text-[13px] font-bold tracking-[0.08em] whitespace-nowrap text-ink">
                   {wm}
                 </span>
               ))}
             </div>
           ) : null}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div className="flex items-center gap-3">
           {step.clip > 0 ? (
-            <button
-              type="button"
+            <Button
+              size="sm"
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(step.value);
@@ -240,28 +247,26 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
                   /* the browser refused the clipboard */
                 }
               }}
-              style={{ height: 34, padding: "0 14px", border: `1px solid ${C.v700}`, background: "#FFFFFF", borderRadius: 4, color: C.v700, fontSize: 13, fontWeight: 500, cursor: "pointer" }}
             >
               {copied ? "Copied" : "Copy"}
-            </button>
+            </Button>
           ) : null}
-          <span style={{ fontSize: 13, color: C.v700 }}>{step.clip > 0 ? `Clipboard clears in ${step.clip}s` : "Copy is disabled for Restricted secrets — read it and type it."}</span>
+          <span className="text-[13px] text-body">{step.clip > 0 ? `Clipboard clears in ${step.clip}s` : "Copy is disabled for Restricted secrets — read it and type it."}</span>
         </div>
-        <div style={{ fontSize: 13, color: C.muted }}>Hiding in {Math.ceil(left / 1000)} seconds. Revealing again needs the whole flow.</div>
+        <div className="text-[13px] text-muted">Hiding in {Math.ceil(left / 1000)} seconds. Revealing again needs the whole flow.</div>
       </div>
     );
     btns = (
-      <button
-        type="button"
+      <Button
+        variant="primary"
         onClick={() => {
           if (copiedRef.current) navigator.clipboard?.writeText("").catch(() => {});
           copiedRef.current = false;
           setStep({ k: "hidden", seconds: Math.round((now - (step.until - step.total)) / 1000) });
         }}
-        style={btnStyle("v")}
       >
         Hide now
-      </button>
+      </Button>
     );
   } else if (plan) {
     if (plan.step === "novault") {
@@ -274,11 +279,11 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
           <Msg t="Not available to you" m={plan.why} tone="violet" />
           {plan.who.length ? (
             <div>
-              <div style={{ ...LBL, marginBottom: 6 }}>People who can</div>
+              <div className="mb-1.5 text-xs font-medium tracking-label text-muted uppercase">People who can</div>
               {plan.who.slice(0, 6).map((n) => (
-                <div key={n} style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 0" }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: C.v500 }} />
-                  <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: C.ink }}>{n}</span>
+                <div key={n} className="flex items-center gap-3 py-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-muted" />
+                  <span className="flex-1 text-sm font-medium text-ink">{n}</span>
                 </div>
               ))}
             </div>
@@ -293,20 +298,20 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
         <>
           {closeB}
           {plan.canBreakglass ? (
-            <Link href="/locker/emergency" style={btnStyle("d")}>
+            <Link href="/locker/emergency" className={buttonClass({ variant: "danger" })}>
               Start emergency access
             </Link>
           ) : null}
         </>
       );
     } else if (plan.step === "confirm") {
-      body = <div style={{ fontSize: 13, lineHeight: "19px", color: C.v700 }}>Standard secret. {plan.notice}</div>;
+      body = <div className="text-[13px] leading-[19px] text-body">Standard secret. {plan.notice}</div>;
       btns = (
         <>
           {cancel}
-          <button type="button" disabled={busy} onClick={() => doReveal()} style={btnStyle("v")}>
+          <Button variant="primary" disabled={busy} onClick={() => doReveal()}>
             {busy ? "Revealing…" : "Reveal"}
-          </button>
+          </Button>
         </>
       );
     } else if (plan.step === "stepup") {
@@ -314,9 +319,8 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
       body = (
         <>
           {plan.approvedBy ? <Msg t={`Approved by ${plan.approvedBy}`} m={`Confirm your password to see it. The approval lapses in ${mmss(leftApproval ?? 0)}.`} tone="green" /> : null}
-          <label style={{ display: "block" }}>
-            <span style={{ display: "block", ...LBL, marginBottom: 6 }}>Confirm it is you</span>
-            <input
+          <Field label="Confirm it is you" error={pwErr || null}>
+            <Input
               type="password"
               value={pw}
               onChange={(e) => {
@@ -326,20 +330,20 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
               placeholder="Your MahekOne password"
               autoComplete="off"
               autoFocus
-              style={{ width: "100%", height: 44, padding: "0 12px", border: `1px solid ${pwErr ? C.red : "#C2C8D2"}`, borderRadius: 4, fontSize: 15, fontFamily: MONO }}
+              invalid={!!pwErr}
+              className="h-11 font-mono text-[15px]"
             />
-            {pwErr ? <span style={{ display: "block", fontSize: 12, color: C.red, marginTop: 4 }}>{pwErr}</span> : null}
-          </label>
+          </Field>
           {plan.askReason ? whyBox : null}
-          <div style={{ fontSize: 13, lineHeight: "19px", color: C.v700 }}>This reveal will be recorded against your name. {plan.notice}</div>
+          <div className="text-[13px] leading-[19px] text-body">This reveal will be recorded against your name. {plan.notice}</div>
         </>
       );
       btns = (
         <>
           {cancel}
-          <button type="button" disabled={busy || !pw} onClick={() => doReveal(plan.requestId)} style={pw ? btnStyle("v") : { ...btnStyle("v"), opacity: 0.5, cursor: "not-allowed" }}>
+          <Button variant="primary" disabled={busy || !pw} onClick={() => doReveal(plan.requestId)}>
             {busy ? "Revealing…" : "Reveal"}
-          </button>
+          </Button>
         </>
       );
     } else if (plan.step === "request") {
@@ -349,24 +353,24 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
           <Msg t="Restricted secrets need a second person’s approval" m="Your request will be sent to:" tone="violet" />
           {plan.approvers.length ? (
             plan.approvers.slice(0, 6).map((n) => (
-              <div key={n} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: C.v700 }} />
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: C.ink }}>{n}</span>
-                <span style={{ fontSize: 13, color: C.muted }}>Approvals</span>
+              <div key={n} className="flex items-center gap-3">
+                <span className="h-2.5 w-2.5 rounded-full bg-ink" />
+                <span className="flex-1 text-sm font-medium text-ink">{n}</span>
+                <span className="text-[13px] text-muted">Approvals</span>
               </div>
             ))
           ) : (
             <Msg t="Nobody else can approve" m="Nobody else holds Approvals in the Locker. Ask a Locker admin to give it to a second person." tone="amber" />
           )}
           {whyBox}
-          <div style={{ fontSize: 13, lineHeight: "19px", color: C.v700 }}>Requests lapse after {plan.approvalMinutes} minutes. Copy to clipboard is disabled for Restricted secrets — read it and type it.</div>
+          <div className="text-[13px] leading-[19px] text-body">Requests lapse after {plan.approvalMinutes} minutes. Copy to clipboard is disabled for Restricted secrets — read it and type it.</div>
         </>
       );
       btns = (
         <>
           {cancel}
-          <button
-            type="button"
+          <Button
+            variant="primary"
             disabled={busy}
             onClick={async () => {
               if (!whyOk) return setWhyErr(true);
@@ -376,10 +380,9 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
               if (!r.ok) return setStep({ k: "error", msg: r.error });
               await load();
             }}
-            style={btnStyle("v")}
           >
             {busy ? "Sending…" : "Request approval"}
-          </button>
+          </Button>
         </>
       );
     } else if (plan.step === "waiting") {
@@ -393,29 +396,27 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
           <>
             <Msg t="Request sent" m="Approval is needed from one of the people below. You can close this window — the request stays open and you are notified when it is decided." tone="violet" />
             {plan.approvers.slice(0, 6).map((n) => (
-              <div key={n} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#B77B08", animation: "lk-pulse 1.4s ease-in-out infinite" }} />
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: C.ink }}>{n}</span>
-                <span style={{ fontSize: 13, color: C.muted }}>notified</span>
+              <div key={n} className="flex items-center gap-3">
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-warn" />
+                <span className="flex-1 text-sm font-medium text-ink">{n}</span>
+                <span className="text-[13px] text-muted">notified</span>
               </div>
             ))}
           </>
         );
       btns = (
         <>
-          <button
-            type="button"
+          <Button
             onClick={async () => {
               await withdrawReveal(plan.requestId);
               close();
             }}
-            style={btnStyle("s")}
           >
             Withdraw request
-          </button>
-          <button type="button" onClick={close} style={btnStyle("v")}>
+          </Button>
+          <Button variant="primary" onClick={close}>
             Close — keep waiting
-          </button>
+          </Button>
         </>
       );
     } else if (plan.step === "declined") {
@@ -431,35 +432,37 @@ function RevealDialog({ credentialId, title, tier, field, previousSecretId, onCl
 
   const canBackdropClose = step.k !== "revealed" && !(plan && plan.step === "waiting");
   return (
-    <div onClick={() => canBackdropClose && close()} style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(38,32,65,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+    <div onClick={() => canBackdropClose && close()} className="ui-scrim animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6">
       <div
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 560, maxWidth: "100%", maxHeight: "calc(100vh - 48px)", background: "#FFFFFF", borderRadius: 6, boxShadow: "0 16px 48px rgba(38,32,65,0.24)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "lk-reveal 300ms cubic-bezier(0.2,0,0.2,1)" }}
+        className="ui-dialog flex max-h-[88vh] w-[560px] max-w-full flex-col overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 24px", background: C.v50, borderBottom: `1px solid ${C.v100}` }}>
-          <span style={{ color: C.v700, fontSize: 18, lineHeight: "24px" }}>◈</span>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 18, lineHeight: "24px", fontWeight: 600, color: C.v900 }}>{head}</span>
-            <span style={{ display: "block", fontSize: 13, color: C.v700, marginTop: 2 }}>{step.k === "revealed" ? `${step.field}${step.previous ? " · previous value" : ""}` : title}</span>
-            <span style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+        <div className="ui-dialog-title flex items-start gap-3 border-b border-divider px-5 py-4">
+          <span className="mt-0.5 flex text-muted">
+            <LkIcon name="key" size={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-lg leading-6 font-semibold text-ink">{head}</span>
+            <span className="mt-0.5 block text-[13px] text-body">{step.k === "revealed" ? `${step.field}${step.previous ? " · previous value" : ""}` : title}</span>
+            <span className="mt-1.5 flex items-center gap-2">
               <TierPill tier={tier} />
-              <span style={{ fontSize: 12, color: C.v500 }}>{step.k === "revealed" ? "Revealed to you" : `${field}${previousSecretId ? " · previous value" : ""}`}</span>
+              <span className="text-xs text-muted">{step.k === "revealed" ? "Revealed to you" : `${field}${previousSecretId ? " · previous value" : ""}`}</span>
             </span>
           </span>
           {ring ? (
-            <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+            <span className="flex flex-none items-center gap-2">
               <svg width="36" height="36" viewBox="0 0 36 36" aria-hidden>
-                <circle cx="18" cy="18" r="15" fill="none" stroke={C.v100} strokeWidth="3" />
-                <circle cx="18" cy="18" r="15" fill="none" stroke={C.v700} strokeWidth="3" strokeDasharray={String(RING)} strokeDashoffset={String(ring.off)} transform="rotate(-90 18 18)" strokeLinecap="round" />
+                <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-line)" strokeWidth="3" />
+                <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-ink)" strokeWidth="3" strokeDasharray={String(RING)} strokeDashoffset={String(ring.off)} transform="rotate(-90 18 18)" strokeLinecap="round" />
               </svg>
-              <span style={{ fontSize: 15, fontWeight: 600, color: C.v900, minWidth: 34 }}>{ring.label}</span>
+              <span className="min-w-[34px] text-[15px] font-semibold text-ink">{ring.label}</span>
             </span>
           ) : null}
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>{body}</div>
-        <div style={{ padding: "12px 24px", borderTop: `1px solid ${C.v100}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>{btns}</div>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">{body}</div>
+        <div className="flex justify-end gap-2.5 border-t border-divider px-5 py-3">{btns}</div>
       </div>
     </div>
   );

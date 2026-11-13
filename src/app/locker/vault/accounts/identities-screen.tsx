@@ -1,8 +1,9 @@
 "use client";
 
+import { buttonClass, cx } from "@/components/ui/primitives";
 import { useRouter } from "next/navigation";
 import { saveIdentity } from "@/lib/actions/locker-vault";
-import { C, Pill, btnStyle, nf, useModal, useToast, type ModalField } from "../../_ui/kit";
+import { C, Pill, nf, useModal, useToast, type ModalField } from "../../_ui/kit";
 import { Alert, Block, Cell, GTable, Stats, Yes } from "../../_ui/vault-parts";
 
 export type IdRow = { id: string; email: string; provider: string; kind: string; controlled: boolean; mfa: boolean; recovery: boolean; controlledByName: string | null; score: number; direct: number; ownerName: string | null; ownerId: string | null };
@@ -38,10 +39,10 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
     });
   };
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+    <div className="flex flex-col gap-5 px-6 pb-12">
       {pers.length ? (
         <Alert tone="red" t={`${pers.length} company ${pers.length === 1 ? "service is" : "services are"} rooted on personal accounts`} m={pers.map((i) => `${i.email} (${i.direct} linked services, ${i.controlledByName ?? "—"})`).join(" · ")}>
-          <button type="button" onClick={() => router.push(`/locker/vault/connections?id=${pers[0].id}`)} style={btnStyle("d", true)}>
+          <button type="button" onClick={() => router.push(`/locker/vault/connections?id=${pers[0].id}`)} className={buttonClass({ variant: "danger", size: "sm" })}>
             See what breaks
           </button>
         </Alert>
@@ -59,7 +60,7 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
         title="All sign-in accounts"
         sub="Click a sign-in account to see what relies on it."
         acts={
-          <button type="button" onClick={() => edit()} style={btnStyle("v", true)}>
+          <button type="button" onClick={() => edit()} className={buttonClass({ variant: "primary", size: "sm" })}>
             Add account
           </button>
         }
@@ -81,16 +82,16 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
           rows={rows.map((i) => ({
             key: i.id,
             edge: !i.controlled ? C.red : null,
-            bg: !i.controlled ? "#FFF8F8" : null,
+            bg: !i.controlled ? "var(--color-danger-soft)" : null,
             href: `/locker/vault/connections?id=${i.id}`,
             cells: [
               <Cell key="a" t={i.email} sub={i.provider} />,
               <Cell key="b" t={i.kind[0].toUpperCase() + i.kind.slice(1)} />,
-              i.controlled ? <Pill key="c" label="Company" bg="#E9F5EE" fg="#1D7A45" /> : <Pill key="c" label={`Personal · ${i.controlledByName ?? "—"}`} bg="#FCECEC" fg="#B3261E" />,
+              i.controlled ? <Pill key="c" label="Company" tone="success" /> : <Pill key="c" label={`Personal · ${i.controlledByName ?? "—"}`} tone="danger" />,
               <Yes key="d" on={i.mfa} />,
               <Yes key="e" on={i.recovery} yes="Set" no="Missing" noTone="amber" />,
-              <Cell key="f" t={nf(i.direct)} style={{ fontWeight: 600, color: C.ink }} />,
-              <Cell key="g" t={nf(i.score)} style={{ fontWeight: 600, color: i.score > 100 ? C.red : C.ink }} />,
+              <Cell key="f" t={nf(i.direct)} className="font-semibold text-ink" />,
+              <Cell key="g" t={nf(i.score)} className={cx("font-semibold", i.score > 100 ? "text-danger" : "text-ink")} />,
               <Cell key="h" t={i.ownerName ?? "—"} />,
               <button
                 key="i"
@@ -99,7 +100,7 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
                   e.stopPropagation();
                   edit(i);
                 }}
-                style={{ ...btnStyle("s", true), height: 28, fontSize: 12 }}
+                className={buttonClass({ variant: "secondary", size: "sm" })}
               >
                 Edit
               </button>,

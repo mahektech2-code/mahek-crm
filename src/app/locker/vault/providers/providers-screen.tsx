@@ -19,7 +19,7 @@ export function ProvidersScreen({ list }: { list: P[] }) {
   const [selName, setSel] = useState<string | null>(null);
   const sel = list.find((p) => p.name === selName) ?? list.find((p) => /DigitalOcean/i.test(p.name)) ?? list[0];
   return (
-    <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="flex flex-col gap-4 px-6 pb-12">
       <Block vault title="Providers" sub={`${nf(list.length)} providers · click one to expand`}>
         <GTable
           vault
@@ -35,16 +35,16 @@ export function ProvidersScreen({ list }: { list: P[] }) {
           ]}
           rows={list.map((p) => ({
             key: p.name,
-            edge: p === sel ? C.v700 : null,
-            bg: p === sel ? C.v50 : null,
+            edge: p === sel ? C.brand : null,
+            bg: p === sel ? "var(--color-brand-soft)" : null,
             onClick: () => setSel(p.name),
             cells: [
-              <Cell key="a" t={p.name} style={{ fontWeight: 500, color: C.v900 }} />,
+              <Cell key="a" t={p.name} className="font-medium text-ink" />,
               <Cell key="b" t={nf(p.accounts)} />,
               <Cell key="c" t={nf(p.creds.length)} />,
               <Cell key="d" t={nf(p.assets.length)} />,
               <Cell key="e" t={p.spendPaise ? inr(p.spendPaise) : "—"} />,
-              p.mfaPct == null ? <Cell key="f" t="—" /> : <BarCell key="f" t={`${p.mfaPct}%`} pct={p.mfaPct} col={p.mfaPct < 60 ? "#B77B08" : C.v500} />,
+              p.mfaPct == null ? <Cell key="f" t="—" /> : <BarCell key="f" t={`${p.mfaPct}%`} pct={p.mfaPct} col={p.mfaPct < 60 ? "var(--color-warn)" : C.ink} />,
               <Cell key="g" t={p.owners.slice(0, 2).join(", ") || "—"} />,
             ],
           }))}
@@ -63,7 +63,7 @@ export function ProvidersScreen({ list }: { list: P[] }) {
                 ["Env", "100px"],
                 ["Owner", "140px"],
               ]}
-              rows={sel.creds.map((x) => ({ key: x.id, href: `/locker/vault/${x.id}`, cells: [<Cell key="a" t={x.title} style={{ color: C.v900, fontWeight: 500 }} />, <Cell key="b" t={x.account} style={{ fontSize: 13 }} />, <TierPill key="c" tier={x.tier} />, <Cell key="d" t={x.env} />, <Cell key="e" t={x.owner} />] }))}
+              rows={sel.creds.map((x) => ({ key: x.id, href: `/locker/vault/${x.id}`, cells: [<Cell key="a" t={x.title} className="text-ink font-medium" />, <Cell key="b" t={x.account} className="text-[13px]" />, <TierPill key="c" tier={x.tier} />, <Cell key="d" t={x.env} />, <Cell key="e" t={x.owner} />] }))}
             />
           </Block>
           <Block title={`${sel.name} · subscriptions and assets`} sub={`${inr(sel.spendPaise)} a year`}>

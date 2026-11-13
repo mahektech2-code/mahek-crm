@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORIES, CATEGORY } from "@/lib/locker/catalogue";
-import { CRIT } from "@/lib/locker/engine";
-import { Btn, C, PageHead, Pill } from "../../_ui/kit";
+import { Btn, CritPill, PageHead } from "../../_ui/kit";
 import { ListBlock } from "../../_ui/register-parts";
 import { AssetForm, type PersonOpt, type PmOpt, type TypeOpt } from "../asset-form";
 
@@ -29,9 +28,9 @@ export function NewAsset(props: { types: TypeOpt[]; cats: string[]; initialCat: 
   return (
     <>
       <PageHead crumb="Locker · Register" title="Add asset" sub={sub} />
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="flex flex-col gap-5 px-6 pb-12">
         {step === "cat" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 16, alignItems: "start" }}>
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
             <ListBlock
               title="Choose a category"
               sub="The category decides who sees it and which types it offers."
@@ -63,7 +62,7 @@ export function NewAsset(props: { types: TypeOpt[]; cats: string[]; initialCat: 
               .map((t) => ({
                 t: t.name,
                 sub: `${MODEL_LINE[t.model]} · time needed ${t.leadDays} days`,
-                badge: <Pill label={CRIT[t.criticality].label} bg={CRIT[t.criticality].bg} fg={CRIT[t.criticality].fg} />,
+                badge: <CritPill crit={t.criticality} />,
                 action: (
                   <Btn
                     kind="p"
@@ -95,7 +94,7 @@ export function NewAsset(props: { types: TypeOpt[]; cats: string[]; initialCat: 
             onSaved={(id) => router.push(`/locker/assets/${id}`)}
           />
         ) : null}
-        <div style={{ fontSize: 12, color: C.muted }}>Every asset is saved with a named owner and starts its reminder schedule the moment it is saved.</div>
+        <div className="text-xs text-muted">Every asset is saved with a named owner and starts its reminder schedule the moment it is saved.</div>
       </div>
     </>
   );

@@ -1,9 +1,10 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import { useRouter } from "next/navigation";
 import { saveLadder } from "@/lib/actions/locker-admin";
 import { CRIT } from "@/lib/locker/engine";
-import { Pill, btnStyle, useModal, useToast } from "../../_ui/kit";
+import { Pill, useModal, useToast } from "../../_ui/kit";
 import { Block, Grid, LList } from "../../_ui/vault-parts";
 
 export function LaddersScreen({ ladders }: { ladders: Record<number, number[]> }) {
@@ -11,7 +12,7 @@ export function LaddersScreen({ ladders }: { ladders: Record<number, number[]> }
   const modal = useModal();
   const toast = useToast();
   return (
-    <div style={{ padding: "0 24px 48px 24px" }}>
+    <div className="px-6 pb-12">
       <Grid cols={2}>
         {[4, 3, 2, 1].map((k) => {
           const L = ladders[k] ?? [];
@@ -39,7 +40,7 @@ export function LaddersScreen({ ladders }: { ladders: Record<number, number[]> }
                       },
                     })
                   }
-                  style={btnStyle("s", true)}
+                  className={buttonClass({ variant: "secondary", size: "sm" })}
                 >
                   Edit schedule
                 </button>
@@ -51,7 +52,7 @@ export function LaddersScreen({ ladders }: { ladders: Record<number, number[]> }
                   t: x > 0 ? `+${x} daily` : x === 0 ? "End date day" : `${x} days`,
                   sub:
                     (x <= -30 ? "In-app · owner" : x <= -7 ? "In-app · owner and backup" : `In-app · owner, backup, department head${k === 4 ? ", management" : ""}`) + (x >= 0 ? " · moves up if nobody acts" : ""),
-                  badge: x >= 0 ? <Pill label="Moves up" bg="#FCECEC" fg="#B3261E" /> : <Pill label="Reminder" bg="#F7F8FA" fg="#3D4453" />,
+                  badge: x >= 0 ? <Pill label="Moves up" tone="danger" /> : <Pill label="Reminder" tone="neutral" />,
                 }))}
               />
             </Block>

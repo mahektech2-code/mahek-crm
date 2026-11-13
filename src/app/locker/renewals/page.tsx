@@ -5,8 +5,9 @@ import { CRIT, daysLabel } from "@/lib/locker/engine";
 import type { AssetLite } from "@/lib/locker/lite";
 import { toLite } from "@/lib/locker/register-service";
 import { registerFor, today } from "@/lib/locker/service";
-import { C, fd, nf } from "@/lib/locker/style";
-import { PageHead, Pill, StatusPill } from "../_ui/kit";
+import { buttonClass, cx } from "@/components/ui/primitives";
+import { fd, nf } from "@/lib/locker/style";
+import { PageHead, StatusPill } from "../_ui/kit";
 import { GenTable } from "../_ui/register-parts";
 
 export const metadata = { title: "Renewals" };
@@ -36,22 +37,22 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Pro
     href: `/locker/assets/${a.id}/renewal`,
     cells: [
       { t: a.title, sub: `${a.code} · ${a.typeName}` },
-      { t: daysLabel(a.actionIn), sub: fd(a.actionDate), style: { fontWeight: 600, color: (a.d ?? 0) < 0 ? C.red : C.ink } },
+      { t: daysLabel(a.actionIn), sub: fd(a.actionDate), cls: cx("font-semibold", (a.d ?? 0) < 0 ? "text-danger" : "text-ink") },
       { node: <StatusPill status={a.status} /> },
-      { t: a.ownerName ?? "Unassigned", style: a.ownerName ? {} : { color: C.red, fontWeight: 600 } },
-      { node: <Pill label={OPEN.includes(a.status) ? "Open case" : "Start renewal"} bg={C.brand} fg="#FFFFFF" style={{ height: 28, padding: "0 10px", borderRadius: 4, fontSize: 12 }} />, style: { textAlign: "right" as const } },
+      { t: a.ownerName ?? "Unassigned", cls: a.ownerName ? undefined : "font-semibold text-danger" },
+      { node: <span className={buttonClass({ variant: "primary", size: "sm" })}>{OPEN.includes(a.status) ? "Open case" : "Start renewal"}</span>, cls: "text-right" },
     ],
   });
-  const tabSt = (on: boolean) => ({ height: 40, display: "inline-flex", alignItems: "center", fontSize: 14, fontWeight: on ? 600 : 400, color: on ? C.ink : C.muted, boxShadow: on ? `inset 0 -2px 0 ${C.brand}` : "none", textDecoration: "none" });
+  const tabCls = (on: boolean) => cx("-mb-px flex items-center border-b-2 py-2 text-sm whitespace-nowrap no-underline hover:no-underline", on ? "border-brand font-semibold text-ink" : "border-transparent font-medium text-muted hover:text-body");
   return (
     <>
       <PageHead crumb="Locker · My work" title="Renewals" sub="Renewal tasks in flight, and what needs one started." />
-      <div style={{ padding: "0 24px 48px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
-        <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${C.line}` }}>
-          <Link href="/locker/renewals" style={tabSt(tab !== "all")}>
+      <div className="flex flex-col gap-5 px-6 pb-12">
+        <div className="flex flex-wrap gap-x-5 border-b border-line">
+          <Link href="/locker/renewals" className={tabCls(tab !== "all")}>
             Assigned to me · {nf(all.filter((a) => mineOf(a) && DUE.includes(a.status)).length)}
           </Link>
-          <Link href="/locker/renewals?tab=all" style={tabSt(tab === "all")}>
+          <Link href="/locker/renewals?tab=all" className={tabCls(tab === "all")}>
             Everyone · {nf(all.filter((a) => DUE.includes(a.status)).length)}
           </Link>
         </div>

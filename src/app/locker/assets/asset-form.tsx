@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { addDays, daysBetween } from "@/lib/format";
 import { createAsset, updateAsset, type AssetInput } from "@/lib/actions/locker-assets";
 import { CRIT, daysLabel, endFromValidity, validityFromDates, type ValidityUnit } from "@/lib/locker/engine";
 import type { TimeModel } from "@/lib/locker/catalogue";
-import { BTN_OFF, Btn, C, LBL, btnStyle, fd } from "../_ui/kit";
+import { Button, Card, controlClass, cx } from "@/components/ui/primitives";
+import { Btn, fd } from "../_ui/kit";
 
 /* ---------------------------------------------------------------------------
  * ONE FORM FOR A NEW ASSET AND FOR EDITING ONE, shaped by the type's time
@@ -43,18 +44,31 @@ export type FormInit = Partial<{
   extra: Record<string, string>;
 }>;
 
-const inputStyle = (bad?: boolean): CSSProperties => ({ width: "100%", height: 36, padding: "0 10px", border: `1px solid ${bad ? C.red : "#C2C8D2"}`, borderRadius: 4, fontSize: 14, background: "#FFFFFF", color: C.ink });
+/** The v4 control box for a raw input or select; `w` narrows it in a row. */
+const inputCls = (bad?: boolean, extra?: string) => controlClass({ invalid: bad, className: cx("h-8.5", extra) });
 
-function Field({ l, hint, hintC, err, children, req }: { l: string; hint?: ReactNode; hintC?: string; err?: string; children: ReactNode; req?: boolean }) {
+/** A hint that matters is coloured: ink when it states the result, amber or red when it warns. */
+type HintTone = "ink" | "warn" | "danger";
+const HINT_CLS: Record<HintTone, string> = { ink: "font-medium text-ink", warn: "font-medium text-warn-ink", danger: "font-medium text-danger" };
+
+/** The v4 field: sentence-case label, required marked, the hint written under the box. */
+function Field({ l, hint, hintC, err, children, req }: { l: string; hint?: ReactNode; hintC?: HintTone; err?: string; children: ReactNode; req?: boolean }) {
   return (
-    <label style={{ display: "block" }}>
-      <span style={{ ...LBL, display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+    <label className="block">
+      <span className="ui-field-label mb-1 flex items-center gap-1 text-xs font-medium tracking-label text-muted uppercase">
         <span>{l}</span>
-        {req ? <span>Required</span> : null}
+        {req ? (
+          <>
+            <span aria-hidden="true" className="text-danger">
+              *
+            </span>
+            <span className="sr-only">(required)</span>
+          </>
+        ) : null}
       </span>
       {children}
-      {hint ? <span style={{ display: "block", fontSize: 12, marginTop: 4, color: hintC ?? C.muted, fontWeight: hintC ? 500 : 400 }}>{hint}</span> : null}
-      {err ? <span style={{ display: "block", fontSize: 12, marginTop: 4, color: C.red }}>{err}</span> : null}
+      {hint ? <span className={cx("mt-1 block text-xs", hintC ? HINT_CLS[hintC] : "text-muted")}>{hint}</span> : null}
+      {err ? <span className="mt-1 block text-xs text-danger">{err}</span> : null}
     </label>
   );
 }
@@ -183,7 +197,7 @@ export function AssetForm({
   };
 
   const sel = (k: keyof FormInit, opts: { v: string; l: string }[], bad?: boolean) => (
-    <select value={String(v[k] ?? "")} onChange={(e) => set(k, e.target.value)} style={inputStyle(bad)}>
+    <select value={String(v[k] ?? "")} onChange={(e) => set(k, e.target.value)} className={inputCls(bad)}>
       {opts.map((o) => (
         <option key={o.v} value={o.v}>
           {o.l}
@@ -191,13 +205,13 @@ export function AssetForm({
       ))}
     </select>
   );
-  const txt = (k: keyof FormInit, ph?: string, type2 = "text") => <input type={type2} value={String(v[k] ?? "")} placeholder={ph} onChange={(e) => set(k, e.target.value)} style={inputStyle(!!errs[k])} />;
+  const txt = (k: keyof FormInit, ph?: string, type2 = "text") => <input type={type2} value={String(v[k] ?? "")} placeholder={ph} onChange={(e) => set(k, e.target.value)} className={inputCls(!!errs[k])} />;
   const peopleOpts = (blank: string) => [{ v: "", l: blank }].concat(people.map((p) => ({ v: p.id, l: p.title ? `${p.name} · ${p.title}` : p.name })));
   const durationRow = (label: string) => (
-    <Field l={label} hint={end ? `→ ${m === "term_contract" ? "Term ends" : "Expires"} ${fd(end)} · ${daysLabel(left)} ${left != null && left >= 0 ? "remaining" : ""}. Type an end date below instead and the duration fills itself.` : "Enter the start date and the end date computes."} hintC={end ? C.ink : undefined}>
-      <span style={{ display: "flex", gap: 8 }}>
-        <input type="number" min={1} value={validN} onChange={(e) => onDuration(e.target.value, unit)} style={{ ...inputStyle(), width: 120 }} />
-        <select value={unit} onChange={(e) => onDuration(validN, e.target.value as ValidityUnit)} style={{ ...inputStyle(), width: 160 }}>
+    <Field l={label} hint={end ? `→ ${m === "term_contract" ? "Term ends" : "Expires"} ${fd(end)} · ${daysLabel(left)} ${left != null && left >= 0 ? "remaining" : ""}. Type an end date below instead and the duration fills itself.` : "Enter the start date and the end date computes."} hintC={end ? "ink" : undefined}>
+      <span className="flex gap-2">
+        <input type="number" min={1} value={validN} onChange={(e) => onDuration(e.target.value, unit)} className={inputCls(false, "w-[120px]")} />
+        <select value={unit} onChange={(e) => onDuration(validN, e.target.value as ValidityUnit)} className={inputCls(false, "w-40")}>
           <option value="days">days</option>
           <option value="months">months</option>
           <option value="quarters">quarters</option>
@@ -208,15 +222,15 @@ export function AssetForm({
   );
 
   return (
-    <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
-      <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.line2}` }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>{type.name}</div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+    <Card className="overflow-hidden">
+      <div className="border-b border-divider px-5 py-3.5">
+        <div className="text-base font-semibold text-ink">{type.name}</div>
+        <div className="mt-0.5 text-[13px] text-muted">
           {categoryName} · {{ document: "Document", subscription: "Subscription", perpetual: "Lifetime", term_contract: "Contract with notice period" }[m]}
         </div>
       </div>
-      <div style={{ padding: "16px 20px", display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 14 }}>
-        <div style={{ gridColumn: "1 / -1" }}>
+      <div className="grid grid-cols-1 gap-3.5 px-5 py-4 md:grid-cols-2">
+        <div className="col-span-full">
           <Field l="Title" req err={errs.title}>
             {txt("title", `${type.name} · location`)}
           </Field>
@@ -226,17 +240,17 @@ export function AssetForm({
           <>
             <Field l="Document number">{txt("docNo")}</Field>
             <Field l="Issued by">
-              <input value={v.extra?.issued_by ?? ""} placeholder={type.authority} onChange={(e) => setExtra("issued_by", e.target.value)} style={inputStyle()} />
+              <input value={v.extra?.issued_by ?? ""} placeholder={type.authority} onChange={(e) => setExtra("issued_by", e.target.value)} className={inputCls()} />
             </Field>
             <Field l="Issued on">
-              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => onIssued(e.target.value)} style={inputStyle()} />
+              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => onIssued(e.target.value)} className={inputCls()} />
             </Field>
             {durationRow("Valid for")}
             <Field l="Or expires on" req hint="Typing an end date fills the duration above." err={errs.endDate}>
-              <input type="date" value={v.endDate ?? ""} onChange={(e) => onEnd(e.target.value)} style={inputStyle(!!errs.endDate)} />
+              <input type="date" value={v.endDate ?? ""} onChange={(e) => onEnd(e.target.value)} className={inputCls(!!errs.endDate)} />
             </Field>
             <Field l="Grace period" hint={type.graceDays ? `${type.graceDays} days after expiry — set on the type` : "None — runs out on the end date"}>
-              <input disabled value={type.graceDays ? `${type.graceDays} days` : "None"} style={{ ...inputStyle(), background: C.soft, color: C.muted }} />
+              <input disabled value={type.graceDays ? `${type.graceDays} days` : "None"} className={inputCls(false, "bg-canvas text-muted")} />
             </Field>
           </>
         ) : null}
@@ -245,25 +259,25 @@ export function AssetForm({
           <>
             <Field l="Provider">{txt("provider")}</Field>
             <Field l="Started on">
-              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => set("issuedOn", e.target.value)} style={inputStyle()} />
+              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => set("issuedOn", e.target.value)} className={inputCls()} />
             </Field>
             <Field l="Billing cycle">{sel("billingCycle", ["Monthly", "Quarterly", "Half-yearly", "Annual", "Biennial", "Triennial"].map((x) => ({ v: x, l: x })))}</Field>
             <Field l="Current period ends" req err={errs.endDate}>
-              <input type="date" value={v.endDate ?? ""} onChange={(e) => set("endDate", e.target.value)} style={inputStyle(!!errs.endDate)} />
+              <input type="date" value={v.endDate ?? ""} onChange={(e) => set("endDate", e.target.value)} className={inputCls(!!errs.endDate)} />
             </Field>
             <Field l="Amount · ₹ per cycle, GST extra">{txt("amountRupees", "", "number")}</Field>
             <Field l="Auto-renew">
-              <select value={v.autoRenew ? "On" : "Off"} onChange={(e) => set("autoRenew", e.target.value === "On")} style={inputStyle()}>
+              <select value={v.autoRenew ? "On" : "Off"} onChange={(e) => set("autoRenew", e.target.value === "On")} className={inputCls()}>
                 <option>On</option>
                 <option>Off</option>
               </select>
             </Field>
-            <Field l="Payment method" hint={cardFirst ? `⚠ This card expires on ${fd(pm!.expiresOn)}, before the renewal on ${fd(end)}. The charge will fail.` : undefined} hintC={C.amber}>
+            <Field l="Payment method" hint={cardFirst ? `⚠ This card expires on ${fd(pm!.expiresOn)}, before the renewal on ${fd(end)}. The charge will fail.` : undefined} hintC="warn">
               {sel("paymentMethodId", [{ v: "", l: "Manual transfer · none on file" }].concat(pms.map((p) => ({ v: p.id, l: `${p.label} ····${p.last4}${p.expiresOn ? ` · expires ${fd(p.expiresOn)}` : ""}` }))))}
             </Field>
             <Field l="Seats">{txt("seats", "", "number")}</Field>
             <Field l="Cancellation deadline">
-              <input type="date" value={v.extra?.cancellation_deadline ?? ""} onChange={(e) => setExtra("cancellation_deadline", e.target.value)} style={inputStyle()} />
+              <input type="date" value={v.extra?.cancellation_deadline ?? ""} onChange={(e) => setExtra("cancellation_deadline", e.target.value)} className={inputCls()} />
             </Field>
           </>
         ) : null}
@@ -272,21 +286,21 @@ export function AssetForm({
           <>
             <Field l="Document number">{txt("docNo")}</Field>
             <Field l="Acquired on">
-              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => set("issuedOn", e.target.value)} style={inputStyle()} />
+              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => set("issuedOn", e.target.value)} className={inputCls()} />
             </Field>
             <Field l="Version">
-              <input value={v.extra?.version ?? ""} onChange={(e) => setExtra("version", e.target.value)} style={inputStyle()} />
+              <input value={v.extra?.version ?? ""} onChange={(e) => setExtra("version", e.target.value)} className={inputCls()} />
             </Field>
             <Field l="Seats">{txt("seats", "", "number")}</Field>
             <Field l="Validity" hint="The licence is forever; support is not. Reminders follow the support date where there is one.">
-              <select value={noExpiry ? "none" : "support"} onChange={(e) => setNoExpiry(e.target.value === "none")} style={inputStyle()}>
+              <select value={noExpiry ? "none" : "support"} onChange={(e) => setNoExpiry(e.target.value === "none")} className={inputCls()}>
                 <option value="none">No expiry</option>
                 <option value="support">Support expires on a date</option>
               </select>
             </Field>
             {!noExpiry ? (
               <Field l="Support expires on">
-                <input type="date" value={v.endDate ?? ""} onChange={(e) => set("endDate", e.target.value)} style={inputStyle()} />
+                <input type="date" value={v.endDate ?? ""} onChange={(e) => set("endDate", e.target.value)} className={inputCls()} />
               </Field>
             ) : null}
           </>
@@ -296,26 +310,26 @@ export function AssetForm({
           <>
             <Field l="Other party">{txt("provider", type.authority)}</Field>
             <Field l="Signed on">
-              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => onIssued(e.target.value)} style={inputStyle()} />
+              <input type="date" value={v.issuedOn ?? ""} onChange={(e) => onIssued(e.target.value)} className={inputCls()} />
             </Field>
             {durationRow("Term")}
             <Field l="Or term ends on" req err={errs.endDate}>
-              <input type="date" value={v.endDate ?? ""} onChange={(e) => onEnd(e.target.value)} style={inputStyle(!!errs.endDate)} />
+              <input type="date" value={v.endDate ?? ""} onChange={(e) => onEnd(e.target.value)} className={inputCls(!!errs.endDate)} />
             </Field>
             <Field l="Notice period · days">{txt("noticeDays", String(type.leadDays), "number")}</Field>
             <Field
               l="Last day to give notice · computed"
               hint={`This is the date that matters: miss it and the contract renews for another term. Reminders fire on it, not on the expiry${end ? ` (${fd(end)})` : ""}.`}
-              hintC={C.redInk}
+              hintC="danger"
             >
-              <input disabled value={noticeBy ? `${fd(noticeBy)} · ${daysLabel(daysBetween(today, noticeBy))}` : "Enter the term"} style={{ ...inputStyle(), background: C.soft, color: C.ink }} />
+              <input disabled value={noticeBy ? `${fd(noticeBy)} · ${daysLabel(daysBetween(today, noticeBy))}` : "Enter the term"} className={inputCls(false, "bg-canvas text-ink")} />
             </Field>
           </>
         ) : null}
 
         {type.fields.map((f) => (
           <Field key={f.key} l={f.label}>
-            <input value={v.extra?.[f.key] ?? ""} onChange={(e) => setExtra(f.key, e.target.value)} style={inputStyle()} />
+            <input value={v.extra?.[f.key] ?? ""} onChange={(e) => setExtra(f.key, e.target.value)} className={inputCls()} />
           </Field>
         ))}
 
@@ -325,28 +339,28 @@ export function AssetForm({
           {sel("criticality", [4, 3, 2, 1].map((k) => ({ v: String(k), l: CRIT[k].label })))}
         </Field>
         <Field l="Department">{txt("department", "Compliance, Finance, IT…")}</Field>
-        <Field l="Primary owner" req hint={!ownerOk ? "An asset cannot be saved without a responsible person." : undefined} hintC={C.red} err={errs.ownerId}>
+        <Field l="Primary owner" req hint={!ownerOk ? "An asset cannot be saved without a responsible person." : undefined} hintC="danger" err={errs.ownerId}>
           {sel("ownerId", peopleOpts("Choose an owner"), !!errs.ownerId)}
         </Field>
-        <Field l={`Backup owner${crit >= 3 ? "" : " · optional"}`} req={crit >= 3} hint={crit >= 3 && !v.backupId ? `Every ${CRIT[crit].label.toLowerCase()} asset needs one — if the owner is away, nobody receives the reminder.` : undefined} hintC={C.amber} err={errs.backupId}>
+        <Field l={`Backup owner${crit >= 3 ? "" : " · optional"}`} req={crit >= 3} hint={crit >= 3 && !v.backupId ? `Every ${CRIT[crit].label.toLowerCase()} asset needs one — if the owner is away, nobody receives the reminder.` : undefined} hintC="warn" err={errs.backupId}>
           {sel("backupId", peopleOpts("No backup"), !!errs.backupId)}
         </Field>
         <Field l="External contact" hint="The CA, lawyer, agent or broker who does this renewal.">
           {txt("externalContact")}
         </Field>
-        <div style={{ gridColumn: "1 / -1" }}>
+        <div className="col-span-full">
           <Field l="Conditions imposed">
-            <textarea value={v.conditions ?? ""} onChange={(e) => set("conditions", e.target.value)} rows={3} style={{ width: "100%", padding: "8px 10px", border: "1px solid #C2C8D2", borderRadius: 4, fontSize: 14, lineHeight: "20px" }} />
+            <textarea value={v.conditions ?? ""} onChange={(e) => set("conditions", e.target.value)} rows={3} className={controlClass({ className: "resize-y py-2 leading-[21px]" })} />
           </Field>
         </div>
-        {fail ? <div style={{ gridColumn: "1 / -1", fontSize: 13, color: C.red }}>{fail}</div> : null}
-        <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        {fail ? <div className="col-span-full text-[13px] text-danger">{fail}</div> : null}
+        <div className="col-span-full flex justify-end gap-2">
           <Btn onClick={onBack}>Back</Btn>
-          <button type="button" title={why} onClick={save} style={ok && !busy ? btnStyle("p") : BTN_OFF}>
+          <Button variant="primary" title={why} disabled={!ok || busy} onClick={save}>
             {busy ? "Saving…" : assetId ? "Save changes" : "Save asset"}
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

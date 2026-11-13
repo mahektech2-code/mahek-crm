@@ -1,11 +1,12 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveType } from "@/lib/actions/locker-admin";
 import { CATEGORIES, CATEGORY } from "@/lib/locker/catalogue";
 import { MODEL_LABEL } from "@/lib/locker/engine";
-import { C, CritPill, Pill, btnStyle, inr, nf, useModal, useToast, type ModalField } from "../../_ui/kit";
+import { C, CritPill, Pill, inr, nf, useModal, useToast, type ModalField } from "../../_ui/kit";
 import { Block, Cell, GTable, Grid, LList } from "../../_ui/vault-parts";
 
 type T = { code: string; name: string; category: string; model: string; validityMonths: number; leadDays: number; graceDays: number; criticality: number; authority: string; typicalCostPaise: number; steps: string[]; consequence: string | null; fields: { key: string; label: string }[]; system: boolean; active: boolean };
@@ -61,13 +62,13 @@ export function TypesScreen({ types }: { types: T[] }) {
     });
   };
   return (
-    <div style={{ padding: "0 24px 48px 24px" }}>
+    <div className="px-6 pb-12">
       <Grid cols={2}>
         <Block
           title="Types"
           sub={`${nf(types.length)} types in ${new Set(types.map((t) => t.category)).size} categories`}
           acts={
-            <button type="button" onClick={() => edit()} style={btnStyle("p", true)}>
+            <button type="button" onClick={() => edit()} className={buttonClass({ variant: "primary", size: "sm" })}>
               New type
             </button>
           }
@@ -77,7 +78,7 @@ export function TypesScreen({ types }: { types: T[] }) {
             rows={types.map((y) => ({
               key: y.code,
               edge: y.code === selCode ? C.brand : null,
-              bg: y.code === selCode ? "#F7F4FF" : null,
+              bg: y.code === selCode ? "var(--color-brand-soft)" : null,
               onClick: () => setSel(y.code),
               cells: [
                 <Cell key="a" t={y.name} sub={`${y.authority}${y.active ? "" : " · retired"}`} />,
@@ -91,12 +92,12 @@ export function TypesScreen({ types }: { types: T[] }) {
           />
         </Block>
         {sel ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="flex flex-col gap-4">
             <Block
               title={sel.name}
               sub={`${MODEL_LABEL[sel.model as keyof typeof MODEL_LABEL] ?? sel.model} · ${sel.system ? "seeded with the Locker" : "added by an admin"}`}
               acts={
-                <button type="button" onClick={() => edit(sel)} style={btnStyle("s", true)}>
+                <button type="button" onClick={() => edit(sel)} className={buttonClass({ variant: "secondary", size: "sm" })}>
                   Edit type
                 </button>
               }
@@ -112,7 +113,7 @@ export function TypesScreen({ types }: { types: T[] }) {
               />
             </Block>
             <Block title={`Field schema · ${sel.name}`} sub="Fields beyond the common spine. Never a password here — secrets go in the vault.">
-              <LList items={sel.fields.map((f) => ({ key: f.key, t: f.label, sub: `key ${f.key}`, badge: <Pill label="Text" bg="#F7F8FA" fg="#3D4453" /> }))} empty="No extra fields — the common spine covers it." />
+              <LList items={sel.fields.map((f) => ({ key: f.key, t: f.label, sub: `key ${f.key}`, badge: <Pill label="Text" tone="neutral" /> }))} empty="No extra fields — the common spine covers it." />
             </Block>
             <Block title="Renewal steps" sub="Copied onto each renewal task when it is started, so a later edit never rewrites one under way.">
               <LList items={sel.steps.map((s, i) => ({ key: String(i), t: `${i + 1}. ${s}` }))} empty="No steps of its own — the general ones are used." />

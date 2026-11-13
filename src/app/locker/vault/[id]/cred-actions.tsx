@@ -1,9 +1,10 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/primitives";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { addLink, recordChange, removeLink } from "@/lib/actions/locker-vault";
-import { btnStyle, useModal, useToast } from "../../_ui/kit";
+import { useModal, useToast } from "../../_ui/kit";
 
 export function CredActions({ id, title, provider, fields, canWrite }: { id: string; title: string; provider: string; fields: string[]; canWrite: boolean }) {
   const modal = useModal();
@@ -11,12 +12,12 @@ export function CredActions({ id, title, provider, fields, canWrite }: { id: str
   const router = useRouter();
   const all = fields.length ? fields : ["Password"];
   return (
-    <span style={{ display: "flex", gap: 8, flex: "none" }}>
+    <span className="flex flex-none gap-2">
       <button
         type="button"
         disabled={!canWrite}
         title={canWrite ? "" : "The vault has no key on this deployment"}
-        style={btnStyle("s")}
+        className={buttonClass({ variant: "secondary" })}
         onClick={() =>
           modal({
             title: "Record a password change",
@@ -39,7 +40,7 @@ export function CredActions({ id, title, provider, fields, canWrite }: { id: str
       >
         Change
       </button>
-      <Link href={`/locker/vault/${id}/edit`} style={btnStyle("s")}>
+      <Link href={`/locker/vault/${id}/edit`} className={buttonClass({ variant: "secondary" })}>
         Edit
       </Link>
     </span>
@@ -60,7 +61,7 @@ export function LinkControls(p: { mode: "add"; credentialId: string; identities:
           if (!r.ok) return toast(r.error);
           router.refresh();
         }}
-        style={{ border: "none", background: "transparent", color: "#6B7385", cursor: "pointer", fontSize: 14 }}
+        className="cursor-pointer text-sm text-muted hover:text-danger"
       >
         ×
       </button>
@@ -68,7 +69,7 @@ export function LinkControls(p: { mode: "add"; credentialId: string; identities:
   return (
     <button
       type="button"
-      style={{ ...btnStyle("g", true), padding: 0, color: "#5B5080" }}
+      className="cursor-pointer text-[13px] font-medium text-brand-hover hover:underline"
       onClick={() =>
         modal({
           title: "Record a connection",

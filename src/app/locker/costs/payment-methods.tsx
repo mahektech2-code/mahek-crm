@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { daysBetween } from "@/lib/format";
 import { savePaymentMethod } from "@/lib/actions/locker-assets";
-import { Btn, C, Pill, fd, nf, useModal, useToast, type ModalField } from "../_ui/kit";
+import { Btn, Pill, fd, nf, useModal, useToast, type ModalField } from "../_ui/kit";
 import { ListBlock } from "../_ui/register-parts";
 
 type PM = { id: string; label: string; kind: string; last4: string; expiresOn: string | null; holder: string; bank: string; personal: boolean; active: boolean; uses: number };
@@ -48,7 +48,7 @@ export function PaymentMethods({ pms, canEdit, today }: { pms: PM[]; canEdit: bo
           t: `${p.label}${p.last4 ? ` ····${p.last4}` : ""}`,
           sub: [p.kind, p.bank, p.holder, p.expiresOn ? `expires ${fd(p.expiresOn)}` : "no expiry", `${p.uses} ${p.uses === 1 ? "asset" : "assets"}`].filter(Boolean).join(" · "),
           red: !p.active ? false : left != null && left < 0,
-          badge: !p.active ? <Pill label="Retired" bg={C.soft} fg={C.muted} /> : p.personal ? <Pill label="Personal card" bg={C.redSoft} fg={C.red} /> : left != null && left <= 60 ? <Pill label={left < 0 ? "Expired" : `In ${left} days`} bg={C.amberSoft} fg={C.amber} /> : undefined,
+          badge: !p.active ? <Pill tone="muted" label="Retired" /> : p.personal ? <Pill tone="danger" label="Personal card" /> : left != null && left <= 60 ? <Pill tone="warn" label={left < 0 ? "Expired" : `In ${left} days`} /> : undefined,
           action: canEdit ? <Btn small onClick={() => open(p)}>Change</Btn> : undefined,
         };
       })}

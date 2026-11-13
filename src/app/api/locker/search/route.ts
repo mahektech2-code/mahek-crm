@@ -30,7 +30,7 @@ export async function GET(req: Request) {
       .where(and(eq(lockerCredentials.active, true), or(ilike(lockerCredentials.title, like), ilike(lockerCredentials.username, like), ilike(lockerCredentials.provider, like))))
       .limit(6);
     if (creds.length)
-      groups.push({ label: "◈ Passwords & keys", vault: true, items: creds.map((c) => ({ href: `/locker/vault/${c.id}`, name: c.title, meta: `${TIER[c.tier as keyof typeof TIER].label} · ${c.username}` })) });
+      groups.push({ label: "Passwords & keys", vault: true, items: creds.map((c) => ({ href: `/locker/vault/${c.id}`, name: c.title, meta: `${TIER[c.tier as keyof typeof TIER].label} · ${c.username}` })) });
   }
   return NextResponse.json({ groups });
 }
