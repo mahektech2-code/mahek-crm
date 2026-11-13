@@ -259,7 +259,7 @@ describe("powers and godowns", () => {
     const t = await makeUser("Tara Transport", "associate");
     await db.insert(appModuleAccess).values({ id: id("ama"), userId: t.id, app: "erp", module: "erp.transport" });
     const ctx = await as(t);
-    for (const k of ["transport", "pendingLr", "trackLr", "paidFreight"]) assert.ok(ctx.screens.has(k), k);
+    for (const k of ["transport", "pendingLr", "trackLr", "freight"]) assert.ok(ctx.screens.has(k), k);
     assert.equal(ctx.screens.has("stock"), false);
     assert.equal(ctx.screens.has("rmStock"), false, "a tab of a screen they do not hold stays closed");
     await assert.rejects(requireErpWrite("rmStock"), ErpNotPermitted);

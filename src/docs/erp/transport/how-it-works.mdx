@@ -65,38 +65,42 @@ The desk *suggests* the bills an LR carries — our invoice number printed on it
 
 An LR's date is read from the date as printed, day first (31/10/26 is 31 October), not from the AI's own conversion. A date that cannot be this LR's — in the future, or more than four months old — is not used; where it reads as January and exactly one of October, November or December fits (a handwritten 10 read as 1), that month is taken and the desk is told to check it.
 
-## Vehicle trips and the transport payment
+## Transport expenses
 
-<Rule title="Dispatch names the vehicle; the trip follows">
-Mark dispatch-verified records the vehicle number. Each bill record it opens or joins takes that number and joins the **trip** of that vehicle on that dispatch date — matched with spaces and case ignored, so *MH04 AB 1234* and *mh04ab1234* are one vehicle — or opens a new trip. One trip carries bills for any number of customers. A bill dispatched with no vehicle joins no trip and is listed under *Bills on no trip* until Logistics puts it on one. Logistics can create a trip, edit its vehicle, driver, transporter and day (every bill on it takes the new vehicle number), add bills and take them off.
+<Rule title="Only Paid freight is a company expense">
+An order line's freight is the consignment's payment type, else the billing party's freight term. **Paid** (we pay the transporter) is included. **To Pay** (the customer pays the transporter) and **TBB** are shown on the bill so nobody wonders where they went, and are never counted.
 </Rule>
 
-<Rule title="A transport payment is shared out by dispatched litres only">
-Logistics records the **confirmed** transport amount once, against a trip, and ticks the bills it covers. It is shared out by dispatched litres — never by boxes, weight or the number of bills:
+<Rule title="One bill is one vehicle on one day, split by litres">
+A bill names the vehicle and the day it left. Every order line dispatch-verified onto that vehicle that day is offered — matched with spaces and case ignored, so *MH04 AB 1234* and *mh04ab1234* are one vehicle — and an order that left on another vehicle can be added by its number. The bill is shared over the ticked lines by dispatched litres only, never by boxes, customers or orders:
 
-- **Cost per litre** = the amount ÷ the ticked bills' litres;
-- **A bill's share** = its litres × the cost per litre.
+- **Cost per litre** = the bill ÷ the ticked lines' litres;
+- **A line's share** = its litres × the cost per litre.
 
-₹1,000 over 1,000 litres is ₹1 a litre, and a 250-litre bill carries ₹250. The shares are worked in paise and always add up to the amount exactly: each is rounded down, and the paise left over go one each to the bills that lost most to the rounding (on a tie, the larger bill, then the bill's id), so the same inputs always give the same split. The payment dialog previews the split with the same function the save writes with.
+₹1,000 over 500 litres is ₹2 a litre: 100 L carries ₹200, 150 L ₹300 and 250 L ₹500. Shares are worked in paise and always add up to the bill exactly: each is rounded down and the paise left over go to the lines that lost most to the rounding. The add-bill dialog previews the split with the same function the save writes with.
 </Rule>
 
-<Rule title="The same cost cannot reach a bill twice">
-A bill holds at most one live share, enforced by the database as well as the screen. A payment is refused when a ticked bill already carries one, when a bill is not on the trip, or when a bill's litres are zero or missing — naming the order, so its litres can be corrected. A payment that covers only part of a trip must say which part. A wrong payment is **reversed** with a reason: the payment and its shares stay, marked reversed, and the bills can be shared again. Moving a bill that carries a share to another trip is refused until its payment is reversed.
+<Rule title="The same freight cannot reach an order line twice">
+An order line carries at most one live share, enforced by the database. A line already on another bill is greyed out with that bill's number. The same LR number from the same transporter cannot be entered twice.
 </Rule>
 
-<Callout kind="money" title="Logistics records the payment; it does not make it">
-Recording a payment says the amount is confirmed — paid, or agreed to be paid — by whoever pays transporters. Nothing on the screen says Logistics paid it, and nothing here moves money. This is our cost to the transporter; the freight charged to the customer on the bill (Transportation cost on the order line, extra expenses on Paid freight) is a different figure and is never mixed with it.
+<Rule title="The split goes on the order line by itself">
+Nobody types a line's transport expense. It appears on Orders → Billing & dispatch as **Transport expense**, is added to the line's costing and margin where the cost comes from allocated lots, and reaches the Founder's Margins desk with the line's typed extra expenses. A line costed from the old order sheet already carries the sheet's whole cost, so its share is shown and not added again.
+</Rule>
+
+<Rule title="Pending until paid; a manager can undo">
+A new bill is **Pending**. **Mark as paid** asks the payment date and Bank, UPI or Cash (a reference and remarks are optional) and moves it to **Paid history**; the split stays on every order. A paid bill cannot be edited. A **manager** can move a paid bill back to Pending with a reason — the split stays and the undone payment is kept in the bill's history. A pending bill can be edited, or deleted with a reason, which takes its shares off every order; the bill itself is kept, marked deleted.
+</Rule>
+
+<Rule title="A corrected dispatch makes the split stale">
+If an order line on a pending bill changes after the split — its litres are corrected, it stops being Paid freight, or its dispatch is undone — the bill says so and cannot be paid until somebody presses **Split again**, which shares the bill over its lines as they are now (lines no longer Paid freight drop out). A paid bill is a record of what was paid and is not re-checked.
+</Rule>
+
+<Callout kind="money" title="Two different freight figures">
+This is our cost to the transporter. The freight charged to the customer on the bill (Transportation cost on the order line) is a different figure and is never mixed with it. Marking a bill paid records the payment; it does not move money in Petty Cash/Bank.
 </Callout>
 
-| Transport cost status (per trip) | When |
-|---|---|
-| **Not Recorded** | No live payment |
-| **Recorded** | A live payment not yet shared out |
-| **Allocation Pending** | Shared out, but some bill on the trip carries no share |
-| **Allocated** | Every bill on the trip carries a share |
-| **Reconciliation Required** | A share no longer matches — a bill's litres changed after the split, or the shares do not add up to the payment. Reverse it and record it again. |
-
-Every trip change, payment and reversal writes an event on each bill it touches (not shown to the customer) and an audit row.
+Every write is a row in the bill's history and an audit row (`erp.freightBill.*`). Bills, reports and the history are read on **Transport expenses**; Trips & freight and Paid freight were retired into it, and the old addresses open it.
 
 ## Delivery is confirmed by somebody
 
