@@ -141,7 +141,7 @@ export function TeamList({
                 className={
                   "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] whitespace-nowrap " +
                   (on
-                    ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
                     : "border-line bg-surface text-body hover:bg-canvas")
                 }
               >
@@ -183,7 +183,7 @@ export function TeamList({
                 (hasFix ? "cursor-pointer hover:bg-canvas" : "")
               }
             >
-              <span className="relative mt-0.5 flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
+              <span className="relative mt-0.5 flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-brand-hover">
                 {r.initials}
                 <span
                   className="absolute -right-0.5 -bottom-0.5 block size-2.5 rounded-full border-2 border-surface"

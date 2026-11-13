@@ -6,6 +6,7 @@ import { getConfig } from "@/lib/config/store";
 import { erpId } from "./server";
 import { purchaseFigures } from "./engines/purchase";
 import { batchState } from "./engines/production";
+import { CLOSED } from "./engines/logistics";
 import {
   belowLevel,
   drumVariances,
@@ -127,7 +128,7 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     orderLines({ openWork: true }),
     q(sql`select t.id, t.bill_no as "billNo", c.name as party, t.bill_date::text as "billDate", t.lr_no as lr, t.transporter, t.material_stage as stage, t.signed_copy_id as "signedCopyId"
             from erp_transports t join customers c on c.id = t.billing_customer_id
-           where coalesce(t.lr_no, '') = '' and t.signed_copy_id is null`),
+           where coalesce(t.lr_no, '') = '' and t.signed_copy_id is null and t.material_stage <> ${CLOSED}`),
     /* Accepted = the complaint moved to in_progress; when is its status history. */
     q(sql`select r.id, c.name as party,
                  (select min(h.at) from complaint_status_history h where h.complaint_id = r.id and h.to_status = 'in_progress') as "approvedAt",

@@ -198,7 +198,7 @@ function PersonPerformanceModal({
                 className={cx(
                   "cursor-pointer rounded-full border px-3 py-1 text-[13px]",
                   preset === p.key
-                    ? "border-brand bg-brand-soft text-[#5223E0]"
+                    ? "border-brand bg-brand-soft text-brand-hover"
                     : "border-line bg-surface text-body hover:border-brand",
                 )}
               >

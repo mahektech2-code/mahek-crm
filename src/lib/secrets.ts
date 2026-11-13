@@ -110,6 +110,12 @@ export const SECRET_NAMES = {
   "website.cmsReadSecret": "WEBSITE_CMS_READ_SECRET",
   /** What MahekOne presents when it tells the public website to refresh, and the key that signs preview links. Server-to-server only. */
   "website.cmsPublishSecret": "WEBSITE_CMS_PUBLISH_SECRET",
+  /**
+   * A fine-grained GitHub token on the one repository (Issues: read and write,
+   * Pull requests: read, Contents: read). Turns a feedback report into an
+   * issue, labels it for Claude, and reads the pull requests that fix it.
+   */
+  "github.token": "GITHUB_FEEDBACK_TOKEN",
 } as const;
 
 export type SecretName = keyof typeof SECRET_NAMES;

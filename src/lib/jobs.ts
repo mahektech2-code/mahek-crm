@@ -160,6 +160,8 @@ export type JobName =
   | "erp-alerts"
   /** Website review: approvals whose seven days have passed become `expired`, freeing their items. Idempotent. */
   | "website-review-expiry"
+  /** Feedback sent to GitHub: the pull request that fixed it, and whether it is in the serving build. Closes what is live. Hourly. */
+  | "feedback-fixes"
   /** A price list whose successor has taken over, filed as superseded. Hourly and nightly. */
   | "price-lists-supersede"
   /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
@@ -212,6 +214,15 @@ export type JobName =
   | "call-intel-eval";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
+
+async function feedbackFixesStep() {
+  const { syncFeedbackFixes } = await import("./services/feedback-fix-service");
+  const r = await syncFeedbackFixes();
+  return {
+    recordsAffected: r.closed,
+    detail: `${r.checked} with GitHub checked, ${r.merged} merged, ${r.closed} closed as live${r.errors ? `, ${r.errors} GitHub errors` : ""}`,
+  };
+}
 
 async function run(
   job: JobName,
@@ -914,6 +925,9 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
 
+  // Feedback whose fix is merged and now in the serving build closes itself.
+  results.push(await run("feedback-fixes", feedbackFixesStep, triggeredById));
+
   // Website review: approvals past their seven days.
   results.push(await run("website-review-expiry", websiteReviewExpiryStep, triggeredById));
   results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
@@ -1362,6 +1376,8 @@ export async function runJob(
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
     case "website-review-expiry":
       return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
+    case "feedback-fixes":
+      return [await run("feedback-fixes", feedbackFixesStep, triggeredById)];
     case "price-lists-supersede":
       return [await run("price-lists-supersede", priceListsSupersedeStep, triggeredById)];
     case "price-books-morning":

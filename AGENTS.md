@@ -1975,6 +1975,18 @@ slow payers and month-end view. Never write "· required" or
 (claude.ai artifact "Tele CRM — ERP design system and less text") is the
 board-by-board plan, and it lists, per screen, everything that was kept.
 
+**THE SALES DASHBOARD WEARS IT TOO (Nov 2026).** Its own shell
+(`app/sales/sales-shell.tsx`) is the ERP's frame — the sidebar the full height
+under the Mahek mark with "Live now" at its foot, the lavender header beside it
+with the switcher, the scope line, the search, Ask, the bell and the account
+menu — and carries `data-v4 data-v4-app="sales"`; the layout imports the sheet
+and Geist. The console's own parts (`components/console/parts.tsx`) are drawn
+in the ERP's forms: `MetricRow` is figure cards, `Pill` is a sentence-case
+`ui-badge`, `Button` carries the `ui-btn` markers, cards are `rounded-card`.
+The sheet's sentence-case label rule answers to `sales` as it does to `crm`,
+and a head cell with `aria-sort="none"` is no longer drawn as the sorted one.
+Nothing about what any screen shows or does moved.
+
 **AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
 The screens had drifted into twenty-two spellings of the small uppercase
 label, four heading sizes, three checkbox looks, ten text-link buttons and
@@ -2982,8 +2994,9 @@ src/
     admin/components/      the live design system, under For builders
     admin/feedback/        where the team's reports are read and answered
     admin/settings/        every setting, one page per app that has any
-    feedback/              the other end of it — where the person who reported
-                           something reads the reply and answers back
+    feedback/              forwards to the Feedback page inside an app the
+                           person holds (`<app>/feedback`), where they read
+                           the reply and answer back
   components/
     customers/customers-screen.tsx
                            the customer list, shared by the CRM and Accounts
@@ -6445,6 +6458,76 @@ permission rule is how one of them ends up more generous than the others.
 because the form that writes them runs in the browser and the service that
 reads them is `server-only`. `bug_reports` is the empty table this replaced —
 nothing writes to it; do not start.
+
+**FEEDBACK IS READ INSIDE THE APP, not on a page of its own (Nov 2026).** The
+reporter's side was `/feedback`, a bare page outside every app with no header
+or sidebar, which read as being thrown out of MahekOne. Each app with a
+sidebar now has a **Feedback** page under Support (or its last group) —
+`FEEDBACK_APP_PATHS`: the CRM, Accounts, the Sales Dashboard, the ERP, HRMS and
+the Founder Command Centre — all rendering `MyFeedbackPage`, and every one is
+in `ALWAYS_OPEN_MODULES`, for the reason My tasks is: a reply has to be
+readable wherever somebody is. `/feedback` FORWARDS (with `?r=`) to the first of
+those apps they hold, which is why every notification links there — the link
+has to work from any app's bell. Somebody holding none of them still reads it
+there, in a plain frame.
+
+**THE BUTTON IS A MENU, THE FORM ASKS LESS.** `FeedbackButton` carries the count
+of unread replies, opens on Report a problem / Suggest an idea / Ask a question
+(each opening `TellUsDialog` with its kind chosen) and the last three things
+sent with their stage. The form is one box — `titleFromBody` makes the first
+line the heading, so `title` is optional on `submitFeedback` — plus, for a
+fault only, how much it is getting in the way (`feedback.impact`: blocking,
+slows, minor), which orders the team's queue. Screenshots are captured
+(`getDisplayMedia`, one frame, the dialog hidden by `body.fb-capturing`),
+pasted or picked — `components/feedback/shots.tsx`.
+
+**EVERY REPORT HAS A NUMBER.** `feedback.number` is a sequence; `feedbackRef`
+reads it "FB-1042". It is what a notification, the console's search and a merge
+name, never the id.
+
+**SAME PROBLEM, ONE CONVERSATION.** `feedback.duplicate_of_id` points a report
+at another. It keeps its own words and files and reads the other's status and
+thread; everybody who reported it is on the REPORTER side of that one thread
+(`reportersOf`, `canSeeFeedback`), each notified with a link to their own row.
+One level only — `rootOf` resolves every join to the root, and a merge
+re-points anything that had joined the merged report. The form offers open
+reports that read the same (`similarFeedback`, pg_trgm) as somebody types; the
+console merges by number. The console lists roots only, with the others under
+"Also reported by".
+
+**TEAM NOTES.** `feedback_messages.internal`: written by triage, read only in
+the team's view (`withThreads(…, team)`), never notified to the reporter, and
+never counted as an answer when deciding who owes whom.
+
+**DONE CLOSES IT — Mahek's decision, Nov 2026.** Nobody waits for the reporter
+to confirm. They are told and asked "Is it fixed for you?" (`answerFix`):
+`fixed` is recorded in `feedback.verdict`; `still_happening` reopens it to
+Being looked at and it comes back as owed. The queues (`triageQueue`, pure) are
+Needs a reply / Waiting on them / Being looked at / Closed, decided per row by
+the last line the REPORTER can read, and `feedbackCounts` counts through the
+same function so a tab and its number cannot disagree. `assignFeedback` hands a
+report only to somebody `triagerIds` names.
+
+**A REPORT IS ASKED WHAT IT NEEDS BEFORE IT IS FIXED, and only code reaches
+GitHub.** Most of what the team sends in is a wrong record, a setting, an
+access grant or a question, fixed in minutes by the team; a developer handed
+one finds there is nothing to change. `feedback_fixes` (`0326`) keeps, per
+root report, its `need` — code_change, data_fix, setting, access, how_to,
+not_a_fault — read by the AI after every new report (`after()` in
+`submitFeedback`, `feedbackFix.*` settings) and overrulable by anybody
+triaging (`need_decided_by_id`; the AI never writes over a person). Anything
+but a code change opens "How the team can fix it" with the steps. A code
+change is "Send to developer" (a GitHub issue through the `github.token`
+credential) and "Ask Claude to fix", which only a PLATFORM ADMINISTRATOR may
+press (checked in `askClaudeToFix`): it puts `feedbackFix.aiFixLabel` on the
+issue and `.github/workflows/claude-fix.yml` runs Claude Code, which opens a
+pull request a person reviews and merges. `lib/feedback-fix.ts` is the rule,
+pure: what may be offered (`fixActions`), and `redact`, which takes phones,
+emails, GSTIN, PAN and Aadhaar out of what goes to GitHub — customer names
+stay, Mahek's call. The hourly `feedback-fixes` step reads each issue's
+timeline for the pull request that mentions it and closes the report only
+once GitHub's compare says the merge commit is in `MAHEK_BUILD`, the build
+now serving — never at the merge — and tells everybody who reported it.
 
 **A SHOP MASTER IS NOT AN ORDER HISTORY, so the kind is read off evidence.**
 The EMP 2.0 workbook's `Customer Details` tab is 5,292 shops and the only

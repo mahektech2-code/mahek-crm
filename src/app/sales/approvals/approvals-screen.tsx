@@ -194,7 +194,7 @@ export function ApprovalsScreen({
                     <Link
                       href="/accounts/approvals"
                       title="An order over the credit limit is accounts' decision, not the sales desk's — the person chasing the target does not sign off the orders that hit it."
-                      className="text-[13px] text-[#5223E0] no-underline"
+                      className="text-[13px] text-brand-hover no-underline"
                     >
                       Accounts decide this →
                     </Link>

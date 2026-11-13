@@ -38,10 +38,12 @@ export type SalesIconName =
   | "dots"
   | "tick"
   | "signOut"
-  | "chevron";
+  | "chevron"
+  | "chat";
 
 const PATHS: Record<SalesIconName, React.ReactNode> = {
   home: <path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" />,
+  chat: <path d="M21 11.5a8.4 8.4 0 0 1-12.3 7.5L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5z" />,
   pin: (
     <>
       <path d="M12 21s7-6.4 7-11a7 7 0 1 0-14 0c0 4.6 7 11 7 11z" />

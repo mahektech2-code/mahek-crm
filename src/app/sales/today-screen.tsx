@@ -308,7 +308,7 @@ function TeamTable({ people, day, isToday }: { people: SalesmanDay[]; day: strin
           type="button"
           onClick={() => setSort(on ? { key, desc: !sort.desc } : { key, desc: key !== "name" && key !== "status" })}
           className={cx(
-            "group inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 font-medium hover:text-ink",
+            "group inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 font-medium uppercase hover:text-ink",
             align === "right" ? "flex-row-reverse" : "",
           )}
           title="Sort by this column"
@@ -382,9 +382,9 @@ function TeamTable({ people, day, isToday }: { people: SalesmanDay[]; day: strin
           <table className="w-full table-fixed border-collapse text-[13px]">
             <colgroup>
               <col />
-              <col className="w-[170px]" />
-              <col className="w-[76px]" />
-              <col className="w-[76px]" />
+              <col className="w-[146px]" />
+              <col className="w-[88px]" />
+              <col className="w-[88px]" />
               <col className="w-[112px]" />
               <col className="w-[112px]" />
               <col className="w-[150px]" />

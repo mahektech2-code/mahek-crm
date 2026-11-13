@@ -63,7 +63,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
 
   return (
     <Page
-      title={`${c.billNo ?? `Order ${c.orderNo}`} · ${c.deliveryParty}`}
+      title={`${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`}
       sub={`${PHASE_LABEL[c.phase]} · ${STAGE_SHORT[STAGES[stageStep(c.stage)]]}`}
       actions={
         <PageLinks>

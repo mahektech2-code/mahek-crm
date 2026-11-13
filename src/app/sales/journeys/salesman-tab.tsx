@@ -157,7 +157,7 @@ export function SalesmanTab({
             the handset and the way to change them stay. */}
         {stay ? null : (
         <div className="flex min-w-0 items-start gap-3">
-          <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-brand-soft text-[13px] font-semibold text-[#5223E0]">
+          <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-brand-soft text-[13px] font-semibold text-brand-hover">
             {salesman.initials}
           </span>
           <span className="min-w-0">
@@ -441,7 +441,7 @@ function CalendarGrid({
               <span
                 className={
                   "text-[13px] tabular-nums " +
-                  (d.date === today ? "font-semibold text-[#5223E0]" : "font-medium text-ink")
+                  (d.date === today ? "font-semibold text-brand-hover" : "font-medium text-ink")
                 }
               >
                 {Number(d.date.slice(8))}
@@ -1289,7 +1289,7 @@ function toneText(tone: DayOwed["tone"]): string {
     : tone === "warn"
       ? "text-warn-ink"
       : tone === "brand"
-        ? "text-[#5223E0]"
+        ? "text-brand-hover"
         : tone === "success"
           ? "text-success"
           : "text-muted";

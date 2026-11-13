@@ -143,7 +143,7 @@ export function Managers({
                     className={
                       "inline-flex h-8 items-center rounded-[4px] border px-3 text-[13px] " +
                       (on
-                        ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                        ? "border-brand bg-brand-soft font-medium text-brand-hover"
                         : "border-line bg-surface text-body hover:bg-canvas")
                     }
                   >

@@ -13,12 +13,12 @@ import {
 } from "@/lib/services/customer-contact-service";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { listedTransporterName } from "@/lib/erp/transporter-rename";
 import { notificationAppSql } from "@/lib/notification-app-sql";
-import { REMIND_AFTER_MINUTES } from "@/lib/notification-feed";
+import { isSnoozeCode, remindAtFor, type SnoozeCode } from "@/lib/notification-feed";
 import {
   auditLog,
   customers,
@@ -2229,18 +2229,30 @@ export async function markNotificationRead(
 }
 
 /**
- * The ERP pop-up's answers, for one notification or a whole batch. Only your
+ * The pop-up's answers, for one notification or a whole batch. Only your
  * own rows, and only unread ones: "later" must not bring back something
  * already dealt with. The server sets the time, so a wrong laptop clock cannot.
  */
-export async function answerNotifications(ids: string[], answer: "read" | "later"): Promise<Result> {
+export async function answerNotifications(
+  ids: string[],
+  answer: "read" | "later" | "shown",
+  snooze: SnoozeCode = "30m",
+): Promise<Result> {
   const ctx = await resolveScope();
   if (!ids.length) return okVoid();
-  const later = new Date(Date.now() + REMIND_AFTER_MINUTES * 60_000);
+  if (answer === "later" && !isSnoozeCode(snooze)) return err("That reminder time is not one of the choices.", "validation");
+  const mine = and(inArray(notifications.id, ids.slice(0, 100)), eq(notifications.userId, ctx.user.id), eq(notifications.read, false));
+  if (answer === "shown") {
+    /* Put in front of somebody and not yet answered: due NOW, so a reload, a
+       closed tab or another machine brings it straight back instead of losing
+       it. A reminder already set is left alone — showing is not snoozing. */
+    await db.update(notifications).set({ remindAt: new Date() }).where(and(mine, isNull(notifications.remindAt)));
+    return okVoid();
+  }
   await db
     .update(notifications)
-    .set(answer === "read" ? { read: true } : { remindAt: later })
-    .where(and(inArray(notifications.id, ids.slice(0, 100)), eq(notifications.userId, ctx.user.id), eq(notifications.read, false)));
+    .set(answer === "read" ? { read: true } : { remindAt: remindAtFor(snooze, Date.now()) })
+    .where(mine);
   return okVoid();
 }
 

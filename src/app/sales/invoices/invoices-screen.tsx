@@ -244,7 +244,7 @@ export function InvoicesScreen({
             className={cx(
               "h-8.5 cursor-pointer rounded-[4px] border px-3 text-sm",
               show === c.key
-                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                ? "border-brand bg-brand-soft font-medium text-brand-hover"
                 : "border-line bg-surface text-body hover:bg-canvas",
             )}
           >

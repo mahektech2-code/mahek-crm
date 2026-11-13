@@ -505,6 +505,7 @@ export const APP_MODULES: AppModule[] = [
   ),
   crm("eod", "EOD Report", "Targets & reporting"),
   crm("help", "Help Center", "Support", "The SOPs. Withholding it is rarely what anybody means."),
+  crm("feedback", "Feedback", "Support", "Always open: what they sent in from any app, and the replies."),
   crm(
     "settings",
     "Manager settings",
@@ -1211,6 +1212,24 @@ const myTasks = (app: "accounts" | "sales" | "founder", group: string): AppModul
 });
 APP_MODULES.push(myTasks("accounts", "Overview"), myTasks("sales", "Field work"), myTasks("founder", "Today"));
 
+/**
+ * FEEDBACK, ONE PER APP — the reporter's side of the Tell us conversation,
+ * drawn inside the app they are working in (it used to be a page of its own
+ * outside every app). ALWAYS OPEN, for the reason My tasks is: a reply to
+ * something they reported has to be readable wherever they are, and a narrowed
+ * grant that hid it would be a narrowing nobody meant. The ERP's and HRMS's
+ * come from their own registries; the CRM's is `crm.feedback` above.
+ */
+const feedbackPage = (app: "accounts" | "sales" | "founder", group: string): AppModule => ({
+  key: `${app}.feedback`,
+  app,
+  label: "Feedback",
+  group,
+  href: `/${app}/feedback`,
+  note: "Always open: what they sent in from any app, and the replies.",
+});
+APP_MODULES.push(feedbackPage("accounts", "Support"), feedbackPage("sales", "Support"), feedbackPage("founder", "Organisation"));
+
 const BY_KEY = new Map(APP_MODULES.map((m) => [m.key, m]));
 
 /**
@@ -1256,6 +1275,7 @@ export const ALWAYS_OPEN_MODULES: ReadonlySet<string> = new Set([
   ...[...HRMS_ALWAYS_OPEN].map((k) => `hrms.${k}`),
   ...[...ERP_ALWAYS_OPEN].map((k) => `erp.${k}`),
   ...["accounts", "sales", "founder"].map((a) => `${a}.my-tasks`),
+  ...["crm", "accounts", "sales", "founder"].map((a) => `${a}.feedback`),
 ]);
 
 export function isAlwaysOpen(key: string): boolean {

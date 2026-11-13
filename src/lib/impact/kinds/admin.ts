@@ -309,6 +309,10 @@ const STOPS: Record<SecretName, Felt> = {
     app: "Website",
     label: "publishing to the live site, and previews",
     note: "Publishing still saves here, but the live site is not told to refresh and preview links stop working.",
+  },  "github.token": {
+    app: "Admin Console",
+    label: "turning feedback into GitHub issues, and closing fixed reports",
+    note: "Feedback can no longer be sent to the developer or to Claude from the console, and fixed reports stop closing themselves after a deploy. Copy for developer still works.",
   },
 };
 
@@ -328,6 +332,7 @@ const TITLE: Record<SecretName, string> = {
   "enquiries.ingestSecret": "the website enquiry ingest secret",
   "website.cmsReadSecret": "the website content read secret",
   "website.cmsPublishSecret": "the website publish secret",
+  "github.token": "the GitHub token",
 };
 
 function spare(): Felt {

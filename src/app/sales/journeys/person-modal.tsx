@@ -54,7 +54,7 @@ export function PersonModal({
       <div className="flex max-h-full w-full max-w-[1200px] flex-col overflow-hidden rounded-[8px] bg-canvas shadow-[0_12px_32px_rgba(22,22,22,0.18)]">
         <header className="flex flex-none flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-surface px-5 pt-3">
           <div className="flex min-w-0 items-center gap-3 pb-3">
-            <span className="flex size-9 flex-none items-center justify-center rounded-full bg-brand-soft text-[12px] font-semibold text-[#5223E0]">
+            <span className="flex size-9 flex-none items-center justify-center rounded-full bg-brand-soft text-[12px] font-semibold text-brand-hover">
               {initials}
             </span>
             <span className="min-w-0">

@@ -177,7 +177,7 @@ export function TagPeopleModal({
               type="button"
               onClick={() => toggle(p.id)}
               title={`Untag ${p.name}`}
-              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[14px] border border-brand bg-brand-soft pr-2 pl-1 text-[12px] font-medium text-[#5223E0] hover:bg-surface"
+              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[14px] border border-brand bg-brand-soft pr-2 pl-1 text-[12px] font-medium text-brand-hover hover:bg-surface"
             >
               <Initials initials={p.initials} small />
               {p.name}

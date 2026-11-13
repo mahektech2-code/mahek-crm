@@ -60,7 +60,7 @@ export function SalesmanPicker({
               href={`/sales/journeys?tab=salesman&salesman=${selectedId}&view=${v.key}`}
               className={
                 "rounded-[3px] px-3 py-1.5 text-[13px] no-underline hover:no-underline " +
-                (view === v.key ? "bg-brand-soft font-medium text-[#5223E0]" : "text-body hover:bg-canvas")
+                (view === v.key ? "bg-brand-soft font-medium text-brand-hover" : "text-body hover:bg-canvas")
               }
             >
               {v.label}

@@ -204,6 +204,11 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/audit", label: "Audit trail", icon: "list" },
     ],
   },
+  {
+    label: "Support",
+    icon: "chat",
+    items: [{ href: "/sales/feedback", label: "Feedback", icon: "chat" }],
+  },
 ];
 
 /**

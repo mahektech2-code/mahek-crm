@@ -447,6 +447,15 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "feedback",
+        title: "Feedback",
+        summary: "Telling us about a fault, an idea or a question from any app, and reading the answer.",
+        group: "Support",
+        modules: ["crm.feedback"],
+        screen: "/crm/feedback",
+        written: ALL,
+      },
+      {
         slug: "help-and-settings",
         title: "Help Center and Manager settings",
         summary: "Where SOPs live, and every setting a manager can change from the CRM.",
@@ -527,6 +536,15 @@ export const DOC_APPS: DocApp[] = [
         group: "Decisions",
         modules: ["sales.targets"],
         screen: "/sales/targets",
+        written: ALL,
+      },
+      {
+        slug: "feedback",
+        title: "Feedback",
+        summary: "Telling us about a fault, an idea or a question from any app, and reading the answer.",
+        group: "Administration",
+        modules: ["sales.feedback"],
+        screen: "/sales/feedback",
         written: ALL,
       },
       {
@@ -804,6 +822,15 @@ export const DOC_APPS: DocApp[] = [
         group: "Start here",
         modules: ["erp.myTasks"],
         screen: "/erp/my-tasks",
+        written: ALL,
+      },
+      {
+        slug: "feedback",
+        title: "Feedback",
+        summary: "Telling us about a fault, an idea or a question from any app, and reading the answer.",
+        group: "Start here",
+        modules: ["erp.feedback"],
+        screen: "/erp/feedback",
         written: ALL,
       },
       {

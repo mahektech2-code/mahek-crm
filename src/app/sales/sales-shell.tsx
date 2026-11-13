@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { signOut } from "@/lib/actions/auth";
-import { SalesIcon } from "@/components/console/icons";
+import Link from "next/link";
 import { AppFrame } from "@/components/shell/app-frame";
+import { AccountMenu } from "@/components/shell/account-menu";
 import { HeaderLead } from "@/components/shell/header-lead";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
@@ -72,7 +72,7 @@ export function SalesShell({
    * line beside the wordmark has said "11 salesmen · All India · 7 regions"
    * all along, which is the same fact without the invented rank.
    */
-  user: { name: string; title: string; titleSentence: string; initials: string };
+  user: { name: string; email: string | null; phone: string | null; role: string; title: string; titleSentence: string; initials: string };
   /** "11 salesmen · All India · 7 states" — the scope, not just the name. */
   teamLine: string;
   /** The patch in full, for `teamLine`'s hover — it prints a count past two. */
@@ -93,9 +93,15 @@ export function SalesShell({
   const [collapsed, setCollapsed] = React.useState(false);
 
   return (
-    // The 1100px floor, the scroll model and the arrival animation are the
-    // frame's — see `components/shell/app-frame.tsx`. This app carried the
-    // widest of the four floors the suite used to state for itself.
+    /*
+     * THE ERP'S FRAME, SHARED (Nov 2026). `data-v4` is what
+     * `styles/v4-theme.css` answers to, and `data-v4-app="sales"` is what puts
+     * this app's spaced-capital labels into sentence case, as the CRM's are.
+     * The sidebar runs the full height under the Mahek mark; the lavender
+     * header beside it carries the switcher, the scope, the search, Ask, the
+     * bell and the account — the same order the ERP, the CRM and Tasks use.
+     */
+    <div data-v4 data-v4-app="sales" className="contents">
     <AppFrame
       /*
        * THE ONE APP THAT BLEEDS. Live tracking and Territory are maps, and a
@@ -104,54 +110,34 @@ export function SalesShell({
        * do not stretch across a 1920 monitor.
        */
       bleed
+      sidebarFirst
       header={
-        <header className="relative z-30 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-6">
+        <header data-v4-header className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
+          {/* The switcher first, as in every app: which app you may go to,
+              then what is in this one. The wordmark is atop the sidebar. */}
+          <div className="flex flex-none items-center">
+            <HeaderLead
+              apps={apps}
+              current="sales"
+              collapsed={collapsed}
+              onToggleSidebar={() => setCollapsed((c) => !c)}
+              href="/sales"
+              label="MBOS MANAGER"
+              wordmark={false}
+              toggleIcon={
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 5h16v14H4zM9 5v14" />
+                </svg>
+              }
+            />
+          </div>
+
           {/*
-            THE SWITCHER SITS FIRST, BEFORE THIS APP'S OWN NAME.
-
-            It was over on the right, tucked between the audit bell and the
-            user's initials, which is where this app happened to put it and
-            nowhere else does: the CRM, Accounts, HRMS and the Admin Console all
-            open their header with it. The console says why in its own comment —
-            moving between apps is a platform affordance rather than something
-            each app decides to offer — and an affordance that moves depending on
-            which app you are standing in is one people stop reaching for.
-
-            Reading order is the argument too. Left to right, the header now says
-            which app you may go to, which app you are in, and then what is in it,
-            rather than opening with a name and hiding the way out beside the
-            sign-out button.
+            THE SCOPE SHRINKS AND TRUNCATES. It is built from the manager's own
+            patch, so its length is data; `min-w-0` is what lets `truncate` work
+            on a flex item at all, and the full patch is on the hover.
           */}
-          <HeaderLead
-            apps={apps}
-            current="sales"
-            collapsed={collapsed}
-            onToggleSidebar={() => setCollapsed((c) => !c)}
-            href="/sales"
-            label="MBOS MANAGER"
-          />
-
-          <span className="h-[22px] w-px flex-none bg-divider" />
-          {/*
-            IT SHRINKS AND TRUNCATES, and it did neither.
-
-            `flex-none` beside `whitespace-nowrap` is a promise the bar cannot
-            keep: the line is built from the manager's own patch, so its length is
-            somebody's data rather than a constant, and a five-state manager got a
-            string wide enough to push the search box to its minimum and the user
-            chip clean off the right edge — under `overflow-hidden`, so it was cut
-            rather than scrollable, and the sign-out button with it.
-
-            `min-w-0` is the half that is easy to miss: a flex item defaults to
-            `min-width: auto`, which is its content, so `truncate` alone does
-            nothing here and the element goes on refusing to be smaller than its
-            own text. The service keeps this short as well — both, because a
-            layout that only holds while the data is polite is not a layout.
-          */}
-          <span
-            title={scopeDetail}
-            className="min-w-0 flex-initial truncate text-[13px] text-muted"
-          >
+          <span title={scopeDetail} className="min-w-0 flex-initial truncate text-[13px] font-medium text-[#5a4e8c]">
             {teamLine}
           </span>
 
@@ -159,101 +145,61 @@ export function SalesShell({
 
           <span className="flex-1" />
 
-          {/*
-            The design's tinted header button, and the drawer behind it. It sits
-            before the bell and the feedback control because it is the one thing
-            in the header that answers a question rather than opening a list.
-          */}
-          <AskPanel setup={SALES_ASK} />
-
-          {feedback}
-
-          {/*
-            THE BELL IS THE NOTIFICATION BOX, as it is in every other app.
-
-            It was a link to the Audit trail wearing the bell, with a red count
-            of the console's waiting queues on it — so pressing it opened the
-            audit log, and nothing anybody sent this person (a decision, a
-            special price asked for, a claim) could be read from this header at
-            all. Those queues are already badged in the sidebar, and the Audit
-            trail has its own sidebar row.
-          */}
-          <NotificationBell notifications={notifications} />
-
-          {/*
-            THE NAME IS WHAT GIVES WAY, never the sign-out button.
-
-            The name is data too — "Pritesh Bipin Doshi" beside a five-state role
-            is wider than the two icons around it — so it is capped, truncated,
-            and the full pair kept on the hover. But a capped name in a `flex-none`
-            group is still a fixed width: at the shell's own 1100px floor the group
-            held its 256px and the sign-out button was the thing pushed past the
-            edge, which is the worst possible choice of casualty.
-
-            So the GROUP shrinks and the two icons inside it do not. Under
-            pressure the name gets narrower and the avatar, the badge and the way
-            out stay exactly where they are.
-          */}
-          <span className="flex min-w-0 flex-initial items-center gap-2">
-            <span className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-              {user.initials}
-            </span>
-            <span
-              className="min-w-0 flex-initial max-w-[180px] leading-[14px]"
-              title={`${user.name} — ${user.titleSentence}`}
-            >
-              <span className="block truncate text-[13px] font-medium text-ink">
-                {user.name}
-              </span>
-              <span className="block truncate text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                {user.title}
-              </span>
-            </span>
-            <form action={signOut} className="flex-none">
-              <button
-                type="submit"
-                title="Sign out"
-                aria-label="Sign out"
-                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-              >
-                <SalesIcon name="signOut" size={16} />
-              </button>
-            </form>
-          </span>
+          <div className="flex flex-none items-center gap-2">
+            <AskPanel setup={SALES_ASK} />
+            {feedback}
+            {/* The bell is the notification box, as in every app — the
+                waiting queues are badged in the sidebar. */}
+            <NotificationBell notifications={notifications} />
+            {/* The account menu is the way out, as in the ERP: the name and
+                level are inside it, the header shows the avatar alone. */}
+            <AccountMenu user={user} hat={{ label: user.title, sentence: user.titleSentence }} variant="header" nameFromXl />
+          </div>
         </header>
       }
       sidebar={
-          <aside
-            className={cx(
-              "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
-              collapsed ? "w-14" : "w-[232px]",
-            )}
+        <aside
+          className={cx(
+            "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
+            collapsed ? "w-16" : "w-[232px]",
+          )}
+        >
+          <Link
+            href="/sales"
+            title="MahekOne Sales"
+            className={cx("flex h-14 flex-none items-center gap-2.5 no-underline hover:no-underline", collapsed ? "justify-center" : "px-4")}
           >
-            <SalesSidebarNav allowed={allowed} counts={counts} railed={collapsed} />
-
-            {/* Railed, Live now keeps only its pulsing dot; the line is on hover. */}
-            {collapsed ? (
-              <div
-                className="flex flex-none justify-center border-t border-divider py-3"
-                title={`Live now — ${liveLine}`}
-              >
-                <span className="block h-[7px] w-[7px] animate-pulse rounded-full bg-success" />
-              </div>
-            ) : (
-              <div className="flex-none border-t border-divider px-3 py-2.5">
-                <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Live now
-                </div>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <span className="block h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-success" />
-                  <span className="text-[13px] text-ink">{liveLine}</span>
-                </div>
-              </div>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+            <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
+            {collapsed ? null : (
+              <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
+                MahekOne <span className="font-medium text-faint">Sales</span>
+              </span>
             )}
-          </aside>
+          </Link>
+
+          <SalesSidebarNav allowed={allowed} counts={counts} railed={collapsed} />
+
+          {/* "Live now" sits at the foot, always. Railed, it keeps only its
+              pulsing dot; the line is on hover. */}
+          {collapsed ? (
+            <div className="flex flex-none justify-center border-t border-divider py-3" title={`Live now — ${liveLine}`}>
+              <span className="block h-[7px] w-[7px] animate-pulse rounded-full bg-success" />
+            </div>
+          ) : (
+            <div className="m-2 flex-none rounded-card border border-success/25 bg-success-soft px-3 py-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-success">
+                <span className="block h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-success" />
+                Live now
+              </div>
+              <div className="mt-1 text-[13px] font-medium text-ink">{liveLine}</div>
+            </div>
+          )}
+        </aside>
       }
     >
       {children}
     </AppFrame>
+    </div>
   );
 }

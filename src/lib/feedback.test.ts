@@ -22,7 +22,10 @@ import { appAccess, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
+  answerFix,
+  assignFeedback,
   markFeedbackRead,
+  mergeFeedback,
   myFeedbackSummary,
   replyToFeedback,
   setFeedbackStatus,
@@ -30,8 +33,11 @@ import {
 } from "@/lib/actions/feedback";
 import {
   feedbackCounts,
+  feedbackOverview,
   listFeedback,
   listMyFeedback,
+  similarFeedback,
+  unreadFeedbackReplies,
 } from "@/lib/services/feedback-service";
 import { canRead } from "@/lib/services/attachment-service";
 import { testPhone } from "@/lib/test-phone";
@@ -204,7 +210,7 @@ describe("A report becomes a conversation", () => {
       .from(notifications)
       .where(sql`${notifications.userId} = ${priya.id}`);
     assert.equal(bell.length, 1);
-    assert.equal(bell[0].href, "/feedback");
+    assert.equal(bell[0].href, `/feedback?r=${fb}`);
     assert.equal(bell[0].kind, "warn");
   });
 });
@@ -346,5 +352,176 @@ describe("Who may answer, and who may look", () => {
     const blank = await replyToFeedback({ id: fb, body: "   " });
     assert.equal(blank.ok, false);
     assert.equal((await listFeedback())[0].messages.length, 0);
+  });
+});
+
+/* ------------------------------------------------------------------ v2 */
+
+/** What reached somebody as a REPORTER — the links to their own threads. */
+async function bellOf(userId: string) {
+  return db
+    .select()
+    .from(notifications)
+    .where(sql`${notifications.userId} = ${userId} and ${notifications.href} like '/feedback%'`);
+}
+
+describe("A report has a number, an impact and a heading of its own", () => {
+  test("the first line becomes the title when none is given, and the number reads FB-n", async () => {
+    const result = await submitFeedback({
+      kind: "bug",
+      body: "Outstanding on the customer page is double\nOpened Shree Paints from the queue.",
+      impact: "blocking",
+      path: "/crm/customers/cus_1",
+    });
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+    const row = (await listFeedback())[0];
+    assert.equal(row.title, "Outstanding on the customer page is double");
+    assert.match(row.ref, /^FB-\d+$/);
+    assert.equal(row.impact, "blocking");
+    assert.equal(result.ok && result.data.ref, row.ref);
+  });
+
+  test("only a fault carries an impact", async () => {
+    await submitFeedback({ kind: "suggestion", body: "Let me sort bills by due date please", impact: "blocking" });
+    assert.equal((await listFeedback())[0].impact, null);
+  });
+});
+
+describe("Same problem, one conversation", () => {
+  test("joining a report puts the second person on its reporter side", async () => {
+    const first = await report();
+    setTestUser(deepa);
+    const joined = await submitFeedback({ kind: "bug", body: "Same here on Mehta Hardware", sameAsId: first });
+    assert.equal(joined.ok, true, joined.ok ? "" : joined.error);
+
+    // The console lists the problem once, with both people on it.
+    setTestUser(manager);
+    const listed = await listFeedback();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].alsoReported.length, 1);
+    assert.equal(listed[0].alsoReported[0].byName, "Deepa");
+
+    // A reply there reaches both of them, each linked to their own report.
+    assert.equal((await replyToFeedback({ id: first, body: "Found it." })).ok, true);
+    const deepaBell = await bellOf(deepa.id);
+    const priyaBell = await bellOf(priya.id);
+    assert.equal(deepaBell.length, 1);
+    assert.equal(priyaBell.length, 1);
+    assert.ok(deepaBell[0].href?.endsWith(joined.ok ? joined.data.id : "x"));
+
+    // Deepa reads the shared thread on her own report, and it counts as unread.
+    setTestUser(deepa);
+    const mine = await listMyFeedback(deepa.id);
+    assert.equal(mine[0].sameAs?.id, first);
+    assert.deepEqual(mine[0].messages.map((m) => m.body), ["Found it."]);
+    assert.equal(await unreadFeedbackReplies(deepa.id), 1);
+
+    // What she adds lands on the shared thread, on the reporter side.
+    assert.equal((await replyToFeedback({ id: joined.ok ? joined.data.id : "", body: "Kapoor too." })).ok, true);
+    setTestUser(manager);
+    const after = (await listFeedback())[0];
+    assert.equal(after.messages.at(-1)?.body, "Kapoor too.");
+    assert.equal(after.queue, "reply");
+  });
+
+  test("triage merges by number, and the reporter is told where to look", async () => {
+    const a = await report({ body: "Lot stock shows zero after a transfer" });
+    const b = await report({ body: "Stock on hand is wrong after moving it" });
+    setTestUser(manager);
+    const target = (await listFeedback()).find((r) => r.id === a)!;
+    const merged = await mergeFeedback(b, target.ref);
+    assert.equal(merged.ok, true, merged.ok ? "" : merged.error);
+    const listed = await listFeedback();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].id, a);
+  });
+
+  test("open reports that read the same are offered", async () => {
+    await report({ title: "Outstanding figure on the customer page is wrong", body: "It is double what Accounts says." });
+    const hits = await similarFeedback("the outstanding figure on the customer page is wrong for Mehta");
+    assert.equal(hits.length, 1);
+  });
+});
+
+describe("Team notes and the queues", () => {
+  test("a team note is never read by, or told to, the reporter, and is not an answer", async () => {
+    const fb = await report();
+    setTestUser(manager);
+    assert.equal((await replyToFeedback({ id: fb, body: "Probably the ledger double count.", internal: true })).ok, true);
+    assert.equal((await listFeedback())[0].queue, "reply", "a note does not answer anybody");
+    assert.equal((await bellOf(priya.id)).length, 0);
+    setTestUser(priya);
+    assert.equal((await listMyFeedback(priya.id))[0].messages.length, 0);
+  });
+
+  test("a reporter cannot write a team note", async () => {
+    const fb = await report();
+    const r = await replyToFeedback({ id: fb, body: "secret", internal: true });
+    assert.equal(r.ok, false);
+  });
+
+  test("a written reply moves it to Waiting on them; a status alone to Being looked at", async () => {
+    const fb = await report();
+    setTestUser(manager);
+    await setFeedbackStatus(fb, "in_progress");
+    assert.equal((await listFeedback())[0].queue, "looking");
+    await replyToFeedback({ id: fb, body: "Which customer was it?" });
+    assert.equal((await listFeedback())[0].queue, "waiting");
+    assert.equal((await feedbackCounts()).waiting, 1);
+  });
+
+  test("a report is handed only to somebody who can answer feedback", async () => {
+    const fb = await report();
+    setTestUser(manager);
+    assert.equal((await assignFeedback(fb, priya.id)).ok, false);
+    assert.equal((await assignFeedback(fb, manager.id)).ok, true);
+    assert.equal((await listFeedback())[0].assigneeName, "Vikram");
+  });
+});
+
+describe("Done closes it, and the reporter can reopen it", () => {
+  test("still happening reopens it into Needs a reply; fixed is recorded", async () => {
+    const fb = await report();
+    setTestUser(manager);
+    await setFeedbackStatus(fb, "done");
+    assert.equal((await listFeedback())[0].queue, "closed");
+
+    setTestUser(priya);
+    const still = await answerFix({ id: fb, verdict: "still_happening" });
+    assert.equal(still.ok, true, still.ok ? "" : still.error);
+    setTestUser(manager);
+    const reopened = (await listFeedback())[0];
+    assert.equal(reopened.status, "in_progress");
+    assert.equal(reopened.queue, "reply");
+
+    await setFeedbackStatus(fb, "done");
+    setTestUser(priya);
+    assert.equal((await answerFix({ id: fb, verdict: "fixed" })).ok, true);
+    const mine = (await listMyFeedback(priya.id))[0];
+    assert.equal(mine.stage, "confirmed");
+    setTestUser(manager);
+    assert.equal((await feedbackOverview(30)).confirmedFixed, 1);
+  });
+
+  test("only somebody who reported it may answer", async () => {
+    const fb = await report();
+    setTestUser(manager);
+    await setFeedbackStatus(fb, "done");
+    assert.equal((await answerFix({ id: fb, verdict: "fixed" })).ok, false);
+  });
+});
+
+describe("The menu summary", () => {
+  test("carries the last few with their stage and what is unread", async () => {
+    const fb = await report();
+    setTestUser(manager);
+    await replyToFeedback({ id: fb, body: "On it." });
+    setTestUser(priya);
+    const summary = await myFeedbackSummary();
+    assert.equal(summary.ok && summary.data.unreadReplies, 1);
+    assert.equal(summary.ok && summary.data.recent[0].unread, 1);
+    await markFeedbackRead(fb);
+    const after = await myFeedbackSummary();
+    assert.equal(after.ok && after.data.unreadReplies, 0);
   });
 });

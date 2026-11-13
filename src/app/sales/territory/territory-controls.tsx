@@ -174,7 +174,7 @@ export function PeopleTable({
                 <span
                   className={cx(
                     "flex size-7 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
-                    empty ? "bg-divider text-muted" : "bg-brand-soft text-[#5223E0]",
+                    empty ? "bg-divider text-muted" : "bg-brand-soft text-brand-hover",
                   )}
                 >
                   {p.initials}

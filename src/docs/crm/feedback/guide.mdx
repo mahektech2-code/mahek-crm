@@ -1,0 +1,54 @@
+**Feedback** is how anybody in the team tells the people who build MahekOne that something is wrong, could be easier, is missing, or does not make sense — and where the answer comes back. The **Feedback** button is in the header of every app. The answers are read on **Feedback**, under **Support** in the sidebar of the app you are working in.
+
+## Telling us something
+
+Press **Feedback** in the header. The menu offers **Report a problem**, **Suggest an idea** and **Ask a question**, and below them the last three things you sent with where each one has got to. A small red number on the button counts replies you have not read yet.
+
+<Wireframe url="/crm/call-log" caption="Tell us — the screen you are on is attached for you">
+  <WfBar>
+    <WfTitle sub="From CRM › Call Log — attached for you">Tell us</WfTitle>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfButton>Something is broken</WfButton>
+    <WfButton>An idea to make it easier</WfButton>
+    <WfButton>Something new</WfButton>
+    <WfButton>A question</WfButton>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar>
+    <WfButton>I can't do my work</WfButton>
+    <WfButton>It slows me down</WfButton>
+    <WfButton>A small thing</WfButton>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfBlock label="What happened? — the first line becomes the title" h={70} />
+  <Hotspot n={4} />
+  <WfBar>
+    <WfButton>Capture this screen</WfButton>
+    <WfButton>Add a picture</WfButton>
+    <Hotspot n={5} />
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Where you are.</b> The app and the screen are attached for you — you never type them.</span>,
+  <span key="2"><b>What it is about.</b> A fault, an idea, something new, or a question.</span>,
+  <span key="3"><b>How much it is getting in the way.</b> Asked only for a fault. "I can't do my work" puts it at the top of the team's list.</span>,
+  <span key="4"><b>One box.</b> Say it the way you would to a colleague, or press the microphone and say it in any language. "Help me say it" adds the three lines a fault report needs: what you did, what you expected, what happened instead.</span>,
+  <span key="5"><b>Show us.</b> Capture this screen takes one picture of the screen you choose (the dialog steps out of the way). You can also add a picture, or paste one with Ctrl+V. Up to three.</span>,
+]} />
+
+**Someone reported this already.** While you type, reports about the same thing are offered. Press **Same problem — add mine to it** and your words and screenshots are added to that report, and every reply on it reaches you. **Mine is different** sends yours as a new one.
+
+When it is sent you get a number — **FB-1042** — and the four steps it goes through: Sent, Seen by the team, Being looked at, Done.
+
+## Reading the answer
+
+Open **Feedback** under **Support** (or **See all** in the Feedback menu, or the notification). Everything you sent from any app is listed on the left — **Open**, **New replies**, **Closed**. The conversation is on the right, with its progress beside it. You can add to any of them: a sentence, a screenshot, or the microphone.
+
+**Done closes it.** When the team marks it done you are told and asked **Is it fixed for you?** Answering **Yes** thanks them. **Still happening** reopens it and puts it straight back at the top of the team's list.
+
+## For the team that answers
+
+Managers and whoever holds the Admin Console answer feedback in **Admin Console → Feedback**. The tabs are queues worked in order: **Needs a reply**, **Waiting on them**, **Being looked at**, **Closed**, **Everything**, and an **Overview**. Each report shows the conversation, everybody who reported the same thing, where it happened and who is holding it. You can reply, write a **team note** the reporter never sees, hand it to somebody, change its status, merge it into another report by its number, or copy the whole report for a developer.

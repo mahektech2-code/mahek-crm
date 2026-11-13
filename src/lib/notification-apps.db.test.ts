@@ -129,7 +129,7 @@ test("mark all read inside an app leaves the other apps' notifications unread", 
   assert.equal(await read(e), true);
 });
 
-test("the ERP pop-up: a reminder stays unread, comes due in the ERP only, and leaves once read", async () => {
+test("the pop-up: a reminder stays unread, comes due in its own app only, and leaves once read", async () => {
   const e = await note("/erp/transport");
   const c = await note("/crm/customers/c_1");
   const stranger = id("ntf");
@@ -154,11 +154,32 @@ test("the ERP pop-up: a reminder stays unread, comes due in the ERP only, and le
   await db.update(notifications).set({ remindAt: new Date(Date.now() - 1000) }).where(eq(notifications.id, e));
   await db.update(notifications).set({ remindAt: new Date(Date.now() - 1000) }).where(eq(notifications.id, c));
   assert.deepEqual((await notificationFeed(priya.id, "erp")).due?.map((n) => n.id), [e], "the ERP's, not the CRM's");
-  assert.deepEqual((await notificationFeed(priya.id, "crm")).due, [], "other apps ask for no reminders");
+  assert.deepEqual((await notificationFeed(priya.id, "crm")).due?.map((n) => n.id), [c], "every app pops up its own");
 
   assert.equal((await answerNotifications([e], "read")).ok, true);
   assert.deepEqual((await notificationFeed(priya.id, "erp")).due, []);
   await answerNotifications([e], "later");
   const after = await row(e);
   assert.ok(after.read && after.remindAt!.getTime() < Date.now(), "something read cannot be brought back");
+});
+
+test("the pop-up's other answers: a chosen reminder, a refused one, and shown-means-due", async () => {
+  const n = await note("/crm/payments");
+  const row = async (nid: string) => (await db.select().from(notifications).where(eq(notifications.id, nid)))[0];
+
+  assert.equal((await answerNotifications([n], "shown")).ok, true);
+  const shown = await row(n);
+  assert.ok(shown.remindAt && shown.remindAt.getTime() <= Date.now(), "shown and unanswered is due now");
+  assert.deepEqual((await notificationFeed(priya.id, "crm")).due?.map((x) => x.id), [n], "so a reload brings it back");
+
+  assert.equal((await answerNotifications([n], "later", "3h")).ok, true);
+  const mins = ((await row(n)).remindAt!.getTime() - Date.now()) / 60_000;
+  assert.ok(mins > 179 && mins <= 180, "three hours, on the server's clock");
+
+  assert.equal((await answerNotifications([n], "shown")).ok, true);
+  assert.ok((await row(n)).remindAt!.getTime() > Date.now(), "showing again never cuts a reminder short");
+
+  const refused = await answerNotifications([n], "later", "525600m" as never);
+  assert.equal(refused.ok, false, "a time that is not one of the choices is refused");
+  assert.ok((await row(n)).remindAt!.getTime() - Date.now() < 181 * 60_000, "and nothing was written");
 });

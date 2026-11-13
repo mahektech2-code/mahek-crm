@@ -534,7 +534,7 @@ function DecideDialog({
               href={`/api/attachments/${item.photoId}`}
               target="_blank"
               rel="noreferrer"
-              className="text-[#5223E0] no-underline hover:underline"
+              className="text-brand-hover no-underline hover:underline"
             >
               Open full size
             </a>

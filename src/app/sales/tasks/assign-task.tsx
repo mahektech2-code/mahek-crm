@@ -74,7 +74,7 @@ const STEPS: { key: Step; label: string }[] = [
 ];
 
 const TAB = "inline-flex h-8 items-center rounded-[4px] border px-3 text-[13px]";
-const TAB_ON = "border-brand bg-brand-soft font-medium text-[#5223E0]";
+const TAB_ON = "border-brand bg-brand-soft font-medium text-brand-hover";
 const TAB_OFF = "border-line bg-surface text-body hover:bg-canvas";
 const CONTROL = "h-8.5 w-full rounded-[4px] border border-line bg-surface px-2 text-[13px]";
 const AREA = "w-full rounded-[4px] border border-line bg-surface px-2 py-1.5 text-[13px]";
@@ -756,7 +756,7 @@ function FieldEditor({
   return (
     <div className={CARD}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-brand-soft px-1.5 text-[12px] font-semibold text-[#5223E0]">
+        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-brand-soft px-1.5 text-[12px] font-semibold text-brand-hover">
           {index + 1}
         </span>
         <select value={f.type} onChange={(e) => changeType(e.target.value as TaskFieldType)} className={`${CONTROL} w-44`}>
@@ -1023,7 +1023,7 @@ function PhonePreview({ title, fields }: { title: string; fields: TaskField[] })
                     </p>
                     {f.help ? <p className="text-[11px] text-muted">{f.help}</p> : null}
                     {f.link ? (
-                      <p className="text-[11px] text-[#5223E0]">
+                      <p className="text-[11px] text-brand-hover">
                         {`↻ Shows what the record holds; saved to ${TASK_LINK_TARGETS[f.link.target].label.toLowerCase()}${f.link.scope === "each" ? " — asked once per contact" : ""}`}
                       </p>
                     ) : null}
@@ -1512,7 +1512,7 @@ function ReviewStep(props: {
                       <span className="flex-1">
                         <span className="font-medium text-ink">“{f.label}”</span>
                         {" → "}
-                        <span className="text-[#5223E0]">{linkWords(x.link)}</span>
+                        <span className="text-brand-hover">{linkWords(x.link)}</span>
                         <span className="block text-[12px] text-muted">
                           {x.reason}
                           {x.source === "ai" ? ` · AI, ${x.confidence}% sure` : " · matched by its words"}
@@ -1575,7 +1575,7 @@ function linkWords(link: TaskFieldLink): string {
 function LinkBadge({ link }: { link: TaskFieldLink }) {
   return (
     <span
-      className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-[#5223E0]"
+      className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-hover"
       title={linkWords(link)}
     >
       ↻ {TASK_LINK_TARGETS[link.target].label}

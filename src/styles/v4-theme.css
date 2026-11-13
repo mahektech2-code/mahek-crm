@@ -1,5 +1,6 @@
 /* ---------------------------------------------------------------------------
-   THE V4 LOOK — the ERP's, and since October 2026 the CRM's too.
+   THE V4 LOOK — the ERP's, since October 2026 the CRM's, and since November
+   2026 the Sales Dashboard's (its own shell carries `data-v4-app="sales"`).
 
    One stylesheet, and only a look: it changes no element, no handler and no
    order of anything, so every screen does exactly what it did and is drawn
@@ -187,6 +188,20 @@
   font-size: 12px;
 }
 
+/* The Sales Dashboard wears the same rule, for the same reason: its small
+   labels were spaced capitals too ("LIVE NOW", "ORDERS TODAY"). */
+
+:root:has([data-v4-app="sales"]) .uppercase:not(th):not(th *) {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+:root:has([data-v4-app="sales"]) .uppercase.text-\[11px\]:not(th):not(th *),
+:root:has([data-v4-app="sales"]) .uppercase.text-\[10px\]:not(th):not(th *),
+:root:has([data-v4-app="sales"]) .uppercase.text-\[10\.5px\]:not(th):not(th *) {
+  font-size: 12px;
+}
+
 /* An empty state is its title and its one action; the sentence under the
    title moves behind the ⓘ beside it (`EmptyState`). */
 
@@ -222,8 +237,10 @@
   color: #dcd1fc;
 }
 
-:root:has([data-v4]) th[aria-sort] button,
-:root:has([data-v4]) th[aria-sort] button svg {
+/* `aria-sort="none"` is the standard way to say a column CAN sort and is
+   not; only an ascending or descending one is drawn in coral. */
+:root:has([data-v4]) th[aria-sort]:not([aria-sort="none"]) button,
+:root:has([data-v4]) th[aria-sort]:not([aria-sort="none"]) button svg {
   color: #ff7a59;
 }
 

@@ -32,6 +32,9 @@ test("the CRM shell asks for the v4 look, and the ERP and the CRM read one sheet
   assert.match(layout, /@\/styles\/v4-theme\.css/);
   assert.match(read("src/app/erp/layout.tsx"), /@\/styles\/v4-theme\.css/);
   assert.match(read("src/app/erp/_ui/erp-shell.tsx"), /data-v4\b/);
+  /* The Sales Dashboard wears it through its own shell. */
+  assert.match(read("src/app/sales/layout.tsx"), /@\/styles\/v4-theme\.css/);
+  assert.match(read("src/app/sales/sales-shell.tsx"), /data-v4-app="sales"/);
   /* Accounts shares AppShell and has not asked for the look. */
   assert.doesNotMatch(read("src/app/accounts/layout.tsx"), /look="v4"/);
 });
@@ -63,7 +66,7 @@ test("every rule in the sheet is scoped to a marker, so it cannot follow somebod
     for (const part of topLevel(sel)) {
       const p = part.trim();
       if (!p) continue;
-      assert.match(p, /^:root:has\(\[data-v4(-app="crm")?\]\)/, `unscoped selector: ${p}`);
+      assert.match(p, /^:root:has\(\[data-v4(-app="(crm|sales)")?\]\)/, `unscoped selector: ${p}`);
     }
   }
 });

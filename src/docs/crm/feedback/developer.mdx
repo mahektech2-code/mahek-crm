@@ -1,0 +1,42 @@
+Feedback is two tables, one pure vocabulary file, one service of reads, one file of actions, and three screens: the header button and Tell us dialog, the reporter's page inside each app, and the console's triage inbox.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Tables | `src/db/schema.ts`, `drizzle/0325_feedback_v2.sql` | `feedback` (number, impact, assignee, duplicate_of, verdict), `feedback_messages` (internal) |
+| Vocabulary | `src/lib/feedback-labels.ts` | kinds, impacts, stages, queues, `triageQueue`, `feedbackStage`, `titleFromBody`, `FEEDBACK_APP_PATHS` |
+| Who may | `src/lib/services/feedback-access.ts` | `canTriageFeedback`, `canSeeFeedback`, `triagerIds` |
+| Reads | `src/lib/services/feedback-service.ts` | `listFeedback`, `listMyFeedback`, `similarFeedback`, `feedbackCounts`, `feedbackOverview` |
+| Writes | `src/lib/actions/feedback.ts` | `submitFeedback`, `replyToFeedback`, `setFeedbackStatus`, `assignFeedback`, `mergeFeedback`, `answerFix` |
+| Header | `src/components/shell/feedback-button.tsx` | the menu, `TellUsDialog` |
+| Screenshots | `src/components/feedback/shots.tsx` | capture, paste, pick |
+| Reporter page | `src/components/feedback/my-feedback-page.tsx`, `my-feedback-screen.tsx` | mounted at each app's `/feedback` |
+| Thread | `src/components/feedback/feedback-thread.tsx` | one component, `view="reporter"` or `"team"` |
+| Console | `src/app/admin/feedback/[[...tab]]/page.tsx`, `src/app/admin/feedback-section.tsx` | queues, filters, detail, overview |
+
+## The queue rule
+
+<Code file="src/lib/feedback-labels.ts" symbol="triageQueue" />
+
+## The modules
+
+`crm.feedback`, `accounts.feedback`, `sales.feedback`, `founder.feedback`, `erp.feedback` and `hrms.feedback` are all in `ALWAYS_OPEN_MODULES` — the reporter's Feedback page must be reachable in every app whatever was ticked.
+
+## Fixing a report
+
+| Layer | File | What lives there |
+|---|---|---|
+| Table | `drizzle/0326_feedback_fixes.sql` | `feedback_fixes`, one row per root report: need, diagnosis, issue, PR, deploy |
+| Rules | `src/lib/feedback-fix.ts` | needs, `redact`, `routeHint`, `issueBody`, `fixStage`, `fixActions`, `commitIsInBuild` |
+| Wiring | `src/lib/services/feedback-fix-service.ts` | `diagnoseFeedback`, `createIssue`, `requestAiFix`, `syncFeedbackFixes` |
+| Actions | `src/lib/actions/feedback-fix.ts` | triage reads, chooses and sends; `askClaudeToFix` checks `isPlatformAdmin` |
+| Card | `src/app/admin/feedback-fix-card.tsx` | Fix it, How the team can fix it, the Claude confirm |
+| Workflow | `.github/workflows/claude-fix.yml` | `anthropics/claude-code-action` on the `ai-fix` label or an `@claude` comment |
+| Job | `feedback-fixes` in `src/lib/jobs.ts` | hourly; `npm run jobs -- feedback-fixes` by hand |
+
+What is offered is one pure function, read by the card and enforced again in the actions:
+
+<Code file="src/lib/feedback-fix.ts" symbol="fixActions" />
+
+The token is the `github.token` credential (Admin Console → Integrations, or `GITHUB_FEEDBACK_TOKEN`). The workflow needs the `ANTHROPIC_API_KEY` repository secret. A report is live when GitHub's compare of the merge commit against `MAHEK_BUILD` says `ahead` or `identical`.

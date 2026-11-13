@@ -1,0 +1,61 @@
+A report is a **conversation**, not a ticket. Both sides write to the same thread and each side's message notifies the other, because silence is what teaches a team to stop reporting things.
+
+## The rules
+
+- **Anybody signed in may report.** Answering is a manager's, or whoever holds the Admin Console — checked on the server, not by hiding a button.
+- **Where it happened is captured, never typed.** The path, the app it belongs to and the browser go with every report.
+- **One box.** The first line becomes the heading, so nobody has to write a summary before they have written the thing.
+- **How much it is in the way** is asked of a fault only, and orders the team's queue: can't-work first, then slows-down, then whoever has waited longest.
+- **Same problem, one conversation.** A report can point at another. It keeps its own words and screenshots and reads the other's status and conversation; every reply there reaches everybody who reported it. Only one level deep — joining a report that itself points elsewhere joins the one it points at.
+- **Team notes** are lines of the same thread that the reporter never reads and is never told about.
+- **Done closes a report.** Nobody waits for the reporter to confirm. They are asked; **Still happening** reopens it into the team's **Needs a reply** queue.
+- **Nothing is deleted.** A declined report stands, with its reason.
+
+## Which queue a report is in
+
+<Flow caption="triageQueue" chart={`
+flowchart TD
+  S{"Status"} -- "Done or Not doing" --> C["Closed"]
+  S -- "New or Being looked at" --> L{"The last line the reporter can read"}
+  L -- "is theirs, or there is none" --> R["Needs a reply"]
+  L -- "is a written reply from the team" --> W["Waiting on them"]
+  L -- "is only a status change" --> B["Being looked at"]
+`} />
+
+## Where it is read
+
+The Feedback page is inside every app that has a sidebar to put it in — the CRM, Accounts, the Sales Dashboard, the ERP, HRMS and the Founder Command Centre — and it is **always open**: a narrowed grant never hides it. A notification links to `/feedback`, which forwards to the first of those apps the person holds, so the link works from any app's bell.
+
+## Fixing a report
+
+Most reports do not need a developer. The console reads every new report and says what it **needs**:
+
+| It needs | Who fixes it |
+|---|---|
+| A change to the code | A developer — or Claude, asked from the console |
+| A record to correct | The team, on the record's own screen |
+| A setting to change | An administrator, on a settings page |
+| Somebody's access | Admin Console → Access |
+| How to use it | A reply saying how |
+| Not a fault | A reply saying why, or Not doing |
+
+Anybody triaging can change the answer, and a person's answer is never written over by the AI. For anything but a code change, **How the team can fix it** opens the steps and what to ask the reporter. Only a code change can go to GitHub:
+
+<Flow caption="From report to live fix" chart={`
+flowchart LR
+  A["Report"] --> B{"What it needs"}
+  B -- "anything but code" --> T["The team fixes it, replies, marks Done"]
+  B -- "a code change" --> I["Send to developer: a GitHub issue"]
+  I -- "platform administrator" --> C["Ask Claude to fix: Claude opens a pull request"]
+  I --> P["A developer opens a pull request"]
+  C --> M["A person reviews and merges"]
+  P --> M
+  M --> L["Hourly check: the merge is in the live build"]
+  L --> D["Report closed, everybody who reported it told"]
+`} />
+
+- **Ask Claude to fix** is a platform administrator's alone. It labels the issue, which starts the repository's Claude workflow; Claude's pull request is reviewed and merged by a person like any other.
+- What goes to GitHub carries **no phone number, email, GSTIN, PAN or Aadhaar**. Customer and shop names stay, so the fix can be checked against the right account.
+- The report closes itself only when the merged commit is in the build **now serving** — not at the merge.
+
+The check is <Setting k="feedbackFix.enabled"/>, with the model <Setting k="feedbackFix.model"/>; issues go to <Setting k="feedbackFix.githubRepo"/>, and the label that asks Claude is <Setting k="feedbackFix.aiFixLabel"/>.

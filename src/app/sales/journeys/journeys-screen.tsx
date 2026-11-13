@@ -240,7 +240,7 @@ export function JourneysScreen({
                 className={
                   "h-8.5 cursor-pointer rounded-[4px] border px-2.5 text-sm font-medium " +
                   (horizon === h
-                    ? "border-brand bg-brand-soft text-[#5223E0]"
+                    ? "border-brand bg-brand-soft text-brand-hover"
                     : "border-line bg-surface text-body hover:bg-canvas")
                 }
               >
@@ -398,7 +398,7 @@ function ShopChip({
       className={
         "inline-flex h-7 items-center gap-1.5 rounded-[4px] border px-2 text-[12px] " +
         (on
-          ? "border-brand bg-brand-soft text-[#5223E0]"
+          ? "border-brand bg-brand-soft text-brand-hover"
           : "border-line bg-surface text-body hover:bg-canvas")
       }
     >
@@ -698,7 +698,7 @@ function DayLine({
                 <button
                   type="button"
                   onClick={() => setAnywhere(true)}
-                  className="cursor-pointer text-[12px] text-[#5223E0] hover:underline"
+                  className="cursor-pointer text-[12px] text-brand-hover hover:underline"
                 >
                   Add a shop from somewhere else ({elsewhere.length})
                 </button>
