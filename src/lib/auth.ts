@@ -116,7 +116,34 @@ export async function requireUser(): Promise<User> {
     redirect("/login");
     throw new Error("unreachable"); // redirect() never returns
   }
+  await refuseWhileLocked(user);
   return user;
+}
+
+/**
+ * THE WORKDAY LOCK, ON THE SERVER. A lock drawn only on the screen is a curtain
+ * anybody can open by typing a URL, so a SERVER ACTION — every save in
+ * MahekOne — is refused while somebody is locked out (before punching in, on a
+ * break, after punching out). Only actions: a page still renders behind the
+ * lock screen, and punching in itself goes through `/api/workday`, a route,
+ * so the way out of the lock is never behind it. Off by default
+ * (`hrms.workday.lockEnabled`), and outside a request — a job, a test — there
+ * is no action to refuse.
+ */
+async function refuseWhileLocked(user: User) {
+  if (process.env.NODE_ENV === "test") return;
+  let isAction = false;
+  try {
+    const { headers } = await import("next/headers");
+    isAction = !!(await headers()).get("next-action");
+  } catch {
+    return;
+  }
+  if (!isAction) return;
+  const { serverLocked } = await import("@/lib/hrms/services/workday");
+  if (await serverLocked(user)) {
+    throw new Error("MahekOne is locked. Punch in, or resume from your break, before saving anything.");
+  }
 }
 
 export async function requireManager(): Promise<User> {

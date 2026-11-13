@@ -6577,6 +6577,64 @@ any number on three or more shops — two is an ordinary proprietor with two
 counters — because the next export will use a different placeholder and a
 number written into the code would silently stop catching it.
 
+**THE WORKDAY CLOCK: PUNCH IN, BREAKS, IDLE AND THE LOCK (Nov 2026).** An
+office day is a list of working stretches — `hrms_attendance.sessions`,
+`[{ in, out, end, reason }]` in epoch ms, the MBOS handset's own shape — and a
+break is the gap between two of them. `check_in`, `check_out` and
+`stoppage_min` are MIRRORS of the list (first in, last out once closed, the
+gaps), written in the same update, so the register, the monthly summary and
+payroll read the row they always did. A row with an empty list is one
+stretch from check-in to check-out, so nothing recorded before moved. The
+rules are pure in `lib/hrms/engines/workday.ts`; `services/workday.ts` settles
+and mirrors; `workday-ops.ts` is break, resume, punch in again, the heartbeat
+and claims; `/api/workday` is the one door the screens use. The words are the
+handset's: PUNCH in and out is the day, CHECK in is a shop.
+
+**EVERY AUTOMATIC BOUNDARY IS DATED FROM THE LAST ACTIVITY.** Idle
+`hrms.workday.idleBreakMinutes` (30) is a break starting at the last activity;
+idle `idleOutMinutes` (60) closes the day there; a manual break longer than
+`breakOutMinutes` (120) closes the day where the break began. The server
+notices whenever something reads the day (`settledToday`), and because the
+boundary is backdated it does not matter how late — an idle hour is never
+counted as work, and no job has to run every minute. Activity is any input in
+any MahekOne tab (shared through a BroadcastChannel and localStorage) or an
+open call drawer (`data-workday-busy`); the browser sends a heartbeat at most
+once a minute, and only a running stretch takes one.
+
+**PRESENT, HALF DAY OR ABSENT IS HOURS WORKED, breaks left out.**
+`hrms.attendance.presentHours` (8) and `halfDayHours` (4), overridable per
+weekday on People → Working hours (`hrms_staff_timings.present_min` /
+`half_min`) and stamped on the day at punch-in, like the office hours. The
+same rule as the handset. `dayFigures` reads them before the old percentage,
+which only a row with no hours (tests, tools) still uses; below the half-day
+hours a day is "Absent". Sundays and other week-off days (a weekday the
+person's working hours do not cover), holidays and approved leave are never
+Absent; worked anyway, the day is `off_day` and "Extra" — counted by no
+payroll figure. Half a day of leave lowers the bar to the half-day hours.
+
+**THE LOCK IS OFF UNTIL SOMEBODY TURNS IT ON** (`hrms.workday.lockEnabled`).
+On, every app is covered — header and sidebar too — before punching in, on a
+break and after punching out, and `requireUser` REFUSES SERVER ACTIONS for
+that person — every one that signs in through it, which is every app's
+context and capability check (it asks `serverLocked` when the request carries
+`next-action`; pages still render, behind the lock). That is why punching in,
+resuming and punching out go through `/api/workday`, a route: the way out of
+the lock is never behind it. Never locked: no HRMS grant, no employee link, a
+`field` app holder (the handset holds their day), a day off, a day already on
+the handset, and — while `exemptPlatformAdmins` is on — a platform
+administrator, so nobody is locked out of the console that turns it off.
+`serverLocked` caches its answer ten seconds per person and guards its own
+re-entry (`hrmsContext` calls `requireUser`).
+
+**AN AUTOMATIC BREAK IS NEVER QUIETLY TURNED BACK INTO WORK.** "I was working
+away from the screen" is a `hrms_workday_claims` row the person's manager (or
+HR) decides on Attendance → Corrections; nobody decides their own. Approved,
+its span counts as worked and comes off `stoppage_min`; declined needs a
+reason and the person is told. Attendance → Team today is the live board.
+The provider is mounted by `AppFrame` and the launcher; the timer rides with
+`NotificationBell`; `LauncherCheckIn` is now the day card (`DayPanel`). Desktop
+punch-in uses the HRMS office-location rules and never a camera.
+
 **THE HRMS IS SIMPLIFIED TO THREE ROLES, AND CHECKING IN LEFT IT (Nov 2026).**
 The role is the level on the HRMS grant, given on the Access screen: an
 ASSOCIATE sees their own days, leave, pay and score; a MANAGER sees their team

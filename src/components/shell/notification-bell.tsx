@@ -11,6 +11,7 @@ import { appFor } from "@/lib/app-routes";
 import { notificationAppName, notificationAppOf, unreadElsewhere } from "@/lib/notification-apps";
 import { SpeakerIcon, readAll, readOne, useNotificationFeed, useNotifyPrefs } from "./notification-center";
 import { TasksTray } from "./tasks-tray";
+import { WorkdayChip } from "@/components/workday/workday-chip";
 
 /**
  * The bell in an app's header, and the list it opens.
@@ -87,6 +88,7 @@ export function NotificationBell({
   return (
     <>
       {/* The tasks tray rides with the bell, so every app's header has it from this one place. */}
+      <WorkdayChip />
       <TasksTray />
       <div ref={notifRef} className="relative">
       <button

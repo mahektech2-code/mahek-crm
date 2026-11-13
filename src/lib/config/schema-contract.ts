@@ -164,7 +164,7 @@ const HRMS_TABS: Array<{ slug: string; label: string; groups: Record<string, str
   {
     slug: "attendance",
     label: "Attendance",
-    groups: { attendance: "Check-in and the working day", office: "Offices", ot: "Overtime", reports: "Monthly reports", holidays: "Holidays" },
+    groups: { attendance: "Check-in and the working day", workday: "Workday clock: breaks, idle and the lock", office: "Offices", ot: "Overtime", reports: "Monthly reports", holidays: "Holidays" },
   },
   { slug: "payroll", label: "Payroll", groups: { payroll: "Salary, PF, ESIC and PT" } },
   {

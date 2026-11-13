@@ -10,6 +10,14 @@ export type AttendanceCfg = {
   fullDayPercent: number;
   qrGraceMinutes: number;
   qrFullDayPercent: number;
+  /**
+   * THE HOURS RULE (Nov 2026): minutes worked to be Present and to be a Half
+   * day. When given — and the attendance service always gives them — a day is
+   * judged on hours, the MBOS handset's rule, and the percentage above is not
+   * read. A row can carry its own weekday's numbers, stamped at punch-in.
+   */
+  presentMin?: number;
+  halfMin?: number;
 };
 
 export type AttendanceDay = {
@@ -21,6 +29,11 @@ export type AttendanceDay = {
   officialOut: string | null;
   targetMin: number | null;
   method: string;
+  /** Stamped at punch-in from the weekday's timing; null = the settings. */
+  presentMin?: number | null;
+  halfMin?: number | null;
+  /** week_off · holiday · leave: a day off somebody worked anyway. */
+  offDay?: string | null;
 };
 
 export type DayFigures = {
@@ -36,8 +49,12 @@ export type DayFigures = {
   lateTxt: string;
   /** Worked ÷ target, a whole percent. */
   pct: number | null;
-  /** Full Day / Half Day once checked out; "" before. */
-  workDay: "" | "Full Day" | "Half Day";
+  /**
+   * Full Day / Half Day once checked out; "" before. On the hours rule a day
+   * below the half-day hours is "Absent", and a day off worked anyway is
+   * "Extra" — counted by no payroll figure.
+   */
+  workDay: "" | "Full Day" | "Half Day" | "Absent" | "Extra";
   /** Working (checked in, not yet out) / Present / No check-out. */
   current: "Working" | "Present" | "No check-out";
   /** Target − duration. */
@@ -64,7 +81,13 @@ export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string):
   const target = r.targetMin ?? null;
   const pct = workedMin != null && target ? Math.round((workedMin * 100) / target) : null;
   let workDay: DayFigures["workDay"] = "";
-  if (workedMin != null) {
+  const presentMin = r.presentMin ?? cfg.presentMin ?? null;
+  const halfMin = r.halfMin ?? cfg.halfMin ?? null;
+  if (workedMin != null && r.offDay) {
+    workDay = "Extra";
+  } else if (workedMin != null && presentMin != null) {
+    workDay = workedMin >= presentMin ? "Full Day" : workedMin >= (halfMin ?? 0) ? "Half Day" : "Absent";
+  } else if (workedMin != null) {
     const full = qr ? (pct ?? 0) > cfg.qrFullDayPercent : (pct ?? 0) >= cfg.fullDayPercent;
     workDay = target ? (full ? "Full Day" : "Half Day") : "Full Day";
   }

@@ -111,6 +111,8 @@ export const HRMS_GROUPS: HrmsGroup[] = [
       s("attendance", "attendance", "Attendance", "check", "", {
         views: [
           t("attendance", "Days", "Every check-in and check-out, newest first."),
+          t("teamToday", "Team today", "Who is working, on a break or not in, right now.", "list", MANAGER),
+          t("workdayClaims", "Corrections", "Automatic breaks somebody says were work. Their manager decides."),
           t("pendingOut", "Not checked out", "Days with a check-in and no check-out. An open day holds up that month’s salary."),
           t("absentees", "Absent", "People with no attendance on the day who are not on leave or a holiday.", "list", MANAGER),
           t("attChart", "Chart", "People present each day, with the trend.", "chart", MANAGER),

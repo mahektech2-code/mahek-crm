@@ -4366,6 +4366,94 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "hrms.attendance.presentHours",
+    type: "decimal",
+    category: "hrms",
+    label: "Present when worked at least",
+    description:
+      "Hours worked, breaks left out, for a day to count as Present (a Full Day on payroll). The same rule as the MBOS handset. A weekday can ask for different hours on People → Working hours.",
+    default: 8,
+    min: 0.5,
+    max: 24,
+  },
+  {
+    key: "hrms.attendance.halfDayHours",
+    type: "decimal",
+    category: "hrms",
+    label: "Half day when worked at least",
+    description:
+      "Hours worked for a day to count as a Half Day. Below it the day is Absent. Sundays and other week-off days, holidays and approved leave are never Absent.",
+    default: 4,
+    min: 0.5,
+    max: 24,
+  },
+  {
+    key: "hrms.workday.lockEnabled",
+    type: "boolean",
+    category: "hrms",
+    label: "Lock MahekOne until people punch in",
+    description:
+      "On, every app is locked for an office employee before they punch in, while they are on a break and after they punch out, and saves are refused on the server. Field salesmen (who punch in on the MBOS handset), people not linked to an employee record, and days off are never locked.",
+    default: false,
+  },
+  {
+    key: "hrms.workday.exemptPlatformAdmins",
+    type: "boolean",
+    category: "hrms",
+    label: "Platform administrators are never locked",
+    description:
+      "On, a platform administrator can always use MahekOne without punching in, so nobody is ever locked out of the console that turns the lock off.",
+    default: true,
+  },
+  {
+    key: "hrms.workday.idleWarnMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Ask “are you still working?” after",
+    description: "Minutes with no activity in any MahekOne tab before the warning appears. Any movement cancels it.",
+    default: 25,
+    min: 1,
+    max: 600,
+  },
+  {
+    key: "hrms.workday.idleBreakMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Start a break after idle",
+    description: "Minutes with no activity before the time becomes a break. It is dated from the last activity, not from this minute.",
+    default: 30,
+    min: 2,
+    max: 600,
+  },
+  {
+    key: "hrms.workday.idleOutMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Punch out after idle",
+    description: "Minutes with no activity before the day is closed, at the last activity. The idle time is never counted as work.",
+    default: 60,
+    min: 3,
+    max: 1440,
+  },
+  {
+    key: "hrms.workday.breakOutMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Punch out if a break goes on longer than",
+    description: "Minutes. Somebody who starts a break and never comes back is punched out at the start of the break rather than left on a break all night.",
+    default: 120,
+    min: 1,
+    max: 1440,
+  },
+  {
+    key: "hrms.workday.breakReasons",
+    type: "text",
+    category: "hrms",
+    label: "Break reasons",
+    description: "Offered when somebody starts a break, separated by commas. Picking one is optional, and no reason has a time limit of its own.",
+    default: "Lunch, Tea, Prayer, Personal, Meeting outside, Other",
+  },
+  {
     key: "hrms.office.maxRangeM",
     type: "integer",
     category: "hrms",
@@ -6159,6 +6247,18 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
 
+  /* The idle clock has to warn, then break, then punch out, in that order. */
+  if (!(config["hrms.workday.idleWarnMinutes"] < config["hrms.workday.idleBreakMinutes"])) {
+    problems.push("The idle warning has to come before the automatic break.");
+  }
+  if (!(config["hrms.workday.idleBreakMinutes"] < config["hrms.workday.idleOutMinutes"])) {
+    problems.push("The automatic break has to come before the automatic punch-out.");
+  }
+  /* A half day at or above a full day makes every full day a half one too. */
+  if (!(config["hrms.attendance.halfDayHours"] < config["hrms.attendance.presentHours"])) {
+    problems.push("The half-day hours must be below the hours needed to be present.");
+  }
+
   /* A lightest weight above the heaviest would refuse every empty drum. */
   if (config["erp.drums.minEmptyKg"] >= config["erp.drums.maxEmptyKg"]) {
     problems.push("The lightest empty drum weight must be below the heaviest.");
@@ -6894,6 +6994,15 @@ export type Config = {
   "hrms.attendance.qrEnabled": boolean;
   "hrms.attendance.qrGraceMinutes": number;
   "hrms.attendance.qrFullDayPercent": number;
+  "hrms.attendance.presentHours": number;
+  "hrms.attendance.halfDayHours": number;
+  "hrms.workday.lockEnabled": boolean;
+  "hrms.workday.exemptPlatformAdmins": boolean;
+  "hrms.workday.idleWarnMinutes": number;
+  "hrms.workday.idleBreakMinutes": number;
+  "hrms.workday.idleOutMinutes": number;
+  "hrms.workday.breakOutMinutes": number;
+  "hrms.workday.breakReasons": string;
   "hrms.office.maxRangeM": number;
   "hrms.ot.enabled": boolean;
   "hrms.ot.minMinutes": number;

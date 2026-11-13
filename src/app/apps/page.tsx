@@ -17,22 +17,22 @@ import { clock, longDate, today } from "@/lib/format";
 import { AppShortcuts } from "./app-shortcuts";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LauncherCheckIn } from "@/components/checkin/launcher-check-in";
-import type { CheckInState } from "@/components/checkin/check-in-panel";
+import { WorkdayProvider } from "@/components/workday/workday-context";
+import { WorkdayChip } from "@/components/workday/workday-chip";
 
 export const metadata = { title: "Your apps - MahekOne" };
 
-export default async function LauncherPage({ searchParams }: { searchParams: Promise<{ checkin?: string }> }) {
+export default async function LauncherPage() {
   const user = await requireUser();
-  const [apps, ids, attendance, sp] = await Promise.all([
+  const [apps, ids, attendance] = await Promise.all([
     launcherApps(user),
     listUserApps(user.id),
     todaysAttendance(user.id),
-    searchParams,
   ]);
-  /* CHECKING IN IS HERE, NOT IN THE HRMS (Nov 2026): the launcher is where
-     everybody lands after signing in. It is offered to whoever holds the
-     HRMS, which is everybody whose day is recorded there. */
-  const checkIn = ids.includes("hrms") ? await launcherCheckIn() : null;
+  /* PUNCHING IN IS HERE, NOT IN THE HRMS (Nov 2026): the launcher is where
+     everybody lands after signing in. The day card is the workday clock's,
+     shown to whoever holds the HRMS — everybody whose day is recorded there. */
+  const checkIn = ids.includes("hrms");
 
   const locked = lockedApps(ids);
   const waiting = apps.filter((a) => a.count > 0);
@@ -50,6 +50,7 @@ export default async function LauncherPage({ searchParams }: { searchParams: Pro
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   return (
+    <WorkdayProvider>
     <div className="animate-fade-in flex min-h-screen flex-col bg-canvas">
       {apps.length > 1 ? (
         <AppShortcuts hrefs={apps.map((a) => a.href)} />
@@ -58,6 +59,7 @@ export default async function LauncherPage({ searchParams }: { searchParams: Pro
       <header className="relative z-2 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-8">
         <Wordmark />
         <span className="flex-1" />
+        <WorkdayChip />
         <FeedbackButton />
         {/* The same menu the apps carry in their sidebar, so "where do I change
             my password" has one answer wherever somebody is standing. */}
@@ -134,7 +136,7 @@ export default async function LauncherPage({ searchParams }: { searchParams: Pro
         <div className="mx-auto max-w-[1120px]">
           {checkIn ? (
             <div className="mb-4">
-              <LauncherCheckIn state={checkIn.state} canHelp={checkIn.canHelp} ask={sp.checkin === "1"} />
+              <LauncherCheckIn />
             </div>
           ) : null}
           {primary ? (
@@ -281,6 +283,7 @@ export default async function LauncherPage({ searchParams }: { searchParams: Pro
         </div>
       </div>
     </div>
+    </WorkdayProvider>
   );
 }
 
@@ -306,13 +309,4 @@ function HeroStat({
       </span>
     </span>
   );
-}
-
-/** Today's check-in for the launcher, or nothing for somebody with no HRMS role. */
-async function launcherCheckIn(): Promise<{ state: CheckInState; canHelp: boolean } | null> {
-  const { hrmsContext } = await import("@/lib/hrms/access");
-  const { checkInState } = await import("@/lib/hrms/check-in-state");
-  const ctx = await hrmsContext();
-  if (!ctx.level) return null;
-  return { state: await checkInState(ctx), canHelp: ctx.screens.has("help") };
 }
