@@ -47,6 +47,10 @@ const files = [
   // The Studio: posters only for your own book, recipes that redraw, bulk skips
   // said in words, and an upload published only by somebody given approval.
   "src/lib/studio/studio.integration.test.ts",
+  // The Locker: register scope, renewals that supersede, one reminder digest;
+  // the vault's dual control, audit-before-plaintext, tamper and break-glass rules.
+  "src/lib/locker/register.integration.test.ts",
+  "src/lib/locker/vault.integration.test.ts",
   // Routines: one task a day per routine, changed only by its setter or a manager.
   "src/lib/tasks/routines.integration.test.ts",
   "src/lib/tasks/audiences.integration.test.ts",

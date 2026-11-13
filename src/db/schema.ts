@@ -672,6 +672,9 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   /** A screenshot somebody attached when closing a task (the Tasks app). Read by
       whoever can see the task — see `canSeeTask` in lib/tasks/service.ts. */
   "task",
+  /** A scan of a Locker asset — a licence, a policy, an agreement. Read by
+      whoever may open that asset's category in the Locker (lib/locker/access.ts). */
+  "locker_asset",
 ]);
 
 /**
@@ -714,6 +717,8 @@ export const appIdEnum = pgEnum("app_id", [
   "tasks",
   /** Studio — personalised festival and promotional posters for leads and customers. */
   "studio",
+  /** Locker — the company's licences, policies, contracts, subscriptions and the password vault. */
+  "locker",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -17755,3 +17760,388 @@ export const studioForwardRecipients = pgTable(
     check("studio_forward_recipients_status", sql`${t.status} in ('pending','opened','sent','skipped')`),
   ],
 );
+
+/* ===========================================================================
+ * LOCKER — the company's licences, policies, contracts, subscriptions and
+ * company records, each with an end date somebody owns; and the vault of
+ * passwords and keys that run them. Rules in lib/locker/engine.ts (pure);
+ * reads in lib/locker/service.ts; writes in lib/actions/locker.ts.
+ *
+ * Status is DERIVED from the end date, the type's renewal lead and grace, and
+ * nothing else — `stage` holds only the states a person sets (a renewal under
+ * way, applied, replaced, cancelled…), never "expired", so no row can say a
+ * licence is live after its end date has passed.
+ * ========================================================================= */
+
+/** The companies in the group. An asset belongs to exactly one. */
+export const lockerEntities = pgTable("locker_entities", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  gstin: text("gstin"),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Offices, plants, godowns and depots. `hazardous` marks a site that stores solvents. */
+export const lockerSites = pgTable("locker_sites", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  kind: text("kind").notNull().default("office"),
+  state: text("state").notNull().default(""),
+  hazardous: boolean("hazardous").notNull().default(false),
+  entityId: text("entity_id").references(() => lockerEntities.id),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [check("locker_sites_kind", sql`${t.kind} in ('office','factory','godown','depot')`)]);
+
+/**
+ * What a kind of asset is: how long it lasts, how early it must be renewed,
+ * how long a grace it has, how important it usually is and who issues it.
+ * Seeded with Mahek's catalogue; an admin adds more on Admin › Types.
+ */
+export const lockerAssetTypes = pgTable("locker_asset_types", {
+  code: text("code").primaryKey(),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  /** document · subscription · perpetual · term_contract */
+  model: text("model").notNull(),
+  validityMonths: integer("validity_months").notNull().default(0),
+  leadDays: integer("lead_days").notNull().default(0),
+  graceDays: integer("grace_days").notNull().default(0),
+  criticality: integer("criticality").notNull().default(2),
+  authority: text("authority").notNull().default(""),
+  typicalCostPaise: bigint("typical_cost_paise", { mode: "number" }).notNull().default(0),
+  /** What has to happen to renew one, in order. */
+  steps: jsonb("steps").$type<string[]>().notNull().default([]),
+  /** What stops if it runs out — said on the asset and on the dashboard. */
+  consequence: text("consequence"),
+  /** Extra fields an admin added for this type: [{ key, label }]. */
+  fields: jsonb("fields").$type<{ key: string; label: string; required?: boolean; hint?: string }[]>().notNull().default([]),
+  /** Seeded with the product; an admin may edit it but it is never deleted. */
+  system: boolean("system").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("locker_asset_types_model", sql`${t.model} in ('document','subscription','perpetual','term_contract')`),
+  check("locker_asset_types_crit", sql`${t.criticality} between 1 and 4`),
+]);
+
+/** How a recurring charge is paid. Never the card number: the last four and the expiry. */
+export const lockerPaymentMethods = pgTable("locker_payment_methods", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  kind: text("kind").notNull().default("Credit card"),
+  last4: text("last4").notNull().default(""),
+  expiresOn: date("expires_on"),
+  holder: text("holder").notNull().default(""),
+  bank: text("bank").notNull().default(""),
+  /** A card in somebody's own name paying a company bill — a risk, said as one. */
+  personal: boolean("personal").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const lockerAssets = pgTable("locker_assets", {
+  id: text("id").primaryKey(),
+  /** LCK-<CAT>-0001, numbered per category; never reused. */
+  code: text("code").notNull().unique(),
+  title: text("title").notNull(),
+  typeCode: text("type_code").notNull().references(() => lockerAssetTypes.code),
+  category: text("category").notNull(),
+  /** 1 low · 2 medium · 3 high · 4 business critical. Starts at the type's. */
+  criticality: integer("criticality").notNull(),
+  entityId: text("entity_id").references(() => lockerEntities.id),
+  siteId: text("site_id").references(() => lockerSites.id),
+  /** The day it runs out (document), renews (subscription) or the term ends (contract). Null for lifetime. */
+  endDate: date("end_date"),
+  issuedOn: date("issued_on"),
+  /** Only what a person sets; null means "read it off the dates". See engine.ts `statusOf`. */
+  stage: text("stage"),
+  ownerId: text("owner_id").references(() => users.id),
+  backupId: text("backup_id").references(() => users.id),
+  approverId: text("approver_id").references(() => users.id),
+  /** Who actually does the renewal work, where that is not the owner. */
+  executorId: text("executor_id").references(() => users.id),
+  department: text("department").notNull().default(""),
+  externalContact: text("external_contact"),
+  docNo: text("doc_no").notNull().default(""),
+  provider: text("provider").notNull().default(""),
+  amountPaise: bigint("amount_paise", { mode: "number" }).notNull().default(0),
+  billingCycle: text("billing_cycle").notNull().default(""),
+  paymentMethodId: text("payment_method_id").references(() => lockerPaymentMethods.id),
+  autoRenew: boolean("auto_renew").notNull().default(false),
+  seats: integer("seats").notNull().default(0),
+  noticeDays: integer("notice_days").notNull().default(0),
+  conditions: text("conditions"),
+  physicalLocation: text("physical_location"),
+  custodianId: text("custodian_id").references(() => users.id),
+  /** The type's extra fields, by key. */
+  extra: jsonb("extra").$type<Record<string, string>>().notNull().default({}),
+  tags: jsonb("tags").$type<string[]>().notNull().default([]),
+  /** The asset this one replaced, when a renewal brought a new document. */
+  replacesId: text("replaces_id"),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archivedReason: text("archived_reason"),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  lastCheckedById: text("last_checked_by_id").references(() => users.id),
+  createdById: text("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("locker_assets_end_idx").on(t.endDate),
+  index("locker_assets_owner_idx").on(t.ownerId),
+  index("locker_assets_cat_idx").on(t.category),
+  check("locker_assets_crit", sql`${t.criticality} between 1 and 4`),
+  check("locker_assets_stage", sql`${t.stage} is null or ${t.stage} in ('renewal_in_progress','renewal_filed','awaiting_document','superseded','cancelled','lost','suspended','disputed','draft')`),
+]);
+
+/** One renewal of one asset, from "not started" to "complete". */
+export const lockerRenewals = pgTable("locker_renewals", {
+  id: text("id").primaryKey(),
+  assetId: text("asset_id").notNull().references(() => lockerAssets.id),
+  /** 0 Not started … 8 Complete — RENEWAL_STEPS in engine.ts. */
+  step: integer("step").notNull().default(1),
+  /** The type's steps, ticked: [{ text, done, by, at }]. Copied at start so a later edit to the type does not rewrite it. */
+  checklist: jsonb("checklist").$type<{ text: string; done: boolean; by?: string; at?: string }[]>().notNull().default([]),
+  assignedToId: text("assigned_to_id").references(() => users.id),
+  appliedOn: date("applied_on"),
+  ackNo: text("ack_no"),
+  costPaise: bigint("cost_paise", { mode: "number" }).notNull().default(0),
+  newEndDate: date("new_end_date"),
+  newDocNo: text("new_doc_no"),
+  notes: text("notes"),
+  startedById: text("started_by_id").references(() => users.id),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  completedById: text("completed_by_id").references(() => users.id),
+}, (t) => [
+  index("locker_renewals_asset_idx").on(t.assetId),
+  uniqueIndex("locker_renewals_one_open").on(t.assetId).where(sql`${t.completedAt} is null`),
+]);
+
+/** Reminder schedules, one per importance: offsets in days from the action day. */
+export const lockerReminderSchedules = pgTable("locker_reminder_schedules", {
+  criticality: integer("criticality").primaryKey(),
+  offsets: jsonb("offsets").$type<number[]>().notNull(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A reminder that was sent, so the nightly pass never sends one twice. */
+export const lockerRemindersSent = pgTable("locker_reminders_sent", {
+  id: text("id").primaryKey(),
+  assetId: text("asset_id").notNull().references(() => lockerAssets.id),
+  endDate: date("end_date"),
+  offset: integer("offset").notNull(),
+  sentTo: jsonb("sent_to").$type<string[]>().notNull().default([]),
+  sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("locker_reminders_sent_once").on(t.assetId, t.endDate, t.offset)]);
+
+/* ---------------------------------------------------------------- the vault */
+
+/** An account other logins sign in THROUGH: a Google mailbox, a GitHub org, a cloud service account. */
+export const lockerIdentities = pgTable("locker_identities", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  provider: text("provider").notNull(),
+  /** organisational · shared · personal · service */
+  kind: text("kind").notNull().default("organisational"),
+  /** The company can recover it without one person. False for somebody's own Gmail. */
+  controlled: boolean("controlled").notNull().default(true),
+  mfa: boolean("mfa").notNull().default(false),
+  recovery: boolean("recovery").notNull().default(false),
+  controlledByName: text("controlled_by_name"),
+  ownerId: text("owner_id").references(() => users.id),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("locker_identities_email").on(t.email, t.provider)]);
+
+export const lockerCredentials = pgTable("locker_credentials", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  /** Web login · API key · Banking · Government portal · SSH key · Database · Wi-Fi · Device admin · Email inbox · Payment card portal */
+  kind: text("kind").notNull(),
+  /** standard · sensitive · restricted — decides who may reveal and what it costs. */
+  tier: text("tier").notNull().default("standard"),
+  provider: text("provider").notNull().default(""),
+  url: text("url").notNull().default(""),
+  username: text("username").notNull().default(""),
+  env: text("env").notNull().default("Production"),
+  /** direct · federated_sso · api_key · ssh_key · shared_secret */
+  auth: text("auth").notNull().default("direct"),
+  viaIdentityId: text("via_identity_id").references(() => lockerIdentities.id),
+  /** The sign-in account is the only way in — lose it and this is lost. */
+  sole: boolean("sole").notNull().default(false),
+  /** The mailbox this login IS, for an "Email inbox". */
+  identityId: text("identity_id").references(() => lockerIdentities.id),
+  assetId: text("asset_id").references(() => lockerAssets.id),
+  ownerId: text("owner_id").references(() => users.id),
+  backupOwnerId: text("backup_owner_id").references(() => users.id),
+  mfa: boolean("mfa").notNull().default(false),
+  /** totp · sms · email · hardware_key · app_push · none */
+  mfaMethod: text("mfa_method").notNull().default("none"),
+  recoveryEmail: text("recovery_email").notNull().default(""),
+  accessLevel: text("access_level").notNull().default(""),
+  /** The exact people (beyond the vault module) who may reveal a RESTRICTED login. Empty means nobody but by break-glass. */
+  revealers: jsonb("revealers").$type<string[]>().notNull().default([]),
+  lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+  /** Days between changes; null reads the tier's default from settings. */
+  rotateEveryDays: integer("rotate_every_days"),
+  lastRotatedAt: timestamp("last_rotated_at", { withTimezone: true }),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+  createdById: text("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("locker_credentials_tier", sql`${t.tier} in ('standard','sensitive','restricted')`),
+  index("locker_credentials_via_idx").on(t.viaIdentityId),
+]);
+
+/**
+ * Every value a credential's field has held. The current one has `retired_at`
+ * null; a change retires it rather than overwriting, so "previous values" can
+ * be revealed (with a reason) after a rotation goes wrong. Ciphertext only —
+ * AES-256-GCM, key in the environment (lib/locker/crypto.ts). `hint` is the
+ * last two characters, which is what every list shows.
+ */
+export const lockerSecrets = pgTable("locker_secrets", {
+  id: text("id").primaryKey(),
+  credentialId: text("credential_id").notNull().references(() => lockerCredentials.id),
+  field: text("field").notNull(),
+  /** AES-256-GCM under this value's OWN data key: iv:tag:data, base64. */
+  ciphertext: text("ciphertext").notNull(),
+  /** The data key, itself wrapped (AES-256-GCM) by the key-encryption key named by `kek_version`. */
+  wrappedDek: text("wrapped_dek").notNull(),
+  kekVersion: integer("kek_version").notNull().default(1),
+  hint: text("hint").notNull().default(""),
+  /** sha256 of the value, keyed — finds the same password used twice without decrypting anything. */
+  fingerprint: text("fingerprint").notNull().default(""),
+  createdById: text("created_by_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+}, (t) => [
+  index("locker_secrets_cred_idx").on(t.credentialId, t.field),
+  uniqueIndex("locker_secrets_one_current").on(t.credentialId, t.field).where(sql`${t.retiredAt} is null`),
+]);
+
+/** What else depends on a sign-in account: a login signing in through it, its recovery email, its billing owner. */
+export const lockerLinks = pgTable("locker_links", {
+  id: text("id").primaryKey(),
+  credentialId: text("credential_id").notNull().references(() => lockerCredentials.id),
+  identityId: text("identity_id").notNull().references(() => lockerIdentities.id),
+  /** Shared sign-in · Recovery email · Billing owner */
+  kind: text("kind").notNull(),
+  sole: boolean("sole").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("locker_links_once").on(t.credentialId, t.identityId, t.kind)]);
+
+/**
+ * Every reveal, and every ASK for one. A restricted secret is revealed only
+ * once somebody else approves; the row is the request, the decision and the
+ * reveal, so the reveal history on a login reads straight off it.
+ */
+export const lockerReveals = pgTable("locker_reveals", {
+  id: text("id").primaryKey(),
+  credentialId: text("credential_id").notNull().references(() => lockerCredentials.id),
+  secretId: text("secret_id").references(() => lockerSecrets.id),
+  field: text("field").notNull(),
+  previous: boolean("previous").notNull().default(false),
+  userId: text("user_id").notNull().references(() => users.id),
+  reason: text("reason").notNull(),
+  /** waiting · approved · declined · revealed · expired · emergency */
+  state: text("state").notNull(),
+  decidedById: text("decided_by_id").references(() => users.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  revealedAt: timestamp("revealed_at", { withTimezone: true }),
+  /** Until when an approval may be spent. */
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  breakglassId: text("breakglass_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("locker_reveals_cred_idx").on(t.credentialId, t.createdAt),
+  index("locker_reveals_state_idx").on(t.state),
+]);
+
+/** Emergency access: a time-boxed window over named secrets, approved by a second person, visible to everyone. */
+export const lockerBreakglass = pgTable("locker_breakglass", {
+  id: text("id").primaryKey(),
+  startedById: text("started_by_id").notNull().references(() => users.id),
+  reason: text("reason").notNull(),
+  scope: jsonb("scope").$type<string[]>().notNull().default([]),
+  minutes: integer("minutes").notNull().default(60),
+  /** awaiting · active · ended · declined */
+  state: text("state").notNull().default("awaiting"),
+  approvedById: text("approved_by_id").references(() => users.id),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  activeFrom: timestamp("active_from", { withTimezone: true }),
+  activeUntil: timestamp("active_until", { withTimezone: true }),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  endedById: text("ended_by_id").references(() => users.id),
+  reviewNote: text("review_note"),
+});
+
+/** A quarterly access review: each row a person's grant, kept or removed by a named reviewer. */
+export const lockerReviewItems = pgTable("locker_review_items", {
+  id: text("id").primaryKey(),
+  period: text("period").notNull(),
+  userId: text("user_id").notNull().references(() => users.id),
+  moduleKey: text("module_key").notNull(),
+  /** keep · remove · null (not reviewed yet) */
+  decision: text("decision"),
+  decidedById: text("decided_by_id").references(() => users.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+}, (t) => [uniqueIndex("locker_review_items_once").on(t.period, t.userId, t.moduleKey)]);
+
+/** Offboarding: what a leaver owned and held, and what was done with each. */
+export const lockerOffboarding = pgTable("locker_offboarding", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  startedById: text("started_by_id").notNull().references(() => users.id),
+  /** [{ kind, id, title, action, done, to }] — reassign an asset, change a password, take back an account. */
+  items: jsonb("items").$type<{ kind: string; id: string; title: string; action: string; done: boolean; to?: string | null }[]>().notNull().default([]),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+/** The Locker's Security settings (Admin › Security): one row, edited on that screen. Defaults in lib/locker/settings.ts. */
+export const lockerSettings = pgTable("locker_settings", {
+  id: text("id").primaryKey().default("locker"),
+  values: jsonb("values").$type<Record<string, unknown>>().notNull().default({}),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * THE LOCKER'S OWN AUDIT: append-only and hash-chained. Every row carries the
+ * hash of the one before, so a removed or altered row breaks the chain and
+ * `verifyAuditChain` says where. A trigger refuses UPDATE and DELETE at every
+ * privilege the app connects with. Never a secret value — that a field
+ * changed, not what to.
+ */
+export const lockerAudit = pgTable("locker_audit", {
+  seq: bigint("seq", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  actorId: text("actor_id").references(() => users.id),
+  actorName: text("actor_name").notNull().default(""),
+  /** locker.asset.created, locker.secret.revealed, … (audit-labels.ts) */
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull().default(""),
+  entityId: text("entity_id").notNull().default(""),
+  entityTitle: text("entity_title").notNull().default(""),
+  /** The sentence the Audit screen shows. */
+  summary: text("summary").notNull(),
+  reason: text("reason"),
+  approvedById: text("approved_by_id").references(() => users.id),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+  security: boolean("security").notNull().default(false),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  prevHash: text("prev_hash").notNull(),
+  hash: text("hash").notNull(),
+}, (t) => [
+  index("locker_audit_entity_idx").on(t.entityType, t.entityId),
+  index("locker_audit_actor_idx").on(t.actorId, t.at),
+]);

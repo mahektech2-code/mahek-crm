@@ -164,6 +164,8 @@ export type JobName =
   | "feedback-fixes"
   /** A price list whose successor has taken over, filed as superseded. Hourly and nightly. */
   | "price-lists-supersede"
+  /** The Locker's renewal reminders: today's ladder rungs and card-expiry alerts, one digest per person. Nightly. */
+  | "locker-reminders"
   /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
   | "bank-statement-pdfs"
   | "price-list-stale-reads"
@@ -272,6 +274,13 @@ async function taskAutomationsStep(): Promise<{ recordsAffected: number; detail:
   return { recordsAffected: n, detail: `${r.reduce((a, x) => a + x.raised, 0)} raised, ${r.reduce((a, x) => a + x.closed, 0)} closed${failed.length ? `; failed: ${failed.join(", ")}` : ""}` };
 }
 
+/** Locker renewal reminders — see lib/locker/reminders.ts. */
+async function lockerRemindersStep(): Promise<{ recordsAffected: number; detail: string }> {
+  const { runLockerReminders } = await import("./locker/reminders");
+  const r = await runLockerReminders();
+  return { recordsAffected: r.sent, detail: `${r.rungs} reminder rungs and ${r.cardAlerts} card alerts to ${r.people} people` };
+}
+
 /* ---------------------------------------------------------------- nightly */
 
 export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
@@ -298,6 +307,14 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
      too; the nightly is the net on a deployment whose hourly is not called. */
   results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
   results.push(await run("price-overrides-sync", priceOverridesSyncStep, triggeredById));
+
+  /* The Locker's reminders: a step that fails must not cost the nightly the
+     steps after it, and a missed night is caught by the "+1 daily" rungs. */
+  try {
+    results.push(await run("locker-reminders", lockerRemindersStep, triggeredById));
+  } catch (e) {
+    console.error("Nightly: Locker reminders failed:", e instanceof Error ? e.message : e);
+  }
 
   /* The Price Desk's morning check — after the supersede, so it reads the
      revisions in force. A finding is a courtesy: it must never cost the
@@ -1380,6 +1397,8 @@ export async function runJob(
       return [await run("feedback-fixes", feedbackFixesStep, triggeredById)];
     case "price-lists-supersede":
       return [await run("price-lists-supersede", priceListsSupersedeStep, triggeredById)];
+    case "locker-reminders":
+      return [await run("locker-reminders", lockerRemindersStep, triggeredById)];
     case "price-books-morning":
       return [await run("price-books-morning", priceBooksMorningStep, triggeredById)];
     case "price-overrides-sync":

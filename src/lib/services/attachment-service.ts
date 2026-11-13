@@ -65,7 +65,9 @@ export type ParentType =
   /** A supplier's invoice on a vendor payout — one file per invoice row. */
   | "vendor_payout_invoice"
   /** The screenshots somebody attached when closing a task (the Tasks app). */
-  | "task";
+  | "task"
+  /** A scan of a Locker asset: the licence, the policy, the agreement — every version. */
+  | "locker_asset";
 
 export type AttachmentView = {
   id: string;
@@ -94,6 +96,9 @@ export async function limitFor(parentType: ParentType): Promise<number> {
       return config["attachments.maxPerFeedback"];
     case "task":
       return MAX_PROOFS;
+    case "locker_asset":
+      /* Every renewal adds a document and none is ever removed (spec P9). */
+      return 200;
     case "mbos_document":
     case "mbos_course":
     case "price_list_document":
@@ -383,6 +388,14 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     const ctx = await resolveScope();
     const { canSeeTaskById } = await import("@/lib/tasks/service");
     return canSeeTaskById(ctx.user, row.parentId);
+  }
+
+  /* A Locker asset's document: whoever may open that asset's category in the
+     Locker may open its files (lib/locker/access.ts), and nobody else. */
+  if (row.parentType === "locker_asset") {
+    const ctx = await resolveScope();
+    const { canReadLockerAsset } = await import("@/lib/locker/register-service");
+    return canReadLockerAsset(ctx.user.id, row.parentId);
   }
 
   if (row.parentType === "price_list_document") {
