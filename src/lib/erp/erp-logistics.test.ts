@@ -46,6 +46,7 @@ import * as L from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { erpAudit } from "@/lib/erp/server";
 import * as T from "@/lib/erp/trips";
+import * as F from "@/lib/erp/freight-bills";
 import { createComplaint } from "@/lib/services/complaint-create";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
@@ -104,7 +105,7 @@ async function dispatch(date: string, qty: number, bill: string, dispatched: str
 before(async () => {
   await db.execute(sql`
     truncate users, customers, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries,
-             erp_pack_entries, erp_transport_allocations, erp_transport_payments, erp_trips, erp_order_reviews, erp_transports, erp_lrs, erp_transport_events, erp_transport_messages, erp_transporters, erp_requests, erp_followups, erp_credits, erp_expenses, erp_videos,
+             erp_pack_entries, erp_freight_bill_events, erp_freight_bill_lines, erp_freight_bills, erp_transport_allocations, erp_transport_payments, erp_trips, erp_order_reviews, erp_transports, erp_lrs, erp_transport_events, erp_transport_messages, erp_transporters, erp_requests, erp_followups, erp_credits, erp_expenses, erp_videos,
              erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
@@ -342,14 +343,58 @@ describe("dispatch opens the transport record (§18)", () => {
     await db.update(customers).set({ whatsappDnd: false }).where(eq(customers.id, "cus_shree"));
   });
 
-  test("paid freight lists the line until its extra expense is entered, and the transport record follows", async () => {
+  test("a transporter's bill is split over the Paid-freight lines on its vehicle by litres, paid, undone by a manager and deleted with a reason", async () => {
     const ctx = await as(admin);
-    const { rows } = await mod("paidFreight").load(ctx);
-    assert.equal(rows.length, 1);
-    assert.ok((await mod("paidFreight").actions!.extra(ctx, rows[0].id, { amount: "250" })).ok);
-    assert.equal((await mod("paidFreight").load(ctx)).rows.length, 0);
     const [t] = await db.select().from(erpTransports);
-    assert.equal(t.extraExpensePaise, 25000);
+    await db.update(erpTransports).set({ vehicleNo: "MH04 KL 2231" }).where(eq(erpTransports.id, t.id));
+    const day = String(t.billDate);
+    /* The vehicle is found however its number is spaced, and the line is Paid freight with its litres. */
+    const [vl] = await F.vehicleLines("mh04kl2231", day);
+    assert.equal(Number(vl.litres), 10);
+    assert.equal(vl.freightTerm, "Paid");
+    assert.ok((await F.recentVehicles(3650)).some((v) => v.vehicleNo === "MH04 KL 2231" && v.unbilledLines === 1));
+    const input = { lrNo: "88213", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 25000, orderIds: [vl.orderId] };
+    const saved = await F.saveFreightBill(ctx, input);
+    assert.ok(saved.ok, msg(saved));
+    const billId = saved.ok ? saved.data.id : "";
+    let [bill] = await F.freightBills({ status: "pending", ids: [billId] });
+    assert.equal(bill.shares.length, 1);
+    assert.equal(bill.shares[0].amountPaise, 25000, "one line carries the whole bill");
+    /* The same LR from the same transporter is the same bill; the same line cannot carry freight twice. */
+    assert.match(msg(await F.saveFreightBill(ctx, input)), /already entered as TB-/);
+    assert.match(msg(await F.saveFreightBill(ctx, { ...input, lrNo: "88214" })), /Already on TB-/);
+    /* The share reaches the line, where costing and margin read it. */
+    const { rows } = await mod("orderDetails").load(ctx);
+    assert.equal(rows.find((r) => r.id === vl.orderId)?.v.freightShare, 25000);
+    /* A line that stops being Paid freight makes the split stale: it cannot be paid until split again. */
+    await db.update(erpTransports).set({ paymentType: "To Pay" }).where(eq(erpTransports.id, t.id));
+    [bill] = await F.freightBills({ status: "pending", ids: [billId] });
+    assert.equal(bill.stale[0]?.why, "not_paid");
+    assert.match(msg(await F.markFreightBillPaid(ctx, billId, { paidOn: day, mode: "bank" })), /Split it again/);
+    assert.match(msg(await F.resplitFreightBill(ctx, billId)), /None of this bill's dispatches is Paid freight/);
+    await db.update(erpTransports).set({ paymentType: "Paid" }).where(eq(erpTransports.id, t.id));
+    /* Paid: it leaves Pending expense; the clerk cannot undo it, a manager can, and the history keeps both. */
+    assert.match(msg(await F.markFreightBillPaid(ctx, billId, { paidOn: day, mode: "cheque" })), /Bank, UPI or Cash/);
+    assert.ok((await F.markFreightBillPaid(ctx, billId, { paidOn: day, mode: "upi", reference: "UTR9" })).ok);
+    assert.equal((await F.freightBills({ status: "pending" })).length, 0);
+    assert.equal((await F.freightBills({ status: "paid" })).length, 1);
+    assert.match(msg(await F.saveFreightBill(ctx, { ...input, id: billId })), /Undo the payment first/);
+    assert.match(msg(await F.undoFreightBillPayment(await as(clerk), billId, "wrong account")), /Only a manager/);
+    assert.equal((await F.undoFreightBillPayment(await as(admin), billId, "")).ok, false, "an undo says why");
+    assert.ok((await F.undoFreightBillPayment(await as(admin), billId, "paid from the wrong account")).ok);
+    [bill] = await F.freightBills({ status: "pending", ids: [billId] });
+    assert.equal(bill.status, "pending");
+    assert.equal(bill.shares[0].amountPaise, 25000, "undoing a payment keeps the split");
+    assert.deepEqual(bill.events.map((e) => e.kind), ["created", "paid", "unpaid"]);
+    /* Deleted with a reason: the share leaves the order, the row stays. */
+    assert.ok((await F.deleteFreightBill(ctx, billId, "entered against the wrong vehicle")).ok);
+    assert.equal((await F.freightSharesFor([vl.orderId])).size, 0);
+    assert.equal((await db.execute(sql`select status from erp_freight_bills where id = ${billId}`))[0].status, "deleted");
+    /* And the line is free for a new bill. */
+    assert.ok((await F.saveFreightBill(ctx, { ...input, lrNo: "88215", amountPaise: 30000 })).ok);
+    const report = await F.freightReport("2000-01-01", "2100-01-01");
+    assert.equal(report.pendingPaise, 30000);
+    assert.equal(report.byCustomer[0].label, "Shree Paints");
   });
 
   test("an extra expense entered on Orders → Billing & dispatch reaches the transport record too", async () => {

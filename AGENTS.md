@@ -9497,6 +9497,26 @@ skipped with why. Wati's ticks reach them through `applyWatiEvent` (`etmsg_`).
 the shared steps — never call notes, problem notes, prices or staff names,
 because a WhatsApp link gets forwarded.
 
+**TRANSPORT EXPENSES REPLACED TRIPS & FREIGHT AND PAID FREIGHT (Nov 2026).**
+Logistics → Transport expenses (`?view=freight`; `trips` and `paidFreight`
+redirect there) is the Transportation Expense PRD: a transporter's bill
+(`erp_freight_bills`, `TB-<n>`, 0331) names the vehicle and the day it left,
+and every order line dispatch-verified onto it that day is offered
+(`erp_order_details.transport_id` → `erp_transports.vehicle_no`). Only PAID
+freight is counted (`coalesce(payment_type, customers.freight_term)`); To Pay
+and TBB are shown and greyed. The bill is split over the ticked ORDER LINES by
+litres with `allocateByLitres`, written to `erp_freight_bill_lines` on save —
+one live share per order line (a partial unique index) — and `detailRows`
+reads it (`freightSharesFor`), so it reaches the line's costing, margin and
+the Founder's Margins desk with nobody typing it; a sheet-costed line shows it
+and does not add it again. Pending until **Mark as paid** (date, Bank/UPI/
+Cash, reference); only an ERP manager undoes a payment, with a reason, and the
+split stays. A corrected dispatch makes a pending split stale (`staleShares`)
+and it cannot be paid until split again. Nothing here posts to Petty Cash/Bank.
+Rules: `engines/freight-bill.ts`; reads and writes: `lib/erp/freight-bills.ts`;
+screen: `app/erp/transport/parts/freight.tsx`. `erp_trips` still groups bills
+by vehicle at dispatch; its payment tables are read by no screen.
+
 ## Delivery proof — an LR for a transporter, a signed copy for a Mahek Vehicle
 
 **A BILL GOES ONE OF TWO WAYS, and the order says which.** "Delivered by" on

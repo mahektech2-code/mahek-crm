@@ -82,7 +82,8 @@ export async function marginLines(from: string, to: string): Promise<MarginRead>
     tooWide: null,
     lines: sold.map((r): MarginLine => {
       const l = r.l;
-      const extra = r.d.extraExpensesPaise ?? 0;
+      /* Typed extra expenses plus the line's share of a transporter's bill (Logistics → Transport expenses). */
+      const extra = (r.d.extraExpensesPaise ?? 0) + (r.costSource === "lots" ? (r.freight?.amountPaise ?? 0) : 0);
       const place = places.get(l.o.billingCustomerId);
       const orderDate = String(l.o.orderDate).slice(0, 10);
       const dispatch = String(r.d.dispatchDate).slice(0, 10);

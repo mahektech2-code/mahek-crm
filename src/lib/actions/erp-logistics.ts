@@ -5,7 +5,7 @@ import { after } from "next/server";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
-import * as T from "@/lib/erp/trips";
+import * as F from "@/lib/erp/freight-bills";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -188,27 +188,48 @@ export async function erpLogisticsMessageRetry(messageId: string) {
   return run((ctx) => L.retryMessage(ctx, messageId));
 }
 
-/* ---- trips and the transport payment (Order-to-Delivery PRD steps 10–11) ---- */
+/* ---- transport expenses (the Transportation Expense PRD) ---- */
 
-export async function erpTripSave(input: T.TripInput) {
-  return run((ctx) => T.saveTrip(ctx, { ...input, transportIds: ids(input?.transportIds) }));
+/** Reads for the add-bill form: holding the Logistics screen is enough, and nothing is written. */
+async function readFor<T>(fn: () => Promise<T>): Promise<Result<T>> {
+  try {
+    const ctx = await erpContext();
+    if (!ctx.screens.has("transport")) return err("You do not hold Logistics.", "not_permitted");
+    return ok(await fn());
+  } catch (e) {
+    return refused(e);
+  }
 }
 
-export async function erpTripAddBills(tripId: string, transportIds: string[]) {
-  return run((ctx) => T.addToTrip(ctx, String(tripId ?? ""), ids(transportIds)));
+/** Every order line that left on this vehicle that day. */
+export async function erpFreightVehicleLines(vehicleNo: string, dispatchOn: string, billId?: string | null) {
+  return readFor(() => F.vehicleLines(String(vehicleNo ?? ""), String(dispatchOn ?? ""), billId ? String(billId) : null));
 }
 
-export async function erpTripRemoveBill(transportId: string, confirmation?: ImpactConfirmation) {
-  return run((ctx) => T.removeFromTrip(ctx, String(transportId ?? ""), confirmation));
+/** Dispatched lines of these order numbers — a dispatch that left on another vehicle. */
+export async function erpFreightOrderLines(orderNos: number[], billId?: string | null) {
+  return readFor(() => F.linesOfOrders(Array.isArray(orderNos) ? orderNos.map(Number) : [], billId ? String(billId) : null));
 }
 
-/** Logistics records the confirmed payment; it does not make it. */
-export async function erpTransportPaymentRecord(input: T.PaymentInput) {
-  return run((ctx) => T.recordTransportPayment(ctx, { ...input, transportIds: ids(input?.transportIds) }));
+export async function erpFreightBillSave(input: F.FreightBillInput) {
+  return run((ctx) => F.saveFreightBill(ctx, { ...input, orderIds: ids(input?.orderIds) }));
 }
 
-export async function erpTransportPaymentReverse(paymentId: string, reason: string, confirmation?: ImpactConfirmation) {
-  return run((ctx) => T.reverseTransportPayment(ctx, String(paymentId ?? ""), reason ?? "", confirmation));
+export async function erpFreightBillResplit(billId: string) {
+  return run((ctx) => F.resplitFreightBill(ctx, String(billId ?? "")));
+}
+
+export async function erpFreightBillPay(billId: string, payment: F.PaymentFields) {
+  return run((ctx) => F.markFreightBillPaid(ctx, String(billId ?? ""), payment ?? { paidOn: "", mode: "" }));
+}
+
+/** A manager moves a paid bill back to pending, with a reason. */
+export async function erpFreightBillUnpay(billId: string, reason: string) {
+  return run((ctx) => F.undoFreightBillPayment(ctx, String(billId ?? ""), String(reason ?? "")));
+}
+
+export async function erpFreightBillDelete(billId: string, reason: string) {
+  return run((ctx) => F.deleteFreightBill(ctx, String(billId ?? ""), String(reason ?? "")));
 }
 
 export async function erpLogisticsMergeTransporter(fromId: string, intoId: string, confirmation?: ImpactConfirmation) {

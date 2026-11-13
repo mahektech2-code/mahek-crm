@@ -6,7 +6,7 @@ import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
 import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
-import { isPaidFreight } from "./engines/logistics";
+import { unbilledPaidLines } from "./freight-bills";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
 import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
@@ -370,10 +370,20 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ========================================================= logistics */
   const logistics: Tile[] = [];
-  if (has("paidFreight")) {
-    const { rows } = await details();
-    const n = rows.filter((r) => isPaidFreight(r.l.billing.freightTerm) && r.d.extraExpensesPaise == null).length;
-    logistics.push({ l: "Paid freight without extra expense", v: String(n), href: tileHref("paidFreight", null, "") });
+  if (has("freight")) {
+    /* Transport expenses: transporters' bills still to pay, and Paid-freight dispatches nobody has entered a bill for. */
+    const [[due], unbilled] = await Promise.all([
+      q(sql`select count(*)::int as n, coalesce(sum(amount_paise), 0)::bigint as paise from erp_freight_bills where status = 'pending'`),
+      unbilledPaidLines(30),
+    ]);
+    const n = Number(due?.n ?? 0);
+    logistics.push({
+      l: "Transport bills to pay",
+      v: String(n),
+      sub: `${n ? rupees(Number(due?.paise ?? 0)) : "Nothing pending"}${unbilled ? ` · ${plural(unbilled, "dispatch", "dispatches")} with no bill` : ""}`,
+      tone: unbilled ? "warn" : undefined,
+      href: tileHref("freight", null, ""),
+    });
   }
   if (has("transport")) {
     /* The logistics flow's four steps, each opening its tab of the desk. */

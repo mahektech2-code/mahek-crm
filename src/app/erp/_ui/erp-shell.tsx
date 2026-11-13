@@ -91,7 +91,7 @@ const SCREEN_ICON: Record<string, string> = {
   transport: "truck",
   pendingLr: "clock",
   trackLr: "pin",
-  paidFreight: "rupee",
+  freight: "rupee",
   requests: "chat",
   issueCn: "receipt",
   complaints: "warning",

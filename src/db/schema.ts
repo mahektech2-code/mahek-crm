@@ -13558,6 +13558,105 @@ export const erpTransportAllocations = pgTable(
 );
 
 /**
+ * A TRANSPORTER'S BILL, entered on Logistics → Transport expenses (the
+ * Transportation Expense PRD). One bill is one vehicle that left on one day;
+ * it is split by litres over every PAID-freight order line on that vehicle
+ * (`erp_freight_bill_lines`) the moment it is saved. Pending until somebody
+ * marks it paid; a manager can undo a payment, with a reason. Never deleted:
+ * a deleted bill keeps its row, its lines go not-live and the reason is kept.
+ */
+export const erpFreightBills = pgTable(
+  "erp_freight_bills",
+  {
+    id: text("id").primaryKey(),
+    /** Series `freightBill`, shown as TB-<n>. */
+    billNo: integer("bill_no").notNull(),
+    lrNo: text("lr_no").notNull(),
+    billDate: date("bill_date").notNull(),
+    transporter: text("transporter").notNull(),
+    vehicleNo: text("vehicle_no").notNull(),
+    /** The day the vehicle left — what picks its dispatches. */
+    dispatchOn: date("dispatch_on").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    remarks: text("remarks"),
+    /** pending | paid | deleted. */
+    status: text("status").notNull().default("pending"),
+    paidOn: date("paid_on"),
+    /** bank | upi | cash. */
+    paymentMode: text("payment_mode"),
+    paymentRef: text("payment_ref"),
+    paymentRemarks: text("payment_remarks"),
+    paidById: text("paid_by_id").references(() => users.id),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    deleteReason: text("delete_reason"),
+    deletedById: text("deleted_by_id").references(() => users.id),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_freight_bills_no_key").on(t.billNo),
+    index("erp_freight_bills_status_idx").on(t.status, t.billDate),
+    index("erp_freight_bills_vehicle_idx").on(t.dispatchOn, sql`upper(${t.vehicleNo})`),
+    check("erp_freight_bills_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_freight_bills_status_check", sql`${t.status} in ('pending', 'paid', 'deleted')`),
+    check("erp_freight_bills_mode_check", sql`${t.paymentMode} is null or ${t.paymentMode} in ('bank', 'upi', 'cash')`),
+    check("erp_freight_bills_paid_check", sql`(${t.status} = 'paid') = (${t.paidOn} is not null and ${t.paymentMode} is not null and ${t.paidAt} is not null)`),
+  ],
+);
+
+/**
+ * One order line's share of a transport bill: its litres and the paise they
+ * carry. The live shares of a bill add up to its amount exactly. An order line
+ * holds at most one live share, so the same freight cannot reach it twice.
+ * Splitting again marks the old shares not live and writes new ones.
+ */
+export const erpFreightBillLines = pgTable(
+  "erp_freight_bill_lines",
+  {
+    id: text("id").primaryKey(),
+    billId: text("bill_id")
+      .notNull()
+      .references(() => erpFreightBills.id),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    transportId: text("transport_id").references(() => erpTransports.id),
+    litres: numeric("litres", { precision: 12, scale: 3, mode: "number" }).notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    live: boolean("live").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_freight_bill_lines_bill_idx").on(t.billId),
+    uniqueIndex("erp_freight_bill_lines_live_key").on(t.orderId).where(sql`${t.live}`),
+    check("erp_freight_bill_lines_litres_check", sql`${t.litres} > 0`),
+    check("erp_freight_bill_lines_amount_check", sql`${t.amountPaise} >= 0`),
+  ],
+);
+
+/** What happened to a transport bill, append-only: created, edited, split, paid, unpaid, deleted. */
+export const erpFreightBillEvents = pgTable(
+  "erp_freight_bill_events",
+  {
+    id: text("id").primaryKey(),
+    billId: text("bill_id")
+      .notNull()
+      .references(() => erpFreightBills.id),
+    kind: text("kind").notNull(),
+    note: text("note"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_freight_bill_events_bill_idx").on(t.billId, t.at),
+    check("erp_freight_bill_events_kind_check", sql`${t.kind} in ('created', 'edited', 'split', 'paid', 'unpaid', 'deleted')`),
+  ],
+);
+
+/**
  * The transport companies logistics rings. A name is what bills and LRs carry
  * as text, so a transporter here is matched to them by name; the row adds the
  * numbers to call and, where the company has one, its online tracking page.
