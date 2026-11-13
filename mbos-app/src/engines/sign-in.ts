@@ -90,6 +90,9 @@ export type HandoverVerdict =
   | { kind: 'same-person' }
   | { kind: 'first-sign-in' }
   | { kind: 'new-person-clean' }
+  /* A different identifier was typed and nothing here can say whose it is —
+     the server decides, before it binds the phone to anybody. */
+  | { kind: 'ask-server'; unsent: number; lastUserId: string }
   | { kind: 'refuse'; unsent: number; lastName: string };
 
 export function handoverVerdict(args: {
@@ -102,9 +105,24 @@ export function handoverVerdict(args: {
 }): HandoverVerdict {
   const { last } = args;
   if (!last) return { kind: 'first-sign-in' };
-  const same = args.userId != null ? args.userId === last.userId : digits(args.mobile ?? '') === digits(last.mobile);
-  if (same) return { kind: 'same-person' };
-  if (args.unsent > 0) return { kind: 'refuse', unsent: args.unsent, lastName: last.name };
+  if (args.userId != null) {
+    if (args.userId === last.userId) return { kind: 'same-person' };
+    if (args.unsent > 0) return { kind: 'refuse', unsent: args.unsent, lastName: last.name };
+    return { kind: 'new-person-clean' };
+  }
+  /*
+   * A NUMBER THAT DIFFERS IS NOT A DIFFERENT PERSON.
+   *
+   * One account answers to a work number, an HRMS personal mobile (the one a
+   * sign-in code goes to) and an email. This used to refuse on any mismatch,
+   * so a salesman who signed in by password on his work number and came back
+   * by code on his personal mobile was told his OWN unsent work belonged to
+   * somebody else who had to sign in first — himself, locked out by name.
+   * Only the server can say whose an identifier is, so a mismatch is a
+   * question for it; it refuses a genuinely different person before binding.
+   */
+  if (digits(args.mobile ?? '') === digits(last.mobile)) return { kind: 'same-person' };
+  if (args.unsent > 0) return { kind: 'ask-server', unsent: args.unsent, lastUserId: last.userId };
   return { kind: 'new-person-clean' };
 }
 

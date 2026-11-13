@@ -16,6 +16,14 @@ import { mbosLogin } from "@/lib/actions/mbos";
 
 export const dynamic = "force-dynamic";
 
+/** The last person's account, where the handset still holds their unsent work. */
+function readHandover(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const h = raw as { lastUserId?: unknown; unsent?: unknown };
+  if (typeof h.lastUserId !== "string" || !h.lastUserId) return undefined;
+  return typeof h.unsent === "number" && h.unsent > 0 ? h.lastUserId : undefined;
+}
+
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try {
@@ -43,6 +51,7 @@ export async function POST(request: Request) {
     deviceLabel: typeof body.deviceLabel === "string" ? body.deviceLabel : undefined,
     platform: typeof body.platform === "string" ? body.platform : undefined,
     appVersion: typeof body.appVersion === "string" ? body.appVersion : undefined,
+    handoverFrom: readHandover(body.handover),
   });
 
   if (!result.ok) {
