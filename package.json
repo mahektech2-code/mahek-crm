@@ -23,6 +23,7 @@
     "jobs:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/run-job.ts",
     "jobs:prod:sheets": "tsx --conditions=react-server --env-file=.env.local --env-file=.env.prod.local scripts/run-job.ts",
     "report:qualification": "tsx --conditions=react-server --env-file=.env.local scripts/qualification-report.ts",
+    "report:hrms-managers": "tsx --conditions=react-server --env-file=.env.local scripts/hrms-managers-report.ts",
     "hire:deploy": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/hire-install.ts",
     "erp:levels:deploy": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/erp-levels-plan.ts",
     "hire:seed": "tsx --conditions=react-server --env-file=.env.local scripts/hire-seed.ts",

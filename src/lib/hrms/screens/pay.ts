@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { employees, hrmsAdvances, hrmsExpenses, hrmsSalaries, users, type HrmsSalary } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { fdLong, inr, nf, type ActionSpec, type ColSpec, type FieldSpec, type FormSpec, type ListRow, type RowField } from "@/lib/erp/ui";
-import { has, type HrmsContext, type Scope } from "../access";
+import { has, verifiesExpenseFor, type HrmsContext, type Scope } from "../access";
 import { err, fieldErr, hrmsAudit, hrmsId, inTx, nextSeries, okVoid, paise, refuse, rupeesField, stampLine, text, today, num, type HrmsScreenModule, type ScreenQuery, type Tx, type Values } from "../server";
 import { allPeople, byId, isActive, refList, type Person } from "../services/people";
 import { approvedLeave, attendanceRows, holidays, monthCounts } from "../services/attendance";
@@ -1081,17 +1081,36 @@ async function setVerify(ctx: HrmsContext, ids: string[], to: "Verified" | "Pend
   return done.length;
 }
 
+/** The expense list's reach: everybody for HR and the verify power, a manager's team, else one's own. */
+function expenseScope(ctx: HrmsContext, q: ScreenQuery, wide: boolean): { scope: Scope; options: Scope[] } {
+  if (wide) return wideScope(q, true);
+  if (ctx.level === "manager" && ctx.team.size) return { scope: q.scope === "mine" ? "mine" : "team", options: ["mine", "team"] };
+  return { scope: "mine", options: ["mine"] };
+}
+
+/** Every expense named must be one this person may verify — refused whole, never half done. */
+async function expenseVerifyRefusal(ctx: HrmsContext, ids: string[]) {
+  if (has(ctx, "verifyExp")) return null;
+  if (!ids.length) return err("Choose an expense first.");
+  const rows = await db.select({ employeeId: hrmsExpenses.employeeId }).from(hrmsExpenses).where(inArray(hrmsExpenses.id, ids));
+  if (!rows.length) return err("That expense no longer exists.", "not_found");
+  if (rows.every((r) => verifiesExpenseFor(ctx, r.employeeId))) return null;
+  return err("Verifying expenses needs the “Verify expenses” power. A manager verifies their own team’s claims, never their own.", "not_permitted");
+}
+
 const expenses: HrmsScreenModule = {
   key: "expenses",
   async load(ctx, q) {
     const wide = expWide(ctx);
-    const { scope, options } = wideScope(q, wide);
+    const { scope, options } = expenseScope(ctx, q, wide);
     const me = ctx.employee?.id ?? "";
     const [people, all] = await Promise.all([allPeople(), db.select().from(hrmsExpenses)]);
     const pb = byId(people);
     const bal = expenseBalances(all);
-    const rows = all.filter((x) => scope === "all" || x.employeeId === me);
-    const verifier = has(ctx, "verifyExp");
+    const rows = all.filter((x) => scope === "all" || x.employeeId === me || (scope === "team" && ctx.team.has(x.employeeId)));
+    /* A manager verifies their team's claims, never their own: the bulk button
+       is offered to them too, and each row is checked again on the server. */
+    const verifier = has(ctx, "verifyExp") || (ctx.level === "manager" && ctx.team.size > 0);
     return {
       spec: {
         screen: "expenses",
@@ -1127,8 +1146,10 @@ const expenses: HrmsScreenModule = {
         const totalBal = bal.get(x.employeeId) ?? 0;
         const amount = x.payType === CLAIM ? x.claimPaise : x.paidPaise;
         const acts: ActionSpec[] = [];
-        if (x.verify !== "Verified") acts.push({ id: "verify", l: "Verify", primary: true, why: verifier ? undefined : "Verifying expenses needs the “Verify expenses” power" });
-        else if (verifier) acts.push({ id: "unverify", l: "Mark pending" });
+        const mayVerify = verifiesExpenseFor(ctx, x.employeeId);
+        if (x.verify !== "Verified")
+          acts.push({ id: "verify", l: "Verify", primary: true, why: mayVerify ? undefined : own && ctx.level === "manager" ? "Your own claims are verified by someone else" : "Verifying expenses needs the “Verify expenses” power, or this person in your team" });
+        else if (mayVerify) acts.push({ id: "unverify", l: "Mark pending" });
         if (wide || (own && x.verify !== "Verified")) acts.push({ id: "edit", l: "Edit", loadsForm: true });
         if (has(ctx, "admin") || has(ctx, "hr") || (own && x.verify !== "Verified"))
           acts.push({ id: "delete", l: "Delete", impact: { kind: "hrms-expense", id: x.id } });
@@ -1173,12 +1194,14 @@ const expenses: HrmsScreenModule = {
   },
   actions: {
     async verify(ctx, id) {
-      if (!has(ctx, "verifyExp")) return err("Verifying expenses needs the “Verify expenses” power", "not_permitted");
+      const refusal = await expenseVerifyRefusal(ctx, [id]);
+      if (refusal) return refusal;
       const n = await setVerify(ctx, [id], "Verified");
       return n ? okVoid("Verified") : err("Already verified.");
     },
     async unverify(ctx, id) {
-      if (!has(ctx, "verifyExp")) return err("Marking an expense pending needs the “Verify expenses” power", "not_permitted");
+      const refusal = await expenseVerifyRefusal(ctx, [id]);
+      if (refusal) return refusal;
       const n = await setVerify(ctx, [id], "Pending");
       return n ? okVoid("Marked pending") : err("Already pending.");
     },
@@ -1196,7 +1219,8 @@ const expenses: HrmsScreenModule = {
   },
   bulk: {
     async verify(ctx, ids) {
-      if (!has(ctx, "verifyExp")) return err("Verifying expenses needs the “Verify expenses” power", "not_permitted");
+      const refusal = await expenseVerifyRefusal(ctx, ids);
+      if (refusal) return refusal;
       const n = await setVerify(ctx, ids, "Verified");
       return okVoid(`${n} expense${n === 1 ? "" : "s"} verified${ids.length > n ? ` · ${ids.length - n} were already verified` : ""}`);
     },

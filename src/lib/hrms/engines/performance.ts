@@ -196,6 +196,22 @@ export type StaffMonth = {
 const pct = (n: number) => Math.round(n * 1000) / 10;
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
+/**
+ * What the overall figure averages (Nov 2026). It used to be four parts —
+ * hours, punctuality, daily tasks and to-dos — but the HRMS's checklists,
+ * to-dos and daily sales entries were taken out, and a part with nothing
+ * left to record it either handed everybody a free 100% (no checklist, no
+ * to-do) or a flat 0% (a salesman with no daily entry). So a part counts only
+ * where something recorded it: hours and punctuality always, the field-work
+ * score only for a salesman who has daily entries that month. The other
+ * figures are still worked out, so a month from before reads as it did.
+ */
+function overallParts(x: StaffMonthInput, f: { workingHoursPct: number; punctualityPct: number; dailyTaskPct: number }): number[] {
+  const parts = [f.workingHoursPct, f.punctualityPct];
+  if (x.sales && x.kpiParts.length) parts.push(f.dailyTaskPct);
+  return parts;
+}
+
 /** §12.3 — one employee's month. */
 export function staffMonth(x: StaffMonthInput): StaffMonth {
   /* A22: the source formula is truncated; this is the spec's reading. */
@@ -244,7 +260,7 @@ export function staffMonth(x: StaffMonthInput): StaffMonth {
     todoPct,
     notDoneBuddy: x.buddy.length - buddyDone,
     buddyPct,
-    overallPct: Math.round(((workingHoursPct + todoPct + dailyTaskPct + punctualityPct) / 4) * 10) / 10,
+    overallPct: Math.round(avg(overallParts(x, { workingHoursPct, punctualityPct, dailyTaskPct })) * 10) / 10,
   };
 }
 
@@ -309,6 +325,8 @@ export type PointsInput = {
   activityDates: number;
   noteChars: number;
   kpiVisits: number;
+  /** Daily sales entries in the period. */
+  kpiDays: number;
 };
 
 export type Points = {
@@ -347,6 +365,9 @@ export function performancePoints(x: PointsInput, cfg: PointsCfg): Points {
   const punctualityPoint = punctualityCount / days;
   const workingHourPoint = ratio(avgHours, cfg.standardHours);
 
+  /* Checklists and to-dos were taken out of the HRMS (Nov 2026), so no job
+     is scored on them any more: an empty count scored a flat 0 and pulled
+     every office total down. Older periods' counts are still shown. */
   const withTasks = x.kind !== "Other";
   const taskCount = x.checklistTotal + x.todosTotal;
   /* No checklist item and no to-do in the period is not a failure to do them; it scores nothing only because there is nothing to score. */
@@ -372,10 +393,12 @@ export function performancePoints(x: PointsInput, cfg: PointsCfg): Points {
   const noteLen = sales ? ratio(x.noteChars, x.kpiVisits) : null;
   const descriptionPoint = noteLen == null ? null : noteLen > cfg.bands.description[0] ? 1 : noteLen > cfg.bands.description[1] ? 0.5 : 0;
 
-  let parts: number[];
-  if (x.kind === "Sales") parts = [attendancePoint, punctualityPoint, workingHourPoint, taskPoint!, salesPoint!, litrePoint!, outstandingPoint!, timePoint!, descriptionPoint!];
-  else if (x.kind === "OfficeStaff") parts = [taskPoint!, attendancePoint, punctualityPoint, workingHourPoint];
-  else parts = [attendancePoint, punctualityPoint, workingHourPoint];
+  /* Every job is scored on attendance, punctuality and hours. A salesman's
+     sales, litres, outstanding, time and notes come from the daily sales
+     entries, which are no longer made, so they count only for a period that
+     has some; with none they would score a flat 0 for work nobody recorded. */
+  const parts = [attendancePoint, punctualityPoint, workingHourPoint];
+  if (x.kind === "Sales" && x.kpiDays > 0) parts.push(salesPoint!, litrePoint!, outstandingPoint!, timePoint!, descriptionPoint!);
 
   return {
     attendanceCount,

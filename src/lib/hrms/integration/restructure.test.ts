@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, employeeReporting, employees, hrmsHolidays, mbosApprovals, mbosAttendanceDays, mbosHolidays, mbosLeaveRequests, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
+import { appAccess, appModuleAccess, employeeReporting, employees, hrmsHolidays, mbosApprovals, mbosAttendanceDays, mbosHolidays, mbosLeaveRequests, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsExpenses, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
@@ -93,7 +93,7 @@ let hr: typeof users.$inferSelect;
 let narrowed: typeof users.$inferSelect;
 
 before(async () => {
-  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, hrms_holidays, mbos_documents, mbos_deletions, mbos_holidays, mbos_attendance_days, mbos_leave_requests, mbos_approvals, notifications, audit_log restart identity cascade`);
+  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_expenses, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, hrms_holidays, mbos_documents, mbos_deletions, mbos_holidays, mbos_attendance_days, mbos_leave_requests, mbos_approvals, notifications, audit_log restart identity cascade`);
   headEmp = await person("Ravi Head", { office: "Andheri", position: "Sales Head", type: "Sales" });
   teamEmp = await person("Tara Team", { office: "Pune", position: "Salesman", type: "Sales", reportsTo: "Sales Head" });
   officeEmp = await person("Omkar Office", { office: "Andheri", position: "Field Boy", type: "Field" });
@@ -170,6 +170,42 @@ describe("the three roles", () => {
     const { spec, rows } = await mod("approvals").load(ctx, {});
     assert.ok(spec);
     assert.ok(!rows.some((r) => r.id === theirs.id), "another team's request is not on a manager's list");
+  });
+
+  test("a manager approves their team's help and verifies their team's expenses, never their own or another team's", async () => {
+    const mgrEmp = await person("Meera Manager", { office: "Andheri", position: "Floor Manager", type: "Other" });
+    const mineEmp = await person("Manoj Report", { office: "Andheri", position: "Clerk", type: "Other" });
+    await db.insert(employeeReporting).values({ id: id("er"), employeeId: mineEmp.id, managerId: mgrEmp.id });
+    const mgr = await account("Meera Manager", mgrEmp, "manager");
+    const ctx = await as(mgr);
+    const help = async (employeeId: string) => {
+      const hid = id("hhlp");
+      await db.insert(hrmsHelp).values({ id: hid, date: today(), employeeId, type: HELP.other, text: "Need a hand" });
+      return hid;
+    };
+    const ours = await help(mineEmp.id);
+    const theirs = await help(strangerEmp.id);
+    const own = await help(mgrEmp.id);
+    assert.equal((await mod("help").actions!.approve(ctx, theirs, { remark: "" })).ok, false);
+    assert.equal((await mod("help").actions!.approve(ctx, own, { remark: "" })).ok, false, "a manager never approves their own");
+    const done = await mod("help").actions!.approve(ctx, ours, { remark: "Sorted" });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const { rows } = await mod("help").load(ctx, {});
+    assert.ok(rows.some((r) => r.id === ours) && !rows.some((r) => r.id === theirs), "the team's requests and not another team's");
+
+    const exp = async (employeeId: string) => {
+      const xid = id("hexp");
+      await db.insert(hrmsExpenses).values({ id: xid, serial: `EX-${Math.floor(Math.random() * 1e6)}`, date: today(), employeeId, payType: "Claim", claimPaise: 50000, verify: "Pending" });
+      return xid;
+    };
+    const ourClaim = await exp(mineEmp.id);
+    const theirClaim = await exp(strangerEmp.id);
+    const ownClaim = await exp(mgrEmp.id);
+    assert.equal((await mod("expenses").actions!.verify(ctx, theirClaim, {})).ok, false);
+    assert.equal((await mod("expenses").actions!.verify(ctx, ownClaim, {})).ok, false, "a manager never verifies their own claim");
+    assert.equal((await mod("expenses").bulk!.verify(ctx, [ourClaim, theirClaim], {})).ok, false, "a bulk verify reaching past the team is refused whole");
+    const ok = await mod("expenses").actions!.verify(ctx, ourClaim, {});
+    assert.ok(ok.ok, ok.ok ? "" : ok.error);
   });
 
   test("the HR team opens everything and sees everybody", async () => {

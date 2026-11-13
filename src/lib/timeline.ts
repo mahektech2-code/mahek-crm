@@ -157,20 +157,9 @@ export const CRM_EVENT = {
  * in a table whose whole discipline is that every row points back at the record
  * that is the actual truth.
  */
-/**
- * The event types HRMS's sales desk writes. A back-office caller putting a
- * customer on the calling list is a planned call; logging it is the call. Both
- * belong in the customer's shared history beside the telecaller's and the
- * salesman's, or the office rang a shop and nobody else can see that it did.
- */
-export const HRMS_EVENT = {
-  callPlanned: "hrms_call_planned",
-  call: "hrms_call",
-  /* A meeting or call a salesman logged on the Sales desk. It reached the
-     customer's history nowhere until the restructure, so the record showed
-     the telecaller's calls and the field visits and not the office's own. */
-  activity: "hrms_activity",
-} as const;
+/* HRMS's Sales desk wrote `hrms_call_planned`, `hrms_call` and `hrms_activity`.
+   The desk was taken out (Nov 2026) and nothing writes them now; rows already
+   on a customer's timeline stay there and read as they always did. */
 
 export const MBOS_EVENT = {
   /* Already written before §R was completed. */

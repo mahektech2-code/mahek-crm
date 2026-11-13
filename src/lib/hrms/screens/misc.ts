@@ -5,7 +5,7 @@ import { attachments, hrmsAttendance, hrmsGrievances, hrmsHelp, hrmsNotification
 import { submitFeedback } from "@/lib/actions/feedback";
 import { bindAttachments } from "@/lib/services/attachment-service";
 import type { ActionSpec, Contact, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
-import { has, type HrmsContext, type Scope } from "../access";
+import { has, resolvesHelpFor, type HrmsContext, type Scope } from "../access";
 import { err, fieldErr, first, hrmsAudit, hrmsId, inTx, nextSeries, now, okVoid, stampLine, text, today, type HrmsScreenModule, type ScreenQuery } from "../server";
 import { allPeople, byId, isActive, isSales, offices, type Person } from "../services/people";
 import { bindHrmsFiles } from "../attachments";
@@ -14,7 +14,7 @@ import { fdShort, tmin } from "../time";
 import { calendarDate } from "@/lib/business-date";
 import { personFrom, personOption } from "./attendance";
 import { GRIEVANCE_ANSWERED, HELP } from "../values";
-import { hrmsUserIds, powerHolderUserIds, tell, usersOfEmployees } from "../services/notify";
+import { hrmsUserIds, managerUserIdsOf, powerHolderUserIds, tell, usersOfEmployees } from "../services/notify";
 import { announce, bellsOf, markAnnouncementSeen, rewordAnnouncement, withdrawAnnouncement } from "@/lib/services/announcement-service";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
@@ -83,7 +83,7 @@ type HelpRow = typeof hrmsHelp.$inferSelect;
 const correctsDay = (ctx: HrmsContext, r: HelpRow) => ATTENDANCE_TYPES.includes(r.type) && !!(r.inTime || r.outTime) && has(ctx, "editAtt");
 
 function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefined): ActionSpec[] {
-  const resolver = has(ctx, "resolve");
+  const resolver = resolvesHelpFor(ctx, r.employeeId);
   const late = r.type === HELP.runningLate;
   const a: ActionSpec[] = [];
   if (r.status === "Pending")
@@ -91,7 +91,11 @@ function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefi
       id: "approve",
       l: "Approve",
       primary: true,
-      why: resolver ? undefined : "Approving help requests needs the “Resolve help requests and grievances” power",
+      why: resolver
+        ? undefined
+        : r.employeeId === ctx.employee?.id && ctx.level === "manager"
+          ? "Your own requests are approved by someone else"
+          : "Approving help requests needs the “Resolve help requests and grievances” power, or this person in your team",
       prompt: {
         title: "Approve help request",
         sub: r.type,
@@ -146,16 +150,24 @@ async function appIssue(ctx: HrmsContext, body: string, shot: string | null) {
   return okVoid(`Sent to MahekOne Tell us with your text${attached ? " and screenshot" : ""}`);
 }
 
+/** The help list's reach: everybody for a resolver, a manager's team, else one's own. */
+function helpScope(ctx: HrmsContext, q: ScreenQuery): { scope: Scope; options: Scope[] } {
+  if (has(ctx, "resolve")) return privateScope(q, true);
+  if (ctx.level === "manager" && ctx.team.size) return { scope: q.scope === "mine" ? "mine" : "team", options: ["mine", "team"] };
+  return { scope: "mine", options: ["mine"] };
+}
+
 const help: HrmsScreenModule = {
   key: "help",
   async load(ctx, q) {
-    const { scope, options } = privateScope(q, has(ctx, "resolve"));
+    const { scope, options } = helpScope(ctx, q);
     const me = ctx.employee?.id;
+    const reach = scope === "team" ? [...(me ? [me] : []), ...ctx.team] : me ? [me] : [];
     const rows =
       scope === "all"
         ? await db.select().from(hrmsHelp).orderBy(desc(hrmsHelp.date))
-        : me
-          ? await db.select().from(hrmsHelp).where(eq(hrmsHelp.employeeId, me)).orderBy(desc(hrmsHelp.date))
+        : reach.length
+          ? await db.select().from(hrmsHelp).where(inArray(hrmsHelp.employeeId, reach)).orderBy(desc(hrmsHelp.date))
           : [];
     const people = byId(await allPeople());
     const empIds = [...new Set(rows.map((r) => r.employeeId))];
@@ -212,9 +224,10 @@ const help: HrmsScreenModule = {
   },
   actions: {
     async approve(ctx, id, v) {
-      if (!has(ctx, "resolve")) return err("Approving help requests needs the “Resolve help requests and grievances” power", "not_permitted");
       const [r] = await db.select().from(hrmsHelp).where(eq(hrmsHelp.id, id));
       if (!r) return err("That request no longer exists.", "not_found");
+      if (!resolvesHelpFor(ctx, r.employeeId))
+        return err("Approving help requests needs the “Resolve help requests and grievances” power. A manager approves their own team’s, never their own.", "not_permitted");
       if (r.status !== "Pending") return err("This help request is already approved.");
       const remark = text(v.remark);
       if (r.type === HELP.runningLate && !remark) return fieldErr("remark", "Say what was agreed about the late start.");
@@ -233,7 +246,10 @@ const help: HrmsScreenModule = {
       return okVoid(has(ctx, "editAtt") ? "Approved · attendance was not changed" : "Approved · someone who can edit attendance sets the times on that day");
     },
     async remark(ctx, id, v) {
-      if (!has(ctx, "resolve")) return err("Writing the reviewer’s remark needs the “Resolve help requests and grievances” power", "not_permitted");
+      const [r] = await db.select({ employeeId: hrmsHelp.employeeId }).from(hrmsHelp).where(eq(hrmsHelp.id, id));
+      if (!r) return err("That request no longer exists.", "not_found");
+      if (!resolvesHelpFor(ctx, r.employeeId))
+        return err("Writing the reviewer’s remark needs the “Resolve help requests and grievances” power, or this person in your team", "not_permitted");
       const remark = text(v.remark);
       if (!remark) return fieldErr("remark", "Write the remark");
       const res = await db.update(hrmsHelp).set({ adminRemark: remark, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsHelp.id, id)).returning({ id: hrmsHelp.id });
@@ -269,7 +285,8 @@ const help: HrmsScreenModule = {
       const id = hrmsId("hhlp");
       await db.insert(hrmsHelp).values({ id, date: today(), employeeId: me.id, type, inTime, outTime, text: body, status: "Pending", createdById: ctx.user.id });
       await hrmsAudit(ctx, "hrms.help.raise", "hrms_help", id, null, { type });
-      const to = (await resolverUserIds()).filter((u) => u !== ctx.user.id);
+      /* The resolvers and the person's own managers, who may approve it for their team. */
+      const to = [...new Set([...(await resolverUserIds()), ...(await managerUserIdsOf(me.id))])].filter((u) => u !== ctx.user.id);
       await tell(to.map((userId) => ({ userId, title: `Help request from ${me.name}`, body: `${type} · ${body}`, kind: "warn", href: hrmsLink("help", { scope: "all", open: id }) })));
       return okVoid("Help request sent");
     },

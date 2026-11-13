@@ -219,7 +219,7 @@ export const HRMS_GROUPS: HrmsGroup[] = [
  */
 export const HRMS_ROLES: { level: "associate" | "manager" | "admin"; name: string; sees: string; decides: string }[] = [
   { level: "associate", name: "Associate", sees: "Their own days, leave, pay, score, assets and requests", decides: "Nothing; asks for leave, help and corrections" },
-  { level: "manager", name: "Manager", sees: "Their team, from the org chart, as well as their own", decides: "Their team's leave; marks and checks out their team" },
+  { level: "manager", name: "Manager", sees: "Their team, from the org chart, as well as their own", decides: "Their team's leave, help requests and expense claims; marks and checks out their team" },
   { level: "admin", name: "HR team", sees: "Everybody", decides: "Everything: leave, salaries, people, offices, assets, settings" },
 ];
 

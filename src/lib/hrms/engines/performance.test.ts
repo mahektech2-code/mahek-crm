@@ -139,7 +139,8 @@ test("staff month: hours, punctuality, checklist, to-dos, buddy (A21, A22)", () 
   assert.equal(m.speed, "Takes 2 days on average; 1 to-do not done");
   assert.equal(m.buddyPct, 25);
   assert.equal(m.notDoneBuddy, 3);
-  assert.equal(m.overallPct, Math.round(((50 + 50 + 50 + 66.7) / 4) * 10) / 10);
+  /* Checklists and to-dos no longer count: hours and punctuality only. */
+  assert.equal(m.overallPct, Math.round(((50 + 66.7) / 2) * 10) / 10);
 });
 
 test("staff month for sales: daily task is the four KPI components ÷ 25", () => {
@@ -159,6 +160,21 @@ test("staff month for sales: daily task is the four KPI components ÷ 25", () =>
   assert.equal(m.todoPct, 100);
   assert.equal(m.buddyPct, null);
   assert.equal(m.speed, "No to-dos finished yet; 0 to-dos not done");
+  /* No attendance rows: hours and punctuality are 0; the field-work score counts because there are entries. */
+  assert.equal(m.overallPct, Math.round(((0 + 0 + 70) / 3) * 10) / 10);
+});
+
+test("staff month for sales with no daily entries: the field-work score is left out, not scored 0", () => {
+  const m = staffMonth({
+    sales: true,
+    days: [{ durationMin: 480, early: true }],
+    targetMinutes: [480],
+    checklist: [],
+    kpiParts: [],
+    todos: [],
+    buddy: [],
+  });
+  assert.equal(m.overallPct, 100);
 });
 
 test("employee of the month at or above the mark", () => {
@@ -203,6 +219,7 @@ const pts: PointsInput = {
   activityDates: 2,
   noteChars: 300,
   kpiVisits: 10,
+  kpiDays: 3,
 };
 const pcfg = { standardHours: 8, periodDivisor: 30, bands: DEFAULT_POINT_BANDS };
 
@@ -219,15 +236,14 @@ test("points for Other: attendance, punctuality and working hours only (A23: hol
   assert.equal(p.total, Math.round(((1 + 0.8 + 1) / 3) * 1000) / 1000);
 });
 
-test("points for OfficeStaff: the four-point average (A20)", () => {
+test("points for OfficeStaff: tasks are no longer in the total", () => {
   const p = performancePoints({ ...pts, kind: "OfficeStaff" }, pcfg);
   assert.equal(p.taskCount, 10);
   assert.equal(p.taskPoint, 0.8);
-  assert.equal(p.naText, "10 tasks · not applicable: Stock audit");
-  assert.equal(p.total, Math.round(((0.8 + 1 + 0.8 + 1) / 4) * 1000) / 1000);
+  assert.equal(p.total, Math.round(((1 + 0.8 + 1) / 3) * 1000) / 1000);
 });
 
-test("points for Sales: all nine", () => {
+test("points for Sales: attendance, punctuality, hours and the five sales points (tasks no longer count)", () => {
   const p = performancePoints({ ...pts, kind: "Sales" }, pcfg);
   /* 30,000 ÷ 30 × 10 days = 10,000 target; 10,000 sold. */
   assert.equal(p.salesPoint, 1);
@@ -239,8 +255,13 @@ test("points for Sales: all nine", () => {
   assert.equal(p.timePoint, 1);
   assert.equal(p.noteLength, 30);
   assert.equal(p.descriptionPoint, 1);
-  const nine = [1, 0.8, 1, 0.8, 1, 0.5, 0.5, 1, 1];
-  assert.equal(p.total, Math.round((nine.reduce((a, b) => a + b, 0) / 9) * 1000) / 1000);
+  const eight = [1, 0.8, 1, 1, 0.5, 0.5, 1, 1];
+  assert.equal(p.total, Math.round((eight.reduce((a, b) => a + b, 0) / 8) * 1000) / 1000);
+});
+
+test("points for Sales with no daily sales entries: the sales points are left out, not scored 0", () => {
+  const p = performancePoints({ ...pts, kind: "Sales", kpiDays: 0 }, pcfg);
+  assert.equal(p.total, Math.round(((1 + 0.8 + 1) / 3) * 1000) / 1000);
 });
 
 test("points bands are strict: exactly 180 minutes or 25 characters is the lower band", () => {
