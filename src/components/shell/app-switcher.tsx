@@ -43,6 +43,7 @@ const GLYPH: Record<AppId, string> = {
   docs: "book",
   tasks: "check",
   studio: "image",
+  locker: "lock",
 };
 
 export function AppSwitcher({

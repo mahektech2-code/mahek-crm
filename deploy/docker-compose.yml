@@ -128,6 +128,17 @@ services:
       - -c
       - max_connections=20            # was 30; the app pool is 10, and this pays for work_mem
       - -c
+      # MIGRATING AN EMPTY DATABASE NEEDS MORE LOCKS THAN THE DEFAULT. The lock
+      # table holds max_locks_per_transaction × max_connections, and with 20
+      # connections the default of 64 left too few: drizzle applies every
+      # pending migration in ONE transaction, and from nothing that is 330+
+      # migrations creating well over a thousand relations, each locked until
+      # commit. It ran out ("out of shared memory", 53200) the day the Locker's
+      # tables were added — on a fresh droplet, a rebuild and the CI stack
+      # test. A deployed database applies only what is pending and never comes
+      # close. 512 costs a few MB of shared memory.
+      - max_locks_per_transaction=512
+      - -c
       - random_page_cost=1.1          # NVMe, not a spinning disk
       - -c
       - effective_io_concurrency=200  # NVMe; was the single-spindle default of 1

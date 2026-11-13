@@ -37,6 +37,7 @@ const SHELLS: Partial<Record<AppId, string[]>> = {
   docs: ["src/app/docs/docs-shell.tsx"],
   tasks: ["src/app/tasks/_ui/tasks-shell.tsx"],
   studio: ["src/app/studio/_ui/studio-shell.tsx"],
+  locker: ["src/app/locker/_ui/locker-shell.tsx"],
 };
 
 /*
