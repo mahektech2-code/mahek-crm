@@ -12,59 +12,11 @@ import { LkIcon } from "./icons";
  * own button is a screen that will stop matching.
  * ------------------------------------------------------------------------- */
 
-export const C = {
-  ink: "#1A1E28",
-  body: "#3D4453",
-  muted: "#6B7385",
-  faint: "#9BA3B2",
-  line: "#DDE1E8",
-  line2: "#EDEFF3",
-  line3: "#F3F4F7",
-  canvas: "#FCFCFD",
-  soft: "#F7F8FA",
-  brand: "#6835FB",
-  brandInk: "#5223E0",
-  brandSoft: "#F1ECFF",
-  red: "#B3261E",
-  redInk: "#8E1F1F",
-  redSoft: "#FCECEC",
-  amber: "#8A5C05",
-  amberSoft: "#FDF6E7",
-  green: "#1D7A45",
-  greenSoft: "#E9F5EE",
-  blue: "#2B5CBF",
-  blueSoft: "#EDF2FC",
-  /* the vault's violet */
-  v50: "#F0EFF6",
-  v100: "#DFDCEC",
-  v500: "#5B5080",
-  v700: "#3E3660",
-  v900: "#262041",
-};
+import { C, LBL, MONO, btnStyle, type BtnKind } from "@/lib/locker/style";
+/* The pure values live in lib/locker/style.ts so SERVER pages can use them
+   too — a value exported from this client module is only a reference there. */
+export { C, LBL, MONO, btnStyle, type BtnKind };
 
-export const LBL: CSSProperties = { fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted };
-export const MONO = "'JetBrains Mono',ui-monospace,monospace";
-
-export type BtnKind = "p" | "s" | "d" | "v" | "g";
-export function btnStyle(k: BtnKind, small = false): CSSProperties {
-  return {
-    height: small ? 30 : 36,
-    padding: small ? "0 10px" : "0 14px",
-    borderRadius: 4,
-    fontSize: small ? 13 : 14,
-    fontWeight: 500,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    border: k === "s" ? "1px solid #C2C8D2" : "none",
-    background: k === "p" ? C.brand : k === "d" ? C.red : k === "v" ? C.v700 : k === "g" ? "transparent" : "#FFFFFF",
-    color: k === "p" || k === "d" || k === "v" ? "#FFFFFF" : k === "g" ? C.brandInk : C.body,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    textDecoration: "none",
-  };
-}
 export const BTN_OFF: CSSProperties = { ...btnStyle("s"), color: C.faint, background: C.soft, border: `1px solid ${C.line2}`, cursor: "not-allowed" };
 
 export function Btn({

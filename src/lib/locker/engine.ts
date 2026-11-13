@@ -228,3 +228,80 @@ export const MODEL_LABEL: Record<TimeModel, string> = {
   perpetual: "Lifetime · never ends",
   term_contract: "Contract with notice period · last day to give notice matters",
 };
+
+/* ---------------------------------------------------------- reminder schedule */
+
+/** ISO weekday, Monday 1 … Sunday 7, of a YYYY-MM-DD date. */
+export function isoDow(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return wd === 0 ? 7 : wd;
+}
+
+/**
+ * The day a reminder scheduled for `date` is actually sent: that day if it is
+ * a working day, else the working day before it (spec §7.3 — "a reminder
+ * nobody reads on Sunday is not a reminder").
+ */
+export function sendDayFor(date: string, workingDays: number[]): string {
+  if (!workingDays.length) return date;
+  let d = date;
+  for (let i = 0; i < 7 && !workingDays.includes(isoDow(d)); i++) d = addDays(d, -1);
+  return d;
+}
+
+/**
+ * WHICH RUNGS OF A LADDER ARE SENT TODAY. Each offset is days from the action
+ * day (negative before). A rung landing on a non-working day moves to the
+ * working day before it, so a Saturday may carry Sunday's rung as well as its
+ * own. After the last positive rung the reminder repeats daily until the
+ * asset is renewed or archived ("+1 daily until resolved").
+ */
+export function rungsSentOn(offsets: number[], actionDate: string | null, day: string, workingDays: number[]): number[] {
+  if (!actionDate || !offsets.length) return [];
+  const out: number[] = [];
+  for (const o of offsets) {
+    if (sendDayFor(addDays(actionDate, o), workingDays) === day) out.push(o);
+  }
+  const last = Math.max(...offsets);
+  const past = daysBetween(actionDate, day);
+  if (last > 0 && past > last && workingDays.includes(isoDow(day)) && !out.includes(past)) out.push(past);
+  return out;
+}
+
+/** The sentence a reminder rung says — a lead-time rung is "start now", an end-date rung is "this ends". */
+export function rungLine(offset: number, model: TimeModel): string {
+  const what = model === "term_contract" ? "notice deadline" : model === "subscription" ? "renewal" : "end date";
+  if (offset < 0) return `${-offset} ${offset === -1 ? "day" : "days"} to the ${what}`;
+  if (offset === 0) return `the ${what} is today`;
+  return `${offset} ${offset === 1 ? "day" : "days"} past the ${what}`;
+}
+
+/** Add months to an ISO date, clamping to the month's last day. */
+export function addMonthsIso(iso: string, months: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(Math.min(d, last)).padStart(2, "0")}`;
+}
+
+export type ValidityUnit = "days" | "months" | "quarters" | "years";
+
+/** Spec §4.4: issued on + valid for N units → the last valid day (the day before the anniversary). */
+export function endFromValidity(issuedOn: string, n: number, unit: ValidityUnit): string {
+  if (unit === "days") return addDays(issuedOn, n - 1);
+  const months = unit === "months" ? n : unit === "quarters" ? n * 3 : n * 12;
+  return addDays(addMonthsIso(issuedOn, Math.round(months)), -1);
+}
+
+/** The other direction: issued on + end date → the duration, in the largest whole unit that fits exactly, else days. */
+export function validityFromDates(issuedOn: string, endDate: string): { n: number; unit: ValidityUnit } {
+  for (const unit of ["years", "quarters", "months"] as ValidityUnit[]) {
+    for (let n = 1; n <= 240; n++) {
+      const e = endFromValidity(issuedOn, n, unit);
+      if (e === endDate) return { n, unit };
+      if (e > endDate) break;
+    }
+  }
+  return { n: daysBetween(issuedOn, endDate) + 1, unit: "days" };
+}

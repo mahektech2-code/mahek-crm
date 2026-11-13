@@ -366,6 +366,7 @@ const DESCRIBE: Record<string, Describer> = {
   "locker.asset.owner_set": () => ["set who owns or backs up a Locker asset"],
   "locker.asset.stage_set": () => ["changed a Locker asset's status"],
   "locker.asset.document_added": () => ["added a document to a Locker asset"],
+  "locker.asset.tamper_detected": () => ["found a Locker document whose stored bytes no longer match the hash taken on upload"],
   "locker.assets.exported": () => ["exported the Locker register"],
   "locker.renewal.started": () => ["started renewing a Locker asset"],
   "locker.renewal.updated": () => ["moved a Locker renewal forward"],
