@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ScanUnit } from "@/lib/erp/engines/trace";
-import { applyLocal, judgeLorryScan, orderForUnit, type LoadingPack, type PackLine } from "./lorry-judge";
+import { applyLocal, bumpLorry, halfOf, judgeLorryScan, orderForUnit, sayLocal, settle, type LoadingPack, type PackLine } from "./lorry-judge";
+import type { Lorry, LorryBatchResult } from "./types";
 
 /* The phone's judgement of a lorry scan — the same decisions `lorryScan` makes, against a pack. */
 
@@ -122,4 +123,56 @@ test("an order with stickers loads by box and sticker, in either order", () => {
 
 test("nothing left on the lorry refuses whatever is scanned", () => {
   assert.equal(judgeLorryScan(pack({}), B1, null).result, "refused");
+});
+
+/* ---------------------------------------------------------------- offline-first loading */
+
+test("the phone says its own answer: on, repeat, refused in the desk's words, and wait where it cannot judge", () => {
+  let p = pack({
+    lines: [line({ id: "l1", orderNo: 10, skuId: "s1", alloc: [{ id: "bc1", lotCode: "LOT1", qty: 2, scanned: 0 }] })],
+    units: [unit({ id: B1, skuId: "s1" }), unit({ id: B2, skuId: "s9", productId: "pr-other" })],
+  });
+  const on = judgeLorryScan(p, B1, null);
+  assert.equal(sayLocal(on).tone, "ok");
+  assert.equal(sayLocal(on).title, "On the lorry");
+  p = applyLocal(p, on);
+  assert.equal(sayLocal(judgeLorryScan(p, B1, null)).tone, "warn");
+  const wrong = sayLocal(judgeLorryScan(p, B2, null));
+  assert.equal(wrong.tone, "bad");
+  assert.equal(wrong.title, "Wrong stock — do not load");
+  assert.ok(!/order \d/.test(wrong.text), "a loader is never shown an order: " + wrong.text);
+  assert.equal(sayLocal(judgeLorryScan(p, BX, null)).tone, "wait");
+  assert.equal(sayLocal(judgeLorryScan(p, "DS-46487", null)).tone, "wait", "a slip that is not a box label is the office's to judge");
+  assert.equal(sayLocal(null).tone, "wait", "no pack yet: every scan waits for the office, none is lost");
+});
+
+test("an accepted box moves the lorry's counts on the phone, before the server has heard of it", () => {
+  const p = pack({ lines: [line({ id: "l1", orderNo: 10, skuId: "s1", alloc: [{ id: "bc1", lotCode: "LOT1", qty: 2, scanned: 0 }] })], units: [unit({ id: B1, skuId: "s1" })] });
+  const lorry: Lorry = { key: "L:vrl", name: "VRL", items: [{ sku: "s1", label: "S1", unit: "boxes", target: 2, loaded: 0, orders: 1, late: false, notBilled: false, byLot: false }], target: 2, loaded: 0, orders: 1, late: 0, due: null, task: null, loader: null };
+  const after = bumpLorry(lorry, p, judgeLorryScan(p, B1, null));
+  assert.equal(after.loaded, 1);
+  assert.equal(after.items[0].loaded, 1);
+  assert.equal(bumpLorry(lorry, p, judgeLorryScan(p, BX, null)), lorry, "nothing moves for a scan the phone could not judge");
+});
+
+test("a half is said the way the server says it", () => {
+  assert.equal(halfOf(null), null);
+  assert.equal(halfOf(B1)?.kind, "box");
+  assert.match(halfOf(B1)!.says, /sticker/);
+});
+
+test("settling the server's answer: agreement is quiet, a late yes is counted, any no the phone did not say is loud", () => {
+  const ok = { ok: true, id: "a", code: B1, tone: "ok", title: "On the lorry", message: "", task: "T-1" } as LorryBatchResult;
+  const no = { ok: false, id: "a", code: B1, title: "Do not load this", text: "", fix: "", task: null, override: null } as LorryBatchResult;
+  const rep = { ...no, repeat: true } as LorryBatchResult;
+  const half = { ...ok, half: { kind: "box", code: B1, says: "" } } as LorryBatchResult;
+  assert.equal(settle("accepted", ok), "quiet");
+  assert.equal(settle("repeat", rep), "quiet");
+  assert.equal(settle("refused", no), "quiet", "the phone already said no, and the server only recorded it");
+  assert.equal(settle("accepted", no), "refused", "counted on the phone, refused by the office: the loader must hear it");
+  assert.equal(settle("unknown", ok), "counted");
+  assert.equal(settle(null, ok), "counted");
+  assert.equal(settle("lot", no), "refused");
+  assert.equal(settle("half", half), "quiet");
+  assert.equal(settle("unknown", half), "refused", "a pair the phone never held cannot be finished after the loader moved on");
 });

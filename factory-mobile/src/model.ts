@@ -17,7 +17,7 @@ import { Platform } from "react-native";
 import type { ReactNode } from "react";
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { LorryBoard, LorryHalf } from "@/lib/factory/types";
+import type { LorryBoard, LorryHalf, LorryLocal } from "@/lib/factory/types";
 import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave, QcLot, ReqDept, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import type { DrumLotView, DrumSaved, LoadBoard, LrFields, LrRecent } from "@/lib/factory/types";
@@ -27,7 +27,7 @@ export type Flow = { task: Task; step: number; d: Draft; key: string };
 /** A box label the server judged: loaded onto the order, or looked up from the home scan. */
 export type BoxOk = { ok: true; code: string; kind: "box"; name: string; text: string; facts: { l: string; v: string }[] };
 /** A box that went on: shown as a band over the camera, and the next scan is taken straight away. */
-export type Feed = { tone: "ok" | "warn"; code: string; title: string; text: string; at: number };
+export type Feed = { tone: "ok" | "warn" | "bad"; code: string; title: string; text: string; at: number };
 export type Scan = {
   purpose: ScanPurpose;
   meta: ScanMeta;
@@ -102,8 +102,22 @@ export type LorryUi = {
   busy: boolean;
   /** A box or dispatch sticker scanned, waiting for its other half: an order with stickers loads by the pair. */
   half: LorryHalf | null;
+  /** Scans NOT counted — refused on the phone, or by the office when it caught up — for the loader to set aside. Kept across lorries; each names its lorry. */
+  missed: Missed[];
+  /** The not-counted list is open. */
+  missedOpen: boolean;
 };
-export const LORRY0: LorryUi = { board: null, res: null, ask: null, on: false, decline: null, pick: null, busy: false, half: null };
+export const LORRY0: LorryUi = { board: null, res: null, ask: null, on: false, decline: null, pick: null, busy: false, half: null, missed: [], missedOpen: false };
+
+/**
+ * A loading scan on its way to the office. OFFLINE FIRST: the phone answered
+ * it the instant the label was read, and it waits here — on disk, under a key
+ * ending `.queue` so a shared phone's sign-out keeps it — until the server has
+ * it. `held` is the half the phone held when it read it; `local` its answer.
+ */
+export type LorryOut = { id: string; key: string; code: string; at: number; held: string | null; local: LorryLocal | null; tries?: number };
+/** A scan that was not counted, and why. `override`: the items still short, for a wrong-stock box to be asked about. */
+export type Missed = { id: string; key: string; code: string; title: string; text: string; fix: string; at: number; late: boolean; override?: { sku: string; label: string }[] | null };
 
 export type State = {
   lang: Lang;

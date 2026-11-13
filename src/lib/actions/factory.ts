@@ -16,7 +16,7 @@ import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "@/lib/factory/head";
-import type { FactoryDeviceReport, HistoryDay, LorryBatch, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { FactoryDeviceReport, HistoryDay, LorryBatch, LorryBatchOpts, LorryBoard, LorryFind, LorryScan, LorryScanIn, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload } from "@/lib/factory/lorry";
 import { lorryScanBatch } from "@/lib/factory/scan-batch";
 import { historyFor } from "@/lib/factory/history";
@@ -434,7 +434,7 @@ export async function factoryLorryScan(key: string, code: string, taskId: string
  * `held` is the half the phone holds before the first of them; `timings` how
  * long the loader waited on the previous batch's, for the scan log.
  */
-export async function factoryLorryScanBatch(key: string, taskId: string | null, held: string | null, scans: LorryScanIn[], timings?: { id: string; ms: number }[]): Promise<LorryBatch> {
+export async function factoryLorryScanBatch(key: string, taskId: string | null, held: string | null, scans: LorryScanIn[], timings?: { id: string; ms: number }[], opts?: LorryBatchOpts): Promise<LorryBatch> {
   const fc = await factoryContext();
   const list = Array.isArray(scans) ? scans : [];
   if (!fc) {
@@ -449,7 +449,7 @@ export async function factoryLorryScanBatch(key: string, taskId: string | null, 
     };
   }
   const build = (await headers()).get("x-factory-client");
-  return lorryScanBatch(fc, key, taskId, held ?? null, list, timings ?? [], build ? build.slice(0, 40) : null);
+  return lorryScanBatch(fc, key, taskId, held ?? null, list, timings ?? [], build ? build.slice(0, 40) : null, opts?.follow === true);
 }
 export async function factoryLorryUnload(key: string, unitId: string): Promise<LorryScan> {
   const fc = await factoryContext();

@@ -59,7 +59,7 @@ import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSIO
 import { clock12, clockText, dayLine, hhmm } from "@/lib/factory/time";
 import { addDays, calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
-import { applyLocal, judgeLorryScan, type LoadingPack } from "@/lib/factory/lorry-judge";
+import { applyLocal, bumpLorry, halfOf, judgeLorryScan, sayLocal, settle, type LoadingPack, type LocalJudgement } from "@/lib/factory/lorry-judge";
 import { deviceReport } from "./device";
 import { APP_BUILD, call, dropSession, NotReceived, sendPhoto, uploadPhoto, type PhotoSend } from "./api";
 import { Btn, Div, Input, Root, Span } from "./web";
@@ -83,7 +83,7 @@ function photoProblem(r: Extract<PhotoSend, { ok: false }>, again: string): { ti
 }
 import { promptDue, snoozeUntil } from "./update";
 import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
-import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type LorryUi, LORRY0, type TilesSheet, type Feed, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey, scanId } from "./model";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type LorryUi, LORRY0, type TilesSheet, type Feed, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey, scanId, type LorryOut, type Missed } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -145,10 +145,8 @@ export class FactoryApp extends Component<Props, State> {
   private tt: ReturnType<typeof setTimeout> | undefined;
   /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
   /** Loading scans in the order they were made, with when each label was read. */
-  private scanQ: { code: string; at: number; local?: LorryLocal }[] = [];
+  private scanQ: { code: string; at: number }[] = [];
   private scanRunning = false;
-  /** How long the loader waited on each scan of the last batch — sent with the next, for the server's scan log. */
-  private waits: { id: string; ms: number }[] = [];
   /** The server has no batch op (a build older than the phone): one at a time, as before. */
   private noBatch = false;
   /* The half of a box-and-sticker pair the next scan is sent with. Held here as well as in state: queued scans are sent back to back, before a render. */
@@ -170,6 +168,16 @@ export class FactoryApp extends Component<Props, State> {
   private reportedAt = 0;
   private noReport = false;
   private packTimer: ReturnType<typeof setTimeout> | undefined;
+  /*
+   * OFFLINE FIRST (lib/factory/lorry-judge.ts). A lorry scan is judged HERE,
+   * against the loading pack, and sounded the instant the label is read; it
+   * then waits on disk in the outbox and goes to the server in `follow`
+   * batches behind the loader. Nothing a loader scans is dropped for want of a
+   * signal, a slow reply or a refused label before it.
+   */
+  private ob: { me: string; items: LorryOut[] } | null = null;
+  private outRunning = false;
+  private outTimer: ReturnType<typeof setTimeout> | undefined;
   private staleTimer: ReturnType<typeof setTimeout> | undefined;
   private ot: ReturnType<typeof setInterval> | undefined;
   private subs: { remove: () => void }[] = [];
@@ -245,12 +253,15 @@ export class FactoryApp extends Component<Props, State> {
       if (a === "active") {
         this.setState({ clock: hhmm(new Date()) });
         void this.flushQueue();
+        void this.pumpOut();
         void this.poll();
         void this.checkUpdate();
       }
     }));
     this.subs.push(BackHandler.addEventListener("hardwareBackPress", this.onBack) as NativeEventSubscription);
     this.ivs.push(setInterval(() => void this.flushQueue(), 30_000));
+    /* Loading scans left on the phone — from a closed app, a dead battery, a day with no Wi-Fi — go by themselves. */
+    this.ivs.push(setInterval(() => void this.pumpOut(), 20_000));
     this.ivs.push(setInterval(() => this.setState({ clock: hhmm(new Date()) }), 15_000));
     this.ivs.push(
       setInterval(() => {
@@ -261,7 +272,7 @@ export class FactoryApp extends Component<Props, State> {
     /* New work reaches the phone without anybody pressing anything. */
     this.ivs.push(setInterval(() => void this.poll(), 45_000));
     /* Signed in from yesterday: refresh the floor now, and send anything waiting. */
-    if (this.state.me) void this.poll().then(() => this.flushQueue());
+    if (this.state.me) void this.poll().then(() => (this.flushQueue(), this.pumpOut()));
     /* A newer APK is asked about on opening, on every return to the app and
        every half hour; Update later's three hours are checked every minute. */
     void this.checkUpdate();
@@ -272,6 +283,7 @@ export class FactoryApp extends Component<Props, State> {
   componentWillUnmount() {
     this.ivs.forEach((i) => clearInterval(i));
     clearTimeout(this.tt);
+    clearTimeout(this.outTimer);
     clearInterval(this.ot);
     this.subs.forEach((x) => x.remove());
     try {
@@ -329,7 +341,10 @@ export class FactoryApp extends Component<Props, State> {
 
   private setNet(n: Net) {
     this.setState({ net: n }, () => {
-      if (n !== "offline") void this.flushQueue();
+      if (n !== "offline") {
+        void this.flushQueue();
+        void this.pumpOut();
+      }
     });
   }
 
@@ -851,6 +866,8 @@ export class FactoryApp extends Component<Props, State> {
       beep("bad");
       return this.toast("Not counted. Tap the card first, then scan it again.", "warn");
     }
+    const f = this.state.flow;
+    if (f && isLorryTask(f.task) && !this.noBatch) return this.lorryIntake(code);
     this.scanQ.push({ code, at: Date.now() });
     void this.pumpScans();
   }
@@ -872,15 +889,12 @@ export class FactoryApp extends Component<Props, State> {
     this.scanRunning = true;
     try {
       while (this.scanQ.length && this.state.scan?.purpose === "load" && !this.halted()) {
-        const f = this.state.flow;
-        /* On a lorry: everything queued so far, in one round trip. The server stops at a refusal and hands back the rest. */
-        let behind = 0;
-        if (f && isLorryTask(f.task) && !this.noBatch) behind = await this.lorrySend(this.scanQ.splice(0, LORRY_BATCH));
-        else await this.doScan(this.scanQ.shift()!.code);
+        /* A lorry's scans never come through here — they are judged on the phone (`lorryIntake`). An order's do, one at a time. */
+        await this.doScan(this.scanQ.shift()!.code);
         await new Promise<void>((done) => this.setState({}, done));
         if (!this.halted()) continue;
         /* What came in behind it is not counted: the loader is told how many, to scan them again. */
-        const dropped = behind + this.scanQ.length;
+        const dropped = this.scanQ.length;
         this.scanQ = [];
         this.alarm(dropped);
       }
@@ -890,7 +904,7 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   /** A box that went on: a band over the camera and a short buzz. Nothing to tap — the next scan is taken at once. */
-  fed(tone: "ok" | "warn", code: string, title: string, text: string) {
+  fed(tone: "ok" | "warn" | "bad", code: string, title: string, text: string) {
     const sc = this.state.scan;
     if (!sc) return;
     buzz(tone);
@@ -1441,6 +1455,9 @@ export class FactoryApp extends Component<Props, State> {
   /** A board from the server: drawn, and the lorry's counts put back into the floor data the steps check. */
   applyLorry(key: string, board: LorryBoard | null, data?: FactoryData | null) {
     this.packSoon(key);
+    /* Scans still on the phone are not on the server's board: its boxes and overrides are drawn, the counts stay the phone's. */
+    if (this.waiting(key))
+      return this.setState((st) => (board ? { lorry: { ...st.lorry, board: { ...board, lorry: st.db?.lorries?.[key] ?? board.lorry } } } : null));
     this.setState((st) => {
       const base = data ?? st.db;
       if (!base) return null;
@@ -1459,9 +1476,9 @@ export class FactoryApp extends Component<Props, State> {
     if (l.sent) return this.toast("Loaded and sent. The office verifies it now.");
     const running = l.task ? this.task(l.task) : undefined;
     this.held = null;
-    if (this.pack?.key !== key) this.pack = null;
+    if (this.pack?.key !== key) this.pack = this.packFromPhone(key);
     this.packHeld = null;
-    this.setState({ lorry: { ...LORRY0 } });
+    this.setState({ lorry: { ...LORRY0, missed: load<Missed[]>(me.key, "lorry.missed", []) } });
     if (running) this.startTask(running.id);
     else {
       const crew = db.teams.dispatch ?? { owner: null, op: null, helpers: [], ver: null };
@@ -1471,6 +1488,30 @@ export class FactoryApp extends Component<Props, State> {
     }
     void this.refreshLorry(key);
     if (thenScan) this.setState({ scan: { purpose: "load", meta: {}, res: null, torch: false }, cam: "wait" }, () => void this.lorryScanCode(thenScan));
+  }
+
+  /**
+   * The pack this phone kept for a lorry, moved on by every scan of it still in
+   * the outbox — so a lorry reopened offline is judged as it stands on the
+   * phone, not as the office last saw it.
+   */
+  packFromPhone(key: string): LoadingPack | null {
+    const me = this.state.me?.key;
+    if (!me) return null;
+    let p = load<LoadingPack | null>(me, "pack." + key, null);
+    if (!p || p.key !== key) return null;
+    let held: string | null = null;
+    try {
+      for (const x of this.outbox) {
+        if (x.key !== key || !x.local) continue;
+        const j = judgeLorryScan(p, x.code, x.held ?? held);
+        p = applyLocal(p, j);
+        held = j.held;
+      }
+    } catch {
+      return null;
+    }
+    return p;
   }
 
   async refreshLorry(key?: string) {
@@ -1496,9 +1537,203 @@ export class FactoryApp extends Component<Props, State> {
   /** A box or lot label on the lorry: the server picks the order and the desk judges it. */
   async lorryScanCode(code: string) {
     if (this.noBatch) return this.lorryScanOne(code);
-    /* Into the same line as every other loading scan: only the pump sends, so nothing is sent twice at once. */
-    this.scanQ.push({ code, at: Date.now(), local: this.shadowJudge(code) });
-    void this.pumpScans();
+    return this.lorryIntake(code);
+  }
+
+  /** The loading scans on this phone not yet with the office — every lorry, oldest first. */
+  get outbox(): LorryOut[] {
+    const me = this.state.me?.key ?? "";
+    if (!this.ob || this.ob.me !== me) this.ob = { me, items: me ? load<LorryOut[]>(me, "lorry.queue", []) : [] };
+    return this.ob.items;
+  }
+  set outbox(v: LorryOut[]) {
+    const me = this.state.me?.key ?? "";
+    this.ob = { me, items: v };
+    if (me) save(me, "lorry.queue", v.length ? v : null);
+  }
+  /** How many of this lorry's scans are still on the phone. */
+  waiting(key: string | undefined): number {
+    return key ? this.outbox.filter((x) => x.key === key).length : 0;
+  }
+
+  /**
+   * A label read on the lorry, OFFLINE FIRST: judged against the pack, its
+   * answer sounded now, the scan put on disk, and the sender woken. A refusal
+   * is said loudly and listed — it never stops the next scan.
+   */
+  lorryIntake(code: string) {
+    const f = this.state.flow;
+    if (!f || !isLorryTask(f.task)) return;
+    const key = f.task.item!;
+    const before = this.packHeld;
+    const pack = this.pack?.key === key ? this.pack : null;
+    let j: LocalJudgement | null = null, us = 0;
+    if (pack) {
+      try {
+        const t0 = performance.now();
+        j = judgeLorryScan(pack, code, before);
+        us = Math.round((performance.now() - t0) * 1000);
+        this.pack = applyLocal(pack, j);
+        this.packSeq++;
+      } catch {
+        j = null;
+      }
+    }
+    const item: LorryOut = { id: scanId(), key, code: j?.code || code.trim(), at: Date.now(), held: before, local: j && pack ? { result: j.result, line: j.line, why: j.why, us, packAt: pack.at } : null };
+    this.outbox = [...this.outbox, item];
+    this.sayScan(item, j, pack);
+    void this.pumpOut();
+  }
+
+  /** The phone's answer, said: a band and a beep, a held half, or a refusal listed and spoken. */
+  sayScan(item: LorryOut, j: LocalJudgement | null, pack: LoadingPack | null) {
+    if (j) {
+      this.packHeld = j.held;
+      this.held = halfOf(j.held);
+      this.setLorry({ half: this.held });
+    }
+    if (j?.result === "accepted" && pack) this.bumpBoard(item.key, pack, j);
+    if (j?.result === "half") {
+      buzz("ok");
+      beep("ok");
+      const sc = this.state.scan;
+      if (sc) this.setState({ scan: { ...sc, res: null, typed: sc.typed != null ? "" : sc.typed, feed: undefined } });
+      return;
+    }
+    const s = sayLocal(j);
+    if (s.tone === "bad") {
+      const short = j?.why === "mismatch" ? (this.state.lorry.board?.lorry?.items ?? []).filter((i) => i.loaded < i.target).map((i) => ({ sku: i.sku, label: i.label })) : null;
+      return this.missScan({ id: item.id, key: item.key, code: item.code, title: s.title, text: s.text, fix: s.fix, at: Date.now(), late: false, override: short?.length ? short : null });
+    }
+    const tone = s.tone === "ok" ? "ok" : "warn";
+    this.fed(tone, item.code, s.title, s.text);
+    beep(tone);
+  }
+
+  /** A box the phone put on: the lorry's counts move now, on the screen and in the floor data the steps read. */
+  bumpBoard(key: string, pack: LoadingPack, j: LocalJudgement) {
+    this.setState((st) => {
+      const b = st.lorry.board, base = st.db;
+      const lorry = b?.lorry && b.lorry.key === key ? bumpLorry(b.lorry, pack, j) : null;
+      const inDb = base?.lorries?.[key];
+      return {
+        lorry: lorry ? { ...st.lorry, board: { ...b!, lorry } } : st.lorry,
+        db: base && inDb ? { ...base, lorries: { ...base.lorries, [key]: bumpLorry(inDb, pack, j) } } : base,
+      };
+    });
+  }
+
+  /** A scan that was not counted: listed for the loader, spoken, and buzzed long — and the next scan is taken at once. */
+  missScan(m: Missed) {
+    const me = this.state.me?.key;
+    this.setState((st) => {
+      const missed = [m, ...st.lorry.missed.filter((x) => x.id !== m.id)].slice(0, 100);
+      if (me) save(me, "lorry.missed", missed);
+      return { lorry: { ...st.lorry, missed } };
+    });
+    const here = this.state.scan?.purpose === "load" && this.state.flow?.task.item === m.key;
+    if (here) this.fed("bad", m.code, m.title, m.text);
+    else this.toast((m.late ? "Not counted by the office: " : "Not counted: ") + m.code + " — " + m.title, "warn");
+    buzz("bad");
+    beep("bad");
+    try {
+      void Speech.stop();
+      Speech.speak((m.late ? "Office says: " : "") + m.title, { language: LANG_SPEECH[this.state.lang], rate: 0.95 });
+    } catch {
+      /* No voice on this phone: the buzz and the list still say it. */
+    }
+  }
+
+  /** The loader has set those boxes aside: the list for this lorry is cleared. */
+  clearMissed(key: string) {
+    const me = this.state.me?.key;
+    this.setState((st) => {
+      const missed = st.lorry.missed.filter((x) => x.key !== key);
+      if (me) save(me, "lorry.missed", missed.length ? missed : null);
+      return { lorry: { ...st.lorry, missed, missedOpen: false } };
+    });
+  }
+
+  /** The job a lorry's scans go to: the one this screen is on, else the one the floor data names. */
+  lorryTaskOf(key: string): string | null {
+    const f = this.state.flow;
+    if (f && f.task.item === key && !f.task.id.startsWith(NEW_LORRY)) return f.task.id;
+    return this.state.db?.lorries?.[key]?.task ?? null;
+  }
+
+  /** Try the outbox again shortly: no network, or the server busy. */
+  outSoon(ms = 5000) {
+    clearTimeout(this.outTimer);
+    this.outTimer = setTimeout(() => void this.pumpOut(), ms);
+  }
+
+  /**
+   * THE SENDER. One lorry at a time, oldest first, up to LORRY_BATCH in a call,
+   * judged on the server in `follow` mode. A scan leaves the outbox only once
+   * the server has answered it; anything else — no network, a timeout, being
+   * signed out, the server failing to judge — stays and goes again.
+   */
+  async pumpOut() {
+    if (this.outRunning || !this.state.me || !this.outbox.length) return;
+    if (this.state.net === "offline") return this.outSoon(15_000);
+    this.outRunning = true;
+    try {
+      while (this.outbox.length && this.state.me) {
+        const key = this.outbox[0].key;
+        const items = this.outbox.filter((x) => x.key === key).slice(0, LORRY_BATCH);
+        let r: LorryBatch;
+        try {
+          r = await call("lorryScanBatch", key, this.lorryTaskOf(key), items[0].held, items.map((x) => ({ id: x.id, code: x.code, at: new Date(x.at).toISOString(), local: x.local, held: x.held })), [], { follow: true });
+        } catch (e) {
+          if (!(e instanceof NotReceived)) throw e;
+          return this.outSoon();
+        }
+        const byId = new Map(items.map((x) => [x.id, x]));
+        const done = new Set<string>();
+        const retry = new Set<string>();
+        for (const x of r.results) {
+          /* Signed out, or the server could not judge it: not an answer — it goes again. */
+          if (!x.ok && (x.title === "Please sign in again" || /could not (check|be read)/.test(x.text))) {
+            const it = byId.get(x.id);
+            if (it && (it.tries ?? 0) < 5) {
+              retry.add(x.id);
+              continue;
+            }
+          }
+          done.add(x.id);
+        }
+        this.outbox = this.outbox.filter((x) => !done.has(x.id)).map((x) => (retry.has(x.id) ? { ...x, tries: (x.tries ?? 0) + 1 } : x));
+        if (r.task && /^T-/.test(r.task) && this.state.flow?.task.item === key) this.adoptLorryJob(r.task, r.data);
+        for (const x of r.results) if (done.has(x.id)) this.settleScan(key, byId.get(x.id), x);
+        /* Caught up on this lorry: the server's board is now the truth, and the pack is read again from it. */
+        if (!this.waiting(key)) this.applyLorry(key, r.board, r.data);
+        if (!done.size) return this.outSoon(10_000);
+      }
+    } finally {
+      this.outRunning = false;
+    }
+  }
+
+  /** The server's answer to a scan the loader has long moved past: quiet if it agrees, loud if it will not count it. */
+  settleScan(key: string, it: LorryOut | undefined, r: LorryBatchResult) {
+    if (r.ok && r.stale) this.refreshSoon();
+    const how = settle(it?.local?.result ?? null, r);
+    if (how === "quiet") return;
+    if (how === "counted") {
+      if (r.ok && this.state.scan?.purpose === "load" && this.state.flow?.task.item === key) {
+        this.fed(r.tone, r.code, r.title, r.message);
+        beep(r.tone);
+      }
+      return;
+    }
+    const pair = r.ok;
+    this.missScan({
+      id: r.id, key, code: r.code, at: Date.now(), late: true,
+      title: pair ? "Scan the box and its sticker again" : r.title,
+      text: pair ? "The office could not finish this pair." : r.text,
+      fix: pair ? "Scan both again." : r.fix,
+      override: pair ? null : r.override,
+    });
   }
 
   /** The lorry's loading pack, read again a moment after the lorry last changed — never mid-burst. */
@@ -1510,101 +1745,20 @@ export class FactoryApp extends Component<Props, State> {
 
   async loadPack(key: string) {
     if (this.state.flow?.task.item !== key) return;
-    if (this.noPack || this.scanRunning || this.scanQ.length) return this.packSoon(key);
+    /* A pack read while scans are still on the phone would not carry them: wait until the office has them all. */
+    if (this.noPack || this.scanRunning || this.scanQ.length || this.waiting(key)) return this.packSoon(key);
     const seq = this.packSeq;
     try {
       const p = await call("lorryPack", key);
       /* A scan was judged while this was on its way: the pack it judged against is newer than this one. */
-      if (seq !== this.packSeq || this.state.flow?.task.item !== key) return;
+      if (seq !== this.packSeq || this.state.flow?.task.item !== key || this.waiting(key)) return;
       this.pack = p;
+      /* Kept on the phone: a lorry opened again with no signal is still judged here. */
+      if (p && this.state.me) save(this.state.me.key, "pack." + key, p);
       this.packHeld = this.held?.code ?? null;
     } catch (e) {
       if (e instanceof NotReceived && e.message === "unknown-op") this.noPack = true;
     }
-  }
-
-  /** The phone's own answer to a lorry scan, for the server to compare with its own. Never throws, never shown. */
-  shadowJudge(code: string): LorryLocal | undefined {
-    const pack = this.pack;
-    if (!pack || pack.key !== this.state.flow?.task.item) return undefined;
-    try {
-      const t0 = performance.now();
-      const j = judgeLorryScan(pack, code, this.packHeld);
-      this.pack = applyLocal(pack, j);
-      const us = Math.round((performance.now() - t0) * 1000);
-      this.packHeld = j.held;
-      this.packSeq++;
-      return { result: j.result, line: j.line, why: j.why, us, packAt: pack.at };
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Labels read on the lorry, judged by the server in one call and in the
-   * order they were read; each answer is then shown, sounded and buzzed in
-   * turn, exactly as if it had come back on its own. Returns how many were
-   * left unjudged behind a refusal, for the loader to scan again.
-   */
-  async lorrySend(items: { code: string; at: number; local?: LorryLocal }[]): Promise<number> {
-    const st = this.state, f = st.flow;
-    if (!f || !isLorryTask(f.task) || !items.length) return 0;
-    const key = f.task.item!;
-    const scans = items.map((x) => ({ id: scanId(), code: x.code, at: new Date(x.at).toISOString(), local: x.local ?? null }));
-    const readAt = new Map(scans.map((x, i) => [x.id, items[i].at]));
-    const waits = this.waits;
-    this.waits = [];
-    this.setLorry({ busy: true });
-    let r: LorryBatch;
-    try {
-      r = await call("lorryScanBatch", key, f.task.id.startsWith(NEW_LORRY) ? null : f.task.id, this.held?.code ?? null, scans, waits);
-    } catch (e) {
-      this.setLorry({ busy: false });
-      if (!(e instanceof NotReceived)) throw e;
-      this.waits = waits.concat(this.waits).slice(-100);
-      if (e.message === "unknown-op") {
-        /* A server from before batches: the same labels, one at a time. */
-        this.noBatch = true;
-        for (const x of items) {
-          if (this.halted()) return items.length - items.indexOf(x);
-          await this.doScan(x.code);
-        }
-        return 0;
-      }
-      const n = items.length;
-      this.setLorry({ res: { tone: "bad", code: items[0].code, title: "No network", text: n > 1 ? `These ${n} labels are not counted yet.` : "This label is not counted yet.", fix: "Check the Wi-Fi, then scan the same " + (n > 1 ? "labels" : "label") + " again. Nothing will be counted twice." } });
-      beep("bad");
-      return 0;
-    }
-    this.applyLorry(key, r.board, r.data);
-    this.setLorry({ busy: false });
-    const answered = Date.now();
-    for (const x of r.results) {
-      const before = this.scanMoment();
-      this.lorryAnswer(x, r.data);
-      await new Promise<void>((done) => this.setState({}, done));
-      const tone = scanTone(before, this.scanMoment());
-      if (tone) beep(tone);
-      this.waits.push({ id: x.id, ms: answered - (readAt.get(x.id) ?? answered) });
-    }
-    this.setHalf(r.half);
-    return r.notJudged.length;
-  }
-
-  /** One scan's answer on the lorry: the job adopted, the half held, and a band, a buzz or the red card. */
-  lorryAnswer(r: LorryBatchResult, data: FactoryData | null) {
-    if (r.task) this.adoptLorryJob(r.task, r.ok ? data : null);
-    /* The server says which half, if any, the next scan goes with. */
-    this.setHalf(r.half ?? null);
-    /* What went on is a band and a buzz; only a refusal stops the loader. */
-    if (r.ok && r.stale) this.refreshSoon();
-    if (r.ok && r.half) {
-      buzz("ok");
-      const sc = this.state.scan;
-      if (sc) this.setState({ scan: { ...sc, res: null, typed: sc.typed != null ? "" : sc.typed, feed: undefined } });
-    } else if (r.ok) this.fed(r.tone, r.code, r.title, r.message);
-    else if (r.repeat) this.fed("warn", r.code, "Already on — not counted again", r.text);
-    else this.setLorry({ res: { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
   }
 
   /** One label, one round trip — for a server that has no batch op yet. */
@@ -1744,6 +1898,8 @@ export class FactoryApp extends Component<Props, State> {
     return (
       <Div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <Btn onClick={() => this.openScan("load")} style={{ ...btn("p", 60), display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }}>{ic("qr", 26, "#FFFFFF")}{this.lorryStickered() ? "Scan box and sticker" : "Scan a box or lot label"}</Btn>
+        {this.renderLorryStatus(t.item!, false)}
+        {st.lorry.missedOpen && !st.scan && this.renderMissed(t.item!, true)}
         {this.lorryStickered() && <MsgBox m={msg("Orders with QR dispatch stickers: scan each box and the dispatch sticker on it, either one first.", "info")} />}
         <Div>
           <Div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
@@ -1897,11 +2053,11 @@ export class FactoryApp extends Component<Props, State> {
 
   /** The last box that went on, as a band over the camera: green on, amber already on. It stays until the next scan replaces it. */
   renderFeed(fd: Feed): ReactNode {
-    const ok = fd.tone === "ok", count = this.loadCount();
+    const ok = fd.tone === "ok", bad = fd.tone === "bad", count = this.loadCount();
     return (
-      <Div key={fd.at} style={{ flex: "none", margin: "0 12px 4px 12px", borderRadius: "18px", overflow: "hidden", background: ok ? "#1D7A45" : "#B77B08", color: "#FFFFFF", padding: "12px 16px", position: "relative", zIndex: 2, animation: "fx-up 160ms cubic-bezier(0.2,0,0.2,1)" }}>
+      <Div key={fd.at} style={{ flex: "none", margin: "0 12px 4px 12px", borderRadius: "18px", overflow: "hidden", background: ok ? "#1D7A45" : bad ? "#B3261E" : "#B77B08", color: "#FFFFFF", padding: "12px 16px", position: "relative", zIndex: 2, animation: "fx-up 160ms cubic-bezier(0.2,0,0.2,1)" }}>
         <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <Span style={{ flex: 1, minWidth: 0, fontSize: "22px", lineHeight: "28px", fontWeight: 800 }}>{(ok ? "✓ " : "↺ ") + fd.title}</Span>
+          <Span style={{ flex: 1, minWidth: 0, fontSize: "22px", lineHeight: "28px", fontWeight: 800 }}>{(ok ? "✓ " : bad ? "✕ " : "↺ ") + fd.title}</Span>
           {!!count && <Span style={{ flex: "none", fontSize: "15px", fontWeight: 800, background: "rgba(255,255,255,0.18)", borderRadius: "12px", padding: "4px 10px" }}>{count}</Span>}
         </Div>
         <Div style={{ ...mono, fontSize: "14px", fontWeight: 600, marginTop: "2px", opacity: 0.9 }}>{fd.code}</Div>
@@ -1940,6 +2096,64 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   /** Asking for an override: which item still short on this lorry the box goes in place of, and why. */
+  /**
+   * What is still on the phone and what was not counted, for one lorry. On the
+   * camera it is one dark strip that never covers the viewfinder; tapping the
+   * red half opens the list over it.
+   */
+  renderLorryStatus(key: string, dark: boolean): ReactNode {
+    const st = this.state, left = this.waiting(key), missed = st.lorry.missed.filter((m) => m.key === key);
+    if (!left && !missed.length) return null;
+    const offline = st.net === "offline";
+    return (
+      <Div style={{ flex: "none", display: "flex", gap: "8px", margin: dark ? "0 12px 4px 12px" : 0, position: "relative", zIndex: 2 }}>
+        {left > 0 && (
+          <Span style={{ flex: 1, display: "flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "14px", fontSize: "14px", fontWeight: 700, background: dark ? "rgba(255,255,255,0.10)" : "#F3F4F7", color: dark ? "#C2C8D2" : "#3D4453" }}>
+            {ic("sync", 16, dark ? "#C2C8D2" : "#3D4453")}
+            {left + (offline ? " saved on phone · no network" : " sending…")}
+          </Span>
+        )}
+        {missed.length > 0 && (
+          <Btn onClick={() => this.setLorry({ missedOpen: true })} style={{ flex: 1, height: "40px", padding: "0 12px", borderRadius: "14px", border: "none", background: "#B3261E", color: "#FFFFFF", fontSize: "14px", fontWeight: 800, cursor: "pointer" }}>
+            {missed.length + " not counted — see"}
+          </Btn>
+        )}
+      </Div>
+    );
+  }
+
+  /** The not-counted list: each label, why, and what to do — and one tap once they are set aside. */
+  renderMissed(key: string, inline = false): ReactNode {
+    const missed = this.state.lorry.missed.filter((m) => m.key === key);
+    const close = () => this.setLorry({ missedOpen: false });
+    const body = (
+        <Div style={inline ? { ...card, padding: "16px", display: "flex", flexDirection: "column", gap: "10px" } : { width: "100%", maxHeight: "92%", overflowY: "auto", background: "#FFFFFF", color: "#1A1E28", borderRadius: "26px 26px 0 0", padding: "18px 18px 20px 18px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <Div style={{ fontSize: "20px", lineHeight: "26px", fontWeight: 800 }}>{missed.length + " not counted"}</Div>
+          <Div style={{ fontSize: "15px", lineHeight: "21px", color: "#3D4453" }}>These are NOT on the lorry's count. Take them off or keep them aside.</Div>
+          {missed.map((m) => (
+            <Div key={m.id} style={{ border: "1px solid #F6CFCF", background: "#FCECEC", borderRadius: "14px", padding: "12px 14px" }}>
+              <Div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                <Span style={{ fontSize: "16px", fontWeight: 800, color: "#B3261E" }}>{m.title}</Span>
+                <Span style={{ fontSize: "12px", color: "#6B7385", whiteSpace: "nowrap" }}>{(m.late ? "office · " : "") + hhmm(new Date(m.at))}</Span>
+              </Div>
+              <Div style={{ ...mono, fontSize: "13px", color: "#3D4453", marginTop: "2px" }}>{m.code}</Div>
+              {!!m.text && <Div style={{ fontSize: "14px", lineHeight: "20px", marginTop: "4px" }}>{m.text}</Div>}
+              {!!m.fix && <Div style={{ fontSize: "14px", lineHeight: "20px", marginTop: "2px", fontWeight: 700 }}>{m.fix}</Div>}
+              {!!m.override?.length && (
+                <Btn onClick={() => this.setLorry({ missedOpen: false, ask: { code: m.code, items: m.override!, sku: m.override!.length === 1 ? m.override![0].sku : null, reason: "", busy: false, err: "" } })} style={{ ...btn("s", 44), marginTop: "8px" }}>Ask for an override</Btn>
+              )}
+            </Div>
+          ))}
+          <Div style={{ display: "flex", gap: "10px", marginTop: "4px" }}>
+            <Btn onClick={close} style={{ ...btn("s", 56), flex: 1 }}>Close</Btn>
+            <Btn onClick={() => this.clearMissed(key)} style={{ ...btn("p", 56), flex: 2 }}>All set aside</Btn>
+          </Div>
+        </Div>
+    );
+    if (inline) return body;
+    return <Div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, background: "rgba(14,16,22,0.55)", display: "flex", flexDirection: "column", justifyContent: "flex-end", zIndex: 7 }}>{body}</Div>;
+  }
+
   renderLorryAsk(): ReactNode {
     const a = this.state.lorry.ask!;
     return (
@@ -3337,6 +3551,15 @@ export class FactoryApp extends Component<Props, State> {
     if (!f) return;
     if (st.sending) return this.toast("Already sending — please wait");
     if (st.results[f.key]) return this.setState({ result: st.results[f.key] });
+    /* A lorry is sent only once the office has every scan: a loading sent ahead of its boxes would be verified short. */
+    if (isLorryTask(f.task)) {
+      const left = this.waiting(f.task.item);
+      if (left) {
+        void this.pumpOut();
+        return this.toast(left + (left === 1 ? " scan is" : " scans are") + " still on this phone. " + (st.net === "offline" ? "They go when there is network — send the loading after that." : "Sending them now — try again in a moment."), "warn");
+      }
+      if (f.task.id.startsWith(NEW_LORRY)) return this.toast("Nothing is on this lorry yet.", "warn");
+    }
     const savedIso = new Date().toISOString();
     if (st.net === "offline") return this.enqueue(f, savedIso);
     this.setState({ sending: true, result: { kind: "sending", key: f.key } });
@@ -3894,14 +4117,15 @@ export class FactoryApp extends Component<Props, State> {
     const corner = (pos: CSSProperties, b: string, rad: string): ReactNode => <Span style={{ position: "absolute", width: "44px", height: "44px", ...pos, [b.split("|")[0]]: "5px solid #C6FF34", [b.split("|")[1]]: "5px solid #C6FF34", borderRadius: rad } as CSSProperties} />;
     return (
       <Div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
-        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || !!st.lorry.res || !!st.lorry.pick || !!st.lorry.ask} onCode={(c) => this.intake(c)} onState={(s) => this.camState(s)} />}
-        {P === "load" && !typing && !st.lorry.ask && <GunInput onCode={(c) => this.intake(c)} />}
+        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || !!st.lorry.res || !!st.lorry.pick || !!st.lorry.ask || st.lorry.missedOpen} onCode={(c) => this.intake(c)} onState={(s) => this.camState(s)} />}
+        {P === "load" && !typing && !st.lorry.ask && !st.lorry.missedOpen && <GunInput onCode={(c) => this.intake(c)} />}
         <Div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <Btn onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</Btn>
           <Span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</Span>
           {typing ? <Span style={{ width: "48px", height: "48px", flex: "none" }} /> : <Btn onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</Btn>}
         </Div>
         {P === "load" && (st.lorry.half ? this.renderHalf(st.lorry.half) : !!sc.feed && this.renderFeed(sc.feed))}
+        {P === "load" && f && isLorryTask(f.task) && this.renderLorryStatus(f.task.item!, true)}
         {typing ? this.renderTyping(labels) : (
           <>
         <Div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>
@@ -3960,6 +4184,7 @@ export class FactoryApp extends Component<Props, State> {
         )}
               {st.lorry.res && this.renderLorryRes()}
         {st.lorry.ask && this.renderLorryAsk()}
+        {P === "load" && f && isLorryTask(f.task) && st.lorry.missedOpen && !st.lorry.ask && this.renderMissed(f.task.item!)}
         {st.lorry.pick && this.renderLorryPick()}
       </Div>
     );

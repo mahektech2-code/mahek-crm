@@ -817,6 +817,32 @@ describe("dispatch", () => {
     await as("imran");
     await lorryUnload(fc, key, box1);
     await lorryUnload(fc, key, box2);
+
+    /* FOLLOW: the offline-first phone. A refusal stops nothing; what the phone refused is recorded and never judged; what it took and the server will not count is said, and the scan behind it still goes on. */
+    const fid = [0, 1, 2, 3].map(() => "SC-follow-" + randomUUID());
+    const took = { result: "accepted", line: ln.id, why: "matched", us: 5, packAt: at };
+    const said = { result: "refused", line: null, why: "mismatch", us: 5, packAt: at };
+    const f1 = await lorryScanBatch(fc, key, last.task, null, [
+      { id: fid[0], code: wrong, at, local: said, held: null },
+      { id: fid[1], code: box1, at, local: took, held: null },
+      { id: fid[2], code: wrong, at, local: took, held: null },
+      { id: fid[3], code: box2, at, local: took, held: null },
+    ], [], null, true);
+    assert.deepEqual(f1.notJudged, [], "follow mode judges the whole batch");
+    assert.deepEqual(f1.results.map((x) => [x.id, x.ok]), [[fid[0], false], [fid[1], true], [fid[2], false], [fid[3], true]], JSON.stringify(f1.results));
+    assert.deepEqual(await (async () => Object.fromEntries((await q<{ id: string; status: string }>(sql`select id, status from factory_scan_events where id in ${inList(fid)}`)).map((x) => [x.id, x.status])))(),
+      { [fid[0]]: "refused", [fid[1]]: "accepted", [fid[2]]: "refused", [fid[3]]: "accepted" });
+    const [phoneSaid] = await q<{ text: string; ms: number }>(sql`select result->>'text' as text, judge_ms as ms from factory_scan_events where id = ${fid[0]}`);
+    assert.match(phoneSaid.text, /Refused on the phone/, "the phone's refusal is on record as the phone's");
+    const [wu] = await q<{ status: string }>(sql`select status from erp_units where id = ${wrong}`);
+    assert.equal(wu.status, "available", "a box the phone refused is never counted by the server");
+    const [n2] = await q<{ n: number }>(sql`select count(*)::int as n from erp_units where order_id = ${ln.id} and status = 'scanned'`);
+    assert.equal(n2.n, 2, "both good boxes on, the one behind a refusal included");
+    const resent = await lorryScanBatch(fc, key, last.task, null, [{ id: fid[0], code: wrong, at, local: took, held: null }], [], null, true);
+    assert.equal(resent.results[0]?.ok, false, "a resend is answered from the log, whatever the phone says the second time");
+
+    await lorryUnload(fc, key, box1);
+    await lorryUnload(fc, key, box2);
   });
 
   test("the phone's loading pack judges a lorry's scans as the server does, and both answers are kept with whether they agreed", async () => {
