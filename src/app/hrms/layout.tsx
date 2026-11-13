@@ -3,10 +3,11 @@ import { webApps } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { listNotifications } from "@/lib/queries";
-import { requireHrmsApp } from "@/lib/hrms/access";
+import { holdsScreen, requireHrmsApp } from "@/lib/hrms/access";
 import { HRMS_GROUPS, hrmsHref, hrmsKeysOf } from "@/lib/hrms/registry";
 import { hrmsNavCounts } from "@/lib/hrms/counts";
 import { HrmsShell, type NavGroup } from "./_ui/hrms-shell";
+import "@/styles/v4-theme.css";
 
 /**
  * The HRMS's shell.
@@ -31,7 +32,7 @@ export default async function HrmsLayout({ children }: { children: React.ReactNo
     label: g.label,
     icon: g.icon,
     screens: g.screens
-      .filter((s) => ctx.screens.has(s.key))
+      .filter((s) => holdsScreen(ctx, s))
       .map((s) => ({
         key: s.key,
         label: s.label,
@@ -46,6 +47,11 @@ export default async function HrmsLayout({ children }: { children: React.ReactNo
   })).filter((g) => g.screens.length > 0);
 
   return (
+    <>
+    {/* The v4 look is set in Geist, as the ERP's, the CRM's and the Sales
+        Dashboard's are. React hoists a precedence stylesheet into the head once. */}
+    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <HrmsShell
       nav={nav}
       user={{ name: ctx.user.name, email: ctx.user.email, phone: ctx.user.phone, initials: initialsOf(ctx.user.name), role: ctx.user.role }}
@@ -55,5 +61,6 @@ export default async function HrmsLayout({ children }: { children: React.ReactNo
     >
       {children}
     </HrmsShell>
+    </>
   );
 }

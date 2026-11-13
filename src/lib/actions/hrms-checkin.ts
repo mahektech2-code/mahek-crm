@@ -21,13 +21,14 @@ import { hrmsLink } from "@/lib/hrms/registry";
 function refresh() {
   try {
     revalidatePath("/hrms");
+    revalidatePath("/apps");
   } catch {
     /* no request context */
   }
 }
 
 /* ---------------------------------------------------------------------------
- * Checking in and out from the home card (spec §6.2). The browser sends where
+ * Checking in and out from the launcher’s check-in (spec §6.2). The browser sends where
  * it is; the SERVER measures the distance to the office and decides — a
  * position typed into a request is still measured against the office's pin,
  * and the refusal comes from the same rule the home card explains.

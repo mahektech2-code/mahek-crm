@@ -1,7 +1,7 @@
 import "server-only";
-import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, hrmsUserPowers, users } from "@/db/schema";
+import { appAccess, employeeReporting, employees, hrmsUserPowers, users } from "@/db/schema";
 import { notifyUsers, type NotifyEntry, type NotifyMessage } from "@/lib/notify";
 import type { HrmsPower } from "../powers";
 
@@ -37,6 +37,29 @@ export async function powerHolderUserIds(power: HrmsPower): Promise<string[]> {
     .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "hrms")))
     .leftJoin(hrmsUserPowers, and(eq(hrmsUserPowers.userId, users.id), eq(hrmsUserPowers.power, power)))
     .where(and(eq(users.active, true), or(isNotNull(hrmsUserPowers.userId), eq(appAccess.role, "admin"), eq(users.role, "admin"))));
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The MANAGERS of one employee who hold HRMS as a manager — the people who
+ * decide that person's leave by role. The org chart names them; for somebody
+ * the chart has not placed, the people whose job title is their Report To —
+ * the same two answers `hrmsContext`'s team gives from the other end.
+ */
+export async function managerUserIdsOf(employeeId: string): Promise<string[]> {
+  const chart = await db.select({ id: employeeReporting.managerId }).from(employeeReporting).where(eq(employeeReporting.employeeId, employeeId));
+  let managerIds = chart.map((r) => r.id).filter((x): x is string => !!x);
+  if (!managerIds.length) {
+    const [me] = await db.select({ reportsTo: employees.reportsTo }).from(employees).where(eq(employees.id, employeeId)).limit(1);
+    const title = me?.reportsTo?.trim().toLowerCase();
+    if (title) managerIds = (await db.select({ id: employees.id }).from(employees).where(sql`lower(trim(${employees.position})) = ${title}`)).map((r) => r.id);
+  }
+  if (!managerIds.length) return [];
+  const rows = await db
+    .selectDistinct({ id: users.id })
+    .from(users)
+    .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "hrms"), eq(appAccess.role, "manager")))
+    .where(and(inArray(users.employeeId, managerIds), eq(users.active, true)));
   return rows.map((r) => r.id);
 }
 

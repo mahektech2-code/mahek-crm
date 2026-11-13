@@ -57,7 +57,7 @@ export const isTaskApp = (v: string): v is TaskApp => (TASK_APPS as readonly str
 /**
  * EVERY APP HAS ITS OWN MY TASKS, and this is where each one lives. It shows
  * the tasks whose work happens in that app, plus personal ones. The CRM's came
- * first, at `/crm/tasks`; Accounts, the Sales Dashboard, the ERP, HRMS and the
+ * first, at `/crm/tasks`; Accounts, the Sales Dashboard, the ERP and the
  * Founder app have theirs at `/<app>/my-tasks` (the Sales Dashboard already had
  * a `tasks` meaning something else). Only these apps have one, for now: a task
  * of any other app is seen in the Tasks app.
@@ -67,7 +67,6 @@ export const APP_TASKS_PATH: Partial<Record<TaskApp, string>> = {
   accounts: "/accounts/my-tasks",
   sales: "/sales/my-tasks",
   erp: "/erp/my-tasks",
-  hrms: "/hrms/my-tasks",
   founder: "/founder/my-tasks",
 };
 

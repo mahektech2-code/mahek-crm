@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
-import { HRMS_ALWAYS_OPEN, HRMS_SCREENS } from "./registry";
+import { HRMS_ALWAYS_OPEN, HRMS_SCREENS, gateOpen, hrmsListKeys, type HrmsScreen } from "./registry";
 import { HRMS_POWERS, HRMS_POWER_LABEL, type HrmsPower } from "./powers";
 
 /* ---------------------------------------------------------------------------
@@ -118,14 +118,27 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
   const flags = { ot: config["hrms.ot.enabled"], qr: config["hrms.attendance.qrEnabled"] };
   const held = new Set<string>(modules.map((m) => m.key.replace(/^hrms\./, "")));
   if (level) HRMS_ALWAYS_OPEN.forEach((k) => held.add(k));
-  /* Holding a screen opens every tab of it, so every check that names a tab's
-     key — an action's screen, a badge, a home-page item — keeps working. A
-     tab behind a setting that is off is not opened by anything. */
+  /* Holding a screen opens every tab of it that is for this person's role —
+     or that a power they were GRANTED opens — so every check that names a
+     tab's key (an action's screen, a badge, a home-page item) keeps working.
+     A tab behind a setting that is off is not opened by anything. Only the
+     lists are opened: a screen's own key is opened as a list only when it is
+     one, so a grant naming a screen whose first list was removed (`kpi`)
+     opens what is left of it and nothing else. */
+  const role = administrator ? "admin" : level;
   const screens = new Set<string>();
   for (const sc of HRMS_SCREENS) {
-    if (!held.has(sc.key)) continue;
-    screens.add(sc.key);
-    for (const tab of sc.views ?? []) if (!tab.flag || flags[tab.flag]) screens.add(tab.key);
+    if (!held.has(sc.key) || !gateOpen(sc, role, granted)) continue;
+    if (!sc.views) screens.add(sc.key);
+    for (const tab of sc.views ?? []) if ((!tab.flag || flags[tab.flag]) && gateOpen(tab, role, granted)) screens.add(tab.key);
+  }
+  /* A MANAGER decides their team's leave by role, the way a head marks and
+     checks out their office by position: in `powers`, never `granted`, so it
+     widens no list, and every decision is checked against the team on the
+     server (`decidesFor`). */
+  if (level === "manager" && !administrator) {
+    powers.add("markStaff");
+    powers.add("checkoutStaff");
   }
 
   return { user, level, administrator, powers, granted, screens, employee, isHead, team, platformAdmin, flags };
@@ -154,16 +167,32 @@ async function teamOf(me: HrmsEmployeeRef): Promise<Set<string>> {
 export const has = (ctx: HrmsContext, p: HrmsPower) => ctx.powers.has(p);
 
 /**
- * How far a list reaches for this person (spec §2.2): everything for a
- * manager-level grant or a holder of one of the widening powers, the team
- * (employees whose Report To is my position) for a head, else their own.
+ * How far a list reaches for this person — the three roles: everything for
+ * the HR team (an HRMS administrator) or a holder of one of the widening
+ * powers; the team on the org chart for a manager or a head; else their own.
  */
 export function scopeOf(ctx: HrmsContext, ...widening: HrmsPower[]): Scope {
-  if (ctx.administrator || ctx.level === "manager") return "all";
+  if (ctx.administrator) return "all";
   if (widening.some((p) => ctx.granted.has(p))) return "all";
-  if (ctx.isHead || ctx.team.size > 0) return "team";
+  if (ctx.level === "manager" || ctx.isHead || ctx.team.size > 0) return "team";
   return "mine";
 }
+
+/** Whether this person holds a screen: any of its lists is open to them. */
+export const holdsScreen = (ctx: HrmsContext, sc: HrmsScreen) => hrmsListKeys(sc).some((k) => ctx.screens.has(k));
+
+/**
+ * WHO A LEAVE DECISION MAY BE MADE FOR. Somebody granted the power (or HR, or
+ * an HRMS administrator) decides anybody's; a MANAGER decides their team's —
+ * the org chart's — and never their own.
+ */
+export function decidesLeaveFor(ctx: HrmsContext, employeeId: string): boolean {
+  if (ctx.administrator || ctx.granted.has("approveLeave")) return true;
+  return ctx.level === "manager" && employeeId !== ctx.employee?.id && ctx.team.has(employeeId);
+}
+
+/** Whether this person decides any leave at all: the approver's buttons and badge. */
+export const decidesLeave = (ctx: HrmsContext) => ctx.administrator || ctx.granted.has("approveLeave") || ctx.level === "manager";
 
 /** The layout's gate: the app granted, or the launcher. */
 export async function requireHrmsApp(): Promise<HrmsContext> {

@@ -481,7 +481,13 @@ jobs:
       # prerequisite and not a convenience.
       - run: npm run db:seed
 
+      # The type check is the `build` job's, run on its own there. Inside
+      # `next build` it ran straight after the compile and the runner was shut
+      # down part-way through it — the same memory ceiling the `build` job
+      # already steps round. This job checks links, not types.
       - run: npm run build
+        env:
+          NEXT_BUILD_SKIP_TYPECHECK: "1"
 
       - name: Start the app
         run: npm start &

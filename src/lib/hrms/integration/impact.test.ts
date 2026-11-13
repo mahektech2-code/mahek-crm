@@ -11,7 +11,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -20,19 +20,13 @@ import {
   customers,
   employeeReporting,
   employees,
-  hrmsActivities,
   hrmsAdvances,
   hrmsAssetAssignments,
   hrmsAssetStock,
   hrmsAttendance,
-  hrmsBuddyTasks,
-  hrmsCalling,
-  hrmsChecklist,
   hrmsExpenses,
   hrmsGrievances,
   hrmsHelp,
-  hrmsJourneys,
-  hrmsKpi,
   hrmsLeaveCredits,
   hrmsLeaveRequests,
   hrmsMonthlyRemarks,
@@ -41,11 +35,9 @@ import {
   hrmsSalaries,
   hrmsStaffTimings,
   hrmsTaskTemplates,
-  hrmsTodos,
   mbosAttendanceDays,
   mbosDocuments,
   sessions,
-  timelineEvents,
   users,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
@@ -276,60 +268,9 @@ describe("conversations and the library", () => {
   });
 });
 
-describe("the sales desk", () => {
-  test("withdrawing a deactivation request says it leaves the managers' list", async () => {
-    const ctx = await asAdmin();
-    await db.update(customers).set({ deactivationRequested: true, deactivationReason: "Shop closed", deactivationRequestedById: admin.id, deactivationRequestedAt: new Date() }).where(eq(customers.id, customerId));
-    const r = await report("hrms-deactivation-request", customerId);
-    assert.equal(item(r, "CRM", "deleted")?.count, 1, items(r));
-    assert.equal((await mod("customers").actions!.withdrawRequest(ctx, customerId, {})).ok, false);
-    assert.ok((await mod("customers").actions!.withdrawRequest(ctx, customerId, yes(r))).ok);
-    const [c] = await db.select().from(customers).where(eq(customers.id, customerId));
-    assert.equal(c.deactivationRequested, false);
-    assert.equal((await report("hrms-deactivation-request", customerId)).blockers.length, 1);
-  });
-
-  test("a calling row and an activity leave the customer's history standing, and say so", async () => {
-    const ctx = await asAdmin();
-    const callId = id("hcal");
-    await db.insert(hrmsCalling).values({ id: callId, customerId, employeeId: asha.id, date: today(), followUp: addDaysISO(today(), 5) });
-    await db.insert(timelineEvents).values({ id: id("tle"), customerId, eventType: "hrms_call", sourceApp: "hrms", sourceRecordId: `${callId}:${today()}:picked`, occurredAt: new Date(), summary: "Back office call" });
-    const r = await report("hrms-calling-row", callId);
-    assert.equal(item(r, "HRMS", "deleted")?.count, 1, items(r));
-    assert.equal(item(r, "CRM", "kept")?.count, 1, items(r));
-    assert.equal((await mod("calling").actions!.delete(ctx, callId, {})).ok, false);
-    assert.ok((await mod("calling").actions!.delete(ctx, callId, yes(r))).ok);
-    assert.equal((await db.select().from(timelineEvents).where(eq(timelineEvents.customerId, customerId))).length, 1, "the call happened");
-
-    const day = addDaysISO(today(), -1);
-    const actId = id("hact");
-    await db.insert(hrmsActivities).values({ id: actId, date: day, employeeId: asha.id, customerId, customerName: "Sai Paint Depot", minutes: 30, note: "Talked about the new thinner" });
-    await db.insert(hrmsKpi).values({ id: id("hkpi"), date: day, employeeId: asha.id });
-    await db.insert(timelineEvents).values({ id: id("tle"), customerId, eventType: "hrms_activity", sourceApp: "hrms", sourceRecordId: actId, occurredAt: new Date(), summary: "Meeting" });
-    const a = await report("hrms-activity", actId);
-    assert.equal(item(a, "HRMS", "changed")?.count, 1, items(a));
-    assert.equal(item(a, "CRM", "kept")?.count, 1, items(a));
-    assert.ok((await mod("activity").actions!.delete(ctx, actId, yes(a))).ok);
-  });
-
-  test("a journey plan and a sales entry ask before they go", async () => {
-    const ctx = await asAdmin();
-    const jid = id("hjr");
-    await db.insert(hrmsJourneys).values({ id: jid, employeeId: asha.id, startDate: today(), endDate: today(), location: "Nashik" });
-    const j = await report("hrms-journey", jid);
-    assert.deepEqual(j.items, []);
-    assert.equal((await mod("journey").actions!.delete(ctx, jid, {})).ok, false);
-    assert.ok((await mod("journey").actions!.delete(ctx, jid, yes(j))).ok);
-
-    const kid = id("hkpi");
-    await db.insert(hrmsKpi).values({ id: kid, date: addDaysISO(today(), -2), employeeId: asha.id });
-    const k = await report("hrms-sales-entry", kid);
-    assert.equal(item(k, "HRMS", "deleted")?.count, 1, items(k));
-    assert.equal((await mod("kpi").actions!.delete(ctx, kid, {})).ok, false);
-    assert.ok((await mod("kpi").actions!.delete(ctx, kid, yes(k))).ok);
-  });
-});
-
+/* The Sales desk and Tasks were taken out of the HRMS (Nov 2026): no screen
+   draws them and nobody holds their keys, so their impact reports are no
+   longer reachable and their suites went with them. */
 describe("money", () => {
   test("a paid salary names its payment record and the advance it gives back, and is typed by its number", async () => {
     const ctx = await asAdmin();
@@ -470,39 +411,5 @@ describe("people", () => {
     assert.equal(item(a, "HRMS", "changed")?.count, 2, items(a));
     assert.equal((await mod("assignments").actions!.delete(ctx, asg, {})).ok, false);
     assert.ok((await mod("assignments").actions!.delete(ctx, asg, yes(a))).ok);
-  });
-});
-
-describe("tasks", () => {
-  test("a template stops the rows coming and keeps the ones written; the rows move the month's score", async () => {
-    const ctx = await asAdmin();
-    const tpl = id("htt");
-    await db.insert(hrmsTaskTemplates).values({ id: tpl, serial: 1, employeeId: asha.id, task: "Count the stock", frequency: "Daily", weekdays: ["Monday"] });
-    const cl = id("hcl");
-    await db.insert(hrmsChecklist).values({ id: cl, date: today(), employeeId: asha.id, templateId: tpl, task: "Count the stock" });
-    await db.insert(hrmsTodos).values({ id: id("htd"), forDate: today(), fromLabel: "Monthly", toEmployeeId: asha.id, task: "Count the stock", templateId: tpl });
-    const t = await report("hrms-task-template", tpl);
-    assert.equal(item(t, "HRMS", "changed")?.count, 1, items(t));
-    assert.equal(t.items.filter((i) => i.effect === "kept").length, 2, items(t));
-    assert.equal(t.confirmWord, "Count the stock");
-    assert.equal((await mod("templates").actions!.delete(ctx, tpl, {})).ok, false);
-    assert.ok((await mod("templates").actions!.delete(ctx, tpl, yes(t))).ok);
-
-    const c = await report("hrms-checklist-item", cl);
-    assert.equal(item(c, "HRMS", "changed")?.count, 1, items(c));
-    assert.ok((await mod("checklist").actions!.delete(ctx, cl, yes(c))).ok);
-
-    const todo = id("htd");
-    await db.insert(hrmsTodos).values({ id: todo, forDate: today(), fromEmployeeId: ravi.id, fromLabel: "Ravi Kumar", toEmployeeId: asha.id, task: "Send the quote" });
-    const d = await report("hrms-todo", todo);
-    assert.equal((await mod("todos").actions!.delete(ctx, todo, {})).ok, false);
-    assert.ok((await mod("todos").actions!.delete(ctx, todo, yes(d))).ok);
-
-    const bt = id("hbt");
-    await db.insert(hrmsBuddyTasks).values({ id: bt, date: today(), fromEmployeeId: asha.id, toEmployeeId: ravi.id, task: "Cover the counter" });
-    const b = await report("hrms-shared-task", bt);
-    assert.equal(b.confirmWord, "Cover the counter");
-    assert.ok((await mod("buddy").actions!.delete(ctx, bt, yes(b))).ok);
-    assert.equal((await db.select().from(hrmsBuddyTasks).where(and(eq(hrmsBuddyTasks.id, bt)))).length, 0);
   });
 });

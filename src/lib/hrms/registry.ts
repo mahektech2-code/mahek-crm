@@ -26,6 +26,8 @@
  * PURE and client-safe.
  * ------------------------------------------------------------------------- */
 
+import type { HrmsPower } from "./powers";
+
 export type HrmsIcon =
   | "clock" | "check" | "cal" | "file" | "wallet" | "receipt" | "list" | "chart"
   | "phone" | "people" | "building" | "box" | "help" | "doc" | "bell" | "gear";
@@ -33,8 +35,18 @@ export type HrmsIcon =
 /** How a list is drawn: the generic list, or one of the design's other views above it. */
 export type HrmsView = "list" | "home" | "calendar" | "chart" | "perf" | "custom";
 
-/** A TAB of a screen: a list of its own, opened by holding the screen. */
-export type HrmsTab = {
+/**
+ * WHO A SCREEN OR TAB IS FOR. HRMS gives a person one of three roles — the
+ * level on their HRMS grant: an ASSOCIATE sees their own days, leave, pay and
+ * score; a MANAGER sees their team (the org chart) and decides its leave; the
+ * HR TEAM (the admin level) sees everybody and runs pay and settings. A gate
+ * opens at its `min` level or above, or for somebody GRANTED one of its
+ * `powers` on the Access screen — an associate given the HR power is HR's
+ * hands whatever their level.
+ */
+export type HrmsGate = { min?: "manager" | "admin"; powers?: HrmsPower[] };
+
+export type HrmsTab = HrmsGate & {
   /** The server module key that draws this tab. Never renamed — links and stored landings name it. */
   key: string;
   label: string;
@@ -45,7 +57,7 @@ export type HrmsTab = {
   flag?: "ot";
 };
 
-export type HrmsScreen = {
+export type HrmsScreen = HrmsGate & {
   /** Stable key; the module key is `hrms.<key>`. Never renamed — it is a grant. */
   key: string;
   /** URL segment under /hrms. Home is the app root. */
@@ -79,21 +91,31 @@ const s = (key: string, slug: string, label: string, icon: HrmsIcon, sub: string
 
 const t = (key: string, label: string, sub: string, view: HrmsView = "list", extra: Partial<HrmsTab> = {}): HrmsTab => ({ key, label, sub, view, ...extra });
 
+const MANAGER = { min: "manager" } as const;
+const hr = (...powers: HrmsPower[]): HrmsGate => ({ min: "admin", powers });
+
+/*
+ * THE SIMPLIFIED HRMS (Nov 2026). Checking in left for the MahekOne launcher,
+ * and Tasks, My tasks, the Sales desk and the daily sales entries were taken
+ * out at the client's request. Their server modules are still in
+ * `screens/` — the data behind them is kept — but no screen draws them and
+ * `hrmsContext` opens none of their keys, so nothing can act on them either.
+ */
 export const HRMS_GROUPS: HrmsGroup[] = [
-  { id: "home", label: "Check in", icon: "clock", screens: [s("home", "", "Check in", "clock", "", { view: "home", bottom: true })] },
+  { id: "home", label: "Home", icon: "chart", screens: [s("home", "", "Home", "chart", "", { view: "home", bottom: true })] },
   {
-    id: "day",
-    label: "My work",
-    icon: "check",
+    id: "time",
+    label: "Time",
+    icon: "clock",
     screens: [
       s("attendance", "attendance", "Attendance", "check", "", {
         views: [
-          t("attendance", "Register", "Every check-in and check-out, newest first. Heads see their team; HR and admin see everyone."),
-          t("pendingOut", "Not checked out", "Days with a check-in and no check-out. A day left open holds up that month’s salary."),
-          t("absentees", "Absent", "Active people with no attendance on the day, who are not on leave or on a holiday that applies to them."),
-          t("monthly", "Monthly summary", "Per person per month. Days nobody can account for must be cleared before that month’s salary."),
-          t("attChart", "Chart", "People present each day, with the trend. Pick a row to open that person’s days.", "chart"),
-          t("overtime", "Overtime", "One record per person per day, for time worked beyond the shortest overtime.", "list", { flag: "ot" }),
+          t("attendance", "Days", "Every check-in and check-out, newest first."),
+          t("pendingOut", "Not checked out", "Days with a check-in and no check-out. An open day holds up that month’s salary."),
+          t("absentees", "Absent", "People with no attendance on the day who are not on leave or a holiday.", "list", MANAGER),
+          t("attChart", "Chart", "People present each day, with the trend.", "chart", MANAGER),
+          t("monthly", "Monthly summary", "Per person per month. Days nobody can account for are cleared before salaries.", "list", hr("hr", "payroll", "editAtt")),
+          t("overtime", "Overtime", "Time worked beyond the shortest overtime.", "list", { flag: "ot", ...MANAGER }),
         ],
       }),
       s("leave", "leave", "Leave & holidays", "cal", "", {
@@ -101,77 +123,58 @@ export const HRMS_GROUPS: HrmsGroup[] = [
         nav: "Leave",
         short: "Leave",
         views: [
-          t("leave", "Requests", "Every leave and half-day request. You see your own; HR and admin see everyone’s."),
-          t("approvals", "To decide", "Requests waiting for a decision, by person. Approving sets how many of the days are paid."),
-          t("leaveCal", "Calendar", "One bar per request — approved in green, waiting in amber — with the month’s holidays.", "calendar"),
-          t("holidays", "Holidays", "Weekly offs, festivals, national and weather closures, and who each one applies to."),
-          t("leaveSetup", "Monthly credits", "Paid leave credited to each person each month — automatically on the 1st, or by hand."),
+          t("leave", "Requests", "Leave and half-day requests."),
+          t("approvals", "To decide", "Requests waiting for a decision. Approving sets how many of the days are paid.", "list", { ...MANAGER, powers: ["approveLeave"] }),
+          t("leaveCal", "Calendar", "Approved in green, waiting in amber, with the month’s holidays.", "calendar"),
+          t("holidays", "Holidays", "Festivals, national days and closures, and who each applies to."),
+          t("leaveSetup", "Balances", "Paid leave credited to each person each month — on the 1st, or by hand.", "list", hr("hr", "entitle")),
         ],
       }),
-      s("checklist", "tasks", "Tasks", "list", "", {
-        bottom: true,
-        views: [
-          t("checklist", "Checklist", "Today’s tasks, what is still open this week, and every checklist before."),
-          t("todos", "To-dos", "Work given to you and by you. Whoever gave it checks it once it is done."),
-          t("buddy", "Buddy tasks", "One of today’s tasks handed to a colleague, who accepts it and marks it done."),
-          t("templates", "Templates", "Your daily, weekly and monthly tasks. Take my task copies today’s into your checklist."),
-        ],
-      }),
-      s("myTasks", "my-tasks", "My tasks", "check", "Your MahekOne tasks that belong to HRMS — given to you, raised by the app, or added by you.", { view: "custom" }),
+    ],
+  },
+  {
+    id: "results",
+    label: "Pay & results",
+    icon: "wallet",
+    screens: [
       s("payroll", "pay", "Pay", "wallet", "", {
         views: [
-          t("payroll", "Salaries", "Salaries prepared, approved and paid, by month. Everyone sees their own payslips once paid."),
-          t("advances", "Advances", "Salary advances, and how much of each is still to be recovered."),
-          t("expenses", "Expenses", "Claims and payments per person, with the month’s balance and the running balance."),
+          t("payroll", "Salaries", "Salaries by month. Everyone sees their own payslips once paid."),
+          t("expenses", "Expenses", "Claims and payments, with the month’s balance."),
+          t("advances", "Advances", "Salary advances, and how much is still to be recovered."),
         ],
       }),
-    ],
-  },
-  {
-    id: "perf",
-    label: "Results",
-    icon: "chart",
-    screens: [
+      /* The screen key is still `kpi`, because it is a grant: the daily sales
+         entries it opened on are gone, and the screen opens on the month. */
       s("kpi", "performance", "Performance", "chart", "", {
         views: [
-          t("kpi", "Daily sales entries", "Each salesman’s day: visits, km, litres, sales and outstanding. Visits are filled in from the field app."),
-          t("salesPerf", "Sales score", "A daily score out of 100, from nine parts measured against each salesman’s targets.", "perf"),
-          t("staffPerf", "Staff month", "Each month’s working hours, punctuality, tasks, to-dos and buddy tasks."),
-          t("eom", "Employee of the month", "Everyone at the Employee of the Month mark or above, overall."),
-          t("points", "Period review", "Points for any period, with the review questions and a PDF report."),
-        ],
-      }),
-      s("customers", "sales-desk", "Sales desk", "phone", "", {
-        views: [
-          t("customers", "Customers", "Customers by status, with how often they have been called and visited."),
-          t("calling", "Calling", "Your area’s calling list. Log each call; if nobody picks up you are asked what happens next."),
-          t("activity", "Sales activity", "Meetings and calls by salesmen, with the time given to each area."),
-          t("journey", "Journey planner", "Where each salesman plans to be, by date.", "calendar"),
+          t("staffPerf", "Monthly score", "Each month’s working hours and punctuality."),
+          t("eom", "Employee of the month", "Everyone at the Employee of the Month mark or above."),
+          t("points", "Period review", "Points for any period, with the review questions and a PDF report.", "list", hr("perfAdmin")),
         ],
       }),
     ],
   },
   {
-    id: "team",
+    id: "company",
     label: "Company",
     icon: "people",
     screens: [
       s("employees", "people", "People", "people", "", {
         views: [
           t("employees", "Directory", "Everyone, by status. Your own record is your profile."),
-          t("idCards", "ID cards", "Every person’s ID card."),
-          t("timings", "Working hours", "Each person’s start and finish time for every day of the week."),
+          t("idCards", "ID cards", "Every person’s ID card.", "list", hr("hr")),
+          t("timings", "Working hours", "Each person’s start and finish time for every day of the week.", "list", hr("hr", "timings")),
         ],
       }),
       /* Its own screen, not a tab of People: moving a reporting line moves
-         who the CRM names as an account's sales manager, which is a grant
-         somebody may be given without the directory's addresses, or the
-         directory without it. */
+         who the CRM names as an account's sales manager. */
       s("org", "org", "Org chart", "people", "Who reports to whom.", { view: "custom" }),
-      s("offices", "offices", "Offices", "building", "Where people check in: the map pin, how close they must be, and the opening hours."),
+      s("offices", "offices", "Offices", "building", "Where people check in: the map pin, how close they must be, and the opening hours.", hr("hr")),
       s("assetStock", "assets", "Assets", "box", "", {
         views: [
-          t("assetStock", "Stock", "What the company owns, and how much of each is still in stock."),
+          /* Stock is HR's; everybody else opens on what is with people. */
+          t("assetStock", "Stock", "What the company owns, and how much of each is still in stock.", "list", hr("hr")),
           t("assignments", "With people", "Who holds what, and what has come back."),
         ],
       }),
@@ -184,29 +187,54 @@ export const HRMS_GROUPS: HrmsGroup[] = [
     screens: [
       s("help", "requests", "Help & grievances", "help", "", {
         views: [
-          t("help", "Help requests", "Attendance corrections and other help. Problems with the app itself go to Tell us at the top."),
+          t("help", "Help requests", "Attendance corrections and other help."),
           t("grievances", "Grievances", "Raised to the CEO, HR, the company or a named person, and closed with an answer."),
         ],
       }),
-      s("documents", "documents", "Documents", "doc", "Policies, forms and videos. You see what is meant for you."),
-      s("notifications", "announcements", "Announcements", "bell", "Messages sent to one person or to everyone. Each one also arrives in the bell.", { bottom: true, short: "Notices" }),
-      s("feedback", "feedback", "Feedback", "help", "What you sent in from any app with the Feedback button, and the replies.", { view: "custom" }),
+      s("documents", "documents", "Documents", "doc", "Policies, forms and videos meant for you."),
+      s("notifications", "announcements", "Announcements", "bell", "Messages to one person or to everyone. Each also arrives in the bell.", { bottom: true, short: "Notices" }),
+      s("feedback", "feedback", "Feedback", "help", "What you sent in with the Feedback button, and the replies.", { view: "custom" }),
     ],
   },
   {
     id: "settings",
-    label: "Settings",
+    label: "Admin",
     icon: "gear",
     screens: [
       s("settings", "settings", "Settings", "gear", "", {
+        ...hr("admin"),
         views: [
           t("settings", "Rules", "The rules HRMS runs on, and who changes them.", "custom"),
+          t("roles", "Roles", "What each of the three HRMS roles sees and decides.", "custom"),
           t("refLists", "Pick lists", "The values every form picks from."),
         ],
       }),
     ],
   },
 ];
+
+/**
+ * THE THREE ROLES, as people read them. The role is the level on the HRMS
+ * grant, given on Admin Console → Access; nothing here grants anything.
+ */
+export const HRMS_ROLES: { level: "associate" | "manager" | "admin"; name: string; sees: string; decides: string }[] = [
+  { level: "associate", name: "Associate", sees: "Their own days, leave, pay, score, assets and requests", decides: "Nothing; asks for leave, help and corrections" },
+  { level: "manager", name: "Manager", sees: "Their team, from the org chart, as well as their own", decides: "Their team's leave; marks and checks out their team" },
+  { level: "admin", name: "HR team", sees: "Everybody", decides: "Everything: leave, salaries, people, offices, assets, settings" },
+];
+
+/** Is a gate open for this level and these GRANTED powers. */
+export function gateOpen(g: HrmsGate, level: "associate" | "manager" | "admin" | null, granted: ReadonlySet<string>): boolean {
+  if (!g.min) return true;
+  const rank = { associate: 0, manager: 1, admin: 2 } as const;
+  if (level && rank[level] >= rank[g.min]) return true;
+  return (g.powers ?? []).some((p) => granted.has(p));
+}
+
+/** The lists a screen draws: its tabs' keys, or its own key when it has none. */
+export function hrmsListKeys(screen: HrmsScreen): string[] {
+  return screen.views ? screen.views.map((v) => v.key) : [screen.key];
+}
 
 export const HRMS_SCREENS: HrmsScreen[] = HRMS_GROUPS.flatMap((g) => g.screens);
 
@@ -267,10 +295,10 @@ export function hrmsKeysOf(screen: HrmsScreen): string[] {
 }
 
 /**
- * Screens every HRMS user reaches whatever they were narrowed to: checking in
- * is the reason almost everybody holds the app at all.
+ * Screens every HRMS user reaches whatever they were narrowed to: Home, and
+ * the replies to what they sent in.
  */
-export const HRMS_ALWAYS_OPEN = new Set(["home", "myTasks", "feedback"]);
+export const HRMS_ALWAYS_OPEN = new Set(["home", "feedback"]);
 
 /**
  * The first build's URLs, and the list each now lives on. `next.config.ts`
@@ -290,19 +318,19 @@ export const HRMS_RETIRED_SLUGS: Record<string, string> = {
   payroll: "payroll",
   advances: "advances",
   expenses: "expenses",
-  checklists: "checklist",
-  "to-dos": "todos",
-  "buddy-tasks": "buddy",
-  "task-templates": "templates",
-  kpi: "kpi",
-  "sales-performance": "salesPerf",
+  checklists: "home",
+  "to-dos": "home",
+  "buddy-tasks": "home",
+  "task-templates": "home",
+  kpi: "staffPerf",
+  "sales-performance": "home",
   "staff-performance": "staffPerf",
   "employee-of-the-month": "eom",
   "performance-points": "points",
-  customers: "customers",
-  calling: "calling",
-  "sales-activity": "activity",
-  "journey-planner": "journey",
+  customers: "home",
+  calling: "home",
+  "sales-activity": "home",
+  "journey-planner": "home",
   employees: "employees",
   "id-cards": "idCards",
   "staff-timings": "timings",
@@ -312,4 +340,8 @@ export const HRMS_RETIRED_SLUGS: Record<string, string> = {
   grievances: "grievances",
   notifications: "notifications",
   "reference-lists": "refLists",
+  /* Removed in the simplification: they land on Home rather than a 404. */
+  tasks: "home",
+  "my-tasks": "home",
+  "sales-desk": "home",
 };

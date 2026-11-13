@@ -66,7 +66,7 @@ test("every rule in the sheet is scoped to a marker, so it cannot follow somebod
     for (const part of topLevel(sel)) {
       const p = part.trim();
       if (!p) continue;
-      assert.match(p, /^:root:has\(\[data-v4(-app="(crm|sales)")?\]\)/, `unscoped selector: ${p}`);
+      assert.match(p, /^:root:has\(\[data-v4(-app="(crm|sales|hrms)")?\]\)/, `unscoped selector: ${p}`);
     }
   }
 });

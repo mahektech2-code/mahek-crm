@@ -101,9 +101,9 @@ const JOBS: Partial<Record<AppId, Partial<Record<Level, string>>>> = {
      the roster") described the employees screen, which most associates are
      narrowed away from and the roster is the sheet's, not anybody's here. */
   hrms: {
-    associate: "checks in, asks for leave and reads their own pay",
-    manager: "runs the team's attendance and leave",
-    admin: "HRMS administrator, holding every power",
+    associate: "asks for leave and reads their own days and pay",
+    manager: "decides their team's leave and reads its attendance",
+    admin: "the HR team, holding every HRMS power",
   },
   /* What an ERP user may DO is its powers, not its level, so the level's job
      is only how much of the plant they run. */
