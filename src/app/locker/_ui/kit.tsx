@@ -1,15 +1,22 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { Modal } from "@/components/ui/modal";
+import { Pager } from "@/components/ui/pager";
+import { Badge, Button, Card as UiCard, Field, Input, Select, Textarea, cx, type Tone as BadgeTone } from "@/components/ui/primitives";
 import { CRIT, STATUS, TIER, type Status, type Tier } from "@/lib/locker/engine";
 import { LkIcon } from "./icons";
 
 /* ---------------------------------------------------------------------------
- * THE LOCKER'S PARTS, drawn exactly as the design draws them — its colours,
- * sizes and spacing as inline styles, because the design was written that way
- * and a translation into utility classes is where "same to same" drifts.
- * Every screen is built from these; a screen that writes its own pill or its
- * own button is a screen that will stop matching.
+ * THE LOCKER'S PARTS, drawn in the ERP's v4 design system. Each one is the
+ * shared component the ERP, CRM, HRMS, Tasks and Studio already use —
+ * `Button`, `Badge`, `Card`, `PageHeader`'s type, `Pager`, `Modal`, `Field` —
+ * or a thin wrapper on one, so the Locker reads like the rest of MahekOne and
+ * picks up any change to the v4 look for free. No hex lives here: colours are
+ * the theme's tokens (Tailwind classes, or `C.*`, which are CSS variables).
+ *
+ * The names are the ones the Locker's screens were written against, so a
+ * screen did not have to change to change its look.
  * ------------------------------------------------------------------------- */
 
 import { C, LBL, MONO, btnStyle, type BtnKind } from "@/lib/locker/style";
@@ -17,7 +24,9 @@ import { C, LBL, MONO, btnStyle, type BtnKind } from "@/lib/locker/style";
    too — a value exported from this client module is only a reference there. */
 export { C, LBL, MONO, btnStyle, type BtnKind };
 
-export const BTN_OFF: CSSProperties = { ...btnStyle("s"), color: C.faint, background: C.soft, border: `1px solid ${C.line2}`, cursor: "not-allowed" };
+export const BTN_OFF: CSSProperties = { ...btnStyle("s"), color: C.faint, background: C.soft, border: `1px solid ${C.line}`, cursor: "not-allowed" };
+
+const VARIANT: Record<BtnKind, "primary" | "secondary" | "danger" | "ghost"> = { p: "primary", s: "secondary", d: "danger", v: "primary", g: "ghost" };
 
 export function Btn({
   kind = "s",
@@ -39,32 +48,33 @@ export function Btn({
   children: ReactNode;
   style?: CSSProperties;
 }) {
-  const base = disabled ? { ...BTN_OFF, ...(small ? { height: 30, padding: "0 10px", fontSize: 13 } : {}) } : btnStyle(kind, small);
   return (
-    <button type={type} onClick={disabled ? undefined : onClick} title={disabled ? why : undefined} aria-disabled={disabled || undefined} style={{ ...base, ...style }}>
+    <Button
+      type={type}
+      variant={VARIANT[kind]}
+      size={small ? "sm" : "md"}
+      disabled={disabled}
+      title={disabled ? why : undefined}
+      onClick={disabled ? undefined : onClick}
+      className={cx("gap-1.5", kind === "g" && "border-transparent text-brand-hover hover:bg-brand-soft")}
+      style={style}
+    >
       {children}
-    </button>
+    </Button>
   );
 }
 
-export function Pill({ label, bg, fg, style }: { label: ReactNode; bg: string; fg: string; style?: CSSProperties }) {
+/* ------------------------------------------------------------------ badges */
+
+const TONE_BY_COLOUR: Record<string, BadgeTone> = {};
+for (const t of [...Object.values(STATUS), ...Object.values(CRIT)]) TONE_BY_COLOUR[`${t.bg}|${t.fg}`] = t.tone;
+
+/** A badge. Given a tone it is the shared `Badge`; given colours (older call sites) it is drawn in them. */
+export function Pill({ label, bg, fg, tone, style }: { label: ReactNode; bg?: string; fg?: string; tone?: BadgeTone; style?: CSSProperties }) {
+  const t = tone ?? (bg && fg ? TONE_BY_COLOUR[`${bg}|${fg}`] : undefined);
+  if (t && !style) return <Badge tone={t}>{label}</Badge>;
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        height: 20,
-        padding: "0 8px",
-        borderRadius: 10,
-        fontSize: 11,
-        fontWeight: 500,
-        whiteSpace: "nowrap",
-        background: bg,
-        color: fg,
-        ...style,
-      }}
-    >
+    <span className="ui-badge inline-flex h-5 items-center gap-1 rounded-[3px] px-1.5 text-[11px] font-medium whitespace-nowrap" style={{ background: bg, color: fg, ...style }}>
       {label}
     </span>
   );
@@ -72,105 +82,124 @@ export function Pill({ label, bg, fg, style }: { label: ReactNode; bg: string; f
 
 export function StatusPill({ status }: { status: Status }) {
   const t = STATUS[status] ?? STATUS.active;
-  return <Pill label={(t.glyph ?? "") + t.label} bg={t.bg} fg={t.fg} style={t.ring ? { boxShadow: `inset 0 0 0 1px ${t.ring}` } : undefined} />;
+  return (
+    <Badge tone={t.tone} className={t.ring ? "ring-1 ring-current/25 ring-inset" : undefined}>
+      {(t.glyph ?? "") + t.label}
+    </Badge>
+  );
 }
 
 export function CritPill({ crit }: { crit: number }) {
   const t = CRIT[crit] ?? CRIT[2];
-  return <Pill label={t.label} bg={t.bg} fg={t.fg} />;
+  return <Badge tone={t.tone}>{t.label}</Badge>;
 }
 
 export function TierPill({ tier }: { tier: Tier }) {
+  if (tier === "restricted")
+    return (
+      <span className="ui-badge inline-flex h-5 items-center gap-1 rounded-[3px] bg-ink px-1.5 text-[11px] font-semibold tracking-label whitespace-nowrap text-white uppercase">
+        <LkIcon name="key" size={11} />
+        Restricted
+      </span>
+    );
   const t = TIER[tier] ?? TIER.standard;
-  return <Pill label={t.label.toUpperCase()} bg={t.bg} fg={t.fg} style={{ letterSpacing: "0.04em" }} />;
+  return (
+    <Badge tone={t.tone} className="tracking-label uppercase">
+      {t.label}
+    </Badge>
+  );
 }
 
+const TAG_TONE: Record<string, BadgeTone> = { red: "danger", amber: "warn", blue: "brand", green: "success", grey: "muted", violet: "neutral" };
 export function Tag({ label, tone }: { label: string; tone: "red" | "amber" | "blue" | "green" | "grey" | "violet" }) {
-  const m = {
-    red: [C.redSoft, C.red],
-    amber: [C.amberSoft, C.amber],
-    blue: [C.blueSoft, C.blue],
-    green: [C.greenSoft, C.green],
-    grey: [C.soft, C.muted],
-    violet: [C.v50, C.v700],
-  }[tone];
-  return <span style={{ fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 10, background: m[0], color: m[1], whiteSpace: "nowrap" }}>{label}</span>;
+  return <Badge tone={TAG_TONE[tone]}>{label}</Badge>;
 }
 
-export const card: CSSProperties = { background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" };
-export const vaultCard: CSSProperties = { background: "#FFFFFF", border: `1px solid ${C.v100}`, borderRadius: 6, overflow: "hidden" };
-export const vaultEdge: CSSProperties = { ...vaultCard, boxShadow: `inset 3px 0 0 ${C.v700}` };
+/* ---------------------------------------------------------------- surfaces */
+
+export const card: CSSProperties = { background: C.surface, border: `1px solid ${C.line}`, borderRadius: "var(--radius-card, 8px)", overflow: "hidden" };
+export const vaultCard: CSSProperties = card;
+/** A vault card carries an ink left edge — the one mark of the vault besides its lock. */
+export const vaultEdge: CSSProperties = { ...card, boxShadow: `inset 3px 0 0 ${C.ink}` };
 
 export function Card({ children, style, vault }: { children: ReactNode; style?: CSSProperties; vault?: boolean }) {
-  return <div style={{ ...(vault ? vaultCard : card), ...style }}>{children}</div>;
+  return (
+    <UiCard className="overflow-hidden" style={{ ...(vault ? { boxShadow: `inset 3px 0 0 ${C.ink}` } : {}), ...style }}>
+      {children}
+    </UiCard>
+  );
 }
 
-/** A card's own heading bar — plain, or the vault's violet. */
+/** A card's heading bar, the shared `CardHeader`'s shape; a vault card's carries the lock. */
 export function CardHead({ title, sub, right, vault }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; vault?: boolean }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "12px 20px",
-        background: vault ? C.v50 : "#FFFFFF",
-        borderBottom: `1px solid ${vault ? C.v100 : C.line2}`,
-        color: vault ? C.v900 : C.ink,
-      }}
-    >
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: 15, fontWeight: 600 }}>{title}</span>
-        {sub ? <span style={{ display: "block", fontSize: 12, fontWeight: 400, color: vault ? C.v500 : C.muted, marginTop: 2 }}>{sub}</span> : null}
-      </span>
+    <div className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-base leading-6 font-semibold text-ink">
+          {vault ? (
+            <span className="flex text-muted">
+              <LkIcon name="key" size={15} />
+            </span>
+          ) : null}
+          {title}
+        </div>
+        {sub ? <div className="mt-0.5 text-[13px] text-muted">{sub}</div> : null}
+      </div>
       {right}
     </div>
   );
 }
 
-/** The page head every screen opens with: crumb, title, one line, actions on the right. */
+/**
+ * The page head: the v4 page header — the title and its actions, the
+ * explanation behind nothing (written small under the title), and the
+ * crumb kept as the eyebrow the ERP uses above a record's name.
+ */
 export function PageHead({ crumb, title, sub, actions, vault }: { crumb: string; title: ReactNode; sub?: ReactNode; actions?: ReactNode; vault?: boolean }) {
   return (
-    <div style={{ padding: "20px 24px 16px 24px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-      <div style={{ minWidth: 0, flex: "1 1 420px" }}>
-        <div style={{ ...LBL, ...(vault ? { color: C.v500 } : {}) }}>{crumb}</div>
-        <div style={{ fontSize: 28, lineHeight: "34px", fontWeight: 600, color: C.ink, marginTop: 2 }}>{title}</div>
-        {sub ? <div style={{ fontSize: 14, color: C.muted, marginTop: 4, maxWidth: 820, textWrap: "pretty" }}>{sub}</div> : null}
+    <div className="flex flex-wrap items-start justify-between gap-4 px-6 pt-6 pb-4">
+      <div className="min-w-0 flex-[1_1_420px]">
+        <div className="flex items-center gap-1.5 text-xs font-medium tracking-label text-muted uppercase">
+          {vault ? <LkIcon name="key" size={12} /> : null}
+          {crumb}
+        </div>
+        <h1 className="mt-1 text-[28px] leading-[34px] font-semibold text-ink">{title}</h1>
+        {sub ? <p className="mt-1 max-w-[820px] text-[13px] leading-[18px] text-pretty text-muted">{sub}</p> : null}
       </div>
-      {actions ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>{actions}</div> : null}
+      {actions ? <div className="flex flex-none flex-wrap items-center gap-2.5 print:hidden">{actions}</div> : null}
     </div>
   );
 }
 
-export function Body({ children, gap = 12, pad = "0 24px 40px 24px" }: { children: ReactNode; gap?: number; pad?: string }) {
-  return <div style={{ padding: pad, display: "flex", flexDirection: "column", gap }}>{children}</div>;
+export function Body({ children, gap = 12, pad }: { children: ReactNode; gap?: number; pad?: string }) {
+  return (
+    <div className={cx("flex flex-col", pad ? undefined : "px-6 pb-10")} style={{ gap, ...(pad ? { padding: pad } : {}) }}>
+      {children}
+    </div>
+  );
 }
 
-/** A row of underlined tabs. */
+/** Underlined tabs — the ERP list's own tab strip. */
 export function Tabs<K extends string>({ tabs, value, onPick }: { tabs: { key: K; label: ReactNode; n?: string; red?: boolean }[]; value: K; onPick: (k: K) => void }) {
   return (
-    <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${C.line}`, overflowX: "auto" }}>
+    <div role="tablist" className="flex flex-wrap items-center gap-x-5 border-b border-line">
       {tabs.map((t) => {
         const on = t.key === value;
         return (
           <button
             key={t.key}
             type="button"
+            role="tab"
+            aria-selected={on}
             onClick={() => onPick(t.key)}
-            style={{
-              height: 40,
-              padding: 0,
-              border: "none",
-              background: "transparent",
-              fontSize: 14,
-              fontWeight: on ? 600 : 400,
-              color: t.red ? C.red : on ? C.ink : C.body,
-              boxShadow: on ? `inset 0 -2px 0 ${C.brand}` : "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
+            className={cx(
+              "-mb-px flex cursor-pointer items-center gap-1.5 border-b-2 py-2 text-sm whitespace-nowrap",
+              on ? "border-brand font-semibold text-ink" : "border-transparent font-medium text-muted hover:text-body",
+              t.red && !on && "text-danger",
+            )}
           >
-            {t.label} {t.n != null ? <span style={{ color: C.muted, fontWeight: 400 }}>{t.n}</span> : null}
+            {t.label}
+            {t.n != null ? <span className="rounded-full bg-canvas px-1.5 text-2xs leading-[17px] font-semibold text-body">{t.n}</span> : null}
           </button>
         );
       })}
@@ -178,28 +207,22 @@ export function Tabs<K extends string>({ tabs, value, onPick }: { tabs: { key: K
   );
 }
 
-/** A small segmented control: Table / Cards, Month / Year, Comfortable / Compact. */
-export function Segmented<K extends string>({ opts, value, onPick, dark }: { opts: { key: K; label: string }[]; value: K; onPick: (k: K) => void; dark?: boolean }) {
+/** A small segmented switch: Table / Cards, Month / Year, Comfortable / Compact — the v4 pager's rows switch. */
+export function Segmented<K extends string>({ opts, value, onPick }: { opts: { key: K; label: string }[]; value: K; onPick: (k: K) => void; dark?: boolean }) {
   return (
-    <span style={{ display: "inline-flex", gap: 2, padding: 3, border: `1px solid ${C.line}`, borderRadius: 6, background: "#FFFFFF", flex: "none" }}>
+    <span role="group" className="flex flex-none gap-0.5 rounded-[7px] bg-canvas p-0.5">
       {opts.map((o) => {
         const on = o.key === value;
         return (
           <button
             key={o.key}
             type="button"
+            aria-pressed={on}
             onClick={() => onPick(o.key)}
-            style={{
-              height: 28,
-              padding: dark ? "0 10px" : "0 12px",
-              border: "none",
-              borderRadius: 4,
-              background: on ? (dark ? C.ink : C.brand) : "transparent",
-              color: on ? "#FFFFFF" : C.body,
-              fontSize: dark ? 12 : 13,
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
+            className={cx(
+              "cursor-pointer rounded-[5px] px-2.5 py-1 text-[12.5px]",
+              on ? "bg-surface font-semibold text-ink shadow-[0_1px_2px_rgba(20,20,30,0.08)]" : "font-medium text-muted hover:text-ink",
+            )}
           >
             {o.label}
           </button>
@@ -209,25 +232,17 @@ export function Segmented<K extends string>({ opts, value, onPick, dark }: { opt
   );
 }
 
-/** A filter chip that toggles. */
-export function Chip({ label, on, onFlip, vault }: { label: ReactNode; on: boolean; onFlip: () => void; vault?: boolean }) {
-  const accent = vault ? C.v700 : C.brand;
+/** A filter that toggles — the ERP toolbar's toggle. */
+export function Chip({ label, on, onFlip }: { label: ReactNode; on: boolean; onFlip: () => void; vault?: boolean }) {
   return (
     <button
       type="button"
+      aria-pressed={on}
       onClick={onFlip}
-      style={{
-        height: 30,
-        padding: "0 12px",
-        borderRadius: 15,
-        border: `1px solid ${on ? accent : "#C2C8D2"}`,
-        background: on ? (vault ? C.v50 : C.brandSoft) : "#FFFFFF",
-        color: on ? (vault ? C.v900 : C.brandInk) : C.body,
-        fontSize: 13,
-        fontWeight: 500,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-      }}
+      className={cx(
+        "flex h-8 cursor-pointer items-center gap-1.5 rounded-control border px-3 text-[13px] font-medium whitespace-nowrap",
+        on ? "border-brand bg-brand-soft text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
+      )}
     >
       {label}
     </button>
@@ -236,16 +251,11 @@ export function Chip({ label, on, onFlip, vault }: { label: ReactNode; on: boole
 
 export function SearchBox({ value, onChange, placeholder, width = 240 }: { value: string; onChange: (v: string) => void; placeholder: string; width?: number }) {
   return (
-    <span style={{ position: "relative", width, flex: "none" }}>
-      <span style={{ position: "absolute", left: 10, top: 9, color: C.muted, display: "flex" }}>
+    <span className="relative flex-none" style={{ width }}>
+      <span className="pointer-events-none absolute top-1/2 left-2.5 flex -translate-y-1/2 text-muted">
         <LkIcon name="search" />
       </span>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        style={{ width: "100%", height: 34, padding: "0 10px 0 32px", border: "1px solid #C2C8D2", borderRadius: 4, background: "#FFFFFF", fontSize: 14 }}
-      />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} className="pl-8" />
     </span>
   );
 }
@@ -269,52 +279,28 @@ export function Picker({ k, label, value, options, onPick, ph = "Search" }: { k:
   const hits = needle ? options.filter((o) => `${o.l} ${o.m ?? ""}`.toLowerCase().includes(needle)) : options;
   const shown = hits.slice(0, 60);
   return (
-    <span style={{ position: "relative", flex: "none" }} onClick={(e) => e.stopPropagation()}>
+    <span className="relative flex-none" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
         onClick={() => {
           setOpen(!open);
           setQ("");
         }}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          height: 34,
-          padding: "0 10px",
-          border: `1px solid ${open || value ? C.brand : "#C2C8D2"}`,
-          borderRadius: 4,
-          background: "#FFFFFF",
-          fontSize: 14,
-          fontWeight: 500,
-          color: C.ink,
-          cursor: "pointer",
-        }}
+        className={cx(
+          "flex h-8 cursor-pointer items-center gap-2 rounded-control border bg-surface px-2.5 text-[13px] font-medium text-ink",
+          open || value ? "border-brand" : "border-line hover:bg-canvas",
+        )}
       >
-        <span style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>{k}</span>
-        <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-        <span style={{ color: C.faint }}>▾</span>
+        <span className="text-2xs font-medium tracking-label text-muted uppercase">{k}</span>
+        <span className="max-w-[200px] truncate">{label}</span>
+        <span className="text-faint">▾</span>
       </button>
       {open ? (
-        <div
-          style={{
-            position: "absolute",
-            top: 40,
-            left: 0,
-            zIndex: 30,
-            width: 340,
-            background: "#FFFFFF",
-            border: `1px solid ${C.line}`,
-            borderRadius: 6,
-            boxShadow: "0 8px 24px rgba(26,30,40,0.12)",
-            overflow: "hidden",
-            animation: "lk-pop 150ms cubic-bezier(0.2,0,0.2,1)",
-          }}
-        >
-          <div style={{ padding: 8, borderBottom: `1px solid ${C.line2}` }}>
-            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={ph} style={{ width: "100%", height: 34, padding: "0 10px", border: "1px solid #C2C8D2", borderRadius: 4, fontSize: 14 }} />
+        <div className="absolute top-10 left-0 z-30 w-[340px] overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(15,27,51,0.12)]">
+          <div className="border-b border-divider p-2">
+            <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={ph} aria-label={ph} />
           </div>
-          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+          <div className="max-h-80 overflow-y-auto">
             {shown.map((o) => (
               <button
                 key={o.v + o.l}
@@ -323,31 +309,19 @@ export function Picker({ k, label, value, options, onPick, ph = "Search" }: { k:
                   setOpen(false);
                   onPick(o.v);
                 }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  width: "100%",
-                  padding: "8px 12px",
-                  border: "none",
-                  borderTop: `1px solid ${C.soft}`,
-                  background: o.v === value ? C.brandSoft : "#FFFFFF",
-                  color: o.v === value ? C.brandInk : C.ink,
-                  fontSize: 14,
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
+                className={cx(
+                  "flex w-full cursor-pointer items-center gap-2.5 border-t border-divider px-3 py-2 text-left text-sm",
+                  o.v === value ? "bg-brand-soft text-brand-hover" : "bg-surface text-ink hover:bg-canvas",
+                )}
               >
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.l}</span>
-                <span style={{ fontSize: 12, color: C.muted, flex: "none" }}>{o.m ?? ""}</span>
+                <span className="min-w-0 flex-1 truncate">{o.l}</span>
+                <span className="flex-none text-xs text-muted">{o.m ?? ""}</span>
               </button>
             ))}
-            {!hits.length ? <div style={{ padding: 12, fontSize: 13, color: C.muted }}>Nothing matches “{q}”.</div> : null}
+            {!hits.length ? <div className="p-3 text-[13px] text-muted">Nothing matches “{q}”.</div> : null}
           </div>
           {hits.length > shown.length ? (
-            <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.line2}`, fontSize: 12, color: C.muted }}>
-              Showing 60 of {hits.length.toLocaleString("en-IN")} — keep typing to narrow it down
-            </div>
+            <div className="border-t border-divider px-3 py-2 text-xs text-muted">Showing 60 of {hits.length.toLocaleString("en-IN")} — keep typing to narrow it down</div>
           ) : null}
         </div>
       ) : null}
@@ -355,37 +329,28 @@ export function Picker({ k, label, value, options, onPick, ph = "Search" }: { k:
   );
 }
 
-/** Paging for a long table, in the design's footer. */
+/** Paging for a long table: the shared v4 pager. */
 export function usePager(total: number, initialSize = 25) {
   const [size, setSize] = useState(initialSize);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
   const pages = Math.max(1, Math.ceil(total / size));
-  const p = Math.min(page, pages - 1);
+  const p = Math.min(page, pages);
   return {
-    slice: <T,>(arr: T[]) => arr.slice(p * size, p * size + size),
-    reset: () => setPage(0),
+    slice: <T,>(arr: T[]) => arr.slice((p - 1) * size, (p - 1) * size + size),
+    reset: () => setPage(1),
     footer: (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderTop: `1px solid ${C.line2}`, fontSize: 13, color: C.muted, background: "#FFFFFF" }}>
-        <span>{total ? `Showing ${(p * size + 1).toLocaleString("en-IN")}–${Math.min(total, p * size + size).toLocaleString("en-IN")} of ${total.toLocaleString("en-IN")}` : "Nothing to show"}</span>
-        <span style={{ flex: 1 }} />
-        <select
-          value={String(size)}
-          onChange={(e) => {
-            setSize(Number(e.target.value));
-            setPage(0);
+      <div className="border-t border-divider">
+        <Pager
+          look="v4"
+          total={total}
+          page={p}
+          perPage={size}
+          onPage={setPage}
+          onPerPage={(n) => {
+            setSize(n);
+            setPage(1);
           }}
-          style={{ height: 28, border: `1px solid ${C.line}`, borderRadius: 4, background: "#FFFFFF" }}
-        >
-          <option value="25">25 rows</option>
-          <option value="50">50 rows</option>
-          <option value="100">100 rows</option>
-        </select>
-        <button type="button" onClick={() => setPage(Math.max(0, p - 1))} style={{ height: 28, padding: "0 10px", border: `1px solid ${C.line}`, background: "#FFFFFF", borderRadius: 4, cursor: "pointer" }}>
-          ‹ Previous
-        </button>
-        <button type="button" onClick={() => setPage(Math.min(pages - 1, p + 1))} style={{ height: 28, padding: "0 10px", border: `1px solid ${C.line}`, background: "#FFFFFF", borderRadius: 4, cursor: "pointer" }}>
-          Next ›
-        </button>
+        />
       </div>
     ),
   };
@@ -424,6 +389,7 @@ const ToastCtx = createContext<(msg: string, undo?: () => void) => void>(() => {
 export const useModal = () => useContext(ModalCtx);
 export const useToast = () => useContext(ToastCtx);
 
+/** The shared `Modal`, filled from a spec: notes, then `Field`s, then Cancel and the action. */
 function ModalView({ m, close }: { m: ModalSpec; close: () => void }) {
   const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries((m.fields ?? []).map((f) => [f.k, f.init ?? ""])));
   const [errs, setErrs] = useState<Record<string, string>>({});
@@ -439,92 +405,74 @@ function ModalView({ m, close }: { m: ModalSpec; close: () => void }) {
     return e;
   };
   const ok = !Object.keys(check()).length;
-  const base: CSSProperties = { width: "100%", minHeight: 36, padding: "8px 10px", border: "1px solid #C2C8D2", borderRadius: 4, fontSize: 14, lineHeight: "20px", background: "#FFFFFF", color: C.ink };
+  const submit = async () => {
+    const e = check();
+    if (Object.keys(e).length) return setErrs(e);
+    if (busy) return;
+    setBusy(true);
+    setFail("");
+    const res = await m.done?.(vals);
+    setBusy(false);
+    if (typeof res === "string" && res) setFail(res);
+    else close();
+  };
   return (
-    <div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(26,30,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        style={{ width: 520, maxWidth: "100%", maxHeight: "calc(100vh - 48px)", background: "#FFFFFF", borderRadius: 6, boxShadow: "0 8px 24px rgba(26,30,40,0.12)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "lk-pop 200ms cubic-bezier(0.2,0,0.2,1)" }}
-      >
-        <div style={{ padding: "18px 24px 12px 24px" }}>
-          <div style={{ fontSize: 18, lineHeight: "24px", fontWeight: 600, color: C.ink }}>{m.title}</div>
-          {m.sub ? <div style={{ fontSize: 14, lineHeight: "21px", color: C.body, marginTop: 6, textWrap: "pretty" }}>{m.sub}</div> : null}
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "4px 24px 16px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-          {(m.notes ?? []).map((n, i) => (
-            <div key={i} style={{ padding: "10px 12px", borderRadius: 4, fontSize: 13, lineHeight: "19px", background: n.bg ?? C.soft, color: n.fg ?? C.body, whiteSpace: "pre-wrap" }}>
-              {n.t}
-            </div>
-          ))}
-          {(m.fields ?? []).map((f) => {
-            const err = errs[f.k];
-            const st = { ...base, ...(err ? { borderColor: C.red } : {}) };
-            const on = (v: string) => {
-              setVals({ ...vals, [f.k]: v });
-              setErrs({ ...errs, [f.k]: "" });
-            };
-            return (
-              <label key={f.k} style={{ display: "block" }}>
-                <span style={{ display: "flex", justifyContent: "space-between", ...LBL, marginBottom: 4 }}>
-                  <span>{f.l}</span>
-                  <span>{f.req || f.min ? "Required" : "Optional"}</span>
-                </span>
-                {f.type === "area" ? (
-                  <textarea value={vals[f.k]} onChange={(e) => on(e.target.value)} placeholder={f.ph} rows={3} style={st} />
-                ) : f.type === "select" ? (
-                  <select value={vals[f.k]} onChange={(e) => on(e.target.value)} style={st}>
-                    {(f.opts ?? []).map((o) => {
-                      const x = typeof o === "string" ? { v: o, l: o } : o;
-                      return (
-                        <option key={x.v} value={x.v}>
-                          {x.l}
-                        </option>
-                      );
-                    })}
-                  </select>
-                ) : (
-                  <input type={f.type ?? "text"} value={vals[f.k]} onChange={(e) => on(e.target.value)} placeholder={f.ph} style={st} autoComplete={f.type === "password" ? "off" : undefined} />
-                )}
-                {f.hint ? <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 4 }}>{f.hint}</span> : null}
-                {err ? <span style={{ display: "block", fontSize: 12, color: C.red, marginTop: 4 }}>{err}</span> : null}
-              </label>
-            );
-          })}
-          {fail ? <div style={{ fontSize: 13, color: C.red }}>{fail}</div> : null}
-        </div>
-        <div style={{ padding: "12px 24px", borderTop: `1px solid ${C.line2}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button type="button" onClick={close} style={{ height: 36, padding: "0 14px", border: "1px solid #C2C8D2", background: "#FFFFFF", borderRadius: 4, fontSize: 14, cursor: "pointer" }}>
-            {m.cancel ?? "Cancel"}
-          </button>
+    <Modal
+      open
+      onClose={close}
+      title={m.title}
+      footer={
+        <>
+          <Button onClick={close}>{m.cancel ?? "Cancel"}</Button>
           {m.okL ? (
-            <button
-              type="button"
-              title={ok ? "" : "Complete the required fields first"}
-              style={ok && !busy ? btnStyle(m.danger ? "d" : m.vault ? "v" : "p") : BTN_OFF}
-              onClick={async () => {
-                const e = check();
-                if (Object.keys(e).length) return setErrs(e);
-                if (busy) return;
-                setBusy(true);
-                setFail("");
-                const res = await m.done?.(vals);
-                setBusy(false);
-                if (typeof res === "string" && res) setFail(res);
-                else close();
-              }}
-            >
+            <Button variant={m.danger ? "danger" : "primary"} disabled={!ok || busy} title={ok ? undefined : "Complete the required fields first"} onClick={submit}>
               {busy ? "Saving…" : m.okL}
-            </button>
+            </Button>
           ) : null}
-        </div>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3.5">
+        {m.sub ? <p className="text-sm leading-[21px] text-pretty text-body">{m.sub}</p> : null}
+        {(m.notes ?? []).map((n, i) => (
+          <div key={i} className="rounded-control border border-line bg-canvas px-3 py-2.5 text-[13px] leading-[19px] whitespace-pre-wrap text-body">
+            {n.t}
+          </div>
+        ))}
+        {(m.fields ?? []).map((f) => {
+          const err = errs[f.k];
+          const on = (v: string) => {
+            setVals({ ...vals, [f.k]: v });
+            setErrs({ ...errs, [f.k]: "" });
+          };
+          return (
+            <Field key={f.k} label={f.l} required={!!(f.req || f.min)} optional={!(f.req || f.min)} hint={f.hint} hintShown error={err || null}>
+              {f.type === "area" ? (
+                <Textarea value={vals[f.k]} onChange={(e) => on(e.target.value)} placeholder={f.ph} rows={3} invalid={!!err} />
+              ) : f.type === "select" ? (
+                <Select value={vals[f.k]} onChange={(e) => on(e.target.value)}>
+                  {(f.opts ?? []).map((o) => {
+                    const x = typeof o === "string" ? { v: o, l: o } : o;
+                    return (
+                      <option key={x.v} value={x.v}>
+                        {x.l}
+                      </option>
+                    );
+                  })}
+                </Select>
+              ) : (
+                <Input type={f.type ?? "text"} value={vals[f.k]} onChange={(e) => on(e.target.value)} placeholder={f.ph} invalid={!!err} autoComplete={f.type === "password" ? "off" : undefined} />
+              )}
+            </Field>
+          );
+        })}
+        {fail ? <div className="text-[13px] text-danger">{fail}</div> : null}
       </div>
-    </div>
+    </Modal>
   );
 }
 
-/** Wraps the Locker: one modal and one toast at a time, the design's dark toast with Undo. */
+/** Wraps the Locker: one modal and one toast at a time; the toast keeps the design's Undo. */
 export function LockerOverlays({ children }: { children: ReactNode }) {
   const [modal, setModal] = useState<{ m: ModalSpec; key: number } | null>(null);
   const [toast, setToast] = useState<{ msg: string; undo?: () => void; key: number } | null>(null);
@@ -533,24 +481,14 @@ export function LockerOverlays({ children }: { children: ReactNode }) {
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setModal(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
   return (
     <ModalCtx.Provider value={(m) => setModal(m ? { m, key: Date.now() } : null)}>
       <ToastCtx.Provider value={(msg, undo) => setToast({ msg, undo, key: Date.now() })}>
         {children}
         {modal ? <ModalView key={modal.key} m={modal.m} close={() => setModal(null)} /> : null}
         {toast ? (
-          <div
-            role="status"
-            style={{ position: "fixed", right: 24, bottom: 24, zIndex: 60, display: "flex", alignItems: "center", gap: 14, maxWidth: 520, padding: "12px 16px", background: C.ink, color: "#FFFFFF", borderRadius: 6, boxShadow: "0 8px 24px rgba(26,30,40,0.2)", fontSize: 14, animation: "lk-pop 150ms cubic-bezier(0.2,0,0.2,1)" }}
-          >
-            <span style={{ flex: 1 }}>{toast.msg}</span>
+          <div role="status" className="fixed bottom-6 left-1/2 z-[90] flex max-w-[520px] -translate-x-1/2 items-center gap-3.5 rounded-control bg-ink px-4 py-3 text-sm text-white shadow-[0_8px_24px_rgba(15,27,51,0.2)]">
+            <span className="flex-1">{toast.msg}</span>
             {toast.undo ? (
               <button
                 type="button"
@@ -559,7 +497,7 @@ export function LockerOverlays({ children }: { children: ReactNode }) {
                   setToast(null);
                   u?.();
                 }}
-                style={{ border: "none", background: "transparent", color: "#DDD2FF", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+                className="cursor-pointer text-sm font-semibold text-brand-softer"
               >
                 Undo
               </button>

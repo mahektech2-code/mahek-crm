@@ -185,41 +185,56 @@ export function istDay(at: Date): string {
 
 /* ------------------------------------------------------------ words & colour */
 
-export const CRIT: Record<number, { label: string; bg: string; fg: string; edge: string }> = {
-  4: { label: "Business critical", bg: "#FBEAEA", fg: "#8E1F1F", edge: "#B3261E" },
-  3: { label: "High", bg: "#FDF0E3", fg: "#8A4F05", edge: "#C27008" },
-  2: { label: "Medium", bg: "#FBF6E4", fg: "#7A6208", edge: "#B59208" },
-  1: { label: "Low", bg: "#F2F4F7", fg: "#5F6572", edge: "#9BA3B2" },
+/* Colours are the v4 theme's tokens (src/styles/v4-theme.css), as CSS
+   variables, never hex; `tone` is the shared `Badge` tone the kit draws with. */
+type BadgeTone = "neutral" | "brand" | "success" | "warn" | "danger" | "muted";
+const tok = (n: string) => `var(--color-${n})`;
+const TONE_COL: Record<BadgeTone, { bg: string; fg: string }> = {
+  neutral: { bg: tok("divider"), fg: tok("body") },
+  brand: { bg: tok("brand-soft"), fg: tok("brand-hover") },
+  success: { bg: tok("success-soft"), fg: tok("success") },
+  warn: { bg: tok("warn-soft"), fg: tok("warn-ink") },
+  danger: { bg: tok("danger-soft"), fg: tok("danger") },
+  muted: { bg: tok("canvas"), fg: tok("muted") },
+};
+const toned = <T extends { tone: BadgeTone }>(x: T) => ({ ...x, ...TONE_COL[x.tone] });
+
+export const CRIT: Record<number, { label: string; tone: BadgeTone; bg: string; fg: string; edge: string }> = {
+  4: toned({ label: "Business critical", tone: "danger", edge: tok("danger") }),
+  3: toned({ label: "High", tone: "warn", edge: tok("warn") }),
+  2: toned({ label: "Medium", tone: "neutral", edge: tok("warn-line") }),
+  1: toned({ label: "Low", tone: "muted", edge: tok("line-strong") }),
 };
 
-export const STATUS: Record<Status, { label: string; bg: string; fg: string; glyph?: string; ring?: string }> = {
-  active: { label: "Active", bg: "#E9F5EE", fg: "#1D7A45" },
-  expiring: { label: "Expiring soon", bg: "#FDF6E7", fg: "#8A5C05" },
-  renewal_due: { label: "Renewal due", bg: "#FDF6E7", fg: "#8A5C05" },
-  renewal_in_progress: { label: "Renewal in progress", bg: "#EDF2FC", fg: "#2B5CBF" },
-  renewal_filed: { label: "Renewal applied", bg: "#EDF2FC", fg: "#2B5CBF", glyph: "↗ ", ring: "#B9CDF2" },
-  awaiting_document: { label: "Awaiting document", bg: "#EDF2FC", fg: "#2B5CBF" },
-  in_grace: { label: "In grace period", bg: "#FDF2E7", fg: "#A85D08", glyph: "◔ ", ring: "#E9B985" },
-  expired: { label: "Expired", bg: "#FCECEC", fg: "#B3261E", glyph: "✕ " },
-  superseded: { label: "Replaced", bg: "#F7F8FA", fg: "#6B7385" },
-  cancelled: { label: "Cancelled", bg: "#F7F8FA", fg: "#6B7385" },
-  lost: { label: "Original lost", bg: "#FCECEC", fg: "#B3261E" },
-  suspended: { label: "Suspended", bg: "#FCECEC", fg: "#B3261E" },
-  disputed: { label: "Disputed", bg: "#FDF6E7", fg: "#8A5C05" },
-  draft: { label: "Draft", bg: "#F7F8FA", fg: "#6B7385" },
+export const STATUS: Record<Status, { label: string; tone: BadgeTone; bg: string; fg: string; glyph?: string; ring?: string }> = {
+  active: toned({ label: "Active", tone: "success" }),
+  expiring: toned({ label: "Expiring soon", tone: "warn" }),
+  renewal_due: toned({ label: "Renewal due", tone: "warn" }),
+  renewal_in_progress: toned({ label: "Renewal in progress", tone: "brand" }),
+  renewal_filed: toned({ label: "Renewal applied", tone: "brand", glyph: "↗ ", ring: tok("brand-softer") }),
+  awaiting_document: toned({ label: "Awaiting document", tone: "brand" }),
+  in_grace: toned({ label: "In grace period", tone: "warn", glyph: "◔ ", ring: tok("warn-line") }),
+  expired: toned({ label: "Expired", tone: "danger", glyph: "✕ " }),
+  superseded: toned({ label: "Replaced", tone: "muted" }),
+  cancelled: toned({ label: "Cancelled", tone: "muted" }),
+  lost: toned({ label: "Original lost", tone: "danger" }),
+  suspended: toned({ label: "Suspended", tone: "danger" }),
+  disputed: toned({ label: "Disputed", tone: "warn" }),
+  draft: toned({ label: "Draft", tone: "muted" }),
 };
 
-export const TIER: Record<Tier, { label: string; bg: string; fg: string }> = {
-  standard: { label: "Standard", bg: "#F0EFF6", fg: "#3E3660" },
-  sensitive: { label: "Sensitive", bg: "#DFDCEC", fg: "#262041" },
-  restricted: { label: "Restricted", bg: "#262041", fg: "#FFFFFF" },
+export const TIER: Record<Tier, { label: string; tone: BadgeTone; bg: string; fg: string }> = {
+  standard: toned({ label: "Standard", tone: "neutral" }),
+  sensitive: toned({ label: "Sensitive", tone: "brand" }),
+  /* The one dark badge in the Locker: a restricted secret should look unlike anything else. */
+  restricted: { label: "Restricted", tone: "neutral", bg: tok("ink"), fg: tok("surface") },
 };
 
 /** The colour of a day count: red past the end, amber inside 30, ink otherwise. */
 export function daysColour(d: number | null, status: Status): string {
-  if (d != null && d < 0) return status === "in_grace" ? "#A85D08" : status === "renewal_filed" ? "#2B5CBF" : "#B3261E";
-  if (d != null && d <= 30) return "#8A5C05";
-  return "#1A1E28";
+  if (d != null && d < 0) return status === "in_grace" ? tok("warn-ink") : status === "renewal_filed" ? tok("info") : tok("danger");
+  if (d != null && d <= 30) return tok("warn-ink");
+  return tok("ink");
 }
 
 export const MODEL_LABEL: Record<TimeModel, string> = {
