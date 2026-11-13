@@ -161,6 +161,7 @@ export const MODULE_SINCE: Readonly<Record<string, string>> = {
   "studio.home": "2026-11-12",
   "studio.make": "2026-11-12",
   "studio.bulk": "2026-11-12",
+  "studio.forward": "2026-11-13",
   "studio.posters": "2026-11-12",
   "studio.dates": "2026-11-12",
   "studio.designs": "2026-11-12",

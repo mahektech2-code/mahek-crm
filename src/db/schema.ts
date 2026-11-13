@@ -17601,3 +17601,58 @@ export const studioReminderState = pgTable("studio_reminder_state", {
 export type StudioPoster = typeof studioPosters.$inferSelect;
 export type StudioDesign = typeof studioDesigns.$inferSelect;
 export type StudioPeopleDate = typeof studioPeopleDates.$inferSelect;
+
+/**
+ * UPLOAD & BULK FORWARD: a finished poster, forwarded unchanged. The picture
+ * is stored once (file storage); each recipient is a row somebody works
+ * through. MahekOne sends nothing — `status` is only what a person said.
+ */
+export const studioForwards = pgTable(
+  "studio_forwards",
+  {
+    id: text("id").primaryKey(),
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    format: text("format").notNull(),
+    sha256: text("sha256").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    caption: text("caption").notNull().default(""),
+    status: text("status").notNull().default("draft"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_forwards_created_by_idx").on(t.createdById, t.createdAt),
+    index("studio_forwards_sha_idx").on(t.sha256),
+    check("studio_forwards_status", sql`${t.status} in ('draft','started')`),
+    check("studio_forwards_format", sql`${t.format} in ('png','jpeg','webp')`),
+  ],
+);
+
+export const studioForwardRecipients = pgTable(
+  "studio_forward_recipients",
+  {
+    id: text("id").primaryKey(),
+    forwardId: text("forward_id")
+      .notNull()
+      .references(() => studioForwards.id, { onDelete: "cascade" }),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    company: text("company").notNull(),
+    place: text("place").notNull().default(""),
+    /** pending — not touched; opened — the chat was opened; sent — the person says they sent it; skipped — deliberately not. */
+    status: text("status").notNull().default("pending"),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedById: text("decided_by_id").references(() => users.id),
+    note: text("note"),
+  },
+  (t) => [
+    uniqueIndex("studio_forward_recipients_one").on(t.forwardId, t.customerId),
+    index("studio_forward_recipients_customer_idx").on(t.customerId),
+    check("studio_forward_recipients_status", sql`${t.status} in ('pending','opened','sent','skipped')`),
+  ],
+);

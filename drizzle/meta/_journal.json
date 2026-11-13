@@ -2269,6 +2269,13 @@
       "when": 1793730880000,
       "tag": "0328_hrms_simplified",
       "breakpoints": true
+    },
+    {
+      "idx": 324,
+      "version": "7",
+      "when": 1793730940000,
+      "tag": "0329_studio_forward",
+      "breakpoints": true
     }
   ]
 }

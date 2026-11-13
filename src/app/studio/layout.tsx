@@ -37,6 +37,7 @@ export default async function StudioLayout({ children }: { children: React.React
       ...(held.has("studio.home") ? [{ href: "/studio", label: "Home", icon: "dashboard", exact: true }] : []),
       ...(held.has("studio.make") ? [{ href: "/studio/make", label: "Make a poster", icon: "image" }] : []),
       ...(held.has("studio.bulk") ? [{ href: "/studio/bulk", label: "Bulk posters", icon: "grid" }] : []),
+      ...(held.has("studio.forward") ? [{ href: "/studio/forward", label: "Upload & Bulk Forward", icon: "image" }] : []),
       ...(held.has("studio.posters") ? [{ href: "/studio/posters", label: "My posters", icon: "history" }] : []),
       ...(held.has("studio.dates") ? [{ href: "/studio/dates", label: "Dates", icon: "calendar" }] : []),
       /* A group of one is a heading over a single link; without Approve the
