@@ -75,6 +75,15 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    # MIGRATING AN EMPTY DATABASE NEEDS MORE LOCKS THAN THE DEFAULT. drizzle
+    # applies every pending migration in ONE transaction, and from nothing that
+    # is 330+ migrations creating well over a thousand tables, indexes and
+    # TOAST relations, each holding a lock until commit. The default of 64 per
+    # transaction ran out ("out of shared memory", 53200) the day the Locker's
+    # tables were added — on a fresh droplet, a rebuild, and the CI stack test.
+    # A deployed database applies only what is pending and never comes close.
+    # 256 costs a few MB of shared memory.
+    command: ["postgres", "-c", "max_locks_per_transaction=256"]
     environment:
       POSTGRES_USER: mahek
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
