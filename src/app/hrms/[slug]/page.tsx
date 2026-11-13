@@ -1,14 +1,15 @@
-import { notFound, redirect } from "next/navigation";
+import Link from "next/link";
+import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/primitives";
 import { ListTabs, type ListTab } from "@/app/erp/_ui/list-screen";
-import { hrmsContext } from "@/lib/hrms/access";
+import { holdsScreen, hrmsContext } from "@/lib/hrms/access";
 import { hrmsNavCounts } from "@/lib/hrms/counts";
 import { hrmsScreenBySlug } from "@/lib/hrms/registry";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
 import { offices } from "@/lib/hrms/services/people";
 import { hrmsModuleTitle } from "./title";
 import { HrmsList } from "../_ui/hrms-list";
-import { SettingsView } from "../_ui/settings-view";
+import { RolesView, SettingsView } from "../_ui/settings-view";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export async function generateMetadata({ params, searchParams }: { params: Promi
 /** The tabs that are not lists, and what draws them. */
 const CUSTOM_TABS: Record<string, () => Promise<React.ReactNode>> = {
   settings: async () => <SettingsView />,
+  roles: async () => <RolesView />,
 };
 
 /**
@@ -42,7 +44,17 @@ export default async function HrmsScreenPage({
   const screen = hrmsScreenBySlug(slug);
   if (!screen || screen.view === "custom") notFound();
   const ctx = await hrmsContext();
-  if (!ctx.screens.has(screen.key)) redirect("/hrms");
+  /* Not this person's: said in words rather than bounced, because a
+     bookmarked HR screen that silently lands on Home reads as a broken link. */
+  if (!holdsScreen(ctx, screen))
+    return (
+      <div className="px-6 pt-6 pb-10">
+        <PageHeader title={screen.label} subtitleShown subtitle="This screen is not part of your HRMS role. HR can tell you who looks after it." />
+        <Link href="/hrms" className="text-[13px] font-semibold text-brand">
+          Back to Home
+        </Link>
+      </div>
+    );
 
   const views = (screen.views ?? []).filter((v) => ctx.screens.has(v.key));
   const current = views.find((v) => v.key === sp.view) ?? views[0] ?? null;

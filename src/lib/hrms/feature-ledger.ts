@@ -106,6 +106,21 @@ export const ADDED: Partial<Record<HandlerRef, string>> = {};
  */
 export type Feature = { what: string; file: string; marker: string };
 
+/**
+ * TAKEN OUT AT THE CLIENT'S REQUEST (Nov 2026), when the HRMS was simplified
+ * to three roles. No screen draws these and `hrmsContext` opens none of their
+ * keys, so nothing can act on them; their server modules and their data are
+ * kept, because deleting a year of checklists and calls is not undoable.
+ * Their handlers stay in `BASELINE` and still exist, unreachable.
+ */
+export const REMOVED: Record<string, string> = {
+  checkInScreen: "Checking in and out — moved to the MahekOne launcher (see launcherCheckIn)",
+  checklist: "Tasks: checklists, to-dos, buddy tasks and templates",
+  myTasks: "My tasks inside the HRMS; HRMS tasks are seen in the Tasks app",
+  customers: "The Sales desk: customers, calling, sales activity and the journey planner",
+  kpi: "Daily sales entries and the daily sales score",
+};
+
 export const FEATURES: Record<string, Feature> = {
   /* ------------------------------------------------------------- check-in */
   checkIn: { what: "Geo-fenced check-in with an optional photo; HR and admin get the wider range", file: "src/lib/actions/hrms-checkin.ts", marker: "export async function hrmsCheckIn" },
@@ -114,8 +129,11 @@ export const FEATURES: Record<string, Feature> = {
   lateHelp: { what: "A refused late check-in can raise “I am late today” on the spot", file: "src/lib/actions/hrms-checkin.ts", marker: "export async function hrmsRaiseLateHelp" },
   checkInRules: { what: "The check-in refusal order: already, location off, no pin, outside, late", file: "src/lib/hrms/engines/attendance.ts", marker: "export function decideCheckIn" },
   dayFigures: { what: "Worked time, late, percentage of target, full or half day", file: "src/lib/hrms/engines/attendance.ts", marker: "export function dayFigures" },
-  homeCard: { what: "The check-in card: timing, office, worked-so-far bar, late and day result", file: "src/app/hrms/_ui/home-card.tsx", marker: "export function HomeCard" },
-  homeWaiting: { what: "“Waiting for you today”: check-outs, checklist, to-dos, buddy tasks, approvals, staff to mark or check out, help and grievances", file: "src/app/hrms/page.tsx", marker: "wait.push" },
+  homeCard: { what: "The check-in panel: timing, office, worked-so-far bar, late and day result — on the launcher now", file: "src/components/checkin/check-in-panel.tsx", marker: "export function CheckInPanel" },
+  launcherCheckIn: { what: "Checking in moved to the MahekOne launcher: a strip, and a dialog that opens once a day", file: "src/components/checkin/launcher-check-in.tsx", marker: "export function LauncherCheckIn" },
+  homeWaiting: { what: "Home by role, and “Needs you”: check-outs, leave to decide, staff to mark or check out, help and grievances", file: "src/app/hrms/page.tsx", marker: "wait.push" },
+  roles: { what: "Three roles — associate, manager, HR team — open the tabs that are theirs", file: "src/lib/hrms/registry.ts", marker: "export function gateOpen" },
+  managerLeave: { what: "A manager decides their own team's leave, checked on the server", file: "src/lib/hrms/access.ts", marker: "export function decidesLeaveFor" },
   officeQrPrint: { what: "A printable QR code per office", file: "src/app/hrms/offices/[id]/qr/page.tsx", marker: "qrSvgPath" },
   qrEncoder: { what: "The in-house QR encoder", file: "src/lib/hrms/qr.ts", marker: "export function encodeQr" },
 
@@ -132,21 +150,13 @@ export const FEATURES: Record<string, Feature> = {
   advanceRecovery: { what: "Advance outstanding derived from salaries, oldest advance recovered first", file: "src/lib/hrms/screens/pay.ts", marker: "recoveredByAdvance" },
   expenseBalances: { what: "Verified claims less verified payments, by month and in all", file: "src/lib/hrms/screens/pay.ts", marker: "expenseBalances" },
 
-  /* ---------------------------------------------------------------- tasks */
-  taskTemplates: { what: "Template checks: frequency, weekdays, day of month, before-day, times", file: "src/lib/hrms/engines/tasks.ts", marker: "export function checkTemplate" },
-  taskEod: { what: "Task EOD message, to copy or send to WhatsApp", file: "src/lib/hrms/engines/tasks.ts", marker: "export function taskEodMessage" },
 
   /* ---------------------------------------------------------- performance */
-  salesScore: { what: "The nine-part daily sales score", file: "src/lib/hrms/engines/performance.ts", marker: "export function dailyScore" },
   staffMonth: { what: "Monthly staff performance: hours, punctuality, tasks, to-dos, buddy tasks", file: "src/lib/hrms/engines/performance.ts", marker: "export function staffMonth" },
   points: { what: "Period performance points by kind of job", file: "src/lib/hrms/engines/performance.ts", marker: "export function performancePoints" },
   employeeOfMonth: { what: "Employee of the month at the configured mark", file: "src/lib/hrms/engines/performance.ts", marker: "export const isEmployeeOfMonth" },
   reviewPdf: { what: "The period review PDF", file: "src/app/api/hrms/performance-report/route.ts", marker: "export async function GET" },
-  kpiPrefill: { what: "KPI visits filled in from field-app check-ins", file: "src/lib/hrms/screens/perf.ts", marker: "mbosVisitCount" },
 
-  /* ---------------------------------------------------------------- sales */
-  callingTabs: { what: "Calling tabs: to call, follow-ups due, history, older", file: "src/lib/hrms/engines/calling.ts", marker: "export function callingTab" },
-  callingSuggestion: { what: "Follow up or deactivate, from calls against orders", file: "src/lib/hrms/engines/calling.ts", marker: "export function suggestion" },
 
   /* --------------------------------------------------------------- people */
   orgChart: { what: "The org chart: chart and list views, set and clear a manager, loop refusal", file: "src/lib/actions/org.ts", marker: "export async function setManager" },
@@ -170,7 +180,6 @@ export const FEATURES: Record<string, Feature> = {
   announcements: { what: "One sender for HRMS Announcements and the Sales Dashboard's Send a notification; edits and deletes reach the bell", file: "src/lib/services/announcement-service.ts", marker: "export async function announce" },
   salesBroadcastLogged: { what: "A Sales Dashboard broadcast is on record beside the office's announcements", file: "src/lib/actions/sales.ts", marker: "source: \"sales\"" },
   teamFromChart: { what: "My team is the org chart, with the Report To job title only for people the chart has not placed", file: "src/lib/hrms/access.ts", marker: "async function teamOf" },
-  activityTimeline: { what: "A logged sales activity reaches the customer's shared history", file: "src/lib/hrms/screens/sales.ts", marker: "HRMS_EVENT.activity" },
   helpWritesDay: { what: "Approving an attendance help request can write its times onto the day", file: "src/lib/hrms/screens/attendance.ts", marker: "export async function correctDayFromHelp" },
   headReach: { what: "A head acts on their team and office only, enforced on the server", file: "src/lib/hrms/services/people.ts", marker: "export function staffInReach" },
   storedWords: { what: "Every renamed stored value, and the old spelling read from an old file", file: "src/lib/hrms/values.ts", marker: "export function fromOld" },

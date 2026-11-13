@@ -202,6 +202,19 @@
   font-size: 12px;
 }
 
+/* The HRMS wears it too since its redraw (Nov 2026). */
+
+:root:has([data-v4-app="hrms"]) .uppercase:not(th):not(th *) {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+:root:has([data-v4-app="hrms"]) .uppercase.text-\[11px\]:not(th):not(th *),
+:root:has([data-v4-app="hrms"]) .uppercase.text-\[10px\]:not(th):not(th *),
+:root:has([data-v4-app="hrms"]) .uppercase.text-\[10\.5px\]:not(th):not(th *) {
+  font-size: 12px;
+}
+
 /* An empty state is its title and its one action; the sentence under the
    title moves behind the ⓘ beside it (`EmptyState`). */
 

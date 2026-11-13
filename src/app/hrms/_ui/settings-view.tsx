@@ -3,6 +3,7 @@ import { getConfig } from "@/lib/config/store";
 import { hrmsSchema } from "@/lib/config/schema-contract";
 import type { Config } from "@/lib/config/registry";
 import { ADMIN } from "@/lib/admin-routes";
+import { HRMS_ROLES } from "@/lib/hrms/registry";
 
 /**
  * HRMS settings are edited in ONE place, the Admin Console's HRMS section —
@@ -52,4 +53,36 @@ function show(v: unknown): string {
   if (Array.isArray(v)) return v.length ? v.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ") : "—";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+/** The three HRMS roles: what each sees and decides. Read here, given on the Access screen. */
+export function RolesView() {
+  return (
+    <div className="grid gap-4">
+      <div className="rounded-[8px] border border-line bg-surface px-4 py-3 text-[13px] text-body">
+        A person’s HRMS role is the level on their HRMS grant, given on the{" "}
+        <Link href={ADMIN.access}>Admin Console’s Access screen</Link>. A power ticked there adds to the role.
+      </div>
+      <div className="overflow-x-auto rounded-[8px] border border-line bg-surface">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr>
+              <th className="px-4 py-2 text-left">Role</th>
+              <th className="px-4 py-2 text-left">Sees</th>
+              <th className="px-4 py-2 text-left">Decides</th>
+            </tr>
+          </thead>
+          <tbody>
+            {HRMS_ROLES.map((r) => (
+              <tr key={r.level} className="border-t border-divider">
+                <td className="px-4 py-2.5 font-semibold text-ink">{r.name}</td>
+                <td className="px-4 py-2.5 text-body">{r.sees}</td>
+                <td className="px-4 py-2.5 text-body">{r.decides}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }

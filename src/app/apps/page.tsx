@@ -16,16 +16,23 @@ import { cx } from "@/components/ui/primitives";
 import { clock, longDate, today } from "@/lib/format";
 import { AppShortcuts } from "./app-shortcuts";
 import { CardGrid } from "@/components/ui/card-grid";
+import { LauncherCheckIn } from "@/components/checkin/launcher-check-in";
+import type { CheckInState } from "@/components/checkin/check-in-panel";
 
 export const metadata = { title: "Your apps - MahekOne" };
 
-export default async function LauncherPage() {
+export default async function LauncherPage({ searchParams }: { searchParams: Promise<{ checkin?: string }> }) {
   const user = await requireUser();
-  const [apps, ids, attendance] = await Promise.all([
+  const [apps, ids, attendance, sp] = await Promise.all([
     launcherApps(user),
     listUserApps(user.id),
     todaysAttendance(user.id),
+    searchParams,
   ]);
+  /* CHECKING IN IS HERE, NOT IN THE HRMS (Nov 2026): the launcher is where
+     everybody lands after signing in. It is offered to whoever holds the
+     HRMS, which is everybody whose day is recorded there. */
+  const checkIn = ids.includes("hrms") ? await launcherCheckIn() : null;
 
   const locked = lockedApps(ids);
   const waiting = apps.filter((a) => a.count > 0);
@@ -125,6 +132,11 @@ export default async function LauncherPage() {
 
       <div className="flex-1 px-8 pt-7 pb-12">
         <div className="mx-auto max-w-[1120px]">
+          {checkIn ? (
+            <div className="mb-4">
+              <LauncherCheckIn state={checkIn.state} canHelp={checkIn.canHelp} ask={sp.checkin === "1"} />
+            </div>
+          ) : null}
           {primary ? (
             <div className="flex items-center gap-4 rounded-[6px] border border-line bg-surface px-5 py-4 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
               <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-warn-soft text-warn">
@@ -294,4 +306,13 @@ function HeroStat({
       </span>
     </span>
   );
+}
+
+/** Today's check-in for the launcher, or nothing for somebody with no HRMS role. */
+async function launcherCheckIn(): Promise<{ state: CheckInState; canHelp: boolean } | null> {
+  const { hrmsContext } = await import("@/lib/hrms/access");
+  const { checkInState } = await import("@/lib/hrms/check-in-state");
+  const ctx = await hrmsContext();
+  if (!ctx.level) return null;
+  return { state: await checkInState(ctx), canHelp: ctx.screens.has("help") };
 }

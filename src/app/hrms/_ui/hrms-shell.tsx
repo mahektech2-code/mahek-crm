@@ -80,23 +80,29 @@ export function HrmsShell({
   return (
     <ToastProvider>
       <ErpUiProvider kit={HRMS_KIT}>
+        {/* THE ERP'S FRAME (Nov 2026). `data-v4` is what `styles/v4-theme.css`
+            answers to, and `data-v4-app="hrms"` puts this app's spaced-capital
+            labels into sentence case, as the CRM's and the Sales Dashboard's
+            are. The sidebar runs the full height under the Mahek mark; the
+            lavender header beside it carries the switcher, the search, the
+            bell and the account. No floor: HRMS is opened on phones too. */}
+        <div data-v4 data-v4-app="hrms" className="contents">
         <AppFrame
           floor={false}
+          sidebarFirst
           header={
-            <header className="z-30 flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-3 lg:gap-5 lg:px-4">
-              <div className="flex flex-none items-center gap-2 lg:w-[216px]">
+            <header data-v4-header className="z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3 lg:gap-4">
+              <div className="flex flex-none items-center gap-2">
                 <button
                   onClick={() => setDrawer(true)}
                   aria-label="Menu"
-                  className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-[4px] border border-line text-body lg:hidden"
+                  className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-[7px] text-body lg:hidden"
                 >
                   <HIcon n="menu" />
                 </button>
-                {/* Phones get the drawer and a compact wordmark; from `lg:` up the
-                    header starts with the same three controls as every app. */}
                 <Link href="/hrms" className="flex items-center gap-2 no-underline hover:no-underline lg:hidden">
                   <span className="text-[15px] font-semibold tracking-[-0.01em] whitespace-nowrap text-ink">
-                    MAHEK <span className="text-brand">HRMS</span>
+                    MahekOne <span className="font-medium text-faint">HRMS</span>
                   </span>
                 </Link>
                 <div className="hidden lg:flex">
@@ -107,6 +113,7 @@ export function HrmsShell({
                     onToggleSidebar={() => setCollapsed((c) => !c)}
                     href="/hrms"
                     label="MAHEK HRMS"
+                    wordmark={false}
                   />
                 </div>
               </div>
@@ -119,22 +126,32 @@ export function HrmsShell({
                   <FeedbackButton />
                 </span>
                 <NotificationBell notifications={notifications} />
-                <span className="mx-1 hidden h-6 w-px bg-divider sm:block" />
-                <AccountMenu user={user} hat={hat} variant="header" />
+                <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
               </div>
             </header>
           }
           sidebar={
-            <aside className={cx("hidden flex-none flex-col border-r border-line bg-surface transition-[width] duration-150 lg:flex", collapsed ? "w-14" : "w-[216px]")}>
+            <aside className={cx("hidden flex-none flex-col border-r border-line bg-surface transition-[width] duration-150 lg:flex", collapsed ? "w-16" : "w-[232px]")}>
+              <Link
+                href="/hrms"
+                title="MahekOne HRMS"
+                className={cx("flex h-14 flex-none items-center gap-2.5 no-underline hover:no-underline", collapsed ? "justify-center" : "px-4")}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
+                {collapsed ? null : (
+                  <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
+                    MahekOne <span className="font-medium text-faint">HRMS</span>
+                  </span>
+                )}
+              </Link>
               {sidebar}
-              <div className="flex flex-none items-center border-t border-divider px-2 py-2">
-                <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
-              </div>
             </aside>
           }
         >
           <div className="pb-16 lg:pb-0">{children}</div>
         </AppFrame>
+        </div>
 
         {drawer ? (
           <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-label="HRMS menu">
@@ -147,7 +164,7 @@ export function HrmsShell({
             >
               <div className="flex h-14 flex-none items-center justify-between border-b border-divider px-4">
                 <span className="text-[15px] font-semibold text-ink">
-                  MAHEK <span className="text-brand">HRMS</span>
+                  MahekOne <span className="font-medium text-faint">HRMS</span>
                 </span>
                 <AppSwitcher apps={apps} current="hrms" />
               </div>
@@ -220,8 +237,8 @@ function HrmsSearch() {
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search people, customers, documents…"
-        className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
+        placeholder="Search people and documents…"
+        className="h-8.5 w-full rounded-[8px] border border-brand-softer bg-surface pr-3 pl-8 text-sm text-ink outline-none focus:border-brand"
       />
       {open ? (
         <div className="absolute top-10 left-0 z-40 w-full overflow-hidden rounded-[6px] border border-line bg-surface py-1.5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">

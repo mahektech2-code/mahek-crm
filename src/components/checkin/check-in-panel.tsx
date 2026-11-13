@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { hrmsCheckIn, hrmsCheckOut, hrmsRaiseLateHelp, type CheckResult } from "@/lib/actions/hrms-checkin";
@@ -9,17 +8,18 @@ import { longDate } from "@/lib/format";
 import { nowHM } from "@/lib/hrms/time";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { HIcon } from "./icons";
+import { Icon } from "@/components/shell/icons";
 
 /* ---------------------------------------------------------------------------
- * The home card (design "Check in"). Location is read ONCE, when the button is
- * pressed, and sent to the server, which measures it against the office and
- * decides — the browser never judges its own distance. A refusal is drawn in
- * place with the one thing that fixes it: "I am late" raises the help request
- * from here rather than sending somebody to find another screen.
+ * CHECKING IN AND OUT, which lives on the MahekOne launcher now rather than in
+ * the HRMS (Nov 2026): the launcher draws it as a strip and a dialog. Location
+ * is read ONCE, when the button is pressed, and sent to the server, which
+ * measures it against the office and decides — the browser never judges its
+ * own distance. A refusal is drawn in place with the one thing that fixes it:
+ * "I am late" raises the help request from here.
  * ------------------------------------------------------------------------- */
 
-export type HomeState = {
+export type CheckInState = {
   linked: boolean;
   name: string;
   date: string;
@@ -46,16 +46,6 @@ export type HomeState = {
     /** Checked in on the field app: checked out there too. */
     field?: boolean;
   } | null;
-};
-
-export type WaitItem = { l: string; v: string; sub: string; tone: "danger" | "warn" | "brand" | "success" | "neutral"; href: string };
-
-const DOT: Record<WaitItem["tone"], string> = {
-  danger: "bg-danger",
-  warn: "bg-warn",
-  brand: "bg-brand",
-  success: "bg-success",
-  neutral: "bg-muted",
 };
 
 type Refused = { reason: CheckInRefusal | "error"; title: string; line: string };
@@ -86,7 +76,7 @@ function greeting(nowMs: number, name: string) {
   return `Good ${h < 12 ? "morning" : h < 17 ? "afternoon" : "evening"}, ${name.split(" ")[0]}`;
 }
 
-export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: WaitItem[]; canHelp: boolean }) {
+export function CheckInPanel({ state, canHelp, onDone }: { state: CheckInState; canHelp: boolean; onDone?: () => void }) {
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = useState<"" | "locating" | "saving">("");
@@ -114,6 +104,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
     setQrOpen(false);
     if (res.message) toast.push(res.message);
     router.refresh();
+    onDone?.();
   }
 
   async function act(kind: "in" | "out", qrCode?: string) {
@@ -155,8 +146,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
   const workedLabel = t ? (t.out ? t.worked : `${Math.floor(liveWorked / 60)}h ${String(liveWorked % 60).padStart(2, "0")}m so far`) : "";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-      <section className="rounded-[8px] border border-line bg-surface p-5">
+    <div>
         <div className="text-[18px] font-semibold text-ink">{greeting(state.nowMs, state.name)}</div>
         <div className="mt-0.5 text-[13px] text-muted">{longDate(state.date)}</div>
         {state.linked ? (
@@ -172,7 +162,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
         <div className="mt-5 grid gap-3">
           {!state.linked ? (
             <div className="rounded-[6px] border border-warn-line bg-warn-soft px-3.5 py-3 text-[13px] text-warn-ink">
-              Your MahekOne account is not linked to an employee record yet, so you cannot check in. Ask HR to link it on the Access screen in the Admin Console.
+              Your MahekOne account is not linked to an employee record yet, so you cannot check in. Ask HR to link it on the Admin Console’s Access screen.
             </div>
           ) : null}
 
@@ -227,7 +217,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
                 disabled={!!busy}
                 className="flex h-14 items-center justify-center gap-2 rounded-[6px] bg-brand text-[16px] font-semibold text-white hover:bg-brand-hover disabled:opacity-60"
               >
-                <HIcon n="clock" s={20} />
+                <Icon name="clock" size={20} />
                 {busy === "saving" ? "Checking in…" : "Check in"}
               </button>
               {state.qr ? (
@@ -305,29 +295,6 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
             <div className="text-[12px] text-muted">Your office has no location pin yet, so your distance cannot be measured. HR sets it on the Offices screen.</div>
           ) : null}
         </div>
-      </section>
-
-      <section className="rounded-[8px] border border-line bg-surface p-5">
-        <div className="text-[14px] font-semibold text-ink">Waiting for you today</div>
-        {wait.length === 0 ? <div className="mt-3 text-[13px] text-muted">Nothing is waiting for you. Everything you can act on today is done.</div> : null}
-        <div className="mt-3 grid gap-2">
-          {wait.map((w) => (
-            <Link
-              key={w.l}
-              href={w.href}
-              className="flex items-center gap-3 rounded-[6px] border border-line px-3 py-2.5 no-underline hover:border-brand hover:no-underline"
-            >
-              <span className={cx("size-2 shrink-0 rounded-full", DOT[w.tone])} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[14px] text-ink">{w.l}</span>
-                {w.sub ? <span className="block text-[12px] text-muted">{w.sub}</span> : null}
-              </span>
-              <span className="text-[14px] font-semibold text-ink">{w.v}</span>
-              <HIcon n="chev" s={16} className="text-muted" />
-            </Link>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
@@ -345,7 +312,7 @@ function Fact({ l, v }: { l: string; v: string }) {
 function PhotoPick({ photo, onPick }: { photo: File | null; onPick: (f: File | null) => void }) {
   return (
     <label className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body">
-      <HIcon n="camera" s={16} />
+      <Icon name="image" size={16} />
       {photo ? `Photo added — ${photo.name.slice(0, 24)}` : "Add a photo (optional)"}
       <input type="file" accept="image/jpeg,image/png" capture="user" className="hidden" onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
     </label>

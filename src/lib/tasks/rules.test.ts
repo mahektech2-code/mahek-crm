@@ -133,8 +133,9 @@ describe("every app's own My tasks", () => {
   });
 
   it("a new task can be filed only under Personal and the apps with a My tasks", () => {
-    for (const a of ["tasks", "crm", "accounts", "sales", "erp", "hrms", "founder"]) assert.equal(canFileUnder(a), true, a);
-    for (const a of ["hire", "enquiries", "website", "factory"]) assert.equal(canFileUnder(a), false, a);
+    for (const a of ["tasks", "crm", "accounts", "sales", "erp", "founder"]) assert.equal(canFileUnder(a), true, a);
+    /* HRMS lost its My tasks in the simplification (Nov 2026). */
+    for (const a of ["hire", "enquiries", "website", "factory", "hrms"]) assert.equal(canFileUnder(a), false, a);
     assert.equal(newTaskProblems({ title: "Call", app: "hire", dueDate: "2026-11-12", priority: "normal" })[0]?.field, "app");
   });
 

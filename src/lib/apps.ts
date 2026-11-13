@@ -149,7 +149,7 @@ export const APPS: AppDefinition[] = [
     name: "HRMS",
     initials: "HR",
     description:
-      "Check in and out, leave, payroll, tasks, performance, the sales desk and the employee master.",
+      "Attendance, leave, pay, performance, people, assets and HR requests.",
     href: "/hrms",
     tone: "neutral",
     built: true,

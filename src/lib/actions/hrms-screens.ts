@@ -101,7 +101,7 @@ export async function hrmsRunTool(screen: string, tool: string, values: Record<s
 
 export type HrmsSearchHit = { kind: string; name: string; meta: string; href: string };
 
-/** The header search: people, customers and documents this person may open. */
+/** The header search: people and documents this person may open. */
 export async function hrmsSearch(q: string): Promise<HrmsSearchHit[]> {
   const { hrmsContext } = await import("@/lib/hrms/access");
   const { hrmsLink } = await import("@/lib/hrms/registry");
@@ -123,10 +123,6 @@ export async function hrmsSearch(q: string): Promise<HrmsSearchHit[]> {
       .filter((p) => (!ids || ids.has(p.id)) && (p.name.toLowerCase().includes(n) || String(p.code ?? "").toLowerCase().includes(n)))
       .slice(0, 5)
       .forEach((r) => out.push({ kind: "Employee", name: r.name, meta: `${r.code} · ${r.position ?? ""}`, href: hrmsLink("employees", { open: r.id }) }));
-  }
-  if (ctx.screens.has("customers")) {
-    const { searchCustomers } = await import("@/lib/hrms/screens/sales");
-    for (const r of await searchCustomers(ctx, term, 4)) out.push({ kind: "Customer", name: r.name ?? "", meta: r.area ?? r.city ?? "", href: hrmsLink("customers", { open: r.id }) });
   }
   if (ctx.screens.has("documents")) {
     const { searchDocuments } = await import("@/lib/hrms/screens/misc");

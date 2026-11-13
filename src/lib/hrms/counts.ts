@@ -1,11 +1,11 @@
 import "server-only";
 import { cache } from "react";
-import { and, eq, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsAttendance, hrmsBuddyTasks, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsSalaries, hrmsTodos } from "@/db/schema";
-import type { HrmsContext } from "./access";
+import { hrmsAttendance, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsSalaries } from "@/db/schema";
+import { decidesLeave, type HrmsContext } from "./access";
 import { today } from "./server";
-import { BUDDY_DONE, LEAVE_WAITING } from "./values";
+import { LEAVE_WAITING } from "./values";
 
 /* ---------------------------------------------------------------------------
  * What is waiting on each screen for this person — the sidebar's badges.
@@ -24,8 +24,19 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
       db.select({ n: count }).from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me), isNull(hrmsAttendance.checkOut), lt(hrmsAttendance.date, today())))
         .then((r) => void (out.pendingOut = n(r))),
     );
-  if (ctx.screens.has("approvals") && ctx.powers.has("approveLeave"))
-    jobs.push(db.select({ n: count }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.status, LEAVE_WAITING)).then((r) => void (out.approvals = n(r))));
+  if (ctx.screens.has("approvals") && decidesLeave(ctx)) {
+    /* A manager is counted their team's requests only — the ones they decide. */
+    const wide = ctx.administrator || ctx.granted.has("approveLeave");
+    const team = [...ctx.team].filter((id) => id !== me);
+    if (wide || team.length)
+      jobs.push(
+        db
+          .select({ n: count })
+          .from(hrmsLeaveRequests)
+          .where(and(eq(hrmsLeaveRequests.status, LEAVE_WAITING), wide ? undefined : inArray(hrmsLeaveRequests.employeeId, team)))
+          .then((r) => void (out.approvals = n(r))),
+      );
+  }
   if (ctx.screens.has("help") && ctx.powers.has("resolve"))
     jobs.push(db.select({ n: count }).from(hrmsHelp).where(eq(hrmsHelp.status, "Pending")).then((r) => void (out.help = n(r))));
   if (ctx.screens.has("grievances") && ctx.powers.has("resolve"))
@@ -35,13 +46,6 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
     jobs.push(
       db.select({ n: count }).from(hrmsGrievances).where(and(eq(hrmsGrievances.status, "Pending"), eq(hrmsGrievances.toEmployeeId, me)))
         .then((r) => void (out.grievances = n(r))),
-    );
-  if (me && ctx.screens.has("todos"))
-    jobs.push(db.select({ n: count }).from(hrmsTodos).where(and(eq(hrmsTodos.toEmployeeId, me), eq(hrmsTodos.status, "Open"))).then((r) => void (out.todos = n(r))));
-  if (me && ctx.screens.has("buddy"))
-    jobs.push(
-      db.select({ n: count }).from(hrmsBuddyTasks).where(and(eq(hrmsBuddyTasks.toEmployeeId, me), eq(hrmsBuddyTasks.date, today()), ne(hrmsBuddyTasks.status, BUDDY_DONE)))
-        .then((r) => void (out.buddy = n(r))),
     );
   if (ctx.screens.has("payroll") && (ctx.powers.has("payroll") || ctx.powers.has("pay")))
     jobs.push(db.select({ n: count }).from(hrmsSalaries).where(sql`${hrmsSalaries.status} <> 'Paid'`).then((r) => void (out.payroll = n(r))));

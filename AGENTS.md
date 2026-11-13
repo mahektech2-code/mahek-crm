@@ -6575,6 +6575,27 @@ any number on three or more shops — two is an ordinary proprietor with two
 counters — because the next export will use a different placeholder and a
 number written into the code would silently stop catching it.
 
+**THE HRMS IS SIMPLIFIED TO THREE ROLES, AND CHECKING IN LEFT IT (Nov 2026).**
+The role is the level on the HRMS grant, given on the Access screen: an
+ASSOCIATE sees their own days, leave, pay and score; a MANAGER sees their team
+— the org chart's — and decides its leave; the HR TEAM (the admin level) sees
+everybody and runs pay, offices and settings. `HrmsGate` in
+`lib/hrms/registry.ts` puts a `min` level, and the powers that open it anyway,
+on a screen or a tab; `hrmsContext` opens only the lists a gate lets through,
+and `holdsScreen` asks for a screen by its lists, because a screen key is a
+grant and not always a list (`kpi` — Performance — lost the daily sales entries
+it opened on and kept its key). `scopeOf` reads manager as TEAM now, where it
+read everybody. A manager decides leave by role through `decidesLeaveFor`
+(their team, never themself), checked in every leave handler; it adds nothing
+to `granted`, so it widens no list. Tasks, My tasks, the Sales desk and the
+daily sales entries were taken out at the client's request: no screen draws
+them and `hrmsContext` opens none of their keys, but their server modules and
+data are kept (`REMOVED` in the feature ledger), and `0327` deleted the module
+rows naming them. Checking in and out is the launcher's: `LauncherCheckIn`
+(`components/checkin/`) draws a strip and a dialog that opens once a day, the
+same `hrmsCheckIn`/`hrmsCheckOut` actions behind it, and the HRMS Home links
+to `/apps?checkin=1`. The shell wears the v4 frame (`data-v4-app="hrms"`).
+
 **THE HRMS IS FOURTEEN SCREENS, AND ITS OLD SCREENS ARE TABS.** The first
 build copied Mahek EMP 2.0 one AppSheet view at a time — 41 screens, the same
 list drawn three ways under three grants. A tab (`views` in

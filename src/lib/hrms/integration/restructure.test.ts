@@ -118,9 +118,11 @@ after(async () => {
 describe("tabs", () => {
   test("holding a screen opens every tab of it, and nothing else", async () => {
     const n = await as(narrowed);
-    for (const k of ["leave", "approvals", "leaveCal", "holidays", "leaveSetup", "home"]) assert.ok(n.screens.has(k), k);
-    for (const k of ["attendance", "pendingOut", "payroll", "org"]) assert.ok(!n.screens.has(k), k);
-    await requireHrmsWrite("approvals");
+    /* An associate's tabs of the screen: the team's and HR's stay shut. */
+    for (const k of ["leave", "leaveCal", "holidays", "home"]) assert.ok(n.screens.has(k), k);
+    for (const k of ["approvals", "leaveSetup", "attendance", "pendingOut", "payroll", "org"]) assert.ok(!n.screens.has(k), k);
+    await requireHrmsWrite("leave");
+    await assert.rejects(() => requireHrmsWrite("approvals"), HrmsNotPermitted);
     await assert.rejects(() => requireHrmsWrite("pendingOut"), HrmsNotPermitted);
   });
 
@@ -128,6 +130,55 @@ describe("tabs", () => {
     const h = await as(hr);
     assert.ok(h.screens.has("attendance"));
     assert.ok(!h.screens.has("overtime"));
+  });
+});
+
+describe("the three roles", () => {
+  test("an associate opens their own lists, and none of the team's or HR's", async () => {
+    const ctx = await as(staff);
+    for (const k of ["attendance", "pendingOut", "leave", "payroll", "staffPerf", "employees", "assignments", "help", "documents", "notifications"]) assert.ok(ctx.screens.has(k), k);
+    for (const k of ["absentees", "approvals", "leaveSetup", "monthly", "points", "idCards", "offices", "assetStock", "settings", "refLists", "checklist", "customers", "kpi"]) assert.ok(!ctx.screens.has(k), k);
+  });
+
+  test("a manager decides their own team's leave and nobody else's, and their lists are the team", async () => {
+    const mgrEmp = await person("Mohan Manager", { office: "Andheri", position: "Ops Manager", type: "Other" });
+    const mineEmp = await person("Mira Report", { office: "Andheri", position: "Clerk", type: "Other" });
+    await db.insert(employeeReporting).values({ id: id("er"), employeeId: mineEmp.id, managerId: mgrEmp.id });
+    const mgr = await account("Mohan Manager", mgrEmp, "manager");
+    const ctx = await as(mgr);
+    assert.ok(ctx.screens.has("approvals") && ctx.screens.has("absentees"));
+    assert.ok(!ctx.screens.has("leaveSetup") && !ctx.screens.has("settings") && !ctx.screens.has("offices"));
+    const { scopeOf, decidesLeaveFor } = await import("@/lib/hrms/access");
+    assert.equal(scopeOf(ctx, "hr"), "team");
+    assert.ok(decidesLeaveFor(ctx, mineEmp.id));
+    assert.ok(!decidesLeaveFor(ctx, strangerEmp.id));
+    assert.ok(!decidesLeaveFor(ctx, mgrEmp.id), "a manager never decides their own leave");
+    const t = addDaysISO(today(), 7);
+    const req = async (employeeId: string) => {
+      const [r] = await db
+        .insert(hrmsLeaveRequests)
+        .values({ id: id("hlr"), reqNo: `LR-${Math.floor(Math.random() * 1e6)}`, employeeId, appliedOn: today(), type: "Leave", startDate: t, endDate: t, days: 1, status: LEAVE_WAITING })
+        .returning();
+      return r;
+    };
+    const ours = await req(mineEmp.id);
+    const theirs = await req(strangerEmp.id);
+    const refused = await mod("approvals").actions!.reject(ctx, theirs.id, { remark: "Not mine to decide" });
+    assert.equal(refused.ok, false);
+    const done = await mod("approvals").actions!.reject(ctx, ours.id, { remark: "Short-staffed that day" });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const { spec, rows } = await mod("approvals").load(ctx, {});
+    assert.ok(spec);
+    assert.ok(!rows.some((r) => r.id === theirs.id), "another team's request is not on a manager's list");
+  });
+
+  test("the HR team opens everything and sees everybody", async () => {
+    const hrEmp = await person("Harsha HR", { office: "Andheri", position: "HR", type: "Other" });
+    const hrAdmin = await account("Harsha HR", hrEmp, "admin");
+    const ctx = await as(hrAdmin);
+    for (const k of ["approvals", "leaveSetup", "monthly", "points", "idCards", "timings", "offices", "assetStock", "settings", "roles", "refLists"]) assert.ok(ctx.screens.has(k), k);
+    const { scopeOf } = await import("@/lib/hrms/access");
+    assert.equal(scopeOf(ctx, "hr"), "all");
   });
 });
 

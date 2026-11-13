@@ -21,7 +21,10 @@ test("keys, slugs and tab keys are unique, and a tab is on one screen only", () 
   for (const k of HRMS_ALWAYS_OPEN) assert.ok(HRMS_SCREENS.some((s) => s.key === k));
   /* A screen with tabs opens on the tab that carries its own key, so a grant
      and the first thing it shows are the same thing. */
-  for (const s of HRMS_SCREENS) if (s.views) assert.equal(s.views[0].key, s.key, `${s.key} must open on its own tab`);
+  /* Except Performance: its grant is still `kpi`, the daily sales entries it
+     opened on were taken out in the simplification (Nov 2026), and a grant
+     key is never renamed. */
+  for (const s of HRMS_SCREENS) if (s.views && s.key !== "kpi") assert.equal(s.views[0].key, s.key, `${s.key} must open on its own tab`);
 });
 
 test("a link to a tab lands on its screen with the tab named, and a first tab needs no name", () => {
@@ -49,9 +52,27 @@ test("every retired URL names a list that exists, and no retired URL is a live s
 test("the grant migration moves every tab that used to be a screen onto the screen it is a tab of", () => {
   const sql = readFileSync("drizzle/0201_hrms_screens_merged.sql", "utf8");
   const pairs = new Map([...sql.matchAll(/\('hrms\.(\w+)', 'hrms\.(\w+)'\)/g)].map((m) => [m[1], m[2]]));
+  /* The lists the simplification took out (Nov 2026) were moved by 0201 and
+     their rows deleted by 0327; every list still here that 0201 moved is on
+     the screen 0201 moved it to. */
+  const removed = new Set(["checklist", "todos", "buddy", "templates", "salesPerf", "customers", "calling", "activity", "journey"]);
   const tabs = HRMS_TABS.filter((x) => x.tab.key !== x.screen.key);
-  assert.deepEqual([...pairs.keys()].sort(), tabs.map((x) => x.tab.key).sort());
-  for (const x of tabs) assert.equal(pairs.get(x.tab.key), x.screen.key, `${x.tab.key} must move to ${x.screen.key}`);
+  for (const [tab, screen] of pairs) {
+    if (removed.has(tab)) continue;
+    const here = HRMS_TABS.find((x) => x.tab.key === tab);
+    assert.ok(here, `${tab} was moved by 0201 and is gone without being recorded as removed`);
+    assert.equal(here.screen.key, screen, `${tab} must stay on ${screen}`);
+  }
+  /* A tab that was never a screen is new, and says so. */
+  const fresh = tabs.filter((x) => !pairs.has(x.tab.key)).map((x) => x.tab.key);
+  assert.deepEqual(fresh, ["roles"]);
+});
+
+test("the simplification's migration removes exactly the screens that were taken out", () => {
+  const sql = readFileSync("drizzle/0327_hrms_simplified.sql", "utf8");
+  const gone = [...sql.matchAll(/'hrms\.(\w+)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(gone, ["checklist", "customers", "myTasks"]);
+  for (const k of gone) assert.ok(!HRMS_SCREENS.some((s) => s.key === k), `${k} is still a screen`);
 });
 
 test("the plain-words migration renames exactly what values.ts says was renamed", async () => {
