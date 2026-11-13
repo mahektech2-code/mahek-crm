@@ -6590,7 +6590,7 @@ read everybody. A manager decides leave by role through `decidesLeaveFor`
 to `granted`, so it widens no list. Tasks, My tasks, the Sales desk and the
 daily sales entries were taken out at the client's request: no screen draws
 them and `hrmsContext` opens none of their keys, but their server modules and
-data are kept (`REMOVED` in the feature ledger), and `0327` deleted the module
+data are kept (`REMOVED` in the feature ledger), and `0328` deleted the module
 rows naming them. Checking in and out is the launcher's: `LauncherCheckIn`
 (`components/checkin/`) draws a strip and a dialog that opens once a day, the
 same `hrmsCheckIn`/`hrmsCheckOut` actions behind it, and the HRMS Home links
@@ -10667,6 +10667,38 @@ source; an entry with no source is drawn "Unverified date", and nothing is
 extrapolated past its coverage. Birthdays and anniversaries are one shared
 list, edited by version so two people cannot silently overwrite each other.
 There is no birthday design yet, so those remind and do not make a poster.
+
+**THE TEMPLATE LIBRARY PUBLISHES AT ONCE, AND NOTHING IS PUBLISHED THAT THE
+REGISTRY WOULD REJECT.** `/studio/designs` is the shared library: every
+published design, shipped or uploaded, searchable by name, occasion, language
+and uploader. Whoever holds `studio.designs` uploads a JPG, JPEG, PNG or WebP
+(no PDF; PSD is exported to JPG or PNG first) and publishes their own draft
+(`publishDesign`) when `studio.publishImmediately` is on (the default);
+off, only a holder of `studio.approve` publishes (`approveDesign`). Both
+go through ONE function, `publishRow`, which runs the placement checks, draws
+EVERY declared language with sample text and with long names, and then writes
+the candidate as the folder it would be and runs the registry's own loader on
+it (`validateCandidate`). A design the loader would exclude — a missing
+language, wording that fails the copy or customer rules, a wrong-size
+background — is refused with the reason and stays a draft. English is
+mandatory; Hindi and Gujarati are optional per design, each with wording typed
+for it (nothing is translated), drawn in its own script's font.
+
+**ARCHIVE, RESTORE, VERSIONS, ORIGINALS.** The uploader archives their own
+design; whoever holds `studio.approve` archives or restores anybody's. WHO
+archived it is on the row (`archived_by_id`): an uploader restores only what
+they archived themselves, so an approver's archive stays theirs to undo. An
+archived design, and every earlier version of a design, is read by the
+registry as an ARCHIVED COPY of its version (`<id>-v<version>`, `versionOf`),
+never listed and never offered for a new poster, so every poster already made
+keeps drawing. A NEW VERSION (`reviseDesign`, or new artwork of the same
+shape through the upload route's `revisesId`) is a private draft that, on
+publish, moves the design to its next version IN ONE TRANSACTION: the version
+being replaced is saved whole in `studio_design_versions` first. A published
+version is never edited. The ORIGINAL upload is kept in file storage beside the
+normalised background (`source_ref`, `source_format`); `/tmp` holds only a
+rebuildable cache, and a registry built after a folder could not be written is
+never remembered, so the next request tries again.
 
 ## Testing
 

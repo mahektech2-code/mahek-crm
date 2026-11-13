@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { CANVAS_PRESETS, buildManifest, canvasById, canvasForSize, checkPlacement, copyFromDraft, defaultPlacement, newTemplateId, parsePlacement, type PlacementDraft } from "./template-upload";
+import { CANVAS_PRESETS, buildManifest, canvasById, canvasForSize, checkPlacement, copyFromDraft, declaredLanguages, defaultPlacement, newTemplateId, nextVersion, normalizeDraft, parsePlacement, type PlacementDraft } from "./template-upload";
 
 const canvas = canvasById("square")!;
 function draft(keys: ("company_name" | "customer_name" | "product_name" | "greeting" | "contact_phone" | "logo" | "occasion_title")[] = ["company_name"]): PlacementDraft {
@@ -139,5 +139,141 @@ describe("manual product name", () => {
     assert.deepEqual(typed.values.product_name, { kind: "text", text: "Typed Product" });
     const none = resolveFieldValues({ fields: [field], lead, user, language: "en", greeting: null, showOptional: true });
     assert.equal(none.values.product_name, null, "never falls back to the CRM product");
+  });
+});
+
+describe("languages on an uploaded design", () => {
+  const meta = { id: "custom-lang-test", version: "1.0.0", status: "approved" as const, approvedBy: "T", approvedAt: "2026-11-13" };
+  /** A design with a greeting and a fixed headline, in English plus the languages asked for, each complete. */
+  function multi(languages: ("hi" | "gu")[]): PlacementDraft {
+    const d = draft(["company_name", "greeting", "occasion_title"]);
+    d.fields.find((f) => f.key === "occasion_title")!.text = "Season's Greetings";
+    const i18n: NonNullable<PlacementDraft["i18n"]> = {};
+    if (languages.includes("hi")) i18n.hi = { messages: ["आपके और आपकी टीम के लिए एक सफल मौसम की शुभकामनाएँ।"], statics: { occasion_title: "शुभकामनाएँ" } };
+    if (languages.includes("gu")) i18n.gu = { messages: ["તમને અને તમારી ટીમને સફળ મોસમની શુભેચ્છાઓ."], statics: { occasion_title: "શુભેચ્છાઓ" } };
+    return { ...draft(["company_name", "greeting", "occasion_title"]), fields: d.fields, languages, i18n };
+  }
+
+  test("a design with no languages is English only, which is every design uploaded before languages existed", () => {
+    assert.deepEqual(declaredLanguages({}), ["en"]);
+    assert.deepEqual(declaredLanguages({ languages: [] }), ["en"]);
+    const built = buildManifest(draft(), meta);
+    assert.ok(built.ok);
+    if (built.ok) assert.deepEqual(built.manifest.languages, ["en"]);
+  });
+
+  test("English plus Hindi plus Gujarati: declared in a fixed order, each drawn in its own script's font, each with its own copy", () => {
+    const d = multi(["gu", "hi"]);
+    assert.deepEqual(declaredLanguages(d), ["en", "hi", "gu"]);
+    assert.deepEqual(checkPlacement(d).errors, []);
+    const built = buildManifest(d, meta);
+    assert.ok(built.ok, built.ok ? "" : built.problems.join("; "));
+    if (!built.ok) return;
+    assert.deepEqual(built.manifest.languages, ["en", "hi", "gu"]);
+    assert.deepEqual(built.manifest.fonts.body, { en: "noto-sans", hi: "noto-sans-devanagari", gu: "noto-sans-gujarati" });
+    const headline = built.manifest.fields.find((f) => f.key === "occasion_title");
+    assert.ok(headline && headline.type === "text");
+    if (headline && headline.type === "text") assert.deepEqual(headline.text, { en: "Season's Greetings", hi: "शुभकामनाएँ", gu: "શુભેચ્છાઓ" });
+    const copy = copyFromDraft(d);
+    assert.deepEqual(Object.keys(copy), ["en", "hi", "gu"]);
+    assert.match(copy.hi![0]!.text, /शुभकामनाएँ/);
+    assert.match(copy.gu![0]!.text, /શુભેચ્છાઓ/);
+  });
+
+  test("a declared language with anything missing is never publishable", () => {
+    const noMessages = multi(["hi"]);
+    noMessages.i18n!.hi!.messages = [];
+    assert.match(checkPlacement(noMessages).errors.map((e) => e.message).join(" "), /message in हिन्दी/);
+    const noHeadline = multi(["gu"]);
+    noHeadline.i18n!.gu!.statics = {};
+    assert.match(checkPlacement(noHeadline).errors.map((e) => e.message).join(" "), /ગુજરાતી: the fixed text cannot be empty|in ગુજરાતી/);
+    const noContent = { ...multi(["hi"]), i18n: undefined };
+    assert.ok(checkPlacement(noContent).errors.length >= 2, "no Hindi content at all is refused, never filled in from English");
+  });
+
+  test("the wording must be in the language's own script, and never in the other Indic script", () => {
+    const latinHindi = multi(["hi"]);
+    latinHindi.i18n!.hi!.messages = ["Wishing you a bright season."];
+    assert.match(checkPlacement(latinHindi).errors.map((e) => e.message).join(" "), /Devanagari/);
+    const gujaratiInHindi = multi(["hi"]);
+    gujaratiInHindi.i18n!.hi!.messages = ["તમને શુભેચ્છાઓ."];
+    assert.ok(checkPlacement(gujaratiInHindi).errors.length > 0);
+    const gujaratiHeadlineInHindi = multi(["hi"]);
+    gujaratiHeadlineInHindi.i18n!.hi!.statics = { occasion_title: "શુભેચ્છાઓ" };
+    assert.match(checkPlacement(gujaratiHeadlineInHindi).errors.map((e) => e.message).join(" "), /script/);
+  });
+
+  test("wording rules apply in every language: no digits, links, prices or claims", () => {
+    for (const bad of ["आपको 50% छूट मिलेगी।", "देखें www.example.com पर।"]) {
+      const d = multi(["hi"]);
+      d.i18n!.hi!.messages = [bad];
+      assert.ok(checkPlacement(d).errors.length > 0, bad);
+    }
+  });
+
+  test("a stored placement is read back: the old English-only shape and the new one both parse; unknown keys do not", () => {
+    assert.ok(parsePlacement(draft()).ok, "old shape");
+    assert.ok(parsePlacement(multi(["hi", "gu"])).ok, "new shape");
+    assert.equal(parsePlacement({ ...multi(["hi"]), languages: ["fr"] }).ok, false, "only Hindi and Gujarati can be added");
+    assert.equal(parsePlacement({ ...multi(["hi"]), i18n: { hi: { messages: [], statics: {}, extra: 1 } } }).ok, false);
+    assert.equal(parsePlacement({ ...multi(["hi"]), i18n: { mr: { messages: [], statics: {} } } }).ok, false);
+  });
+});
+
+describe("the loader's wording rules are applied before publishing, in every language", () => {
+  const withMessages = (messages: string[]): PlacementDraft => ({ ...draft(["company_name", "greeting"]), messages });
+  test("English wording the registry would reject is refused here: digits, prices, links, claims and new-lead language", () => {
+    for (const bad of ["Get 20 cans free this week.", "Visit www.example.com today.", "Best price guaranteed for you.", "Welcome to Mahek, thanks for your interest.", "Wishing you 100% success."]) {
+      assert.ok(checkPlacement(withMessages([bad])).errors.length > 0, bad);
+    }
+    assert.deepEqual(checkPlacement(withMessages(["Wishing you a bright season ahead."])).errors, []);
+  });
+  test("a lead-style line in Hindi or Gujarati is refused too", () => {
+    const hi: PlacementDraft = { ...withMessages(["Wishing you a bright season ahead."]), languages: ["hi"], i18n: { hi: { messages: ["हमारे साथ आपकी रुचि के लिए धन्यवाद।"], statics: {} } } };
+    assert.ok(checkPlacement(hi).errors.some((e) => /new-lead/.test(e.message)));
+    const gu: PlacementDraft = { ...withMessages(["Wishing you a bright season ahead."]), languages: ["gu"], i18n: { gu: { messages: ["અમારા પરિવારમાં આપનું સ્વાગત છે."], statics: {} } } };
+    assert.ok(checkPlacement(gu).errors.some((e) => /new-lead/.test(e.message)));
+  });
+});
+
+describe("normalizeDraft and nextVersion", () => {
+  const base = (): PlacementDraft => draft(["company_name", "greeting", "occasion_title"]);
+  test("an English-only design is stored exactly as it always was", () => {
+    const d = { ...base(), languages: [] as ("hi" | "gu")[], i18n: { hi: { messages: ["x"], statics: {} } } };
+    const n = normalizeDraft(d);
+    assert.equal("languages" in n, false);
+    assert.equal("i18n" in n, false);
+    assert.deepEqual(Object.keys(n).sort(), ["canvas", "fields", "messages", "name", "occasion"]);
+  });
+  test("languages come out in their fixed order, once each; undeclared content and unplaced fixed text are dropped", () => {
+    const d: PlacementDraft = {
+      ...base(),
+      languages: ["gu", "hi", "gu"],
+      i18n: { hi: { messages: ["एक"], statics: { occasion_title: "शुभ", eyebrow: "stray" } }, gu: { messages: ["એક"], statics: { occasion_title: "શુભ" } } },
+    };
+    const n = normalizeDraft(d);
+    assert.deepEqual(n.languages, ["hi", "gu"]);
+    assert.deepEqual(n.i18n!.hi!.statics, { occasion_title: "शुभ" }, "the placed headline is kept, the unplaced eyebrow is not");
+    const gone = normalizeDraft({ ...d, languages: ["hi"] });
+    assert.deepEqual(Object.keys(gone.i18n ?? {}), ["hi"]);
+  });
+  test("messages are kept only where a message field is placed", () => {
+    const d: PlacementDraft = { ...draft(["company_name"]), languages: ["hi"], i18n: { hi: { messages: ["शुभकामनाएँ"], statics: {} } } };
+    assert.deepEqual(normalizeDraft(d).i18n!.hi!.messages, []);
+  });
+  test("a missing language entry becomes an empty one, never a gap", () => {
+    assert.deepEqual(normalizeDraft({ ...base(), languages: ["hi"] }).i18n, { hi: { messages: [], statics: {} } });
+  });
+  test("the number of fixed texts per language is capped when a placement is read", () => {
+    const many = Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`k${i}`, "x"]));
+    assert.equal(parsePlacement({ ...base(), languages: ["hi"], i18n: { hi: { messages: [], statics: many } } }).ok, false);
+    const ok = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${i}`, "x"]));
+    assert.equal(parsePlacement({ ...base(), languages: ["hi"], i18n: { hi: { messages: [], statics: ok } } }).ok, true);
+  });
+  test("the next version raises the patch number, and anything unreadable starts again at 1.0.1", () => {
+    assert.equal(nextVersion("1.0.0"), "1.0.1");
+    assert.equal(nextVersion("1.2.9"), "1.2.10");
+    assert.equal(nextVersion("2.0.0"), "2.0.1");
+    assert.equal(nextVersion("banana"), "1.0.1");
   });
 });

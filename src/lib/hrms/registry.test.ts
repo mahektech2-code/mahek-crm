@@ -53,7 +53,7 @@ test("the grant migration moves every tab that used to be a screen onto the scre
   const sql = readFileSync("drizzle/0201_hrms_screens_merged.sql", "utf8");
   const pairs = new Map([...sql.matchAll(/\('hrms\.(\w+)', 'hrms\.(\w+)'\)/g)].map((m) => [m[1], m[2]]));
   /* The lists the simplification took out (Nov 2026) were moved by 0201 and
-     their rows deleted by 0327; every list still here that 0201 moved is on
+     their rows deleted by 0328; every list still here that 0201 moved is on
      the screen 0201 moved it to. */
   const removed = new Set(["checklist", "todos", "buddy", "templates", "salesPerf", "customers", "calling", "activity", "journey"]);
   const tabs = HRMS_TABS.filter((x) => x.tab.key !== x.screen.key);
@@ -69,7 +69,7 @@ test("the grant migration moves every tab that used to be a screen onto the scre
 });
 
 test("the simplification's migration removes exactly the screens that were taken out", () => {
-  const sql = readFileSync("drizzle/0327_hrms_simplified.sql", "utf8");
+  const sql = readFileSync("drizzle/0328_hrms_simplified.sql", "utf8");
   const gone = [...sql.matchAll(/'hrms\.(\w+)'/g)].map((m) => m[1]).sort();
   assert.deepEqual(gone, ["checklist", "customers", "myTasks"]);
   for (const k of gone) assert.ok(!HRMS_SCREENS.some((s) => s.key === k), `${k} is still a screen`);

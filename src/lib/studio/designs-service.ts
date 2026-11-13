@@ -5,11 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import type { Copy } from "./domain/copy";
+import { LANGUAGE_NAMES, type Language } from "./domain/language";
 import {
   MIN_SOURCE_WIDTH,
   PLACEABLE,
   buildManifest,
   canvasForSize,
+  declaredLanguages,
   checkPlacement,
   copyFromDraft,
   type PlacementCheck,
@@ -113,18 +115,18 @@ export function templateForDraft(input: { id: string; placement: PlacementDraft;
 
 const label = (key: string) => (key in PLACEABLE ? PLACEABLE[key as keyof typeof PLACEABLE].label : key.replaceAll("_", " "));
 
-async function renderCase(template: LoadedTemplate, stress: boolean): Promise<{ png?: Buffer; errors: string[]; shortened: string[] }> {
+async function renderCase(template: LoadedTemplate, stress: boolean, language: Language = "en"): Promise<{ png?: Buffer; errors: string[]; shortened: string[] }> {
   const m = template.manifest;
   const has = (k: string) => m.fields.some((f) => f.key === k);
   const base = sampleLead(template);
-  const longest = (template.copy.en ?? []).map((o) => o.text).sort((a, b) => b.length - a.length)[0];
+  const longest = (template.copy[language] ?? []).map((o) => o.text).sort((a, b) => b.length - a.length)[0];
   const lead = stress ? { ...base, contact: "Maheshwari Venkataraghavan Subramaniam", company: "Shri Maheshwari Venkataraghavan Industries Private Limited" } : base;
   const prepared = prepareRender({
     template,
     lead,
     user: SAMPLE_USER,
-    language: "en",
-    options: template.copy.en ?? [],
+    language,
+    options: template.copy[language] ?? [],
     variantId: undefined,
     showProduct: true,
     assetsDir: ASSETS_DIR,
@@ -137,7 +139,7 @@ async function renderCase(template: LoadedTemplate, stress: boolean): Promise<{ 
   if (!prepared.ok) return { errors: [prepared.error], shortened: [] };
   try {
     const result = await draftRenders.run(() =>
-      renderCreative({ template: { manifest: m, dir: template.dir, backgroundPath: template.backgroundPath }, values: prepared.data.values, language: "en", fonts: shippedRegistry().fonts.families }),
+      renderCreative({ template: { manifest: m, dir: template.dir, backgroundPath: template.backgroundPath }, values: prepared.data.values, language, fonts: shippedRegistry().fonts.families }),
     );
     return { png: result.image, errors: [], shortened: result.report.filter((r) => r.status === "shortened").map((r) => r.key) };
   } catch (e) {
@@ -158,12 +160,27 @@ export async function previewDraft(input: { id: string; placement: PlacementDraf
   const background = () => sharp(input.backgroundPath).png().toBuffer();
   const tpl = templateForDraft({ ...input, status: "draft", approvedBy: "preview" });
   if (!tpl.ok) return { png: await background(), check, render: { errors: [], warnings: [] } };
-  const sample = await renderCase(tpl.template, false);
-  const render = { errors: [...sample.errors], warnings: [] as string[] };
-  for (const k of sample.shortened) render.errors.push(`${label(k)}: even the sample text does not fit at the smallest size. Make the box larger or lower the smallest size.`);
+  /* EVERY declared language is drawn, first with the sample text and then with deliberately long names. The picture returned is the
+     English one; a problem in Hindi or Gujarati is an error named for that language, so a design that does not fit in a language it
+     declares can never be published. */
+  const langs = declaredLanguages(input.placement);
+  const named = (lang: Language, msg: string) => (lang === "en" ? msg : `${LANGUAGE_NAMES[lang]}: ${msg}`);
+  const tooBig = (k: string) => `${label(k)}: even the sample text does not fit at the smallest size. Make the box larger or lower the smallest size.`;
+  const sample = await renderCase(tpl.template, false, "en");
+  const render = { errors: [] as string[], warnings: [] as string[] };
+  for (const e of sample.errors) render.errors.push(e);
+  for (const k of sample.shortened) render.errors.push(tooBig(k));
+  for (const lang of langs.filter((l) => l !== "en")) {
+    const r = await renderCase(tpl.template, false, lang);
+    for (const e of r.errors) render.errors.push(named(lang, e));
+    for (const k of r.shortened) render.errors.push(named(lang, tooBig(k)));
+  }
   if (sample.png && render.errors.length === 0) {
-    const stress = await renderCase(tpl.template, true);
-    for (const k of stress.shortened) render.warnings.push(`${label(k)}: a very long value would be shortened with "...". Make the box larger if that matters.`);
+    for (const lang of langs) {
+      const stress = await renderCase(tpl.template, true, lang);
+      for (const e of stress.errors) render.errors.push(named(lang, e));
+      for (const k of stress.shortened) render.warnings.push(named(lang, `${label(k)}: a very long value would be shortened with "...". Make the box larger if that matters.`));
+    }
   }
   return { png: sample.png ?? (await background()), check, render };
 }

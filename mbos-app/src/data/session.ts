@@ -179,7 +179,11 @@ async function signInOnce(args: Parameters<typeof signIn>[0]): Promise<LoginOutc
    * A DIFFERENT PERSON ON THIS PHONE, asked before the server is.
    *
    * Asking the server first re-binds the handset to the new person, and then
-   * the last person could not get back in to send what they left behind.
+   * the last person could not get back in to send what they left behind. A
+   * number that merely differs from last time is NOT a different person —
+   * the work number and the HRMS personal mobile name one account — so that
+   * case is sent with `handover`, and the server refuses a genuinely
+   * different person after checking the credential and before binding.
    */
   const previous = await lastUser();
   const before = handoverVerdict({ last: previous, mobile: args.mobile, unsent: await unsentWork() });
@@ -189,7 +193,12 @@ async function signInOnce(args: Parameters<typeof signIn>[0]): Promise<LoginOutc
 
   let out: Awaited<ReturnType<typeof api.login>>;
   try {
-    out = await api.login({ mobile: args.mobile, password: args.password, otp: args.otp });
+    out = await api.login({
+      mobile: args.mobile,
+      password: args.password,
+      otp: args.otp,
+      handover: before.kind === 'ask-server' ? { lastUserId: before.lastUserId, unsent: before.unsent } : undefined,
+    });
   } catch (e) {
     /*
      * A server that answered and refused is a real refusal — do not fall back
@@ -197,6 +206,9 @@ async function signInOnce(args: Parameters<typeof signIn>[0]): Promise<LoginOutc
      * `ApiError` is by definition an answer, so ANY of them stops here, and
      * the server's own `step` says where on the screen it belongs.
      */
+    if (e instanceof ApiError && e.step === 'handover_pending' && before.kind === 'ask-server') {
+      return { ok: false, step: 'status', message: handoverRefusal(before.unsent, previous?.name ?? '') };
+    }
     if (e instanceof ApiError) {
       return { ok: false, step: loginStepFor(e.step), message: e.message };
     }
