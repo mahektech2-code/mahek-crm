@@ -1932,6 +1932,16 @@ export const SETTINGS = [
     default: ["no_order"],
   },
 
+  /* ----------------------------------------------------------------- studio */
+  {
+    key: "studio.publishImmediately",
+    type: "boolean",
+    category: "attachments",
+    label: "Studio: publish templates immediately",
+    description:
+      "On: whoever uploads a poster template publishes it to everybody in the Studio the moment every check passes — the artwork fits, every language it declares has its own wording and every one draws without overflow. Off: an uploaded template waits for somebody who approves designs, as before. Templates already published stay published either way.",
+    default: true,
+  },
   /* ----------------------------------------------------------- attachments */
   {
     key: "attachments.maxSizeMb",
@@ -6834,6 +6844,7 @@ export type Config = {
   "customers.defaultCreditDays": number;
   "customers.birthdayHeadsUpDays": number;
 
+  "studio.publishImmediately": boolean;
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];
   "attachments.maxPerComplaint": number;
