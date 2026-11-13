@@ -523,7 +523,15 @@ export type SessionUser = {
  * his whole book from the same request that authenticated him, rather than
  * authenticating and then failing to fetch anything.
  */
-export async function login(args: { mobile: string; password?: string; otp?: string }): Promise<{
+export async function login(args: {
+  mobile: string;
+  password?: string;
+  otp?: string;
+  /** Sent where the typed number differs from the last person's and their
+      work is still waiting: the server refuses a different account before
+      it binds this phone. See `handoverVerdict`. */
+  handover?: { lastUserId: string; unsent: number };
+}): Promise<{
   accessToken: string;
   refreshToken: string;
   bootstrap: PullPayload & { user: SessionUser };

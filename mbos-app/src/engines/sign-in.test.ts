@@ -76,9 +76,21 @@ test('the same person is recognised by account id once the server has named it',
   assert.equal(handoverVerdict({ last, userId: 'u1', mobile: 'mahesh@mahek.in', unsent: 4 }).kind, 'same-person');
 });
 
+test('a different number with work waiting is a question for the server, never a refusal', () => {
+  /* Prakash signed in on his work number and came back on his personal mobile:
+     the phone cannot tell that is him, so it must not tell him it is not. */
+  const last = { userId: 'u1', mobile: '9820011007', name: 'Mahesh' };
+  assert.deepEqual(handoverVerdict({ last, mobile: '9820011008', unsent: 3 }), {
+    kind: 'ask-server',
+    unsent: 3,
+    lastUserId: 'u1',
+  });
+  assert.equal(handoverVerdict({ last, mobile: 'mahesh@mahek.in', unsent: 3 }).kind, 'ask-server');
+});
+
 test("a different person is refused while the last person's work is waiting", () => {
   const last = { userId: 'u1', mobile: '9820011007', name: 'Mahesh' };
-  const v = handoverVerdict({ last, mobile: '9820011008', unsent: 3 });
+  const v = handoverVerdict({ last, userId: 'u2', unsent: 3 });
   assert.deepEqual(v, { kind: 'refuse', unsent: 3, lastName: 'Mahesh' });
   const msg = handoverRefusal(3, 'Mahesh');
   assert.match(msg, /3 entries from Mahesh/);

@@ -192,6 +192,8 @@ export async function mbosLogin(input: {
   deviceLabel?: string;
   platform?: string;
   appVersion?: string;
+  /** The account whose unsent work is still on this handset. */
+  handoverFrom?: string;
 }): Promise<LoginOutcome> {
   if (!signingKeyPresent()) {
     return {
@@ -222,6 +224,25 @@ export async function mbosLogin(input: {
     return { ok: false, status, step: checks.step, error: checks.error };
   }
   const user = checks.user;
+
+  /*
+   * SOMEBODY ELSE'S WORK IS STILL ON THIS PHONE.
+   *
+   * The handset sends this when the number typed differs from the last
+   * person's — which is often the SAME person on another of their numbers, so
+   * it cannot refuse on its own. Settled here, after the credential and before
+   * the binding: binding first would tie the phone to the new person and lock
+   * the last one out of sending what they left behind.
+   */
+  if (input.handoverFrom && input.handoverFrom !== user.id) {
+    return {
+      ok: false,
+      status: 409,
+      step: "handover_pending",
+      error:
+        "This phone still has work from the last person who signed in that has not reached the office. They must sign in here once, with signal, before anyone else can use this phone.",
+    };
+  }
 
   /* Device binding — one active handset per person. */
   const device = await checkDeviceBinding(user.id, input.deviceId);
