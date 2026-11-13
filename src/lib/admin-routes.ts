@@ -73,6 +73,7 @@ export const ADMIN_TABS = {
     { slug: "hr", label: "HR" },
     { slug: "tasks", label: "Tasks" },
     { slug: "studio", label: "Studio" },
+    { slug: "locker", label: "Locker" },
     { slug: "access", label: "People & access" },
     { slug: "settings", label: "Settings & catalogue" },
     { slug: "signin", label: "Sign-ins" },

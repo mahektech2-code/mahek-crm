@@ -24,6 +24,7 @@ export const APP_IDS = [
   "factory",
   "tasks",
   "studio",
+  "locker",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -321,6 +322,23 @@ export const APPS: AppDefinition[] = [
     description:
       "Festival and promotional posters for your leads and customers — their name, their company, an approved greeting, ready to download or send on WhatsApp.",
     href: "/studio",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "locker",
+    /*
+     * The company's licences, policies, contracts, subscriptions and company
+     * records — each with an end date, an owner and a reminder schedule — and
+     * the vault of passwords and keys that run them. Rules in
+     * lib/locker/engine.ts; reads in lib/locker/service.ts; writes in
+     * lib/actions/locker.ts.
+     */
+    name: "Locker",
+    initials: "LK",
+    description:
+      "Every licence, policy, contract and subscription with its end date and owner, and the vault of company passwords and keys.",
+    href: "/locker",
     tone: "neutral",
     built: true,
   },

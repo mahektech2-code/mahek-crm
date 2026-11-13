@@ -1100,6 +1100,43 @@ export const APP_MODULES: AppModule[] = [
     offByDefault: true,
     note: "Publishing somebody's uploaded design to everybody holding the Studio. An approved design can never be edited again.",
   },
+  /*
+   * LOCKER is the design's own sidebar, one module per entry: each register
+   * category can be given or withheld on its own (the fleet manager holds
+   * Vehicles and Insurance), and the vault and admin screens start unticked —
+   * a whole-Locker grant must not hand out the company's passwords.
+   */
+  { key: "locker.dashboard", app: "locker", label: "Dashboard", group: "Overview", href: "/locker", exact: true, note: "What needs attention, most serious first." },
+  { key: "locker.calendar", app: "locker", label: "Calendar", group: "Overview", href: "/locker/calendar", note: "Every end date on a month grid and a year timeline." },
+  { key: "locker.risk", app: "locker", label: "Risk", group: "Overview", href: "/locker/risk", note: "Unowned assets, personal sign-in accounts and the other hidden risks." },
+  { key: "locker.myassets", app: "locker", label: "My assets", group: "My work", href: "/locker/my-assets", note: "Everything they are primary or backup owner of." },
+  { key: "locker.renewals", app: "locker", label: "Renewals", group: "My work", href: "/locker/renewals", note: "Their renewals due and under way." },
+  { key: "locker.approvals", app: "locker", label: "Approvals", group: "My work", href: "/locker/approvals", note: "Approving restricted password reveals and emergency access." },
+  { key: "locker.assets", app: "locker", label: "All assets", group: "Register", href: "/locker/assets", note: "The whole register across every category they hold." },
+  { key: "locker.cat.statutory", app: "locker", label: "Legal", group: "Register", href: "/locker/assets/c/statutory", note: "Legal and government registrations, and quality certificates." },
+  { key: "locker.cat.hazardous", app: "locker", label: "Hazardous", group: "Register", href: "/locker/assets/c/hazardous", note: "Licences for storing and handling flammable solvents." },
+  { key: "locker.cat.insurance", app: "locker", label: "Insurance", group: "Register", href: "/locker/assets/c/insurance", note: "The insurance part of the register." },
+  { key: "locker.cat.vehicles", app: "locker", label: "Vehicles", group: "Register", href: "/locker/assets/c/vehicles", note: "The vehicles part of the register." },
+  { key: "locker.cat.property", app: "locker", label: "Property", group: "Register", href: "/locker/assets/c/property", note: "The property part of the register." },
+  { key: "locker.cat.contracts", app: "locker", label: "Contracts", group: "Register", href: "/locker/assets/c/contracts", note: "The contracts part of the register." },
+  { key: "locker.cat.ip", app: "locker", label: "Brands", group: "Register", href: "/locker/assets/c/ip", note: "The brands part of the register." },
+  { key: "locker.cat.banking", app: "locker", label: "Banking", group: "Register", href: "/locker/assets/c/banking", note: "The banking part of the register." },
+  { key: "locker.cat.digital", app: "locker", label: "Digital", group: "Register", href: "/locker/assets/c/digital", note: "Domains, hosting and subscriptions, and software licences." },
+  { key: "locker.cat.corporate", app: "locker", label: "Company records", group: "Register", href: "/locker/assets/c/corporate", note: "The company records part of the register." },
+  { key: "locker.credentials", app: "locker", label: "Passwords & keys", group: "Vault", href: "/locker/vault", offByDefault: true, note: "The vault itself. Revealing anything still needs a reason, and a second person for a restricted one." },
+  { key: "locker.identities", app: "locker", label: "Sign-in accounts", group: "Vault", href: "/locker/vault/accounts", offByDefault: true, note: "The mailboxes and accounts other logins sign in through." },
+  { key: "locker.providers", app: "locker", label: "Providers", group: "Vault", href: "/locker/vault/providers", offByDefault: true, note: "Every outside service, with its logins and what it costs." },
+  { key: "locker.graph", app: "locker", label: "Connections", group: "Vault", href: "/locker/vault/connections", offByDefault: true, note: "What breaks if one sign-in account is lost." },
+  { key: "locker.rotation", app: "locker", label: "Change due", group: "Vault", href: "/locker/vault/change-due", offByDefault: true, note: "Passwords older than their tier allows." },
+  { key: "locker.offboard", app: "locker", label: "Offboard", group: "Operations", href: "/locker/offboard", offByDefault: true, note: "Handing over a leaver's assets, passwords and accounts." },
+  { key: "locker.review", app: "locker", label: "Access review", group: "Operations", href: "/locker/review", offByDefault: true, note: "The quarterly review of who holds what in the Locker." },
+  { key: "locker.costs", app: "locker", label: "Costs", group: "Operations", href: "/locker/costs", note: "What renewals and subscriptions cost, by month and category." },
+  { key: "locker.audit", app: "locker", label: "Audit", group: "Operations", href: "/locker/audit", note: "Every change, reveal and approval in the Locker." },
+  { key: "locker.types", app: "locker", label: "Types", group: "Admin", href: "/locker/admin/types", offByDefault: true, note: "Asset types: how long each lasts, how early to renew, what it needs." },
+  { key: "locker.ladders", app: "locker", label: "Reminders", group: "Admin", href: "/locker/admin/reminders", offByDefault: true, note: "The reminder schedule for each importance." },
+  { key: "locker.entities", app: "locker", label: "Companies", group: "Admin", href: "/locker/admin/companies", offByDefault: true, note: "The group's companies and sites." },
+  { key: "locker.access", app: "locker", label: "Access", group: "Admin", href: "/locker/admin/access", offByDefault: true, note: "Who holds which part of the Locker." },
+  { key: "locker.settings", app: "locker", label: "Security", group: "Admin", href: "/locker/admin/security", offByDefault: true, note: "How long a reveal stays on screen, who must approve, and how often passwords change." },
   {
     key: "docs.app",
     app: "docs",

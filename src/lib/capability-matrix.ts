@@ -827,6 +827,11 @@ export const MATRIX: Record<AppId, AppMatrix> = {
      design is the `studio.approve` module, ticked on the Access screen. What a
      poster may be made FOR is scope — a person's own book, or their team's. */
   studio: { associate: [], manager: [] },
+  /* The Locker decides by MODULE: each screen in its sidebar — every register
+     category, every vault screen — is a module ticked on the Access screen,
+     which is the design's own "tabs a person holds". Revealing a password is
+     the vault module plus a reason, and a second person for a restricted one. */
+  locker: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the
