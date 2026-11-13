@@ -388,7 +388,7 @@ function DayDoneCard() {
     <>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-[22px] font-bold">Good work today, {w.state.name.split(" ")[0]}</h1>
+          <h1 className="text-[22px] font-bold">Your day is done, {w.state.name.split(" ")[0]}</h1>
           <p className="mt-1 text-[14px] text-muted">Punched out at {at(last?.out)}</p>
         </div>
         {v ? <VerdictPill v={v} /> : null}

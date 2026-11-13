@@ -121,6 +121,22 @@ export async function requireUser(): Promise<User> {
 }
 
 /**
+ * `requireUser` for an action that only READS — the header's polls (the
+ * feedback summary, the tasks tray). The workday lock refuses saves, not a
+ * badge count: refusing these would throw in every open tab every few seconds
+ * while somebody is on a break, and save nothing by doing it.
+ */
+export async function requireReader(): Promise<User> {
+  const user = await getCurrentUser();
+  if (!user) {
+    const { redirect } = await import("next/navigation");
+    redirect("/login");
+    throw new Error("unreachable");
+  }
+  return user;
+}
+
+/**
  * THE WORKDAY LOCK, ON THE SERVER. A lock drawn only on the screen is a curtain
  * anybody can open by typing a URL, so a SERVER ACTION — every save in
  * MahekOne — is refused while somebody is locked out (before punching in, on a
