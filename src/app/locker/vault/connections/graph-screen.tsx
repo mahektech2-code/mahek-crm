@@ -1,5 +1,6 @@
 "use client";
 
+import { CardGrid } from "@/components/ui/card-grid";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { exportBackupPlan } from "@/lib/actions/locker-vault";
@@ -154,7 +155,8 @@ export function GraphScreen({ identities, creds, links, initial }: { identities:
           {E.length > shown.length ? <span>+{E.length - shown.length} more not drawn — see the risk list</span> : null}
         </div>
       </div>
-      <div style={{ gridColumn: 2, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 16, alignItems: "start" }}>
+      <div style={{ gridColumn: 2 }}>
+        <CardGrid min={280} className="items-start">
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ background: "#FFFFFF", border: `1px solid ${C.v100}`, borderRadius: 6, overflow: "hidden" }}>
             <div style={{ padding: "12px 16px", background: C.v50, borderBottom: `1px solid ${C.v100}` }}>
@@ -217,6 +219,7 @@ export function GraphScreen({ identities, creds, links, initial }: { identities:
             </div>
           </div>
         ) : null}
+      </CardGrid>
       </div>
     </div>
   );

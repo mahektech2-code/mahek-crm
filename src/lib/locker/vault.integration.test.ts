@@ -7,7 +7,7 @@
  * emergency access is never self-approved; offboarding cannot be signed off
  * with open tasks; the audit chain finds an altered row.
  *
- * Runs ONLY against mahekone_locker_test (see the `before`).
+ * Runs ONLY against a test database, mahekone_test or a private mahekone_locker_test (see the `before`).
  */
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -40,7 +40,7 @@ let admin: User, rahul: User, meera: User, auditor: User;
 let restrictedId: string, sensitiveId: string;
 
 before(() => {
-  assert.match(process.env.DATABASE_URL ?? "", /mahekone_locker_test/, "Runs only against mahekone_locker_test.");
+  assert.match(process.env.DATABASE_URL ?? "", /mahekone(_locker)?_test/, "Runs only against a test database — `npm run test:db` first.");
 });
 
 beforeEach(async () => {
