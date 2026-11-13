@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsAttendance, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsSalaries } from "@/db/schema";
+import { hrmsAttendance, hrmsExpenses, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsSalaries } from "@/db/schema";
 import { decidesLeave, type HrmsContext } from "./access";
 import { today } from "./server";
 import { LEAVE_WAITING } from "./values";
@@ -24,10 +24,11 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
       db.select({ n: count }).from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me), isNull(hrmsAttendance.checkOut), lt(hrmsAttendance.date, today())))
         .then((r) => void (out.pendingOut = n(r))),
     );
+  const team = [...ctx.team].filter((id) => id !== me);
+  const managesTeam = ctx.level === "manager" && !ctx.administrator && team.length > 0;
   if (ctx.screens.has("approvals") && decidesLeave(ctx)) {
     /* A manager is counted their team's requests only — the ones they decide. */
     const wide = ctx.administrator || ctx.granted.has("approveLeave");
-    const team = [...ctx.team].filter((id) => id !== me);
     if (wide || team.length)
       jobs.push(
         db
@@ -37,8 +38,20 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
           .then((r) => void (out.approvals = n(r))),
       );
   }
+  /* A manager without the resolve power is counted their team's help requests
+     and unverified expense claims — the ones they may act on. */
   if (ctx.screens.has("help") && ctx.powers.has("resolve"))
     jobs.push(db.select({ n: count }).from(hrmsHelp).where(eq(hrmsHelp.status, "Pending")).then((r) => void (out.help = n(r))));
+  else if (ctx.screens.has("help") && managesTeam)
+    jobs.push(
+      db.select({ n: count }).from(hrmsHelp).where(and(eq(hrmsHelp.status, "Pending"), inArray(hrmsHelp.employeeId, team)))
+        .then((r) => void (out.help = n(r))),
+    );
+  if (ctx.screens.has("expenses") && !ctx.powers.has("verifyExp") && managesTeam)
+    jobs.push(
+      db.select({ n: count }).from(hrmsExpenses).where(and(sql`${hrmsExpenses.verify} <> 'Verified'`, inArray(hrmsExpenses.employeeId, team)))
+        .then((r) => void (out.expenses = n(r))),
+    );
   if (ctx.screens.has("grievances") && ctx.powers.has("resolve"))
     jobs.push(db.select({ n: count }).from(hrmsGrievances).where(eq(hrmsGrievances.status, "Pending")).then((r) => void (out.grievances = n(r))));
   /* Somebody a grievance is addressed to answers it too: the home page said

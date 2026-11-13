@@ -3,9 +3,7 @@ import type { HrmsScreenModule } from "../server";
 import { ATTENDANCE_SCREENS } from "./attendance";
 import { LEAVE_SCREENS } from "./leave";
 import { PAY_SCREENS } from "./pay";
-import { TASKS_SCREENS } from "./tasks";
 import { PERF_SCREENS } from "./perf";
-import { SALES_SCREENS } from "./sales";
 import { PEOPLE_SCREENS } from "./people";
 import { MISC_SCREENS } from "./misc";
 
@@ -18,9 +16,7 @@ const ALL: HrmsScreenModule[] = [
   ...ATTENDANCE_SCREENS,
   ...LEAVE_SCREENS,
   ...PAY_SCREENS,
-  ...TASKS_SCREENS,
   ...PERF_SCREENS,
-  ...SALES_SCREENS,
   ...PEOPLE_SCREENS,
   ...MISC_SCREENS,
 ];

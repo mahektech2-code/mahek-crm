@@ -1264,8 +1264,8 @@ export const REMOVED_MODULES: Readonly<Record<string, AppId>> = {
 };
 
 /**
- * Modules a holder of the app reaches WHATEVER was ticked — HRMS's check-in
- * screen, the ERP's dashboard and settings. Their own apps enforce this
+ * Modules a holder of the app reaches WHATEVER was ticked — HRMS's Home and
+ * Feedback, the ERP's dashboard and settings. Their own apps enforce this
  * (`lib/hrms/access.ts`, `lib/erp/access.ts`); it is read here so the Access
  * screen can draw them as always on instead of as a checkbox that does
  * nothing when unticked, which is the one kind of control that teaches people
@@ -1449,7 +1449,7 @@ export function moduleAllowed(
      administrator bypass either. */
   if (getModule(key)?.explicitOnly) return forApp.includes(key);
   /* Always open is always open, whatever was ticked (a person's own tasks,
-     HRMS's check-in, the ERP's dashboard and settings). */
+     HRMS's Home, the ERP's dashboard and settings). */
   if (ALWAYS_OPEN_MODULES.has(key)) return true;
   /* A write level is a narrowing of its screen, never a way onto it: a row
      for the companion beside no row for the screen opens nothing. */

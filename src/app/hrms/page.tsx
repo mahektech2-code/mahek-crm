@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsAttendance, hrmsGrievances, hrmsHelp, hrmsLeaveRequests } from "@/db/schema";
+import { hrmsAttendance, hrmsExpenses, hrmsGrievances, hrmsHelp, hrmsLeaveRequests } from "@/db/schema";
 import { decidesLeave, hrmsContext, scopeOf } from "@/lib/hrms/access";
 import { checkInState } from "@/lib/hrms/check-in-state";
 import { approvedLeave, attendanceRows } from "@/lib/hrms/services/attendance";
@@ -13,6 +13,7 @@ import { longDate } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
 import { HIcon } from "./_ui/icons";
+import { LauncherCheckIn } from "@/components/checkin/launcher-check-in";
 import { LEAVE_WAITING } from "@/lib/hrms/values";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +25,11 @@ type WaitItem = { l: string; v: string; sub: string; tone: Tone; href: string };
 const DOT: Record<Tone, string> = { danger: "bg-danger", warn: "bg-warn", brand: "bg-brand", success: "bg-success", neutral: "bg-muted" };
 
 /**
- * HOME, by role (Nov 2026). Checking in moved to the MahekOne launcher, so
- * Home no longer carries the button: it says where today stands and links to
- * the launcher's check-in. An ASSOCIATE sees their own month; a MANAGER their
+ * HOME, by role (Nov 2026). Checking in lives on the MahekOne launcher, and
+ * somebody whose only app is HRMS never sees the launcher (one app opens
+ * straight into it) — so Home draws the SAME strip and dialog, which opens by
+ * itself once a day exactly as the launcher's does (one remembered key, so
+ * nobody holding both is asked twice). An ASSOCIATE sees their own month; a MANAGER their
  * team today; the HR TEAM the whole company today. Under it, what is waiting
  * on this person — only items they can act on, each linking to its screen.
  */
@@ -102,6 +105,16 @@ export default async function HrmsHome() {
     const n = markableStaff(ctx, people, ctx.powers.has("hr") || ctx.administrator).filter((p) => !marked.has(p.id)).length;
     if (n) wait.push({ l: "Staff not yet marked today", v: String(n), sub: "Field and other staff of your office", tone: "warn", href: hrmsLink("attendance") });
   }
+  const team = [...ctx.team].filter((id) => id !== me?.id);
+  const managesTeam = ctx.level === "manager" && !ctx.administrator && team.length > 0;
+  if (managesTeam && !ctx.powers.has("resolve") && ctx.screens.has("help")) {
+    const [h] = await db.select({ n: count }).from(hrmsHelp).where(and(eq(hrmsHelp.status, "Pending"), inArray(hrmsHelp.employeeId, team)));
+    if (h.n) wait.push({ l: "Your team’s help requests", v: String(h.n), sub: "", tone: "warn", href: hrmsLink("help", { scope: "team" }) });
+  }
+  if (managesTeam && !ctx.powers.has("verifyExp") && ctx.screens.has("expenses")) {
+    const [x] = await db.select({ n: count }).from(hrmsExpenses).where(and(sql`${hrmsExpenses.verify} <> 'Verified'`, inArray(hrmsExpenses.employeeId, team)));
+    if (x.n) wait.push({ l: "Your team’s expenses to verify", v: String(x.n), sub: "", tone: "warn", href: hrmsLink("expenses", { scope: "team" }) });
+  }
   if (ctx.powers.has("resolve")) {
     const [h] = await db.select({ n: count }).from(hrmsHelp).where(eq(hrmsHelp.status, "Pending"));
     if (h.n && ctx.screens.has("help")) wait.push({ l: "Help requests waiting", v: String(h.n), sub: "", tone: "warn", href: hrmsLink("help") });
@@ -111,15 +124,6 @@ export default async function HrmsHome() {
     const [g] = await db.select({ n: count }).from(hrmsGrievances).where(and(eq(hrmsGrievances.status, "Pending"), eq(hrmsGrievances.toEmployeeId, me.id)));
     if (g.n) wait.push({ l: "Grievances addressed to you", v: String(g.n), sub: "", tone: "warn", href: hrmsLink("grievances") });
   }
-
-  const d = state.today;
-  const dayLine = !state.linked
-    ? "Your account is not linked to an employee record yet. Ask HR to link it."
-    : !d
-      ? "You have not checked in today."
-      : d.out
-        ? `Checked in at ${d.in}, out at ${d.out} · ${d.worked} · ${d.workDay}`
-        : `Checked in at ${d.in}${state.office ? ` at ${state.office}` : ""}${d.late ? ` · ${d.late}` : ""}`;
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -136,23 +140,9 @@ export default async function HrmsHome() {
       </CardGrid>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <section className="rounded-[8px] border border-line bg-surface p-5">
-          <div className="text-[14px] font-semibold text-ink">Today</div>
-          <div className="mt-2 flex items-start gap-3">
-            <span className={cx("mt-1.5 size-2.5 flex-none rounded-full", d ? "bg-success" : "bg-warn")} />
-            <div className="min-w-0 flex-1 text-[14px] text-body">{dayLine}</div>
-          </div>
-          {state.official ? <div className="mt-2 text-[13px] text-muted">Office hours {state.official}</div> : null}
-          {state.linked && (!d || (!d.out && !d.field)) ? (
-            <Link
-              href="/apps?checkin=1"
-              className="mt-4 inline-flex h-9 items-center rounded-[7px] bg-brand px-4 text-[13px] font-semibold text-white no-underline hover:bg-brand-hover hover:no-underline"
-            >
-              {d ? "Check out on the launcher" : "Check in on the launcher"}
-            </Link>
-          ) : null}
-          <div className="mt-3 text-[12px] text-muted">Checking in and out happens on the MahekOne launcher, where you land after signing in.</div>
-        </section>
+        <div className="self-start">
+          <LauncherCheckIn state={state} canHelp={ctx.screens.has("help")} ask={false} />
+        </div>
 
         <section className="rounded-[8px] border border-line bg-surface p-5">
           <div className="text-[14px] font-semibold text-ink">Needs you</div>

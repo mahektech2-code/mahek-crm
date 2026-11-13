@@ -18,13 +18,6 @@ export const HRMS_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "hrms-document": () => import("./hrms-misc").then((m) => m.documentWithdrawImpact),
   "hrms-announcement": () => import("./hrms-misc").then((m) => m.announcementImpact),
 
-  /* HRMS → Sales desk: customers, calling, activity, journey planner, sales entry. */
-  "hrms-deactivation-request": () => import("./hrms-sales").then((m) => m.deactivationRequestImpact),
-  "hrms-calling-row": () => import("./hrms-sales").then((m) => m.callingRowImpact),
-  "hrms-activity": () => import("./hrms-sales").then((m) => m.activityImpact),
-  "hrms-journey": () => import("./hrms-sales").then((m) => m.journeyImpact),
-  "hrms-sales-entry": () => import("./hrms-sales").then((m) => m.salesEntryImpact),
-
   /* HRMS → Payroll, Advances, Expenses. */
   "hrms-salary": () => import("./hrms-pay").then((m) => m.salaryImpact),
   "hrms-advance": () => import("./hrms-pay").then((m) => m.advanceImpact),
@@ -38,12 +31,6 @@ export const HRMS_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "hrms-timing": () => import("./hrms-people").then((m) => m.timingImpact),
   "hrms-asset-lot": () => import("./hrms-people").then((m) => m.assetLotImpact),
   "hrms-asset-assignment": () => import("./hrms-people").then((m) => m.assetAssignmentImpact),
-
-  /* HRMS → Templates, Checklist, To-dos, Buddy tasks. */
-  "hrms-task-template": () => import("./hrms-tasks").then((m) => m.taskTemplateImpact),
-  "hrms-checklist-item": () => import("./hrms-tasks").then((m) => m.checklistItemImpact),
-  "hrms-todo": () => import("./hrms-tasks").then((m) => m.todoImpact),
-  "hrms-shared-task": () => import("./hrms-tasks").then((m) => m.sharedTaskImpact),
 
   /* Hire → a candidate's application withdrawn. */
   "hire-withdraw": () => import("./hire").then((m) => m.hireWithdrawImpact),

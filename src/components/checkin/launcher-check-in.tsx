@@ -11,7 +11,8 @@ import { CheckInPanel, type CheckInState } from "./check-in-panel";
  * launcher is where everybody lands after signing in, so the day starts there.
  * A strip says where the day stands and opens the dialog; the dialog opens by
  * itself on the first visit of a day nobody has checked in on, and a link with
- * `?checkin=1` (the HRMS Home's "Check in") opens it on purpose.
+ * `?checkin=1` opens it on purpose. HRMS Home draws this same strip, for
+ * somebody whose only app is HRMS and who therefore never sees the launcher.
  *
  * "Later" closes it until the next day, remembered per browser — a reminder,
  * never a gate: nothing in MahekOne waits on a check-in.

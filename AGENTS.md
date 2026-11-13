@@ -104,6 +104,8 @@ npm run hire:deploy  # Hire's install step (blueprints + admins) — runs on eve
 npm run hire:seed -- --demo --reset   # DEV: wipe Hire, load its staff and pipeline
 npm run report:qualification   # READ-ONLY: what the Telecaller-owned Qualification
                      # rules mean for the leads already in the book — writes nothing
+npm run report:hrms-managers   # READ-ONLY: every manager-level HRMS grant and the
+                     # size of the team it now sees — who should be HR team instead
 npm run catalogue:parse    # regenerate the product master from the document
 npm run catalogue:import -- --dry-run   # what the import would change
 npm run catalogue:import   # apply it — idempotent, re-runnable
@@ -6585,16 +6587,25 @@ on a screen or a tab; `hrmsContext` opens only the lists a gate lets through,
 and `holdsScreen` asks for a screen by its lists, because a screen key is a
 grant and not always a list (`kpi` — Performance — lost the daily sales entries
 it opened on and kept its key). `scopeOf` reads manager as TEAM now, where it
-read everybody. A manager decides leave by role through `decidesLeaveFor`
-(their team, never themself), checked in every leave handler; it adds nothing
-to `granted`, so it widens no list. Tasks, My tasks, the Sales desk and the
-daily sales entries were taken out at the client's request: no screen draws
-them and `hrmsContext` opens none of their keys, but their server modules and
-data are kept (`REMOVED` in the feature ledger), and `0328` deleted the module
-rows naming them. Checking in and out is the launcher's: `LauncherCheckIn`
-(`components/checkin/`) draws a strip and a dialog that opens once a day, the
-same `hrmsCheckIn`/`hrmsCheckOut` actions behind it, and the HRMS Home links
-to `/apps?checkin=1`. The shell wears the v4 frame (`data-v4-app="hrms"`).
+read everybody. A manager decides their team's leave (`decidesLeaveFor`),
+approves their team's help requests (`resolvesHelpFor`) and verifies their
+team's expense claims (`verifiesExpenseFor`) — never their own — all through
+`managesFor`, checked in every handler against the one row; it adds nothing to
+`granted`, so it widens no list, and grievances stay private. Tasks, My tasks,
+the Sales desk and the daily sales entries were taken out at the client's
+request and their server code DELETED; their tables and rows are kept, every
+handler is `retired` in the feature ledger's `MOVED`, and `0328` deleted the
+module rows naming them. The Performance score counts only what is still
+recorded: hours and punctuality for everybody, and a salesman's field-work and
+sales points only for a period with daily sales entries — a part with nothing
+behind it is left out, never scored 0 or 100. Checking in and out is the
+launcher's: `LauncherCheckIn` (`components/checkin/`) draws a strip and a
+dialog that opens once a day, the same `hrmsCheckIn`/`hrmsCheckOut` actions
+behind it — and HRMS Home draws the SAME strip, because somebody whose only app
+is HRMS goes straight into it and never sees the launcher (one remembered key,
+so nobody is asked twice). `npm run report:hrms-managers` lists every
+manager-level grant with the team it now sees. The shell wears the v4 frame
+(`data-v4-app="hrms"`).
 
 **THE HRMS IS FOURTEEN SCREENS, AND ITS OLD SCREENS ARE TABS.** The first
 build copied Mahek EMP 2.0 one AppSheet view at a time — 41 screens, the same
@@ -9693,7 +9704,7 @@ the old start on the route rather than adding a second.
 who owes it and `tasks.app` is where its work happens (`crm`, `accounts`…, or
 `tasks` for a personal one), so one row is on the Tasks app (`/tasks`) and on
 that app's own My tasks screen — TeleCRM's at `/crm/tasks` (module
-`crm.tasks`), Accounts', Sales', the ERP's, HRMS's and Founder's at
+`crm.tasks`), Accounts', Sales', the ERP's and Founder's at
 `/<app>/my-tasks`. Rules are pure in `lib/tasks/rules.ts`, reads in
 `lib/tasks/service.ts`, every write in `lib/actions/tasks.ts`; each action asks
 `taskDetail` — the answer the screen drew its buttons from — before it writes.
@@ -9824,7 +9835,7 @@ of the follow-up engine does not); a My tasks on the Factory phone app.
 
 **EVERY APP HAS ITS OWN MY TASKS, AND IT IS ALWAYS OPEN.** `APP_TASKS_PATH` in
 `lib/tasks/rules.ts` is where each lives — `/crm/tasks`, and `/<app>/my-tasks`
-for Accounts, Sales, ERP, HRMS and Founder, and for now no other app (`my-tasks`
+for Accounts, Sales, ERP and Founder, and for now no other app (`my-tasks`
 because Sales already had a `tasks` meaning something else). A NEW task or
 routine may be filed only under Personal or one of those apps (`canFileUnder`,
 `TASK_FILE_APPS`), on the pickers and in the actions; a task or routine filed
@@ -9832,8 +9843,8 @@ under Hire, Enquiries, Website or Factory earlier keeps its app and is seen in
 the Tasks app. Each is
 `AppTasksPage` for its app: the viewer's own tasks of that app plus personal
 ones (`shownInApp`), with what waits in other apps counted. Except TeleCRM's,
-every one is in `ALWAYS_OPEN_MODULES` — `<app>.my-tasks`, and `erp.myTasks` /
-`hrms.myTasks` from their registries — and
+every one is in `ALWAYS_OPEN_MODULES` — `<app>.my-tasks`, and `erp.myTasks`
+from its registry — and
 `moduleAllowed` now answers yes to an always-open module whatever was ticked,
 because a narrowed grant must never hide work somebody owes. Each is placed
 last in its app's order so the "first screen they hold" landing never lands

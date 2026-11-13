@@ -90,7 +90,29 @@ export type Destination =
  * handler with no entry here must still exist under the same screen, kind and
  * id — the test checks it.
  */
-export const MOVED: Partial<Record<HandlerRef, Destination>> = {};
+/* The screens taken out of the HRMS (Nov 2026), whose server code was then
+   deleted. Their tables and rows stay; every handler they had is retired here
+   with the reason, so the baseline still accounts for it. */
+const RETIRED_SCREENS: Record<string, string> = {
+  templates: "Task templates were taken out of the HRMS with the rest of Tasks; the Tasks app does routines now",
+  checklist: "The daily checklist was taken out of the HRMS with the rest of Tasks; the Tasks app does it now",
+  todos: "To-dos were taken out of the HRMS with the rest of Tasks; the Tasks app does them now",
+  buddy: "Buddy tasks were taken out of the HRMS with the rest of Tasks; the Tasks app does them now",
+  kpi: "Daily sales entries were taken out of the HRMS; the field app and the CRM record the work now",
+  salesPerf: "The daily sales score was taken out of the HRMS with the daily sales entries",
+  customers: "The HRMS Sales desk was taken out; customers are worked in the CRM and the field app",
+  calling: "The HRMS Sales desk was taken out; calling is the CRM's Call Log",
+  activity: "The HRMS Sales desk was taken out; field activity is recorded on the field app",
+  journey: "The HRMS Sales desk was taken out; journeys are planned on the Sales Dashboard",
+};
+
+const KINDS_IN_LEDGER = ["actions", "bulk", "forms", "formLoaders", "tools"] as const;
+
+export const MOVED: Partial<Record<HandlerRef, Destination>> = Object.fromEntries(
+  Object.entries(RETIRED_SCREENS).flatMap(([key, why]) =>
+    KINDS_IN_LEDGER.flatMap((kind) => (BASELINE[key]?.[kind] ?? []).map((id) => [`${key}.${kind}.${id}`, { retired: why }] as const)),
+  ),
+);
 
 /**
  * Handlers that did not exist before the restructure. Recorded so a new door
@@ -131,9 +153,11 @@ export const FEATURES: Record<string, Feature> = {
   dayFigures: { what: "Worked time, late, percentage of target, full or half day", file: "src/lib/hrms/engines/attendance.ts", marker: "export function dayFigures" },
   homeCard: { what: "The check-in panel: timing, office, worked-so-far bar, late and day result — on the launcher now", file: "src/components/checkin/check-in-panel.tsx", marker: "export function CheckInPanel" },
   launcherCheckIn: { what: "Checking in moved to the MahekOne launcher: a strip, and a dialog that opens once a day", file: "src/components/checkin/launcher-check-in.tsx", marker: "export function LauncherCheckIn" },
+  homeCheckIn: { what: "HRMS Home draws the launcher's check-in strip and dialog, for staff whose only app is HRMS", file: "src/app/hrms/page.tsx", marker: "<LauncherCheckIn" },
   homeWaiting: { what: "Home by role, and “Needs you”: check-outs, leave to decide, staff to mark or check out, help and grievances", file: "src/app/hrms/page.tsx", marker: "wait.push" },
   roles: { what: "Three roles — associate, manager, HR team — open the tabs that are theirs", file: "src/lib/hrms/registry.ts", marker: "export function gateOpen" },
   managerLeave: { what: "A manager decides their own team's leave, checked on the server", file: "src/lib/hrms/access.ts", marker: "export function decidesLeaveFor" },
+  managerHelpExpenses: { what: "A manager approves their team's help requests and verifies their team's expenses, never their own", file: "src/lib/hrms/access.ts", marker: "export function managesFor" },
   officeQrPrint: { what: "A printable QR code per office", file: "src/app/hrms/offices/[id]/qr/page.tsx", marker: "qrSvgPath" },
   qrEncoder: { what: "The in-house QR encoder", file: "src/lib/hrms/qr.ts", marker: "export function encodeQr" },
 
@@ -152,7 +176,7 @@ export const FEATURES: Record<string, Feature> = {
 
 
   /* ---------------------------------------------------------- performance */
-  staffMonth: { what: "Monthly staff performance: hours, punctuality, tasks, to-dos, buddy tasks", file: "src/lib/hrms/engines/performance.ts", marker: "export function staffMonth" },
+  staffMonth: { what: "Monthly staff performance: hours and punctuality, and the field-work score where daily sales entries exist", file: "src/lib/hrms/engines/performance.ts", marker: "export function staffMonth" },
   points: { what: "Period performance points by kind of job", file: "src/lib/hrms/engines/performance.ts", marker: "export function performancePoints" },
   employeeOfMonth: { what: "Employee of the month at the configured mark", file: "src/lib/hrms/engines/performance.ts", marker: "export const isEmployeeOfMonth" },
   reviewPdf: { what: "The period review PDF", file: "src/app/api/hrms/performance-report/route.ts", marker: "export async function GET" },

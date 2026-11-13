@@ -191,6 +191,22 @@ export function decidesLeaveFor(ctx: HrmsContext, employeeId: string): boolean {
   return ctx.level === "manager" && employeeId !== ctx.employee?.id && ctx.team.has(employeeId);
 }
 
+/**
+ * A MANAGER ACTS ON THEIR TEAM'S REQUESTS, never their own (Nov 2026) — the
+ * leave rule above, said once for the other things a manager answers: help
+ * requests and expense claims. It sits in no power and widens no list; the
+ * handler asks it of the one row it is about.
+ */
+export function managesFor(ctx: HrmsContext, employeeId: string): boolean {
+  return ctx.level === "manager" && !ctx.administrator && employeeId !== ctx.employee?.id && ctx.team.has(employeeId);
+}
+
+/** Approving a help request: the resolve power for anybody's, a manager for their team's. */
+export const resolvesHelpFor = (ctx: HrmsContext, employeeId: string) => has(ctx, "resolve") || managesFor(ctx, employeeId);
+
+/** Verifying an expense: the verify power for anybody's, a manager for their team's. */
+export const verifiesExpenseFor = (ctx: HrmsContext, employeeId: string) => has(ctx, "verifyExp") || managesFor(ctx, employeeId);
+
 /** Whether this person decides any leave at all: the approver's buttons and badge. */
 export const decidesLeave = (ctx: HrmsContext) => ctx.administrator || ctx.granted.has("approveLeave") || ctx.level === "manager";
 
