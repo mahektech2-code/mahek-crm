@@ -5,11 +5,11 @@ import { attachments, customers, erpTransports, erpVideos, users } from "@/db/sc
 import { err, fieldErr, okVoid } from "@/lib/result";
 import { bindErpFiles } from "../attachments";
 import { erpAudit, erpId, multi, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import type { ActionSpec, BulkSpec, CellValue, ColSpec, ListRow } from "../ui";
+import type { ActionSpec, CellValue, ColSpec, ListRow } from "../ui";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { type Col, has, isErpManager, today } from "./common";
-import { countLines, detailRows, EXTRA_EXPENSE_PROMPT, type LineFilter, monthlySalesFor, setExtraExpenses } from "./sales";
+import { monthlySalesFor } from "./sales";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
 import { tooWide, unscoped, windowWhere } from "../window";
@@ -225,61 +225,6 @@ function transportList(scope: TransportScope, key: string = scope): ScreenModule
   };
 }
 
-/**
- * Paid-freight detail lines still without their extra expense (spec §12.1
- * "Transportation Paid"), by dispatch date. A window, because the history
- * copied in from the sheet never had this step and must not read as a backlog.
- */
-const FREIGHT_WINDOW = { label: "Dispatch date", default: REGISTER_DEFAULT } as const;
-
-const paidFreight: ScreenModule = {
-  key: "paidFreight",
-  window: FREIGHT_WINDOW,
-  async load(ctx, s) {
-    const sc = s ?? unscoped();
-    const f: LineFilter = sc.ids?.length ? { ids: sc.ids } : { window: { scope: sc, on: "dispatch" } };
-    const wide = sc.ids?.length ? null : tooWide(await countLines({ ...f, billed: true }), sc);
-    const { rows } = wide ? { rows: [] as Awaited<ReturnType<typeof detailRows>>["rows"] } : await detailRows(f);
-    const shown = rows.filter((r) => isPaidFreight(r.l.billing.freightTerm) && r.d.extraExpensesPaise == null);
-    /* The same gate Orders → Billing & dispatch puts on these columns. */
-    const { cols, hidden, hiddenKeys } = visibleCols(
-      [
-        { k: "party", l: "Billing party", t: "b" },
-        { k: "extra", l: "Extra expenses", t: "m" },
-        { k: "sku", l: "Description of goods", t: "t", w: 240 },
-        { k: "litres", l: "Litres", t: "n" },
-        { k: "payment", l: "Payment type", t: "s", pw: "viewCost" },
-        { k: "transporter", l: "Transporter", t: "t" },
-      ],
-      has(ctx),
-    );
-    const bulk: BulkSpec[] = [{ id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT }];
-    return {
-      spec: { screen: "paidFreight", cols, hidden, groups: ["transporter"],
-        agg: { k: "extra", l: "extra expenses" },
-        stats: [
-          { l: "Lines" },
-          { l: "Parties", kind: "distinct", k: "party" },
-          { l: "Transporters", kind: "distinct", k: "transporter" },
-          { l: "Litres", kind: "sum", k: "litres", u: "L" },
-        ],
-        filters: ["transporter", "party", "payment", "litres"],
-        bulk, noDataLine: "Every paid-freight line has its extra expense." },
-      tooWide: wide,
-      rows: shown.map((r) => ({
-        id: r.l.o.id,
-        v: withoutHidden({ party: r.l.billing.name, extra: r.d.extraExpensesPaise, sku: r.l.sku.name, litres: r.litres, payment: freightWord(r.l.billing.freightTerm), transporter: r.l.o.transporter ?? r.l.delivery.p?.transporter ?? "—" }, hiddenKeys),
-        flags: [],
-        title: `${r.l.billing.name} · order ${r.l.o.orderNo}`,
-        actions: [{ id: "extra", l: "Extra expenses", primary: true, prompt: EXTRA_EXPENSE_PROMPT }],
-      })),
-    };
-  },
-  actions: { extra: (ctx, id, v) => setExtraExpenses(ctx, [id], v) },
-  bulk: { extra: (ctx, ids, v) => setExtraExpenses(ctx, ids, v) },
-};
-
-
 /* ================================================================ videos */
 
 function youtubeId(url: string): string | null {
@@ -387,6 +332,5 @@ export const LOGISTICS_SCREENS: ScreenModule[] = [
   transportList("transport", "allBills"),
   transportList("pendingLr"),
   transportList("trackLr"),
-  paidFreight,
   videos,
 ];

@@ -40,7 +40,7 @@ The ERP is about a hundred screens and tabs. Anything two of them draw or decide
 | A heavy form, sent only when opened | `src/lib/erp/lazy-forms.ts` — `lightSpec`/`lightRow` leave a form over 12 KB on the server, `lazyForm` builds it again on demand through `erpLoadForm`, `newFormIn` skips building a deferred New form | Every list route; the New button and any record action |
 | Which order lines are Pending / being worked | `isPendingLine`, `isWorkingLine` in `screens/sales.ts` | The Orders tabs, their badges, the dashboard |
 | Order-line columns and their headings | `ORDER_COL` / `orderCols` in `screens/sales.ts` | Orders tabs, Billing & dispatch |
-| A line's extra expenses | `setExtraExpenses`, `EXTRA_EXPENSE_PROMPT` in `screens/sales.ts` | Orders → Billing & dispatch, Logistics → Paid freight |
+| A line's extra expenses | `setExtraExpenses`, `EXTRA_EXPENSE_PROMPT` in `screens/sales.ts` | Orders → Billing & dispatch |
 | The godown picker on a form | `godownField` in `screens/common.ts` | Every form with a godown |
 | Is this person an ERP manager | `isErpManager` in `screens/common.ts` | Alerts, recipes, help videos, expenses, stock counts |
 | A power's refusal sentence | `powerRefusal` in `src/lib/erp/access.ts` | Every handler that checks a power |

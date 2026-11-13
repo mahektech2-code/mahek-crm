@@ -1060,6 +1060,8 @@ export const VERBS: Record<string, string> = {
   removeBill: "took a bill off {}",
   record: "recorded",
   reverse: "reversed",
+  resplit: "split again",
+  unpay: "undid the payment of {}",
   /* The logistics desk (erp.logistics.*). */
   atTransport: "marked {} as reached the transporter",
   delivered: "marked {} delivered",
@@ -1308,6 +1310,7 @@ export const NOUNS: Record<string, string> = {
   invoice: "invoice",
   trip: "vehicle trip",
   transportPayment: "transport payment",
+  freightBill: "transport bill",
   logistics: "consignment",
   rawMaterial: "raw material",
   canGroup: "can group",

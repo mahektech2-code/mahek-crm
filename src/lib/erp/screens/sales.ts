@@ -81,6 +81,8 @@ import {
   type InvoiceSnapshot,
 } from "../engines/order-flow";
 import { assignTripsAtDispatch } from "../trips";
+import { freightSharesFor, type LineFreight } from "../freight-bills";
+import { freightBillNo } from "../engines/freight-bill";
 import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, invoiceFilesFor, openHolds, recordHold, sendWords, syncOrderTracking, tellHold, type OpenHold } from "../order-tracking";
 import { reasonByLabel } from "../engines/order-tracking";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
@@ -2788,6 +2790,13 @@ type DetailRow = {
    * "Lotcode Costing" (`sheet_costing_paise`). Null exactly when costing is.
    */
   costSource: "lots" | "sheet" | null;
+  /**
+   * This line's live share of a transporter's bill (Logistics → Transport
+   * expenses), split by litres — pending or paid. Part of `costing` where the
+   * cost comes from lots; a sheet-costed line already carries the sheet's
+   * whole cost, so it is shown and not added again.
+   */
+  freight: LineFreight | null;
   margin: number | null;
   /** Credit notes issued on this line's bill and goods, before GST. */
   creditNote: number | null;
@@ -2822,10 +2831,11 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
   const seen = new Set(main.map((l) => l.o.id));
   const ls = [...main, ...open.filter((l) => !seen.has(l.o.id))];
   const ids = ls.map((l) => l.o.id);
-  const [details, costs, credits] = await Promise.all([
+  const [details, costs, credits, freight] = await Promise.all([
     ids.length ? db.select().from(erpOrderDetails).where(inArray(erpOrderDetails.orderId, ids)) : Promise.resolve([] as (typeof erpOrderDetails.$inferSelect)[]),
     allocationCosts(ids),
     issuedCreditNotes(),
+    freightSharesFor(ids),
   ]);
   const byId = new Map(ls.map((l) => [l.o.id, l]));
   const rows: DetailRow[] = [];
@@ -2837,8 +2847,10 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
        allocated a lot to falls back on the sheet's cost, which is the WHOLE cost
        the sheet took off the amount — extras included, so none are added. */
     const allocated = costs.get(l.o.id) ?? [];
+    const share = freight.get(l.o.id) ?? null;
+    const extras = d.extraExpensesPaise == null && !share ? null : (d.extraExpensesPaise ?? 0) + (share?.amountPaise ?? 0);
     const costing = allocated.length
-      ? lotCosting({ type: l.type, qtyCans: l.o.qtyCans, litres: bill.litres, costs: allocated, extraPaise: d.extraExpensesPaise })
+      ? lotCosting({ type: l.type, qtyCans: l.o.qtyCans, litres: bill.litres, costs: allocated, extraPaise: extras })
       : (d.sheetCostingPaise ?? null);
     rows.push({
       l,
@@ -2850,6 +2862,7 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
       company: bill.company,
       costing,
       costSource: costing == null ? null : allocated.length ? "lots" : "sheet",
+      freight: share,
       margin: margin({ amountPaise: bill.amountPaise, discountedPaise: bill.discountedPaise, costingPaise: costing, creditNotePaise: creditOf(credits, l, d.gstBp) }),
       creditNote: creditOf(credits, l, d.gstBp),
       monthId: monthId(d.dispatchDate),
@@ -2948,6 +2961,8 @@ const orderDetails: ScreenModule = {
       ...orderCols(["area", "transporter"]),
       { k: "transport", l: "Transport cost", t: "m" },
       { k: "extra", l: "Extra expenses", t: "m" },
+      /* This line's share of the transporter's bill, split by litres on Logistics → Transport expenses. */
+      { k: "freightShare", l: "Transport expense", t: "m", pw: "viewCost" },
       orderCol("bill"),
       { k: "payment", l: "Payment type", t: "t", pw: "viewCost" },
       { k: "margin", l: "Margin", t: "m", pw: "viewCost" },
@@ -3050,6 +3065,7 @@ const orderDetails: ScreenModule = {
                 transporter: l.o.transporter ?? l.delivery.p?.transporter ?? null,
                 transport: l.o.transportCostPaise,
                 extra: d.extraExpensesPaise,
+                freightShare: r.freight?.amountPaise ?? null,
                 bill: l.o.tallyBillNo,
                 invoice: `${invoiceFiles.has(l.o.orderNo) ? "y" : "n"}:${l.o.orderNo}`,
                 payment: l.billing.freightTerm,
@@ -3068,6 +3084,9 @@ const orderDetails: ScreenModule = {
               { l: "Quantity dispatch in litre", v: nf(r.litres), der: true },
               { l: "GST", v: d.gstBp ? "18%" : "0%" },
               { l: "Company", v: r.company, der: true },
+              ...(r.freight && cost
+                ? [{ l: "Transport expense", v: `${inr(r.freight.amountPaise)} · ${freightBillNo(r.freight.billNo)} (${r.freight.status === "paid" ? "paid" : "not paid yet"})`, der: true }]
+                : []),
               ...(amounts ? [{ l: "Final amount", v: r.final == null ? "—" : inr(r.final), der: true }] : []),
               ...(cost
                 ? [
