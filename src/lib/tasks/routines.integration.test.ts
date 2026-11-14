@@ -16,7 +16,9 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { deleteRoutine, saveRoutine, setRoutineActive } from "@/lib/actions/task-routines";
-import { routinesFor, writeRoutineTasks } from "@/lib/tasks/routine-service";
+import { markMissedRoutineTasks, routinesFor, writeRoutineTasks } from "@/lib/tasks/routine-service";
+import { closeTask, reopenTask, updateTask } from "@/lib/actions/tasks";
+import { plusDays } from "@/lib/tasks/rules";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -52,7 +54,8 @@ const routine = (assigneeId: string, title = "Download the bank statement") => (
   dayOfMonth: null,
   completeByDay: null,
   startTime: "14:00",
-  dueTime: "16:00",
+  /* No due time: open all its day, so these tests read the same whenever CI runs. */
+  dueTime: null as string | null,
   proofRequired: false,
   checklist: "Download\nEnter in Tally",
 });
@@ -90,7 +93,7 @@ describe("A routine", () => {
     const written = await db.select().from(tasks).where(eq(tasks.assigneeId, priya.id));
     assert.equal(written.length, 1);
     assert.equal(written[0].routineDay, day);
-    assert.equal(written[0].dueTime, "16:00");
+    assert.equal(written[0].dueTime, null);
     assert.equal(written[0].priority, "high");
     assert.deepEqual(written[0].checklist.map((c) => c.done), [false, false]);
     assert.equal((await db.select().from(notifications).where(eq(notifications.userId, priya.id))).length, 1, "she is told once, when it is set");
@@ -123,5 +126,73 @@ describe("A routine", () => {
     const [left] = await db.select().from(tasks);
     assert.ok(left, "the task stays");
     assert.equal(left.routineId, null);
+  });
+});
+
+describe("A routine's task not done on time", () => {
+  /** A task of the routine for `day`, written straight in — the way the writer would have on that day. */
+  async function routineTask(routineId: string, day: string, dueTime: string | null) {
+    const [row] = await db
+      .insert(tasks)
+      .values({ id: id("tsk"), title: "Download the bank statement", app: "tasks", assigneeId: priya.id, createdById: vikram.id, dueDate: day, dueTime, routineId, routineDay: day, remarkRequired: false })
+      .returning();
+    return row;
+  }
+  const close = (taskId: string) => closeTask(taskId, { confirmed: true, remark: "Done it", attachmentIds: [] });
+
+  test("is missed the next day, and cannot be closed or reopened", async () => {
+    setTestUser(vikram);
+    const made = await saveRoutine(routine(priya.id));
+    assert.ok(made.ok);
+    const day = await today();
+    const yesterday = await routineTask(made.data.id, plusDays(day, -1), null);
+
+    assert.equal(await markMissedRoutineTasks(), 1, "only yesterday's — today's is still open all day");
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, yesterday.id));
+    assert.equal(row.status, "missed");
+    assert.equal(row.closedById, null);
+    assert.match(row.closeRemark ?? "", /^Not done on /);
+    assert.equal(await markMissedRoutineTasks(), 0, "asking again misses nothing more");
+
+    setTestUser(priya);
+    assert.ok(!(await close(yesterday.id)).ok, "yesterday's cannot be done today");
+    assert.ok(!(await reopenTask(yesterday.id)).ok, "a missed task cannot be reopened");
+
+    const [todays] = await db.select().from(tasks).where(eq(tasks.routineDay, day));
+    assert.ok((await close(todays.id)).ok, "today's is still hers to do");
+  });
+
+  test("past its due time today is refused at Mark done and marked missed there and then", async () => {
+    setTestUser(vikram);
+    const made = await saveRoutine(routine(priya.id));
+    assert.ok(made.ok);
+    await db.delete(tasks);
+    const due = await routineTask(made.data.id, await today(), "00:00");
+
+    setTestUser(priya);
+    const r = await close(due.id);
+    assert.ok(!r.ok);
+    assert.match(r.ok ? "" : r.error, /Too late/);
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, due.id));
+    assert.equal(row.status, "missed", "the refusal does not wait for the hourly sweep");
+  });
+
+  test("cannot be moved to a later day to dodge it", async () => {
+    setTestUser(vikram);
+    const made = await saveRoutine(routine(priya.id));
+    assert.ok(made.ok);
+    const [todays] = await db.select().from(tasks).where(eq(tasks.assigneeId, priya.id));
+    setTestUser(priya);
+    assert.ok(!(await updateTask(todays.id, { dueDate: plusDays(await today(), 1) })).ok);
+  });
+
+  test("a task given by hand is never missed — it goes late", async () => {
+    const [given] = await db
+      .insert(tasks)
+      .values({ id: id("tsk"), title: "Call the bank", app: "tasks", assigneeId: priya.id, createdById: vikram.id, dueDate: plusDays(await today(), -3) })
+      .returning();
+    assert.equal(await markMissedRoutineTasks(), 0);
+    setTestUser(priya);
+    assert.ok((await closeTask(given.id, { confirmed: true, remark: "Called them", attachmentIds: [] })).ok);
   });
 });

@@ -139,14 +139,14 @@ export function planAutoSync(wanted: WantedTask[], existing: ExistingAutoTask[])
       plan.insert.push(w);
       continue;
     }
-    if (e.status === "done") continue;
+    if (e.status === "done" || e.status === "missed") continue;
     const set: AutoPlan["update"][number]["set"] = {};
     if (e.assigneeId !== w.assigneeId) set.assigneeId = w.assigneeId;
     if (e.title !== w.title) set.title = w.title;
     if (e.dueDate !== w.dueDate) set.dueDate = w.dueDate;
     if (Object.keys(set).length) plan.update.push({ id: e.id, set });
   }
-  for (const e of existing) if (e.status !== "done" && !wantedKeys.has(e.key)) plan.close.push(e.id);
+  for (const e of existing) if (e.status !== "done" && e.status !== "missed" && !wantedKeys.has(e.key)) plan.close.push(e.id);
   return plan;
 }
 

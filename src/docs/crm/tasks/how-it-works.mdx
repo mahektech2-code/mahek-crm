@@ -55,6 +55,7 @@ A **routine** is a task that comes back: daily or weekly on the weekdays it name
 - Each task names its routine and its day, and the database holds that pair to one row — so the hourly job, the nightly one and somebody opening the app can all ask for today, and only the first copy lands.
 - A routine is changed, paused or deleted by **whoever set it** or **anybody above its person**. The person it belongs to sees it but cannot switch off one their manager set.
 - Changing a routine changes the days to come. Pausing adds nothing until it is resumed, and the paused days are not owed. Deleting keeps every task it already added.
+- **A routine's task belongs to its own day.** If it is not done by its due time — or by the end of its day where no time is set — it is marked **Missed**, and it cannot be done, reopened or moved afterwards. Yesterday's task is not done today; today brings its own. Tasks given by hand and automatic tasks are never missed; they show as late. The rule is <Code file="src/lib/tasks/rules.ts" symbol="routineMissed" collapsed />.
 
 ## Automatic tasks
 
@@ -78,4 +79,3 @@ Each app raises some tasks on its own, from its own records, and closes them its
 ## Where the code and the intent disagree today
 
 - The rest of the CRM's follow-up engine (payment chasing, stock checks) is not a task; it stays on the Call Log and Collections.
-- A routine task nobody closes stays open and shows as late; nothing closes or skips it automatically.

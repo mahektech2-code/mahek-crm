@@ -166,6 +166,15 @@ export type VehicleTrip = {
   /** Their litres, and how many customers they belong to. */
   unbilledLitres: number;
   unbilledCustomers: number;
+  /**
+   * Who those unbilled lines were billed to, biggest by litres first, and the
+   * sales bill numbers and bill dates on them. A trip carries several parties
+   * and several bills, so these are lists and a date span, never one value.
+   */
+  billingParties: string[];
+  billNos: string[];
+  billedFrom: string | null;
+  billedTo: string | null;
 };
 
 /**
@@ -188,7 +197,8 @@ export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleT
              coalesce(t.transporter, o.transporter) as transporter,
              lower(regexp_replace(coalesce(t.payment_type, c.freight_term, ''), '[\\s-]+', '_', 'g')) = 'paid' as paid,
              (o.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000) as litres,
-             exists (select 1 from erp_freight_bill_lines bl where bl.order_id = o.id and bl.live) as billed
+             exists (select 1 from erp_freight_bill_lines bl where bl.order_id = o.id and bl.live) as billed,
+             c.name as party, nullif(trim(coalesce(t.bill_no, o.tally_bill_no)), '') as bill_no, t.bill_date
         from erp_order_details d
         join erp_orders o on o.id = d.order_id
         join erp_transports t on t.id = d.transport_id
@@ -203,7 +213,11 @@ export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleT
            count(*) filter (where not paid)::int as "otherLines",
            count(*) filter (where paid and not billed)::int as "unbilledLines",
            coalesce(sum(litres) filter (where paid and not billed), 0)::float8 as "unbilledLitres",
-           count(distinct cid) filter (where paid and not billed)::int as "unbilledCustomers"
+           count(distinct cid) filter (where paid and not billed)::int as "unbilledCustomers",
+           json_agg(json_build_object('n', party, 'l', coalesce(litres, 0))) filter (where paid and not billed) as parties,
+           array_agg(distinct bill_no) filter (where paid and not billed and bill_no is not null) as "billNos",
+           min(bill_date) filter (where paid and not billed)::text as "billedFrom",
+           max(bill_date) filter (where paid and not billed)::text as "billedTo"
       from l group by vkey, dispatch_date
      order by dispatch_date desc, min(vehicle_no)
   `)) as unknown as Row[];
@@ -218,7 +232,19 @@ export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleT
     unbilledLines: Number(r.unbilledLines),
     unbilledLitres: Math.round(Number(r.unbilledLitres) * 1000) / 1000,
     unbilledCustomers: Number(r.unbilledCustomers),
+    billingParties: partiesByLitres(r.parties),
+    billNos: ((r.billNos as string[] | null) ?? []).map(String).sort((a, b) => a.localeCompare(b, "en", { numeric: true })),
+    billedFrom: s(r.billedFrom),
+    billedTo: s(r.billedTo),
   }));
+}
+
+/** One name per party, the party carrying the most litres on the trip first. */
+function partiesByLitres(raw: unknown): string[] {
+  const rows = (typeof raw === "string" ? JSON.parse(raw) : raw) as { n: string; l: number | string }[] | null;
+  const byName = new Map<string, number>();
+  for (const x of rows ?? []) byName.set(x.n, (byName.get(x.n) ?? 0) + Number(x.l));
+  return [...byName.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([n]) => n);
 }
 
 /* ================================================================ bills */

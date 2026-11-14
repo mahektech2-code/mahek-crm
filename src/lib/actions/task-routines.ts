@@ -137,7 +137,7 @@ export async function saveRoutine(input: SaveRoutineInput): Promise<Result<{ id:
   }
   // Today's task, where today is one of its days — a routine set at ten in
   // the morning for "every day" means today as well.
-  await writeRoutineTasks(day, { routineId: id });
+  await writeRoutineTasks(day, { routineId: id, skipPast: true });
   refresh();
   return ok({ id }, before ? "Routine saved. It changes the days to come." : "Routine set.");
 }
@@ -155,7 +155,7 @@ export async function setRoutineActive(id: string, active: boolean): Promise<Res
     .set({ active, updatedAt: new Date(), ...(active ? { startsOn: r.startsOn > day ? r.startsOn : day } : {}) })
     .where(eq(taskRoutines.id, id));
   await audit(user.id, active ? "task.routine.resumed" : "task.routine.paused", id, { title: r.title });
-  if (active) await writeRoutineTasks(day, { routineId: id });
+  if (active) await writeRoutineTasks(day, { routineId: id, skipPast: true });
   refresh();
   return ok(null, active ? "Routine resumed." : "Routine paused. Nothing new is added until it is resumed.");
 }

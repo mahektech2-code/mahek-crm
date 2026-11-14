@@ -11,8 +11,11 @@ import {
   closeProblems,
   dueState,
   dueWords,
+  isClosed,
   managesBoth,
+  missedRemark,
   newTaskProblems,
+  routineMissed,
   parseQuickAdd,
   rejectProblems,
   teamBelow,
@@ -150,5 +153,54 @@ describe("every app's own My tasks", () => {
     assert.equal(taskLink({ id: "t1", app: "erp" }, { tasks: true }), "/tasks?task=t1");
     assert.equal(taskLink({ id: "t1", app: "erp" }, { tasks: false, apps: ["erp"] }), "/erp/my-tasks?task=t1");
     assert.equal(taskLink({ id: "t1", app: "tasks" }, { tasks: false, apps: ["accounts"] }), "/accounts/my-tasks?task=t1");
+  });
+});
+
+describe("a routine's task belongs to its own day", () => {
+  const t = (over: Partial<{ routineId: string | null; status: string; dueDate: string; dueTime: string | null }> = {}) => ({
+    routineId: "rtn_1",
+    status: "todo",
+    dueDate: "2026-11-14",
+    dueTime: "18:00" as string | null,
+    ...over,
+  });
+
+  it("is open until its due time, missed from that minute", () => {
+    assert.equal(routineMissed(t(), "2026-11-14", "17:59"), false);
+    assert.equal(routineMissed(t(), "2026-11-14", "18:00"), true);
+  });
+
+  it("with no time, is open all its day and missed the next", () => {
+    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-14", "23:59"), false);
+    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-15", "00:00"), true);
+  });
+
+  it("cannot be done tomorrow for today", () => {
+    assert.equal(routineMissed(t({ status: "doing" }), "2026-11-15", "09:00"), true);
+  });
+
+  it("done stays done; missed stays missed", () => {
+    assert.equal(routineMissed(t({ status: "done" }), "2026-11-20", "09:00"), false);
+    assert.equal(routineMissed(t({ status: "missed" }), "2026-11-14", "09:00"), true);
+  });
+
+  it("a task due before the rule began stays open and late", () => {
+    assert.equal(routineMissed(t({ dueDate: "2026-11-09" }), "2026-11-20", "09:00"), false);
+    assert.equal(routineMissed(t({ dueDate: "2026-11-10", dueTime: null }), "2026-11-11", "00:00"), true);
+  });
+
+  it("a task given by hand is never missed, only late", () => {
+    assert.equal(routineMissed(t({ routineId: null }), "2026-11-20", "09:00"), false);
+  });
+
+  it("missed is closed, like done", () => {
+    assert.equal(isClosed("missed"), true);
+    assert.equal(isClosed("done"), true);
+    assert.equal(isClosed("waiting"), false);
+  });
+
+  it("says what was missed", () => {
+    assert.equal(missedRemark("2026-11-14", "18:00"), "Not done by 6 PM on 14 Nov.");
+    assert.equal(missedRemark("2026-11-14", null), "Not done on 14 Nov.");
   });
 });

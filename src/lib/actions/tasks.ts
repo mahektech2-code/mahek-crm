@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { attachments, auditLog, customers, taskBatches, taskEvents, taskTransfers, tasks, type TaskChecklistItem } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
@@ -16,7 +16,9 @@ import {
   closeProblems,
   isTaskApp, canFileUnder,
   managesBoth,
+  missedRemark,
   newTaskProblems,
+  routineMissed,
   parseQuickAdd,
   rejectProblems,
   transferProblems,
@@ -30,6 +32,8 @@ import {
 } from "@/lib/tasks/rules";
 import { canReceive, getTaskRow, peopleForApp, taskDetail, teamOf, teamPeople, viewerManagesBoth } from "@/lib/tasks/service";
 import { audienceProblems, audienceWords, type Audience } from "@/lib/tasks/audience";
+import { appClock } from "@/lib/tasks/clock";
+import { markMissedRoutineTasks } from "@/lib/tasks/routine-service";
 import { audienceOptions, resolveFor, type AudienceOptions } from "@/lib/tasks/audience-service";
 
 /* ---------------------------------------------------------------------------
@@ -191,7 +195,7 @@ export async function quickAddTask(text: string, app = "tasks"): Promise<Result<
 /* -------------------------------------------------------------- editing */
 
 export type TaskPatch = {
-  status?: Exclude<TaskStatus, "done">;
+  status?: Exclude<TaskStatus, "done" | "missed">;
   dueDate?: string;
   dueTime?: string | null;
   priority?: TaskPriority;
@@ -205,7 +209,10 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Result> 
   const user = await requireUser();
   const d = await taskDetail(user, id);
   if (!d) return err("That task is not there any more.", "not_found");
-  if (!d.can.edit) return err(d.task.status === "done" ? "Reopen it first." : "You can't change this task.", "not_permitted");
+  if (!d.can.edit) return err(d.task.status === "missed" ? "This was missed, and a missed task cannot be changed." : d.task.status === "done" ? "Reopen it first." : "You can't change this task.", "not_permitted");
+  /* Moving a routine's task to a later day or time would be a way round missing it. */
+  if (d.task.routineId && ((patch.dueDate && patch.dueDate !== d.task.dueDate) || (patch.dueTime !== undefined && (patch.dueTime || null) !== d.task.dueTime)))
+    return err("A routine's task is due when its routine says. Change the routine to change the time.", "rule_violation");
   if ((patch.proofRequired !== undefined || patch.remarkRequired !== undefined) && !d.can.setProof) return err("Only the person who gave this task, or a manager above whoever holds it, decides whether it needs a screenshot.", "not_permitted");
 
   const t = d.task;
@@ -248,7 +255,7 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Result> 
   }
   if (!said.length) return ok(undefined);
 
-  await db.update(tasks).set(set).where(and(eq(tasks.id, id), ne(tasks.status, "done")));
+  await db.update(tasks).set(set).where(and(eq(tasks.id, id), notInArray(tasks.status, ["done", "missed"])));
   for (const s of said) await event(id, user.id, "edited", s);
 
   /* Asking for proof on somebody else's task changes what they must do. */
@@ -305,6 +312,16 @@ export async function closeTask(id: string, input: CloseTaskInput): Promise<Resu
   const d = await taskDetail(user, id);
   if (!d) return err("That task is not there any more.", "not_found");
   if (d.task.status === "done") return err("It is already closed.", "conflict");
+  /* A routine's task belongs to its own day: past its due time it is missed, and stays missed. */
+  if (d.task.status === "missed") return err(`This was missed — ${d.task.closeRemark ?? "not done by its due time."} The next one comes with its own day.`, "conflict");
+  {
+    const clock = appClock();
+    if (routineMissed(d.task, clock.day, clock.hm)) {
+      await markMissedRoutineTasks({ ids: [id] });
+      refresh();
+      return err(`Too late — ${missedRemark(d.task.dueDate, d.task.dueTime)} It is marked missed; the next one comes with its own day.`, "conflict");
+    }
+  }
   if (!d.can.close) return err("Only whoever holds the task, or a manager above them, can close it.", "not_permitted");
 
   const wanted = [...new Set(input.attachmentIds)].slice(0, 10);
@@ -328,7 +345,7 @@ export async function closeTask(id: string, input: CloseTaskInput): Promise<Resu
   const closed = await db
     .update(tasks)
     .set({ status: "done", closedAt: new Date(), closedById: user.id, closeRemark: remark, updatedAt: new Date() })
-    .where(and(eq(tasks.id, id), ne(tasks.status, "done")))
+    .where(and(eq(tasks.id, id), notInArray(tasks.status, ["done", "missed"])))
     .returning({ id: tasks.id });
   if (!closed.length) return err("Somebody closed it a moment ago.", "conflict");
 
@@ -356,7 +373,8 @@ export async function reopenTask(id: string): Promise<Result> {
   const user = await requireUser();
   const d = await taskDetail(user, id);
   if (!d) return err("That task is not there any more.", "not_found");
-  if (!d.can.reopen) return err("You can't reopen this task.", "not_permitted");
+  if (!d.can.reopen)
+    return err(d.task.status === "missed" ? "A missed task cannot be reopened." : d.task.routineId ? "Its day is over — a routine's task cannot be reopened once its due time has passed." : "You can't reopen this task.", "not_permitted");
   await db
     .update(tasks)
     .set({ status: "todo", closedAt: null, closedById: null, closeRemark: null, updatedAt: new Date() })
@@ -411,7 +429,7 @@ export async function transferTask(id: string, input: { toId: string; reason: st
     const moved = await db
       .update(tasks)
       .set({ assigneeId: input.toId, status: t.status === "waiting" ? "todo" : t.status, updatedAt: new Date() })
-      .where(and(eq(tasks.id, id), eq(tasks.assigneeId, t.assigneeId), ne(tasks.status, "done")))
+      .where(and(eq(tasks.id, id), eq(tasks.assigneeId, t.assigneeId), notInArray(tasks.status, ["done", "missed"])))
       .returning({ id: tasks.id });
     if (!moved.length) return err("It changed hands a moment ago — open it again.", "conflict");
     await db.insert(taskTransfers).values({
@@ -477,7 +495,7 @@ export async function decideTransfer(taskId: string, input: { accept: boolean; n
   const moved = await db
     .update(tasks)
     .set({ assigneeId: user.id, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, tr.fromId), ne(tasks.status, "done")))
+    .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, tr.fromId), notInArray(tasks.status, ["done", "missed"])))
     .returning({ id: tasks.id });
   if (!moved.length) {
     await db.update(taskTransfers).set({ status: "withdrawn", decidedAt: new Date(), decisionNote: "The task changed before it was accepted." }).where(eq(taskTransfers.id, tr.id));
@@ -636,7 +654,7 @@ export async function nudgePerson(personId: string): Promise<Result> {
     .where(
       and(
         eq(tasks.assigneeId, personId),
-        ne(tasks.status, "done"),
+        notInArray(tasks.status, ["done", "missed"]),
         sql`${tasks.dueDate} < ${day}::date`,
         manages ? undefined : eq(tasks.createdById, user.id),
       ),
