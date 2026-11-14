@@ -37,6 +37,7 @@ import {
   dueWords,
   isTaskApp,
   newTaskProblems,
+  isClosed,
   plusDays,
   type TaskApp,
   type TaskPriority,
@@ -308,7 +309,7 @@ function RecordDialog({ id, onClose, ctx }: { id: string; onClose: () => void; c
             Transfer
           </Button>
         ) : null}
-        {d.can.edit && t.status !== "done" ? (
+        {d.can.edit && !t.routineId ? (
           <Button onClick={() => void act(updateTask(t.id, { dueDate: plusDays(d.today, 1) }))} disabled={busy}>
             Move to tomorrow
           </Button>
@@ -358,6 +359,13 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
         </div>
       ) : null}
 
+      {t.status === "missed" ? (
+        <div className="rounded-card border border-danger-soft bg-danger-soft px-4 py-3">
+          <div className="text-sm font-semibold text-danger">Missed</div>
+          <div className="mt-1 text-sm text-ink">{t.closeRemark ?? "Not done by its due time."} A routine&apos;s task belongs to its own day, so it can&apos;t be done later — the next one comes with its own day.</div>
+        </div>
+      ) : null}
+
       {d.origin.auto && t.status !== "done" ? (
         <div className="flex items-center gap-2.5 rounded-card bg-brand-soft px-4 py-2.5 text-[13.5px] text-body">
           <KindGlyph kind="auto" />
@@ -374,7 +382,7 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
             <div className="font-semibold text-ink">{t.customerName ?? (t.app === "tasks" ? "Personal" : TASK_APP_LABEL[t.app])}</div>
             <div className="text-xs text-muted">{t.customerName ? `The record this task is about, in ${t.app === "tasks" ? "TeleCRM" : TASK_APP_LABEL[t.app]}` : "Where this work is done"}</div>
           </div>
-          {t.app === "crm" && t.customerId && t.status !== "done" && t.assigneeId === d.viewerId ? (
+          {t.app === "crm" && t.customerId && !isClosed(t.status) && t.assigneeId === d.viewerId ? (
             <Link href={`/crm/customers/${t.customerId}?call=1`} className="inline-flex h-8 items-center rounded-control border border-brand bg-brand px-3 text-[13px] font-semibold text-white no-underline hover:bg-brand-hover hover:no-underline">
               Call
             </Link>
@@ -406,7 +414,7 @@ function DetailsTab({ d, busy, act }: { d: Detail; busy: boolean; act: (p: Promi
           )}
         </Item>
         <Item label="Due">
-          {edit ? (
+          {edit && !t.routineId ? (
             <span className="flex gap-2">
               <Input type="date" className="w-[150px]" defaultValue={t.dueDate} onBlur={(e) => e.target.value && e.target.value !== t.dueDate && void act(updateTask(t.id, { dueDate: e.target.value }))} aria-label="Due day" />
               <Input type="time" className="w-[110px]" defaultValue={t.dueTime ?? ""} onBlur={(e) => (e.target.value || null) !== t.dueTime && void act(updateTask(t.id, { dueTime: e.target.value || null }))} aria-label="Due time" />

@@ -7,7 +7,7 @@
  * "YYYY-MM-DD" strings, passed in — nothing here reads a clock.
  * ------------------------------------------------------------------------- */
 
-export const TASK_STATUSES = ["todo", "doing", "waiting", "done"] as const;
+export const TASK_STATUSES = ["todo", "doing", "waiting", "done", "missed"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -15,7 +15,40 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   doing: "In progress",
   waiting: "Waiting on someone",
   done: "Done",
+  missed: "Missed",
 };
+
+/**
+ * A task is CLOSED when it is done, or — a routine's task only — MISSED: not
+ * done by its due time, closed by nobody at that moment. Everything that asks
+ * "is this still open" asks this, never `status !== "done"`.
+ */
+export const isClosed = (status: string) => status === "done" || status === "missed";
+
+/* ------------------------------------------------------------ missed work */
+
+/**
+ * A ROUTINE'S TASK BELONGS TO ITS OWN DAY. It is missed once its due time has
+ * passed — the end of its due day where no time was set — and from then it
+ * can be neither closed nor reopened: tomorrow is tomorrow's task. A task
+ * somebody gave by hand, or an automatic one, is never missed; it goes late.
+ * `nowDay` is the business day and `nowHM` the "HH:MM" clock in the app's zone.
+ */
+export function routineMissed(
+  task: { routineId: string | null; status: string; dueDate: string; dueTime: string | null },
+  nowDay: string,
+  nowHM: string,
+): boolean {
+  if (!task.routineId || task.status === "done") return false;
+  if (task.status === "missed") return true;
+  if (nowDay > task.dueDate) return true;
+  return nowDay === task.dueDate && task.dueTime != null && nowHM >= task.dueTime;
+}
+
+/** "Not done by 6 PM on 13 Nov." — the remark a missed task closes with. */
+export function missedRemark(dueDate: string, dueTime: string | null): string {
+  return dueTime ? `Not done by ${clock12(dueTime)} on ${shortDate(dueDate)}.` : `Not done on ${shortDate(dueDate)}.`;
+}
 
 export const TASK_PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];

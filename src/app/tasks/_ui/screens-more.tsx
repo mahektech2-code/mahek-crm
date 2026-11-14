@@ -10,7 +10,7 @@ import type { AutomationRule } from "@/lib/tasks/automations";
 import type { TaskRow } from "@/lib/tasks/service";
 import type { CalendarWeek, TaskListPage } from "@/lib/tasks/list-service";
 import { DONE_LIST, type TaskListQuery } from "@/lib/tasks/list-query";
-import { TASK_APP_LABEL, clock12, daysUntil } from "@/lib/tasks/rules";
+import { TASK_APP_LABEL, clock12, daysUntil, isClosed } from "@/lib/tasks/rules";
 import { AppChip } from "./kit";
 import { useTaskDialogs } from "./dialogs";
 import { TaskListView } from "./task-list";
@@ -90,7 +90,7 @@ export function CalendarScreen({ data, days, today, week, rangeWords }: { data: 
                     >
                       {t.title}
                       <small className="mt-0.5 block text-[11.5px] text-muted">
-                        {isToday && behind < 0 && t.status !== "done" ? <span className="text-danger">{-behind}d late · </span> : null}
+                        {isToday && behind < 0 && !isClosed(t.status) ? <span className="text-danger">{-behind}d late · </span> : null}
                         {t.dueTime ? `${clock12(t.dueTime)} · ` : ""}
                         {t.app === "tasks" ? "Personal" : TASK_APP_LABEL[t.app]}
                       </small>

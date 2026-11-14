@@ -18,7 +18,7 @@ import { PRIORITY_LABEL, TASK_APP_LABEL, isTaskApp, plusDays, type TaskApp, type
  * ------------------------------------------------------------------------- */
 
 /** What a tab narrows to. Each screen offers its own subset. */
-export const TASK_TABS = ["open", "now", "today", "late", "upcoming", "doing", "waiting", "done", "all"] as const;
+export const TASK_TABS = ["open", "now", "today", "late", "upcoming", "doing", "waiting", "done", "missed", "all"] as const;
 export type TaskTab = (typeof TASK_TABS)[number];
 
 export const TASK_GROUPS = ["app", "due", "priority", "source", "day", "none"] as const;
@@ -175,7 +175,7 @@ export function groupKeyOf(group: TaskGroup, r: GroupableRow, today: string): st
     case "none":
       return "";
     case "due":
-      return r.status === "done" ? "done" : r.dueDate < today ? "late" : r.dueDate === today ? "today" : r.dueDate === plusDays(today, 1) ? "tomorrow" : "later";
+      return r.status === "done" ? "done" : r.status === "missed" ? "missed" : r.dueDate < today ? "late" : r.dueDate === today ? "today" : r.dueDate === plusDays(today, 1) ? "tomorrow" : "later";
   }
 }
 
@@ -185,18 +185,18 @@ export function groupKeyOf(group: TaskGroup, r: GroupableRow, today: string): st
 export const ALL_TASKS_LIST: TaskListDefaults = {
   tab: "open",
   group: "app",
-  tabs: ["open", "late", "today", "upcoming", "doing", "waiting", "done", "all"],
+  tabs: ["open", "late", "today", "upcoming", "doing", "waiting", "done", "missed", "all"],
   groups: ["app", "due", "priority", "source", "none"],
 };
 /** By app: one app, so grouping by app would be one heading. */
 export const BY_APP_LIST: TaskListDefaults = { ...ALL_TASKS_LIST, group: "due", groups: ["due", "priority", "source", "none"] };
 /** An app's own My tasks. */
-export const APP_TASKS_LIST: TaskListDefaults = { tab: "now", group: "none", tabs: ["now", "late", "upcoming", "done", "all"], groups: ["none"] };
+export const APP_TASKS_LIST: TaskListDefaults = { tab: "now", group: "none", tabs: ["now", "late", "upcoming", "done", "missed", "all"], groups: ["none"] };
 /** Done: everything finished, by the day it closed. */
 export const DONE_LIST: TaskListDefaults = { tab: "done", group: "day", tabs: ["done"], groups: ["day"] };
 /** One person's tasks on Team workload. */
-export const PERSON_LIST: TaskListDefaults = { tab: "open", group: "due", tabs: ["open", "late", "done", "all"], groups: ["due", "app", "none"] };
+export const PERSON_LIST: TaskListDefaults = { tab: "open", group: "due", tabs: ["open", "late", "done", "missed", "all"], groups: ["due", "app", "none"] };
 /** Assigned by me, the tasks given to one person. */
-export const GIVEN_LIST: TaskListDefaults = { tab: "open", group: "none", tabs: ["open", "late", "done", "all"], groups: ["none"] };
+export const GIVEN_LIST: TaskListDefaults = { tab: "open", group: "none", tabs: ["open", "late", "done", "missed", "all"], groups: ["none"] };
 /** Transfers waiting for you, or sent by you. */
 export const TRANSFER_LIST: TaskListDefaults = { tab: "all", group: "none", tabs: ["all"], groups: ["none"] };

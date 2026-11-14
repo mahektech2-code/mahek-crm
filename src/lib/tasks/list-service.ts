@@ -84,7 +84,8 @@ function scopeSql(s: TaskScope): SQL {
 /** Where a task came from, as SQL — the same order `toRow` decides `kind` in. */
 export const KIND_SQL = sql`(case when t.auto_rule is not null then 'auto' when t.routine_id is not null then 'routine' when t.created_by_id <> t.assignee_id then 'assigned' else 'self' end)`;
 
-const OPEN = sql`t.status <> 'done'`;
+/* Open is neither done nor missed; spelled as two inequalities so the open-task partial indexes still apply. */
+const OPEN = sql`t.status <> 'done' and t.status <> 'missed'`;
 
 export function tabSql(tab: TaskTab, today: string): SQL {
   switch (tab) {
@@ -103,6 +104,8 @@ export function tabSql(tab: TaskTab, today: string): SQL {
       return sql`t.status = ${tab}`;
     case "done":
       return sql`t.status = 'done'`;
+    case "missed":
+      return sql`t.status = 'missed'`;
     case "all":
       return sql`true`;
   }
@@ -124,7 +127,7 @@ function filterSql(q: TaskListQuery): SQL {
 const APP_ORDER = [...TASK_APPS].sort((x, y) => (x === "tasks" ? "Personal" : TASK_APP_LABEL[x]).localeCompare(y === "tasks" ? "Personal" : TASK_APP_LABEL[y]));
 
 function dueKeySql(today: string): SQL {
-  return sql`(case when t.status = 'done' then 'done' when t.due_date < ${today}::date then 'late' when t.due_date = ${today}::date then 'today' when t.due_date = ${plusDays(today, 1)}::date then 'tomorrow' else 'later' end)`;
+  return sql`(case when t.status = 'done' then 'done' when t.status = 'missed' then 'missed' when t.due_date < ${today}::date then 'late' when t.due_date = ${today}::date then 'today' when t.due_date = ${plusDays(today, 1)}::date then 'tomorrow' else 'later' end)`;
 }
 
 const CLOSED_ON = sql`coalesce((t.closed_at at time zone ${APP_TIMEZONE})::date::text, '')`;
@@ -154,15 +157,15 @@ function orderSql(group: TaskGroup, tab: TaskTab, today: string): SQL {
     group === "app"
       ? sql`array_position(${idList(APP_ORDER)}, t.app),`
       : group === "due"
-        ? sql`array_position(array['late','today','tomorrow','later','done'], ${dueKeySql(today)}),`
+        ? sql`array_position(array['late','today','tomorrow','later','done','missed'], ${dueKeySql(today)}),`
         : group === "priority"
           ? sql`${PRIORITY_POS},`
           : group === "source"
             ? sql`array_position(array['auto','assigned','routine','self'], ${KIND_SQL}),`
             : sql``;
   // Finished work reads newest first; open work reads in the order it is due.
-  if (group === "day" || tab === "done") return sql`order by ${groupRank} t.closed_at desc nulls last, t.id desc`;
-  return sql`order by ${groupRank} (t.status = 'done'), t.due_date, t.due_time nulls last, ${PRIORITY_POS}, t.created_at, t.id`;
+  if (group === "day" || tab === "done" || tab === "missed") return sql`order by ${groupRank} t.closed_at desc nulls last, t.id desc`;
+  return sql`order by ${groupRank} (t.status in ('done','missed')), t.due_date, t.due_time nulls last, ${PRIORITY_POS}, t.created_at, t.id`;
 }
 
 export type TaskListPage = {
@@ -399,7 +402,7 @@ export async function openElsewhere(userId: string, apps: readonly TaskApp[]): P
 
 /* -------------------------------------------------------------- the team */
 
-export type WorkloadRow = { id: string; name: string; apps: string[]; open: number; late: number; today: number; done: number; manage: boolean };
+export type WorkloadRow = { id: string; name: string; apps: string[]; open: number; late: number; today: number; done: number; missed: number; manage: boolean };
 export type Workload = {
   rows: WorkloadRow[];
   /** People matching the search, across every page. */
@@ -408,7 +411,7 @@ export type Workload = {
   pages: number;
   per: number;
   /** Sums over EVERY person the viewer sees, not the page. */
-  totals: { open: number; late: number; today: number; done: number; withLate: number; people: number };
+  totals: { open: number; late: number; today: number; done: number; missed: number; withLate: number; people: number };
 };
 
 /**
@@ -425,14 +428,15 @@ export async function teamWorkload(viewer: Viewer, today: string, opts: { q: str
            count(*) filter (where ${OPEN})::int as open,
            count(*) filter (where ${OPEN} and t.due_date < ${today}::date)::int as late,
            count(*) filter (where ${OPEN} and t.due_date = ${today}::date)::int as today,
-           count(*) filter (where t.status = 'done' and t.closed_at > now() - interval '14 days')::int as done
+           count(*) filter (where t.status = 'done' and t.closed_at > now() - interval '14 days')::int as done,
+           count(*) filter (where t.status = 'missed' and t.closed_at > now() - interval '14 days')::int as missed
       from tasks t where t.assignee_id in (select id from ppl) group by t.assignee_id`;
   const [totals, matched] = await Promise.all([
     db.execute<Record<string, number>>(sql`
       with ppl as (${ppl}), s as (${stats})
       select (select count(*)::int from ppl) as people,
              coalesce(sum(open), 0)::int as open, coalesce(sum(late), 0)::int as late,
-             coalesce(sum(today), 0)::int as today, coalesce(sum(done), 0)::int as done,
+             coalesce(sum(today), 0)::int as today, coalesce(sum(done), 0)::int as done, coalesce(sum(missed), 0)::int as missed,
              count(*) filter (where late > 0)::int as with_late
         from s`),
     db.execute<{ n: number }>(sql`with ppl as (${ppl}) select count(*)::int as n from ppl ${like ? sql`where name ilike ${like}` : sql``}`),
@@ -440,11 +444,11 @@ export async function teamWorkload(viewer: Viewer, today: string, opts: { q: str
   const people = Number(matched[0]?.n ?? 0);
   const w = pageWindow(opts.page, opts.per, people);
   const rows = people
-    ? await db.execute<{ id: string; name: string; apps: string[] | null; open: number; late: number; today: number; done: number }>(sql`
+    ? await db.execute<{ id: string; name: string; apps: string[] | null; open: number; late: number; today: number; done: number; missed: number }>(sql`
         with ppl as (${ppl}), s as (${stats})
         select p.id, p.name,
                (select array_agg(distinct a.app::text) from app_access a where a.user_id = p.id) as apps,
-               coalesce(s.open, 0)::int as open, coalesce(s.late, 0)::int as late, coalesce(s.today, 0)::int as today, coalesce(s.done, 0)::int as done
+               coalesce(s.open, 0)::int as open, coalesce(s.late, 0)::int as late, coalesce(s.today, 0)::int as today, coalesce(s.done, 0)::int as done, coalesce(s.missed, 0)::int as missed
           from ppl p left join s on s.assignee_id = p.id
          ${like ? sql`where p.name ilike ${like}` : sql``}
          order by coalesce(s.late, 0) desc, coalesce(s.open, 0) desc, p.name, p.id
@@ -452,12 +456,12 @@ export async function teamWorkload(viewer: Viewer, today: string, opts: { q: str
     : [];
   const t = totals[0] ?? {};
   return {
-    rows: rows.map((r) => ({ id: r.id, name: r.name, apps: r.apps ?? [], open: Number(r.open), late: Number(r.late), today: Number(r.today), done: Number(r.done), manage: manages.has(r.id) })),
+    rows: rows.map((r) => ({ id: r.id, name: r.name, apps: r.apps ?? [], open: Number(r.open), late: Number(r.late), today: Number(r.today), done: Number(r.done), missed: Number(r.missed), manage: manages.has(r.id) })),
     people,
     page: w.page,
     pages: w.pages,
     per: opts.per,
-    totals: { people: Number(t.people ?? 0), open: Number(t.open ?? 0), late: Number(t.late ?? 0), today: Number(t.today ?? 0), done: Number(t.done ?? 0), withLate: Number(t.with_late ?? 0) },
+    totals: { people: Number(t.people ?? 0), open: Number(t.open ?? 0), late: Number(t.late ?? 0), today: Number(t.today ?? 0), done: Number(t.done ?? 0), missed: Number(t.missed ?? 0), withLate: Number(t.with_late ?? 0) },
   };
 }
 

@@ -9,7 +9,7 @@ import { listNotifications } from "@/lib/queries";
 import { today } from "@/lib/recompute";
 import { openByApp, taskCounts, teamOf } from "@/lib/tasks/service";
 import { TASK_APP_LABEL, type TaskApp } from "@/lib/tasks/rules";
-import { writeRoutineTasks } from "@/lib/tasks/routine-service";
+import { markMissedRoutineTasks, writeRoutineTasks } from "@/lib/tasks/routine-service";
 import "@/styles/v4-theme.css";
 import { TasksShell, type TasksNav } from "./_ui/tasks-shell";
 
@@ -41,6 +41,7 @@ export default async function TasksLayout({ children }: { children: React.ReactN
      page from opening. */
   try {
     await writeRoutineTasks(day, { assigneeId: user.id });
+    await markMissedRoutineTasks({ assigneeId: user.id });
   } catch (e) {
     console.error("Routine tasks on open failed:", e instanceof Error ? e.message : e);
   }

@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { today } from "@/lib/recompute";
 import { APP_TASKS_LIST, readTaskQuery } from "@/lib/tasks/list-query";
+import { markMissedRoutineTasks } from "@/lib/tasks/routine-service";
 import { appSummary, incomingSummary, openElsewhere, taskListPage } from "@/lib/tasks/list-service";
 import type { TaskApp } from "@/lib/tasks/rules";
 import { TaskDialogs } from "./dialogs";
@@ -25,6 +26,8 @@ export async function AppTasksPage({
 }) {
   const user = await requireUser();
   const [sp, day, apps] = await Promise.all([searchParams, today(), listUserApps(user.id)]);
+  /* A routine task past its due time is missed before anything is counted; never allowed to stop the page opening. */
+  await markMissedRoutineTasks({ assigneeId: user.id }).catch((e) => console.error("Missed routine tasks on open failed:", e instanceof Error ? e.message : e));
   /* What is shown here: this app's tasks and personal ones (`shownInApp`). */
   const here: TaskApp[] = app === "tasks" ? ["tasks"] : [app, "tasks"];
   const query = { ...readTaskQuery(sp, APP_TASKS_LIST), app: null };
