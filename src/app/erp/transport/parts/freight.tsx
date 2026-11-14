@@ -83,9 +83,12 @@ export function FreightDesk(p: Props) {
   const total = shown.reduce((a, b) => a + b.amountPaise, 0);
   const litres = shown.reduce((a, b) => a + b.litres, 0);
   const viewing = dialog?.kind === "view" ? byId.get(dialog.id) : null;
-  /* Paid-freight trips with lines on no bill — the bill has not come in yet. Oldest first, like the bills. */
-  const waiting = useMemo(() => p.vehicles.filter((v) => v.unbilledLines > 0).sort((a, b) => a.dispatchOn.localeCompare(b.dispatchOn) || a.vehicleNo.localeCompare(b.vehicleNo)), [p.vehicles]);
-  const waitingShown = waiting.filter((v) => !needle || [v.vehicleNo, v.transporter ?? ""].some((x) => x.toLowerCase().includes(needle)));
+  /* Paid-freight trips with lines on no bill — the bill has not come in yet. Oldest sales bill first, like the bills. */
+  const waiting = useMemo(
+    () => p.vehicles.filter((v) => v.unbilledLines > 0).sort((a, b) => (a.billedFrom ?? a.dispatchOn).localeCompare(b.billedFrom ?? b.dispatchOn) || a.vehicleNo.localeCompare(b.vehicleNo)),
+    [p.vehicles],
+  );
+  const waitingShown = waiting.filter((v) => !needle || [v.vehicleNo, v.transporter ?? "", ...v.billingParties, ...v.billNos].some((x) => x.toLowerCase().includes(needle)));
   const waitingLines = waiting.reduce((a, v) => a + v.unbilledLines, 0);
   const paying = dialog?.kind === "pay" ? byId.get(dialog.id) : null;
 
@@ -143,13 +146,15 @@ export function FreightDesk(p: Props) {
 
           {p.sub === "pending" ? (
             <div>
-              <SubTitle aside="Oldest trip first">Bill not received yet</SubTitle>
+              <SubTitle aside="Oldest bill first">Bill not received yet</SubTitle>
               <div className="overflow-x-auto rounded-card border border-line bg-surface">
                 {waitingShown.length ? (
                   <table className="w-full text-sm">
                     <thead>
                       <tr>
-                        <Th>Left on</Th>
+                        <Th>Bill date</Th>
+                        <Th>Billing party</Th>
+                        <Th>Bill no.</Th>
                         <Th>Vehicle</Th>
                         <Th>Transporter</Th>
                         <Th align="right">Order lines</Th>
@@ -161,7 +166,13 @@ export function FreightDesk(p: Props) {
                     <tbody>
                       {waitingShown.map((v) => (
                         <Tr key={tripKey(v)}>
-                          <Td>{fd(v.dispatchOn)}</Td>
+                          <Td title={`Left on ${fd(v.dispatchOn)}`}>{v.billedFrom ? (v.billedTo && v.billedTo !== v.billedFrom ? `${fd(v.billedFrom)} – ${fd(v.billedTo)}` : fd(v.billedFrom)) : "—"}</Td>
+                          <Td>
+                            <FirstOf items={v.billingParties} />
+                          </Td>
+                          <Td>
+                            <FirstOf items={v.billNos} />
+                          </Td>
                           <Td className="font-mono text-meta">{v.vehicleNo}</Td>
                           <Td>{v.transporter ?? "—"}</Td>
                           <Td align="right">{v.unbilledLines}</Td>
@@ -602,6 +613,17 @@ function PayDialog({ bill, today, onClose }: { bill: FreightBillView; today: str
 const STEPS = ["Bill", "What was on the vehicle", "Check the split"];
 const tripKey = (v: { vehicleNo: string; dispatchOn: string }) => `${v.vehicleNo}|${v.dispatchOn}`;
 
+/** The first of a trip's several values and how many more, every one of them on hover. */
+function FirstOf({ items }: { items: string[] }) {
+  if (!items.length) return <>—</>;
+  return (
+    <span title={items.length > 1 ? items.join("\n") : undefined} className="whitespace-nowrap">
+      {items[0]}
+      {items.length > 1 ? <span className="text-muted"> +{items.length - 1}</span> : null}
+    </span>
+  );
+}
+
 function AddBillDialog({
   bill,
   trip: startTrip,
@@ -639,7 +661,7 @@ function AddBillDialog({
   const options = useMemo(() => {
     const t = transporter.trim().toLowerCase();
     const list = [...vehicles];
-    if (bill && !list.some((v) => tripKey(v) === tripKey(bill))) list.unshift({ vehicleNo: bill.vehicleNo, dispatchOn: bill.dispatchOn, transporter: bill.transporter, lines: bill.shares.length, customers: bill.customers, paidLitres: bill.litres, otherLines: 0, unbilledLines: 0, unbilledLitres: 0, unbilledCustomers: 0 });
+    if (bill && !list.some((v) => tripKey(v) === tripKey(bill))) list.unshift({ vehicleNo: bill.vehicleNo, dispatchOn: bill.dispatchOn, transporter: bill.transporter, lines: bill.shares.length, customers: bill.customers, paidLitres: bill.litres, otherLines: 0, unbilledLines: 0, unbilledLitres: 0, unbilledCustomers: 0, billingParties: [], billNos: [], billedFrom: null, billedTo: null });
     return t ? [...list.filter((v) => (v.transporter ?? "").toLowerCase() === t), ...list.filter((v) => (v.transporter ?? "").toLowerCase() !== t)] : list;
   }, [vehicles, transporter, bill]);
   const chosen = options.find((v) => tripKey(v) === trip) ?? null;
