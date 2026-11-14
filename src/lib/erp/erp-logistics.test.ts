@@ -357,6 +357,12 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(waiting?.unbilledLines, 1);
     assert.equal(waiting?.unbilledLitres, 10);
     assert.equal(waiting?.unbilledCustomers, 1);
+    /* …and the row names who it was billed to, on which sales bill and when — what the office matches the transporter's bill against. */
+    const [party] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, t.billingCustomerId));
+    assert.deepEqual(waiting?.billingParties, [party.name]);
+    if (t.billNo) assert.deepEqual(waiting?.billNos, [t.billNo.trim()]);
+    assert.equal(waiting?.billedFrom, day);
+    assert.equal(waiting?.billedTo, day);
     const input = { lrNo: "88213", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 25000, orderIds: [vl.orderId] };
     const saved = await F.saveFreightBill(ctx, input);
     assert.ok(saved.ok, msg(saved));
