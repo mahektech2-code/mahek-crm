@@ -374,7 +374,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     /* Transport expenses: transporters' bills still to pay, and Paid-freight dispatches nobody has entered a bill for. */
     const [[due], unbilled] = await Promise.all([
       q(sql`select count(*)::int as n, coalesce(sum(amount_paise), 0)::bigint as paise from erp_freight_bills where status = 'pending'`),
-      unbilledPaidLines(30),
+      unbilledPaidLines(),
     ]);
     const n = Number(due?.n ?? 0);
     logistics.push({

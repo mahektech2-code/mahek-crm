@@ -25,7 +25,7 @@ import { Delivered, Overview } from "./parts/overview";
 import { ToTransport } from "./parts/to-transport";
 import { Transporters } from "./parts/transporters";
 import { FreightDesk, type FreightSub } from "./parts/freight";
-import { freightBills, freightReport, recentVehicles } from "@/lib/erp/freight-bills";
+import { FREIGHT_TRIP_DAYS, freightBills, freightReport, recentVehicles } from "@/lib/erp/freight-bills";
 import { isErpManager } from "@/lib/erp/screens/common";
 import { addDays } from "@/lib/erp/engines/logistics";
 import { UploadLrsButton } from "./parts/upload-lrs-button";
@@ -222,7 +222,7 @@ async function freightData(one: (k: string) => string | undefined, today: string
     freightBills({ status: "pending" }),
     sub === "paid" ? freightBills({ status: "paid", from: `${month}-01`, to: monthEnd }) : Promise.resolve([]),
     sub === "reports" ? freightReport(from, to) : Promise.resolve(null),
-    recentVehicles(45),
+    recentVehicles(FREIGHT_TRIP_DAYS),
   ]);
   /* A bill opened from a link may be outside the list on screen — read it on its own. */
   const opened = one("bill");
@@ -239,6 +239,6 @@ async function freightData(one: (k: string) => string | undefined, today: string
     vehicles,
     pendingCount: pendingBills.length,
     pendingPaise: pendingBills.reduce((a, b) => a + b.amountPaise, 0),
-    unbilledLines: vehicles.filter((v) => v.dispatchOn >= addDays(today, -30)).reduce((a, v) => a + v.unbilledLines, 0),
+    tripDays: FREIGHT_TRIP_DAYS,
   };
 }

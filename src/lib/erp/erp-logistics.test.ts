@@ -352,11 +352,17 @@ describe("dispatch opens the transport record (§18)", () => {
     const [vl] = await F.vehicleLines("mh04kl2231", day);
     assert.equal(Number(vl.litres), 10);
     assert.equal(vl.freightTerm, "Paid");
-    assert.ok((await F.recentVehicles(3650)).some((v) => v.vehicleNo === "MH04 KL 2231" && v.unbilledLines === 1));
+    /* Before its bill arrives the trip is waiting on Pending expense, with the litres and customers still unbilled. */
+    const waiting = (await F.recentVehicles(3650)).find((v) => v.vehicleNo === "MH04 KL 2231");
+    assert.equal(waiting?.unbilledLines, 1);
+    assert.equal(waiting?.unbilledLitres, 10);
+    assert.equal(waiting?.unbilledCustomers, 1);
     const input = { lrNo: "88213", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 25000, orderIds: [vl.orderId] };
     const saved = await F.saveFreightBill(ctx, input);
     assert.ok(saved.ok, msg(saved));
     const billId = saved.ok ? saved.data.id : "";
+    /* Once its bill is in, the trip stops waiting — it is on the bill list instead. */
+    assert.equal((await F.recentVehicles(3650)).find((v) => v.vehicleNo === "MH04 KL 2231")?.unbilledLines, 0);
     let [bill] = await F.freightBills({ status: "pending", ids: [billId] });
     assert.equal(bill.shares.length, 1);
     assert.equal(bill.shares[0].amountPaise, 25000, "one line carries the whole bill");

@@ -26,7 +26,14 @@ import { Empty, plural, ReasonDialog, useAct } from "./common";
 /* ---------------------------------------------------------------------------
  * LOGISTICS → TRANSPORT EXPENSES (the Transportation Expense PRD). Two
  * sub-tabs — Pending expense and Paid history — and the reports behind one
- * button. A transporter's bill is entered against the vehicle that carried the
+ * button. Only Paid freight is our expense, so To Pay never appears here.
+ *
+ * Pending expense is everything still owed to a transporter, in two halves:
+ * the Paid-freight trips whose bill has not arrived yet, and the bills that
+ * have arrived and are not paid. It used to list the second half alone, with
+ * the first as a bare count on a card — so on a day nobody had typed a bill in,
+ * the list said nothing was waiting while a hundred trips were, and none of
+ * them could be reached from the list to enter its bill. A transporter's bill is entered against the vehicle that carried the
  * goods; the split by litres is previewed here with the same `splitBill` the
  * server writes with, so what is shown before saving is what is saved.
  * ------------------------------------------------------------------------- */
@@ -45,7 +52,8 @@ type Props = {
   transporters: string[];
   pendingCount: number;
   pendingPaise: number;
-  unbilledLines: number;
+  /** How far back the trips waiting for a bill go — the add-bill picker's reach. */
+  tripDays: number;
   month: string;
   from: string;
   to: string;
@@ -56,7 +64,7 @@ type Props = {
   initialAdd: boolean;
 };
 
-type Dialog = { kind: "add" } | { kind: "edit"; bill: FreightBillView } | { kind: "view"; id: string } | { kind: "pay"; id: string } | { kind: "unpay"; id: string } | { kind: "delete"; id: string } | null;
+type Dialog = { kind: "add"; trip?: VehicleTrip } | { kind: "edit"; bill: FreightBillView } | { kind: "view"; id: string } | { kind: "pay"; id: string } | { kind: "unpay"; id: string } | { kind: "delete"; id: string } | null;
 
 const qs = (base: string, extra: Record<string, string>) => `${base}${base.includes("?") ? "&" : "?"}${new URLSearchParams(extra).toString()}`;
 const perLitre = (amount: number, litres: number) => {
@@ -75,13 +83,17 @@ export function FreightDesk(p: Props) {
   const total = shown.reduce((a, b) => a + b.amountPaise, 0);
   const litres = shown.reduce((a, b) => a + b.litres, 0);
   const viewing = dialog?.kind === "view" ? byId.get(dialog.id) : null;
+  /* Paid-freight trips with lines on no bill — the bill has not come in yet. Oldest first, like the bills. */
+  const waiting = useMemo(() => p.vehicles.filter((v) => v.unbilledLines > 0).sort((a, b) => a.dispatchOn.localeCompare(b.dispatchOn) || a.vehicleNo.localeCompare(b.vehicleNo)), [p.vehicles]);
+  const waitingShown = waiting.filter((v) => !needle || [v.vehicleNo, v.transporter ?? ""].some((x) => x.toLowerCase().includes(needle)));
+  const waitingLines = waiting.reduce((a, v) => a + v.unbilledLines, 0);
   const paying = dialog?.kind === "pay" ? byId.get(dialog.id) : null;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <NavLink href={qs(p.base, { ft: "pending" })} className={toggleClass(p.sub === "pending", "rounded-full px-3.5 py-1.5")}>
-          Pending expense · {p.pendingCount}
+          Pending expense · {p.pendingCount + waiting.length}
         </NavLink>
         <NavLink href={qs(p.base, { ft: "paid" })} className={toggleClass(p.sub === "paid", "rounded-full px-3.5 py-1.5")}>
           Paid history
@@ -104,15 +116,15 @@ export function FreightDesk(p: Props) {
           <CardGrid min="card" gap="gap-3">
             {p.sub === "pending" ? (
               <>
-                <Figure label="Still to pay" value={inr(p.pendingPaise)} sub={plural(p.pendingCount, "bill")} />
-                <Figure label="Litres on those vehicles" value={`${nf(litres)} L`} sub="Paid freight only" />
-                <Figure label="Average cost per litre" value={perLitre(total, litres)} />
-                <Figure label="Paid-freight dispatches with no bill" value={String(p.unbilledLines)} sub="Vehicles that left in the last 30 days" warn={p.unbilledLines > 0} />
+                <Figure label="Bill not received yet" value={plural(waiting.length, "trip")} sub={`${plural(waitingLines, "order line")} · left in the last ${p.tripDays} days`} warn={waiting.length > 0} />
+                <Figure label="Bills to pay" value={inr(p.pendingPaise)} sub={plural(p.pendingCount, "bill")} />
+                <Figure label="Litres on those bills" value={`${nf(litres)} L`} />
+                <Figure label="Average cost per litre" value={perLitre(total, litres)} sub="On the bills to pay" />
               </>
             ) : (
               <>
                 <Figure label="Paid in this month" value={inr(total)} sub={plural(shown.length, "bill")} />
-                <Figure label="Litres carried" value={`${nf(litres)} L`} sub="Paid freight only" />
+                <Figure label="Litres carried" value={`${nf(litres)} L`} />
                 <Figure label="Average cost per litre" value={perLitre(total, litres)} />
                 <Figure
                   label="By mode"
@@ -124,105 +136,152 @@ export function FreightDesk(p: Props) {
           </CardGrid>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search bill, LR, vehicle, transporter, customer" aria-label="Search bills" className="w-80" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={p.sub === "pending" ? "Search vehicle, transporter, bill, LR, customer" : "Search bill, LR, vehicle, transporter, customer"} aria-label="Search" className="w-80" />
             {p.sub === "paid" ? <MonthPicker base={p.base} month={p.month} /> : null}
-            <span className="ml-auto text-meta text-muted">{p.sub === "pending" ? "Oldest bill first" : "Newest payment first"}</span>
+            {p.sub === "paid" ? <span className="ml-auto text-meta text-muted">Newest payment first</span> : null}
           </div>
 
-          <div className="overflow-x-auto rounded-card border border-line bg-surface">
-            {shown.length ? (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    {p.sub === "paid" ? <Th>Bill date</Th> : null}
-                    <Th>Bill / LR</Th>
-                    {p.sub === "pending" ? <Th>Bill date</Th> : null}
-                    <Th>Transporter</Th>
-                    <Th>Vehicle</Th>
-                    <Th align="right">Litres</Th>
-                    <Th align="right">Cost / L</Th>
-                    <Th align="right">Amount</Th>
-                    {p.sub === "pending" ? <Th align="right">Customers</Th> : null}
-                    {p.sub === "paid" ? (
-                      <>
-                        <Th>Paid on</Th>
-                        <Th>Mode</Th>
-                      </>
-                    ) : null}
-                    <Th>Status</Th>
-                    <Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {shown.map((b) => (
-                    <Tr key={b.id}>
-                      {p.sub === "paid" ? <Td>{fd(b.billDate)}</Td> : null}
-                      <Td>
-                        <button type="button" className={linkClass("brand", "font-medium")} onClick={() => setDialog({ kind: "view", id: b.id })}>
-                          {b.name}
-                        </button>
-                      </Td>
-                      {p.sub === "pending" ? <Td>{fd(b.billDate)}</Td> : null}
-                      <Td>{b.transporter}</Td>
-                      <Td className="font-mono text-meta">{b.vehicleNo}</Td>
-                      <Td align="right">{nf(b.litres)}</Td>
-                      <Td align="right">{perLitre(b.amountPaise, b.litres)}</Td>
-                      <Td align="right" className="font-medium">
-                        {inr(b.amountPaise)}
-                      </Td>
-                      {p.sub === "pending" ? <Td align="right">{b.customers}</Td> : null}
+          {p.sub === "pending" ? (
+            <div>
+              <SubTitle aside="Oldest trip first">Bill not received yet</SubTitle>
+              <div className="overflow-x-auto rounded-card border border-line bg-surface">
+                {waitingShown.length ? (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr>
+                        <Th>Left on</Th>
+                        <Th>Vehicle</Th>
+                        <Th>Transporter</Th>
+                        <Th align="right">Order lines</Th>
+                        <Th align="right">Customers</Th>
+                        <Th align="right">Litres</Th>
+                        <Th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {waitingShown.map((v) => (
+                        <Tr key={tripKey(v)}>
+                          <Td>{fd(v.dispatchOn)}</Td>
+                          <Td className="font-mono text-meta">{v.vehicleNo}</Td>
+                          <Td>{v.transporter ?? "—"}</Td>
+                          <Td align="right">{v.unbilledLines}</Td>
+                          <Td align="right">{v.unbilledCustomers}</Td>
+                          <Td align="right">{nf(v.unbilledLitres)}</Td>
+                          <Td align="right">
+                            {p.canWrite ? (
+                              <Button size="sm" onClick={() => setDialog({ kind: "add", trip: v })}>
+                                Add bill
+                              </Button>
+                            ) : null}
+                          </Td>
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <Empty>{needle && waiting.length ? "No trip matches that search." : `Every Paid-freight trip of the last ${p.tripDays} days has its bill.`}</Empty>
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          <div>
+            {p.sub === "pending" ? <SubTitle aside="Oldest bill first">Bill received, to pay</SubTitle> : null}
+            <div className="overflow-x-auto rounded-card border border-line bg-surface">
+              {shown.length ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      {p.sub === "paid" ? <Th>Bill date</Th> : null}
+                      <Th>Bill / LR</Th>
+                      {p.sub === "pending" ? <Th>Bill date</Th> : null}
+                      <Th>Transporter</Th>
+                      <Th>Vehicle</Th>
+                      <Th align="right">Litres</Th>
+                      <Th align="right">Cost / L</Th>
+                      <Th align="right">Amount</Th>
+                      {p.sub === "pending" ? <Th align="right">Customers</Th> : null}
                       {p.sub === "paid" ? (
                         <>
-                          <Td>{b.paidOn ? fd(b.paidOn) : "—"}</Td>
-                          <Td>{b.paymentMode ? PAYMENT_MODE_LABEL[b.paymentMode] : "—"}</Td>
+                          <Th>Paid on</Th>
+                          <Th>Mode</Th>
                         </>
                       ) : null}
-                      <Td>
-                        <StatusBadge bill={b} today={p.today} />
-                      </Td>
-                      <Td align="right">
-                        {p.canWrite && b.status === "pending" ? (
-                          b.stale.length ? (
-                            <Button size="sm" onClick={() => setDialog({ kind: "view", id: b.id })}>
-                              Check
-                            </Button>
-                          ) : (
-                            <Button size="sm" onClick={() => setDialog({ kind: "pay", id: b.id })}>
-                              Mark as paid
-                            </Button>
-                          )
-                        ) : p.canWrite && p.manager && b.status === "paid" ? (
-                          <Button size="sm" onClick={() => setDialog({ kind: "unpay", id: b.id })}>
-                            Undo payment
-                          </Button>
+                      <Th>Status</Th>
+                      <Th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shown.map((b) => (
+                      <Tr key={b.id}>
+                        {p.sub === "paid" ? <Td>{fd(b.billDate)}</Td> : null}
+                        <Td>
+                          <button type="button" className={linkClass("brand", "font-medium")} onClick={() => setDialog({ kind: "view", id: b.id })}>
+                            {b.name}
+                          </button>
+                        </Td>
+                        {p.sub === "pending" ? <Td>{fd(b.billDate)}</Td> : null}
+                        <Td>{b.transporter}</Td>
+                        <Td className="font-mono text-meta">{b.vehicleNo}</Td>
+                        <Td align="right">{nf(b.litres)}</Td>
+                        <Td align="right">{perLitre(b.amountPaise, b.litres)}</Td>
+                        <Td align="right" className="font-medium">
+                          {inr(b.amountPaise)}
+                        </Td>
+                        {p.sub === "pending" ? <Td align="right">{b.customers}</Td> : null}
+                        {p.sub === "paid" ? (
+                          <>
+                            <Td>{b.paidOn ? fd(b.paidOn) : "—"}</Td>
+                            <Td>{b.paymentMode ? PAYMENT_MODE_LABEL[b.paymentMode] : "—"}</Td>
+                          </>
                         ) : null}
-                      </Td>
+                        <Td>
+                          <StatusBadge bill={b} today={p.today} />
+                        </Td>
+                        <Td align="right">
+                          {p.canWrite && b.status === "pending" ? (
+                            b.stale.length ? (
+                              <Button size="sm" onClick={() => setDialog({ kind: "view", id: b.id })}>
+                                Check
+                              </Button>
+                            ) : (
+                              <Button size="sm" onClick={() => setDialog({ kind: "pay", id: b.id })}>
+                                Mark as paid
+                              </Button>
+                            )
+                          ) : p.canWrite && p.manager && b.status === "paid" ? (
+                            <Button size="sm" onClick={() => setDialog({ kind: "unpay", id: b.id })}>
+                              Undo payment
+                            </Button>
+                          ) : null}
+                        </Td>
+                      </Tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <Tr className="bg-canvas font-medium">
+                      <Td>{plural(shown.length, "bill")}</Td>
+                      <Td />
+                      <Td />
+                      <Td />
+                      <Td align="right">{nf(litres)}</Td>
+                      <Td align="right">{perLitre(total, litres)}</Td>
+                      <Td align="right">{inr(total)}</Td>
+                      <Td />
+                      <Td />
+                      {p.sub === "paid" ? <Td /> : null}
                     </Tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <Tr className="bg-canvas font-medium">
-                    <Td>{plural(shown.length, "bill")}</Td>
-                    <Td />
-                    <Td />
-                    <Td />
-                    <Td align="right">{nf(litres)}</Td>
-                    <Td align="right">{perLitre(total, litres)}</Td>
-                    <Td align="right">{inr(total)}</Td>
-                    <Td />
-                    <Td />
-                    {p.sub === "paid" ? <Td /> : null}
-                  </Tr>
-                </tfoot>
-              </table>
-            ) : (
-              <Empty>{needle ? "No bill matches that search." : p.sub === "pending" ? "No transport bill is waiting to be paid." : "No transport bill was paid in this month."}</Empty>
-            )}
+                  </tfoot>
+                </table>
+              ) : (
+                <Empty>{needle ? "No bill matches that search." : p.sub === "pending" ? "No transport bill is waiting to be paid." : "No transport bill was paid in this month."}</Empty>
+              )}
+            </div>
           </div>
         </>
       )}
 
-      {dialog?.kind === "add" ? <AddBillDialog vehicles={p.vehicles} transporters={p.transporters} today={p.today} onClose={close} onSaved={(id, pay) => setDialog(pay ? { kind: "pay", id } : null)} /> : null}
+      {dialog?.kind === "add" ? <AddBillDialog trip={dialog.trip} vehicles={p.vehicles} transporters={p.transporters} today={p.today} onClose={close} onSaved={(id, pay) => setDialog(pay ? { kind: "pay", id } : null)} /> : null}
       {dialog?.kind === "edit" ? <AddBillDialog bill={dialog.bill} vehicles={p.vehicles} transporters={p.transporters} today={p.today} onClose={close} onSaved={(id) => setDialog({ kind: "view", id })} /> : null}
       {viewing ? (
         <BillDialog
@@ -545,6 +604,7 @@ const tripKey = (v: { vehicleNo: string; dispatchOn: string }) => `${v.vehicleNo
 
 function AddBillDialog({
   bill,
+  trip: startTrip,
   vehicles,
   transporters,
   today,
@@ -552,6 +612,8 @@ function AddBillDialog({
   onSaved,
 }: {
   bill?: FreightBillView;
+  /** Opened from a trip waiting for its bill: the vehicle and transporter come filled in. */
+  trip?: VehicleTrip;
   vehicles: VehicleTrip[];
   transporters: string[];
   today: string;
@@ -562,8 +624,8 @@ function AddBillDialog({
   const [step, setStep] = useState(0);
   const [lrNo, setLrNo] = useState(bill?.lrNo ?? "");
   const [billDate, setBillDate] = useState(bill?.billDate ?? today);
-  const [transporter, setTransporter] = useState(bill?.transporter ?? "");
-  const [trip, setTrip] = useState(bill ? tripKey(bill) : "");
+  const [transporter, setTransporter] = useState(bill?.transporter ?? startTrip?.transporter ?? "");
+  const [trip, setTrip] = useState(bill ? tripKey(bill) : startTrip ? tripKey(startTrip) : "");
   const [amount, setAmount] = useState(bill ? String(bill.amountPaise / 100) : "");
   const [remarks, setRemarks] = useState(bill?.remarks ?? "");
   const [lines, setLines] = useState<VehicleLine[] | null>(null);
@@ -577,7 +639,7 @@ function AddBillDialog({
   const options = useMemo(() => {
     const t = transporter.trim().toLowerCase();
     const list = [...vehicles];
-    if (bill && !list.some((v) => tripKey(v) === tripKey(bill))) list.unshift({ vehicleNo: bill.vehicleNo, dispatchOn: bill.dispatchOn, transporter: bill.transporter, lines: bill.shares.length, customers: bill.customers, paidLitres: bill.litres, otherLines: 0, unbilledLines: 0 });
+    if (bill && !list.some((v) => tripKey(v) === tripKey(bill))) list.unshift({ vehicleNo: bill.vehicleNo, dispatchOn: bill.dispatchOn, transporter: bill.transporter, lines: bill.shares.length, customers: bill.customers, paidLitres: bill.litres, otherLines: 0, unbilledLines: 0, unbilledLitres: 0, unbilledCustomers: 0 });
     return t ? [...list.filter((v) => (v.transporter ?? "").toLowerCase() === t), ...list.filter((v) => (v.transporter ?? "").toLowerCase() !== t)] : list;
   }, [vehicles, transporter, bill]);
   const chosen = options.find((v) => tripKey(v) === trip) ?? null;
