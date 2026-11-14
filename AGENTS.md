@@ -9877,6 +9877,25 @@ anybody above them; its person reads it. A change reaches the days to come
 and never rewrites a task already written. Nobody is notified per day — a
 bell for fifteen daily tasks is a bell nobody reads.
 
+**A ROUTINE'S TASK BELONGS TO ITS OWN DAY, AND IS MISSED IF IT IS NOT DONE ON
+TIME.** Past its due time — the end of its due day where no time is set — it
+is closed as `missed` (`tasks.status`, `0334`): closed at the deadline, by
+nobody, with "Not done by 6 PM on 14 Nov." as its remark. It cannot be closed,
+reopened or edited afterwards, and a routine task's due day and time cannot be
+moved, because moving them is the way round it. Yesterday's is not done today;
+today's is today's own task. `routineMissed` in `rules.ts` is the rule, pure;
+`markMissedRoutineTasks` closes them hourly, nightly and whenever somebody
+opens the Tasks app or an app's My tasks; `closeTask` asks the rule again and
+marks the task missed itself, so the hour between two sweeps is never a way
+in. A done routine task can be reopened only while its time is still running.
+Saving a routine does not write today's task if its time has already gone.
+`isClosed` is "done or missed": open is `status <> 'done' and status <>
+'missed'`, written as two inequalities so the open-task partial indexes still
+apply. A task given by hand, or an automatic one, is never missed — it goes
+late. Missed shows as its own tab and on Team workload. The rule starts at
+`MISSED_FROM` (10 Nov 2026): a routine task due before it stays open and late
+and may still be closed, so turning it on did not sweep the old backlog.
+
 **AUTOMATIC TASKS ARE RAISED BY EACH APP AND CLOSED BY IT.** `lib/tasks/automations.ts`
 (pure) lists the rules — a callback promised, a lead's next action, a complaint
 past its SLA, a payment reported, an order or a PO waiting for approval, a

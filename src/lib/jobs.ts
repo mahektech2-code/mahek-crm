@@ -83,7 +83,7 @@ import {
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
-import { writeRoutineTasks } from "./tasks/routine-service";
+import { markMissedRoutineTasks, writeRoutineTasks } from "./tasks/routine-service";
 import { syncAutomations } from "./tasks/automation-service";
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
@@ -257,13 +257,15 @@ async function run(
 }
 
 /**
- * Today's task from every routine that falls due today. Idempotent — each task
+ * Routine tasks past their due time closed as missed, then today's task from
+ * every routine that falls due today. Idempotent — each task
  * names its routine and its day, and the pair is unique — so it rides both the
  * hourly and the nightly, and the Tasks app asks again for whoever opens it.
  */
 async function taskRoutinesStep(): Promise<{ recordsAffected: number; detail: string }> {
+  const missed = await markMissedRoutineTasks();
   const n = await writeRoutineTasks(await today());
-  return { recordsAffected: n, detail: `${n} routine tasks written` };
+  return { recordsAffected: n + missed, detail: `${n} routine tasks written, ${missed} missed` };
 }
 
 /** Automatic tasks: raised from each app's records, closed when the record is done with. */

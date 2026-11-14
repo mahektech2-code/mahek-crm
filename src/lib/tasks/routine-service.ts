@@ -1,13 +1,15 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { taskEvents, taskRoutines, tasks, users } from "@/db/schema";
+import { taskEvents, taskRoutines, taskTransfers, tasks, users } from "@/db/schema";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { alias } from "drizzle-orm/pg-core";
 import { occurrenceOn, windowWords, type RoutineFrequency } from "./routines";
 import { audienceWords, readAudience, type Audience } from "./audience";
 import { resolveFor } from "./audience-service";
-import type { TaskApp, TaskPriority } from "./rules";
+import { MISSED_FROM, missedRemark, routineMissed, type TaskApp, type TaskPriority } from "./rules";
+import { appClock } from "./clock";
 import { teamOf } from "./service";
 
 /* ---------------------------------------------------------------------------
@@ -143,7 +145,9 @@ export async function getRoutine(id: string) {
 const creator = alias(users, "creator");
 const person = alias(users, "person");
 
-export async function writeRoutineTasks(day: string, opts: { assigneeId?: string; routineId?: string } = {}): Promise<number> {
+export async function writeRoutineTasks(day: string, opts: { assigneeId?: string; routineId?: string; skipPast?: boolean } = {}): Promise<number> {
+  /* A routine made or changed after today's due time does not write a task that is missed the moment it exists. */
+  const clock = opts.skipPast ? appClock() : null;
   const routines = (
     await db
       .select({ r: taskRoutines, creatorActive: creator.active, creatorRole: creator.role, assigneeActive: person.active })
@@ -157,6 +161,7 @@ export async function writeRoutineTasks(day: string, opts: { assigneeId?: string
   for (const { r, creatorActive, creatorRole } of routines) {
     const at = occurrenceOn({ ...r, frequency: r.frequency as RoutineFrequency }, day);
     if (!at) continue;
+    if (clock && routineMissed({ routineId: r.id, status: "todo", dueDate: at.dueDate, dueTime: r.dueTime }, clock.day, clock.hm)) continue;
     let people: string[];
     if (r.assigneeId) people = [r.assigneeId];
     else {
@@ -199,3 +204,60 @@ export async function writeRoutineTasks(day: string, opts: { assigneeId?: string
   }
   return written;
 }
+
+/* ---------------------------------------------------------------------------
+ * MISSED. A routine's task not done by its due time — the end of its due day
+ * where no time was set — is closed as `missed`, at the deadline, by nobody.
+ * It cannot be closed or reopened afterwards: the next day writes the next
+ * day's task, and yesterday's is not done today. The deadline is checked again
+ * in `closeTask`, so the hour between two sweeps is never a way in.
+ *
+ * Idempotent: only open routine tasks past their deadline are touched, so the
+ * hourly job, the nightly one and a person opening the app can all ask.
+ * ------------------------------------------------------------------------- */
+
+/** The instant a routine task's time runs out, as SQL: its due day at its due time, else at midnight after it. */
+export const routineDeadlineSql = sql`((t.due_date + coalesce(t.due_time, '24:00')::time) at time zone ${APP_TIMEZONE})`;
+
+export async function markMissedRoutineTasks(opts: { assigneeId?: string; ids?: string[] } = {}): Promise<number> {
+  const due = (await db.execute(sql`
+    select t.id, t.due_date::text as "dueDate", t.due_time as "dueTime", least(${routineDeadlineSql}, now()) as deadline
+      from tasks t
+     where t.routine_id is not null and t.status <> 'done' and t.status <> 'missed'
+       and ${routineDeadlineSql} <= now()
+       and t.due_date >= ${MISSED_FROM}::date
+       ${opts.assigneeId ? sql`and t.assignee_id = ${opts.assigneeId}` : sql``}
+       ${opts.ids ? (opts.ids.length ? sql`and t.id in ${opts.ids}` : sql`and false`) : sql``}
+  `)) as unknown as { id: string; dueDate: string; dueTime: string | null; deadline: string | Date }[];
+  if (!due.length) return 0;
+
+  let missed = 0;
+  for (let i = 0; i < due.length; i += 200) {
+    const chunk = due.slice(i, i + 200);
+    await db.transaction(async (tx) => {
+      const closedIds: string[] = [];
+      for (const r of chunk) {
+        const done = await tx
+          .update(tasks)
+          .set({ status: "missed", closedAt: new Date(r.deadline), closedById: null, closeRemark: missedRemark(r.dueDate, r.dueTime), updatedAt: new Date() })
+          .where(and(eq(tasks.id, r.id), sql`${tasks.status} <> 'done' and ${tasks.status} <> 'missed'`))
+          .returning({ id: tasks.id });
+        if (done.length) closedIds.push(r.id);
+      }
+      if (!closedIds.length) return;
+      missed += closedIds.length;
+      await tx.insert(taskEvents).values(
+        chunk
+          .filter((r) => closedIds.includes(r.id))
+          .map((r) => ({ id: `tev_${randomUUID().replace(/-/g, "").slice(0, 16)}`, taskId: r.id, actorId: null, kind: "missed", body: missedRemark(r.dueDate, r.dueTime) })),
+      );
+      /* An offer still open on a task that can no longer be done is an offer of nothing. */
+      await tx
+        .update(taskTransfers)
+        .set({ status: "withdrawn", decidedAt: new Date(), decisionNote: "The task was missed before it was accepted." })
+        .where(and(inArray(taskTransfers.taskId, closedIds), eq(taskTransfers.status, "pending")));
+    });
+  }
+  return missed;
+}
+

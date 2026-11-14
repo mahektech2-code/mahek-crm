@@ -22,7 +22,7 @@ import {
   type TaskListQuery,
   type TaskTab,
 } from "@/lib/tasks/list-query";
-import { TASK_APP_LABEL, plusDays, type TaskApp } from "@/lib/tasks/rules";
+import { TASK_APP_LABEL, isClosed, plusDays, type TaskApp } from "@/lib/tasks/rules";
 import { taskOpenHref } from "@/lib/tasks/automations";
 import { AppChip, DueText, PriorityMark, StatusBadge, TaskRowItem, fromWords, KIND_LABEL } from "./kit";
 import { useTaskDialogs } from "./dialogs";
@@ -93,11 +93,12 @@ export function TaskMenu({ task: t, today, viewerId }: { task: TaskRow; today: s
     if (r.ok) router.refresh();
   };
   const href = taskOpenHref(t);
-  const open = t.status !== "done";
+  const open = !isClosed(t.status);
   const items: MenuItem[] = [{ label: "Open the task", onSelect: () => openTask(t.id) }];
   if (open && t.status !== "doing") items.push({ label: "Start it", onSelect: () => void act(updateTask(t.id, { status: "doing" })) });
   if (open && t.status !== "waiting") items.push({ label: "Waiting on someone", onSelect: () => void act(updateTask(t.id, { status: "waiting" })) });
-  if (open) items.push({ label: "Move to tomorrow", onSelect: () => void act(updateTask(t.id, { dueDate: plusDays(today, 1) })) });
+  // A routine's task is due when its routine says; moving it would be a way round missing it.
+  if (open && !t.routineId) items.push({ label: "Move to tomorrow", onSelect: () => void act(updateTask(t.id, { dueDate: plusDays(today, 1) })) });
   if (href && t.app !== "tasks") items.push({ label: `Open in ${TASK_APP_LABEL[t.app]}`, onSelect: () => router.push(href) });
   if (open && !t.transfer && !t.autoRule && t.assigneeId === viewerId) items.push({ label: "Transfer", onSelect: () => openTransfer(t.id) });
   return <RowMenu items={items} />;
@@ -335,7 +336,7 @@ export function TaskListView({
                         </td>
                       ) : null}
                       <td className="border-t border-divider px-3 py-2.5">
-                        <span className={cx("font-medium", t.status === "done" ? "text-faint line-through" : "text-ink")}>{t.title}</span>
+                        <span className={cx("font-medium", t.status === "done" ? "text-faint line-through" : t.status === "missed" ? "text-muted" : "text-ink")}>{t.title}</span>
                         <span className="block text-xs text-muted">
                           {t.customerName ? `${t.customerName} · ` : ""}
                           {fromWords(t, viewerId)}
@@ -356,7 +357,7 @@ export function TaskListView({
                       </td>
                       <td className="border-t border-divider px-3 py-2.5 text-body">{t.checklist.length ? `${t.checklist.filter((c) => c.done).length} of ${t.checklist.length}` : "—"}</td>
                       <td className="border-t border-divider px-3 py-2.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        {t.status !== "done" && !(t.transfer && t.transfer.toId === viewerId) && (t.assigneeId === viewerId || showAssignee) ? (
+                        {!isClosed(t.status) && !(t.transfer && t.transfer.toId === viewerId) && (t.assigneeId === viewerId || showAssignee) ? (
                           <Button size="sm" onClick={() => openClose(t.id)}>
                             Mark done
                           </Button>

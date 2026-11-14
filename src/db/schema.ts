@@ -17433,18 +17433,19 @@ export const tasks = pgTable(
     uniqueIndex("tasks_routine_person_day_key").on(t.routineId, t.assigneeId, t.routineDay).where(sql`routine_id is not null`),
     index("tasks_assignee_idx").on(t.assigneeId, t.status, t.dueDate),
     index("tasks_created_by_idx").on(t.createdById),
+    index("tasks_routine_open_due_idx").on(t.dueDate).where(sql`routine_id is not null and status <> 'done' and status <> 'missed'`),
     index("tasks_open_assignee_due_idx").on(t.assigneeId, t.dueDate).where(sql`status <> 'done'`),
     index("tasks_done_assignee_closed_idx").on(t.assigneeId, t.closedAt.desc()).where(sql`status = 'done'`),
     index("tasks_created_by_created_idx").on(t.createdById, t.createdAt.desc()),
     // tasks_title_trgm_idx (gin, gin_trgm_ops) lives in 0323_tasks_scale.sql: Drizzle cannot express an operator class.
     index("tasks_batch_idx").on(t.batchId),
     index("tasks_customer_idx").on(t.customerId),
-    check("tasks_status", sql`${t.status} in ('todo','doing','waiting','done')`),
+    check("tasks_status", sql`${t.status} in ('todo','doing','waiting','done','missed')`),
     check("tasks_priority", sql`${t.priority} in ('urgent','high','normal','low')`),
     check("tasks_due_time", sql`${t.dueTime} is null or ${t.dueTime} ~ '^[0-2][0-9]:[0-5][0-9]$'`),
     check(
       "tasks_closed_with_remark",
-      sql`(${t.status} = 'done') = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closeRemark} is not null and (${t.closedById} is not null or ${t.autoRule} is not null)))`,
+      sql`(${t.status} in ('done','missed')) = (${t.closedAt} is not null) and (${t.status} <> 'done' or (${t.closeRemark} is not null and (${t.closedById} is not null or ${t.autoRule} is not null))) and (${t.status} <> 'missed' or (${t.routineId} is not null and ${t.closedById} is null and ${t.closeRemark} is not null))`,
     ),
   ],
 );

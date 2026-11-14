@@ -20,7 +20,7 @@ import {
   TRANSFER_LIST,
   type TaskListQuery,
 } from "@/lib/tasks/list-query";
-import { STATUS_LABEL, TASK_APP_LABEL, daysUntil, type TaskApp, type TaskStatus } from "@/lib/tasks/rules";
+import { STATUS_LABEL, TASK_APP_LABEL, daysUntil, isClosed, type TaskApp, type TaskStatus } from "@/lib/tasks/rules";
 import { AppChip, Avatar, DueText, FigureCard, TaskListCard, KIND_LABEL, KindGlyph } from "./kit";
 import { useTaskDialogs } from "./dialogs";
 import { Rows, TaskListView, TaskMenu } from "./task-list";
@@ -216,6 +216,8 @@ const ALL_TABS = [
   { key: "doing", label: "In progress" },
   { key: "waiting", label: "Waiting" },
   { key: "done", label: "Done" },
+
+  { key: "missed", label: "Missed", tone: "danger" },
   { key: "all", label: "Everything" },
 ] as const;
 
@@ -523,6 +525,7 @@ export function TeamScreen({
         <FigureCard label="Late" value={t.late.toLocaleString("en-IN")} sub={`${plural(t.withLate, "person", "people")} with something late`} pct={t.open ? (t.late / t.open) * 100 : 0} tone="danger" />
         <FigureCard label="Due today" value={t.today.toLocaleString("en-IN")} sub="In every app" pct={t.open ? (t.today / t.open) * 100 : 0} tone="brand" />
         <FigureCard label="Done" value={t.done.toLocaleString("en-IN")} sub="In the last fortnight" pct={t.done + t.open ? (t.done / (t.done + t.open)) * 100 : 0} tone="success" />
+        <FigureCard label="Missed" value={t.missed.toLocaleString("en-IN")} sub="Routine tasks not done on time, last fortnight" pct={t.done + t.missed ? (t.missed / (t.done + t.missed)) * 100 : 0} tone="danger" />
       </CardGrid>
       <div className="mb-3 flex items-center gap-2">
         <input
@@ -543,7 +546,7 @@ export function TeamScreen({
         <table className="w-full min-w-[760px] border-separate border-spacing-0 text-[13px]">
           <thead>
             <tr>
-              {["Person", "Open", "Late", "Due today", "Done", "Load", ""].map((h) => (
+              {["Person", "Open", "Late", "Due today", "Done", "Missed", "Load", ""].map((h) => (
                 <th key={h} className="bg-ink px-3 py-2.5 text-left text-[11px] font-bold tracking-[0.05em] text-white uppercase first:rounded-tl-[7px] last:rounded-tr-[7px]">
                   {h}
                 </th>
@@ -568,6 +571,7 @@ export function TeamScreen({
                   <td className="border-t border-divider px-3 py-2.5">{r.late ? <Badge tone="danger">{r.late.toLocaleString("en-IN")}</Badge> : 0}</td>
                   <td className="border-t border-divider px-3 py-2.5">{r.today.toLocaleString("en-IN")}</td>
                   <td className="border-t border-divider px-3 py-2.5">{r.done.toLocaleString("en-IN")}</td>
+                  <td className="border-t border-divider px-3 py-2.5">{r.missed ? <Badge tone="danger">{r.missed.toLocaleString("en-IN")}</Badge> : 0}</td>
                   <td className="border-t border-divider px-3 py-2.5">
                     <span className="flex h-1.5 w-[160px] overflow-hidden rounded-full bg-divider" title={`${r.done} done, ${r.open - r.late} open, ${r.late} late`}>
                       <i className="block h-full bg-success" style={{ width: `${all ? (r.done / all) * 100 : 0}%` }} />
@@ -614,6 +618,8 @@ export function TeamScreen({
               { key: "open", label: "Open" },
               { key: "late", label: "Late", tone: "danger" },
               { key: "done", label: "Done" },
+
+              { key: "missed", label: "Missed", tone: "danger" },
               { key: "all", label: "Everything" },
             ]}
             today={today}
@@ -711,7 +717,7 @@ export function AssignedScreen({
                     <button
                       key={p.taskId}
                       onClick={() => openTask(p.taskId)}
-                      className={cx("inline-flex cursor-pointer items-center gap-1.5 rounded-full py-0.5 pr-2.5 pl-0.5 text-[12.5px]", p.status === "done" ? "bg-success-soft text-success" : "bg-divider text-body")}
+                      className={cx("inline-flex cursor-pointer items-center gap-1.5 rounded-full py-0.5 pr-2.5 pl-0.5 text-[12.5px]", p.status === "done" ? "bg-success-soft text-success" : p.status === "missed" ? "bg-danger-soft text-danger" : "bg-divider text-body")}
                     >
                       <Avatar name={p.name} size={18} /> {p.name.split(" ")[0]} · {STATUS_LABEL[p.status]}
                     </button>
@@ -739,6 +745,8 @@ export function AssignedScreen({
           { key: "open", label: "Open" },
           { key: "late", label: "Late", tone: "danger" },
           { key: "done", label: "Done" },
+
+          { key: "missed", label: "Missed", tone: "danger" },
           { key: "all", label: "Everything" },
         ]}
         today={today}
@@ -747,7 +755,7 @@ export function AssignedScreen({
         showAssignee
         bulk={false}
         empty="Nothing given to one person yet."
-        extra={(t) => (t.status !== "done" && daysUntil(t.dueDate, today) < 0 ? <NudgeButton personId={t.assigneeId} /> : null)}
+        extra={(t) => (!isClosed(t.status) && daysUntil(t.dueDate, today) < 0 ? <NudgeButton personId={t.assigneeId} /> : null)}
       />
     </div>
   );
@@ -825,6 +833,8 @@ export function AppTasksScreen({
           { key: "late", label: "Late", tone: "danger" },
           { key: "upcoming", label: "Upcoming" },
           { key: "done", label: "Done" },
+
+          { key: "missed", label: "Missed", tone: "danger" },
           { key: "all", label: "All" },
         ]}
         today={today}

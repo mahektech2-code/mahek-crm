@@ -4,7 +4,8 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { listAttachments, type AttachmentView } from "@/lib/services/attachment-service";
-import { managesBoth, teamBelow, type TaskApp, type TaskPriority, type TaskStatus } from "./rules";
+import { isClosed, managesBoth, routineMissed, teamBelow, type TaskApp, type TaskPriority, type TaskStatus } from "./rules";
+import { appClock } from "./clock";
 import { AUTOMATION_BY_ID } from "./automations";
 import { scheduleWords, windowWords, type RoutineFrequency } from "./routines";
 import { reachesEverybody, type TaskReach } from "./permissions";
@@ -338,7 +339,10 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
   const mine = task.assigneeId === viewer.id;
   const above = team.has(task.assigneeId);
   const creator = task.createdById === viewer.id;
-  const open = task.status !== "done";
+  /* A routine's task past its due time is missed whether or not the sweep has reached it yet. */
+  const clock = appClock();
+  const missed = routineMissed(task, clock.day, clock.hm);
+  const open = !isClosed(task.status) && !missed;
   return {
     task,
     events: events.map((e) => ({ id: String(e.id), kind: String(e.kind), body: (e.body as string) ?? null, actorName: (e.actor_name as string) ?? null, at: iso(e.created_at)! })),
@@ -359,7 +363,8 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
       edit: open && (mine || above || creator),
       setProof: open && (creator || above),
       close: open && (mine || above),
-      reopen: !open && (mine || above || creator),
+      // Done can be reopened while its day is still running; a routine's task past its time, and a missed one, never.
+      reopen: task.status === "done" && !(task.routineId && routineMissed({ ...task, status: "todo" }, clock.day, clock.hm)) && (mine || above || creator),
       // An automatic task follows its record: the app that raised it decides who holds it.
       transfer: open && !task.transfer && !task.autoRule && (mine || above),
       decideTransfer: Boolean(task.transfer && task.transfer.toId === viewer.id),
@@ -381,12 +386,12 @@ export async function taskCounts(
   const teamIn = await teamInSql({ id: userId, role: (await roleOf(userId)) ?? "associate" }, "see", sql`assignee_id`);
   const rows = await db.execute<Record<string, number>>(sql`
     select
-      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and due_date <= ${today}::date) as due_now,
-      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and due_date < ${today}::date) as late,
-      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done') as open,
+      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and status <> 'missed' and due_date <= ${today}::date) as due_now,
+      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and status <> 'missed' and due_date < ${today}::date) as late,
+      (select count(*)::int from tasks where assignee_id = ${userId} and status <> 'done' and status <> 'missed') as open,
       (select count(*)::int from task_transfers where to_id = ${userId} and status = 'pending') as offered,
-      (select count(*)::int from tasks where ${teamIn} and status <> 'done' and due_date < ${today}::date) as team_late,
-      (select count(*)::int from tasks where created_by_id = ${userId} and assignee_id <> ${userId} and status <> 'done' and auto_rule is null) as given_open`);
+      (select count(*)::int from tasks where ${teamIn} and status <> 'done' and status <> 'missed' and due_date < ${today}::date) as team_late,
+      (select count(*)::int from tasks where created_by_id = ${userId} and assignee_id <> ${userId} and status <> 'done' and status <> 'missed' and auto_rule is null) as given_open`);
   const r = rows[0] ?? {};
   return {
     dueNow: Number(r.due_now ?? 0),
@@ -407,6 +412,6 @@ async function roleOf(userId: string): Promise<string | null> {
 export async function openByApp(userId: string, today: string): Promise<{ app: string; open: number; late: number }[]> {
   const rows = await db.execute<{ app: string; open: number; late: number }>(sql`
     select app, count(*)::int as open, count(*) filter (where due_date < ${today}::date)::int as late
-      from tasks where assignee_id = ${userId} and status <> 'done' group by app order by count(*) desc, app`);
+      from tasks where assignee_id = ${userId} and status <> 'done' and status <> 'missed' group by app order by count(*) desc, app`);
   return rows.map((r) => ({ app: r.app, open: Number(r.open), late: Number(r.late) }));
 }

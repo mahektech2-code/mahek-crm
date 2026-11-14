@@ -11,6 +11,7 @@ import {
   TASK_APP_LABEL,
   clock12,
   daysUntil,
+  isClosed,
   dueWords,
   shortDate,
   weekday,
@@ -50,7 +51,7 @@ export function AppChip({ app, long = false }: { app: TaskApp; long?: boolean })
 }
 
 export function StatusBadge({ status }: { status: TaskStatus }) {
-  const tone = status === "done" ? "success" : status === "doing" ? "brand" : status === "waiting" ? "warn" : "neutral";
+  const tone = status === "done" ? "success" : status === "missed" ? "danger" : status === "doing" ? "brand" : status === "waiting" ? "warn" : "neutral";
   return <Badge tone={tone}>{STATUS_LABEL[status]}</Badge>;
 }
 
@@ -79,6 +80,14 @@ function FlagGlyph() {
 
 /** The left column of a row: the day, and under it the time or how late. */
 export function DueCell({ task, today }: { task: TaskRow; today: string }) {
+  if (task.status === "missed") {
+    return (
+      <div className="text-sm leading-[18px] font-semibold text-danger">
+        Missed
+        <span className="block text-xs font-normal">{shortDate(task.dueDate)}{task.dueTime ? ` · ${clock12(task.dueTime)}` : ""}</span>
+      </div>
+    );
+  }
   if (task.status === "done") {
     return (
       <div className="text-sm leading-[18px] text-success">
@@ -106,6 +115,7 @@ export function DueCell({ task, today }: { task: TaskRow; today: string }) {
 /** "Today · 3 PM", "2 days late" — for a cell or a card. */
 export function DueText({ task, today }: { task: TaskRow; today: string }) {
   if (task.status === "done") return <span className="text-[12.5px] font-semibold text-success">Done</span>;
+  if (task.status === "missed") return <span className="text-[12.5px] font-semibold text-danger">Missed</span>;
   const d = daysUntil(task.dueDate, today);
   return (
     <span className={cx("text-[12.5px] font-semibold whitespace-nowrap", d < 0 ? "text-danger" : d === 0 ? "text-brand-hover" : "text-body")}>
@@ -188,7 +198,7 @@ export function TaskRowItem({
     >
       <DueCell task={task} today={today} />
       <div className="min-w-0">
-        <div className={cx("truncate text-[15px] leading-5 font-medium", task.status === "done" ? "text-faint line-through" : "text-ink")}>{task.title}</div>
+        <div className={cx("truncate text-[15px] leading-5 font-medium", task.status === "done" ? "text-faint line-through" : task.status === "missed" ? "text-muted" : "text-ink")}>{task.title}</div>
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-muted">
           {showApp ? <AppChip app={task.app} /> : null}
           {task.customerName ? <span className="font-medium text-brand">{task.customerName}</span> : null}
@@ -225,7 +235,7 @@ export function TaskRowItem({
               <PriorityMark priority={task.priority} />
             </>
           ) : null}
-          {task.proofRequired && task.status !== "done" ? (
+          {task.proofRequired && !isClosed(task.status) ? (
             <>
               <Sep />
               <span title="A screenshot is needed to close this">Screenshot needed</span>
@@ -243,17 +253,17 @@ export function TaskRowItem({
             </>
           ) : null}
         </div>
-        {task.status === "done" && task.closeRemark ? <div className="mt-1 truncate text-[13px] text-muted">“{task.closeRemark}”</div> : null}
+        {isClosed(task.status) && task.closeRemark ? <div className="mt-1 truncate text-[13px] text-muted">“{task.closeRemark}”</div> : null}
       </div>
       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        {task.status !== "done" && task.customerId && task.app === "crm" && task.assigneeId === viewerId ? (
+        {!isClosed(task.status) && task.customerId && task.app === "crm" && task.assigneeId === viewerId ? (
           <Link href={`/crm/customers/${task.customerId}?call=1`} className="inline-flex h-8 items-center rounded-control border border-brand bg-brand px-3 text-[13px] font-semibold text-white no-underline hover:bg-brand-hover hover:no-underline">
             Call
           </Link>
         ) : null}
         {extra}
-        {task.status === "done" ? (
-          onReopen ? (
+        {isClosed(task.status) ? (
+          onReopen && task.status === "done" ? (
             <Button size="sm" onClick={onReopen}>
               Reopen
             </Button>

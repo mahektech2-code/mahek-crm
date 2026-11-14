@@ -190,7 +190,7 @@ export async function automationStates(): Promise<Map<string, boolean>> {
 /** Open tasks per rule, for the Set up screen. */
 export async function automationOpenCounts(): Promise<Map<string, number>> {
   const rows = await db.execute<{ rule: string; n: number }>(sql`
-    select auto_rule as rule, count(*)::int as n from tasks where auto_rule is not null and status <> 'done' group by auto_rule`);
+    select auto_rule as rule, count(*)::int as n from tasks where auto_rule is not null and status <> 'done' and status <> 'missed' group by auto_rule`);
   return new Map(rows.map((r) => [r.rule, Number(r.n)]));
 }
 
@@ -199,7 +199,7 @@ async function closeAll(rule: AutomationRule, ids: string[], remark: string) {
   const closed = await db
     .update(tasks)
     .set({ status: "done", closedAt: new Date(), closedById: null, closeRemark: remark, updatedAt: new Date() })
-    .where(and(inArray(tasks.id, ids), sql`${tasks.status} <> 'done'`))
+    .where(and(inArray(tasks.id, ids), sql`${tasks.status} <> 'done' and ${tasks.status} <> 'missed'`))
     .returning({ id: tasks.id });
   if (closed.length) await db.insert(taskEvents).values(closed.map((t) => ({ id: newId("tev"), taskId: t.id, actorId: null, kind: "closed", body: remark })));
   return closed.length;
@@ -215,7 +215,7 @@ export async function syncAutomation(rule: AutomationRule, on: boolean): Promise
   ).map((e) => ({ id: e.id, key: e.key, assigneeId: e.assignee_id, title: e.title, dueDate: e.due, status: e.status }));
 
   if (!on) {
-    const closed = await closeAll(rule, existing.filter((e) => e.status !== "done").map((e) => e.id), "This automatic task was switched off.");
+    const closed = await closeAll(rule, existing.filter((e) => e.status !== "done" && e.status !== "missed").map((e) => e.id), "This automatic task was switched off.");
     return { rule: rule.id, raised: 0, updated: 0, closed };
   }
   const wanted = (await READERS[rule.id]()).filter((w) => w.assigneeId && w.dueDate);
