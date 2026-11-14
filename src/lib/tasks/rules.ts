@@ -34,6 +34,13 @@ export const isClosed = (status: string) => status === "done" || status === "mis
  * somebody gave by hand, or an automatic one, is never missed; it goes late.
  * `nowDay` is the business day and `nowHM` the "HH:MM" clock in the app's zone.
  */
+/**
+ * The rule starts from this day. A routine's task due before it was written
+ * under the old rule — it stays open and late, and may still be closed — so
+ * turning this on did not sweep months of backlog into Missed.
+ */
+export const MISSED_FROM = "2026-11-10";
+
 export function routineMissed(
   task: { routineId: string | null; status: string; dueDate: string; dueTime: string | null },
   nowDay: string,
@@ -41,6 +48,7 @@ export function routineMissed(
 ): boolean {
   if (!task.routineId || task.status === "done") return false;
   if (task.status === "missed") return true;
+  if (task.dueDate < MISSED_FROM) return false;
   if (nowDay > task.dueDate) return true;
   return nowDay === task.dueDate && task.dueTime != null && nowHM >= task.dueTime;
 }

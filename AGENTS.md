@@ -9892,7 +9892,9 @@ Saving a routine does not write today's task if its time has already gone.
 `isClosed` is "done or missed": open is `status <> 'done' and status <>
 'missed'`, written as two inequalities so the open-task partial indexes still
 apply. A task given by hand, or an automatic one, is never missed — it goes
-late. Missed shows as its own tab and on Team workload.
+late. Missed shows as its own tab and on Team workload. The rule starts at
+`MISSED_FROM` (10 Nov 2026): a routine task due before it stays open and late
+and may still be closed, so turning it on did not sweep the old backlog.
 
 **AUTOMATIC TASKS ARE RAISED BY EACH APP AND CLOSED BY IT.** `lib/tasks/automations.ts`
 (pure) lists the rules — a callback promised, a lead's next action, a complaint

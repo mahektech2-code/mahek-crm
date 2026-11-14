@@ -8,7 +8,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { occurrenceOn, windowWords, type RoutineFrequency } from "./routines";
 import { audienceWords, readAudience, type Audience } from "./audience";
 import { resolveFor } from "./audience-service";
-import { missedRemark, routineMissed, type TaskApp, type TaskPriority } from "./rules";
+import { MISSED_FROM, missedRemark, routineMissed, type TaskApp, type TaskPriority } from "./rules";
 import { appClock } from "./clock";
 import { teamOf } from "./service";
 
@@ -225,6 +225,7 @@ export async function markMissedRoutineTasks(opts: { assigneeId?: string; ids?: 
       from tasks t
      where t.routine_id is not null and t.status <> 'done' and t.status <> 'missed'
        and ${routineDeadlineSql} <= now()
+       and t.due_date >= ${MISSED_FROM}::date
        ${opts.assigneeId ? sql`and t.assignee_id = ${opts.assigneeId}` : sql``}
        ${opts.ids ? (opts.ids.length ? sql`and t.id in ${opts.ids}` : sql`and false`) : sql``}
   `)) as unknown as { id: string; dueDate: string; dueTime: string | null; deadline: string | Date }[];

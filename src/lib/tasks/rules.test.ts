@@ -184,6 +184,11 @@ describe("a routine's task belongs to its own day", () => {
     assert.equal(routineMissed(t({ status: "missed" }), "2026-11-14", "09:00"), true);
   });
 
+  it("a task due before the rule began stays open and late", () => {
+    assert.equal(routineMissed(t({ dueDate: "2026-11-09" }), "2026-11-20", "09:00"), false);
+    assert.equal(routineMissed(t({ dueDate: "2026-11-10", dueTime: null }), "2026-11-11", "00:00"), true);
+  });
+
   it("a task given by hand is never missed, only late", () => {
     assert.equal(routineMissed(t({ routineId: null }), "2026-11-20", "09:00"), false);
   });
