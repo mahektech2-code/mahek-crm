@@ -47,10 +47,23 @@ import { DeliveredByDialog } from "./on-road";
 type Bill = { key: string; c: Consignment; rows: Consignment[]; packages: number | null };
 
 /** One bill raised on several orders is several transport records and still one bill to attach. */
+/* Who is billed, and the shop it goes to where that is somebody else — two parts of one bill read apart. */
+function partyLine(c: Consignment): string {
+  return c.deliveryPartyId !== c.partyId && c.deliveryParty ? `${c.party} → ${c.deliveryParty}` : c.party;
+}
+
+/*
+ * A bill here is one Tally bill TO ONE SHOP. A distributor's bill can carry
+ * orders delivered to different shops, and an LR (or a signed copy) is one
+ * consignee — so grouped by the bill number alone, such a bill was offered as
+ * one tick and then refused on Attach for "different parties", with nothing
+ * on the screen saying why. Keyed on the delivery party too, each shop's part
+ * is its own row, named for that shop, and goes on its own LR.
+ */
 function byBill(cs: Consignment[]): Bill[] {
   const out = new Map<string, Consignment[]>();
   for (const c of cs) {
-    const k = c.billNo?.trim() ? `${c.partyId}|${c.billNo.trim().toUpperCase()}` : c.id;
+    const k = c.billNo?.trim() ? `${c.partyId}|${c.deliveryPartyId}|${c.billNo.trim().toUpperCase()}` : c.id;
     out.set(k, [...(out.get(k) ?? []), c]);
   }
   return [...out].map(([key, rows]) => ({ key, c: rows[0], rows, packages: sumPackages(rows) }));
@@ -515,7 +528,7 @@ function PendingDetail({
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-start gap-3 border-b border-divider px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-lg font-semibold text-ink">{c.party}</div>
+          <div className="truncate text-lg font-semibold text-ink">{partyLine(c)}</div>
           <div className="flex flex-wrap items-center gap-2 text-meta text-muted">
             <BillRef c={c} />
             {[c.billDate ? shortDay(c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, c.ownVehicle ? (c.vehicleNo ? `Mahek Vehicle ${c.vehicleNo}` : "Mahek Vehicle") : c.transporter].filter(Boolean).join(" · ")}
@@ -785,7 +798,7 @@ function Detail({
   const searchable = row.ranked.length > 0;
   const selBills = row.ranked.filter((x) => ticked.has(x.b.key));
   const selIds = selBills.flatMap((x) => x.b.rows.map((c) => c.id));
-  const parties = new Set(selBills.map((x) => x.b.c.deliveryPartyId));
+  const parties = new Set(selBills.flatMap((x) => x.b.rows.map((c) => c.deliveryPartyId)));
   const boxes = sumPackages(selBills.flatMap((x) => x.b.rows));
   /* A ticked bill going to a shop the LR does not name — said, never refused: a consignee can be written as a person, or as the buyer. */
   const otherParty = lr && partyWords(l.partyHint).length ? selBills.find((x) => !sameParty(l.partyHint, x.b.c.deliveryParty) && !sameParty(l.partyHint, x.b.c.party)) : undefined;
@@ -963,7 +976,7 @@ function Detail({
                       className={checkboxClass}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-ink">{b.c.party}</span>
+                      <span className="block truncate font-medium text-ink">{partyLine(b.c)}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
                         {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? "Mahek Vehicle")].filter(Boolean).join(" · ")}
