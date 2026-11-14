@@ -5,7 +5,7 @@ import { ComboBox } from "@/components/ui/combo-box";
 import { Button, checkboxClass, cx, Input, SectionLabel, Textarea } from "@/components/ui/primitives";
 import { calendarDate } from "@/lib/business-date";
 import { erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
-import { addDays, customerStageWords, MAHEK_VEHICLE, MAX_CITIES_PER_UPDATE, ROAD_STAGES, routeSentence, shortDay, STAGE_SHORT, type Stage } from "@/lib/erp/engines/logistics";
+import { addDays, customerStageWords, directWho, MAX_CITIES_PER_UPDATE, ROAD_STAGES, routeSentence, shortDay, STAGE_SHORT, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment, RouteSuggestions } from "@/lib/erp/logistics";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { Icon } from "../../_ui/icons";
@@ -124,7 +124,7 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
 
   const reached = ORDER.indexOf(c.stage === "Ready for Pickup" ? "Out for Delivery" : (c.stage as Choice));
   const words = [...ROAD, ...LAST_MILE].find((o) => o.key === choice)?.words;
-  const title = `Update ${own ? (c.vehicleNo ?? MAHEK_VEHICLE) : lrLabel(c.lrNo)}`;
+  const title = `Update ${own ? (c.vehicleNo ?? directWho(c.transporter)) : lrLabel(c.lrNo)}`;
 
   return (
     <ErpDialog onClose={onClose} label={title} size="md" tall={false}>
@@ -134,7 +134,7 @@ export function UpdateLrDialog({ group, today, callEveryDays, notifyOn, suggesti
       <DialogBody className="gap-4">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-body">
           <span>
-            <span className="font-medium text-ink">{[...new Set(group.map((b) => b.party))].join(", ")}</span> · {plural(group.length, "bill")} · {own ? [c.vehicleNo ?? MAHEK_VEHICLE, c.driver].filter(Boolean).join(" · ") : (c.transporter ?? "No transporter")}
+            <span className="font-medium text-ink">{[...new Set(group.map((b) => b.party))].join(", ")}</span> · {plural(group.length, "bill")} · {own ? [c.vehicleNo ?? directWho(c.transporter), c.driver].filter(Boolean).join(" · ") : (c.transporter ?? "No transporter")}
           </span>
           {own ? <CallLink phone={driverPhone(c.driver)} name={c.driver ?? "Driver"} /> : <CallLink phone={c.transporterPhone} name={c.transporter} />}
         </div>

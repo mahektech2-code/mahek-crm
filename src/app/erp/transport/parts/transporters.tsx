@@ -91,6 +91,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
                       {t.consignmentLabel}
                     </span>
                   ) : null}
+                  {t.deliversDirect ? <Badge label="No LR · delivers direct" tone="muted" /> : null}
                   {!t.active ? <Badge label="Not in use" tone="muted" /> : t.trackingUrl ? <span className="text-meta text-success">Online tracking</span> : null}
                 </span>
                 <GodownCell t={t} byId={byId} />
@@ -386,7 +387,7 @@ function EditTransporter({
   onClose: () => void;
 }) {
   const { run, pending } = useAct();
-  const [v, setV] = useState({ name: t?.name ?? "", gstin: t?.gstin ?? "", consignmentLabel: t?.consignmentLabel ?? "", trackingUrl: t?.trackingUrl ?? "", active: t?.active ?? true });
+  const [v, setV] = useState({ name: t?.name ?? "", gstin: t?.gstin ?? "", consignmentLabel: t?.consignmentLabel ?? "", trackingUrl: t?.trackingUrl ?? "", active: t?.active ?? true, deliversDirect: t?.deliversDirect ?? false });
   const [godowns, setGodowns] = useState<DraftGodown[]>(() =>
     (t?.godowns ?? []).map((g) => ({
       key: k(),
@@ -520,6 +521,13 @@ function EditTransporter({
                 <Input value={v.trackingUrl} onChange={(e) => setV({ ...v, trackingUrl: e.target.value })} placeholder="https://… with {lr} where the LR number goes" />
               </Field>
               <Checkbox label="In use" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} className="col-span-2" />
+              {/* A hired tempo goes from the gate to the shop and gives no LR: its bills skip "Waiting for LR", like Mahek Vehicle's. */}
+              <Checkbox
+                label="Delivers straight to the shop, with no LR (a tempo)"
+                checked={v.deliversDirect}
+                onChange={(e) => setV({ ...v, deliversDirect: e.target.checked })}
+                className="col-span-2"
+              />
             </div>
           </section>
           ) : null}

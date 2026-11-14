@@ -17,7 +17,7 @@ import {
   erpLogisticsSetKind,
   erpLogisticsVoidLr,
 } from "@/lib/actions/erp-logistics";
-import { addDays, AT_TRANSPORT_STUCK_DAYS, pendingOf, PROOF_WORD, rankForLr, shortDay, type PendingKind, type ProofKind } from "@/lib/erp/engines/logistics";
+import { addDays, AT_TRANSPORT_STUCK_DAYS, directWho, pendingOf, PROOF_WORD, rankForLr, shortDay, type PendingKind, type ProofKind } from "@/lib/erp/engines/logistics";
 import { confidentPick, duplicateFlags, missingFor, partyWords, rankForSignedCopy, READY_SCORE, sameParty, wrongKind, type DeskCopy, type DupFlag } from "@/lib/erp/engines/delivery-proof";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
 import { rupeesField } from "@/lib/erp/ui";
@@ -123,6 +123,7 @@ type PendingBill = { b: Bill; kind: PendingKind; days: number };
 function pendingLabel(kind: PendingKind, stuckLrDays: number): string {
   if (kind === "noLr") return `No LR ${stuckLrDays + 1}+ days`;
   if (kind === "atTransport") return `At transporter ${AT_TRANSPORT_STUCK_DAYS}+ days`;
+  if (kind === "awaitingLr") return "Waiting for LR";
   return "Signed copy missing";
 }
 type State = "dup" | "reading" | "todo" | "ready" | "pick";
@@ -276,7 +277,7 @@ export function DocumentsDesk({
           ))}
           <button type="button" onClick={() => switchTab("pending")} title="Bills still waiting for their LR or signed copy" className={toggleClass(tab === "pending", "flex items-center gap-1.5")}>
             Pending
-            <Badge label={String(pendingBills.length)} tone={tab === "pending" ? "brand" : pendingBills.length ? "danger" : "muted"} />
+            <Badge label={String(pendingBills.length)} tone={tab === "pending" ? "brand" : pendingBills.some((p) => p.kind !== "awaitingLr") ? "danger" : "muted"} />
           </button>
         </div>
         <span className="flex-1" />
@@ -387,7 +388,7 @@ export function DocumentsDesk({
 
 /* ------------------------------------------------------ the Pending tab */
 
-const PENDING_ORDER: PendingKind[] = ["noLr", "atTransport", "signedCopy"];
+const PENDING_ORDER: PendingKind[] = ["noLr", "atTransport", "awaitingLr", "signedCopy"];
 
 /**
  * The bills still waiting for their paper, in the same fixed-height list the
@@ -458,10 +459,10 @@ function PendingDesk({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-ink">{p.b.c.party}</span>
                   <span className="block truncate text-meta text-muted">
-                    {[p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? "Mahek Vehicle") : p.b.c.transporter].filter(Boolean).join(" · ")}
+                    {[p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? directWho(p.b.c.transporter)) : p.b.c.transporter].filter(Boolean).join(" · ")}
                   </span>
                 </span>
-                <span className={cx("shrink-0 text-meta font-semibold tabular-nums", p.kind === "noLr" ? "text-danger" : "text-warn-ink")}>{plural(p.days, "day")}</span>
+                <span className={cx("shrink-0 text-meta font-semibold tabular-nums", p.kind === "noLr" ? "text-danger" : p.kind === "awaitingLr" ? "text-muted" : "text-warn-ink")}>{plural(p.days, "day")}</span>
               </button>
             ))}
           </div>
@@ -531,10 +532,10 @@ function PendingDetail({
           <div className="truncate text-lg font-semibold text-ink">{partyLine(c)}</div>
           <div className="flex flex-wrap items-center gap-2 text-meta text-muted">
             <BillRef c={c} />
-            {[c.billDate ? shortDay(c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, c.ownVehicle ? (c.vehicleNo ? `Mahek Vehicle ${c.vehicleNo}` : "Mahek Vehicle") : c.transporter].filter(Boolean).join(" · ")}
+            {[c.billDate ? shortDay(c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, c.ownVehicle ? [directWho(c.transporter), c.vehicleNo].filter(Boolean).join(" ") : c.transporter].filter(Boolean).join(" · ")}
           </div>
         </div>
-        <Badge label={`${pendingLabel(item.kind, stuckLrDays)} · ${plural(item.days, "day")}`} tone={item.kind === "noLr" ? "danger" : "warn"} />
+        <Badge label={`${pendingLabel(item.kind, stuckLrDays)} · ${plural(item.days, "day")}`} tone={item.kind === "noLr" ? "danger" : item.kind === "awaitingLr" ? "muted" : "warn"} />
       </div>
 
       <div className="flex flex-col gap-4 p-4">
@@ -979,7 +980,7 @@ function Detail({
                       <span className="block truncate font-medium text-ink">{partyLine(b.c)}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
-                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? "Mahek Vehicle")].filter(Boolean).join(" · ")}
+                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? directWho(b.c.transporter))].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {reasons.slice(0, 2).map((r) => (

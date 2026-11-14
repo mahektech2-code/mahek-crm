@@ -2318,6 +2318,13 @@
       "when": 1793800300000,
       "tag": "0335_hrms_for_everyone",
       "breakpoints": true
+    },
+    {
+      "idx": 331,
+      "version": "7",
+      "when": 1793800400000,
+      "tag": "0336_transporter_delivers_direct",
+      "breakpoints": true
     }
   ]
 }

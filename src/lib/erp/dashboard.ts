@@ -388,8 +388,9 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   if (has("transport")) {
     /* The logistics flow's four steps, each opening its tab of the desk. */
     const { phaseOf, CLOSED } = await import("./engines/logistics");
-    const rows = await q(sql`select id, lr_no as lr, material_stage as stage, reminder_date::text as reminder, transport_due_on::text as due, issue from erp_transports where material_stage <> ${"Close - Received to Party"}`);
-    const phase = (r: Row) => phaseOf({ lrNo: (r.lr as string | null) ?? null, materialStage: String(r.stage) });
+    const { directSql } = await import("./direct-delivery");
+    const rows = await q(sql`select id, lr_no as lr, transporter, ${directSql(sql`transporter`)} as direct, material_stage as stage, reminder_date::text as reminder, transport_due_on::text as due, issue from erp_transports where material_stage <> ${"Close - Received to Party"}`);
+    const phase = (r: Row) => phaseOf({ lrNo: (r.lr as string | null) ?? null, materialStage: String(r.stage), transporter: (r.transporter as string | null) ?? null, direct: Boolean(r.direct) });
     const toT = rows.filter((r) => phase(r) === "toTransport");
     const dueT = toT.filter((r) => r.due && String(r.due) <= day).map((r) => String(r.id));
     logistics.push({ l: "Going to the transporter", v: String(toT.length), sub: dueT.length ? `${dueT.length} due today or late` : undefined, tone: dueT.length ? "warn" : undefined, href: tileHref("toTransport", null, "") });

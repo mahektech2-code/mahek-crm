@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AT_TRANSPORT_STUCK_DAYS, attachRefusal, pendingOf, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, plateIn, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
+import { AT_TRANSPORT_STUCK_DAYS, attachRefusal, deliversDirect, directWho, pendingOf, callDue, cleanCities, cleanPlace, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, MAX_CITIES_PER_UPDATE, packagesOf, phaseOf, plateIn, rankForLr, routeSentence, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
 
 test("the phase is the stage and the LR together, never stored", () => {
   assert.equal(phaseOf({ lrNo: null, materialStage: "Dispatched" }), "toTransport");
@@ -168,13 +168,14 @@ test("the route line says only what was reported, and a ready-for-pickup message
   assert.match(body, /Collect it from: Kerala Roadways, Vadakara office \(Suresh 98xxxxxx\)/);
 });
 
-test("a bill is pending for one reason: the missing LR, the days at the transporter, or the missing signed copy", () => {
+test("a bill is pending for one reason: the missing LR, the days at the transporter, the LR still to come, or the missing signed copy", () => {
   const today = "2026-11-02";
   const base = { ownVehicle: false, lrId: null, signedCopyId: null, phase: "lrPending" as const, billDate: "2026-10-31", atTransportAt: null };
-  assert.equal(pendingOf(base, today, 4), null, "two days out, not yet at the transporter long: nothing to chase");
+  assert.deepEqual(pendingOf(base, today, 4), { kind: "awaitingLr", days: 2 }, "two days out and not late: listed, as still waiting");
+  assert.deepEqual(pendingOf({ ...base, phase: "toTransport", billDate: today }, today, 4), { kind: "awaitingLr", days: 0 }, "dispatched today is pending from today");
   assert.deepEqual(pendingOf({ ...base, billDate: "2026-10-27" }, today, 4), { kind: "noLr", days: 6 });
   assert.deepEqual(pendingOf({ ...base, atTransportAt: "2026-10-31T09:00:00.000Z" }, today, 4), { kind: "atTransport", days: AT_TRANSPORT_STUCK_DAYS });
-  assert.equal(pendingOf({ ...base, atTransportAt: "2026-11-01T09:00:00.000Z" }, today, 4), null);
+  assert.deepEqual(pendingOf({ ...base, atTransportAt: "2026-11-01T09:00:00.000Z" }, today, 4), { kind: "awaitingLr", days: 2 }, "one day at the transporter is not stuck yet");
   assert.deepEqual(pendingOf({ ...base, billDate: "2026-10-20", atTransportAt: "2026-10-31T09:00:00.000Z" }, today, 4), { kind: "noLr", days: 13 }, "the older reason wins");
   assert.equal(pendingOf({ ...base, billDate: "2026-10-20", lrId: "elr1" }, today, 4), null, "it has its LR");
   assert.equal(pendingOf({ ...base, billDate: "2026-10-20", phase: "delivered" }, today, 4), null, "delivered is never pending");
@@ -192,4 +193,16 @@ test("a vehicle registration typed as a transporter is read back as the plate", 
   assert.equal(plateIn("MH4 AB 1234"), "MH04AB1234");
   for (const company of ["Portal", '"Name - Tempo"', "Harsh Trasnport", "DELHI RAJASTHAN TRANSPORT COMPANY LIMITED", "HRL  Cargo ( HARSH TRANSPORT )", "Mahek Vehicle", "", null])
     assert.equal(plateIn(company), null, String(company));
+});
+
+test("a tempo marked to deliver direct travels like our own vehicle and keeps its own name", () => {
+  const direct = new Set(['"name - tempo"']);
+  assert.equal(deliversDirect("Mahek Vehicle"), true, "our own vehicle needs no mark");
+  assert.equal(deliversDirect(' "Name - Tempo" ', direct), true);
+  assert.equal(deliversDirect("Harsh Trasnport", direct), false);
+  assert.equal(deliversDirect('"Name - Tempo"'), false, "unmarked, a tempo waits for its LR like anybody");
+  assert.equal(phaseOf({ lrNo: null, materialStage: "At transport", transporter: '"Name - Tempo"', direct: true }), "onRoad", "no LR to wait for");
+  assert.equal(phaseOf({ lrNo: null, materialStage: "At transport", transporter: '"Name - Tempo"' }), "lrPending");
+  assert.equal(directWho("Mahek Vehicle"), "Mahek Vehicle");
+  assert.equal(directWho('"Name - Tempo"'), "Name - Tempo", "never drawn as Mahek Vehicle, and without the typed quotes");
 });

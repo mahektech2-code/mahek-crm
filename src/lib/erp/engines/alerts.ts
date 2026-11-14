@@ -278,11 +278,12 @@ export function readyUnbilled(lines: { id: string; orderNo: number; party: strin
  * own test, so a stray space in the name cannot turn one alert into the other.
  */
 export function lrsMissing(
-  transports: { id: string; billNo: string | null; party: string; billDate: string | null; lr: string | null; transporter?: string | null; stage?: string | null; signedCopyId?: string | null }[],
+  transports: { id: string; billNo: string | null; party: string; billDate: string | null; lr: string | null; transporter?: string | null; stage?: string | null; signedCopyId?: string | null; direct?: boolean }[],
   today: string,
   t: Thresholds,
 ): Candidate[] {
-  const own = (x: { transporter?: string | null }) => isMahekVehicle(x.transporter);
+  /* A tempo marked to deliver direct is proved by its signed copy, like our own vehicle. */
+  const own = (x: { transporter?: string | null; direct?: boolean }) => isMahekVehicle(x.transporter) || !!x.direct;
   return transports
     .filter((x) => x.stage !== CLOSED && !x.lr?.trim() && !x.signedCopyId && x.billDate && daysBetween(x.billDate, today) > t.stuckLrDays)
     .map((x) =>
@@ -293,7 +294,7 @@ export function lrsMissing(
             screen: "pendingLr",
             recordIds: [x.id],
             values: { days: daysBetween(x.billDate!, today) },
-            explanation: `Bill ${x.billNo ?? "—"} for ${x.party} left in a Mahek Vehicle ${daysBetween(x.billDate!, today)} days ago and its customer-signed copy is not on the desk.`,
+            explanation: `Bill ${x.billNo ?? "—"} for ${x.party} left in ${isMahekVehicle(x.transporter) ? "a Mahek Vehicle" : (x.transporter ?? "a direct vehicle")} ${daysBetween(x.billDate!, today)} days ago and its customer-signed copy is not on the desk.`,
           }
         : {
             kind: "lrMissing" as const,
