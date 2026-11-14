@@ -786,6 +786,21 @@ function draftOf(row: AccessRow | null): Draft {
   return out;
 }
 
+/**
+ * What the dialog OPENS with: what they hold, plus HRMS if they do not hold it.
+ *
+ * Everybody in MahekOne holds HRMS as an associate — their own attendance,
+ * leave and payslips, nobody else's — so it arrives ticked, at associate,
+ * because `levelOf` reads an unsaid level as associate. It is a starting
+ * point and not a rule: untick it and it stays off, and the review page names
+ * the grant like any other before anything is written.
+ */
+function startingDraft(row: AccessRow | null): Draft {
+  const out = draftOf(row);
+  if (!out.hrms) out.hrms = DEFAULT_OF("hrms");
+  return out;
+}
+
 /** The level each app is held under today. Never the account's: see `AppGrant.role`. */
 function levelsOf(row: AccessRow | null): Record<string, RoleId> {
   const out: Record<string, RoleId> = {};
@@ -847,7 +862,7 @@ function AccessDialog({
   const before: Draft = React.useMemo(() => draftOf(basis), [basis]);
   const levelsBefore = React.useMemo(() => levelsOf(basis), [basis]);
 
-  const [draft, setDraft] = React.useState<Draft>(before);
+  const [draft, setDraft] = React.useState<Draft>(() => startingDraft(basis));
   /* SCREENS NOBODY HAS DECIDED FOR THEM: shipped after a narrowed grant was
      last saved. Drawn with a "new" mark beside their boxes, and sent with the
      save so that leaving one out is recorded as a decision rather than as
@@ -919,7 +934,7 @@ function AccessDialog({
     // Somebody already holding apps arrives with what they hold — modules,
     // levels and powers — not empty and not defaulted: this dialog sets the
     // whole picture, so it has to start from the picture.
-    setDraft(draftOf(existing));
+    setDraft(startingDraft(existing));
     setRoleDraft(levelsOf(existing));
     setPowers(existing?.erpPowers ?? []);
     setHrmsPowers(existing?.hrmsPowers ?? []);
