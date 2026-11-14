@@ -166,15 +166,6 @@ export type VehicleTrip = {
   /** Their litres, and how many customers they belong to. */
   unbilledLitres: number;
   unbilledCustomers: number;
-  /**
-   * Who those unbilled lines were billed to, biggest by litres first, and the
-   * sales bill numbers and bill dates on them. A trip carries several parties
-   * and several bills, so these are lists and a date span, never one value.
-   */
-  billingParties: string[];
-  billNos: string[];
-  billedFrom: string | null;
-  billedTo: string | null;
 };
 
 /**
@@ -197,8 +188,7 @@ export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleT
              coalesce(t.transporter, o.transporter) as transporter,
              lower(regexp_replace(coalesce(t.payment_type, c.freight_term, ''), '[\\s-]+', '_', 'g')) = 'paid' as paid,
              (o.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000) as litres,
-             exists (select 1 from erp_freight_bill_lines bl where bl.order_id = o.id and bl.live) as billed,
-             c.name as party, nullif(trim(coalesce(t.bill_no, o.tally_bill_no)), '') as bill_no, t.bill_date
+             exists (select 1 from erp_freight_bill_lines bl where bl.order_id = o.id and bl.live) as billed
         from erp_order_details d
         join erp_orders o on o.id = d.order_id
         join erp_transports t on t.id = d.transport_id
@@ -213,11 +203,7 @@ export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleT
            count(*) filter (where not paid)::int as "otherLines",
            count(*) filter (where paid and not billed)::int as "unbilledLines",
            coalesce(sum(litres) filter (where paid and not billed), 0)::float8 as "unbilledLitres",
-           count(distinct cid) filter (where paid and not billed)::int as "unbilledCustomers",
-           json_agg(json_build_object('n', party, 'l', coalesce(litres, 0))) filter (where paid and not billed) as parties,
-           array_agg(distinct bill_no) filter (where paid and not billed and bill_no is not null) as "billNos",
-           min(bill_date) filter (where paid and not billed)::text as "billedFrom",
-           max(bill_date) filter (where paid and not billed)::text as "billedTo"
+           count(distinct cid) filter (where paid and not billed)::int as "unbilledCustomers"
       from l group by vkey, dispatch_date
      order by dispatch_date desc, min(vehicle_no)
   `)) as unknown as Row[];
@@ -232,19 +218,68 @@ export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleT
     unbilledLines: Number(r.unbilledLines),
     unbilledLitres: Math.round(Number(r.unbilledLitres) * 1000) / 1000,
     unbilledCustomers: Number(r.unbilledCustomers),
-    billingParties: partiesByLitres(r.parties),
-    billNos: ((r.billNos as string[] | null) ?? []).map(String).sort((a, b) => a.localeCompare(b, "en", { numeric: true })),
-    billedFrom: s(r.billedFrom),
-    billedTo: s(r.billedTo),
   }));
 }
 
-/** One name per party, the party carrying the most litres on the trip first. */
-function partiesByLitres(raw: unknown): string[] {
-  const rows = (typeof raw === "string" ? JSON.parse(raw) : raw) as { n: string; l: number | string }[] | null;
-  const byName = new Map<string, number>();
-  for (const x of rows ?? []) byName.set(x.n, (byName.get(x.n) ?? 0) + Number(x.l));
-  return [...byName.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([n]) => n);
+/**
+ * One sales bill whose Paid-freight lines are on no transport bill yet. The
+ * office matches a transporter's bill against OUR bill numbers, so Pending
+ * expense lists these one bill to a row rather than one trip to a row.
+ * vehicleNo and dispatchOn are the trip the bill went on, which is what Add
+ * bill opens on.
+ */
+export type WaitingBill = {
+  /** The sales bill number, or null where the dispatch carries none yet. */
+  billNo: string | null;
+  billDate: string | null;
+  party: string;
+  vehicleNo: string;
+  dispatchOn: string;
+  transporter: string | null;
+  lines: number;
+  litres: number;
+};
+
+/**
+ * Sales bills on a vehicle that left in the last days, still waiting for the
+ * transporter's bill — newest bill first. Read off the same lines, the same
+ * Paid test and the same window as recentVehicles, so a bill listed here is
+ * always on a trip the add-bill picker can offer.
+ */
+export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBill[]> {
+  const since = addDays(today(), -days);
+  const rows = (await db.execute(sql`
+    with l as (
+      select upper(regexp_replace(t.vehicle_no, '\s', '', 'g')) as vkey, t.vehicle_no, d.dispatch_date, t.id as tid,
+             nullif(trim(coalesce(t.bill_no, o.tally_bill_no)), '') as bill_no, t.bill_date, c.name as party,
+             coalesce(t.transporter, o.transporter) as transporter,
+             (o.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000) as litres
+        from erp_order_details d
+        join erp_orders o on o.id = d.order_id
+        join erp_transports t on t.id = d.transport_id
+        join customers c on c.id = o.billing_customer_id
+        left join products p on p.id = o.sku_id
+        left join finished_goods fg on fg.id = p.finished_good_id
+       where d.dispatch_date >= ${since}::date and coalesce(trim(t.vehicle_no), '') <> '' and o.status <> 'Cancel'
+         and lower(regexp_replace(coalesce(t.payment_type, c.freight_term, ''), '[\s-]+', '_', 'g')) = 'paid'
+         and not exists (select 1 from erp_freight_bill_lines bl where bl.order_id = o.id and bl.live)
+    )
+    select bill_no as "billNo", max(bill_date)::text as "billDate", mode() within group (order by party) as party,
+           min(vehicle_no) as "vehicleNo", dispatch_date::text as "dispatchOn", mode() within group (order by transporter) as transporter,
+           count(*)::int as lines, coalesce(sum(litres), 0)::float8 as litres
+      from l group by coalesce(bill_no, tid), bill_no, vkey, dispatch_date
+     order by max(bill_date) desc nulls last, dispatch_date desc, bill_no desc
+  `)) as unknown as Row[];
+  return rows.map((r) => ({
+    billNo: s(r.billNo),
+    billDate: s(r.billDate),
+    party: String(r.party),
+    vehicleNo: String(r.vehicleNo),
+    dispatchOn: String(r.dispatchOn),
+    transporter: s(r.transporter),
+    lines: Number(r.lines),
+    litres: Math.round(Number(r.litres) * 1000) / 1000,
+  }));
 }
 
 /* ================================================================ bills */

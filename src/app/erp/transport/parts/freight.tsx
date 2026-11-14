@@ -7,7 +7,7 @@ import { Button, checkboxClass, cx, Field, Input, MoneyInput, Select, Td, Textar
 import { CardGrid } from "@/components/ui/card-grid";
 import { Badge } from "../../_ui/badge";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog, StepBar, TabBar } from "../../_ui/dialog";
-import { eyebrowClass, insetClass, linkClass, SubTitle, toggleClass } from "../../_ui/look";
+import { eyebrowClass, insetClass, SubTitle, toggleClass } from "../../_ui/look";
 import {
   erpFreightBillDelete,
   erpFreightBillPay,
@@ -19,7 +19,9 @@ import {
 } from "@/lib/actions/erp-logistics";
 import { costPerLitrePaise, lineEligibility, paiseFromRupees, PAYMENT_MODE_LABEL, PAYMENT_MODES, splitBill, type PaymentMode } from "@/lib/erp/engines/freight-bill";
 import { shortDay } from "@/lib/erp/engines/logistics";
-import type { FreightBillView, FreightReport, FreightReportRow, VehicleLine, VehicleTrip } from "@/lib/erp/freight-bills";
+import type { FreightBillView, FreightReport, FreightReportRow, VehicleLine, VehicleTrip, WaitingBill } from "@/lib/erp/freight-bills";
+import type { ActionSpec, ListRow, ListSpec } from "@/lib/erp/ui";
+import { ListScreen } from "../../_ui/list-screen";
 import { fd, inr, inrRate, nf } from "@/lib/erp/ui";
 import { Empty, plural, ReasonDialog, useAct } from "./common";
 
@@ -49,6 +51,8 @@ type Props = {
   openedBill: FreightBillView | null;
   report: FreightReport | null;
   vehicles: VehicleTrip[];
+  /** Sales bills whose Paid-freight lines are on no transport bill yet, newest first. */
+  waiting: WaitingBill[];
   transporters: string[];
   pendingCount: number;
   pendingPaise: number;
@@ -75,28 +79,29 @@ const perLitre = (amount: number, litres: number) => {
 export function FreightDesk(p: Props) {
   const { run, pending } = useAct();
   const [dialog, setDialog] = useState<Dialog>(p.initialAdd && p.canWrite ? { kind: "add" } : p.initialOpen ? { kind: "view", id: p.initialOpen } : null);
-  const [q, setQ] = useState("");
   const close = () => setDialog(null);
   const byId = useMemo(() => new Map([...p.bills, ...(p.openedBill ? [p.openedBill] : [])].map((b) => [b.id, b])), [p.bills, p.openedBill]);
-  const needle = q.trim().toLowerCase();
-  const shown = p.bills.filter((b) => !needle || [b.name, b.transporter, b.vehicleNo, ...b.shares.map((s) => s.customer)].some((x) => x.toLowerCase().includes(needle)));
-  const total = shown.reduce((a, b) => a + b.amountPaise, 0);
-  const litres = shown.reduce((a, b) => a + b.litres, 0);
+  const total = p.bills.reduce((a, b) => a + b.amountPaise, 0);
+  const litres = p.bills.reduce((a, b) => a + b.litres, 0);
   const viewing = dialog?.kind === "view" ? byId.get(dialog.id) : null;
-  /* Paid-freight trips with lines on no bill — the bill has not come in yet. Oldest sales bill first, like the bills. */
-  const waiting = useMemo(
-    () => p.vehicles.filter((v) => v.unbilledLines > 0).sort((a, b) => (a.billedFrom ?? a.dispatchOn).localeCompare(b.billedFrom ?? b.dispatchOn) || a.vehicleNo.localeCompare(b.vehicleNo)),
-    [p.vehicles],
-  );
-  const waitingShown = waiting.filter((v) => !needle || [v.vehicleNo, v.transporter ?? "", ...v.billingParties, ...v.billNos].some((x) => x.toLowerCase().includes(needle)));
-  const waitingLines = waiting.reduce((a, v) => a + v.unbilledLines, 0);
+  /* Sales bills whose Paid-freight lines are on no transport bill — the transporter's bill has not come in yet. */
+  const waitingLines = p.waiting.reduce((a, w) => a + w.lines, 0);
+  const waitingTrips = new Set(p.waiting.map((w) => tripKey({ vehicleNo: vkey(w.vehicleNo), dispatchOn: w.dispatchOn }))).size;
+  /* Add bill opens on the trip the sales bill went on — the same trip the picker offers. */
+  const tripOf = (w: WaitingBill): VehicleTrip | undefined => p.vehicles.find((v) => v.dispatchOn === w.dispatchOn && vkey(v.vehicleNo) === vkey(w.vehicleNo));
+  const waitingById = useMemo(() => new Map(p.waiting.map((w) => [waitingId(w), w])), [p.waiting]);
+  const addFor = (id: string) => {
+    const w = waitingById.get(id);
+    if (w && p.canWrite) setDialog({ kind: "add", trip: tripOf(w) });
+  };
   const paying = dialog?.kind === "pay" ? byId.get(dialog.id) : null;
+  const billAct = (actionId: string, id: string) => setDialog(actionId === "pay" ? { kind: "pay", id } : actionId === "unpay" ? { kind: "unpay", id } : { kind: "view", id });
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <NavLink href={qs(p.base, { ft: "pending" })} className={toggleClass(p.sub === "pending", "rounded-full px-3.5 py-1.5")}>
-          Pending expense · {p.pendingCount + waiting.length}
+          Pending expense · {p.pendingCount + p.waiting.length}
         </NavLink>
         <NavLink href={qs(p.base, { ft: "paid" })} className={toggleClass(p.sub === "paid", "rounded-full px-3.5 py-1.5")}>
           Paid history
@@ -119,175 +124,64 @@ export function FreightDesk(p: Props) {
           <CardGrid min="card" gap="gap-3">
             {p.sub === "pending" ? (
               <>
-                <Figure label="Bill not received yet" value={plural(waiting.length, "trip")} sub={`${plural(waitingLines, "order line")} · left in the last ${p.tripDays} days`} warn={waiting.length > 0} />
+                <Figure label="Bill not received yet" value={plural(p.waiting.length, "bill")} sub={`${plural(waitingLines, "order line")} on ${plural(waitingTrips, "trip")} · left in the last ${p.tripDays} days`} warn={p.waiting.length > 0} />
                 <Figure label="Bills to pay" value={inr(p.pendingPaise)} sub={plural(p.pendingCount, "bill")} />
                 <Figure label="Litres on those bills" value={`${nf(litres)} L`} />
                 <Figure label="Average cost per litre" value={perLitre(total, litres)} sub="On the bills to pay" />
               </>
             ) : (
               <>
-                <Figure label="Paid in this month" value={inr(total)} sub={plural(shown.length, "bill")} />
+                <Figure label="Paid in this month" value={inr(total)} sub={plural(p.bills.length, "bill")} />
                 <Figure label="Litres carried" value={`${nf(litres)} L`} />
                 <Figure label="Average cost per litre" value={perLitre(total, litres)} />
                 <Figure
                   label="By mode"
-                  value={PAYMENT_MODES.map((m) => `${PAYMENT_MODE_LABEL[m]} ${inr(shown.filter((b) => b.paymentMode === m).reduce((a, b) => a + b.amountPaise, 0))}`).join(" · ")}
+                  value={PAYMENT_MODES.map((m) => `${PAYMENT_MODE_LABEL[m]} ${inr(p.bills.filter((b) => b.paymentMode === m).reduce((a, b) => a + b.amountPaise, 0))}`).join(" · ")}
                   small
                 />
               </>
             )}
           </CardGrid>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={p.sub === "pending" ? "Search vehicle, transporter, bill, LR, customer" : "Search bill, LR, vehicle, transporter, customer"} aria-label="Search" className="w-80" />
-            {p.sub === "paid" ? <MonthPicker base={p.base} month={p.month} /> : null}
-            {p.sub === "paid" ? <span className="ml-auto text-meta text-muted">Newest payment first</span> : null}
-          </div>
-
           {p.sub === "pending" ? (
             <div>
-              <SubTitle aside="Oldest bill first">Bill not received yet</SubTitle>
-              <div className="overflow-x-auto rounded-card border border-line bg-surface">
-                {waitingShown.length ? (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr>
-                        <Th>Bill date</Th>
-                        <Th>Billing party</Th>
-                        <Th>Bill no.</Th>
-                        <Th>Vehicle</Th>
-                        <Th>Transporter</Th>
-                        <Th align="right">Order lines</Th>
-                        <Th align="right">Customers</Th>
-                        <Th align="right">Litres</Th>
-                        <Th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {waitingShown.map((v) => (
-                        <Tr key={tripKey(v)}>
-                          <Td title={`Left on ${fd(v.dispatchOn)}`}>{v.billedFrom ? (v.billedTo && v.billedTo !== v.billedFrom ? `${fd(v.billedFrom)} – ${fd(v.billedTo)}` : fd(v.billedFrom)) : "—"}</Td>
-                          <Td>
-                            <FirstOf items={v.billingParties} />
-                          </Td>
-                          <Td>
-                            <FirstOf items={v.billNos} />
-                          </Td>
-                          <Td className="font-mono text-meta">{v.vehicleNo}</Td>
-                          <Td>{v.transporter ?? "—"}</Td>
-                          <Td align="right">{v.unbilledLines}</Td>
-                          <Td align="right">{v.unbilledCustomers}</Td>
-                          <Td align="right">{nf(v.unbilledLitres)}</Td>
-                          <Td align="right">
-                            {p.canWrite ? (
-                              <Button size="sm" onClick={() => setDialog({ kind: "add", trip: v })}>
-                                Add bill
-                              </Button>
-                            ) : null}
-                          </Td>
-                        </Tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <Empty>{needle && waiting.length ? "No trip matches that search." : `Every Paid-freight trip of the last ${p.tripDays} days has its bill.`}</Empty>
-                )}
-              </div>
+              <SubTitle aside="Newest bill first">Bill not received yet</SubTitle>
+              <ListScreen
+                spec={waitingSpec(p.tripDays, p.canWrite)}
+                rows={p.waiting.map((w) => waitingRow(w, p.canWrite))}
+                label="Bill not received yet"
+                godowns={[]}
+                tabs={[]}
+                sections={null}
+                toggle={null}
+                bare
+                onOpen={addFor}
+                onRowAct={(_, id) => addFor(id)}
+              />
             </div>
           ) : null}
 
           <div>
             {p.sub === "pending" ? <SubTitle aside="Oldest bill first">Bill received, to pay</SubTitle> : null}
-            <div className="overflow-x-auto rounded-card border border-line bg-surface">
-              {shown.length ? (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      {p.sub === "paid" ? <Th>Bill date</Th> : null}
-                      <Th>Bill / LR</Th>
-                      {p.sub === "pending" ? <Th>Bill date</Th> : null}
-                      <Th>Transporter</Th>
-                      <Th>Vehicle</Th>
-                      <Th align="right">Litres</Th>
-                      <Th align="right">Cost / L</Th>
-                      <Th align="right">Amount</Th>
-                      {p.sub === "pending" ? <Th align="right">Customers</Th> : null}
-                      {p.sub === "paid" ? (
-                        <>
-                          <Th>Paid on</Th>
-                          <Th>Mode</Th>
-                        </>
-                      ) : null}
-                      <Th>Status</Th>
-                      <Th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shown.map((b) => (
-                      <Tr key={b.id}>
-                        {p.sub === "paid" ? <Td>{fd(b.billDate)}</Td> : null}
-                        <Td>
-                          <button type="button" className={linkClass("brand", "font-medium")} onClick={() => setDialog({ kind: "view", id: b.id })}>
-                            {b.name}
-                          </button>
-                        </Td>
-                        {p.sub === "pending" ? <Td>{fd(b.billDate)}</Td> : null}
-                        <Td>{b.transporter}</Td>
-                        <Td className="font-mono text-meta">{b.vehicleNo}</Td>
-                        <Td align="right">{nf(b.litres)}</Td>
-                        <Td align="right">{perLitre(b.amountPaise, b.litres)}</Td>
-                        <Td align="right" className="font-medium">
-                          {inr(b.amountPaise)}
-                        </Td>
-                        {p.sub === "pending" ? <Td align="right">{b.customers}</Td> : null}
-                        {p.sub === "paid" ? (
-                          <>
-                            <Td>{b.paidOn ? fd(b.paidOn) : "—"}</Td>
-                            <Td>{b.paymentMode ? PAYMENT_MODE_LABEL[b.paymentMode] : "—"}</Td>
-                          </>
-                        ) : null}
-                        <Td>
-                          <StatusBadge bill={b} today={p.today} />
-                        </Td>
-                        <Td align="right">
-                          {p.canWrite && b.status === "pending" ? (
-                            b.stale.length ? (
-                              <Button size="sm" onClick={() => setDialog({ kind: "view", id: b.id })}>
-                                Check
-                              </Button>
-                            ) : (
-                              <Button size="sm" onClick={() => setDialog({ kind: "pay", id: b.id })}>
-                                Mark as paid
-                              </Button>
-                            )
-                          ) : p.canWrite && p.manager && b.status === "paid" ? (
-                            <Button size="sm" onClick={() => setDialog({ kind: "unpay", id: b.id })}>
-                              Undo payment
-                            </Button>
-                          ) : null}
-                        </Td>
-                      </Tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <Tr className="bg-canvas font-medium">
-                      <Td>{plural(shown.length, "bill")}</Td>
-                      <Td />
-                      <Td />
-                      <Td />
-                      <Td align="right">{nf(litres)}</Td>
-                      <Td align="right">{perLitre(total, litres)}</Td>
-                      <Td align="right">{inr(total)}</Td>
-                      <Td />
-                      <Td />
-                      {p.sub === "paid" ? <Td /> : null}
-                    </Tr>
-                  </tfoot>
-                </table>
-              ) : (
-                <Empty>{needle ? "No bill matches that search." : p.sub === "pending" ? "No transport bill is waiting to be paid." : "No transport bill was paid in this month."}</Empty>
-              )}
-            </div>
+            {p.sub === "paid" ? (
+              <div className="mb-3 flex items-center gap-2">
+                <MonthPicker base={p.base} month={p.month} />
+                <span className="ml-auto text-meta text-muted">Newest payment first</span>
+              </div>
+            ) : null}
+            <ListScreen
+              key={p.sub}
+              spec={billsSpec(p.sub === "paid" ? "paid" : "pending")}
+              rows={p.bills.map((b) => billRow(b, p.today, p.canWrite, p.manager))}
+              label={p.sub === "paid" ? "Paid transport bills" : "Transport bills to pay"}
+              godowns={[]}
+              tabs={[]}
+              sections={null}
+              toggle={null}
+              bare
+              onOpen={(id) => setDialog({ kind: "view", id })}
+              onRowAct={billAct}
+            />
           </div>
         </>
       )}
@@ -612,17 +506,121 @@ function PayDialog({ bill, today, onClose }: { bill: FreightBillView; today: str
 
 const STEPS = ["Bill", "What was on the vehicle", "Check the split"];
 const tripKey = (v: { vehicleNo: string; dispatchOn: string }) => `${v.vehicleNo}|${v.dispatchOn}`;
+/** A vehicle number however it was spaced — "MH04 KL 2231" and "mh04kl2231" are one lorry. */
+const vkey = (v: string) => v.replace(/\s/g, "").toUpperCase();
+const waitingId = (w: WaitingBill) => `${w.billNo ?? "-"}|${vkey(w.vehicleNo)}|${w.dispatchOn}`;
 
-/** The first of a trip's several values and how many more, every one of them on hover. */
-function FirstOf({ items }: { items: string[] }) {
-  if (!items.length) return <>—</>;
-  return (
-    <span title={items.length > 1 ? items.join("\n") : undefined} className="whitespace-nowrap">
-      {items[0]}
-      {items.length > 1 ? <span className="text-muted"> +{items.length - 1}</span> : null}
-    </span>
-  );
+/* ---------------------------------------------------------------------------
+ * The three tables are the ERP's ordinary list (ListScreen), so they search,
+ * filter by column (ticked values, from–to on a figure), sort, hide columns,
+ * tick rows with totals and export exactly as every other ERP list does. A
+ * click still opens this screen's own dialogs: Add bill on a waiting sales
+ * bill, the bill itself on a transport bill.
+ * ------------------------------------------------------------------------- */
+
+const ADD: ActionSpec = { id: "add", l: "Add bill", primary: true };
+
+function waitingSpec(days: number, canWrite: boolean): ListSpec {
+  return {
+    screen: "freightWaiting",
+    cols: [
+      { k: "billDate", l: "Bill date", t: "d" },
+      { k: "party", l: "Billing party", t: "b" },
+      { k: "billNo", l: "Bill no", t: "mono" },
+      { k: "vehicle", l: "Vehicle", t: "mono" },
+      { k: "transporter", l: "Transporter", t: "t" },
+      { k: "lines", l: "Order lines", t: "n" },
+      { k: "litres", l: "Litres", t: "n" },
+      { k: "leftOn", l: "Left on", t: "d" },
+    ],
+    hidden: [],
+    colFilters: true,
+    filters: ["transporter", "party", "vehicle", "billDate", "litres"],
+    sortDefault: ["billDate", -1],
+    selectSum: [
+      { k: "litres", l: "L" },
+      { k: "transporter", l: "transporters", one: "transporter", kind: "distinct" },
+    ],
+    rowMenu: canWrite ? ["add"] : [],
+    readOnly: true,
+    noDataLine: `Every Paid-freight sales bill of the last ${days} days is on a transport bill.`,
+  };
 }
+
+function waitingRow(w: WaitingBill, canWrite: boolean): ListRow {
+  return {
+    id: waitingId(w),
+    v: { billDate: w.billDate, party: w.party, billNo: w.billNo, vehicle: w.vehicleNo, transporter: w.transporter, lines: w.lines, litres: w.litres, leftOn: w.dispatchOn },
+    flags: [],
+    actions: canWrite ? [ADD] : [],
+  };
+}
+
+function billsSpec(sub: "pending" | "paid"): ListSpec {
+  const paid = sub === "paid";
+  return {
+    screen: paid ? "freightPaid" : "freightPending",
+    cols: [
+      { k: "billDate", l: "Bill date", t: "d" },
+      { k: "name", l: "Bill / LR", t: "b" },
+      { k: "transporter", l: "Transporter", t: "t" },
+      { k: "vehicle", l: "Vehicle", t: "mono" },
+      { k: "parties", l: "Billing parties", t: "t" },
+      { k: "litres", l: "Litres", t: "n" },
+      { k: "perLitre", l: "Cost / L", t: "m" },
+      { k: "amount", l: "Amount", t: "m" },
+      { k: "customers", l: "Customers", t: "n" },
+      ...(paid
+        ? [
+            { k: "paidOn", l: "Paid on", t: "d" as const },
+            { k: "mode", l: "Mode", t: "s" as const },
+          ]
+        : [{ k: "days", l: "Waiting (days)", t: "n" as const }]),
+      { k: "status", l: "Status", t: "s" },
+    ],
+    hidden: [],
+    colFilters: true,
+    filters: paid ? ["transporter", "mode", "vehicle", "amount"] : ["transporter", "status", "vehicle", "amount", "days"],
+    sortDefault: paid ? ["paidOn", -1] : ["billDate", 1],
+    selectSum: [
+      { k: "amount", l: "amount" },
+      { k: "litres", l: "L" },
+    ],
+    rowMenu: ["pay", "unpay", "open"],
+    readOnly: true,
+    noDataLine: paid ? "No transport bill was paid in this month." : "No transport bill is waiting to be paid.",
+  };
+}
+
+function billRow(b: FreightBillView, today: string, canWrite: boolean, manager: boolean): ListRow {
+  const days = Math.max(0, Math.round((Date.parse(today) - Date.parse(b.billDate)) / 86_400_000));
+  const perL = costPerLitrePaise(b.amountPaise, b.litres);
+  const actions: ActionSpec[] = [];
+  if (canWrite && b.status === "pending" && !b.stale.length) actions.push({ id: "pay", l: "Mark as paid", primary: true });
+  if (canWrite && manager && b.status === "paid") actions.push({ id: "unpay", l: "Undo payment" });
+  actions.push({ id: "open", l: b.stale.length && b.status === "pending" ? "Check the split" : "Open bill" });
+  return {
+    id: b.id,
+    v: {
+      billDate: b.billDate,
+      name: b.name,
+      transporter: b.transporter,
+      vehicle: b.vehicleNo,
+      parties: [...new Set(b.shares.map((x) => x.customer))].join(", "),
+      litres: b.litres,
+      perLitre: perL == null ? null : Math.round(perL),
+      amount: b.amountPaise,
+      customers: b.customers,
+      paidOn: b.paidOn,
+      mode: b.paymentMode ? PAYMENT_MODE_LABEL[b.paymentMode] : null,
+      days: b.status === "pending" ? days : null,
+      status: b.status === "paid" ? "Paid" : b.stale.length ? "Split again" : "Pending",
+    },
+    flags: [],
+    actions,
+  };
+}
+
 
 function AddBillDialog({
   bill,
@@ -661,7 +659,7 @@ function AddBillDialog({
   const options = useMemo(() => {
     const t = transporter.trim().toLowerCase();
     const list = [...vehicles];
-    if (bill && !list.some((v) => tripKey(v) === tripKey(bill))) list.unshift({ vehicleNo: bill.vehicleNo, dispatchOn: bill.dispatchOn, transporter: bill.transporter, lines: bill.shares.length, customers: bill.customers, paidLitres: bill.litres, otherLines: 0, unbilledLines: 0, unbilledLitres: 0, unbilledCustomers: 0, billingParties: [], billNos: [], billedFrom: null, billedTo: null });
+    if (bill && !list.some((v) => tripKey(v) === tripKey(bill))) list.unshift({ vehicleNo: bill.vehicleNo, dispatchOn: bill.dispatchOn, transporter: bill.transporter, lines: bill.shares.length, customers: bill.customers, paidLitres: bill.litres, otherLines: 0, unbilledLines: 0, unbilledLitres: 0, unbilledCustomers: 0 });
     return t ? [...list.filter((v) => (v.transporter ?? "").toLowerCase() === t), ...list.filter((v) => (v.transporter ?? "").toLowerCase() !== t)] : list;
   }, [vehicles, transporter, bill]);
   const chosen = options.find((v) => tripKey(v) === trip) ?? null;
