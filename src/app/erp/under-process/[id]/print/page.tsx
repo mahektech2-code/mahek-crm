@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { planPrint, planView } from "@/lib/erp/production-plan";
-import { categorySpec, PLAN_CATEGORIES, printMarks } from "@/lib/erp/engines/production-plan";
+import { PLAN_CATEGORIES, printMarks } from "@/lib/erp/engines/production-plan";
 import { erpPlanHref } from "@/lib/erp/trace-links";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { stamp } from "@/lib/format";
@@ -80,10 +80,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-ink">
-              <Th className="static bg-white px-1 text-ink">Sr.</Th>
-              <Th className="static w-[13%] bg-white px-1 text-ink">Category</Th>
-              <Th className="static w-[34%] bg-white px-1 text-ink">Product</Th>
-              <Th className="static bg-white px-1 text-ink">Size</Th>
+              <Th className="static w-[45%] bg-white px-1 text-ink">Product</Th>
               <Th align="right" className="static bg-white px-1 text-ink">
                 Qty
               </Th>
@@ -97,7 +94,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
               if (!mine.length) return null;
               return [
                 <tr key={`h-${c.key}`} className="bg-canvas">
-                  <Td colSpan={7} className="px-1 py-1 text-2xs font-bold">
+                  <Td colSpan={4} className="px-1 py-1 text-2xs font-bold">
                     {c.label}
                   </Td>
                 </tr>,
@@ -105,18 +102,9 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                   const U = ({ children }: { children: React.ReactNode }) => (r.mark ? <u>{children}</u> : <>{children}</>);
                   return (
                     <tr key={r.id} className="border-b border-divider align-top">
-                      <Td className={cx("px-1 py-1 tabular-nums", r.mark && "font-bold")}>
-                        {r.sr}
-                        {r.mark ? "★" : ""}
-                      </Td>
-                      <Td className="px-1 py-1">
-                        <U>{categorySpec(r.category)?.short ?? r.category}</U>
-                      </Td>
-                      <Td className="px-1 py-1 whitespace-normal">
+                      <Td className={cx("px-1 py-1 whitespace-normal", r.mark && "font-bold")}>
+                        {r.mark ? "★ " : ""}
                         <U>{r.productName}</U>
-                      </Td>
-                      <Td className="px-1 py-1">
-                        <U>{r.size ?? "—"}</U>
                       </Td>
                       <Td align="right" className="px-1 py-1 font-bold tabular-nums">
                         <U>{nf(r.quantity)}</U>
