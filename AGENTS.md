@@ -6612,8 +6612,8 @@ person's working hours do not cover), holidays and approved leave are never
 Absent; worked anyway, the day is `off_day` and "Extra" — counted by no
 payroll figure. Half a day of leave lowers the bar to the half-day hours.
 
-**THE LOCK IS OFF UNTIL SOMEBODY TURNS IT ON** (`hrms.workday.lockEnabled`).
-On, every app is covered — header and sidebar too — before punching in, on a
+**THE LOCK IS ON** (`hrms.workday.lockEnabled`, on by default since `0333`;
+it shipped off and Mahek asked for it on). Every app is covered — header and sidebar too — before punching in, on a
 break and after punching out, and `requireUser` REFUSES SERVER ACTIONS for
 that person — every one that signs in through it, which is every app's
 context and capability check (it asks `serverLocked` when the request carries

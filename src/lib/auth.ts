@@ -142,8 +142,8 @@ export async function requireReader(): Promise<User> {
  * MahekOne — is refused while somebody is locked out (before punching in, on a
  * break, after punching out). Only actions: a page still renders behind the
  * lock screen, and punching in itself goes through `/api/workday`, a route,
- * so the way out of the lock is never behind it. Off by default
- * (`hrms.workday.lockEnabled`), and outside a request — a job, a test — there
+ * so the way out of the lock is never behind it. Switched by
+ * `hrms.workday.lockEnabled` (on by default), and outside a request — a job, a test — there
  * is no action to refuse.
  */
 async function refuseWhileLocked(user: User) {

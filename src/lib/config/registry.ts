@@ -4394,7 +4394,7 @@ export const SETTINGS = [
     label: "Lock MahekOne until people punch in",
     description:
       "On, every app is locked for an office employee before they punch in, while they are on a break and after they punch out, and saves are refused on the server. Field salesmen (who punch in on the MBOS handset), people not linked to an employee record, and days off are never locked.",
-    default: false,
+    default: true,
   },
   {
     key: "hrms.workday.exemptPlatformAdmins",
