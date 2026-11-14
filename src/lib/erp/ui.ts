@@ -650,7 +650,7 @@ export const ST_TONE: Record<string, Tone> = {
   "To count": "info", Mismatch: "danger", "Mismatch · reviewed": "warn", "Red flag": "danger", "Recount out": "warn", Investigating: "warn", "Stock discrepancy": "danger",
   "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
   "Empty – available": "success", "Empty – returnable to vendor": "info", "Needs review": "warn", Sold: "neutral",
-  "Returned to vendor": "muted", Adjusted: "muted", Unpaid: "danger", "Partially Paid": "warn", Paid: "success",
+  "Returned to vendor": "muted", Adjusted: "muted", Unpaid: "danger", "Partially Paid": "warn", Paid: "success", "Split again": "danger",
   "Above limit": "danger", "Within limit": "success", "No declared tare": "muted", "Not matched": "warn",
   "Part matched": "info", Void: "muted", Recorded: "success", "Mahek owned": "brand", "Vendor returnable": "info",
   "Not recorded": "warn", "1–7": "warn", "8–15": "warn", "16–30": "danger", "31–60": "danger", "60+": "danger",

@@ -34,7 +34,8 @@ import {
   type TransportFacts,
 } from "./engines/order-tracking";
 import { today } from "./screens/common";
-import { isMahekVehicle } from "./engines/logistics";
+import { deliversDirect } from "./engines/logistics";
+import { directNames } from "./direct-delivery";
 import { erpAudit, erpId } from "./server";
 
 /* ---------------------------------------------------------------------------
@@ -173,6 +174,7 @@ type TransportRow = TransportFacts & {
 async function readTransports(orderNos: number[]): Promise<Map<number, TransportRow[]>> {
   const out = new Map<number, TransportRow[]>();
   if (!orderNos.length) return out;
+  const direct = await directNames();
   const rows = (await db.execute(sql`
     select t.id, t.order_no as "orderNo", t.material_stage as stage, t.at_transport_at as "atTransportAt", t.lr_no as "lrNo",
            l.lr_date::text as "lrDate", l.file_id as "lrFileId", l.assigned_at as "lrAttachedAt", coalesce(t.transporter, l.transporter) as transporter,
@@ -210,7 +212,7 @@ async function readTransports(orderNos: number[]): Promise<Map<number, Transport
         lrDate: str(r.lrDate),
         lrFileId: str(r.lrFileId),
         signedCopyFileId: str(r.signedCopyFileId),
-        ownVehicle: isMahekVehicle(str(r.transporter)),
+        ownVehicle: deliversDirect(str(r.transporter), direct),
         transporter: str(r.transporter),
         expectedOn: str(r.expectedOn),
         deliveredOn: str(r.deliveredOn),

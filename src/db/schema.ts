@@ -13686,6 +13686,12 @@ export const erpTransporters = pgTable(
     /** Its tracking page, with {lr} where the LR number goes. */
     trackingUrl: text("tracking_url"),
     active: boolean("active").notNull().default(true),
+    /**
+     * DELIVERS STRAIGHT TO THE SHOP, with no LR — a hired tempo (0336). Its
+     * bills skip the LR wait and travel like Mahek Vehicle's (`deliversDirect`),
+     * and keep their own name on every screen.
+     */
+    deliversDirect: boolean("delivers_direct").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id").references(() => users.id),

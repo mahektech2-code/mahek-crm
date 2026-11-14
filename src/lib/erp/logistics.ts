@@ -2,6 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { directNames, directSql } from "./direct-delivery";
 import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterContacts, erpTransporterGodowns, erpTransporters, erpTransports } from "@/db/schema";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput, type ResolvedRung } from "./transporter-godowns";
@@ -21,6 +22,7 @@ import {
   cleanCities,
   cleanPlace,
   CLOSED,
+  deliversDirect,
   isMahekVehicle,
   plateIn,
   isProofKind,
@@ -160,6 +162,7 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
            coalesce(dc.name, c.name) as "deliveryParty",
            t.area, o.godown, c.sales_person_name as "salesPerson",
            coalesce(t.transporter, l.transporter) as transporter,
+           ${directSql(sql`coalesce(t.transporter, l.transporter)`)} as direct,
            tr.phone as "transporterPhone", tr.tracking_url as "transporterTrackUrl",
            t.payment_type as "paymentType", t.packages, t.litres::float8 as litres,
            t.material_stage as stage, t.transport_due_on::text as "transportDueOn",
@@ -219,7 +222,7 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       packages: n(r.packages),
       litres: n(r.litres),
       stage,
-      phase: phaseOf({ lrNo, materialStage: stage, transporter }),
+      phase: phaseOf({ lrNo, materialStage: stage, transporter, direct: Boolean(r.direct) }),
       transportDueOn: s(r.transportDueOn),
       atTransportAt: r.atTransportAt ? new Date(String(r.atTransportAt)).toISOString() : null,
       lrId: s(r.lrId),
@@ -235,7 +238,7 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       tripId: s(r.tripId),
       tripNo: n(r.tripNo),
       vehicleNo: s(r.vehicleNo),
-      ownVehicle: isMahekVehicle(transporter),
+      ownVehicle: isMahekVehicle(transporter) || Boolean(r.direct),
       driver: s(r.driver),
       signedCopyId: s(r.signedCopyId),
       signedCopyFileId: s(r.signedCopyFileId),
@@ -1126,7 +1129,8 @@ export async function updateConsignment(ctx: ErpContext, transportIds: string[],
   if (!ts.length) return err("Nothing here is still on the road.", "rule_violation");
   const stage = input.stage?.trim() || null;
   if (stage && !ROAD_STAGES.includes(stage as never)) return fieldErr("stage", "Pick where the goods are");
-  if (stage && ts.some((t) => !t.lrNo && !isMahekVehicle(t.transporter))) return err("A bill with no LR is moved by attaching its LR on the Documents desk.", "rule_violation");
+  const direct = await directNames();
+  if (stage && ts.some((t) => !t.lrNo && !deliversDirect(t.transporter, direct))) return err("A bill with no LR is moved by attaching its LR on the Documents desk.", "rule_violation");
   const expected = day(input.expectedOn);
   if (input.expectedOn && !expected) return fieldErr("expectedOn", "Expected delivery is not a date");
   const nextIn = day(input.nextCallOn);
@@ -1399,9 +1403,10 @@ export async function reopen(ctx: ErpContext, transportId: string, reason: strin
   if (!t || t.materialStage !== CLOSED) return err("That bill is not closed.", "rule_violation");
   const refusal = await confirmImpact("erp-delivery-reopen", transportId, confirmation);
   if (refusal) return refusal;
-  const stage = t.lrNo ? "Reached Destination Area" : isMahekVehicle(t.transporter) ? "Out for Delivery" : "At transport";
+  const direct = deliversDirect(t.transporter, await directNames());
+  const stage = t.lrNo ? "Reached Destination Area" : direct ? "Out for Delivery" : "At transport";
   await db.transaction(async (tx) => {
-    await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo || isMahekVehicle(t.transporter) ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
+    await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo || direct ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
     await addEvent(tx as unknown as typeof db, ctx, [t.id], "reopened", stage, why, false);
   });
   await erpAudit(ctx, "erp.logistics.reopen", "erp_transport", t.id, { stage: CLOSED }, { stage, reason: why });
@@ -1423,6 +1428,8 @@ export async function saveTransporter(
     godowns?: GodownInput[];
     trackingUrl?: string | null;
     active?: boolean;
+    /** Delivers straight to the shop with no LR — a hired tempo. Absent leaves it as it is. */
+    deliversDirect?: boolean;
     /** A rename rewrites the name on every bill, LR and order carrying it, so it is confirmed (`erp-transporter-rename`). */
     confirmation?: ImpactConfirmation | null;
   },
@@ -1450,6 +1457,7 @@ export async function saveTransporter(
     ...(godowns ? mirrorsFrom(godowns) : {}),
     trackingUrl: url,
     active: input.active ?? true,
+    ...(input.deliversDirect !== undefined ? { deliversDirect: input.deliversDirect } : {}),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
   };
