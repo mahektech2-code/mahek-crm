@@ -298,6 +298,8 @@ export function ListScreen({
   server,
   openRow,
   bare = false,
+  onOpen,
+  onRowAct,
 }: {
   spec: ListSpec;
   /** Every row, or — with `server` — the one page the server cut. */
@@ -332,6 +334,15 @@ export function ListScreen({
   openRow?: ListRow | null;
   /** Drawn inside a page that already has its own heading (Petty Cash): no title, its buttons on a row of their own. */
   bare?: boolean;
+  /**
+   * A screen with its own record dialogs (Logistics → Transport expenses)
+   * opens a clicked row itself instead of the generic record. Everything else
+   * about the list — search, column filters, sorting, columns, ticks, export —
+   * is unchanged.
+   */
+  onOpen?: (id: string) => void;
+  /** …and runs its rows' ⋯ menu actions itself, by the action's id. */
+  onRowAct?: (actionId: string, rowId: string) => void;
 }) {
   const ui = useErpUi();
   const { flags: FLAG, place, exportList, listIds, listCount, listTotals, loadForm, tones, look } = useKit();
@@ -373,7 +384,8 @@ export function ListScreen({
   const { chip, gf, size } = query;
   const setPage = (n: number) => setQuery({ page: n });
   const [sel, setSel] = useState<Record<string, boolean>>({});
-  const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  const [openId, setOpenIdState] = useState<string | null>(initialOpen ?? null);
+  const setOpenId = (id: string | null) => (id != null && onOpen ? onOpen(id) : setOpenIdState(id));
   /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   /* A New form too heavy to send with the list is asked for when it is wanted
@@ -1067,7 +1079,7 @@ export function ListScreen({
                               }
                             />
                           ))}
-                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} /> : null}
+                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} /> : null}
                         </Tr>,
                       );
                       /* Its folded rows, under it: indented, and blank where they only repeat their total. */
@@ -1087,7 +1099,7 @@ export function ListScreen({
                                   <Cell key={c.k} c={c} r={x} cols={cols} small />
                                 ),
                               )}
-                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} /> : null}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} /> : null}
                             </Tr>,
                           );
                         }
@@ -1178,12 +1190,12 @@ const MENU_COL = 52;
  * that order, run exactly as the record dialog runs them. A click inside it
  * never opens the record.
  */
-function MenuCell({ row, ids, screen }: { row: ListRow; ids: string[]; screen: string }) {
+function MenuCell({ row, ids, screen, onRowAct }: { row: ListRow; ids: string[]; screen: string; onRowAct?: (actionId: string, rowId: string) => void }) {
   const ui = useErpUi();
   const items = ids
     .map((id) => row.actions?.find((a) => a.id === id))
     .filter((a): a is NonNullable<typeof a> => !!a)
-    .map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => ui.act(screen, a, row.id) }));
+    .map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => (onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id)) }));
   return (
     <Td className="text-right" onClick={(e) => e.stopPropagation()}>
       {items.length ? <RowMenu items={items} /> : null}

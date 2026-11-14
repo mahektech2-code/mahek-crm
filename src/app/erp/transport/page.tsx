@@ -25,7 +25,7 @@ import { Delivered, Overview } from "./parts/overview";
 import { ToTransport } from "./parts/to-transport";
 import { Transporters } from "./parts/transporters";
 import { FreightDesk, type FreightSub } from "./parts/freight";
-import { FREIGHT_TRIP_DAYS, freightBills, freightReport, recentVehicles } from "@/lib/erp/freight-bills";
+import { FREIGHT_TRIP_DAYS, freightBills, freightReport, recentVehicles, waitingBills } from "@/lib/erp/freight-bills";
 import { isErpManager } from "@/lib/erp/screens/common";
 import { addDays } from "@/lib/erp/engines/logistics";
 import { UploadLrsButton } from "./parts/upload-lrs-button";
@@ -218,11 +218,12 @@ async function freightData(one: (k: string) => string | undefined, today: string
   const monthEnd = addDays(`${addDays(`${month}-28`, 4).slice(0, 7)}-01`, -1);
   const from = one("from") ?? addDays(today, -365);
   const to = one("to") ?? today;
-  const [pendingBills, paidBills, report, vehicles] = await Promise.all([
+  const [pendingBills, paidBills, report, vehicles, waiting] = await Promise.all([
     freightBills({ status: "pending" }),
     sub === "paid" ? freightBills({ status: "paid", from: `${month}-01`, to: monthEnd }) : Promise.resolve([]),
     sub === "reports" ? freightReport(from, to) : Promise.resolve(null),
     recentVehicles(FREIGHT_TRIP_DAYS),
+    waitingBills(FREIGHT_TRIP_DAYS),
   ]);
   /* A bill opened from a link may be outside the list on screen — read it on its own. */
   const opened = one("bill");
@@ -237,6 +238,7 @@ async function freightData(one: (k: string) => string | undefined, today: string
     openedBill: extra[0] ?? null,
     report,
     vehicles,
+    waiting,
     pendingCount: pendingBills.length,
     pendingPaise: pendingBills.reduce((a, b) => a + b.amountPaise, 0),
     tripDays: FREIGHT_TRIP_DAYS,

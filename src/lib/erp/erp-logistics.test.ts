@@ -357,18 +357,23 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(waiting?.unbilledLines, 1);
     assert.equal(waiting?.unbilledLitres, 10);
     assert.equal(waiting?.unbilledCustomers, 1);
-    /* …and the row names who it was billed to, on which sales bill and when — what the office matches the transporter's bill against. */
+    /* …and its sales bill is listed one to a row, with its party, number, date and trip — what the office matches the transporter's bill against. */
     const [party] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, t.billingCustomerId));
-    assert.deepEqual(waiting?.billingParties, [party.name]);
-    if (t.billNo) assert.deepEqual(waiting?.billNos, [t.billNo.trim()]);
-    assert.equal(waiting?.billedFrom, day);
-    assert.equal(waiting?.billedTo, day);
+    const bills = (await F.waitingBills(3650)).filter((w) => w.vehicleNo === "MH04 KL 2231");
+    assert.equal(bills.length, 1);
+    assert.equal(bills[0].party, party.name);
+    if (t.billNo) assert.equal(bills[0].billNo, t.billNo.trim());
+    assert.equal(bills[0].billDate, day);
+    assert.equal(bills[0].dispatchOn, waiting?.dispatchOn);
+    assert.equal(bills[0].lines, 1);
+    assert.equal(bills[0].litres, 10);
     const input = { lrNo: "88213", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 25000, orderIds: [vl.orderId] };
     const saved = await F.saveFreightBill(ctx, input);
     assert.ok(saved.ok, msg(saved));
     const billId = saved.ok ? saved.data.id : "";
     /* Once its bill is in, the trip stops waiting — it is on the bill list instead. */
     assert.equal((await F.recentVehicles(3650)).find((v) => v.vehicleNo === "MH04 KL 2231")?.unbilledLines, 0);
+    assert.equal((await F.waitingBills(3650)).filter((w) => w.vehicleNo === "MH04 KL 2231").length, 0, "a sales bill on a transport bill stops waiting");
     let [bill] = await F.freightBills({ status: "pending", ids: [billId] });
     assert.equal(bill.shares.length, 1);
     assert.equal(bill.shares[0].amountPaise, 25000, "one line carries the whole bill");
