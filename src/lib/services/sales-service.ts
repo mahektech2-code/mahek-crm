@@ -2013,6 +2013,74 @@ export async function beats(): Promise<string[]> {
   return rows.map((r) => r.beat);
 }
 
+/* ═══════════════════════════════════════════════════════════ the shop map */
+
+export type ShopPin = {
+  id: string;
+  name: string;
+  city: string;
+  area: string | null;
+  beat: string | null;
+  lat: number;
+  lng: number;
+  salesmanId: string | null;
+  salesmanName: string | null;
+};
+
+/**
+ * Every active customer with a coordinate. Unpaged, unlike `fieldBook` —
+ * this feeds one map layer rather than a table somebody scrolls, and the
+ * whole book is a few thousand points, one GeoJSON payload rather than
+ * something worth paginating.
+ */
+export async function shopPins(): Promise<ShopPin[]> {
+  const scope = await managerScope();
+  return db.execute<ShopPin>(sql`
+    select c.id, c.name, c.city, c.area, c.beat,
+           c.gps_lat as lat, c.gps_lng as lng,
+           coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
+           u.name as "salesmanName"
+      from customers c
+      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+     where c.status = 'active' and c.kind = 'customer'
+       and c.gps_lat is not null and c.gps_lng is not null
+       ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+  `) as unknown as ShopPin[];
+}
+
+export type ProspectPin = {
+  id: string;
+  name: string;
+  territory: string | null;
+  industryLabel: string | null;
+  lat: number;
+  lng: number;
+  sourceAddedByName: string | null;
+  sourceAddedAt: Date | null;
+};
+
+/**
+ * Field-collected pins that never matched an existing customer — a shop the
+ * team has found, not one MahekOne has a record of. `customerMatchStatus`
+ * covers both `unmatched` and `ambiguous`: a held-for-review candidate is not
+ * yet a confirmed shop either, and both are worth a manager seeing on the
+ * map. Scoped by who pinned it, the same way every other list here narrows
+ * by whose work it is.
+ */
+export async function prospectPins(): Promise<ProspectPin[]> {
+  const scope = await managerScope();
+  return db.execute<ProspectPin>(sql`
+    select p.id, p.name, p.territory, p.industry_label as "industryLabel",
+           p.lat, p.lng,
+           p.source_added_by_name as "sourceAddedByName",
+           p.source_added_at as "sourceAddedAt"
+      from field_customer_pins p
+     where p.customer_match_status in ('unmatched', 'ambiguous')
+       and p.lat is not null and p.lng is not null
+       ${onlyMine(scope, "p.added_by_user_id")}
+  `) as unknown as ProspectPin[];
+}
+
 /* ═════════════════════════════════════════════════════════ the settings */
 
 export type FieldSetting = {

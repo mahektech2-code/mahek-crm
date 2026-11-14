@@ -797,10 +797,26 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
   const [year, month] = period.split("-").map(Number);
   const [prevYear, prevMonth] = addMonths(period, -1).split("-").map(Number);
 
+  // A target is set at the DIRECT CUSTOMER level only — see
+  // `thirdPartyClause("customer")` in lib/queries.ts, whose `kind = 'customer'
+  // and not third_party` this mirrors rather than imports: `queries.ts`
+  // itself reads `today()` from this file, so importing back from there would
+  // be a cycle. A lead has never ordered, so a trailing-average target on one
+  // is a guess with no history behind it; a third-party customer is billed
+  // through a distributor, so this month's revenue never lands on their own
+  // account. `listTargets`/`targetFilterClause` in worklist-services.ts carry
+  // the same restriction, so a row seeded here is a row the Targets screens
+  // will actually show.
   const active = await db
     .select()
     .from(customers)
-    .where(eq(customers.status, "active"));
+    .where(
+      and(
+        eq(customers.status, "active"),
+        eq(customers.kind, "customer"),
+        eq(customers.thirdParty, false),
+      ),
+    );
 
   const existing = await db
     .select({ customerId: monthlyTargets.customerId })

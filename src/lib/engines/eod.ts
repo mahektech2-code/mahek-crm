@@ -3,9 +3,14 @@ import type { BusinessDate } from "../business-date";
 /* ---------------------------------------------------------------------------
  * E6 — EOD Aggregator
  *
- * The day's numbers for one user, plus a plain-text form designed to paste
- * straight into WhatsApp. The formatting is a functional requirement, not a
- * nicety — short lines, no tables, no characters that render badly.
+ * The day's numbers for one user, plus a paste-ready WhatsApp form.
+ *
+ * The report used to deliberately avoid emoji and dividers — "nothing that
+ * WhatsApp renders badly, and no table characters" — because the six-line
+ * report it produced didn't need them to stay readable. This one is longer
+ * and grouped into sections, so the opposite is now true: the emoji and the
+ * "─" dividers are what let a manager scan fifteen lines in a few seconds
+ * instead of reading them. Still verified by pasting into real WhatsApp.
  *
  * Pure.
  * ------------------------------------------------------------------------- */
@@ -20,17 +25,23 @@ export type EodInput = {
   /** Calls the customer placed to us. Never counted as attempted. */
   callsInbound: number;
   callsMissed: number;
+  /** targets.dailyCallTarget. 0 means no target is configured. */
+  callTarget: number;
 
   /**
    * Customers called from the calling queue today.
    *
-   * Deliberately NOT "x of y". The denominator — how many were on today's
-   * queue — can only be had by building the queue, which is what the Call Log
-   * does and shows. Computing a second, cheaper one here produced "3 of 8"
-   * against the Call Log's "3 of 4", and then "3 of 2". A number that cannot
-   * be derived the same way twice does not belong on two screens.
+   * Deliberately NOT "x of y" against a freshly computed denominator — see
+   * `queueAssigned` below for why that denominator is read from the settled
+   * snapshot instead.
    */
   queueWorked: number;
+  /** Rows on today's SETTLED queue snapshot for this user — see eod-service.ts. */
+  queueAssigned: number;
+  /** Of `queueAssigned`, how many carry a high-priority reason (a broken
+   *  promise, an overdue debt, a customer a full cycle past due). */
+  highPriorityTotal: number;
+  highPriorityCalled: number;
 
   /**
    * Two different questions about the same rows, and they have different
@@ -49,11 +60,25 @@ export type EodInput = {
   ordersCaptured: number;
   ordersCount: number;
   ordersValue: number;
+  /** Today's captured order lines, summed via lib/catalogue.ts's own packing math. */
+  ordersBoxes: number;
+  ordersCans: number;
+
+  /** Outcome = no_order, today. The reasons behind it are `extras.noOrderReasons`. */
+  noOrderCount: number;
 
   followUpsMade: number;
   promisesCount: number;
   promisesValue: number;
   paymentsConfirmed: number;
+  /** Today's LIVE collections worklist size — see eod-service.ts for why. */
+  paymentCallsAssigned: number;
+  paymentWaSent: number;
+  paymentWaAssigned: number;
+  /** The combined calls+WA rollup: assigned = sent + pending, always. */
+  followUpAssigned: number;
+  followUpSent: number;
+  followUpPending: number;
 
   remindersClosed: number;
   remindersCreated: number;
@@ -66,6 +91,45 @@ export type EodInput = {
 
   targetAchieved: number;
   targetAmount: number;
+};
+
+/**
+ * The fields the dashboard's own "today"/"this week" reads need too — a
+ * strict subset of `EodInput`. `eodMetricsForRange` in eod-service.ts, which
+ * the dashboard calls directly (including once per team member for a team
+ * view), returns exactly this and nothing more: the EOD-only fields below
+ * cost a settled queue snapshot, a live collections-worklist read and a
+ * product-line join, none of which the dashboard has ever needed and none of
+ * which even mean anything over a date RANGE — a collections worklist is a
+ * "today" concept, not something to sum across a week.
+ */
+export type DashboardMetrics = Omit<
+  EodInput,
+  | "userName"
+  | "date"
+  | "callTarget"
+  | "queueAssigned"
+  | "highPriorityTotal"
+  | "highPriorityCalled"
+  | "ordersBoxes"
+  | "ordersCans"
+  | "noOrderCount"
+  | "paymentCallsAssigned"
+  | "paymentWaSent"
+  | "paymentWaAssigned"
+  | "followUpAssigned"
+  | "followUpSent"
+  | "followUpPending"
+>;
+
+/**
+ * The two list-shaped, per-telecaller-only sections. Kept off `EodInput` so
+ * `TeamRow` — which is `EodInput` minus name and date — stays a flat,
+ * summable row; a list of promised customers has no honest team total.
+ */
+export type EodExtras = {
+  noOrderReasons: Array<{ label: string; count: number }>;
+  promises: Array<{ customerName: string; date: BusinessDate }>;
 };
 
 export type EodReport = {
@@ -88,10 +152,34 @@ export function formatMoney(paise: number): string {
 }
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WEEKDAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 export function formatDate(date: BusinessDate): string {
   const [y, m, d] = date.split("-");
   return `${d} ${MONTHS[Number(m) - 1]} ${y}`;
+}
+
+/**
+ * The weekday of an already-resolved calendar date. Built with `Date.UTC` so
+ * it never reads a clock or a session timezone — it is naming a day of the
+ * week that a Y-M-D string already fixes, not deriving a date from an
+ * instant, so none of the app's usual timestamp rules apply here.
+ */
+function weekdayOf(date: BusinessDate): string {
+  const [y, m, d] = date.split("-").map(Number);
+  return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+
+/** "Sat, 20 Jun, 2026" — the header date, weekday-first for a quick scan. */
+function formatDateWithWeekday(date: BusinessDate): string {
+  const [y, m, d] = date.split("-");
+  return `${weekdayOf(date)}, ${Number(d)} ${MONTHS[Number(m) - 1]}, ${y}`;
+}
+
+/** "23 Jun 26" — short enough for a promise list without crowding the customer name. */
+function formatShortDate(date: BusinessDate): string {
+  const [y, m, d] = date.split("-");
+  return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y.slice(-2)}`;
 }
 
 /**
@@ -110,19 +198,34 @@ function describeOrders(input: EodInput): string {
   return `${input.ordersCaptured} taken · ${input.ordersCount} approved · ${value}`;
 }
 
-/** The same fact in the message's own punctuation, which is not the table's. */
-function describeOrdersForMessage(input: EodInput): string {
-  const value = formatMoney(input.ordersValue);
-  if (input.ordersCaptured === input.ordersCount) {
-    return `${input.ordersCount} (${value})`;
-  }
-  return `${input.ordersCaptured} taken · ${input.ordersCount} approved (${value})`;
+/**
+ * "5 (Will order later×4)" — the total, then the reasons behind it in the
+ * order they were tallied. Shared by the table and the message: one shape,
+ * so the two cannot describe the same day differently.
+ */
+function describeNoOrder(count: number, reasons: EodExtras["noOrderReasons"]): string {
+  if (!reasons.length) return String(count);
+  return `${count} (${reasons.map((r) => `${r.label}×${r.count}`).join(", ")})`;
 }
 
-export function aggregateEod(input: EodInput): EodReport {
+/** "✅ All high priority customers called!" or how many of them are still owed a call. */
+function describePriorityLine(total: number, called: number): string | null {
+  if (total === 0) return null;
+  if (called >= total) return "✅ All high priority customers called!";
+  return `⚠️ ${total - called} of ${total} high priority customers still pending`;
+}
+
+const DIVIDER = "─".repeat(24);
+
+export function aggregateEod(input: EodInput, extras: EodExtras): EodReport {
   const percent = input.targetAmount
     ? Math.round((input.targetAchieved / input.targetAmount) * 100)
     : 0;
+  const queuePercent = input.queueAssigned
+    ? Math.round((input.queueWorked / input.queueAssigned) * 100)
+    : 0;
+  const noOrderText = describeNoOrder(input.noOrderCount, extras.noOrderReasons);
+  const priorityLine = describePriorityLine(input.highPriorityTotal, input.highPriorityCalled);
 
   const lines = [
     { label: "Customers called from the queue", value: String(input.queueWorked) },
@@ -131,6 +234,8 @@ export function aggregateEod(input: EodInput): EodReport {
     { label: "Inbound received", value: String(input.callsInbound) },
     { label: "Missed", value: String(input.callsMissed) },
     { label: "Orders", value: describeOrders(input) },
+    { label: "Order quantity", value: `${input.ordersBoxes} box · ${input.ordersCans} can` },
+    { label: "No order", value: noOrderText },
     { label: "Orders received without a call", value: String(input.ordersWithoutCall) },
     { label: "Payment follow-ups", value: String(input.followUpsMade) },
     { label: "Promises obtained", value: `${input.promisesCount} · ${formatMoney(input.promisesValue)}` },
@@ -140,27 +245,37 @@ export function aggregateEod(input: EodInput): EodReport {
     { label: "Reminders carried forward", value: String(input.remindersCarriedForward) },
     { label: "Complaints logged", value: String(input.complaintsLogged) },
     { label: "WhatsApp sent", value: String(input.whatsappSent) },
+    { label: "Payment WhatsApp sent", value: `${input.paymentWaSent} of ${input.paymentWaAssigned}` },
+    {
+      label: "High priority customers called",
+      value: input.highPriorityTotal ? `${input.highPriorityCalled} of ${input.highPriorityTotal}` : "None today",
+    },
     {
       label: "Monthly target",
       value: `${formatMoney(input.targetAchieved)} of ${formatMoney(input.targetAmount)} (${percent}%)`,
     },
   ];
 
-  // Short lines, a middot as the only separator, asterisks for the one bold
-  // line. Nothing that WhatsApp renders badly, and no table characters.
   const whatsappText = [
-    `*EOD - ${input.userName}*`,
-    formatDate(input.date),
-    "",
-    `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed · ${input.callsInbound} inbound`,
-    `Orders: ${describeOrdersForMessage(input)}`,
-    ...(input.ordersWithoutCall
-      ? [`Orders received without a call: ${input.ordersWithoutCall}`]
-      : []),
-    `Payments: ${input.followUpsMade} followed up · ${formatMoney(input.promisesValue)} promised`,
-    `Reminders: ${input.remindersClosed} closed · ${input.remindersCarriedForward} carried forward`,
-    `Complaints: ${input.complaintsLogged} logged`,
-    `Target: ${formatMoney(input.targetAchieved)} of ${formatMoney(input.targetAmount)} (${percent}%)`,
+    `*📊 EOD — ${input.userName}*`,
+    `📅 ${formatDateWithWeekday(input.date)}`,
+    DIVIDER,
+    `📞 Order Calls: *${input.callsAttempted} / ${input.callTarget}*   ✅ Orders: *${input.ordersCaptured}*`,
+    `   📦 ${input.ordersBoxes} Box  🥫 ${input.ordersCans} Can`,
+    `📵 No Answer: ${input.callsMissed}`,
+    `🚫 No Order: ${noOrderText}`,
+    `💰 Payment Calls: *${input.followUpsMade} / ${input.paymentCallsAssigned}*`,
+    `💬 Payment WA Sent: *${input.paymentWaSent} / ${input.paymentWaAssigned}*`,
+    DIVIDER,
+    `📋 Assigned: *${input.queueAssigned}*`,
+    `☎️  Called:   *${input.queueWorked}* (${queuePercent}%)`,
+    ...(priorityLine ? [priorityLine, DIVIDER] : []),
+    `🤝 Pay Promised: *${input.promisesCount}*`,
+    ...extras.promises.map((p) => `   • ${p.customerName} → ${formatShortDate(p.date)}`),
+    DIVIDER,
+    `🎯 Month: *${percent}%* (${formatMoney(input.targetAchieved)} / ${formatMoney(input.targetAmount)})`,
+    `💸 Payment Follow-up: ${input.followUpAssigned} assigned`,
+    `   ✅ Sent: ${input.followUpSent}  ·  ⏳ Pending: ${input.followUpPending}`,
   ].join("\n");
 
   return { date: input.date, userName: input.userName, lines, whatsappText };
@@ -210,16 +325,24 @@ export type TeamRollup = {
 /**
  * Identical structure and identical metric definitions to the individual
  * report, so figures across the team are directly comparable.
+ *
+ * The team message itself stays the old six-line shape — the new sections
+ * (no-order reasons, the promise list, the high-priority callout) are
+ * per-telecaller detail a roll-up has no room for, not something dropped by
+ * oversight.
  */
 export function aggregateTeamEod(
   date: BusinessDate,
   rows: TeamRow[],
 ): TeamRollup {
   const zero = (): Omit<EodInput, "userName" | "date"> => ({
-    callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
-    queueWorked: 0,
-    ordersCaptured: 0, ordersCount: 0, ordersValue: 0,
+    callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, callTarget: 0, ordersWithoutCall: 0,
+    queueWorked: 0, queueAssigned: 0, highPriorityTotal: 0, highPriorityCalled: 0,
+    ordersCaptured: 0, ordersCount: 0, ordersValue: 0, ordersBoxes: 0, ordersCans: 0,
+    noOrderCount: 0,
     followUpsMade: 0, promisesCount: 0, promisesValue: 0, paymentsConfirmed: 0,
+    paymentCallsAssigned: 0, paymentWaSent: 0, paymentWaAssigned: 0,
+    followUpAssigned: 0, followUpSent: 0, followUpPending: 0,
     remindersClosed: 0, remindersCreated: 0, remindersCarriedForward: 0,
     complaintsLogged: 0, whatsappSent: 0,
     targetAchieved: 0, targetAmount: 0,

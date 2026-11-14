@@ -764,6 +764,17 @@ export const SETTINGS = [
     description: "Scale the first month's target by the portion of the month they existed.",
     default: true,
   },
+  {
+    key: "targets.dailyCallTarget",
+    type: "integer",
+    category: "targets",
+    label: "Daily call target",
+    description:
+      "Outbound calls a telecaller is expected to make in a day, shown on the EOD report. 0 means no target is set.",
+    default: 0,
+    min: 0,
+    max: 200,
+  },
 
   /* ------------------------------------------------------ salesman scoring */
   /*
@@ -2482,6 +2493,7 @@ export type Config = {
   "targets.trailingMonths": number;
   "targets.defaultUpliftPercent": number;
   "targets.proRateNewCustomers": boolean;
+  "targets.dailyCallTarget": number;
 
   "performance.weightRevenue": number;
   "performance.weightVolume": number;

@@ -274,21 +274,41 @@ export function EodScreen({
         <Card>
           <div className="flex items-center justify-between border-b border-divider px-5 py-3.5">
             <span className="text-lg font-semibold text-ink">WhatsApp message</span>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(message);
-                  push("Message copied");
-                } catch {
-                  push("The browser blocked the clipboard.", "error");
-                }
-              }}
-            >
-              <Icon name="copy" size={14} strokeWidth={1.8} />
-              Copy message
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  // Opens the sender's own WhatsApp with the report pre-filled
+                  // — a personal share-sheet convenience for a message the
+                  // telecaller is sending as themselves, not the confirmed-send
+                  // machinery a customer-facing message goes through.
+                  window.open(
+                    `https://wa.me/?text=${encodeURIComponent(message)}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                }}
+              >
+                <Icon name="chat" size={14} strokeWidth={1.8} />
+                WA
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(message);
+                    push("Message copied");
+                  } catch {
+                    push("The browser blocked the clipboard.", "error");
+                  }
+                }}
+              >
+                <Icon name="copy" size={14} strokeWidth={1.8} />
+                Copy message
+              </Button>
+            </div>
           </div>
           <div className="bg-canvas p-5">
             <pre className="m-0 rounded-[6px] border border-line bg-surface p-4 font-mono text-[13px] leading-5 whitespace-pre-wrap text-ink">

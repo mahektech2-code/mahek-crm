@@ -25,13 +25,15 @@ import { customers, monthlyTargets, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedMonthlyTargets } from "@/lib/recompute";
-import { setTarget } from "@/lib/services/worklist-services";
+import { listTargets, setTarget, shortfallAnalysis } from "@/lib/services/worklist-services";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 let manager: typeof users.$inferSelect;
 
-async function makeCustomer() {
+async function makeCustomer(
+  overrides: Partial<typeof customers.$inferInsert> = {},
+) {
   const [row] = await db
     .insert(customers)
     .values({
@@ -44,6 +46,7 @@ async function makeCustomer() {
       status: "active",
       ownerId: manager.id,
       salesAmId: manager.id,
+      ...overrides,
     })
     .returning();
   return row;
@@ -165,4 +168,34 @@ test("saving a real target clears a carried-forward mark", async () => {
   const after_ = await targetFor(c.id, 2026, 9);
   assert.equal(after_?.targetAmount, 130_000);
   assert.equal(after_?.carriedForward, false, "a manager has now looked at this month and decided");
+});
+
+test("a target is set at the direct-customer level only", async () => {
+  const direct = await makeCustomer();
+  const lead = await makeCustomer({ kind: "lead" });
+  const thirdParty = await makeCustomer({ thirdParty: true });
+
+  const created = await seedMonthlyTargets("2026-09");
+  assert.equal(created, 1, "only the direct customer is seeded a target");
+
+  assert.ok(await targetFor(direct.id, 2026, 9));
+  assert.equal(await targetFor(lead.id, 2026, 9), null, "a lead has never ordered — no target to seed");
+  assert.equal(
+    await targetFor(thirdParty.id, 2026, 9),
+    null,
+    "billed through a distributor — no revenue lands on their own account",
+  );
+
+  const rows = await listTargets("2026-09");
+  assert.deepEqual(
+    rows.map((r) => r.customerId).sort(),
+    [direct.id],
+    "leads and third-party customers never reach the Targets screen",
+  );
+
+  const shortfall = await shortfallAnalysis("2026-09");
+  assert.ok(
+    !shortfall.customerGap.some((c) => c.customerId === lead.id || c.customerId === thirdParty.id),
+    "the coverage gap is read off the same direct-customer-only list",
+  );
 });

@@ -25,7 +25,7 @@ import { isManager, requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
-import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
+import { eodMetricsForRange } from "./services/eod-service";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -634,8 +634,15 @@ export function inList(expr: SQL, commaSeparated: string): SQL {
   )})`;
 }
 
-/** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
-function thirdPartyClause(value: string): SQL {
+/**
+ * One account-type filter's own clause — the value `customerFilterClause`
+ * used to inline directly. Exported so a screen that has no *user-facing*
+ * account-type filter can still apply one of these as a fixed baseline —
+ * `thirdPartyClause("customer")` is "direct customers only", reused by the
+ * monthly-targets code in `worklist-services.ts` and `recompute.ts` rather
+ * than re-typing `kind = 'customer' and not third_party` a third time.
+ */
+export function thirdPartyClause(value: string): SQL {
   switch (value) {
     case "yes":
       return sql`customers.third_party`;
@@ -1409,7 +1416,13 @@ export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
 
 /* ------------------------------------------------------------ day activity */
 
-export type DayActivity = Awaited<ReturnType<typeof eodMetricsFor>> & {
+/**
+ * Derived from `eodMetricsForRange`, not `eodMetricsFor` — the dashboard
+ * reads only ever go through the range function, which deliberately carries
+ * `DashboardMetrics` and not the EOD report's day-only extras. See that
+ * type's own comment in lib/engines/eod.ts.
+ */
+export type DayActivity = Awaited<ReturnType<typeof eodMetricsForRange>> & {
   connectRate: number;
 };
 

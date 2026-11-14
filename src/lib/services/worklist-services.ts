@@ -38,7 +38,7 @@ import {
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
-import { customerFilterClause, type CustomerListFilters } from "../queries";
+import { customerFilterClause, thirdPartyClause, type CustomerListFilters } from "../queries";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -749,6 +749,12 @@ export async function listTargets(period?: string) {
         // A customer who has gone quiet still carries a target — that is the
         // gap the month has to explain. Only deactivation removes them.
         ne(customers.status, "deactivated"),
+        // A target is set at the DIRECT CUSTOMER level only. A lead has never
+        // ordered, so a sales target on one is a guess with no order history
+        // behind it; a third-party customer is billed through a distributor,
+        // so the revenue this screen is measuring never lands on their own
+        // account. Neither belongs on a screen asking "what will they buy".
+        thirdPartyClause("customer"),
         scopedToUsers(ids),
       ),
     )
@@ -813,7 +819,9 @@ function targetAchievedSql(year: number, month: number) {
  * is deliberately the same four controls the Customers list offers
  * (status, sales people, sales managers, back office), read the same way,
  * so a name picked here always means what it means there. `thirdParty` is
- * left out: an account's kind is not a question this screen asks.
+ * left out of the FILTER BAR because it is not offered as a choice here —
+ * see `targetFilterClause`, which applies `thirdPartyClause("customer")`
+ * unconditionally rather than as one more control to tick.
  */
 export type TargetListFilters = Pick<
   CustomerListFilters,
@@ -904,7 +912,13 @@ export async function targetFilterClause(
   // filter's own options for exactly this reason: offering it here would
   // be a filter that always returns nothing.
   const notDeactivated = ne(customers.status, "deactivated");
-  const clause = customerClause ? and(notDeactivated, customerClause) : notDeactivated;
+  // Same restriction as `listTargets`, and for the same reason — a target is
+  // set at the direct-customer level only, so a lead or a third-party
+  // customer never appears here, in "set targets in bulk", or in the coverage
+  // gap `shortfallAnalysis` reads off this same list.
+  const directOnly = thirdPartyClause("customer");
+  const base = and(notDeactivated, directOnly);
+  const clause = customerClause ? and(base, customerClause) : base;
 
   return {
     clause,

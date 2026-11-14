@@ -214,9 +214,16 @@ export type PaymentFollowUpPlan = {
  * subqueries — see AGENTS.md.
  */
 export const getPaymentFollowUpPlan = cache(
-  async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
-  const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
+  async function getPaymentFollowUpPlan(
+    /**
+     * Overrides session scope with exactly this one user — for the EOD report,
+     * which needs THIS telecaller's worklist even when it is being generated
+     * for somebody else's day (a manager's team roll-up, or the nightly
+     * auto-generation job, neither of which is that telecaller's own session).
+     */
+    onlyUserId?: string,
+  ): Promise<PaymentFollowUpPlan> {
+  const ids = onlyUserId ? [onlyUserId] : scopedUserIds((await resolveScope()).scope);
   const config = await getConfig();
   const day = await today();
 

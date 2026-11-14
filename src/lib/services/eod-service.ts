@@ -16,13 +16,18 @@ import {
 } from "@/db/schema";
 import { getConfig } from "../config/store";
 import { resolveScope, scopedUserIds, requireCapability } from "../access-control";
+import { boxesFor } from "../catalogue";
+import { HIGH_PRIORITY_REASON_KINDS } from "../queue-priority";
 import {
   aggregateEod,
   aggregateTeamEod,
   eodPreflight,
   type BlockingReminder,
+  type DashboardMetrics,
+  type EodExtras,
   type EodInput,
 } from "../engines/eod";
+import { getPaymentFollowUpPlan } from "./payment-service";
 import { today } from "../recompute";
 import {
   monthKey,
@@ -46,21 +51,29 @@ async function windowFor(range: DateRange) {
 }
 
 /**
- * One day's figures. The EOD report's own view, and the dashboard's "today".
- *
- * A day is a range of one, and it is computed by the range function rather
- * than beside it: two copies of twenty subqueries is how the dashboard and
- * the EOD report come to disagree about how many calls somebody made.
+ * One day's FULL figures — `DashboardMetrics` plus the EOD-only fields, for
+ * callers that need the whole `EodInput` shape: the team roll-up, which
+ * builds one `TeamRow` per member, and the auto-generation job. The
+ * dashboard's own reads go through `eodMetricsForRange` directly instead —
+ * see that function's comment for why.
  */
 export async function eodMetricsFor(
   userId: string,
   day: BusinessDate,
 ): Promise<Omit<EodInput, "userName" | "date">> {
-  return eodMetricsForRange(userId, { from: day, to: day });
+  const [dashboardMetrics, eodOnlyMetrics] = await Promise.all([
+    eodMetricsForRange(userId, { from: day, to: day }),
+    eodOnlyMetricsFor(userId, day),
+  ]);
+  return { ...dashboardMetrics, ...eodOnlyMetrics };
 }
 
 /**
- * The same figures over a span of business days.
+ * The same figures over a span of business days. This is what the dashboard
+ * calls directly — once per team member for a team view — so it carries only
+ * `DashboardMetrics`: the day-only EOD fields (a settled queue snapshot, the
+ * live collections worklist, today's order-line packing) are neither
+ * meaningful over a range nor something every dashboard load should pay for.
  *
  * Every count is over the span. The two MONTHLY figures are not, and cannot
  * be: a target is set for a calendar month, so it is read for the month the
@@ -71,7 +84,7 @@ export async function eodMetricsFor(
 export async function eodMetricsForRange(
   userId: string,
   range: DateRange,
-): Promise<Omit<EodInput, "userName" | "date">> {
+): Promise<DashboardMetrics> {
   const w = await windowFor(range);
   const day = range.to;
   const period = monthKey(range.to);
@@ -97,7 +110,8 @@ export async function eodMetricsForRange(
         and c.interaction_type = 'inbound_call'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_inbound,
       -- Missed reads the OUTCOME. connection_status is retired; reading it
-      -- would have quietly made this number zero.
+      -- would have quietly made this number zero. This is also the EOD
+      -- report's "No Answer" figure — one count, read once.
       (select count(*) from calls c where c.user_id = ${userId}
         and c.interaction_type = 'outbound_call' and c.outcome = 'no_answer'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_missed,
@@ -183,10 +197,235 @@ export async function eodMetricsForRange(
   };
 }
 
+/**
+ * The EOD-only fields `DashboardMetrics` deliberately excludes — a settled
+ * queue snapshot, the live collections worklist, and today's order-line
+ * packing. Always ONE day: none of these are meaningful summed over a range,
+ * and `getPaymentFollowUpPlan` only ever answers for today regardless.
+ */
+async function eodOnlyMetricsFor(
+  userId: string,
+  day: BusinessDate,
+): Promise<
+  Pick<
+    EodInput,
+    | "callTarget"
+    | "queueAssigned"
+    | "highPriorityTotal"
+    | "highPriorityCalled"
+    | "ordersBoxes"
+    | "ordersCans"
+    | "noOrderCount"
+    | "paymentCallsAssigned"
+    | "paymentWaSent"
+    | "paymentWaAssigned"
+    | "followUpAssigned"
+    | "followUpSent"
+    | "followUpPending"
+  >
+> {
+  const w = await windowFor({ from: day, to: day });
+  const config = await getConfig();
+
+  // Reused twice below (the settled-day total, and which of those rows carry
+  // a high-priority reason) — one fragment, so the two queries cannot drift
+  // on which reason kinds count as high priority. Kept in sync with
+  // lib/queue-priority.ts by construction, not by two copies of the list.
+  const priorityKinds = sql.join(
+    HIGH_PRIORITY_REASON_KINDS.map((k) => sql`${k}`),
+    sql`, `,
+  );
+
+  const [
+    [row],
+    { boxes, cans },
+    plan,
+    touchedCustomerIds,
+  ] = await Promise.all([
+    db.execute<Record<string, string>>(sql`
+      select
+        (select count(*) from calls c where c.user_id = ${userId}
+          and c.interaction_type = 'outbound_call' and c.outcome = 'no_order'
+          and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as no_order_count,
+        -- The day's settled list for this user — see queueSnapshots in
+        -- queue-service.ts. Read directly rather than through getQueue(),
+        -- which resolves scope from the SIGNED-IN session and cannot be
+        -- asked for an arbitrary user — this runs for every active user
+        -- during team roll-ups and nightly auto-generation, neither of
+        -- which is a session belonging to that user.
+        (select count(*) from queue_snapshots qs where qs.user_id = ${userId}
+          and qs.day = ${day}::date)::int as queue_assigned,
+        (select count(*) from queue_snapshots qs where qs.user_id = ${userId}
+          and qs.day = ${day}::date
+          and exists (
+            select 1 from jsonb_array_elements(qs.reasons) elem
+            where elem->>'kind' in (${priorityKinds})
+          ))::int as high_priority_total,
+        (select count(distinct c.customer_id) from calls c where c.user_id = ${userId}
+          and c.source_module = 'call_queue'
+          and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz
+          and c.customer_id in (
+            select qs.customer_id from queue_snapshots qs where qs.user_id = ${userId}
+              and qs.day = ${day}::date
+              and exists (
+                select 1 from jsonb_array_elements(qs.reasons) elem
+                where elem->>'kind' in (${priorityKinds})
+              )
+          ))::int as high_priority_called,
+        (select count(*) from wa_messages m
+          join wa_templates t on t.id = m.template_id
+          where m.user_id = ${userId} and t.category = 'payment_reminder'
+            and m.status in ('sent_manually','sent','delivered','read')
+            and coalesce(m.confirmed_sent_at, m.sent_at) >= ${w.start}::timestamptz
+            and coalesce(m.confirmed_sent_at, m.sent_at) <  ${w.end}::timestamptz)::int as payment_wa_sent
+    `),
+    orderQuantityFor(userId, w),
+    getPaymentFollowUpPlan(userId),
+    paymentTouchedCustomersFor(userId, w),
+  ]);
+
+  const n = (k: string) => Number(row?.[k] ?? 0);
+
+  // The LIVE plan already excludes anybody contacted today — see
+  // planPaymentFollowUps's own `contactedToday` handling — so its size IS the
+  // day's remaining, still-pending collections work at the moment this report
+  // is generated. "Assigned" is that plus whoever has already been touched;
+  // arithmetic, not a second read, so assigned always equals sent + pending.
+  const pendingIds = new Set([
+    ...plan.calls.map((c) => c.customerId),
+    ...plan.messages.map((c) => c.customerId),
+  ]);
+  const followUpPending = pendingIds.size;
+  const followUpSent = touchedCustomerIds.size;
+
+  return {
+    callTarget: config["targets.dailyCallTarget"],
+    queueAssigned: n("queue_assigned"),
+    highPriorityTotal: n("high_priority_total"),
+    highPriorityCalled: n("high_priority_called"),
+    ordersBoxes: boxes,
+    ordersCans: cans,
+    noOrderCount: n("no_order_count"),
+    paymentCallsAssigned: plan.calls.length,
+    paymentWaSent: n("payment_wa_sent"),
+    paymentWaAssigned: plan.messages.length,
+    followUpAssigned: followUpPending + followUpSent,
+    followUpSent,
+    followUpPending,
+  };
+}
+
+/** Today's captured order lines, rolled into boxes and loose cans via lib/catalogue.ts. */
+async function orderQuantityFor(
+  userId: string,
+  w: { start: string; end: string },
+): Promise<{ boxes: number; cans: number }> {
+  const rows = await db.execute<{
+    quantity: string;
+    millilitres_per_can: string | null;
+    cans_per_box: string;
+  }>(sql`
+    select l.quantity, p.millilitres_per_can, p.cans_per_box
+    from interaction_product_lines l
+    join calls c on c.id = l.interaction_id
+    join products p on p.id = l.product_id
+    where c.user_id = ${userId}
+      and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz
+  `);
+
+  let boxes = 0;
+  let cans = 0;
+  for (const r of rows) {
+    const { boxes: b, looseCans } = boxesFor(Number(r.quantity), {
+      millilitresPerCan: r.millilitres_per_can == null ? null : Number(r.millilitres_per_can),
+      cansPerBox: Number(r.cans_per_box),
+    });
+    boxes += b;
+    cans += looseCans;
+  }
+  return { boxes, cans };
+}
+
+/** Today's "No order" calls, tallied by which quick note was picked. */
+async function noOrderReasonsFor(
+  userId: string,
+  w: { start: string; end: string },
+): Promise<EodExtras["noOrderReasons"]> {
+  const rows = await db.execute<{ label: string; cnt: string }>(sql`
+    select qn.label, count(*)::int as cnt
+    from calls c
+    cross join lateral jsonb_array_elements_text(c.quick_note_ids) as qnid
+    join quick_notes qn on qn.id = qnid
+    where c.user_id = ${userId}
+      and c.interaction_type = 'outbound_call'
+      and c.outcome = 'no_order'
+      and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz
+    group by qn.label
+    order by cnt desc
+  `);
+  return rows.map((r) => ({ label: r.label, count: Number(r.cnt) }));
+}
+
+/** Distinct customers touched today via either collections channel. */
+async function paymentTouchedCustomersFor(
+  userId: string,
+  w: { start: string; end: string },
+): Promise<Set<string>> {
+  const [callRows, waRows] = await Promise.all([
+    db.execute<{ customer_id: string }>(sql`
+      select distinct a.customer_id
+      from follow_up_attempts a
+      where a.user_id = ${userId} and a.channel = 'call'
+        and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz
+    `),
+    db.execute<{ customer_id: string }>(sql`
+      select distinct m.customer_id
+      from wa_messages m join wa_templates t on t.id = m.template_id
+      where m.user_id = ${userId} and t.category = 'payment_reminder'
+        and m.status in ('sent_manually','sent','delivered','read')
+        and coalesce(m.confirmed_sent_at, m.sent_at) >= ${w.start}::timestamptz
+        and coalesce(m.confirmed_sent_at, m.sent_at) <  ${w.end}::timestamptz
+    `),
+  ]);
+  return new Set([
+    ...callRows.map((r) => r.customer_id),
+    ...waRows.map((r) => r.customer_id),
+  ]);
+}
+
+/** Today's payment promises, name and date, newest first. */
+async function promisesFor(
+  userId: string,
+  w: { start: string; end: string },
+): Promise<EodExtras["promises"]> {
+  const rows = await db.execute<{ customer_name: string; promised_date: string }>(sql`
+    select c.name as customer_name, a.promised_date
+    from follow_up_attempts a
+    join customers c on c.id = a.customer_id
+    where a.user_id = ${userId}
+      and a.promised_date is not null
+      and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz
+    order by a.attempted_at desc
+    limit 10
+  `);
+  return rows.map((r) => ({ customerName: r.customer_name, date: r.promised_date as BusinessDate }));
+}
+
+/**
+ * The full report for one telecaller: every `EodInput` field plus the two
+ * list-shaped extras (no-order reasons, promises) — per-telecaller detail a
+ * team roll-up has no room for, so they are fetched only here.
+ */
 export async function eodFor(userId: string, day: BusinessDate) {
-  const [user] = await db.select().from(users).where(eq(users.id, userId));
-  const metrics = await eodMetricsFor(userId, day);
-  return aggregateEod({ userName: user?.name ?? "Unknown", date: day, ...metrics });
+  const w = await windowFor({ from: day, to: day });
+  const [user, metrics, noOrderReasons, promises] = await Promise.all([
+    db.select().from(users).where(eq(users.id, userId)).then((r) => r[0]),
+    eodMetricsFor(userId, day),
+    noOrderReasonsFor(userId, w),
+    promisesFor(userId, w),
+  ]);
+  const extras: EodExtras = { noOrderReasons, promises };
+  return aggregateEod({ userName: user?.name ?? "Unknown", date: day, ...metrics }, extras);
 }
 
 /** The reminders that block finalisation. */
