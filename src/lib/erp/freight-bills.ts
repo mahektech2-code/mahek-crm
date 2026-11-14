@@ -163,14 +163,24 @@ export type VehicleTrip = {
   otherLines: number;
   /** Paid-freight lines not yet on a bill. */
   unbilledLines: number;
+  /** Their litres, and how many customers they belong to. */
+  unbilledLitres: number;
+  unbilledCustomers: number;
 };
+
+/**
+ * How far back a vehicle trip is offered: the add-bill picker, the trips
+ * Pending expense lists as waiting for a bill, and the dashboard's count of
+ * them. One number, so the list never names a trip the picker cannot offer.
+ */
+export const FREIGHT_TRIP_DAYS = 45;
 
 /**
  * Every vehicle that left in the last `days`, with its Paid-freight litres —
  * the vehicle picker on the add-bill form, newest first, and the "no bill yet"
  * figure on the tab.
  */
-export async function recentVehicles(days = 45): Promise<VehicleTrip[]> {
+export async function recentVehicles(days = FREIGHT_TRIP_DAYS): Promise<VehicleTrip[]> {
   const since = addDays(today(), -days);
   const rows = (await db.execute(sql`
     with l as (
@@ -191,7 +201,9 @@ export async function recentVehicles(days = 45): Promise<VehicleTrip[]> {
            count(*)::int as lines, count(distinct cid)::int as customers,
            coalesce(sum(litres) filter (where paid), 0)::float8 as "paidLitres",
            count(*) filter (where not paid)::int as "otherLines",
-           count(*) filter (where paid and not billed)::int as "unbilledLines"
+           count(*) filter (where paid and not billed)::int as "unbilledLines",
+           coalesce(sum(litres) filter (where paid and not billed), 0)::float8 as "unbilledLitres",
+           count(distinct cid) filter (where paid and not billed)::int as "unbilledCustomers"
       from l group by vkey, dispatch_date
      order by dispatch_date desc, min(vehicle_no)
   `)) as unknown as Row[];
@@ -204,6 +216,8 @@ export async function recentVehicles(days = 45): Promise<VehicleTrip[]> {
     paidLitres: Math.round(Number(r.paidLitres) * 1000) / 1000,
     otherLines: Number(r.otherLines),
     unbilledLines: Number(r.unbilledLines),
+    unbilledLitres: Math.round(Number(r.unbilledLitres) * 1000) / 1000,
+    unbilledCustomers: Number(r.unbilledCustomers),
   }));
 }
 
@@ -341,7 +355,7 @@ export async function freightBills(opts: { status: "pending" | "paid"; from?: st
 }
 
 /** How many Paid-freight order lines left on a vehicle in the last `days` with no bill yet. */
-export async function unbilledPaidLines(days = 30): Promise<number> {
+export async function unbilledPaidLines(days = FREIGHT_TRIP_DAYS): Promise<number> {
   const v = await recentVehicles(days);
   return v.reduce((a, x) => a + x.unbilledLines, 0);
 }
