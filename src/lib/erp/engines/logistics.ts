@@ -105,6 +105,34 @@ export function isMahekVehicle(transporter: string | null | undefined): boolean 
 }
 
 /**
+ * WHO CARRIES A DIRECT BILL, as a screen names it: "Mahek Vehicle" for ours,
+ * and the transporter's own name for a tempo marked to deliver direct — with
+ * the quotes the list was typed with taken off. Drawing "Mahek Vehicle" on a
+ * hired tempo would tell the desk the goods are in our lorry when they are not.
+ */
+export function directWho(transporter: string | null | undefined): string {
+  if (isMahekVehicle(transporter)) return MAHEK_VEHICLE;
+  const name = (transporter ?? "").replace(/["“”]/g, "").trim();
+  return name || MAHEK_VEHICLE;
+}
+
+/**
+ * GOES STRAIGHT TO THE SHOP, with no LR: Mahek Vehicle, or a transporter
+ * marked "delivers without an LR" (`erp_transporters.delivers_direct`) — a
+ * hired tempo, which the floor records as `"Name - Tempo"` with its plate.
+ * Such a bill skips the transporter's godown and the LR wait, and a
+ * customer-signed copy is its proof, exactly as for our own vehicle.
+ *
+ * Only the WAY IT TRAVELS is shared. Mahek Vehicle keeps everything that is
+ * about its identity — its fixed name, never merged, never switched off, and
+ * the words "Mahek Vehicle" on a screen — through `isMahekVehicle`.
+ * `direct` is the set of lower-cased names marked so.
+ */
+export function deliversDirect(transporter: string | null | undefined, direct: ReadonlySet<string> = new Set()): boolean {
+  return isMahekVehicle(transporter) || direct.has((transporter ?? "").trim().toLowerCase());
+}
+
+/**
  * A VEHICLE REGISTRATION written where a transporter's name belongs. Bills
  * from before the transporter list was enforced carry "MH04NB7322",
  * "MH-04 NB-7322 Sunil" or "MH20GZ7144 PORTAL" in the transporter column —
@@ -138,11 +166,11 @@ export function stageStep(stage: string | null | undefined): number {
  * Transit" on the old screen without an LR is still waiting for its LR — the
  * customer cannot be told anything about a lorry nobody can name.
  */
-export function phaseOf(t: { lrNo: string | null; materialStage: string; transporter?: string | null }): Phase {
+export function phaseOf(t: { lrNo: string | null; materialStage: string; transporter?: string | null; direct?: boolean }): Phase {
   if (t.materialStage === CLOSED) return "delivered";
   if (t.lrNo && t.lrNo.trim()) return "onRoad";
-  /* Our own vehicle goes from the gate to the party: no transporter's godown, no LR to wait for. */
-  if (isMahekVehicle(t.transporter)) return "onRoad";
+  /* Our own vehicle — or a tempo marked to deliver direct — goes from the gate to the party: no transporter's godown, no LR to wait for. */
+  if (isMahekVehicle(t.transporter) || t.direct) return "onRoad";
   return stageStep(t.materialStage) >= 1 ? "lrPending" : "toTransport";
 }
 
@@ -203,7 +231,7 @@ export const AT_TRANSPORT_STUCK_DAYS = 2;
  *  - atTransport: at the transporter `AT_TRANSPORT_STUCK_DAYS` or more with no LR, not yet that old;
  *  - signedCopy:  a Mahek Vehicle bill out longer than `stuckLrDays` with no signed copy.
  */
-export type PendingKind = "noLr" | "atTransport" | "signedCopy";
+export type PendingKind = "noLr" | "atTransport" | "awaitingLr" | "signedCopy";
 export type PendingFacts = {
   ownVehicle: boolean;
   lrId: string | null;
@@ -218,6 +246,13 @@ export type PendingFacts = {
  * reason: the "LR missing" alert wins over "at the transporter", because it
  * names the same missing paper with more days on it. A bill already delivered
  * is never pending, whatever paper it lacks.
+ *
+ * EVERY BILL WAITING FOR ITS LR IS PENDING, from the day it is dispatched.
+ * The tab used to list only the late ones, so a day's dispatch was on no list
+ * until Monday and the desk read "nothing pending" with eight bills at the
+ * transporter. The fresh ones are `awaitingLr`, counted in days since the
+ * bill, and drawn quietly below the late ones — the two late kinds are still
+ * the ones in red and amber, and still the only ones the alert raises.
  */
 export function pendingOf(c: PendingFacts, today: string, stuckLrDays: number): { kind: PendingKind; days: number } | null {
   if (c.phase === "delivered") return null;
@@ -229,6 +264,7 @@ export function pendingOf(c: PendingFacts, today: string, stuckLrDays: number): 
     const at = daysBetween(c.atTransportAt.slice(0, 10), today);
     if (at >= AT_TRANSPORT_STUCK_DAYS) return { kind: "atTransport", days: at };
   }
+  if (c.phase === "lrPending" || c.phase === "toTransport") return { kind: "awaitingLr", days: Math.max(0, out ?? 0) };
   return null;
 }
 

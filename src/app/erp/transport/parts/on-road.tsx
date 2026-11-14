@@ -11,7 +11,7 @@ import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsDeliveredBy, erpLogisticsIssue, erpLogisticsUpdate, erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
 import { Icon } from "../../_ui/icons";
 import { shrinkImage } from "@/lib/shrink-image";
-import { addDays, callDue, daysBetween, ISSUES, MAHEK_VEHICLE, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
+import { addDays, callDue, daysBetween, directWho, isMahekVehicle, ISSUES, MAHEK_VEHICLE, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
 import { delayReasonForIssue, reasonsFor } from "@/lib/erp/engines/order-tracking";
 import type { Consignment, RouteSuggestions, UploadedLr } from "@/lib/erp/logistics";
 import { EditLrDialog } from "./edit-lr";
@@ -109,7 +109,7 @@ export function OnRoad({
                 c.signedCopyFileId ? (
                   <LrThumb fileId={c.signedCopyFileId} size={60} />
                 ) : (
-                  <span className="flex h-[60px] w-[60px] flex-none items-center justify-center rounded-control bg-warn-soft text-warn-ink" title="Mahek Vehicle">
+                  <span className="flex h-[60px] w-[60px] flex-none items-center justify-center rounded-control bg-warn-soft text-warn-ink" title={directWho(c.transporter)}>
                     <Icon n="truck" s={26} />
                   </span>
                 )
@@ -121,7 +121,7 @@ export function OnRoad({
                   {c.ownVehicle ? (
                     <>
                       <SubTitle className="mb-0 font-mono">{c.vehicleNo ?? "Vehicle not recorded"}</SubTitle>
-                      <Badge label="Mahek Vehicle" tone="warn" />
+                      <Badge label={directWho(c.transporter)} tone="warn" />
                     </>
                   ) : (
                     <>
@@ -229,7 +229,8 @@ export function OnRoad({
         <UpdateLrDialog key={`u${dialog.group[0].id}`} group={dialog.group} today={today} callEveryDays={callEveryDays} notifyOn={notifyOn} suggestions={suggestions ?? null} onClose={() => setDialog(null)} />
       ) : dialog?.kind === "deliveredBy" ? (
         <DeliveredByDialog key={`by${dialog.group[0].id}`} group={dialog.group} transporters={transporters} onClose={() => setDialog(null)} />
-      ) : dialog?.kind === "delivered" && dialog.group[0].ownVehicle ? (
+      ) : /* The signed copy is demanded of our own vehicle only: a tempo marked to deliver direct closes as any bill does, as it always has. */
+        dialog?.kind === "delivered" && isMahekVehicle(dialog.group[0].transporter) ? (
         <SignedDeliveredDialog key={`sd${dialog.group[0].id}`} group={dialog.group} today={today} notifyOn={notifyOn} waiting={signedWaiting} onClose={() => setDialog(null)} />
       ) : dialog ? (
         <ActionDialog key={`${dialog.kind}${dialog.group[0].id}`} dialog={{ kind: dialog.kind, group: dialog.group }} today={today} notifyOn={notifyOn} onClose={() => setDialog(null)} />
@@ -253,7 +254,7 @@ function ActionDialog({ dialog, today, notifyOn, onClose }: { dialog: { kind: "i
   const [proof, setProof] = useState("");
   const [notify, setNotify] = useState(true);
 
-  const what = c.ownVehicle ? (c.vehicleNo ?? MAHEK_VEHICLE) : lrLabel(c.lrNo);
+  const what = c.ownVehicle ? (c.vehicleNo ?? directWho(c.transporter)) : lrLabel(c.lrNo);
   const title = dialog.kind === "issue" ? `A problem with ${what}` : `${what} delivered`;
   const save = () => {
     const done = (r: { ok: boolean }) => r.ok && onClose();
@@ -429,7 +430,7 @@ function SignedDeliveredDialog({ group, today, notifyOn, waiting, onClose }: { g
       </DialogHeader>
       <DialogBody className="gap-3">
         <div className="flex items-center gap-2 text-meta text-body">
-          <Badge label={MAHEK_VEHICLE} tone="warn" />
+          <Badge label={directWho(c.transporter)} tone="warn" />
           {c.vehicleNo ?? ""} · {plural(group.length, "bill")}
         </div>
         <Field label="Customer-signed copy">
