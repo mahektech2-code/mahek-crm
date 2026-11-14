@@ -48,6 +48,11 @@ type Bill = { key: string; c: Consignment; rows: Consignment[]; packages: number
 
 /** One bill raised on several orders is several transport records and still one bill to attach. */
 /* Who is billed, and the shop it goes to where that is somebody else — two parts of one bill read apart. */
+/* The shop the goods go to — the delivery party where it is somebody other than who is billed. */
+function shopOf(c: Consignment): string {
+  return c.deliveryPartyId !== c.partyId && c.deliveryParty ? c.deliveryParty : c.party;
+}
+
 function partyLine(c: Consignment): string {
   return c.deliveryPartyId !== c.partyId && c.deliveryParty ? `${c.party} → ${c.deliveryParty}` : c.party;
 }
@@ -457,9 +462,10 @@ function PendingDesk({
                 className={cx("flex w-full cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-left last:border-0", sel?.b.key === p.b.key ? "bg-brand-soft" : "hover:bg-canvas")}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-ink">{p.b.c.party}</span>
+                  {/* One bill to a distributor is a row per shop it goes to, so the shop is what tells the rows apart: it leads, and who is billed sits beneath. */}
+                  <span className="block truncate text-sm font-semibold text-ink">{shopOf(p.b.c)}</span>
                   <span className="block truncate text-meta text-muted">
-                    {[p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? directWho(p.b.c.transporter)) : p.b.c.transporter].filter(Boolean).join(" · ")}
+                    {[shopOf(p.b.c) !== p.b.c.party ? `Billed to ${p.b.c.party}` : null, p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? directWho(p.b.c.transporter)) : p.b.c.transporter].filter(Boolean).join(" · ")}
                   </span>
                 </span>
                 <span className={cx("shrink-0 text-meta font-semibold tabular-nums", p.kind === "noLr" ? "text-danger" : p.kind === "awaitingLr" ? "text-muted" : "text-warn-ink")}>{plural(p.days, "day")}</span>
@@ -977,10 +983,10 @@ function Detail({
                       className={checkboxClass}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-ink">{partyLine(b.c)}</span>
+                      <span className="block truncate font-medium text-ink">{shopOf(b.c)}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
-                        {[b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? directWho(b.c.transporter))].filter(Boolean).join(" · ")}
+                        {[shopOf(b.c) !== b.c.party ? `Billed to ${b.c.party}` : null, b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? directWho(b.c.transporter))].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {reasons.slice(0, 2).map((r) => (
