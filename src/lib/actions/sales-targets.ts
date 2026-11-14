@@ -7,6 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
+  productFormulations,
   salesTargetCategories,
   salesTargetRevisions,
   salesTargets,
@@ -84,7 +85,10 @@ const saveSchema = z.object({
   volumeTargetMl: figure,
   newCustomerTarget: figure,
   collectionTargetBp: percent,
-  activityTarget: figure,
+  /* A SHARE of the tasks asked of them, like `collectionTargetBp` above and
+     for the same reason — see the column's own note. `percent` rather than
+     `figure`, so 0-100 is the whole of what this field can express. */
+  activityTargetBp: percent,
   notes: z.string().max(2000).nullable().optional(),
   bands: z.array(bandSchema).max(20),
   /** Required once the target is published. Ignored on a draft. */
@@ -170,7 +174,7 @@ export async function saveSalesTarget(
             volumeTargetMl: data.volumeTargetMl,
             newCustomerTarget: data.newCustomerTarget,
             collectionTargetBp: data.collectionTargetBp,
-            activityTarget: data.activityTarget,
+            activityTargetBp: data.activityTargetBp,
             notes: data.notes ?? null,
             // A real save is a decision, even one that reproduces last
             // month's figures verbatim — so a target carried forward stops
@@ -189,7 +193,7 @@ export async function saveSalesTarget(
           volumeTargetMl: data.volumeTargetMl,
           newCustomerTarget: data.newCustomerTarget,
           collectionTargetBp: data.collectionTargetBp,
-          activityTarget: data.activityTarget,
+          activityTargetBp: data.activityTargetBp,
           notes: data.notes ?? null,
           createdById: ctx.user.id,
           updatedById: ctx.user.id,
@@ -202,11 +206,31 @@ export async function saveSalesTarget(
       await tx
         .delete(salesTargetCategories)
         .where(eq(salesTargetCategories.targetId, targetId));
+      /*
+       * WHICH COLUMN IT LANDS IN IS DECIDED BY WHAT THE ID IS, not by a second
+       * field on the form.
+       *
+       * The picker offers formulations now, so every band written from here is
+       * a formulation. A category id can still arrive — from a target saved
+       * before the change and re-submitted unaltered — and it has to go back
+       * where it came from rather than become a formulation that does not
+       * exist. The check constraint refuses a row that is neither, which is
+       * what stops a stale id being written as both or as nothing.
+       */
+      const formulationIds = new Set(
+        (
+          await tx
+            .select({ id: productFormulations.id })
+            .from(productFormulations)
+        ).map((r) => r.id),
+      );
       for (const band of data.bands) {
+        const isFormulation = formulationIds.has(band.categoryId);
         await tx.insert(salesTargetCategories).values({
           id: id("stc"),
           targetId,
-          categoryId: band.categoryId,
+          categoryId: isFormulation ? null : band.categoryId,
+          formulationId: isFormulation ? band.categoryId : null,
           minimumBp: band.minimumBp,
           targetBp: band.targetBp,
           stretchBp: band.stretchBp,
@@ -301,7 +325,12 @@ function diffOf(existing: Existing, next: SaveTargetInput): Change[] {
       percentOf(existing.collectionTargetBp),
       percentOf(next.collectionTargetBp),
     ],
-    ["activity", "Activity", count(existing.activityTarget), count(next.activityTarget)],
+    [
+      "activity",
+      "Activity",
+      percentOf(existing.activityTargetBp),
+      percentOf(next.activityTargetBp),
+    ],
   ];
 
   return fields
@@ -354,7 +383,7 @@ export async function publishSalesTarget(
       target.volumeTargetMl,
       target.newCustomerTarget,
       target.collectionTargetBp,
-      target.activityTarget,
+      target.activityTargetBp,
     ].filter((v) => v !== null);
     if (!asked.length) {
       return err(

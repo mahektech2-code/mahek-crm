@@ -1,0 +1,14 @@
+-- A TASKS TARGET IS A SHARE, NEVER A COUNT.
+--
+-- "Ten tasks marked done" means nothing without knowing how many were asked
+-- for. A salesman given twelve tasks and one given a hundred were held to the
+-- same ten: the first can barely fail it, the second cannot pass it, and
+-- neither number says anything about whether the person did what was asked. A
+-- target somebody can meet by being given fewer tasks is not a target.
+--
+-- The same move `collection_target_paise` -> `collection_target_bp` already
+-- made, for the same reason, and handled the same way: the old column is LEFT
+-- IN PLACE and simply stops scoring. A target set before this shipped is not
+-- reinterpreted as a percentage — 10 was never a percentage, and reading it as
+-- one would mark somebody at 10% of their tasks and call it their score.
+ALTER TABLE "sales_targets" ADD COLUMN "activity_target_bp" integer;

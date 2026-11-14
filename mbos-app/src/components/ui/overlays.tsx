@@ -18,31 +18,80 @@ import { useReduceMotion } from './motion';
 
 /* ------------------------------------------------------------------ scrim */
 
-function Scrim({
-  onPress,
+/**
+ * The modal every sheet floats in: the screen stays where it is and DIMS, and
+ * only the sheet rises.
+ *
+ * It used to be `animationType="slide"` on the `Modal` itself, which slides the
+ * modal's whole window — the dim layer included. So pressing `+` dropped a dark
+ * pane over the screen from below, and on edge-to-edge Android the window
+ * behind it was drawn black for a frame before the scrim arrived: the page
+ * flickered and the sheet appeared to open on black rather than on the screen
+ * somebody was looking at. The `Modal` now does no animation at all; the scrim
+ * fades and the sheet translates, each on its own value.
+ *
+ * Closing plays the same motion backwards before the `Modal` goes, which is why
+ * `shown` lags `open` on the way out — a sheet that blinks off reads as the app
+ * dropping a frame.
+ */
+function SheetModal({
+  open,
+  onClose,
   children,
-  align = 'flex-end',
-  tone = 'dark',
 }: {
-  onPress: () => void;
+  open: boolean;
+  onClose: () => void;
   children: React.ReactNode;
-  align?: 'flex-end' | 'center';
-  tone?: 'dark' | 'light';
 }) {
+  const reduce = useReduceMotion();
+  const progress = React.useRef(new Animated.Value(0)).current;
+  const [shown, setShown] = React.useState(open);
+  const [sheetHeight, setSheetHeight] = React.useState(480);
+
+  /* Adjusted during render rather than in an effect, so the Modal is mounted on
+     the same pass `open` turns true. */
+  if (open && !shown) setShown(true);
+
+  React.useEffect(() => {
+    if (!shown) return;
+    if (reduce) {
+      progress.setValue(open ? 1 : 0);
+      if (!open) setShown(false);
+      return;
+    }
+    const anim = Animated.timing(progress, {
+      toValue: open ? 1 : 0,
+      duration: open ? 240 : 180,
+      easing: open ? Easing.bezier(0.2, 0, 0, 1) : Easing.bezier(0.4, 0, 1, 1),
+      useNativeDriver: true,
+    });
+    anim.start(({ finished }) => {
+      if (finished && !open) setShown(false);
+    });
+    return () => anim.stop();
+  }, [open, shown, reduce, progress]);
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        flex: 1,
-        backgroundColor: tone === 'dark' ? C.scrim : C.scrimLight,
-        justifyContent: align,
-        paddingHorizontal: align === 'center' ? 20 : 0,
-      }}>
-      {/* Swallowing the press is what keeps a tap inside the sheet from closing it. */}
-      <Pressable onPress={(e) => e.stopPropagation()} style={align === 'center' ? { width: '100%', maxWidth: 320, alignSelf: 'center' } : undefined}>
-        {children}
-      </Pressable>
-    </Pressable>
+    <Modal
+      visible={shown}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      navigationBarTranslucent>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: C.scrim, opacity: progress }]}>
+          <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" />
+        </Animated.View>
+        <Animated.View
+          onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
+          style={{
+            transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [sheetHeight, 0] }) }],
+          }}>
+          {children}
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
@@ -229,28 +278,26 @@ export function BottomSheet({
   const pad = { padding: 20, paddingBottom: 24 };
 
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Scrim onPress={onClose}>
-        <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }]}>
-          {scroll ? (
-            <ScrollView
-              style={{ maxHeight: available }}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-              showsVerticalScrollIndicator={false}>
-              <View style={pad}>{children}</View>
-            </ScrollView>
-          ) : (
-            <ScrollView
-              style={{ maxHeight: available }}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}>
-              <View style={pad}>{children}</View>
-            </ScrollView>
-          )}
-        </View>
-      </Scrim>
-    </Modal>
+    <SheetModal open={open} onClose={onClose}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }]}>
+        {scroll ? (
+          <ScrollView
+            style={{ maxHeight: available }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            <View style={pad}>{children}</View>
+          </ScrollView>
+        ) : (
+          <ScrollView
+            style={{ maxHeight: available }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}>
+            <View style={pad}>{children}</View>
+          </ScrollView>
+        )}
+      </View>
+    </SheetModal>
   );
 }
 
@@ -276,33 +323,31 @@ export function ActionSheet({
 }) {
   const keyboardHeight = useKeyboardHeight();
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Scrim onPress={onClose}>
-        <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24, boxShadow: shadow.sheet }]}>
-          <View style={st.grabber} />
-          <Text style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
-            {title}
-          </Text>
-          {items.map((i) => (
-            <Pressable
-              key={i.label}
-              onPress={() => {
-                onClose();
-                i.run();
-              }}
-              style={({ pressed }) => [st.sheetRow, pressed && { backgroundColor: C.wash }]}>
-              <View style={st.sheetGlyph}>
-                <Icon name={i.glyph} size={18} color={C.body} />
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{i.label}</Text>
-                <Text style={type.caption}>{i.sub}</Text>
-              </View>
-            </Pressable>
-          ))}
-        </View>
-      </Scrim>
-    </Modal>
+    <SheetModal open={open} onClose={onClose}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24, boxShadow: shadow.sheet }]}>
+        <View style={st.grabber} />
+        <Text style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
+          {title}
+        </Text>
+        {items.map((i) => (
+          <Pressable
+            key={i.label}
+            onPress={() => {
+              onClose();
+              i.run();
+            }}
+            style={({ pressed }) => [st.sheetRow, pressed && { backgroundColor: C.wash }]}>
+            <View style={st.sheetGlyph}>
+              <Icon name={i.glyph} size={18} color={C.body} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{i.label}</Text>
+              <Text style={type.caption}>{i.sub}</Text>
+            </View>
+          </Pressable>
+        ))}
+      </View>
+    </SheetModal>
   );
 }
 

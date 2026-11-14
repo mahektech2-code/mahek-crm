@@ -2,13 +2,16 @@ import Link from "next/link";
 import { APP_TIMEZONE, addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { attendanceForDay } from "@/lib/services/sales-service";
+import { unreviewedCounts } from "@/lib/services/day-evidence-service";
 import { getSetting } from "@/lib/config/store";
 import {
   Banner,
   Cell,
+  EntityLink,
   Empty,
   HeadCell,
   MetricRow,
+  SortHead,
   Pill,
   Row,
   ScreenHeader,
@@ -17,7 +20,9 @@ import {
 import {
   plural,
 } from "../words";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 import { Selfies } from "./selfies";
+import { DayCheckDialog } from "./day-check";
 
 export const metadata = { title: "Attendance — Sales Dashboard — MahekOne" };
 
@@ -40,20 +45,45 @@ export const metadata = { title: "Attendance — Sales Dashboard — MahekOne" }
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ day?: string }>;
+  searchParams: Promise<{ day?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
 
-  const rows = await attendanceForDay(day);
-  const retentionHours = await getSetting("mbos.attendance.selfieRetentionHours");
+  const [rows, outstanding, retentionHours] = await Promise.all([
+    attendanceForDay(day),
+    /* What each person's day still has unanswered, so the roll-call can carry
+       the work rather than making somebody open eleven people to find the two
+       who need him. */
+    unreviewedCounts(day),
+    getSetting("mbos.attendance.selfieRetentionHours"),
+  ]);
+
+  /* The figures below are counted over the WHOLE roll-call and never over the
+     sorted copy — sorting changes the order of a list, not what is in it, and
+     a metric that moved when somebody clicked a column would be the screen
+     disagreeing with itself. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/attendance", sort, key, `day=${day}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   const inToday = rows.filter((r) => r.checkInAt);
   const missing = rows.filter((r) => !r.checkInAt);
   const offSite = rows.filter((r) => r.withinGeofence === false);
   const corrections = rows.filter((r) => r.regularisationRequested);
   const openDays = rows.filter((r) => r.checkInAt && !r.checkOutAt);
+  const toCheck = rows.filter((r) => (outstanding.get(r.salesmanId) ?? 0) > 0);
 
   return (
     <div className="p-6">
@@ -110,6 +140,14 @@ export default async function Page({
             value: String(corrections.length),
             tone: corrections.length ? "warn" : undefined,
           },
+          {
+            label: "Photographs to check",
+            value: String([...outstanding.values()].reduce((n, v) => n + v, 0)),
+            tone: toCheck.length ? "warn" : undefined,
+            sub: toCheck.length
+              ? `across ${toCheck.length === 1 ? "one day" : `${toCheck.length} days`}`
+              : "every one is answered",
+          },
         ]}
       />
 
@@ -120,33 +158,38 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1390}
+          minWidth={1530}
           head={
             <>
-              <HeadCell width={200}>Salesman</HeadCell>
-              <HeadCell width={130}>In</HeadCell>
-              <HeadCell width={130}>Out</HeadCell>
-              <HeadCell width={130}>Worked</HeadCell>
-              <HeadCell align="right" width={100}>Visits</HeadCell>
-              <HeadCell width={150}>Verdict</HeadCell>
+              {head("name", "Salesman", 200)}
+              {head("in", "In", 130)}
+              {head("out", "Out", 130)}
+              {head("worked", "Worked", 130)}
+              {head("visits", "Visits", 100, "right")}
+              {head("verdict", "Verdict", 150)}
               {/* Deliberately beside the times rather than at the end: the
                   photograph is what the two times either side of it are worth,
                   and a column somebody has to scroll to is one they stop
                   checking by the second week. */}
               <HeadCell width={230}>Photographs</HeadCell>
+              {/* THE VERIFICATION ITSELF, over the list it was asked from.
+                  It used to be a link to the person's record, opened on one of
+                  its nine tabs — so checking three people's photographs was
+                  three navigations away from the roll-call and three back, and
+                  the date somebody had stepped to was in a URL rather than on
+                  the screen they landed on. It is the SAME component the
+                  record draws, not a second copy of it. */}
+              <HeadCell width={140}>Day check</HeadCell>
               <HeadCell>Notes</HeadCell>
             </>
           }
         >
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <Row key={r.id} striped={i % 2 === 1}>
               <Cell truncate={200}>
-                <Link
-                  href={`/sales/people/${r.salesmanId}`}
-                  className="font-medium text-ink no-underline"
-                >
+                <EntityLink href={`/sales/people/${r.salesmanId}`}>
                   {r.salesmanName}
-                </Link>
+                </EntityLink>
               </Cell>
               <Cell>
                 {r.checkInAt ? (
@@ -201,6 +244,21 @@ export default async function Page({
               </Cell>
               <Cell>
                 <Selfies row={r} />
+              </Cell>
+              {/* The day is CHECKED HERE, over the list it was asked from.
+                  It used to be a link into a nine-tab record of a month, to
+                  answer a question about one person on one day — and the way
+                  back to the row you were on was the browser's own. */}
+              <Cell>
+                <DayCheckDialog
+                  salesmanId={r.salesmanId}
+                  salesmanName={r.salesmanName}
+                  day={day}
+                  longDay={longDay(day)}
+                  today={now}
+                  retentionHours={retentionHours}
+                  outstanding={outstanding.get(r.salesmanId) ?? 0}
+                />
               </Cell>
               <Cell truncate={340} title={r.regularisationReason ?? undefined}>
                 {r.withinGeofence === false ? (
@@ -277,3 +335,27 @@ function clock(at: Date | string): string {
     hour12: false,
   }).format(new Date(at));
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * `null` sorts last in both directions, which is the point on this screen: a
+ * salesman who never started has no check-in time, and floating him to the top
+ * of "latest in" would put the row that answers the question least where the
+ * eye goes first. The banner above the table is where his absence is said.
+ */
+const COLUMNS: SortColumns<{
+  salesmanName: string;
+  checkInAt: Date | string | null;
+  checkOutAt: Date | string | null;
+  workedSeconds: number | null;
+  visits: number;
+  status: string;
+}> = {
+  name: (r) => r.salesmanName,
+  in: (r) => (r.checkInAt ? new Date(r.checkInAt).getTime() : null),
+  out: (r) => (r.checkOutAt ? new Date(r.checkOutAt).getTime() : null),
+  worked: (r) => r.workedSeconds,
+  visits: (r) => r.visits,
+  verdict: (r) => r.status,
+};

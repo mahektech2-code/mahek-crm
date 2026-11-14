@@ -42,6 +42,7 @@ import {
   leadRow,
   type LeadRow,
 } from "@/lib/services/lead-service";
+import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
 
 /* ---------------------------------------------------------------------------
  * Every write the lead funnel makes from a browser.
@@ -243,6 +244,94 @@ export async function advanceLeadStage(input: {
       result.promoted
         ? `${lead.name} is on the book — they are a customer from today.`
         : `Moved to ${stageLabel(to)}.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * MOVING A SELECTION OF LEADS TO ONE RUNG, THROUGH THE GATE EACH TIME.
+ *
+ * §28's whole point is that no lead moves forward because somebody pressed a
+ * button, and a bulk control is the most tempting place in the product to
+ * quietly make an exception — twenty leads, one button, one write, and the
+ * checklist skipped on every one of them. So there is no second path here:
+ * each lead goes through {@link advanceLeadStage}, which asks the gate, refuses
+ * where conditions are missing, writes the transition and the timeline row, and
+ * demands a manager plus a reason for an override exactly as it does on a
+ * record screen.
+ *
+ * What the batch adds is the ANSWER. A refusal that only says "12 of 20" is a
+ * result nobody can act on, so the ones that did not move come back named with
+ * the sentence the gate gave — which is the same sentence the record page would
+ * have printed, so a manager reading it knows where to go next.
+ *
+ * It is sequential rather than parallel deliberately. Each move writes a
+ * transition, a timeline row and possibly a promotion to customer, and twenty
+ * of those racing through one pool is how a connection limit becomes a partial
+ * batch nobody can reconstruct.
+ */
+export async function bulkAdvanceLeadStage(input: {
+  customerIds: string[];
+  to: LeadStage;
+  reasonCode?: string;
+  note?: string;
+}): Promise<Result<{ done: number; failed: Array<{ id: string; name: string; why: string }> }>> {
+  try {
+    /* THE CAP IS THE SELECTION'S OWN.
+       It was 100 here while `leadIdsForSelection` handed out 200, so
+       "Select all 200 this filter reaches" was followed by a button reading
+       "Apply to 200" and a server that moved a hundred — the other hundred
+       neither moved nor refused, because a lead nobody attempted is not a
+       refusal, and the answer came back as a clean success. */
+    const ids = Array.from(new Set(input.customerIds.filter(Boolean))).slice(0, LEAD_BULK_CAP);
+    if (!ids.length) return err("Nothing selected.", "validation");
+
+    /* ASKED BEFORE ANYTHING IS READ.
+       The name lookup used to be the first statement in this function, over a
+       bare `in (ids)` with no capability check in front of it and no scope on
+       it — so a refused batch still answered with the real shop and company
+       name of every id somebody cared to guess. It is a refusal that looks
+       like it is working and an enumeration endpoint underneath. */
+    await requireCapability("lead.work");
+
+    let done = 0;
+    const failed: Array<{ id: string; name: string; why: string }> = [];
+    for (const id of ids) {
+      const result = await advanceLeadStage({
+        customerId: id,
+        to: input.to,
+        reasonCode: input.reasonCode,
+        note: input.note,
+      });
+      if (result.ok) {
+        done += 1;
+        continue;
+      }
+      /* A lead this person cannot reach is never NAMED. `reachableLead` throws
+         on a scope failure, which is the answer: the refusal still comes back,
+         carrying nothing about a record they were not allowed to look at. */
+      let name = "A lead";
+      try {
+        const reach = await reachableLead(id);
+        if (reach.ok) name = reach.lead.name;
+      } catch {
+        /* out of scope — leave it unnamed */
+      }
+      failed.push({ id, name, why: result.error });
+    }
+
+    const head = `${done} ${done === 1 ? "lead" : "leads"} moved to ${stageLabel(input.to)}.`;
+    if (!failed.length) return ok({ done, failed }, head);
+    const shown = failed
+      .slice(0, 3)
+      .map((f) => `${f.name} — ${f.why}`)
+      .join("; ");
+    const more = failed.length > 3 ? ` and ${failed.length - 3} more` : "";
+    return ok(
+      { done, failed },
+      `${head} ${failed.length} did not move: ${shown}${more}`,
     );
   } catch (e) {
     return fromThrown(e);

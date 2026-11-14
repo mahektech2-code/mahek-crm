@@ -2,13 +2,17 @@ import "server-only";
 import { bandFor, type HealthBand } from "../engines/inactivity";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { mbosLeadStageEnum } from "@/db/schema";
+import { bandOf } from "../engines/lead-ladder";
+import type { LeadStage } from "../lead-labels";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
 import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
 import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import { metresBetween } from "@/lib/geo";
 import {
   leaveBalances as leaveBalancesFor,
   leaveDebitDays,
@@ -39,6 +43,29 @@ import {
 
 /** A day boundary in the business zone, for use inside a raw query. */
 const IST_DAY = sql.raw(`at time zone '${APP_TIMEZONE}'`);
+
+/**
+ * HOW LONG A LEAD HAS BEEN QUIET, AND A LEAD NOBODY HAS EVER TOUCHED IS THE
+ * QUIETEST THERE IS.
+ *
+ * `lead_last_activity_date` is nullable, and this read `coalesce(day - it, 0)`
+ * — so a lead raised four months ago that nobody has ever logged anything
+ * against came back as nought days quiet. Nought is never at or past
+ * `staleDays`, so the row printed "Quiet 0 days", the stale banner did not
+ * count it, and "Stale only" did not return it: the one list somebody opens to
+ * find abandoned leads was the list that hid the most abandoned ones.
+ *
+ * The honest fallback is the lead's own AGE. Nothing has happened since it was
+ * raised, so that is exactly how long it has been quiet — and the day boundary
+ * is named on the way, because `created_at` is a timestamp and a bare cast
+ * would date a 1am lead to the day before.
+ */
+const QUIET_DAYS_SQL = (day: string) => sql`
+  coalesce(
+    ${day}::date - c.lead_last_activity_date,
+    ${day}::date - (c.created_at ${IST_DAY})::date,
+    0
+  )`;
 
 /* ═══════════════════════════════════════════════════════════════════ scope */
 
@@ -697,6 +724,8 @@ export type TaskRow = {
   salesmanId: string;
   salesmanName: string;
   initials: string;
+  /** Null where the task names no shop — several kinds legitimately do not. */
+  customerId: string | null;
   customerName: string | null;
   dueDate: string | null;
   priority: string;
@@ -721,7 +750,7 @@ export async function tasksList(day: string): Promise<TaskRow[]> {
     select t.id, t.title, t.description,
            t.assigned_to_user_id as "salesmanId",
            u.name as "salesmanName", u.initials,
-           c.name as "customerName",
+           c.id as "customerId", c.name as "customerName",
            t.due_date::text as "dueDate",
            t.priority::text as priority,
            t.status::text as status,
@@ -747,6 +776,15 @@ export type VisitRow = {
   salesmanId: string;
   salesmanName: string;
   initials: string;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   checkInAt: Date | null;
   durationSeconds: number | null;
@@ -798,7 +836,7 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
   const scope = await managerScope();
   return db.execute<VisitRow>(sql`
     select v.id, v.salesman_id as "salesmanId", u.name as "salesmanName", u.initials,
-           c.name as "customerName",
+           c.id as "customerId", c.name as "customerName",
            v.check_in_at as "checkInAt", v.duration_seconds as "durationSeconds",
            v.outcome::text as outcome, v.verified,
            v.location_mismatch as "locationMismatch",
@@ -1091,7 +1129,7 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return withHealthBand(day, await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           ${QUIET_DAYS_SQL(day)}::int as "quietDays",
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
@@ -1146,7 +1184,7 @@ export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           ${QUIET_DAYS_SQL(day)}::int as "quietDays",
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
@@ -1170,6 +1208,407 @@ export async function archivedLeadsCount(): Promise<number> {
        ${onlyMine(scope, "c.owner_id")}
   `);
   return Number(rows[0]?.n ?? 0);
+}
+
+
+/* ═════════════════════════════════════════════════════════ the leads table */
+
+/**
+ * WHAT THE LEADS SCREEN IS FILTERED BY, in one shape.
+ *
+ * The screen used to read `leadsList`, which took a day and nothing else and
+ * answered with 400 rows — the whole table, the whole export and the whole
+ * stale banner counted in the browser out of that one array. On a real book of
+ * three and a half thousand leads that is a page which ships every row it can
+ * and then silently stops at four hundred, so the count under the funnel and
+ * the list under it were two different answers about one book.
+ *
+ * So the narrowing moved to SQL, and it is ONE shape rather than an argument
+ * per screen: the table, the count, the band chips and the export all take this
+ * and all run the same clause. An export built from a second reading of
+ * "which leads" is how a file comes to hold a different set to the table above
+ * it, which is the worst version of that bug because it looks like more data
+ * rather than wrong data.
+ */
+export type LeadFilters = {
+  /** The archived view is a different LIST, not a filter within one. */
+  archived: boolean;
+  /** Free text, matched across the name, the shop, the phone, the town and the owner. */
+  search: string;
+  /** One of `bandOf`'s four, or `won` / `lost` / `on_hold`. Empty is everything. */
+  band: string;
+  /** A user id, or `none` for the leads nobody is working. */
+  ownerId: string;
+  source: string;
+  /** One of the three ladders, or `legacy` for a lead raised before they existed. */
+  salesType: string;
+  /** Only leads nobody has touched in `staleDays`. */
+  stale: boolean;
+  staleDays: number;
+};
+
+/**
+ * HOW MANY LEADS ONE BATCH TOUCHES, AND IT IS ONE NUMBER.
+ *
+ * It was two: the selection was capped at 200 and the stage move at 100, so
+ * "Select all 200 this filter reaches" was followed by a confirm button reading
+ * "Apply to 200" and a server that moved a hundred — with the other hundred
+ * neither moved nor reported, because a lead that was never attempted is not a
+ * refusal either. A cap the user is told and a cap the server applies have to
+ * be the same cap, so it lives here, beside the filter that produces the
+ * selection, and every caller reads it.
+ */
+export const LEAD_BULK_CAP = 200;
+
+export const EMPTY_LEAD_FILTERS: LeadFilters = {
+  archived: false,
+  search: "",
+  band: "",
+  ownerId: "",
+  source: "",
+  salesType: "",
+  stale: false,
+  staleDays: 30,
+};
+
+/** The four funnel bands plus the three answers that have left the funnel. */
+export const LEAD_BANDS = [
+  "new",
+  "contacted",
+  "qualified",
+  "negotiation",
+  "on_hold",
+  "won",
+  "lost",
+] as const;
+
+/**
+ * Which rungs a band chip stands for.
+ *
+ * Read off `bandOf` rather than typed out, because that function is the one
+ * statement of the mapping and a second copy here would drift the day a
+ * twenty-fourth rung is added — which is precisely the failure the ladder
+ * engine's own test exists to prevent, arriving through the filter instead of
+ * through the funnel.
+ */
+function stagesInBand(band: string): string[] {
+  if (band === "won" || band === "lost" || band === "on_hold") return [band];
+  /* `bandOf` answers null for these two as well, deliberately — they have left
+     the funnel. Left with no chip of their own they were reachable by nothing:
+     in the list, out of every band, and impossible to isolate. */
+  if (band === "converted") return ["customer", "active_distributor"];
+  return mbosLeadStageEnum.enumValues.filter((s) => bandOf(s as LeadStage) === band);
+}
+
+/**
+ * The one WHERE this screen reads through.
+ *
+ * `u` is joined by every caller, because the search reaches the OWNER'S NAME:
+ * "everything Rakesh has" is the commonest thing anybody types into a box above
+ * a list of leads, and a search that answers nothing to it reads as a broken
+ * search box rather than as a field it does not cover.
+ */
+function leadFilterClause(day: string, scope: ManagerScope, f: LeadFilters) {
+  const parts: SQL[] = [
+    sql`c.lead_stage is not null`,
+    f.archived ? sql`and c.lead_archived = true` : sql`and c.lead_archived = false`,
+    onlyMine(scope, "c.owner_id"),
+  ];
+
+  /* Every word has to appear somewhere, rather than the whole string appearing
+     as one — "rakesh nagpur" is two facts about one shop and a single ilike
+     over the joined haystack would find neither. Six is the cap: past that it
+     is not a search, and an unbounded loop here is an unbounded query. */
+  const tokens = f.search.trim().split(/\s+/).filter(Boolean).slice(0, 6);
+  for (const t of tokens) {
+    const like = `%${t.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+    parts.push(sql`and concat_ws(' ', c.name, c.company_name, c.phone, c.city,
+                                 c.area, c.lead_notes, u.name) ilike ${like}`);
+  }
+
+  if (f.band) {
+    const stages = stagesInBand(f.band);
+    parts.push(
+      stages.length
+        ? sql`and c.lead_stage::text in (${sql.join(stages.map((s) => sql`${s}`), sql`, `)})`
+        : sql`and false`,
+    );
+  }
+
+  if (f.ownerId === "none") parts.push(sql`and c.owner_id is null`);
+  else if (f.ownerId) parts.push(sql`and c.owner_id = ${f.ownerId}`);
+
+  if (f.source) parts.push(sql`and coalesce(c.lead_source, 'manual') = ${f.source}`);
+
+  if (f.salesType === "legacy") parts.push(sql`and c.lead_sales_type is null`);
+  else if (f.salesType) parts.push(sql`and c.lead_sales_type::text = ${f.salesType}`);
+
+  /* Stale is about a lead somebody is still supposed to be working. A won or
+     lost lead has not gone quiet, it is finished, and counting those would make
+     the banner a number nobody can act on. */
+  if (f.stale) {
+    parts.push(sql`and c.lead_stage not in ('won', 'lost')
+                   and ${QUIET_DAYS_SQL(day)} >= ${f.staleDays}::int`);
+  }
+
+  return sql.join(parts, sql` `);
+}
+
+/**
+ * How the table is ordered, by what a manager is scanning for.
+ *
+ * EVERY ONE OF THEM ENDS IN `c.id`, and that is the load-bearing part rather
+ * than a tidiness. Thousands of these leads share a null follow-up date, a null
+ * last activity and a null potential, so the sort column alone leaves their
+ * order to the planner — invisible until the list is paged, and then it is a
+ * lead appearing on two pages while another appears on none. It is the same
+ * rule the customer timeline's keyset cursor is written under.
+ */
+const LEAD_SORTS = new Map<string, SQL>(Object.entries({
+  next: sql`c.lead_next_follow_up_date asc nulls last, c.lead_last_activity_date asc nulls last, c.id asc`,
+  quiet: sql`c.lead_last_activity_date asc nulls first, c.id asc`,
+  newest: sql`c.created_at desc, c.id asc`,
+  potential: sql`c.lead_estimated_potential_paise desc nulls last, c.id asc`,
+  name: sql`c.name asc, c.id asc`,
+}));
+
+/**
+ * A SORT KEY COMES OFF A URL, SO IT IS LOOKED UP RATHER THAN INDEXED.
+ *
+ * `LEAD_SORTS[key] ?? LEAD_SORTS.next` over an object literal answers a
+ * FUNCTION for `?sort=constructor`, `?sort=toString` and `?sort=valueOf` —
+ * inherited keys are truthy, so the fallback never fires and the function is
+ * bound into the query as a parameter. The page throws instead of quietly
+ * sorting the way it always did. A Map has no prototype keys to inherit.
+ */
+function leadSort(key: string | undefined): SQL {
+  return LEAD_SORTS.get(key ?? "next") ?? (LEAD_SORTS.get("next") as SQL);
+}
+
+export type LeadPage = {
+  rows: LeadRow[];
+  /** The whole filtered set, which is what the pager and the export describe. */
+  total: number;
+  /**
+   * THE PAGE THIS ANSWER IS ACTUALLY FOR.
+   *
+   * Clamped here and then thrown away, the screen went on rendering the page
+   * that was ASKED for: tick a filter while on page 9 of an unfiltered book and
+   * the pager read "page 9 of 2, showing 121-135 of 18" over page 2's rows,
+   * with Previous landing on those same rows again.
+   */
+  page: number;
+  /** How many of each band are in the filtered set, ignoring the band filter. */
+  bandCounts: Record<string, number>;
+  /**
+   * And the whole of that set.
+   *
+   * NOT the sum of `bandCounts` and not `total` either. The "All" chip counts
+   * what dropping the band filter would show, which `total` does not (it is
+   * counted WITH the band applied); summing the bands instead would silently
+   * omit any rung `bandOf` has no band for, so the chip and the pager four
+   * lines apart would print two different figures for one book.
+   */
+  bandTotal: number;
+  /** Of the filtered set: how many are stale, and how many nobody owns. */
+  stale: number;
+  unassigned: number;
+};
+
+/**
+ * One page of leads, and the figures that describe the whole filtered set.
+ *
+ * The counts are taken in SQL over the same clause the page runs, never over
+ * the rows that came back — a figure computed from a page is a figure that
+ * says 15 on a book of three thousand, and the pager beside it would be
+ * saying the true number on the same line.
+ */
+export async function leadsPage(
+  day: string,
+  f: LeadFilters,
+  paging: { page: number; perPage: number; sort?: string },
+): Promise<LeadPage> {
+  const scope = await managerScope();
+  const perPage = Math.min(200, Math.max(5, Math.floor(paging.perPage) || 15));
+  const where = leadFilterClause(day, scope, f);
+  const order = leadSort(paging.sort);
+
+  const [summary] = await db.execute<{
+    total: number;
+    stale: number;
+    unassigned: number;
+  }>(sql`
+    select count(*)::int as total,
+           count(*) filter (
+             where c.lead_stage not in ('won', 'lost')
+               and ${QUIET_DAYS_SQL(day)} >= ${f.staleDays}::int
+           )::int as stale,
+           count(*) filter (where c.owner_id is null)::int as unassigned
+      from customers c
+      left join users u on u.id = c.owner_id
+     where ${where}
+  `);
+
+  const total = Number(summary?.total ?? 0);
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(1, Math.floor(paging.page) || 1), pages);
+
+  /* The band chips count the set WITHOUT the band filter, so picking one does
+     not empty the other six — a chip row whose every other count reads zero the
+     moment you press one is a chip row nobody presses twice. */
+  const bandWhere = leadFilterClause(day, scope, { ...f, band: "" });
+  const banded = await db.execute<{ stage: string; n: number }>(sql`
+    select c.lead_stage::text as stage, count(*)::int as n
+      from customers c
+      left join users u on u.id = c.owner_id
+     where ${bandWhere}
+     group by c.lead_stage
+  `);
+  const bandCounts: Record<string, number> = {};
+  let bandTotal = 0;
+  for (const r of banded) {
+    bandTotal += Number(r.n);
+    const key =
+      r.stage === "won" || r.stage === "lost" || r.stage === "on_hold"
+        ? r.stage
+        : (bandOf(r.stage as LeadStage) ?? "");
+    if (!key) continue;
+    bandCounts[key] = (bandCounts[key] ?? 0) + Number(r.n);
+  }
+
+  const rows = total
+    ? await db.execute<LeadRow>(sql`
+        ${LEAD_ROW_SELECT},
+               ${QUIET_DAYS_SQL(day)}::int as "quietDays",
+               (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+          from customers c
+          left join users u on u.id = c.owner_id
+          left join users lm on lm.id = c.lead_manager_id
+         where ${where}
+         order by ${order}
+         limit ${perPage} offset ${(page - 1) * perPage}
+      `)
+    : [];
+
+  return {
+    rows: await withHealthBand(day, rows as unknown as LeadRow[]),
+    total,
+    page,
+    bandCounts,
+    bandTotal,
+    stale: Number(summary?.stale ?? 0),
+    unassigned: Number(summary?.unassigned ?? 0),
+  };
+}
+
+/**
+ * The whole filtered set, for the file.
+ *
+ * Capped, because a download is not a reason to hold the entire customers
+ * table in one process — and the cap is REPORTED rather than silently applied,
+ * so a manager exporting a book bigger than it never believes they have the
+ * lot.
+ */
+export const LEAD_EXPORT_CAP = 5000;
+
+export async function leadsForExport(
+  day: string,
+  f: LeadFilters,
+  sort?: string,
+): Promise<{ rows: LeadRow[]; capped: boolean }> {
+  const scope = await managerScope();
+  const where = leadFilterClause(day, scope, f);
+  const order = leadSort(sort);
+  const rows = (await db.execute<LeadRow>(sql`
+    ${LEAD_ROW_SELECT},
+           ${QUIET_DAYS_SQL(day)}::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
+     where ${where}
+     order by ${order}
+     limit ${LEAD_EXPORT_CAP + 1}
+  `)) as unknown as LeadRow[];
+  return { rows: rows.slice(0, LEAD_EXPORT_CAP), capped: rows.length > LEAD_EXPORT_CAP };
+}
+
+/**
+ * EVERY LEAD THE FILTER REACHES, AS IDS, FOR A SELECTION THAT CROSSES PAGES.
+ *
+ * "Everything Rakesh has" is a hundred and forty leads over ten pages, and a
+ * multi-select that can only reach the fifteen in front of somebody is one they
+ * work around by setting the page size to two hundred — which is the slow page
+ * the paging exists to prevent. So the ids are read from the same clause the
+ * table ran, and the cap is the bulk actions' own: a selection bigger than they
+ * will accept must not be offered, or the refusal arrives after the review.
+ */
+export async function leadIdsMatching(
+  day: string,
+  f: LeadFilters,
+  cap: number,
+  sort?: string,
+): Promise<{ ids: string[]; capped: boolean }> {
+  const scope = await managerScope();
+  const where = leadFilterClause(day, scope, f);
+  /* The SAME order the table drew, or "the first 200" names a different 200 to
+     the two hundred somebody is looking at — on a book where potential is
+     mostly null, a selection taken in follow-up order off a screen sorted by
+     potential is very nearly arbitrary. */
+  const order = leadSort(sort);
+  const rows = await db.execute<{ id: string }>(sql`
+    select c.id
+      from customers c
+      left join users u on u.id = c.owner_id
+     where ${where}
+     order by ${order}
+     limit ${cap + 1}
+  `);
+  return { ids: rows.slice(0, cap).map((r) => r.id), capped: rows.length > cap };
+}
+
+
+/**
+ * What the two dropdowns may offer.
+ *
+ * Taken over the WHOLE scoped book rather than the filtered set: an option
+ * list that shrinks as you filter is one where the way back to what you were
+ * looking at disappears the moment you leave it.
+ */
+export async function leadFilterOptions(archived: boolean): Promise<{
+  owners: Array<{ id: string; name: string; n: number }>;
+  unassigned: number;
+  sources: Array<{ code: string; n: number }>;
+}> {
+  const scope = await managerScope();
+  const archivedClause = archived ? sql`c.lead_archived = true` : sql`c.lead_archived = false`;
+
+  const owners = await db.execute<{ id: string | null; name: string | null; n: number }>(sql`
+    select c.owner_id as id, u.name, count(*)::int as n
+      from customers c
+      left join users u on u.id = c.owner_id
+     where c.lead_stage is not null and ${archivedClause}
+       ${onlyMine(scope, "c.owner_id")}
+     group by c.owner_id, u.name
+     order by count(*) desc
+  `);
+
+  const sources = await db.execute<{ code: string; n: number }>(sql`
+    select coalesce(c.lead_source, 'manual') as code, count(*)::int as n
+      from customers c
+     where c.lead_stage is not null and ${archivedClause}
+       ${onlyMine(scope, "c.owner_id")}
+     group by 1
+     order by count(*) desc
+  `);
+
+  return {
+    owners: owners
+      .filter((o) => o.id)
+      .map((o) => ({ id: o.id as string, name: o.name ?? "Unknown", n: Number(o.n) })),
+    unassigned: Number(owners.find((o) => !o.id)?.n ?? 0),
+    sources: sources.map((s) => ({ code: s.code, n: Number(s.n) })),
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════ commercial */
@@ -1203,10 +1642,100 @@ export type FieldOrder = {
  * beside the value. The decision itself is accounts', deliberately: the person
  * chasing the target does not sign off the orders that hit it.
  */
-export async function fieldOrders(pending?: boolean): Promise<FieldOrder[]> {
-  const only = pending ? sql`and o.status = 'pending_approval'` : sql``;
+/**
+ * WHAT MAKES AN ORDER ONE SOMEBODY HAS TO ARGUE ABOUT, in SQL rather than in
+ * the screen.
+ *
+ * It was a predicate in `orders/page.tsx`, run over whatever rows happened to
+ * come back — which meant the "over the limit" count was a count of the capped
+ * page and not of the book. Written once here, the summary and the filtered
+ * list cannot disagree about which orders those are.
+ */
+const OVER_LIMIT = sql`(
+  c.credit_blocked
+  or (c.credit_limit_paise is not null
+      and coalesce(c.outstanding, 0) + o.total_amount > c.credit_limit_paise)
+)`;
+
+/** How many field orders exist at all, and what is waiting inside them. */
+export type FieldOrderSummary = {
+  /** Every pending order in scope, not a count of one page of them. */
+  waiting: number;
+  waitingValuePaise: number;
+  overLimit: number;
+  /** Hours the oldest pending one has been waiting. Zero where none is. */
+  oldestWaitingHours: number;
+  total: number;
+};
+
+/**
+ * THE FIGURES, OVER THE WHOLE BOOK.
+ *
+ * The screen used to derive all of these from `fieldOrders()`, which is capped
+ * at 300 and ordered newest-first — so "Taken in the field: 300 · all time" was
+ * a constant wearing a label, and an order stuck in approval longer than 300
+ * orders ago was absent from the count as well as from the queue. A queue that
+ * silently loses its oldest item is the worst direction for that bug.
+ */
+export async function fieldOrderSummary(): Promise<FieldOrderSummary> {
   const scope = await managerScope();
-  return db.execute<FieldOrder>(sql`
+  const [row] = await db.execute<FieldOrderSummary>(sql`
+    select
+      count(*) filter (where o.status = 'pending_approval')::int as "waiting",
+      coalesce(sum(o.total_amount) filter (where o.status = 'pending_approval'), 0)::bigint
+        as "waitingValuePaise",
+      count(*) filter (where o.status = 'pending_approval' and ${OVER_LIMIT})::int
+        as "overLimit",
+      coalesce(max(floor(extract(epoch from (now() - o.created_at)) / 3600))
+                 filter (where o.status = 'pending_approval'), 0)::int
+        as "oldestWaitingHours",
+      count(*)::int as "total"
+      from orders o
+      join customers c on c.id = o.customer_id
+     where o.source = 'mbos' ${onlyMine(scope, "o.created_by_id")}
+  `);
+  return (
+    row ?? {
+      waiting: 0,
+      waitingValuePaise: 0,
+      overLimit: 0,
+      oldestWaitingHours: 0,
+      total: 0,
+    }
+  );
+}
+
+const FIELD_ORDER_LIMIT = 300;
+
+/**
+ * One view of the order book, narrowed in SQL and capped with the count beside
+ * it.
+ *
+ * The narrowing is deliberately NOT a filter over a fetched page: "waiting" and
+ * "over the limit" are the two views somebody opens this screen to work, and
+ * both are rare inside a long tail of settled orders. Filtering the newest 300
+ * answered a question about the newest 300.
+ */
+export async function fieldOrders(
+  show: "all" | "waiting" | "overlimit" = "all",
+): Promise<{ rows: FieldOrder[]; total: number; capped: boolean }> {
+  const only =
+    show === "waiting"
+      ? sql`and o.status = 'pending_approval'`
+      : show === "overlimit"
+        ? sql`and o.status = 'pending_approval' and ${OVER_LIMIT}`
+        : sql``;
+  const scope = await managerScope();
+
+  const [counted] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from orders o
+      join customers c on c.id = o.customer_id
+     where o.source = 'mbos' ${only} ${onlyMine(scope, "o.created_by_id")}
+  `);
+  const total = counted?.n ?? 0;
+
+  const rows = (await db.execute<FieldOrder>(sql`
     select o.id, o.order_no as "orderNo",
            o.created_by_id as "salesmanId", u.name as "salesmanName",
            o.customer_id as "customerId", c.name as "customerName",
@@ -1227,8 +1756,10 @@ export async function fieldOrders(pending?: boolean): Promise<FieldOrder[]> {
       left join users u on u.id = o.created_by_id
      where o.source = 'mbos' ${only} ${onlyMine(scope, "o.created_by_id")}
      order by o.ordered_at desc
-     limit 300
-  `) as unknown as FieldOrder[];
+     limit ${FIELD_ORDER_LIMIT}
+  `)) as unknown as FieldOrder[];
+
+  return { rows, total, capped: total > FIELD_ORDER_LIMIT };
 }
 
 export type FieldReceipt = {
@@ -1236,6 +1767,15 @@ export type FieldReceipt = {
   receiptNo: string | null;
   salesmanId: string | null;
   salesmanName: string | null;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   amountPaise: number;
   mode: string;
@@ -1257,12 +1797,37 @@ export type FieldReceipt = {
  * bank and a cheque is banked by the office — so only cash is counted against
  * the deposit window.
  */
-export async function fieldReceipts(): Promise<FieldReceipt[]> {
-  const scope = await managerScope();
-  return db.execute<FieldReceipt>(sql`
+const FIELD_RECEIPT_LIMIT = 300;
+
+/**
+ * CASH IS ITS OWN QUESTION AND IT IS NEVER CAPPED, said in SQL.
+ *
+ * `payment_receipts` is a log and the table below it can honestly be a page of
+ * one — but "who is holding company cash" is not a page of anything, it is a
+ * complete answer with a person's name on it. The screen used to derive it by
+ * filtering the newest 300 receipts, which is the one cap that could not be
+ * afforded: the list is ordered newest-first, so the OLDEST undeposited cash —
+ * the money the screen exists to chase — was the first thing dropped.
+ *
+ * The predicate is the screen's own, unchanged: cash, not yet banked, and not
+ * rejected. A `reversed` receipt stays in, because the note was physically
+ * held whatever became of it afterwards.
+ */
+const CASH_IN_HAND = sql`
+  lower(r.mode) = 'cash'
+  and r.deposited_at is null
+  and r.status <> 'rejected'
+`;
+
+/**
+ * The SELECT both reads share, so the log and the cash list cannot come back
+ * shaped differently — they land in the same `FieldReceipt` and are drawn by
+ * the same row.
+ */
+const RECEIPT_COLUMNS = sql`
     select r.id, r.receipt_no as "receiptNo",
            r.reported_by_id as "salesmanId", u.name as "salesmanName",
-           c.name as "customerName",
+           c.id as "customerId", c.name as "customerName",
            r.amount as "amountPaise", r.mode, r.reference,
            r.received_at::text as "receivedAt",
            r.status::text as status,
@@ -1272,15 +1837,72 @@ export async function fieldReceipts(): Promise<FieldReceipt[]> {
       from payment_receipts r
       join customers c on c.id = r.customer_id
       left join users u on u.id = r.reported_by_id
+`;
+
+export type FieldReceipts = {
+  /** The log: newest first, capped, with the count beside it. */
+  rows: FieldReceipt[];
+  total: number;
+  capped: boolean;
+  /** Every unbanked cash note in scope, oldest first. Uncapped, deliberately. */
+  cash: FieldReceipt[];
+  /** Counted over the whole log rather than over `rows`. */
+  reported: number;
+  confirmed: number;
+};
+
+export async function fieldReceipts(): Promise<FieldReceipts> {
+  const scope = await managerScope();
+
+  const [counted] = await db.execute<{
+    total: number;
+    reported: number;
+    confirmed: number;
+  }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where r.status = 'reported')::int as "reported",
+           count(*) filter (where r.status = 'confirmed')::int as "confirmed"
+      from payment_receipts r
+     where r.source = 'mbos' ${onlyMine(scope, "r.reported_by_id")}
+  `);
+
+  const cash = (await db.execute<FieldReceipt>(sql`
+    ${RECEIPT_COLUMNS}
+     where r.source = 'mbos' and ${CASH_IN_HAND}
+       ${onlyMine(scope, "r.reported_by_id")}
+     order by r.received_at asc, r.created_at asc
+  `)) as unknown as FieldReceipt[];
+
+  const rows = (await db.execute<FieldReceipt>(sql`
+    ${RECEIPT_COLUMNS}
      where r.source = 'mbos' ${onlyMine(scope, "r.reported_by_id")}
      order by r.received_at desc, r.created_at desc
-     limit 300
-  `) as unknown as FieldReceipt[];
+     limit ${FIELD_RECEIPT_LIMIT}
+  `)) as unknown as FieldReceipt[];
+
+  const total = counted?.total ?? 0;
+  return {
+    rows,
+    total,
+    capped: total > FIELD_RECEIPT_LIMIT,
+    cash,
+    reported: counted?.reported ?? 0,
+    confirmed: counted?.confirmed ?? 0,
+  };
 }
 
 export type FieldInvoice = {
   id: string;
   billNo: string;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   salesmanId: string | null;
   salesmanName: string | null;
@@ -1303,10 +1925,136 @@ export type FieldInvoice = {
  * means nobody has spoken for this bill either way, and it is held out of
  * outstanding rather than counted as debt.
  */
-export async function fieldInvoices(): Promise<FieldInvoice[]> {
+const FIELD_INVOICE_LIMIT = 300;
+
+/**
+ * WHOSE BILLS THESE ARE, written once.
+ *
+ * Both reads below need it and it is three lines of `exists` — a second
+ * spelling is a second answer to "is this bill the field's", and the two
+ * screens reading them would then disagree about the same book.
+ */
+const FIELD_BILL = sql`
+      from bills b
+      join customers c on c.id = b.customer_id
+      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+     where exists (select 1 from app_access a
+                    where a.user_id = coalesce(c.sales_am_id, c.owner_id) and a.app = 'field')
+`;
+
+/** The aging bands the screen draws, oldest last. Days past the due date. */
+const AGING_BANDS = [
+  { label: "Not due", from: -99999, to: 0 },
+  { label: "1–30 days", from: 1, to: 30 },
+  { label: "31–60", from: 31, to: 60 },
+  { label: "61–90", from: 61, to: 90 },
+  { label: "Over 90", from: 91, to: 99999 },
+];
+
+export type FieldInvoiceSummary = {
+  openCount: number;
+  openPaise: number;
+  overdueCount: number;
+  overduePaise: number;
+  unstatedCount: number;
+  total: number;
+  /** `from` rides along: the strip colours a band by how old it is. */
+  bands: Array<{ label: string; from: number; amountPaise: number }>;
+};
+
+/**
+ * THE MONEY, COUNTED IN SQL OVER EVERY BILL — not over a page of them.
+ *
+ * The screen used to sum its own capped read, which was `limit 300` ordered by
+ * the largest open balance. So "Open ₹X across N bills", "Overdue", and the
+ * whole aging strip described the 300 biggest debts and were labelled as if
+ * they described the book. On the real book that is 300 of 10,815.
+ *
+ * `unstated` is counted and never added: nobody has said whether those bills
+ * were paid, and presenting an unknown as a debt is the mistake that put nine
+ * crore of imaginary collections on this screen's ancestors.
+ */
+export async function fieldInvoiceSummary(): Promise<FieldInvoiceSummary> {
   const scope = await managerScope();
-  return db.execute<FieldInvoice>(sql`
-    select b.id, b.bill_no as "billNo", c.name as "customerName",
+  /* Aliased by INDEX rather than read off the column order that comes back.
+     The labels live in `AGING_BANDS` and nowhere else, so adding a band is one
+     edit — and a positional read would break silently the day a column was
+     added above it. */
+  const bandSql = sql.join(
+    AGING_BANDS.map(
+      (b, i) => sql`coalesce(sum(b.amount - b.paid_amount) filter (
+        where b.payment_position = 'stated'
+          and (b.amount - b.paid_amount) > 0
+          and greatest(0, current_date - b.due_date) between ${b.from} and ${b.to}
+      ), 0)::bigint as ${sql.raw(`"band${i}"`)}`,
+    ),
+    sql`, `,
+  );
+
+  const [row] = await db.execute<Record<string, string | number | null>>(sql`
+    select
+      count(*) filter (where b.payment_position = 'stated'
+                         and (b.amount - b.paid_amount) > 0)::int as "openCount",
+      coalesce(sum(b.amount - b.paid_amount) filter (
+        where b.payment_position = 'stated' and (b.amount - b.paid_amount) > 0), 0)::bigint
+        as "openPaise",
+      count(*) filter (where b.payment_position = 'stated'
+                         and (b.amount - b.paid_amount) > 0
+                         and current_date > b.due_date)::int as "overdueCount",
+      coalesce(sum(b.amount - b.paid_amount) filter (
+        where b.payment_position = 'stated' and (b.amount - b.paid_amount) > 0
+          and current_date > b.due_date), 0)::bigint as "overduePaise",
+      count(*) filter (where b.payment_position <> 'stated')::int as "unstatedCount",
+      count(*)::int as "total",
+      ${bandSql}
+    ${FIELD_BILL} ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+  `);
+
+  const n = (key: string) => Number(row?.[key] ?? 0);
+  return {
+    openCount: n("openCount"),
+    openPaise: n("openPaise"),
+    overdueCount: n("overdueCount"),
+    overduePaise: n("overduePaise"),
+    unstatedCount: n("unstatedCount"),
+    total: n("total"),
+    bands: AGING_BANDS.map((b, i) => ({
+      label: b.label,
+      from: b.from,
+      amountPaise: n(`band${i}`),
+    })),
+  };
+}
+
+/**
+ * One view of the bill book, narrowed in SQL and capped with its count.
+ *
+ * Narrowed HERE rather than filtered on the screen for the same reason the
+ * order list is: "overdue" and "nobody has spoken for" are needles inside a
+ * long tail, and filtering a fetched page answers a question about the page.
+ */
+export async function fieldInvoices(
+  show: "all" | "open" | "overdue" | "unstated" = "all",
+): Promise<{ rows: FieldInvoice[]; total: number; capped: boolean }> {
+  const scope = await managerScope();
+  const only =
+    show === "open"
+      ? sql`and b.payment_position = 'stated' and (b.amount - b.paid_amount) > 0`
+      : show === "overdue"
+        ? sql`and b.payment_position = 'stated' and (b.amount - b.paid_amount) > 0
+              and current_date > b.due_date`
+        : show === "unstated"
+          ? sql`and b.payment_position <> 'stated'`
+          : sql``;
+
+  const [counted] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n
+    ${FIELD_BILL} ${only} ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+  `);
+  const total = counted?.n ?? 0;
+
+  const rows = (await db.execute<FieldInvoice>(sql`
+    select b.id, b.bill_no as "billNo", c.id as "customerId", c.name as "customerName",
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
            b.bill_date::text as "billDate",
@@ -1316,19 +2064,25 @@ export async function fieldInvoices(): Promise<FieldInvoice[]> {
            (b.amount - b.paid_amount) as "openPaise",
            greatest(0, current_date - b.due_date)::int as "overdueDays",
            b.payment_position::text as "paymentPosition"
-      from bills b
-      join customers c on c.id = b.customer_id
-      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where exists (select 1 from app_access a
-                    where a.user_id = coalesce(c.sales_am_id, c.owner_id) and a.app = 'field')
-       ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+    ${FIELD_BILL} ${only} ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
      order by (b.amount - b.paid_amount) desc, b.due_date asc nulls last
-     limit 300
-  `) as unknown as FieldInvoice[];
+     limit ${FIELD_INVOICE_LIMIT}
+  `)) as unknown as FieldInvoice[];
+
+  return { rows, total, capped: total > FIELD_INVOICE_LIMIT };
 }
 
 export type FieldSample = {
   id: string;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   salesmanId: string;
   salesmanName: string;
@@ -1346,10 +2100,48 @@ export type FieldSample = {
 };
 
 /** Stock given away on trial, and the feedback nobody chased. */
-export async function fieldSamples(): Promise<FieldSample[]> {
+const FIELD_SAMPLE_LIMIT = 300;
+
+export type FieldSamples = {
+  rows: FieldSample[];
+  total: number;
+  capped: boolean;
+  awaiting: number;
+  late: number;
+  converted: number;
+};
+
+/**
+ * Stock given away on trial, and the feedback nobody chased.
+ *
+ * **THE ORDER IS WHAT IS OWED, not what is newest.** It was `requested_date
+ * desc`, which put the samples this screen exists to find — the ones sent
+ * months ago that nobody ever went back to — at the very bottom, under the
+ * cap. The screen then counted "past the date" by filtering what came back,
+ * so the older the neglect the less likely it was to be counted. Pending
+ * first, latest first inside that, and the counts come from SQL over the
+ * whole book either way.
+ */
+export async function fieldSamples(): Promise<FieldSamples> {
   const scope = await managerScope();
-  return db.execute<FieldSample>(sql`
-    select s.id, c.name as "customerName",
+
+  const [counted] = await db.execute<{
+    total: number;
+    awaiting: number;
+    late: number;
+    converted: number;
+  }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where s.trial_outcome = 'pending')::int as "awaiting",
+           count(*) filter (where s.trial_outcome = 'pending'
+                              and current_date > s.follow_up_date)::int as "late",
+           count(*) filter (where s.trial_outcome = 'converted')::int as "converted"
+      from mbos_samples s
+     where true ${onlyMine(scope, "s.salesman_id")}
+  `);
+
+  const rows = (await db.execute<FieldSample>(sql`
+    select s.id, c.id as "customerId", c.name as "customerName",
            s.salesman_id as "salesmanId", u.name as "salesmanName",
            p.name as "productName", s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
@@ -1369,9 +2161,22 @@ export async function fieldSamples(): Promise<FieldSample[]> {
       join users u on u.id = s.salesman_id
       left join products p on p.id = s.product_id
      where true ${onlyMine(scope, "s.salesman_id")}
-     order by s.requested_date desc nulls last
-     limit 300
-  `) as unknown as FieldSample[];
+     order by
+       case when s.trial_outcome = 'pending' then 0 else 1 end,
+       greatest(0, current_date - s.follow_up_date) desc,
+       s.requested_date desc nulls last
+     limit ${FIELD_SAMPLE_LIMIT}
+  `)) as unknown as FieldSample[];
+
+  const total = counted?.total ?? 0;
+  return {
+    rows,
+    total,
+    capped: total > FIELD_SAMPLE_LIMIT,
+    awaiting: counted?.awaiting ?? 0,
+    late: counted?.late ?? 0,
+    converted: counted?.converted ?? 0,
+  };
 }
 
 export type CatalogueRow = {
@@ -1619,9 +2424,41 @@ export type LeaveRow = {
  * because it is a question about the state of the calendar at the moment
  * somebody looks.
  */
-export async function leaveRequests(): Promise<LeaveRow[]> {
+const LEAVE_LIMIT = 300;
+
+export type LeaveRequests = {
+  /** Pending first, so the queue is never the part the cap drops. */
+  rows: LeaveRow[];
+  total: number;
+  capped: boolean;
+  waiting: number;
+  approved: number;
+};
+
+export async function leaveRequests(): Promise<LeaveRequests> {
   const scope = await managerScope();
-  return db.execute<LeaveRow>(sql`
+
+  /* Counted over every request rather than over the page. The queue is safe
+     either way — the list is ordered pending-first, so what is waiting can
+     never be the part a cap drops — but "Approved" was a count of however many
+     approved requests happened to fit under 300 after the pending ones. */
+  const [counted] = await db.execute<{
+    total: number;
+    waiting: number;
+    approved: number;
+  }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where l.cancelled_at is null
+                              and (ap.state is null or ap.state = 'pending'))::int as "waiting",
+           count(*) filter (where l.cancelled_at is null and ap.state = 'approved')::int
+             as "approved"
+      from mbos_leave_requests l
+      left join mbos_approvals ap
+             on ap.subject_id = l.id and ap.type = 'leave'
+     where true ${onlyMine(scope, "l.user_id")}
+  `);
+
+  const rows = (await db.execute<LeaveRow>(sql`
     select l.id, l.user_id as "salesmanId", u.name as "salesmanName", u.initials,
            l.leave_type::text as "leaveType",
            l.from_date::text as "fromDate", l.to_date::text as "toDate",
@@ -1661,8 +2498,17 @@ export async function leaveRequests(): Promise<LeaveRow[]> {
      order by
        case when ap.state = 'pending' then 0 else 1 end,
        l.from_date desc
-     limit 300
-  `) as unknown as LeaveRow[];
+     limit ${LEAVE_LIMIT}
+  `)) as unknown as LeaveRow[];
+
+  const total = counted?.total ?? 0;
+  return {
+    rows,
+    total,
+    capped: total > LEAVE_LIMIT,
+    waiting: counted?.waiting ?? 0,
+    approved: counted?.approved ?? 0,
+  };
 }
 
 export type ExpenseRow = {
@@ -2762,6 +3608,27 @@ export type ShopPin = {
   lat: number;
   lng: number;
   /**
+   * WHICH ACCOUNT THIS IS, so a map can say so without a second read.
+   *
+   * `kind` and `third_party` are the two columns `lib/account-types.ts`
+   * decides the word from, and they travel together for that reason — the
+   * mark wins over the kind, which is a rule that lives in one place and
+   * must not be re-derived from a colour expression on a map.
+   */
+  kind: "customer" | "lead";
+  thirdParty: boolean;
+  /**
+   * Live, dormant or closed.
+   *
+   * On the row because the Live map draws accounts of EVERY status — a
+   * dormant shop two streets from where a salesman is standing is the most
+   * useful pin on that screen, not one to hide — and a closed one must not
+   * be drawn identically to a live one. `recomputeInactivity` derives the
+   * first two; `deactivated` is the one value it never writes, because that
+   * is somebody's decision.
+   */
+  status: "active" | "inactive" | "deactivated";
+  /**
    * True where the pin was looked up from an address rather than captured by
    * standing in the shop.
    *
@@ -2777,15 +3644,95 @@ export type ShopPin = {
 };
 
 /**
- * Every active customer with a coordinate. Unpaged, unlike `fieldBook` —
+ * Every active account with a coordinate. Unpaged, unlike `fieldBook` —
  * this feeds one map layer rather than a table somebody scrolls, and the
  * whole book is a few thousand points, one GeoJSON payload rather than
  * something worth paginating.
+ *
+ * **LEADS ARE IN IT, and they were not.** `kind = 'customer'` was in the
+ * where clause, so a lead carrying a perfectly good field-captured pin was
+ * drawn on no map in MahekOne — not Territory's, not the Live map's. A
+ * prospect the team has already been to and pinned is exactly the shop a
+ * manager is looking for when he asks what else is near a beat, and it was
+ * the one category the maps could not show him. Which kind each row is
+ * rides on the row now (`kind`, `thirdParty`), so the map colours them
+ * apart rather than a second query fetching the leads separately and the
+ * two disagreeing about who is in scope.
+ *
+ * **A CATCHMENT IS OPTIONAL AND IS NOT A SCOPE.** Territory reads the whole
+ * book — that screen's question is where the book sits. The Live map asks a
+ * narrower one, which is what a salesman is standing next to, so it passes
+ * the team's own positions and a radius and gets the shops around them. It
+ * can only ever REMOVE rows from what `managerScope` already allows, the
+ * same relationship a handset's territory clause has to its two seats, and
+ * for the same reason: the two look alike from a distance and only one of
+ * them is the security boundary.
+ *
+ * The box is done in SQL and the CIRCLE in JavaScript. A bounding box is an
+ * index-friendly comparison on two columns and a circle is not, and the
+ * corners of a ten-kilometre box are four kilometres further out than its
+ * edges — near enough to matter on a map somebody reads distances off.
+ * `metresBetween` is the same function the check-in gate and the On-your-way
+ * screen measure with, so one distance is never phrased two ways.
  */
-export async function shopPins(): Promise<ShopPin[]> {
+export async function shopPins(options?: {
+  near?: {
+    /** Where the team is. An EMPTY list is not "everywhere" — see below. */
+    centres: Array<{ lat: number; lng: number }>;
+    radiusKm: number;
+  };
+  /**
+   * Dormant and closed accounts too, not only the live book.
+   *
+   * OFF by default, because Territory prints its own counts of the active
+   * book directly above its map and a map disagreeing with the table over
+   * it is worse than a map that shows less. The Live map turns it on: that
+   * screen is not a census, it is what a man on a bike is passing, and a
+   * shop nobody has sold to since March is still a door.
+   */
+  includeClosed?: boolean;
+}): Promise<ShopPin[]> {
+  const near = options?.near;
   const scope = await managerScope();
-  return db.execute<ShopPin>(sql`
+
+  /*
+   * NO CENTRES MEANS NOTHING, never the whole book.
+   *
+   * A caller that asked for a catchment and has none to give has nobody in
+   * the field — and answering that with every shop in the country is the
+   * dangerous reading of an absence, the same trap `territoryClause` names:
+   * an absent narrowing and an empty one look alike in a type signature and
+   * are opposite answers. Territory asks for no catchment at all, which is a
+   * different thing and is how it still gets the book.
+   */
+  if (near && !near.centres.length) return [];
+
+  const box = near
+    ? (() => {
+        const latPad = near.radiusKm / 111;
+        /* Longitude degrees shrink towards the poles. Taken at the widest
+           latitude in the set so the box can never be narrower than the
+           circle it has to contain. */
+        const widest = Math.max(...near.centres.map((c) => Math.abs(c.lat)));
+        const lngPad = near.radiusKm / (111 * Math.max(Math.cos((widest * Math.PI) / 180), 0.1));
+        return sql`and (${sql.join(
+          near.centres.map(
+            (c) => sql`(
+              coalesce(c.gps_lat, c.geocoded_lat) between ${c.lat - latPad} and ${c.lat + latPad}
+              and coalesce(c.gps_lng, c.geocoded_lng) between ${c.lng - lngPad} and ${c.lng + lngPad}
+            )`,
+          ),
+          sql` or `,
+        )})`;
+      })()
+    : sql``;
+
+  const rows = (await db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
+           /* Both columns, because the WORD for an account is decided from
+              the pair and lib/account-types.ts is the one place that
+              decision lives — the mark wins over the kind. */
+           c.kind, c.third_party as "thirdParty", c.status,
            /* The field pin first, then the looked-up one. 503 shops carry an
               address and no pin, and they were absent from this map entirely
               — a shop nobody can see is a shop nobody plans a day around. */
@@ -2800,11 +3747,19 @@ export async function shopPins(): Promise<ShopPin[]> {
            u.name as "salesmanName"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
+     where true
+       ${options?.includeClosed ? sql`` : sql`and c.status = 'active'`}
        and coalesce(c.gps_lat, c.geocoded_lat) is not null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
+       ${box}
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
-  `) as unknown as ShopPin[];
+  `)) as unknown as ShopPin[];
+
+  if (!near) return rows;
+  const radiusM = near.radiusKm * 1000;
+  return rows.filter((r) =>
+    near.centres.some((c) => metresBetween(c.lat, c.lng, Number(r.lat), Number(r.lng)) <= radiusM),
+  );
 }
 
 export type ProspectPin = {
@@ -3306,6 +4261,10 @@ export type SalesmanRecord = {
   salesman: Salesman;
   visits: Array<{
     id: string;
+    /* The account behind the name, so the tab can open it. Carried rather
+       than looked up on a click: the join that produces the name is already
+       being made. */
+    customerId: string;
     customerName: string;
     checkInAt: Date | null;
     durationSeconds: number | null;
@@ -3319,6 +4278,7 @@ export type SalesmanRecord = {
   orders: Array<{
     id: string;
     orderNo: string | null;
+    customerId: string;
     customerName: string;
     orderedAt: Date;
     totalAmountPaise: number;
@@ -3327,6 +4287,7 @@ export type SalesmanRecord = {
   receipts: Array<{
     id: string;
     receiptNo: string | null;
+    customerId: string;
     customerName: string;
     receivedAt: string;
     amountPaise: number;
@@ -3363,6 +4324,7 @@ export type SalesmanRecord = {
   }>;
   samples: Array<{
     id: string;
+    customerId: string;
     customerName: string;
     productName: string | null;
     quantityCans: number | null;
@@ -3386,6 +4348,8 @@ export type SalesmanRecord = {
     priority: string;
     dueDate: string | null;
     status: string;
+    /* Left-joined, so a task that names no shop carries neither. */
+    customerId: string | null;
     customerName: string | null;
   }>;
 };
@@ -3412,7 +4376,7 @@ export async function salesmanRecord(
   const [visits, orders, receipts, attendance, leave, expenses, samples, leads, tasks] =
     await Promise.all([
       db.execute(sql`
-        select v.id, c.name as "customerName", v.check_in_at as "checkInAt",
+        select v.id, c.id as "customerId", c.name as "customerName", v.check_in_at as "checkInAt",
                v.duration_seconds as "durationSeconds", v.outcome::text as outcome,
                v.notes, v.transcript,
                v.verified, v.location_mismatch as "locationMismatch",
@@ -3422,7 +4386,7 @@ export async function salesmanRecord(
          order by v.check_in_at desc nulls last limit ${limit}
       `),
       db.execute(sql`
-        select o.id, o.order_no as "orderNo", c.name as "customerName",
+        select o.id, o.order_no as "orderNo", c.id as "customerId", c.name as "customerName",
                o.ordered_at as "orderedAt", o.total_amount as "totalAmountPaise",
                o.status::text as status
           from orders o join customers c on c.id = o.customer_id
@@ -3430,7 +4394,7 @@ export async function salesmanRecord(
          order by o.ordered_at desc limit ${limit}
       `),
       db.execute(sql`
-        select r.id, r.receipt_no as "receiptNo", c.name as "customerName",
+        select r.id, r.receipt_no as "receiptNo", c.id as "customerId", c.name as "customerName",
                r.received_at::text as "receivedAt", r.amount as "amountPaise",
                r.mode, r.status::text as status, r.deposited_at as "depositedAt"
           from payment_receipts r join customers c on c.id = r.customer_id
@@ -3468,7 +4432,7 @@ export async function salesmanRecord(
          order by e.expense_date desc limit ${limit}
       `),
       db.execute(sql`
-        select s.id, c.name as "customerName", p.name as "productName",
+        select s.id, c.id as "customerId", c.name as "customerName", p.name as "productName",
                s.quantity_cans as "quantityCans",
                s.requested_date::text as "requestedDate",
                s.follow_up_date::text as "followUpDate",
@@ -3494,7 +4458,7 @@ export async function salesmanRecord(
       db.execute(sql`
         select t.id, t.title, t.priority::text as priority,
                t.due_date::text as "dueDate", t.status::text as status,
-               c.name as "customerName"
+               c.id as "customerId", c.name as "customerName"
           from mbos_tasks t
           left join customers c on c.id = t.customer_id
          where t.assigned_to_user_id = ${userId}

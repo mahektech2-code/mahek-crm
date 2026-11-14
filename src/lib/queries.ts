@@ -734,6 +734,21 @@ export function resolveSort<T extends string>(
   return direction === "desc" ? desc(columns[column]) : asc(columns[column]);
 }
 
+/**
+ * A DIRECT CUSTOMER, in SQL: an account we invoice ourselves.
+ *
+ * `kind = 'customer'` on its own is not the answer, because the mark is the
+ * more specific one — a shop we deliver to and do not bill is routinely a
+ * `customer` by kind, since we may have invoiced it last month. See
+ * `lib/account-types.ts`, which states the same rule for the screens.
+ *
+ * It is a constant rather than a literal in each caller because two things
+ * have to agree about it: the Customers list's own type filter, and the
+ * Monthly Targets list, which is direct customers and nothing else. A second
+ * spelling is how one of them quietly starts counting a lead.
+ */
+export const DIRECT_CUSTOMER_SQL = sql`customers.kind = 'customer' and not customers.third_party`;
+
 /** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
 function thirdPartyClause(value: string): SQL {
   switch (value) {
@@ -748,7 +763,7 @@ function thirdPartyClause(value: string): SQL {
     case "lead":
       return sql`customers.kind = 'lead' and not customers.third_party`;
     case "customer":
-      return sql`customers.kind = 'customer' and not customers.third_party`;
+      return DIRECT_CUSTOMER_SQL;
     case "nodistributor":
       /*
        * Converted, and nobody recorded as billing them. It should be empty —
@@ -1111,6 +1126,25 @@ function timelineBranch(kind: TimelineKind, customerId: string): SQL {
                nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
           from calls c join users u on u.id = c.user_id
          where c.customer_id = ${customerId}`;
+    case "Opportunity":
+      return sql`
+        select o.id, 'Opportunity' as kind, o.created_at as at, u.name as actor,
+               concat('Opportunity: ', o.product) as content,
+               -- Every part is optional and the row says only what was
+               -- answered. A blank estimate is nobody having put a figure on
+               -- it, which is not zero, so it is left out rather than printed
+               -- as ₹0 — which reads as an opportunity judged worthless.
+               nullif(concat_ws(' · ',
+                 o.estimated_quantity,
+                 case when o.estimated_value_paise is not null
+                   then concat('₹', to_char(round(o.estimated_value_paise / 100.0), 'FM9G99G99G999'))
+                 end,
+                 case when o.expected_order_date is not null
+                   then concat('expected ', to_char(o.expected_order_date, 'DD Mon'))
+                 end
+               ), '') as meta
+          from call_opportunities o join users u on u.id = o.user_id
+         where o.customer_id = ${customerId}`;
     case "WhatsApp":
       return sql`
         select m.id, 'WhatsApp', coalesce(m.confirmed_sent_at, m.sent_at, m.prepared_at),
@@ -1289,6 +1323,7 @@ export async function customerTimelineCounts(
   const [row] = await db.execute<Record<string, number>>(sql`
     select
       (select count(*)::int from calls where customer_id = ${customerId}) as "Call",
+      (select count(*)::int from call_opportunities where customer_id = ${customerId}) as "Opportunity",
       (select count(*)::int from wa_messages where customer_id = ${customerId}) as "WhatsApp",
       (select count(*)::int from orders where customer_id = ${customerId}) as "Order",
       (select count(*)::int from reminders where customer_id = ${customerId}) as "Reminder",

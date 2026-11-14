@@ -7,6 +7,7 @@ import {
   consoleCounts,
   expenseClaims,
   fieldInvoices,
+  fieldInvoiceSummary,
   fieldOrders,
   fieldReceipts,
   fieldSamples,
@@ -160,6 +161,7 @@ export async function teamBrief(): Promise<TeamBrief> {
     pendingOrders,
     leads,
     invoices,
+    invoiceSummary,
     leave,
     expenses,
     samples,
@@ -175,9 +177,10 @@ export async function teamBrief(): Promise<TeamBrief> {
     }),
     pendingApprovals(),
     fieldReceipts(),
-    fieldOrders(true),
+    fieldOrders("waiting"),
     leadsList(day),
-    fieldInvoices(),
+    fieldInvoices("open"),
+    fieldInvoiceSummary(),
     leaveRequests(),
     expenseClaims(),
     fieldSamples(),
@@ -213,7 +216,7 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- nobody has a published target for this month"]),
   );
 
-  const pendingLeave = leave.filter((l) => l.approvalState === "pending");
+  const pendingLeave = leave.rows.filter((l) => l.approvalState === "pending");
   const pendingExpenses = expenses.filter((e) => e.approvalState === "pending");
 
   lines.push(
@@ -231,9 +234,14 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- nothing waiting"]),
   );
 
-  const cashHeld = receipts.filter(
-    (r) => r.mode === "Cash" && !r.depositedAt && r.status !== "rejected" && r.status !== "reversed",
-  );
+  /* THE SAME LIST THE PAYMENTS SCREEN DRAWS, not a second reading of it.
+     This used to re-derive "cash in hand" here — its own `mode === "Cash"`,
+     its own status exclusions — over a capped page of receipts, so the brief
+     and the screen could quote one manager two different cash totals on one
+     morning. `fieldReceipts().cash` is the definition now and it is complete;
+     the only behaviour that moved is that a `reversed` note is included, which
+     is what the screen has always said. */
+  const cashHeld = receipts.cash;
   const cashByPerson = new Map<string, number>();
   for (const r of cashHeld) {
     const name = r.salesmanName ?? "Unassigned";
@@ -253,10 +261,10 @@ export async function teamBrief(): Promise<TeamBrief> {
 
   lines.push(
     "",
-    `ORDERS WAITING ON ACCOUNTS' APPROVAL (${pendingOrders.length}, longest-waiting first):`,
-    ...(pendingOrders.length
+    `ORDERS WAITING ON ACCOUNTS' APPROVAL (${pendingOrders.total}, longest-waiting first):`,
+    ...(pendingOrders.rows.length
       ? capped(
-          [...pendingOrders].sort((a, b) => b.waitingHours - a.waitingHours),
+          [...pendingOrders.rows].sort((a, b) => b.waitingHours - a.waitingHours),
           (o) =>
             `- ${o.customerName} via ${o.salesmanName ?? "unassigned"}: ${rupees(o.totalAmountPaise)}, waiting ${o.waitingHours}h${o.creditBlocked ? " — CREDIT BLOCKED" : ""}`,
           "orders",
@@ -278,14 +286,17 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- none"]),
   );
 
-  const openInvoices = invoices.filter((b) => b.paymentPosition !== "unstated" && b.openPaise > 0);
+  /* THE TOTALS ARE THE SUMMARY'S AND THE EXAMPLES ARE THE PAGE'S.
+     Summing a capped read here told a manager the book owed whatever its 300
+     biggest debts came to, in a brief written to be quoted. The bills listed
+     underneath are still the page — that is a sample by construction, and
+     `capped` already says so. */
+  const openInvoices = invoices.rows;
   const overdueInvoices = openInvoices.filter((b) => b.overdueDays > 0);
-  const outstandingTotal = openInvoices.reduce((sum, b) => sum + b.openPaise, 0);
-  const overdueTotal = overdueInvoices.reduce((sum, b) => sum + b.openPaise, 0);
 
   lines.push(
     "",
-    `WHAT THE TEAM'S BOOK OWES (${openInvoices.length} bills open, total ${rupees(outstandingTotal)}; ${overdueInvoices.length} overdue, total ${rupees(overdueTotal)}):`,
+    `WHAT THE TEAM'S BOOK OWES (${invoiceSummary.openCount} bills open, total ${rupees(invoiceSummary.openPaise)}; ${invoiceSummary.overdueCount} overdue, total ${rupees(invoiceSummary.overduePaise)}):`,
     ...capped(
       [...overdueInvoices].sort((a, b) => b.overdueDays - a.overdueDays),
       (b) => `- ${b.customerName} via ${b.salesmanName ?? "unassigned"}: ${rupees(b.openPaise)}, ${b.overdueDays} days overdue`,
@@ -318,11 +329,13 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- none"]),
   );
 
-  const lateSamples = samples.filter((s) => s.lateDays > 0);
-  if (lateSamples.length) {
+  /* `samples.late` is the count over the whole book; the rows are the page,
+     which now leads with exactly these. */
+  const lateSamples = samples.rows.filter((s) => s.lateDays > 0);
+  if (samples.late) {
     lines.push(
       "",
-      `SAMPLES WITH FEEDBACK OVERDUE (${lateSamples.length}):`,
+      `SAMPLES WITH FEEDBACK OVERDUE (${samples.late}):`,
       ...capped(
         lateSamples,
         (s) => `- ${s.customerName} via ${s.salesmanName}: ${s.productName ?? "product"}, ${s.lateDays} days late`,
@@ -338,7 +351,7 @@ export async function teamBrief(): Promise<TeamBrief> {
     readings.length === 0 &&
     approvals.length === 0 &&
     cashHeld.length === 0 &&
-    pendingOrders.length === 0 &&
+    pendingOrders.total === 0 &&
     leads.length === 0 &&
     openInvoices.length === 0 &&
     pendingLeave.length === 0 &&

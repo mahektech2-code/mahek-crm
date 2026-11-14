@@ -439,6 +439,8 @@ export type PullDelta = {
    * still his own `payments` row, and still `reported` until accounts find it.
    */
   customerBills: unknown[];
+  /** The oldest day those two channels reach back to. See `statementFrom`. */
+  statementFrom: string;
   /**
    * THE WHOLE BOOK, AS IDS — what this handset is allowed to hold right now.
    *

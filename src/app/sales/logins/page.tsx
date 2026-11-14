@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { deviceBindings } from "@/lib/services/sales-service";
 import { ReleaseButton } from "./release-button";
@@ -6,13 +5,16 @@ import {
   Banner,
   Cell,
   Empty,
+  EntityLink,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Login history — Sales Dashboard — MahekOne" };
 
@@ -30,12 +32,36 @@ export const metadata = { title: "Login history — Sales Dashboard — MahekOne
  * spoke to MahekOne, and whether an admin has released it. The gap is named on
  * the screen rather than filled in.
  */
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string; dir?: string }>;
+}) {
+  const params = await searchParams;
   const rows = await deviceBindings();
 
   const bound = rows.filter((r) => r.deviceId && r.deviceActive);
   const never = rows.filter((r) => !r.deviceId);
   const released = rows.filter((r) => r.releasedAt);
+
+  /* Sorting is DISPLAY ONLY: the three figures above the table are counted
+     over every row, and a "never signed in" count that changed when somebody
+     re-ordered a column would be the screen contradicting itself. What sorting
+     moves is which row is at the top, which is the whole of what a manager
+     scanning for old builds or dead handsets is asking for. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/logins", sort, key)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -72,25 +98,29 @@ export default async function Page() {
           minWidth={1260}
           head={
             <>
-              <HeadCell width={200}>Salesman</HeadCell>
+              {head("name", "Salesman", 200)}
+              {/* The model and the device id underneath it have no order worth
+                  asking for — an id is a random string, and the model is
+                  whatever the phone calls itself. The state column is a set of
+                  pills and the last is the release control; neither is a
+                  value. */}
               <HeadCell width={220}>Handset</HeadCell>
-              <HeadCell width={130}>App</HeadCell>
-              <HeadCell width={190}>Bound</HeadCell>
-              <HeadCell width={190}>Last spoke</HeadCell>
+              {head("version", "App", 130)}
+              {head("bound", "Bound", 190)}
+              {head("spoke", "Last spoke", 190)}
               <HeadCell width={210}>State</HeadCell>
               <HeadCell>Handset</HeadCell>
             </>
           }
         >
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <Row key={`${r.salesmanId}:${r.deviceId ?? "none"}`} striped={i % 2 === 1}>
               <Cell truncate={200}>
-                <Link
+                <EntityLink
                   href={`/sales/people/${r.salesmanId}`}
-                  className="font-medium text-ink no-underline"
                 >
                   {r.salesmanName}
-                </Link>
+                </EntityLink>
               </Cell>
               <Cell truncate={220} title={r.deviceId ?? undefined}>
                 {r.model ?? r.platform ?? (
@@ -153,3 +183,31 @@ export default async function Page() {
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * The APP version is here because it is the one question this screen can
+ * answer that nothing else can: an APK cannot be recalled, so "who is still on
+ * an old build" is asked every time something ships, and it was unanswerable
+ * on a list ordered by when a phone last spoke. It is compared as a string
+ * with `localeCompare`'s numeric option, which reads 1.5.0 above 1.10.0 —
+ * wrong in the strict semantic-version sense and right for the only comparison
+ * anybody makes here, which is against the one version currently published.
+ *
+ * A salesman who has never signed in on a phone has no bound date, no last
+ * contact and no version, and sorts LAST in either direction rather than
+ * heading "oldest build" — the metric above the table is where his absence is
+ * counted.
+ */
+const COLUMNS: SortColumns<{
+  salesmanName: string;
+  appVersion: string | null;
+  boundAt: Date | string | null;
+  lastSeenAt: Date | string | null;
+}> = {
+  name: (r) => r.salesmanName,
+  version: (r) => r.appVersion,
+  bound: (r) => (r.boundAt ? new Date(r.boundAt).getTime() : null),
+  spoke: (r) => (r.lastSeenAt ? new Date(r.lastSeenAt).getTime() : null),
+};

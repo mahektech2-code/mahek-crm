@@ -4,9 +4,13 @@ import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
+import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
+import { CustomerName } from "../../customer-name";
+import { DayCheck } from "./day-check";
 import {
   Cell,
   Empty,
+  EntityLink,
   HeadCell,
   LEAVE_LABEL,
   Pill,
@@ -36,6 +40,15 @@ const TABS = [
   "Orders",
   "Money",
   "Attendance",
+  /* A DAY AT A TIME, beside the record that is a month at a time.
+     Everything else under these tabs is a list to read THROUGH — sixty visits,
+     sixty orders — and answers "what has he been doing". This one answers a
+     different question, "do I believe what he sent me on Tuesday", and it is
+     asked of one day with the photographs in front of you. Folding it into
+     Attendance would have put a date picker inside a tab that is already a
+     list of thirty days, with two date controls on one screen meaning
+     different things. */
+  "Day check",
   "Leave",
   "Expenses",
   "Samples",
@@ -50,14 +63,33 @@ export function SalesmanScreen({
   month,
   thisMonth,
   lastMonth,
+  day,
+  longDay,
+  today,
+  dayEvidence,
+  selfieRetentionHours,
+  openDayCheck,
 }: {
   record: SalesmanRecord;
   month: string;
   /** Null where he did nothing at all in the month, which is a real answer. */
   thisMonth: PerformanceRow | null;
   lastMonth: PerformanceRow | null;
+  /** The day the Day check tab is showing. Defaults to today. */
+  day: string;
+  longDay: string;
+  today: string;
+  dayEvidence: DayEvidenceType | null;
+  selfieRetentionHours: number;
+  /**
+   * Whether the URL asked for a day, which is what makes an arrival from the
+   * Attendance screen land where it said it would. The tab is React state and
+   * the date changer is a set of links, so without this a step to yesterday
+   * would navigate and drop the reader back on Visits.
+   */
+  openDayCheck: boolean;
 }) {
-  const [tab, setTab] = React.useState<Tab>("Visits");
+  const [tab, setTab] = React.useState<Tab>(openDayCheck ? "Day check" : "Visits");
   const { salesman: s } = record;
 
   const counts: Record<Tab, number> = {
@@ -65,6 +97,11 @@ export function SalesmanScreen({
     Orders: record.orders.length,
     Money: record.receipts.length,
     Attendance: record.attendance.length,
+    /* What is still UNANSWERED on the day being shown, not how many
+       photographs there are. The badge is there to say whether this tab wants
+       something from you, and a count that stayed at six after you had checked
+       all six would say the opposite. */
+    "Day check": (dayEvidence?.items ?? []).filter((i) => i.review === null).length,
     Leave: record.leave.length,
     Expenses: record.expenses.length,
     Samples: record.samples.length,
@@ -196,7 +233,19 @@ export function SalesmanScreen({
             {record.visits.map((v, i) => (
               <Row key={v.id} striped={i % 2 === 1}>
                 <Cell>{v.checkInAt ? stamp(v.checkInAt) : <span className="text-muted">—</span>}</Cell>
-                <Cell truncate={220}>{v.customerName}</Cell>
+                {/*
+                  THE SHOP OPENS, on this tab and on the four below it.
+
+                  Six of these tabs name a customer and on every list elsewhere
+                  in the console that name is a `CustomerName`, which opens the
+                  shop's quick view — the same drawer the two maps open, so one
+                  account cannot read two ways depending on where it was found.
+                  There is no customer RECORD page in this app: that lives in
+                  the CRM, which a sales manager may not hold.
+                */}
+                <Cell truncate={220}>
+                  <CustomerName id={v.customerId} name={v.customerName} />
+                </Cell>
                 <Cell>{label(VISIT_OUTCOME_LABEL, v.outcome)}</Cell>
                 <Cell>
                   {v.durationSeconds != null ? (
@@ -245,7 +294,9 @@ export function SalesmanScreen({
               <Row key={o.id} striped={i % 2 === 1}>
                 <Cell>{shortDate(o.orderedAt)}</Cell>
                 <Cell>{o.orderNo ?? <span className="text-muted">Not yet numbered</span>}</Cell>
-                <Cell truncate={320}>{o.customerName}</Cell>
+                <Cell truncate={320}>
+                  <CustomerName id={o.customerId} name={o.customerName} />
+                </Cell>
                 <Cell align="right">{money(o.totalAmountPaise)}</Cell>
                 <Cell>
                   <Pill
@@ -288,7 +339,9 @@ export function SalesmanScreen({
                 <Row key={r.id} striped={i % 2 === 1}>
                   <Cell>{shortDate(r.receivedAt)}</Cell>
                   <Cell>{r.receiptNo ?? <span className="text-muted">Not yet numbered</span>}</Cell>
-                  <Cell truncate={300}>{r.customerName}</Cell>
+                  <Cell truncate={300}>
+                    <CustomerName id={r.customerId} name={r.customerName} />
+                  </Cell>
                   <Cell align="right">{money(r.amountPaise)}</Cell>
                   <Cell>{r.mode}</Cell>
                   <Cell>
@@ -320,6 +373,17 @@ export function SalesmanScreen({
             </p>
           </>
         )
+      ) : null}
+
+      {tab === "Day check" ? (
+        <DayCheck
+          salesmanId={s.id}
+          day={day}
+          longDay={longDay}
+          today={today}
+          evidence={dayEvidence}
+          retentionHours={selfieRetentionHours}
+        />
       ) : null}
 
       {tab === "Attendance" ? (
@@ -480,7 +544,9 @@ export function SalesmanScreen({
             {record.samples.map((sm, i) => (
               <Row key={sm.id} striped={i % 2 === 1}>
                 <Cell>{sm.requestedDate ? shortDate(sm.requestedDate) : "—"}</Cell>
-                <Cell truncate={240}>{sm.customerName}</Cell>
+                <Cell truncate={240}>
+                  <CustomerName id={sm.customerId} name={sm.customerName} />
+                </Cell>
                 <Cell truncate={240}>
                   {sm.productName ?? <span className="text-muted">Not named</span>}
                 </Cell>
@@ -529,7 +595,17 @@ export function SalesmanScreen({
           >
             {record.leads.map((l, i) => (
               <Row key={l.id} striped={i % 2 === 1}>
-                <Cell truncate={220}>{l.name}</Cell>
+                {/* A LEAD OPENS ITS LADDER, not the shop's quick view.
+                    These rows are customer rows — `salesmanRecord` selects
+                    them straight out of `customers` — so `CustomerName` would
+                    work here and would be the wrong control: the quick view
+                    answers "what does this shop buy and owe", and a lead has
+                    never bought anything. What somebody opening a lead wants
+                    is the rung it is on and what is holding it there, and that
+                    is `/sales/leads/[id]`. */}
+                <Cell truncate={220}>
+                  <EntityLink href={`/sales/leads/${l.id}`}>{l.name}</EntityLink>
+                </Cell>
                 <Cell truncate={220}>
                   {l.companyName ?? <span className="text-muted">—</span>}
                 </Cell>
@@ -578,8 +654,16 @@ export function SalesmanScreen({
             {record.tasks.map((t, i) => (
               <Row key={t.id} striped={i % 2 === 1}>
                 <Cell truncate={380}>{t.title}</Cell>
+                {/* A task legitimately names no shop, so the id is nullable
+                    here where it is not on the four tabs above — the control
+                    draws the `muted` node in that case rather than a dead
+                    button over an em dash. */}
                 <Cell truncate={220}>
-                  {t.customerName ?? <span className="text-muted">—</span>}
+                  <CustomerName
+                    id={t.customerId}
+                    name={t.customerName}
+                    muted={<span className="text-muted">—</span>}
+                  />
                 </Cell>
                 <Cell>
                   <Pill tone={t.priority === "high" ? "danger" : "neutral"}>{t.priority}</Pill>

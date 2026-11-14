@@ -482,6 +482,58 @@ a task ONCE — the standing open task is the guard — because thirty rows for 
 quiet shop is a list people stop reading. Measured cycles only: a default is a
 guess, and chasing on a guess rings a quarterly buyer every month.
 
+**THE STATEMENT IS ON THE PHONE, because the question is asked at a counter.**
+A shopkeeper with his own file open asks what was billed in July and what he
+has paid against it in one breath, and the answer cannot be an endpoint: there
+is no signal in a paint market. So `customer_bills` and `customer_payments`
+carry a WINDOW — `mbos.sync.statementMonths`, thirteen — and the record's
+Account tab builds the running balance from them locally.
+
+**IT USED TO BE OPEN BILLS ONLY, capped at ten, and that is a reversal.** That
+was the collections question: a bill with nothing owed on it is nothing to
+collect. It is also 10,405 of the 10,815 bills on this book, so the statement it
+would have made was a year with almost every row missing. Dropping `openOnly`
+is ALSO what lets the channel be a delta, which is what pays for the extra
+rows: the old one could not be `since`-gated, because a bill leaving the open
+set by being settled has no row left to carry a cursor. Inside a window there
+is no such case — a row is either on the phone already or has a moved
+`updated_at`, and a bill leaves only by ageing past a date the handset can read
+for itself.
+
+**So the PICKER filters where the wire used to.** `openCustomerBills` asks for
+a balance above zero, and `pay.tsx` reads that rather than `customerBills`. A
+settled bill offered there is one the salesman names, `handlePayment` refuses
+with `bill_settled`, and the refusal reads as the app being wrong rather than
+the phone being stale.
+
+**WHAT WAS ON A BILL RIDES ON THE BILL, as JSON text.** A bill IS the order, so
+the lines are the order's — and an order records them in one of two ways: the
+sheet and the handset write `orders.line_items` naming the product as TEXT, the
+CRM writes `interaction_product_lines` keyed on the CALL. 10,867 of 10,957
+orders are the first and 90 are the second, which is exactly the ratio that
+makes the second easy to forget and impossible to notice. A column rather than
+a table because a bill's lines never change after it is raised: no second
+cursor, and no moment where a bill has arrived and its contents have not.
+
+**The running balance is the handset's arithmetic and not a second opinion.**
+`engines/statement.ts` is pure and orders rows the office sent; every figure in
+it was written by the office. Outstanding stays `customers.outstandingPaise`,
+the office's own, and the screen says which figure is which — a total computed
+on a phone from thirteen months of rows is how a salesman and an accounts clerk
+quote one shopkeeper two different debts with him listening. Only `confirmed`
+money moves the balance, which is the one rule it shares with `customerLedger`.
+
+**A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the other two say so.** A lead
+has never ordered and a third-party shop is billed to its distributor, so both
+would draw a correct empty list — and an empty list with nothing saying why
+reads as a sync that has not finished. It is the sentence the Accounts app
+already puts above its own ledger for the same account.
+
+**And the tab says how far back THIS PHONE goes**, read off the rows rather
+than off the window the office sent. A shop billed for three months reaches
+back three months, not thirteen, and a screen claiming otherwise over a list
+that starts in June is one nobody trusts twice.
+
 **A SAMPLE HAS THREE DATES BECAUSE THREE PARTIES ASSERT THREE THINGS.**
 `dispatched_at` is us saying it went. `delivered_at` is the carrier, or our own
 man, saying it arrived. `received_at` is the SHOP saying it is in their hands.
@@ -2999,6 +3051,29 @@ as though it were fresh. Reading is cheap when nothing changed, since every
 row carries a content hash — an untouched tab costs a read and no writes,
 which is what makes the cadence affordable.
 
+**THERE IS A THIRD CYCLE, AND FOR A LONG TIME NOTHING CALLED IT.** `runHourly`
+shipped with the MBOS module and no caller was ever written: `sheet-sync.sh`
+knew `cycle` and `nightly`, the crontab knew the same two, and `?mode=hourly`
+was not in the route's own map of modes. So everything this file describes as
+hourly ran nightly at best — the attendance selfie sweep that makes
+`mbos.attendance.selfieRetentionHours` mean 72 rather than "up to a day and a
+half more", the MBOS escalations, the unconfirmed-WhatsApp sweep, the complaint
+SLA, and the salesman score. NOTHING LOOKED BROKEN, which is why it lasted:
+each of those either has a nightly path or fails by simply being late, and a
+late figure is indistinguishable from a correct one unless you know what it
+should say. The handset was where it showed, because that screen reads the
+cache rather than deriving anything — a target published at ten in the morning
+reached the salesman the following day.
+
+**A cache a phone reads is a cache with a deadline.** The score was the half
+missing from `runHourly` itself: the nightly rebuilt both this month and the
+last, and nothing rebuilt anything in between. It is this month ONLY on the
+hour — the previous month's correction can wait for the nightly, and doing it
+twenty-four times over is a pass of the whole order book to move a figure
+nobody is being judged on any more. It needs nothing recomputed before it,
+unlike in the nightly, because every figure it reads comes off the ledger
+rather than off a derived cache.
+
 **A `schedule:` in GitHub Actions is a hope, not a cadence.** It is
 best-effort, and on a private repo belonging to a free account it is the
 lowest priority tier there is: a tick that cannot be served is DROPPED, never
@@ -3897,6 +3972,35 @@ the RESIDUAL, enforced by a partial unique index, and it catches both the
 formulations nobody has classified and every order line whose product name
 matched nothing. Without a residual the shares would not total 100% and every
 percentage on every screen would be wrong by an amount nothing named.
+
+**AND A MIX IS NOW SET ON THE FORMULATION, NOT ON THE CATEGORY ABOVE IT.**
+Universal / PU / Nano is three rows, which is too broad to aim a salesman at —
+the liquid is the thing he actually sells, and nineteen is a list somebody can
+pick three from. So `mixCategories` offers formulations, the picker adds and
+removes them one at a time, and a target carries as many or as few as that
+person's book warrants. `product_formulations.is_residual` is "Other", the same
+partial unique index one level down, because value whose product names no
+formulation still has to be in the denominator.
+
+**NOTHING ALREADY SET IS REINTERPRETED.** `sales_target_categories` and
+`sales_performance_categories` each carry BOTH keys with a check constraint
+demanding exactly one, and a band typed against a category goes on scoring as a
+category — reading "Universal 40%" as a formulation would be inventing which of
+the six liquids under it somebody meant. That is the treatment `activity_target`
+and `collection_target_paise` already get: retired in place, never reread.
+`isFormulation` is taken off the target's own bands and decides which BUCKET of
+actuals is scored, because `scoreMix` totals whatever it is handed and one map
+holding both would halve every share.
+
+**Every reader of that pair has to read both, and the one that did not was the
+WIRE.** The handset's mix rode on an inner join onto `product_categories`, so a
+row keyed on a formulation matched nothing and the phone was sent an empty mix
+for a target that plainly had one — which reads on the phone as nothing having
+been asked of him, not as a payload with a hole in it. Nothing failed: the
+query was valid, the JSON was well formed, and the office screen was right.
+`performance.test.ts` sends a formulation target through `buildBootstrap` and
+asserts the names come back, because a missing row in a correct payload is
+invisible to every other kind of check.
 
 **Unmatched money counts as revenue, contributes no litres, and is REPORTED.**
 Order lines carry a product NAME and several of the sheet's names match

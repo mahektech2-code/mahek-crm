@@ -244,6 +244,30 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
   }
 }
 
+/**
+ * Re-price a day that has already been submitted, after somebody in the office
+ * corrected the evidence under it.
+ *
+ * **It moves the LINES and never the RECORD of what was claimed.**
+ * `submittedClaimedPaise` and `submittedEligiblePaise` say what the totals were
+ * at submission and are deliberately never rebuilt — they are the same kind of
+ * mark as `orders.approvedAt`, a note of what somebody was told on a day, and
+ * a rebuild does not correct that question, it destroys it. What this rewrites
+ * is the per-line eligible figure, which is the cache every screen adds up.
+ *
+ * **It does not touch the lock, the approval or the exceptions.** A correction
+ * is not a decision, and the day stays exactly where it was in the queue with
+ * the same person still owing an answer on it.
+ *
+ * Calling it on a day nobody has submitted is harmless and pointless: the
+ * figures are written at submission anyway, from these same functions.
+ */
+export async function repriceDay(userId: string, day: string): Promise<void> {
+  const answer = await priceDay(userId, day);
+  if (!answer?.computation) return;
+  await writeLineFigures(answer);
+}
+
 /* ---------------------------------------------------- the anomaly findings */
 
 async function anomaliesFor(

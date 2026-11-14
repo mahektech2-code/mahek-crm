@@ -28,6 +28,16 @@ export const TIMELINE_PAGE = 10;
 
 export const TIMELINE_KINDS = [
   "Call",
+  /*
+   * A sales opportunity somebody spotted on a call.
+   *
+   * Second, because it comes OUT of the call above it and a telecaller reading
+   * this record before ringing wants the last conversation and what it turned
+   * up, in that order. `call_opportunities` has no worklist of its own yet, so
+   * this pill is where an opportunity is actually read — a record nobody can
+   * see is a record nobody acts on.
+   */
+  "Opportunity",
   "WhatsApp",
   "Complaint",
   "Reminder",

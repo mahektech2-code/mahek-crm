@@ -115,6 +115,59 @@ export const interactionOutcomeEnum = pgEnum("interaction_outcome", [
 ]);
 
 /**
+ * WHO WAS ON THE OTHER END, as a job rather than a name.
+ *
+ * A price question from the owner and the same question from a store boy are
+ * different calls, and only one of them is worth a salesman's morning. There
+ * is no contact master to read this from — `customers.contact_person` is a
+ * single free-text field holding whoever last answered the phone — so it is
+ * asked on the call, and `caller_name` beside it is what a contact master
+ * would eventually be built out of.
+ */
+export const callerRoleEnum = pgEnum("caller_role", [
+  "owner",
+  "purchase",
+  "accounts",
+  "store",
+  "production",
+  "other",
+]);
+
+/**
+ * WHY THE CUSTOMER RANG — the question this module did not ask.
+ *
+ * `interaction_outcome` is how a call ENDED. This is what the customer wanted
+ * when they picked up the phone, and on an inbound call the two are routinely
+ * different: somebody rings to ask a price and the call ends as a follow-up.
+ * Collapsed onto the outcome, the first half was not recorded at all, and
+ * "how many people rang us about price this quarter" was a grep over free
+ * text rather than something anybody could count.
+ *
+ * NULL is the fourth answer and it is what let this ship: every call logged
+ * before the column existed carries none, and nothing backfills one. Guessing
+ * a reason from an outcome is a decision dressed up as a migration — the
+ * outcome is genuinely a different fact, so the guess would be wrong on
+ * exactly the calls this column exists to tell apart.
+ *
+ * Inbound only, for now. An outbound call's reason is whatever the queue put
+ * the customer in front of us for, which is already recorded as the queue
+ * reason — asking the telecaller to restate it would be a second answer that
+ * can disagree with the first.
+ */
+export const callReasonEnum = pgEnum("call_reason", [
+  "place_order",
+  "price_quotation",
+  "product_enquiry",
+  "stock_availability",
+  "payment_outstanding",
+  "delivery_transport",
+  "complaint",
+  "technical_support",
+  "followup_previous",
+  "other",
+]);
+
+/**
  * What kind of thing the next step is, kept apart from WHEN it is.
  *
  * `booked` is a date the customer is expecting and we owe them; `scheduled` is
@@ -1686,6 +1739,80 @@ export const calls = pgTable(
      */
     quickNoteIds: jsonb("quick_note_ids").$type<string[]>().notNull().default([]),
 
+    /* ------------------------------------------------- who rang, and why
+     *
+     * Both are INBOUND's, and both are null on every call logged before they
+     * existed. Nothing backfills either: a reason guessed from an outcome
+     * would be wrong on exactly the calls the column exists to tell apart,
+     * and a caller role guessed from `contact_person` would assert that the
+     * person who last answered is the person who rang this time.
+     */
+    callerRole: callerRoleEnum("caller_role"),
+    /** Free text beside the role — a role with no name cannot be rung back. */
+    callerName: text("caller_name"),
+    callReason: callReasonEnum("call_reason"),
+
+    /**
+     * The answers the chosen reason asked for, keyed by field.
+     *
+     * JSONB rather than thirteen columns because the questions differ per
+     * reason and most are null on any one row — a price enquiry's packaging
+     * and a delivery chase's issue code have nothing to do with each other,
+     * and a table of columns that are null 90% of the time is one nobody can
+     * read. What is NOT in here is anything that has to be counted across
+     * reasons or joined to: those are columns, above and below.
+     *
+     * `lib/call-reasons.ts` owns the shape and BOTH ends read it — the form
+     * draws from `reasonFieldsFor` and `saveInteraction` validates against the
+     * same function, so a box that is mandatory on the screen is mandatory in
+     * the rule.
+     */
+    reasonDetail: jsonb("reason_detail").$type<Record<string, string>>(),
+
+    /**
+     * WHAT SOMEBODY UNDERTOOK TO DO, as codes.
+     *
+     * A list rather than one value: "send the price and have the salesman call
+     * in" is one sentence a customer says and two things that have to happen,
+     * and storing the first would lose the second silently.
+     */
+    /**
+     * The answers the OUTCOME asked for, keyed by field.
+     *
+     * `reason_detail` above is inbound's "why did they ring"; this is "what
+     * does this ending need to record", and it applies to both directions.
+     * Same shape and same argument for jsonb over columns: the questions
+     * differ per outcome and most are null on any one row — a No Order's
+     * reason code and a complaint's priority have nothing to do with each
+     * other. It is still queryable (`outcome_detail->>'whyNoOrder'`), which is
+     * the whole point: "how many did we lose on credit terms this quarter" has
+     * to be a question somebody can ask.
+     *
+     * `lib/call-outcomes.ts` owns the shape and both ends read it.
+     */
+    outcomeDetail: jsonb("outcome_detail").$type<Record<string, string>>(),
+
+    /**
+     * WHICH ATTEMPT THIS WAS, on a No Answer.
+     *
+     * Stamped rather than derived on read, because it is the answer as it
+     * stood when the call was made — the same kind of mark as `next_step_*`
+     * beside it. `customers.no_answer_count` is the live counter the queue's
+     * own ladder reads and it is reset the moment somebody answers, so a call
+     * logged as "attempt 3" would read as attempt 0 a week later, and the one
+     * question this outcome exists to answer would have no answer left.
+     */
+    callAttempt: integer("call_attempt"),
+
+    nextActions: jsonb("next_actions").$type<string[]>().notNull().default([]),
+    /**
+     * The day it was undertaken FOR. Where one is given it becomes a reminder
+     * — the same mechanism a promised payment already uses rather than a
+     * second one beside it, so a next action cannot be a dropdown nobody acts
+     * on.
+     */
+    nextActionDate: date("next_action_date"),
+
     sourceModule: sourceModuleEnum("source_module").notNull().default("ad_hoc"),
     /** Where in the day's queue this fell, when it came from the queue. */
     queuePosition: integer("queue_position"),
@@ -1736,6 +1863,66 @@ export const calls = pgTable(
     index("calls_user_started_idx").on(t.userId, t.startedAt),
     index("calls_started_idx").on(t.startedAt),
     uniqueIndex("calls_idempotency_key").on(t.idempotencyKey),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * A SALES OPPORTUNITY THE CALL CREATED.
+ *
+ * Its own table and deliberately NOT a lead. A lead here is an account that
+ * has never ordered — about thirty places read `customers.kind` on exactly
+ * that understanding — so an opportunity spotted on a call with a customer of
+ * four years cannot be modelled as one without making every reader wrong. It
+ * is not a jsonb field on the call either: the whole point of asking is that
+ * somebody can later count what was spotted and what came of it, and an answer
+ * buried in a detail blob is one nobody queries.
+ *
+ * What it does NOT have yet is a screen of its own to be worked on. That is
+ * stated rather than hidden: every row also writes a `timeline_events` entry,
+ * so an opportunity lands on the customer record where the next person to read
+ * that account will see it, rather than sitting in a table nothing renders.
+ * A worklist is the obvious next thing to build on top; the record being
+ * honest is what makes building it possible.
+ *
+ * The value is PAISE like all money here, and it is what the telecaller was
+ * told — never derived. `products.priceSource` is still `unset` and
+ * `canValueOrders()` still answers no, so a figure computed from the catalogue
+ * would be an invention.
+ * ------------------------------------------------------------------------- */
+export const callOpportunities = pgTable(
+  "call_opportunities",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The call it came out of. Every row has one — this is the only writer. */
+    callId: text("call_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+
+    /**
+     * What they might buy, in their words. Free text rather than a product id
+     * for the same reason `lead_requirement` is: resolving "thinner for a
+     * spray booth" to a SKU at capture is the telecaller guessing on the
+     * customer's behalf, mid-call.
+     */
+    product: text("product").notNull(),
+    /** Their words again — "about 20 cans a month" is a real answer. */
+    estimatedQuantity: text("estimated_quantity"),
+    /** Paise. Null means nobody put a number on it, which is not zero. */
+    estimatedValuePaise: bigint("estimated_value_paise", { mode: "number" }),
+    expectedOrderDate: date("expected_order_date"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("call_opportunities_customer_idx").on(t.customerId),
+    index("call_opportunities_call_idx").on(t.callId),
   ],
 );
 
@@ -1826,12 +2013,41 @@ export const productFormulations = pgTable(
      * disappears out of the denominator.
      */
     categoryId: text("category_id").references(() => productCategories.id),
+    /**
+     * The catch-all formulation — "Other".
+     *
+     * A mix is now set on FORMULATIONS rather than on the three categories
+     * above them: Universal / PU / Nano is too broad to aim anybody at, and
+     * the liquid is the thing a salesman actually sells. Nineteen rows is a
+     * list somebody can pick three from; three rows was a list that told them
+     * almost nothing.
+     *
+     * Shares have to add up, so there must be somewhere for value to go when
+     * its product names no formulation at all — an unmatched order line, or a
+     * SKU nobody has filed yet. That is this row. At most one may carry it,
+     * enforced by the partial unique index below, exactly as on
+     * `product_categories`: two residuals would count unclassified value twice
+     * and overstate every share.
+     *
+     * It is a real row rather than a sentinel id because the mix tables hold a
+     * foreign key, and a made-up id in a foreign key is a row nobody can join
+     * to. `catalogue-import.ts` only ever creates and updates formulations —
+     * it never deactivates one missing from the document — so it will not
+     * remove this.
+     */
+    isResidual: boolean("is_residual").notNull().default(false),
     active: boolean("active").notNull().default(true),
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("product_formulations_slug_key").on(t.slug)],
+  (t) => [
+    uniqueIndex("product_formulations_slug_key").on(t.slug),
+    /* At most one "Other" — two would count unclassified value twice. */
+    uniqueIndex("product_formulations_residual_key")
+      .on(t.isResidual)
+      .where(sql`is_residual`),
+  ],
 );
 
 export const productBrands = pgTable(
@@ -2521,6 +2737,20 @@ export const complaints = pgTable(
     /** Mandatory — the customer's own words. */
     description: text("description").notNull(),
     severity: severityEnum("severity").notNull().default("medium"),
+    /**
+     * WHAT THE CUSTOMER IS ASKING FOR — a replacement, a credit note, a visit.
+     *
+     * A code from `COMPLAINT_ACTIONS`, and it is what ROUTES the complaint:
+     * `assigned_to` below has defaulted to "Operations" on every complaint ever
+     * raised, which is not a routing decision but the absence of one. The desk
+     * is derived from this rather than asked as a second question the
+     * telecaller has no way to answer.
+     *
+     * Null on every complaint raised before it was asked. Nothing backfills
+     * one: guessing what a customer wanted from a category is a decision
+     * dressed up as a migration.
+     */
+    requiredAction: text("required_action"),
     assignedTo: text("assigned_to").notNull().default("Operations"),
     status: complaintStatusEnum("status").notNull().default("open"),
     relatedBillId: text("related_bill_id"),
@@ -6064,6 +6294,87 @@ export const mbosAttendanceDays = pgTable(
   ],
 );
 
+/* ------------------------------------------------- the evidence of a day */
+
+/** A selfie at a mark, or a meter at one end of a leg. */
+export const mbosEvidenceKindEnum = pgEnum("mbos_evidence_kind", [
+  "attendance_selfie",
+  "odometer",
+]);
+
+export const mbosEvidenceVerdictEnum = pgEnum("mbos_evidence_verdict", [
+  "accepted",
+  "declined",
+]);
+
+/**
+ * WHAT A MANAGER MADE OF THE PHOTOGRAPHS A DAY PRODUCED.
+ *
+ * Every check-in and every check-out is photographed and every leg opened from
+ * "Start visit" photographs the meter at both ends with the reading typed
+ * against it. All of that has reached the office since those modules shipped
+ * and none of it could ever be ANSWERED: the attendance screen drew the
+ * selfies, the travel ledger drew a "Photo" pill, and neither had anywhere to
+ * put the one thing a person looking at a photograph produces. So a photograph
+ * nobody had accepted and a photograph nobody had opened were the same row —
+ * on the two records a payslip and a mileage claim are read against.
+ *
+ * **ONE TABLE FOR TWO KINDS, because it is one act.** A face and a meter are
+ * different evidence and the question put to both is the same one: is this
+ * what it says it is. Two tables would be two actions, two screens and two
+ * answers to "has this day been checked".
+ *
+ * **THE KEY IS THE MARK, NOT THE ROW.** A day carries six selfies and a leg
+ * carries two meters, so keying on the row id alone would collapse them onto
+ * one verdict and the first written would win — the same failure
+ * `timeline_events` avoids by putting the stage in the source id, spelled the
+ * same way here: `att:<dayId>:<session>:in|out` and `leg:<legId>:start|end`.
+ *
+ * **`reportedKm` IS WRITTEN ONCE AND NEVER AGAIN.** Correcting a reading
+ * overwrites what the salesman typed on the leg itself — which is the point,
+ * since the leg is what the distance is worked out from — and this column is
+ * the only place his original figure survives. Restating it on a second
+ * correction would quietly present the office's own first answer as his.
+ *
+ * **It is NOT a decision about money.** `mbos_approvals` decides the claim and
+ * remains the only thing that does. This says whether the evidence under it
+ * stood up, which is the question somebody answers BEFORE deciding and which
+ * was on no screen in the product.
+ */
+export const mbosEvidenceReviews = pgTable(
+  "mbos_evidence_reviews",
+  {
+    id: text("id").primaryKey(),
+    /** The salesman the evidence belongs to — never the manager deciding. */
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The business day in Asia/Kolkata, so one screen is one query. */
+    day: date("day").notNull(),
+    kind: mbosEvidenceKindEnum("kind").notNull(),
+    /** The natural key. See the note above; unique across the table. */
+    sourceRef: text("source_ref").notNull(),
+    /** `mbos_attendance_days` | `mbos_travel_legs`. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    verdict: mbosEvidenceVerdictEnum("verdict").notNull(),
+    /** Required on a decline, by a check constraint and not only by a form. */
+    remark: text("remark"),
+    /** Odometer only: what the salesman typed, kept for ever. */
+    reportedKm: integer("reported_km"),
+    /** Odometer only: what the manager read off the photograph. */
+    correctedKm: integer("corrected_km"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mbos_evidence_reviews_ref_key").on(t.sourceRef),
+    index("mbos_evidence_reviews_day_idx").on(t.userId, t.day),
+  ],
+);
+
 /* ----------------------------------------------------------------- leave */
 
 export const mbosLeaveTypeEnum = pgEnum("mbos_leave_type", [
@@ -6995,7 +7306,38 @@ export const salesTargets = pgTable(
      * the same way any other unset component does.
      */
     collectionTargetBp: integer("collection_target_bp"),
+    /**
+     * A COUNT OF TASKS, and the reason it is retired is the same one that
+     * retired `collection_target_paise` two lines up.
+     *
+     * "Ten tasks marked done" means nothing without knowing how many were
+     * asked for. A salesman given twelve tasks and one given a hundred were
+     * held to the same ten — the first can barely fail it and the second
+     * cannot pass it — and neither figure says anything about whether the
+     * person did what was asked. A target somebody can meet by being given
+     * fewer tasks is not a target.
+     *
+     * Left in place and simply stops scoring, exactly as the retired
+     * collection column does: a target set before this shipped is not
+     * reinterpreted as a percentage, because 10 was never a percentage and
+     * pretending otherwise would mark somebody at 10% of their tasks.
+     */
     activityTarget: integer("activity_target"),
+    /**
+     * Basis points of THE TASKS THEY WERE ASKED TO DO — the ones falling due
+     * inside the month — rather than a count of them.
+     *
+     * The same shape as `collection_target_bp` beside it, and for the same
+     * reason: the thing being measured has a base that differs from person to
+     * person and month to month, so the only figure that means the same thing
+     * everywhere is a share of it.
+     *
+     * Where nobody was given any tasks the implied target is zero, which
+     * `achievementBp` already reads as "not asked" and drops from the score.
+     * A salesman with no tasks has nothing to be measured on here, which is
+     * not the same as failing.
+     */
+    activityTargetBp: integer("activity_target_bp"),
 
     status: salesTargetStatusEnum("status").notNull().default("draft"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
@@ -7038,9 +7380,23 @@ export const salesTargetCategories = pgTable(
     targetId: text("target_id")
       .notNull()
       .references(() => salesTargets.id, { onDelete: "cascade" }),
-    categoryId: text("category_id")
-      .notNull()
-      .references(() => productCategories.id),
+    categoryId: text("category_id").references(() => productCategories.id),
+    /**
+     * WHAT THIS BAND IS ABOUT, when it is a formulation rather than a category.
+     *
+     * Exactly one of `category_id` and `formulation_id` is set, which the check
+     * below enforces. New bands are set on formulations — Universal / PU / Nano
+     * is too broad to aim a salesman at, and nineteen liquids is a list
+     * somebody can pick three from.
+     *
+     * `category_id` is NOT dropped and the rows already set against it are not
+     * rewritten: a band somebody typed is a decision, and reinterpreting
+     * "Universal 40%" as a formulation would be inventing which liquid they
+     * meant. They go on scoring exactly as before until somebody replaces them,
+     * which is the same treatment `activity_target` and
+     * `collection_target_paise` get one table up.
+     */
+    formulationId: text("formulation_id").references(() => productFormulations.id),
     /** Basis points of total value. 3000 is 30%. */
     minimumBp: integer("minimum_bp").notNull().default(0),
     targetBp: integer("target_bp").notNull().default(0),
@@ -7048,6 +7404,13 @@ export const salesTargetCategories = pgTable(
   },
   (t) => [
     uniqueIndex("sales_target_categories_key").on(t.targetId, t.categoryId),
+    uniqueIndex("sales_target_categories_formulation_key").on(t.targetId, t.formulationId),
+    /* One subject per band. Neither set is a row that scores nothing; both set
+       is a row that would score twice. */
+    check(
+      "sales_target_categories_one_subject",
+      sql`(category_id is null) <> (formulation_id is null)`,
+    ),
     /* A band that does not increase would score a larger share lower than a
        smaller one — invisible until somebody is marked down for selling more
        of exactly what they were asked to sell. */
@@ -7176,9 +7539,9 @@ export const salesPerformanceCategories = pgTable(
     performanceId: text("performance_id")
       .notNull()
       .references(() => salesPerformance.id, { onDelete: "cascade" }),
-    categoryId: text("category_id")
-      .notNull()
-      .references(() => productCategories.id),
+    categoryId: text("category_id").references(() => productCategories.id),
+    /** The formulation this reading is about, where the band was set on one. */
+    formulationId: text("formulation_id").references(() => productFormulations.id),
     targetBp: integer("target_bp").notNull().default(0),
     minimumBp: integer("minimum_bp").notNull().default(0),
     stretchBp: integer("stretch_bp").notNull().default(0),
@@ -7192,6 +7555,10 @@ export const salesPerformanceCategories = pgTable(
   },
   (t) => [
     uniqueIndex("sales_performance_categories_key").on(t.performanceId, t.categoryId),
+    uniqueIndex("sales_performance_categories_formulation_key").on(
+      t.performanceId,
+      t.formulationId,
+    ),
   ],
 );
 
@@ -7533,6 +7900,7 @@ export type SampleFeedback = typeof sampleFeedback.$inferSelect;
 export type MbosExpense = typeof mbosExpenses.$inferSelect;
 export type MbosExpenseClaim = typeof mbosExpenseClaims.$inferSelect;
 export type MbosAttendanceDay = typeof mbosAttendanceDays.$inferSelect;
+export type MbosEvidenceReview = typeof mbosEvidenceReviews.$inferSelect;
 export type MbosLeaveRequest = typeof mbosLeaveRequests.$inferSelect;
 export type MbosLeaveBalance = typeof mbosLeaveBalances.$inferSelect;
 export type MbosTour = typeof mbosTours.$inferSelect;

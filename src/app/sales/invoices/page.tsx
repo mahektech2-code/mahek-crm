@@ -1,31 +1,29 @@
 import Link from "next/link";
 import { money, shortDate } from "@/lib/format";
-import { fieldInvoices } from "@/lib/services/sales-service";
+import { fieldInvoices, fieldInvoiceSummary } from "@/lib/services/sales-service";
 import {
   Cell,
   Empty,
   FilterChips,
-  HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import {
   plural,
 } from "../words";
+import { CustomerName } from "../customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Invoices — Sales Dashboard — MahekOne" };
 
-/** The design's aging bands, oldest last. */
-const BANDS = [
-  { label: "Not due", from: -9999, to: 0 },
-  { label: "1–30 days", from: 1, to: 30 },
-  { label: "31–60", from: 31, to: 60 },
-  { label: "61–90", from: 61, to: 90 },
-  { label: "Over 90", from: 91, to: 9999 },
-];
+/* The bands themselves moved into `sales-service.ts`, beside the SQL that
+   sums them — they are the boundaries of a `filter (where …)` clause now, and
+   a second copy of the numbers here would be a strip whose labels stopped
+   describing its own bars. */
 
 /**
  * Every bill raised against the field's book.
@@ -44,33 +42,45 @@ const BANDS = [
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
-  const all = await fieldInvoices();
 
-  const show = ["all", "open", "overdue", "unstated"].includes(params.show ?? "")
-    ? params.show!
-    : "open";
+  const show = (
+    ["all", "open", "overdue", "unstated"].includes(params.show ?? "") ? params.show! : "open"
+  ) as "all" | "open" | "overdue" | "unstated";
 
-  const stated = all.filter((b) => b.paymentPosition === "stated");
-  const unstated = all.filter((b) => b.paymentPosition !== "stated");
-  const open = stated.filter((b) => Number(b.openPaise) > 0);
-  const overdue = open.filter((b) => b.overdueDays > 0);
+  /* EVERY FIGURE ON THIS SCREEN IS COUNTED IN SQL, and the table underneath is
+     a page. They were one read: the whole screen was derived from `limit 300`
+     ordered by the largest open balance, so the open total, the overdue total
+     and the aging strip described the 300 biggest debts and were labelled as
+     if they described the book — 300 of 10,815 on the real one. */
+  const [result, summary] = await Promise.all([fieldInvoices(show), fieldInvoiceSummary()]);
+  const rows = result.rows;
 
-  const rows =
-    show === "all" ? all : show === "overdue" ? overdue : show === "unstated" ? unstated : open;
+  const bands = summary.bands;
+  const widest = Math.max(1, ...bands.map((b) => b.amountPaise));
 
-  const owed = open.reduce((n, b) => n + Number(b.openPaise), 0);
-  const overdueOwed = overdue.reduce((n, b) => n + Number(b.openPaise), 0);
-
-  const bands = BANDS.map((b) => ({
-    ...b,
-    amount: open
-      .filter((x) => x.overdueDays >= b.from && x.overdueDays <= b.to)
-      .reduce((n, x) => n + Number(x.openPaise), 0),
-  }));
-  const widest = Math.max(1, ...bands.map((b) => b.amount));
+  /* Sorting is DISPLAY ONLY. Every figure above this table — the four metrics,
+     the aging strip and the chip counts — is counted in SQL over the whole
+     book by `fieldInvoiceSummary`, so no amount of re-ordering can move one of
+     them. That separation is what makes a client-visible sort safe here:
+     pushing it into the query instead would re-order a capped read, quietly
+     changing WHICH 300 bills are on the page, and the line above the table
+     promising "the largest N" would become false without saying so. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, labelText: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/invoices", sort, key, `show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {labelText}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -81,24 +91,24 @@ export default async function Page({
 
       <MetricRow
         metrics={[
-          { label: "Open", value: money(owed), sub: plural(open.length, "bill") },
+          { label: "Open", value: money(summary.openPaise), sub: plural(summary.openCount, "bill") },
           {
             label: "Overdue",
-            value: money(overdueOwed),
-            sub: plural(overdue.length, "bill"),
-            tone: overdue.length ? "danger" : undefined,
+            value: money(summary.overduePaise),
+            sub: plural(summary.overdueCount, "bill"),
+            tone: summary.overdueCount ? "danger" : undefined,
           },
           {
             label: "Nobody has spoken for",
-            value: String(unstated.length),
+            value: String(summary.unstatedCount),
             sub: "neither paid nor owed",
-            tone: unstated.length ? "warn" : undefined,
+            tone: summary.unstatedCount ? "warn" : undefined,
           },
-          { label: "Bills in all", value: String(all.length) },
+          { label: "Bills in all", value: String(summary.total) },
         ]}
       />
 
-      {open.length ? (
+      {summary.openCount ? (
         <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
           <div className="mb-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             How old the money is
@@ -113,11 +123,11 @@ export default async function Page({
                       "block h-full rounded-[4px] " +
                       (b.from > 60 ? "bg-danger" : b.from > 0 ? "bg-warn" : "bg-success")
                     }
-                    style={{ width: `${Math.round((b.amount / widest) * 100)}%` }}
+                    style={{ width: `${Math.round((b.amountPaise / widest) * 100)}%` }}
                   />
                 </span>
                 <span className="w-[150px] flex-none text-right text-[13px] text-ink tabular-nums">
-                  {b.amount ? money(b.amount) : "—"}
+                  {b.amountPaise ? money(b.amountPaise) : "—"}
                 </span>
               </div>
             ))}
@@ -128,10 +138,10 @@ export default async function Page({
       <FilterChips
         current={show}
                 options={[
-          { key: "open", href: `/sales/invoices?show=open`, label: "Open", count: open.length },
-          { key: "overdue", href: `/sales/invoices?show=overdue`, label: "Overdue", count: overdue.length },
-          { key: "unstated", href: `/sales/invoices?show=unstated`, label: "Unspoken for", count: unstated.length },
-          { key: "all", href: `/sales/invoices?show=all`, label: "Everything", count: all.length },
+          { key: "open", href: `/sales/invoices?show=open`, label: "Open", count: summary.openCount },
+          { key: "overdue", href: `/sales/invoices?show=overdue`, label: "Overdue", count: summary.overdueCount },
+          { key: "unstated", href: `/sales/invoices?show=unstated`, label: "Unspoken for", count: summary.unstatedCount },
+          { key: "all", href: `/sales/invoices?show=all`, label: "Everything", count: summary.total },
         ]}
       />
 
@@ -145,28 +155,39 @@ export default async function Page({
           }
         />
       ) : (
+        <>
+          {/* The figures above are the whole book; this is a page of one view
+              of it, biggest debt first. Saying so is the difference between a
+              slice and a wrong total. */}
+          {result.capped ? (
+            <p className="mb-2 text-[13px] text-muted">
+              The {rows.length} largest of {result.total} in this view.
+            </p>
+          ) : null}
         <Table
           minWidth={1280}
           head={
             <>
-              <HeadCell width={180}>Bill</HeadCell>
-              <HeadCell width={220}>Customer</HeadCell>
-              <HeadCell width={160}>Salesman</HeadCell>
-              <HeadCell width={120}>Due</HeadCell>
-              <HeadCell align="right" width={140}>Amount</HeadCell>
-              <HeadCell align="right" width={140}>Paid</HeadCell>
-              <HeadCell align="right" width={140}>Open</HeadCell>
-              <HeadCell>State</HeadCell>
+              {head("bill", "Bill", 180)}
+              {head("customer", "Customer", 220)}
+              {head("salesman", "Salesman", 160)}
+              {head("due", "Due", 120)}
+              {head("amount", "Amount", 140, "right")}
+              {head("paid", "Paid", 140, "right")}
+              {head("open", "Open", 140, "right")}
+              {head("state", "State")}
             </>
           }
         >
-          {rows.map((b, i) => (
+          {sorted.map((b, i) => (
             <Row key={b.id} striped={i % 2 === 1}>
               <Cell truncate={180}>
                 <span className="font-medium text-ink">{b.billNo}</span>
                 <span className="block text-[12px] text-muted">{shortDate(b.billDate)}</span>
               </Cell>
-              <Cell truncate={220}>{b.customerName}</Cell>
+              <Cell truncate={220}>
+                <CustomerName id={b.customerId} name={b.customerName} />
+              </Cell>
               <Cell truncate={160}>
                 {b.salesmanId ? (
                   <Link
@@ -217,7 +238,51 @@ export default async function Page({
             </Row>
           ))}
         </Table>
+        </>
       )}
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * The money columns compare NUMBERS rather than the strings the cells print:
+ * `money()` renders lakhs and crores in words, so sorting the rendered text
+ * would put ₹9 lakh above ₹9 crore with nothing on the screen to explain it.
+ *
+ * **Open is null on a bill nobody has spoken for**, which is the one judgement
+ * call here. Such a bill has an `openPaise` in the row and the cell
+ * deliberately refuses to print it — it counts as neither paid nor owed —
+ * so sorting on the hidden figure would rank the table by a number the screen
+ * is on record as declining to show, and "not known" would appear half way up
+ * a descending list of real debts. Null instead sends every unspoken-for bill
+ * to the bottom, where the chip and the metric above already say how many
+ * there are.
+ *
+ * State sorts on `overdueDays` rather than on the pill's wording, because that
+ * is the ordering somebody means when they click it: worst first, by how late
+ * rather than alphabetically by a label. Settled and merely open bills both
+ * sit at zero or below and tie, which the stable sort leaves in the query's
+ * own order.
+ */
+const COLUMNS: SortColumns<{
+  billNo: string;
+  customerName: string;
+  salesmanName: string | null;
+  dueDate: string | null;
+  amountPaise: number;
+  paidPaise: number;
+  openPaise: number;
+  overdueDays: number;
+  paymentPosition: string;
+}> = {
+  bill: (b) => b.billNo,
+  customer: (b) => b.customerName,
+  salesman: (b) => b.salesmanName,
+  due: (b) => (b.dueDate ? new Date(b.dueDate).getTime() : null),
+  amount: (b) => Number(b.amountPaise),
+  paid: (b) => Number(b.paidPaise),
+  open: (b) => (b.paymentPosition === "stated" ? Number(b.openPaise) : null),
+  state: (b) => b.overdueDays,
+};

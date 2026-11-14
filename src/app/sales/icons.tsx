@@ -37,7 +37,8 @@ export type SalesIconName =
   | "close"
   | "dots"
   | "tick"
-  | "signOut";
+  | "signOut"
+  | "chevron";
 
 const PATHS: Record<SalesIconName, React.ReactNode> = {
   home: <path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" />,
@@ -174,6 +175,10 @@ const PATHS: Record<SalesIconName, React.ReactNode> = {
     </>
   ),
   tick: <path d="m5 13 4 4L19 7" />,
+  // Drawn pointing RIGHT and rotated by the caller when a group is open, so
+  // the two states are one glyph turning rather than two glyphs swapping —
+  // which is what makes the movement read as the same thing opening.
+  chevron: <path d="m9 6 6 6-6 6" />,
   // Same glyph as the CRM header's own sign-out icon (shell/icons.tsx) — one
   // shape for the action everywhere it appears, not a stand-in borrowed from
   // "close" because this set never had a real one.

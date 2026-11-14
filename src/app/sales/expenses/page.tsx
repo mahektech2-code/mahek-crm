@@ -10,14 +10,17 @@ import {
   Banner,
   Cell,
   Empty,
+  EntityLink,
   FilterChips,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 import { plural } from "../words";
 
 export const metadata = { title: "Expenses & claims — Sales Dashboard — MahekOne" };
@@ -47,7 +50,7 @@ const km = (metres: number) => `${(metres / 1000).toFixed(0)} km`;
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string; month?: string }>;
+  searchParams: Promise<{ show?: string; month?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
@@ -72,6 +75,31 @@ export default async function Page({
   const overPolicy = all.filter((d) => Number(d.excessPaise) > 0);
   const autoApproved = decided.filter((d) => d.routeReason === "auto");
   const escalated = all.filter((d) => d.stepCount > 1);
+
+  /* Sorting is DISPLAY ONLY, over the rows the chip has already cut. The four
+     figures above are counted over the whole month the query returned — what
+     is waiting, what it is eligible for, what is over policy — and not one of
+     them may move when somebody clicks a column: a manager who sorted by
+     Claimed and watched "Eligible, waiting" change would have no way to know
+     which of the two figures to believe.
+
+     BOTH the chip and the month ride on every header link. The month is the
+     more dangerous of the two to drop, because a sort that silently returned
+     him to the current month would look like the claims for March having
+     vanished rather than like a filter having been reset. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, text: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/expenses", sort, key, `show=${show}&month=${month}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {text}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -126,27 +154,36 @@ export default async function Page({
           minWidth={1500}
           head={
             <>
-              <HeadCell width={170}>Salesman</HeadCell>
-              <HeadCell width={110}>Day</HeadCell>
+              {head("name", "Salesman", 170)}
+              {head("day", "Day", 110)}
+              {/* A composed sentence rather than a value — legs, food, hotel
+                  and the rest joined into one line — so there is nothing to
+                  order it by. The state column is the same case one step on:
+                  a set of pills, a decision note and a submission time, whose
+                  one orderable half the chips above already cut. */}
               <HeadCell width={190}>What it was made of</HeadCell>
-              <HeadCell align="right" width={120}>Claimed</HeadCell>
-              <HeadCell align="right" width={120}>Eligible</HeadCell>
-              <HeadCell align="right" width={130}>Approved</HeadCell>
-              <HeadCell width={180}>This month</HeadCell>
+              {/* All THREE money columns sort, because they are three different
+                  numbers and the question is usually about the gap between
+                  them — the biggest claim, the biggest allowance and the
+                  biggest decision are three different days. */}
+              {head("claimed", "Claimed", 120, "right")}
+              {head("eligible", "Eligible", 120, "right")}
+              {head("approved", "Approved", 130, "right")}
+              {head("monthToDate", "This month", 180)}
               <HeadCell width={190}>State</HeadCell>
               <HeadCell align="right" width={200} />
             </>
           }
         >
-          {rows.map((d, i) => {
+          {sorted.map((d, i) => {
             const excess = Number(d.excessPaise);
             const pending = !d.approvalState || d.approvalState === "pending";
             return (
               <Row key={d.dayId} striped={i % 2 === 1}>
                 <Cell truncate={170}>
-                  <Link href={`/sales/people/${d.userId}`} className="font-medium text-ink no-underline">
+                  <EntityLink href={`/sales/people/${d.userId}`}>
                     {d.userName}
-                  </Link>
+                  </EntityLink>
                 </Cell>
                 <Cell>
                   {shortDate(d.day)}
@@ -239,3 +276,36 @@ export default async function Page({
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * Every money figure is read through `Number` for the reason the cells are:
+ * these come off a raw `db.execute`, so a paise column arrives as a string
+ * whatever the row type says, and comparing "9000" against "10000" as text
+ * would put the larger claim underneath the smaller one.
+ *
+ * APPROVED is null until somebody has decided, and a day nobody has decided is
+ * not a day approved for nothing — so it answers null and sorts last in either
+ * direction rather than sitting at the bottom of the descending pass as a
+ * zero. The two columns beside it are what a waiting day is read by.
+ *
+ * The day is compared as its own `YYYY-MM-DD` text rather than parsed: the
+ * spelling sorts correctly on its own and every row here is inside one month,
+ * so there is nothing a timestamp would settle that the string does not.
+ */
+const COLUMNS: SortColumns<{
+  userName: string;
+  day: string;
+  claimedPaise: number;
+  eligiblePaise: number;
+  approvedAmountPaise: number | null;
+  monthToDatePaise: number;
+}> = {
+  name: (d) => d.userName,
+  day: (d) => d.day,
+  claimed: (d) => Number(d.claimedPaise),
+  eligible: (d) => Number(d.eligiblePaise),
+  approved: (d) => (d.approvedAmountPaise === null ? null : Number(d.approvedAmountPaise)),
+  monthToDate: (d) => Number(d.monthToDatePaise),
+};

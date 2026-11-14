@@ -2,20 +2,28 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { cx } from "@/components/ui/primitives";
 import { signOut } from "@/lib/actions/auth";
-import { SalesIcon, type SalesIconName } from "./icons";
+import { SalesIcon } from "./icons";
+import { SalesSidebarNav, type SalesCounts } from "./sidebar-nav";
+import { SalesSearch } from "./search";
 import { AskPanel } from "./ask-panel";
 
 /* ---------------------------------------------------------------------------
  * The Manager Console's shell, from `MBOS Manager Console.dc.html`.
  *
- * Twenty-four destinations in six groups. That is a lot of sidebar, and the
- * design earns it by grouping on what somebody came here to DO rather than on
+ * Thirty destinations grouped on what somebody came here to DO rather than on
  * which table the data sits in: Overview is the morning, Field work is the
  * people, Commercial is the money, and the rest is administration you visit
  * occasionally.
+ *
+ * Drawn flat that was thirty-six rows and taller than the viewport. It is one
+ * pinned row and six collapsed groups now, and the sidebar itself moved to
+ * `./sidebar-nav.tsx` — the shell holds the header, the frame and Live now,
+ * and the column that has state of its own is its own component.
+ *
+ * The list itself is `./nav.ts`, which says why it is data rather than written
+ * out here: it is a second copy of the module registry, and it had drifted by
+ * four screens.
  *
  * Three things the design does that are worth naming, because each is easy to
  * lose in a port:
@@ -33,84 +41,7 @@ import { AskPanel } from "./ask-panel";
  * animation in the whole console.
  * ------------------------------------------------------------------------- */
 
-type Item = {
-  href: string;
-  label: string;
-  icon: SalesIconName;
-  exact?: boolean;
-  count?: number;
-};
-
-/**
- * The navigation, in the design's own order and words.
- *
- * Drawn from this list and filtered through `app_module_access`, so a module
- * somebody does not hold is not drawn — and its route redirects anyway, since
- * a link that is not drawn is a statement to the browser and the browser is not
- * where authority lives.
- */
-const NAV: Array<{ label: string; items: Item[] }> = [
-  {
-    label: "Overview",
-    items: [
-      { href: "/sales", label: "Today", icon: "home", exact: true },
-      { href: "/sales/live", label: "Live map", icon: "pin" },
-      { href: "/sales/territory", label: "Territory", icon: "grid" },
-      { href: "/sales/performance", label: "Performance", icon: "chart" },
-      { href: "/sales/targets", label: "Sales Targets", icon: "target" },
-    ],
-  },
-  {
-    label: "Field work",
-    items: [
-      { href: "/sales/tasks", label: "Tasks", icon: "task" },
-      { href: "/sales/journeys", label: "Journey planning", icon: "route" },
-      { href: "/sales/visits", label: "Visits", icon: "visit" },
-      { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
-      { href: "/sales/leads", label: "Leads", icon: "spark" },
-    ],
-  },
-  {
-    label: "Commercial",
-    items: [
-      { href: "/sales/orders", label: "Orders", icon: "order" },
-      { href: "/sales/payments", label: "Payments", icon: "money" },
-      { href: "/sales/invoices", label: "Invoices", icon: "doc" },
-      { href: "/sales/samples", label: "Samples", icon: "sample" },
-      { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
-    ],
-  },
-  {
-    label: "People",
-    items: [
-      { href: "/sales/attendance", label: "Attendance", icon: "clock" },
-      { href: "/sales/leave", label: "Leave", icon: "cal" },
-      { href: "/sales/holidays", label: "Holidays", icon: "cal" },
-      { href: "/sales/salary", label: "Salary", icon: "money" },
-      { href: "/sales/expenses", label: "Expenses & claims", icon: "receipt" },
-    ],
-  },
-  {
-    label: "Enablement",
-    items: [
-      { href: "/sales/documents", label: "Documents", icon: "doc" },
-      { href: "/sales/knowledge", label: "Knowledge", icon: "book" },
-    ],
-  },
-  {
-    label: "Administration",
-    items: [
-      { href: "/sales/people", label: "Salesmen", icon: "people" },
-      { href: "/sales/prefs", label: "App preferences", icon: "sliders" },
-      { href: "/sales/logins", label: "Login history", icon: "shield" },
-      { href: "/sales/sync-health", label: "Sync health", icon: "bell" },
-      { href: "/sales/notify", label: "Send a notification", icon: "bell" },
-      { href: "/sales/audit", label: "Audit trail", icon: "list" },
-    ],
-  },
-];
-
-export type SalesCounts = Partial<Record<string, number>>;
+export type { SalesCounts };
 
 export function SalesShell({
   user,
@@ -139,14 +70,6 @@ export function SalesShell({
   feedback: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
-  const permitted = new Set(allowed);
-
-  const groups = NAV.map((g) => ({
-    ...g,
-    items: g.items.filter((i) => permitted.has(i.href)),
-  })).filter((g) => g.items.length > 0);
-
   return (
     <div className="flex h-screen min-w-[1100px] flex-col overflow-hidden bg-canvas">
       {/* ------------------------------------------------------------ header */}
@@ -206,15 +129,7 @@ export function SalesShell({
           {teamLine}
         </span>
 
-        <span className="relative min-w-[180px] max-w-[380px] flex-[1_1_320px]">
-          <span className="pointer-events-none absolute top-[9px] left-2.5 flex text-muted">
-            <SalesIcon name="search" size={16} />
-          </span>
-          <input
-            placeholder="Search a salesman, customer, order or bill"
-            className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
-          />
-        </span>
+        <SalesSearch />
 
         <span className="flex-1" />
 
@@ -287,61 +202,7 @@ export function SalesShell({
       <div className="flex min-h-0 flex-1">
         {/* --------------------------------------------------------- sidebar */}
         <aside className="flex w-[232px] flex-none flex-col border-r border-line bg-surface">
-          <nav
-            aria-label="Manager Console sections"
-            className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4"
-          >
-            {groups.map((group) => (
-              <div key={group.label}>
-                <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  {group.label}
-                </div>
-                {group.items.map((item) => {
-                  const active = item.exact
-                    ? pathname === item.href
-                    : pathname === item.href || pathname.startsWith(item.href + "/");
-                  const count = counts[item.href] ?? 0;
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      aria-current={active ? "page" : undefined}
-                      className={cx(
-                        "relative mb-px flex min-h-9 items-center gap-2.5 rounded-[4px] border-l-[3px] pr-2.5 pl-[9px] text-sm whitespace-nowrap no-underline hover:no-underline",
-                        active
-                          ? "border-l-brand font-medium text-[#5223E0]"
-                          : "border-l-transparent text-body hover:bg-canvas",
-                      )}
-                    >
-                      {active ? (
-                        <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
-                      ) : null}
-                      <span className="relative z-1 flex flex-none">
-                        <SalesIcon name={item.icon} size={18} />
-                      </span>
-                      <span className="relative z-1 min-w-0 flex-1 overflow-hidden text-ellipsis">
-                        {item.label}
-                      </span>
-                      {count > 0 ? (
-                        <span
-                          className={cx(
-                            "relative z-1 h-[18px] min-w-5 flex-none rounded-[9px] px-1.5 text-center text-[11px] leading-[18px] font-medium tabular-nums",
-                            /* Red past five, amber below. The number alone does
-                             * not say whether anybody is on top of it. */
-                            count >= 5
-                              ? "bg-danger-soft text-danger"
-                              : "bg-warn-line text-warn-ink",
-                          )}
-                        >
-                          {count}
-                        </span>
-                      ) : null}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
-          </nav>
+          <SalesSidebarNav allowed={allowed} counts={counts} />
 
           <div className="flex-none border-t border-divider px-3 py-2.5">
             <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">

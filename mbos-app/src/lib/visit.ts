@@ -59,7 +59,7 @@ export const FOLLOW_ON: Partial<Record<OutcomeKey, { label: string; word: string
 };
 
 export type VisitCheck = {
-  key: 'gps' | 'dwell' | 'photo' | 'followon' | 'outcome';
+  key: 'gps' | 'dwell' | 'followon' | 'outcome';
   ok: boolean;
   line: string;
   /** Only shown when the check has failed — the reason the rule exists at all. */
@@ -91,7 +91,6 @@ export type VisitFacts = {
    * what the office is told changes; what changes is that he is asked once.
    */
   checkInOverridden: boolean;
-  hasShopPhoto: boolean;
   outcome: OutcomeKey | null;
   followOnCaptured: boolean;
 };
@@ -133,12 +132,10 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
         : `Only ${f.dwellSeconds}s so far — a visit needs ${floor}`,
       why: 'Two minutes is the floor agreed with your manager.',
     },
-    {
-      key: 'photo',
-      ok: f.hasShopPhoto,
-      line: f.hasShopPhoto ? 'Shop photo taken' : 'Shop photo not taken',
-      why: 'The photo is what the office sees when nobody was there.',
-    },
+    /* No photograph check. The shop and owner photos are offered on the form
+       and never required: a visit is not refused, or saved unverified, for
+       want of a picture of a counter. The tiles do not say "optional" either —
+       they are simply there to be pressed. */
     {
       key: 'followon',
       ok: !fo || f.followOnCaptured,

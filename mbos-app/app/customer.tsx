@@ -12,16 +12,28 @@ import { stageLabel } from '../src/engines/funnel';
 import { complaintsFor, customerSamples, type Complaint, type Sample } from '../src/data/requests';
 import { writeInternalNote } from '../src/data/internal-notes';
 import {
+  billLines,
   competitorRecords,
+  customerBills,
   customerOrders,
   customerPayments,
   customerTimeline,
   OUTSTANDING_ALERT_PAISE,
   recordCompetitor,
+  statementReach,
+  type CustomerBill,
   type CustomerOrder,
   type CustomerPayment,
   type TimelineEvent,
 } from '../src/data/customers';
+import { accountType } from '../src/lib/account-label';
+import {
+  buildStatement,
+  countsAsMoney,
+  periodRange,
+  PERIODS,
+  type PeriodKey,
+} from '../src/engines/statement';
 import { TIMELINE_PAGE } from '../src/data/customer-query';
 import { getConfig } from '../src/data/config';
 import { inr, inrFromPaise, isoDate, pretty, shopName } from '../src/lib/format';
@@ -41,7 +53,19 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
  * know which he has.
  */
 
-const TABS = ['Overview', 'Timeline', 'Orders', 'Payments', 'Samples', 'Complaints', 'Competitors'];
+/*
+ * "Payments" IS "Account" NOW, in the same position, which is why nothing had
+ * to be done about `pTab` — it is an index in the store and a salesman who
+ * left the record on that tab comes back to the tab that replaced it.
+ *
+ * The old one listed receipts alone, and a list of payments with no bills
+ * beside them cannot answer the question it is opened for. A shopkeeper with
+ * his own file open asks what was billed in July and what he has paid against
+ * it, in one breath; two tabs made the salesman hold one half in his head
+ * while he read the other. It is the same shape the Accounts app has for the
+ * same reason — a customer account, not a payments list.
+ */
+const TABS = ['Overview', 'Timeline', 'Orders', 'Account', 'Samples', 'Complaints', 'Competitors'];
 const TL_FILTERS = ['All', 'Visits', 'Orders', 'Payments', 'Calls', 'Complaints'];
 
 /** The stream's own event types, in the words the design puts on the badge. */
@@ -108,6 +132,14 @@ export default function CustomerRecord() {
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
   const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
   const [receipts, setReceipts] = React.useState<CustomerPayment[]>([]);
+  const [bills, setBills] = React.useState<CustomerBill[]>([]);
+  /* The oldest day this handset actually holds something for — see
+     `statementReach`. Not the window the office sent: what is HERE. */
+  const [reach, setReach] = React.useState<string | null>(null);
+  const [period, setPeriod] = React.useState<PeriodKey>('three_months');
+  /* Which bill is open to show what was on it. One at a time: a list of
+     twenty bills each unfolded into four lines is a screen nobody scrolls. */
+  const [openBillId, setOpenBillId] = React.useState<string | null>(null);
   const [samples, setSamples] = React.useState<Sample[]>([]);
   const [gripes, setGripes] = React.useState<Complaint[]>([]);
   const [note, setNote] = React.useState('');
@@ -150,13 +182,17 @@ export default function CustomerRecord() {
       customerPayments(id),
       customerSamples(id),
       complaintsFor(id),
+      customerBills(id),
+      statementReach(id),
     ]);
   }, [id, tlFilter]);
 
   const apply = React.useCallback(
-    ([t, k, o, r, sm, g]: Awaited<NonNullable<ReturnType<typeof read>>>) => {
+    ([t, k, o, r, sm, g, b, from]: Awaited<NonNullable<ReturnType<typeof read>>>) => {
       setOrders(o);
       setReceipts(r);
+      setBills(b);
+      setReach(from);
       setSamples(sm);
       setGripes(g);
       setEvents(t);
@@ -269,6 +305,19 @@ export default function CustomerRecord() {
 
   const dues = c.outstandingPaise / 100;
   const owner = c.contactPerson ?? c.name;
+
+  /* WHAT KIND OF ACCOUNT THIS IS, from the shared pure rule rather than from
+     `c.kind` — the office keeps one row for a lead and a customer, and the
+     lead arrives down its own channel. See `lib/account-label.ts`. */
+  const accountKind = accountType({ ...c, isLead: lead ? 1 : 0 });
+
+  /* The statement for the window on screen. Derived rather than held in state:
+     it is a pure function of three things already here, and a copy in state is
+     a copy that can be stale by exactly one render — on a screen showing money
+     to a customer. */
+  const window = periodRange(period, isoDate(new Date(nowMs)));
+  const statement = buildStatement(bills, receipts, window);
+  const billsInWindow = statement.entries.filter((e) => e.kind === 'bill').length;
 
   /*
    * THREE REASONS A TAB IS BLANK, and only the last is the one those sentences
@@ -683,42 +732,151 @@ export default function CustomerRecord() {
           </View>
         ) : null}
 
-        {/* ---- what they paid ---- */}
+        {/* ---- the account: what was billed, what came in ---- */}
         {pTab === 3 ? (
           <View style={{ gap: 10 }}>
-            {receipts.length === 0 ? (
-              nothingYet(
-                'No payments on this handset',
-                "Receipts the office has recorded arrive with the day's sync. If this shop has paid and nothing is here, sign out and in once.",
-              )
+            {/*
+              A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the two that are
+              not say so rather than showing an empty list.
+
+              A lead has never ordered — that is the whole definition — and a
+              third-party shop is one we deliver to and do not bill, so its
+              invoices are the distributor's and always will be. Both would
+              draw a correct, empty screen, and an empty screen with nothing
+              saying why reads as a sync that has not finished. It is the same
+              sentence the Accounts app puts above its own ledger for the same
+              account, one screen over.
+            */}
+            {accountKind === 'Lead' ? (
+              <Empty
+                head="Nothing billed to a lead"
+                body="A lead is a shop that has never ordered from us. When the first order is billed, it will be on this tab."
+              />
+            ) : accountKind === 'Third party' ? (
+              <Empty
+                head="We deliver here and do not bill it"
+                body="The goods are invoiced to the distributor, so there are no bills on this shop. What it has taken is under Orders."
+              />
             ) : (
               <>
-                {receipts.map((r) => (
-                  <Card key={r.id} style={{ gap: 4 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                      <Text
-                        style={[
-                          {
-                            fontSize: 15,
-                            /* Only confirmed money has moved anything. A
-                               rejected or reversed receipt is shown rather than
-                               hidden — the customer will say "we paid that",
-                               and he needs an answer — but it must not read
-                               like money in the bank. */
-                            color: r.status === 'confirmed' ? C.ink : C.muted,
-                          },
-                          weight(600),
-                        ]}>
-                        {r.amountPaise != null ? inrFromPaise(r.amountPaise) : '—'}
-                      </Text>
-                      <Text style={type.caption}>{pretty(r.receivedAt)}</Text>
-                    </View>
-                    <Text style={type.caption}>
-                      {[r.mode, r.reference, r.status].filter(Boolean).join(' · ')}
-                    </Text>
-                  </Card>
-                ))}
-                <Slice n={receipts.length} noun="payment" />
+                {/* ---- the window ---- */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 8, paddingRight: 16 }}
+                  style={{ flexGrow: 0, marginHorizontal: -16, paddingHorizontal: 16 }}>
+                  {PERIODS.map((p) => {
+                    const on = period === p.key;
+                    return (
+                      <Pressable
+                        key={p.key}
+                        onPress={() => setPeriod(p.key)}
+                        style={{
+                          height: 34,
+                          paddingHorizontal: 14,
+                          borderRadius: radius.pill,
+                          borderWidth: 1,
+                          borderColor: on ? C.primary : C.border,
+                          backgroundColor: on ? C.primaryTint : C.surface,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                        <Text
+                          style={[
+                            { fontSize: 14, color: on ? C.primaryDeep : C.body },
+                            weight(on ? 500 : 400),
+                          ]}>
+                          {p.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* ---- the four figures ----
+
+                    OUTSTANDING IS THE OFFICE'S OWN and is not added up here.
+                    Everything else on this card describes the window; that one
+                    describes the account, and a second total computed on a
+                    phone from thirteen months of rows is exactly how a salesman
+                    and an accounts clerk come to quote a shopkeeper two
+                    different debts with him listening. */}
+                <Card style={{ gap: 10 }}>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <Figure label="Billed" value={inrFromPaise(statement.billedPaise)} />
+                    <Figure label="Received" value={inrFromPaise(statement.receivedPaise)} />
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 12, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 10 }}>
+                    <Figure
+                      label="Outstanding now"
+                      value={c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing'}
+                      tone={c.outstandingPaise ? C.danger : undefined}
+                    />
+                    {statement.awaitingCount ? (
+                      <Figure
+                        label="With accounts"
+                        value={inrFromPaise(statement.awaitingPaise)}
+                        tone={C.warn}
+                      />
+                    ) : (
+                      <Figure label="Bills" value={String(billsInWindow)} />
+                    )}
+                  </View>
+                  <Text style={type.caption}>
+                    Billed and received are for the window above. Outstanding is the office&apos;s own
+                    figure for the whole account, and only money accounts have found in the bank
+                    counts towards it.
+                  </Text>
+                </Card>
+
+                {statement.openingPaise !== 0 ? (
+                  <Text style={type.caption}>
+                    {inrFromPaise(statement.openingPaise)} was outstanding before this window opened.
+                  </Text>
+                ) : null}
+
+                {/* ---- the lines ---- */}
+                {statement.entries.length === 0 ? (
+                  nothingYet(
+                    bills.length || receipts.length
+                      ? 'Nothing in this window'
+                      : 'Nothing billed on this handset',
+                    bills.length || receipts.length
+                      ? 'No bill or payment falls inside these dates. Try a wider one.'
+                      : "The office's bills and receipts arrive with the day's sync. If this shop has been billed and nothing is here, sign out and in once.",
+                  )
+                ) : (
+                  statement.entries.map((e) =>
+                    e.kind === 'bill' ? (
+                      <BillCard
+                        key={'b' + e.bill.id}
+                        bill={e.bill}
+                        balanceAfterPaise={e.balancePaise}
+                        open={openBillId === e.bill.id}
+                        onToggle={() =>
+                          setOpenBillId(openBillId === e.bill.id ? null : e.bill.id)
+                        }
+                      />
+                    ) : (
+                      <ReceiptCard
+                        key={'r' + e.receipt.id}
+                        receipt={e.receipt}
+                        balanceAfterPaise={e.balancePaise}
+                      />
+                    ),
+                  )
+                )}
+
+                {/* HOW FAR BACK THIS PHONE GOES, said plainly. A capped list
+                    has to admit what it is a slice of — otherwise a salesman
+                    reads "This year" over eight months of bills and tells a
+                    shopkeeper that is all there was. */}
+                {reach ? (
+                  <Text style={[type.caption, { marginTop: 4 }]}>
+                    This phone holds the account back to {pretty(reach)}. Anything older is in
+                    the office.
+                  </Text>
+                ) : null}
               </>
             )}
           </View>
@@ -1009,6 +1167,187 @@ function Slice({ n, noun }: { n: number; noun: string }) {
     <Text style={[type.caption, { textAlign: 'center', marginTop: 2 }]}>
       {'The last ' + n + ' ' + noun + 's. Older ones stay in the office.'}
     </Text>
+  );
+}
+
+/** One figure on the account card. */
+function Figure({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <View style={{ flex: 1, minWidth: 0 }}>
+      <Text style={type.label}>{label}</Text>
+      <Text style={[{ fontSize: 17, color: tone ?? C.ink, marginTop: 2 }, weight(600), tabular]}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * ONE BILL, and what was on it.
+ *
+ * The number, the date and the amount are what a shopkeeper reads off his own
+ * copy, so they are what the card leads with — an invoice conversation starts
+ * with "MMI/26-27/1119" and not with a balance.
+ *
+ * WHAT IT WAS FOR IS FOLDED AWAY until he taps. Half these bills are one line
+ * and half are eight, and unfolding every one of them turns a year's statement
+ * into a scroll nobody reaches the bottom of. The count is on the closed card,
+ * because "4 items" is usually the whole answer.
+ *
+ * AN UNSTATED BILL SAYS SO INSTEAD OF SHOWING A BALANCE. Its balance is the
+ * full amount purely because nobody has recorded anything against it either
+ * way — the office keeps it out of the outstanding figure, and drawing it
+ * beside real balances is the imported-book mistake arriving on a phone.
+ */
+function BillCard({
+  bill,
+  balanceAfterPaise,
+  open,
+  onToggle,
+}: {
+  bill: CustomerBill;
+  balanceAfterPaise: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const lines = open ? billLines(bill) : [];
+  const unstated = bill.paymentPosition === 'unstated';
+  const settled = !unstated && (bill.balancePaise ?? 0) <= 0;
+  const count = bill.lineCount ?? 0;
+
+  return (
+    <Card style={{ gap: 8 }}>
+      <Pressable
+        onPress={onToggle}
+        accessibilityLabel={'What was on bill ' + (bill.billNo ?? '')}
+        style={{ gap: 6 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(600)]} numberOfLines={1}>
+            {bill.billNo ?? 'Bill'}
+          </Text>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
+            {bill.amountPaise != null ? inrFromPaise(bill.amountPaise) : '—'}
+          </Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Text style={type.caption}>{pretty(bill.billDate)}</Text>
+          {bill.dueDate ? <Text style={type.caption}>· due {pretty(bill.dueDate)}</Text> : null}
+          {settled ? (
+            <Badge tone="success">Settled</Badge>
+          ) : unstated ? (
+            <Badge tone="neutral">Not stated</Badge>
+          ) : (bill.overdueDays ?? 0) > 0 ? (
+            <Badge tone="danger">{bill.overdueDays} days late</Badge>
+          ) : (
+            <Badge tone="amber">Open</Badge>
+          )}
+          {bill.disputed ? <Badge tone="danger">Disputed</Badge> : null}
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+          <Text style={type.caption}>
+            {count ? count + (count === 1 ? ' item' : ' items') + (open ? '' : ' · tap to see them') : 'Nothing itemised'}
+          </Text>
+          <Text style={type.caption}>
+            {unstated
+              ? 'No payment recorded either way'
+              : settled
+                ? 'Paid in full'
+                : inrFromPaise(bill.balancePaise ?? 0) + ' still open'}
+          </Text>
+        </View>
+      </Pressable>
+
+      {open ? (
+        lines.length ? (
+          <View style={{ borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8, gap: 6 }}>
+            {lines.map((l, i) => (
+              <View
+                key={l.product + i}
+                style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                <Text style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.body }}>{l.product}</Text>
+                <Text style={[{ fontSize: 14, color: C.ink }, tabular]}>
+                  {/* CANS, which is what the customer says and what the office
+                      stores. Litres are derived from the pack size and are not
+                      on the wire, so naming a unit we were not sent would be
+                      the screen inventing one. */}
+                  {l.qty}
+                </Text>
+                <Text style={[{ width: 92, textAlign: 'right', fontSize: 14, color: C.body }, tabular]}>
+                  {l.amountPaise != null ? inrFromPaise(l.amountPaise) : '—'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
+            Nothing itemised against this bill in the office.
+          </Text>
+        )
+      ) : null}
+
+      <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
+        {inrFromPaise(balanceAfterPaise)} outstanding after this line
+      </Text>
+    </Card>
+  );
+}
+
+/**
+ * ONE PAYMENT, with what it was and whether it has counted.
+ *
+ * A REJECTED OR REVERSED receipt is drawn rather than hidden: the shopkeeper
+ * will say "we paid that" and the salesman has to be able to answer. It is
+ * drawn muted with its own word, because the one thing it must not read like
+ * is money in the bank.
+ */
+function ReceiptCard({
+  receipt,
+  balanceAfterPaise,
+}: {
+  receipt: CustomerPayment;
+  balanceAfterPaise: number;
+}) {
+  const counted = countsAsMoney(receipt.status);
+  const tone: BadgeTone =
+    receipt.status === 'confirmed'
+      ? 'success'
+      : receipt.status === 'rejected' || receipt.status === 'reversed'
+        ? 'danger'
+        : 'amber';
+  const word =
+    receipt.status === 'confirmed'
+      ? 'Received'
+      : receipt.status === 'reported'
+        ? 'With accounts'
+        : receipt.status === 'held'
+          ? 'Being checked'
+          : receipt.status === 'rejected'
+            ? 'Never arrived'
+            : receipt.status === 'reversed'
+              ? 'Reversed'
+              : (receipt.status ?? 'Unknown');
+
+  return (
+    <Card style={{ gap: 6, borderLeftWidth: 3, borderLeftColor: counted ? C.success : C.warn }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+        <Text style={[{ fontSize: 15, color: counted ? C.success : C.muted }, weight(600), tabular]}>
+          {receipt.amountPaise != null ? inrFromPaise(receipt.amountPaise) : '—'}
+        </Text>
+        <Text style={type.caption}>{pretty(receipt.receivedAt)}</Text>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Badge tone={tone}>{word}</Badge>
+        {receipt.mode ? <Text style={type.caption}>{receipt.mode}</Text> : null}
+        {receipt.reference ? <Text style={type.caption}>· {receipt.reference}</Text> : null}
+      </View>
+      <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
+        {counted
+          ? inrFromPaise(balanceAfterPaise) + ' outstanding after this line'
+          : 'Nothing has come off the balance for this one yet'}
+      </Text>
+    </Card>
   );
 }
 

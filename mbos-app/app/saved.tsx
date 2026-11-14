@@ -7,7 +7,7 @@ import { Card, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
-import { OUTCOMES } from '../src/data/fixtures';
+import { FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
 import { pendingCount } from '../src/sync/queue';
 
 /**
@@ -27,6 +27,7 @@ export default function Saved() {
   const voice = useStore((s) => s.voice);
   const gps = useStore((s) => s.gps);
   const nextDate = useStore((s) => s.nextDate);
+  const nextMode = useStore((s) => s.nextMode);
   const visitSpent = useStore((s) => s.visitSpent);
 
   const picked = OUTCOMES.find((o) => o.k === outcome) ?? OUTCOMES[0];
@@ -82,7 +83,7 @@ export default function Saved() {
       : voice === 'queued'
         ? { l: 'Voice note kept — the office writes it out when you are back on', ok: false }
         : null,
-    { l: 'Follow-up set for ' + pretty(nextDate), ok: true },
+    { l: (FOLLOW_UP_MODES.find((m) => m.k === nextMode)?.label ?? 'Visit') + ' set for ' + pretty(nextDate), ok: true },
     queued
       ? { l: 'Your manager sees it the next time this phone sends', ok: false }
       : { l: 'Your manager notified', ok: true },

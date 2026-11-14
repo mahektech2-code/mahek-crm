@@ -240,8 +240,24 @@ The host clock is **UTC**, so the crontab is written in UTC.
 | UTC | IST | What |
 |---|---|---|
 | `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project |
+| `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
 | `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
+
+The hourly row is newer than the other two and a deployment installed before it
+**will not have it** — check with `crontab -l` and add it if it is missing:
+
+```
+22 * * * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh hourly >> /var/log/mahekone-sync.log 2>&1
+```
+
+It had no caller at all until then: `runHourly` shipped with the MBOS module,
+the crontab knew `cycle` and `nightly`, and nothing asked for what sits between
+them. The visible cost was a handset showing yesterday's score — it reads the
+cache rather than deriving anything — and an attendance selfie retention window
+of "72 hours" that was really as long as the nightly took to come round. A
+minute of its own rather than a place in the `cycle` chain, because it reads
+nothing the read modes land and so has no ordering against them.
 
 The sync used to live in GitHub Actions. `schedule:` there is best-effort: on a
 private repo under a free account it delivered five or six of forty-eight

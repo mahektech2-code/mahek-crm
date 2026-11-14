@@ -15,6 +15,7 @@ import {
   Button,
   Cell,
   Empty,
+  EntityLink,
   HeadCell,
   MetricRow,
   Pill,
@@ -165,12 +166,11 @@ export function ApprovalsScreen({
                   <Pill tone={isOrder ? "neutral" : "brand"}>{label(APPROVAL_LABEL, p.type)}</Pill>
                 </Cell>
                 <Cell truncate={170}>
-                  <Link
+                  <EntityLink
                     href={`/sales/people/${p.requestedById}`}
-                    className="font-medium text-ink no-underline"
                   >
                     {p.requestedByName}
-                  </Link>
+                  </EntityLink>
                 </Cell>
                 <Cell truncate={360} title={p.reason ?? undefined}>
                   <span className="text-ink">{p.summary}</span>

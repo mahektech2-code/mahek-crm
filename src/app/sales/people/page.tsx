@@ -5,7 +5,19 @@ import { getCurrentUser, isManager } from "@/lib/auth";
 import { Credentials } from "./credentials";
 import { Managers } from "./managers";
 import { Territories, WorksCell } from "./territories";
-import { Banner, Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table } from "../parts";
+import {
+  Banner,
+  Cell,
+  Empty,
+  EntityLink,
+  HeadCell,
+  Pill,
+  Row,
+  ScreenHeader,
+  SortHead,
+  Table,
+} from "../parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 import { plural } from "../words";
 
 export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
@@ -22,7 +34,12 @@ export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
  * customers in it and somebody has to move them; a person missing from a list
  * reads as a broken list.
  */
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string; dir?: string }>;
+}) {
+  const params = await searchParams;
   const [team, managerRows, regions, places, me] = await Promise.all([
     fieldTeam(),
     managers(),
@@ -42,6 +59,22 @@ export default async function Page() {
      it is not signing in at all, and naming a leaver in a banner about work
      going undone sends somebody to fix the wrong thing. */
   const unallocated = team.filter((t) => t.active && !(t.territories ?? []).length);
+
+  /* Sorted for display only. The banner above counts the whole team, because
+     re-ordering a list must not change what it says about itself. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(team, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/people", sort, key)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -88,25 +121,24 @@ export default async function Page() {
           minWidth={1180}
           head={
             <>
-              <HeadCell width={220}>Name</HeadCell>
+              {head("name", "Name", 220)}
               <HeadCell width={190}>Work number</HeadCell>
-              <HeadCell align="right" width={110}>Customers</HeadCell>
-              <HeadCell width={190}>Handset</HeadCell>
+              {head("customers", "Customers", 110, "right")}
+              {head("synced", "Handset", 190)}
               <HeadCell width={190}>Works</HeadCell>
-              <HeadCell width={170}>Last signed in</HeadCell>
+              {head("login", "Last signed in", 170)}
               <HeadCell />
             </>
           }
         >
-          {team.map((t, i) => (
+          {sorted.map((t, i) => (
             <Row key={t.id} striped={i % 2 === 1}>
               <Cell truncate={220}>
-                <Link
+                <EntityLink
                   href={`/sales/people/${t.id}`}
-                  className="font-medium text-ink no-underline"
                 >
                   {t.name}
-                </Link>
+                </EntityLink>
                 {t.active ? null : (
                   <span className="ml-2">
                     <Pill>Closed account</Pill>
@@ -169,3 +201,23 @@ export default async function Page() {
     </div>
   );
 }
+
+/**
+ * Four of six columns sort, and the two that do not are why `SortHead` is a
+ * separate component rather than a flag on every head cell: "Work number" and
+ * "Works" have no order anybody wants — a phone number sorts by area code and
+ * a territory list is a set, not a value.
+ */
+const COLUMNS: SortColumns<{
+  name: string;
+  customerCount: number;
+  lastSeenAt: Date | null;
+  lastLoginAt: Date | null;
+}> = {
+  name: (t) => t.name,
+  customers: (t) => t.customerCount,
+  /* A handset that has never synced has no date, and sorts last either way —
+     it is the row the banner above already names. */
+  synced: (t) => (t.lastSeenAt ? new Date(t.lastSeenAt).getTime() : null),
+  login: (t) => (t.lastLoginAt ? new Date(t.lastLoginAt).getTime() : null),
+};

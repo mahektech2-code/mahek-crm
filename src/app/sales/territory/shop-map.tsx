@@ -6,12 +6,22 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { ProspectPin, ShopPin } from "@/lib/services/sales-service";
 import { pinIndustryInfo } from "@/lib/field-customer-pin-labels";
 import {
+  BOOK_PIN_COLOUR,
+  BOOK_PIN_COLOUR_EXPRESSION,
+  BOOK_PIN_LABEL,
+  bookPinLabel,
+  bookPinTone,
+  countByTone,
+  shortPinName,
+  type BookPinTone,
+} from "../book-pins";
+import {
   OlaMapsStyleSwitcher,
   olaMapsStyleUrl,
   olaMapsTransformRequest,
   type OlaMapsStyleMode,
 } from "../ola-maps";
-import { CustomerQuickView } from "./customer-quick-view";
+import { CustomerQuickView } from "../customer-quick-view";
 
 /**
  * The territory table's own gap ("N of M shops have no coordinates") drawn as
@@ -24,11 +34,18 @@ import { CustomerQuickView } from "./customer-quick-view";
  * instances quietly disagreeing about how to authenticate is worse than one
  * shared answer.
  *
- * Two layers. Shops are real customers with a coordinate — clustered, since
- * the whole book can be a few thousand points. Prospects are field-collected
- * pins that never matched an existing customer: a shop the team has found,
- * not one MahekOne has a record of, drawn hollow so the two are never
- * mistaken for each other at a glance.
+ * Two layers. The book is every account with a coordinate — clustered, since
+ * it can be a few thousand points — coloured by what each account IS: a
+ * direct customer, a lead, or a shop somebody else bills. Those three
+ * colours are `../book-pins.tsx`'s, shared with the Live map, because which
+ * colour a lead is drawn in is not a fact either map owns. Prospects are
+ * field-collected pins that never matched an existing customer: a shop the
+ * team has found, not one MahekOne has a record of, drawn hollow so the two
+ * are never mistaken for each other at a glance.
+ *
+ * LEADS ARRIVED LATE HERE. `shopPins` filtered to `kind = 'customer'`, so a
+ * lead somebody had stood in front of and pinned was on no map at all — see
+ * that function's own note.
  *
  * A shop pin opens `customer-quick-view.tsx` — a real record, so it gets the
  * record, read through `/api/sales/customer-quick-view` from the same two
@@ -66,6 +83,8 @@ export function ShopMap({
   const [showProspects, setShowProspects] = React.useState(true);
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
   const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
+
+  const bookCounts = countByTone(shops);
 
   const points: [number, number][] = [
     ...shops.map((s) => [s.lng, s.lat] as [number, number]),
@@ -192,9 +211,9 @@ export function ShopMap({
                 properties: {
                   shopId: s.id,
                   approximate: s.approximate,
-                  label:
-                    `${s.name} · ${s.city}${s.salesmanName ? ` · ${s.salesmanName}` : ""}` +
-                    (s.approximate ? " · approximate, from the address" : ""),
+                  tone: bookPinTone(s),
+                  shortName: shortPinName(s.name),
+                  label: bookPinLabel(s),
                 },
                 geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
               })),
@@ -232,13 +251,43 @@ export function ShopMap({
                  the shop is certainly somewhere near here and this is not a
                  measurement of where it is. Filled and hollow says that
                  without a legend; drawing both alike would make a guess look
-                 like a fix taken in the doorway. */
-              "circle-color": ["case", ["get", "approximate"], "#FFFFFF", "#5223E0"],
+                 like a fix taken in the doorway. WHICH colour it is filled or
+                 outlined in says what kind of account it is. */
+              "circle-color": [
+                "case",
+                ["get", "approximate"],
+                "#FFFFFF",
+                BOOK_PIN_COLOUR_EXPRESSION,
+              ] as unknown as maplibregl.ExpressionSpecification,
               "circle-stroke-width": 2,
-              "circle-stroke-color": "#5223E0",
+              "circle-stroke-color": BOOK_PIN_COLOUR_EXPRESSION,
             },
           });
-          for (const id of ["shops-clusters", "shops-cluster-count", "shops-points"]) {
+          /* The name, once the map is close enough for one to mean anything.
+             `text-optional` keeps the DOT when its label collides with a
+             neighbour's and MapLibre drops it — otherwise a dense lane would
+             take shops off the map to make room for words. */
+          built.addLayer({
+            id: "shops-labels",
+            type: "symbol",
+            source: "shops",
+            filter: ["!", ["has", "point_count"]],
+            minzoom: 13.5,
+            layout: {
+              "text-field": ["get", "shortName"],
+              "text-size": 10,
+              "text-anchor": "top",
+              "text-offset": [0, 0.7],
+              "text-optional": true,
+              "text-max-width": 9,
+            },
+            paint: {
+              "text-color": "#3A3F47",
+              "text-halo-color": "#FFFFFF",
+              "text-halo-width": 1.4,
+            },
+          });
+          for (const id of ["shops-clusters", "shops-cluster-count", "shops-points", "shops-labels"]) {
             built.setLayoutProperty(id, "visibility", showShops ? "visible" : "none");
           }
         }
@@ -338,6 +387,7 @@ export function ShopMap({
     setVisible("shops-clusters", showShops);
     setVisible("shops-cluster-count", showShops);
     setVisible("shops-points", showShops);
+    setVisible("shops-labels", showShops);
     setVisible("prospects-points", showProspects);
   }, [showShops, showProspects]);
 
@@ -388,16 +438,29 @@ export function ShopMap({
       {/* Stacked below the style switcher rather than beside it — both anchored
           top-left reads as one cluster of map controls, and leaves MapLibre's
           own zoom control at top-right the width it needs. */}
-      <div className="absolute top-11 left-2 z-10 flex gap-3 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
+      <div className="absolute top-11 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap gap-x-3 gap-y-1.5 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
         <label className="flex cursor-pointer items-center gap-1.5">
           <input
             type="checkbox"
             checked={showShops}
             onChange={(e) => setShowShops(e.target.checked)}
           />
-          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "#5223E0" }} />
-          Shops ({shops.length})
+          The book ({shops.length})
         </label>
+        {/* The three types, each with its own count. One swatch reading
+            "Shops" said nothing about the two thirds of this map that are not
+            direct customers. */}
+        {(["customer", "lead", "third", "closed"] as BookPinTone[])
+          .filter((tone) => bookCounts[tone] > 0)
+          .map((tone) => (
+            <span key={tone} className="flex items-center gap-1.5 text-muted">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ background: BOOK_PIN_COLOUR[tone] }}
+              />
+              {BOOK_PIN_LABEL[tone]} ({bookCounts[tone]})
+            </span>
+          ))}
         <label className="flex cursor-pointer items-center gap-1.5">
           <input
             type="checkbox"

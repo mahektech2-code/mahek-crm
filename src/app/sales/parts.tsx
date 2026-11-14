@@ -173,13 +173,30 @@ export function Table({
   minWidth,
   head,
   children,
+  chrome = true,
 }: {
   minWidth: number;
   head: React.ReactNode;
   children: React.ReactNode;
+  /**
+   * Whether the table draws its own box.
+   *
+   * Off where the table sits INSIDE one — a filter bar above it and a pager
+   * below it belong to the same panel, and a table that carries its own border
+   * there draws a second line through the middle of one card. It is a prop
+   * rather than a second component because everything else about the two is
+   * identical, and two table components is how two screens come to have two
+   * row heights.
+   */
+  chrome?: boolean;
 }) {
   return (
-    <div className="min-w-0 overflow-auto rounded-[6px] border border-line bg-surface">
+    <div
+      className={cx(
+        "min-w-0 overflow-auto",
+        chrome ? "rounded-[6px] border border-line bg-surface" : "bg-surface",
+      )}
+    >
       <table style={{ minWidth }} className="w-full table-fixed border-collapse">
         <thead>
           <tr>{head}</tr>
@@ -209,6 +226,72 @@ export function HeadCell({
     >
       {children}
     </th>
+  );
+}
+
+/**
+ * A HEAD CELL THAT SORTS, and it looks like one before it is pressed.
+ *
+ * The arrow is drawn faint on every sortable column and solid on the one in
+ * force — a control that only appears on hover is a control most people never
+ * discover, and a table where three of nine columns sort has to say which
+ * three without being asked.
+ *
+ * It takes an `href` rather than a handler because these tables are server
+ * components: a sort is a URL here, exactly as a filter chip is, so it can be
+ * bookmarked and sent to somebody.
+ */
+export function SortHead({
+  align = "left",
+  width,
+  href,
+  active,
+  dir,
+  children,
+}: {
+  align?: "left" | "right";
+  width?: number;
+  href: string;
+  /** True on the column currently in force. */
+  active: boolean;
+  dir: "asc" | "desc";
+  children?: React.ReactNode;
+}) {
+  return (
+    <th
+      style={width ? { width, minWidth: width } : undefined}
+      className={cx(
+        "sticky top-0 z-2 h-8.5 border-b border-line bg-canvas px-4 text-[11px] font-medium tracking-[0.04em] whitespace-nowrap uppercase",
+        active ? "text-body" : "text-muted",
+        align === "right" ? "text-right" : "text-left",
+      )}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <Link
+        href={href}
+        scroll={false}
+        title={active ? "Sort the other way" : "Sort by this column"}
+        className={cx(
+          "inline-flex items-center gap-1 tracking-[0.04em] uppercase no-underline hover:text-ink hover:no-underline",
+          active ? "text-body" : "text-muted",
+        )}
+      >
+        {align === "right" ? <Arrow active={active} dir={dir} /> : null}
+        {children}
+        {align === "right" ? null : <Arrow active={active} dir={dir} />}
+      </Link>
+    </th>
+  );
+}
+
+function Arrow({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
+  return (
+    <span
+      aria-hidden
+      className={cx("text-[9px] leading-none", active ? "text-[#5223E0]" : "text-line-strong")}
+    >
+      {active && dir === "asc" ? "\u25B2" : "\u25BC"}
+    </span>
   );
 }
 
@@ -294,6 +377,42 @@ export function Row({
     >
       {children}
     </tr>
+  );
+}
+
+/**
+ * THE NAME IN THE FIRST COLUMN, WHICH IS THE WAY IN.
+ *
+ * Twelve screens here drew their subject as `font-medium text-ink
+ * no-underline` — black, undecorated, indistinguishable from the eleven values
+ * beside it. It IS a link, and on a table where nothing else is clickable
+ * there is no way to find that out except by mousing over every cell in the
+ * row. "There is no option to open their details" is what somebody reported
+ * about the team list, and they were reading the screen correctly.
+ *
+ * It stays INK rather than becoming brand-coloured, because a first column of
+ * purple on every row of every table is a page that shouts, and the name is
+ * the thing being read rather than an action being offered. What carries the
+ * affordance is the hover — the underline and the colour arrive together under
+ * the pointer — which is the convention a table row already teaches.
+ */
+export function EntityLink({
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      title={title}
+      className="font-medium text-ink no-underline decoration-from-font underline-offset-2 hover:text-brand hover:underline"
+    >
+      {children}
+    </Link>
   );
 }
 
@@ -634,3 +753,127 @@ export {
   VISIT_OUTCOME_LABEL,
   LEAVE_LABEL,
 } from "./words";
+
+/* ------------------------------------------------------------------- pager */
+
+/**
+ * PAGING OVER A FILTERED SET.
+ *
+ * This file's own header says Accounts' parts carry "a pager that means
+ * nothing here", and that was true while every Sales list was a few dozen
+ * rows. It stopped being true on a book of three and a half thousand leads.
+ * It is a second copy rather than an import for the reason the two files exist
+ * at all — Accounts pages by URL inside a server component and this one is
+ * driven from a client screen, so what they share is a look rather than a
+ * mechanism.
+ *
+ * The figure on the left is the WHOLE filtered set and says so, because every
+ * screen that pages here also shows a total and an export describing that set
+ * rather than the fifteen rows below.
+ */
+export function Pager({
+  total,
+  page,
+  perPage,
+  note,
+  onPage,
+  onPerPage,
+}: {
+  total: number;
+  page: number;
+  perPage: number;
+  note?: string;
+  onPage: (p: number) => void;
+  onPerPage: (n: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const at = Math.min(page, pages);
+  const from = (at - 1) * perPage;
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-t border-line bg-canvas px-4 py-2.5">
+      <span className="text-[13px] whitespace-nowrap text-muted">
+        {total
+          ? `Showing ${from + 1}–${Math.min(total, from + perPage)} of ${total.toLocaleString("en-IN")}`
+          : "No rows"}
+      </span>
+      {note ? <span className="min-w-0 truncate text-[13px] text-muted">· {note}</span> : null}
+      <span className="min-w-2 flex-1" />
+
+      <span className="flex flex-none items-center gap-1.5">
+        <span className="text-[13px] whitespace-nowrap text-muted">Rows</span>
+        {/*
+          15 FIRST, AND IT IS THE DEFAULT.
+          Fifteen rows is what a manager reads without scrolling, and on this
+          book the difference between a page of fifteen and a page of a hundred
+          is the difference between a screen that opens and one somebody waits
+          for. The larger sizes are offered rather than removed, because
+          "everything on one screen" is a real thing to want once you have
+          filtered down to eleven rows.
+        */}
+        {[15, 50, 100].map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onPerPage(n)}
+            className={cx(
+              "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+              perPage === n
+                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                : "border-line bg-surface text-body hover:bg-canvas",
+            )}
+          >
+            {n}
+          </button>
+        ))}
+      </span>
+
+      {total > perPage ? (
+        <span className="flex flex-none items-center gap-2">
+          <span className="h-5 w-px bg-line" />
+          <span className="text-[13px] whitespace-nowrap text-muted">
+            Page {at} of {pages}
+          </span>
+          <PagerButton
+            enabled={at > 1}
+            onClick={() => onPage(at - 1)}
+            disabledTitle="You are on the first page"
+          >
+            Previous
+          </PagerButton>
+          <PagerButton
+            enabled={at < pages}
+            onClick={() => onPage(at + 1)}
+            disabledTitle="You are on the last page"
+          >
+            Next
+          </PagerButton>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function PagerButton({
+  enabled,
+  onClick,
+  disabledTitle,
+  children,
+}: {
+  enabled: boolean;
+  onClick: () => void;
+  disabledTitle: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={enabled ? onClick : undefined}
+      disabled={!enabled}
+      title={enabled ? undefined : disabledTitle}
+      className="h-7 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body hover:bg-canvas disabled:cursor-default disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}

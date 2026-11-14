@@ -35,7 +35,7 @@ function blankRow(person: Person): TargetRow {
     volumeTargetMl: null,
     newCustomerTarget: null,
     collectionTargetBp: null,
-    activityTarget: null,
+    activityTargetBp: null,
     publishedAt: null,
     bands: [],
     revisions: 0,
@@ -263,7 +263,9 @@ export function TargetsScreen({
                 <Cell align="right">
                   {orDash(r.collectionTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
                 </Cell>
-                <Cell align="right">{orDash(r.activityTarget, String)}</Cell>
+                <Cell align="right">
+                  {orDash(r.activityTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
+                </Cell>
                 <Cell truncate={200}>
                   <Growth target={r.revenueTargetPaise} baseline={base} months={baselineMonths} />
                 </Cell>
@@ -345,14 +347,12 @@ function Editor({
     row.newCustomerTarget === null ? "" : String(row.newCustomerTarget),
   );
   const [collection, setCollection] = useState(toPercent(row.collectionTargetBp));
-  const [activity, setActivity] = useState(
-    row.activityTarget === null ? "" : String(row.activityTarget),
-  );
+  const [activity, setActivity] = useState(toPercent(row.activityTargetBp));
   const [reason, setReason] = useState("");
   const [reasonNote, setReasonNote] = useState("");
   // Only the categories this target already carries — not every active one.
   // A book with two categories and a book with eight both start from what is
-  // actually theirs; "Add category" is how either grows, never a wall of
+  // actually theirs; "Add formulation" is how either grows, never a wall of
   // rows to skip past for the categories that do not apply here.
   const [bands, setBands] = useState(() =>
     row.bands.map((existing) => {
@@ -398,7 +398,7 @@ function Editor({
         volumeTargetMl: toMl(volume),
         newCustomerTarget: toCount(newCustomers),
         collectionTargetBp: toBp(collection),
-        activityTarget: toCount(activity),
+        activityTargetBp: toBp(activity),
         notes: null,
         bands: filled.map((b) => ({
           categoryId: b.categoryId,
@@ -515,9 +515,10 @@ function Editor({
         />
         <Field
           label="Tasks target"
+          suffix="%"
           value={activity}
           onChange={setActivity}
-          hint="tasks marked done"
+          hint="of the tasks falling due in the month"
         />
       </div>
 
@@ -527,15 +528,15 @@ function Editor({
       <p className="mb-3 max-w-[720px] text-[12px] text-muted">
         Three numbers rather than one, because a book selling into furniture and one
         selling into automotive cannot be held to the same 30%. Below the minimum a
-        category falls away to nothing; stretch is exceptional. Add only the
-        categories that matter for this person — one, two, or all of them.
+        formulation falls away to nothing; stretch is exceptional. Add only the
+        formulations that matter for this person — one, two, or all of them.
       </p>
 
       <div className="mb-2 overflow-x-auto">
         <table className="text-[13px]">
           <thead>
             <tr className="text-[11px] tracking-[0.04em] text-muted uppercase">
-              <th className="px-2 py-1 text-left font-medium">Category</th>
+              <th className="px-2 py-1 text-left font-medium">Formulation</th>
               <th className="px-2 py-1 text-right font-medium">Minimum %</th>
               <th className="px-2 py-1 text-right font-medium">Target %</th>
               <th className="px-2 py-1 text-right font-medium">Stretch %</th>
@@ -546,7 +547,7 @@ function Editor({
             {bands.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-2 py-2 text-[13px] text-muted">
-                  No categories added yet. Product mix is left out of this target&rsquo;s
+                  No formulations added yet. Product mix is left out of this target&rsquo;s
                   score until at least one is added below.
                 </td>
               </tr>
@@ -620,7 +621,7 @@ function Editor({
             }}
             className="rounded-[4px] border border-line bg-surface px-2 py-1 text-[13px]"
           >
-            <option value="">+ Add category…</option>
+            <option value="">+ Add formulation…</option>
             {available.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}

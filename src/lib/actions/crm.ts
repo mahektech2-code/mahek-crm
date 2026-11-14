@@ -185,6 +185,22 @@ export type SaveInteractionActionInput = {
   noOrderNextCallDate?: string;
   noOrderNoCommitment?: boolean;
   paymentPromiseDate?: string;
+  /* Inbound's own questions — who rang, why, what they asked for, and what we
+     said we would do. Absent on an outbound call and on an order received. */
+  callerRole?: string;
+  callerName?: string;
+  callReason?: string;
+  reasonDetail?: Record<string, string>;
+  /** What the OUTCOME asked for — both directions. See lib/call-outcomes.ts. */
+  outcomeDetail?: Record<string, string>;
+  nextActions?: string[];
+  nextActionDate?: string;
+  opportunity?: {
+    product: string;
+    estimatedQuantity?: string;
+    estimatedValueRupees?: number;
+    expectedOrderDate?: string;
+  };
   complaintCategory?: string;
   complaintDescription?: string;
   complaintRequestCn?: boolean;
@@ -234,6 +250,14 @@ export async function saveInteractionAction(
       noOrderNextCallDate: raw.noOrderNextCallDate,
       noOrderNoCommitment: raw.noOrderNoCommitment ?? false,
       paymentPromiseDate: raw.paymentPromiseDate,
+      callerRole: raw.callerRole as never,
+      callerName: raw.callerName,
+      callReason: raw.callReason as never,
+      reasonDetail: raw.reasonDetail ?? {},
+      outcomeDetail: raw.outcomeDetail ?? {},
+      nextActions: raw.nextActions ?? [],
+      nextActionDate: raw.nextActionDate,
+      opportunity: raw.opportunity,
       complaintCategory: raw.complaintCategory as never,
       complaintDescription: raw.complaintDescription,
       complaintRequestCn: raw.complaintRequestCn ?? false,

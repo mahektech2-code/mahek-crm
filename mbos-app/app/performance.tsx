@@ -209,11 +209,18 @@ export default function PerformanceScreen() {
                  above the card listing this component's per-category targets,
                  and in the same words the dropped-component sentence uses for a
                  component nobody set a target for at all. The mix target is a
-                 set of category bands rather than one figure, so the honest
-                 summary is how many were asked. */
+                 set of bands rather than one figure, so the honest summary is
+                 how many were asked.
+
+                 FORMULATION is the word the office screen uses, and the two
+                 must not have two vocabularies for one month — the same rule
+                 `COMPONENT_LABELS` follows. A target set before the mix moved
+                 off the three categories reads the same word for bands that
+                 are still categories underneath; that is a handful of old
+                 targets, against every new one being named wrongly. */
               target={
                 current.categories.length
-                  ? `${plural(current.categories.length, 'category', 'categories')} set`
+                  ? `${plural(current.categories.length, 'formulation', 'formulations')} set`
                   : null
               }
               bp={null}

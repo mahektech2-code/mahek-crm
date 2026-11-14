@@ -9,6 +9,7 @@ import {
 } from "./modules";
 import { grantableApps } from "./modules";
 import { NAV } from "@/components/shell/nav";
+import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
 /* ---------------------------------------------------------------------------
  * The module registry, which is what an access grant points at.
@@ -70,6 +71,77 @@ describe("the registry and the navigation agree", () => {
       for (const item of group.items) {
         assert.ok(keys.has(item.href), `${item.href} has no module`);
       }
+    }
+  });
+
+  /**
+   * BOTH DIRECTIONS FOR THE SALES DASHBOARD, because only one of them had ever
+   * been checked anywhere and the other is the one that bit.
+   *
+   * A sidebar link with no module behind it is a screen nobody can be withheld
+   * from — and, since the sidebar filters itself through the grants, one that
+   * silently vanishes for everybody.
+   *
+   * A module with no sidebar link is the failure this test was written for:
+   * Travel ledger, Expense exceptions, Expense policy and Cost & return were
+   * all declared, all routable, all grantable, and none of them drawn. Cost &
+   * return had no inbound link anywhere in the product. Nothing looked broken,
+   * because a missing entry is indistinguishable from a module somebody was
+   * not given.
+   */
+  it("every Sales Dashboard sidebar link is a module that can be withheld", () => {
+    const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
+    for (const href of navHrefs()) {
+      assert.ok(hrefs.has(href), `${href} is in the sidebar and has no module`);
+    }
+  });
+
+  it("every Sales Dashboard module is reachable from the sidebar", () => {
+    // Both halves, through `navHrefs`: Today is pinned above the groups, so a
+    // check that read the groups alone would call the console's own home
+    // unreachable.
+    const drawn = new Set(navHrefs());
+    for (const m of modulesForApp("sales")) {
+      if (NOT_IN_SIDEBAR.includes(m.href)) continue;
+      assert.ok(
+        drawn.has(m.href),
+        `${m.key} can be granted and has no way in — draw it, or name it in NOT_IN_SIDEBAR`,
+      );
+    }
+  });
+
+  it("nothing is excluded from the sidebar that is not a module", () => {
+    // An excuse for a module that no longer exists is an excuse that would
+    // silently cover a real one the day somebody reuses the path.
+    const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
+    for (const href of NOT_IN_SIDEBAR) {
+      assert.ok(hrefs.has(href), `${href} is excused from the sidebar and is not a module`);
+    }
+  });
+
+  /**
+   * A pinned item that is also in a group is drawn twice — once at the top and
+   * once inside the group — and the second copy is the one nobody expects to
+   * find. It is the same failure `SALES_PINNED` was created by: Today moved
+   * out of Overview, and leaving it in both lists would have been invisible
+   * until somebody counted the rows.
+   */
+  it("nothing is both pinned and inside a group", () => {
+    const grouped = new Set(SALES_NAV.flatMap((g) => g.items.map((i) => i.href)));
+    for (const item of SALES_PINNED) {
+      assert.equal(grouped.has(item.href), false, `${item.href} is pinned and in a group`);
+    }
+    assert.deepEqual(navHrefs(), [...new Set(navHrefs())], "the sidebar draws an href twice");
+  });
+
+  /**
+   * A group with no icon collapses to a word in a list. The type demands one,
+   * so this only guards against a group arriving with an icon name the set
+   * does not carry — which renders as a gap rather than as an error.
+   */
+  it("every group has a glyph the icon set carries", () => {
+    for (const group of SALES_NAV) {
+      assert.ok(group.icon, `${group.label} has no icon`);
     }
   });
 

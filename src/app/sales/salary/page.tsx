@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { MonthNav } from "@/components/ui/month-nav";
 import { money, shortDate } from "@/lib/format";
 import { endOfMonth } from "@/lib/business-date";
@@ -8,14 +7,17 @@ import {
   Banner,
   Cell,
   Empty,
+  EntityLink,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import { plural } from "../words";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Salary — Sales Dashboard — MahekOne" };
 
@@ -40,7 +42,7 @@ export const metadata = { title: "Salary — Sales Dashboard — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string }>;
+  searchParams: Promise<{ month?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
@@ -62,6 +64,28 @@ export default async function Page({
     0,
   );
   const reimbursed = rows.reduce((n, r) => n + Number(r.reimbursedPaise), 0);
+
+  /* Sorting is DISPLAY ONLY: the figures above the table are counted over the
+     whole payroll and never over the sorted copy, because re-ordering a list
+     changes nothing about what is in it and a total that moved when somebody
+     clicked a column would be the screen disagreeing with itself.
+
+     The month has to be carried through the link or sorting silently throws
+     somebody back into the current month — and on a screen about pay, a figure
+     that quietly changed the period it describes is the worst kind of wrong. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/salary", sort, key, `month=${month}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -112,26 +136,34 @@ export default async function Page({
             minWidth={1180}
             head={
               <>
-                <HeadCell width={210}>Salesman</HeadCell>
+                {head("name", "Salesman", 210)}
+                {/* The employee code is an identifier rather than a quantity —
+                    ordering people by it sorts them by whenever HR happened to
+                    create their row, which is a question nobody asks. Who has
+                    no payroll row at all is the one thing worth pulling out of
+                    this column, and the banner above already names every one
+                    of them by name. */}
                 <HeadCell width={150}>Employee</HeadCell>
-                <HeadCell align="right" width={140}>Net</HeadCell>
-                <HeadCell align="right" width={140}>Conveyance</HeadCell>
-                <HeadCell align="right" width={130}>Other</HeadCell>
-                <HeadCell width={170}>Days</HeadCell>
-                <HeadCell align="right" width={150}>Reimbursed</HeadCell>
+                {head("net", "Net", 140, "right")}
+                {head("conveyance", "Conveyance", 140, "right")}
+                {head("other", "Other", 130, "right")}
+                {head("days", "Days", 170)}
+                {head("reimbursed", "Reimbursed", 150, "right")}
+                {/* Three states, none of them above another: applicable, not,
+                    and nobody has said. A sort over that only ever groups the
+                    blanks, which is what the dash already does on the row. */}
                 <HeadCell width={130}>PF / ESIC</HeadCell>
               </>
             }
           >
-            {rows.map((r, i) => (
+            {sorted.map((r, i) => (
               <Row key={r.salesmanId} striped={i % 2 === 1}>
                 <Cell truncate={210}>
-                  <Link
+                  <EntityLink
                     href={`/sales/people/${r.salesmanId}`}
-                    className="font-medium text-ink no-underline"
                   >
                     {r.salesmanName}
-                  </Link>
+                  </EntityLink>
                   {r.dateOfJoining ? (
                     <span className="block text-[12px] text-muted">
                       since {shortDate(r.dateOfJoining)}
@@ -220,4 +252,32 @@ export default async function Page({
   );
 }
 
-
+/**
+ * What each sortable column is worth.
+ *
+ * `null` sorts last in both directions, and on this screen that is the whole
+ * of the argument for it: a salesman payroll has no row for has no net pay,
+ * and floating him to the top of "highest paid" would be the screen inventing
+ * a figure out of a missing one. He is named in the banner instead, where the
+ * sentence can say what to do about it.
+ *
+ * Days sorts on the days WORKED alone rather than on some combination with
+ * leave. The cell prints both because they read together, but "who worked
+ * fewest days" and "who took most leave" are different questions and a column
+ * that quietly answered a blend of them would answer neither.
+ */
+const COLUMNS: SortColumns<{
+  salesmanName: string;
+  netSalaryPaise: number | null;
+  conveyancePaise: number | null;
+  otherSalaryPaise: number | null;
+  daysWorked: number;
+  reimbursedPaise: number | string;
+}> = {
+  name: (r) => r.salesmanName,
+  net: (r) => r.netSalaryPaise,
+  conveyance: (r) => r.conveyancePaise,
+  other: (r) => r.otherSalaryPaise,
+  days: (r) => r.daysWorked,
+  reimbursed: (r) => Number(r.reimbursedPaise),
+};

@@ -1744,6 +1744,17 @@ export const SETTINGS = [
     default: "block",
   },
   {
+    key: "mbos.location.nearbyBookRadiusKm",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far around the team the Live map draws the book",
+    description:
+      "Kilometres from each salesman's last known position within which the Live map draws the shops and leads he could be standing next to. It is a catchment and not a territory: the point of drawing the book under a trail is to read the day against what he went past, and the whole book at national scale is a wash of dots that answers nothing. Ten is about a morning's reach on a bike. Raising it puts more on the screen and more on the wire; the Territory screen is where the whole book is read.",
+    default: 10,
+    min: 1,
+    max: 50,
+  },
+  {
     key: "mbos.location.dwellRadiusMeters",
     type: "integer",
     category: "mbos-location",
@@ -2376,6 +2387,17 @@ export const SETTINGS = [
     description:
       "Seconds between sync attempts, in order. After the last one the item is `failed` and shown for a person to retry by hand. Jittered on the device, and the schedule resumes rather than restarts across an app restart.",
     default: [2, 8, 30, 120, 600, 1800],
+  },
+  {
+    key: "mbos.sync.statementMonths",
+    type: "integer",
+    category: "mbos-sync",
+    label: "How many months of the ledger a handset carries",
+    description:
+      "A salesman standing in a shop is asked what was billed and what was paid, and the answer has to be on the phone — there is no signal in a paint market. This is how far back the bills and receipts behind that answer are synced. Thirteen covers the widest filter the record screen offers (this financial year) at any point in the year, plus the three months before it. Raising it puts more of the ledger on every handset and more on the wire; lowering it makes the older end of a statement unanswerable in the field rather than merely slow.",
+    default: 13,
+    min: 1,
+    max: 60,
   },
   {
     key: "mbos.sync.maxItemsPerRequest",
@@ -3613,6 +3635,7 @@ export type Config = {
   "mbos.location.trackEverySeconds": number;
   "mbos.location.trackEveryMinutes": number;
   "mbos.location.trailStalledAfterMisses": number;
+  "mbos.location.nearbyBookRadiusKm": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;
@@ -3675,6 +3698,7 @@ export type Config = {
   "mbos.sync.imageQualityPercent": number;
   "mbos.sync.offlineLoginValidityDays": number;
   "mbos.sync.retryBackoffSeconds": number[];
+  "mbos.sync.statementMonths": number;
   "mbos.sync.maxItemsPerRequest": number;
   "mbos.sync.accessTokenMinutes": number;
 

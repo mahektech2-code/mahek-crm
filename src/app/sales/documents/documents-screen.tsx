@@ -253,7 +253,7 @@ export function DocumentsScreen({ rows }: { rows: DocumentRow[] }) {
                       href={`/api/attachments/${d.attachmentId}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="font-medium text-ink no-underline"
+                      className="font-medium text-ink no-underline underline-offset-2 hover:text-brand hover:underline"
                     >
                       {d.title}
                     </a>
