@@ -2325,6 +2325,13 @@
       "when": 1793800400000,
       "tag": "0336_transporter_delivers_direct",
       "breakpoints": true
+    },
+    {
+      "idx": 332,
+      "version": "7",
+      "when": 1793800500000,
+      "tag": "0337_harsh_transport_spelling",
+      "breakpoints": true
     }
   ]
 }
