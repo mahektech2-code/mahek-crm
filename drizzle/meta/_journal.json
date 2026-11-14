@@ -2297,6 +2297,13 @@
       "when": 1793800000000,
       "tag": "0332_workday_clock",
       "breakpoints": true
+    },
+    {
+      "idx": 328,
+      "version": "7",
+      "when": 1793800100000,
+      "tag": "0333_workday_lock_on",
+      "breakpoints": true
     }
   ]
 }
