@@ -2,7 +2,8 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { BottomSheet } from '../ui/overlays';
-import { Badge, PrimaryButton, SecondaryButton, T } from '../ui/primitives';
+import { Badge, T } from '../ui/primitives';
+import { PillButton } from './v3';
 import { Icon } from '../ui/Icon';
 import { color as C, radius, weight, tabular } from '../../theme/tokens';
 import { dayLabelRelative, hhmm, inrFromPaise, plural } from '../../lib/format';
@@ -76,7 +77,7 @@ export function PastDaySheet({
         />
       ) : day ? (
         <>
-          <T s="h2">{dayLabelRelative(day.planDate, today)}</T>
+          <T style={sheetTitle}>{dayLabelRelative(day.planDate, today)}</T>
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
             {whereOf(day) ?? 'No city recorded'}
           </T>
@@ -130,7 +131,7 @@ export function PastDaySheet({
               </T>
             </>
           )}
-          <SecondaryButton label="Close" onPress={onClose} style={{ marginTop: 16 }} />
+          <PillButton label="Close" variant="outline" onPress={onClose} style={{ marginTop: 16 }} />
         </>
       ) : null}
     </BottomSheet>
@@ -358,7 +359,7 @@ function ShopDayView({
         <Icon name="back" size={16} color={C.primaryDeep} strokeWidth={1.8} />
         <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>{dayLabel}</T>
       </Pressable>
-      <T s="h2">{s.name}</T>
+      <T style={sheetTitle}>{s.name}</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
         {[s.accountType, s.offRoute ? 'off your route' : null, s.area, dayLabel].filter(Boolean).join(' · ')}
       </T>
@@ -407,8 +408,8 @@ function ShopDayView({
         </T>
       ) : null}
 
-      <PrimaryButton label="Open shop record" onPress={onOpenRecord} style={{ marginTop: 12 }} />
-      <SecondaryButton label={'Back to ' + dayLabel} onPress={onBack} style={{ marginTop: 10 }} />
+      <PillButton label="Open shop record" variant="navyLime" height={56} onPress={onOpenRecord} style={{ marginTop: 12 }} />
+      <PillButton label={'Back to ' + dayLabel} variant="outline" onPress={onBack} style={{ marginTop: 10 }} />
     </>
   );
 }
@@ -490,7 +491,7 @@ export function PlannedDaySheet({
         <>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <T s="h2">{dayLabelRelative(day.planDate, today)}</T>
+              <T style={sheetTitle}>{dayLabelRelative(day.planDate, today)}</T>
               <T s="small" style={{ color: C.muted, marginTop: 2 }}>
                 {(whereOf(day) ? whereOf(day) + ' · ' : '') + plural(shops?.length ?? day.picked, 'shop') + ' picked'}
               </T>
@@ -563,13 +564,16 @@ export function PlannedDaySheet({
               with today's picks already ticked — because they are one act:
               deciding which doors, in which order. Starting over is the only
               one that throws the list away, so it is the only one that asks. */}
-          <PrimaryButton label="Add or change shops" onPress={change} style={{ marginTop: 16 }} />
+          <PillButton label="Add or change shops" variant="navyLime" height={56} onPress={change} style={{ marginTop: 16 }} />
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-            <SecondaryButton label="Start over" onPress={startOver} style={{ flex: 1 }} />
-            <SecondaryButton label="Close" onPress={onClose} style={{ flex: 1 }} />
+            <PillButton label="Start over" variant="outline" onPress={startOver} style={{ flex: 1 }} />
+            <PillButton label="Close" variant="outline" onPress={onClose} style={{ flex: 1 }} />
           </View>
         </>
       ) : null}
     </BottomSheet>
   );
 }
+
+/** The V3 sheet heading. */
+const sheetTitle = [{ fontSize: 22, lineHeight: 28, letterSpacing: -0.44, color: C.ink }, weight(800)];

@@ -8,6 +8,7 @@ import { Stagger } from '../src/components/ui/motion';
 import { dmy } from '../src/lib/format';
 import { color as C, weight } from '../src/theme/tokens';
 import { activePolicy, type LocalPolicy } from '../src/data/travel';
+import { GLYPH, Glyph, HeroPill, type GlyphShape } from '../src/components/me/kit';
 
 /**
  * What you are allowed.
@@ -41,17 +42,34 @@ export default function PolicyScreen() {
     }, []),
   );
 
+  const hero =
+    policy ? (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 14 }}>
+        <HeroPill strong>Version {policy.versionNo}</HeroPill>
+        <HeroPill icon={GLYPH.cal}>
+          {`From ${dmy(policy.effectiveFrom)}`}
+        </HeroPill>
+        {policy.subject.grade ? (
+          <HeroPill ink={C.primaryDeep}>{`Your grade: ${policy.subject.grade.replace(/_/g, ' ')}`}</HeroPill>
+        ) : null}
+      </View>
+    ) : null;
+
   return (
-    <AppFrame title="Expense policy" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 32 }}>
+    <AppFrame
+      title="What you are allowed"
+      activeTab={null}
+      onBack={back.go}
+      hero={hero}
+      contentStyle={{ padding: 14, paddingBottom: 32 }}>
       <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">What you are allowed</T>
 
       {policy === undefined ? (
-        <Card style={{ marginTop: 14, paddingVertical: 28 }}>
+        <Card style={{ paddingVertical: 28 }}>
           <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Loading…</T>
         </Card>
       ) : policy === null ? (
-        <Card style={{ marginTop: 14, paddingVertical: 28 }}>
+        <Card style={{ paddingVertical: 28 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             No policy on this phone yet
           </T>
@@ -62,11 +80,6 @@ export default function PolicyScreen() {
         </Card>
       ) : (
         <>
-          <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
-            Version {policy.versionNo}, used from {dmy(policy.effectiveFrom)}
-            {policy.subject.grade ? ` · your grade: ${policy.subject.grade.replace(/_/g, ' ')}` : ''}
-          </T>
-
           {policy.sentences.length === 0 ? (
             <Card>
               <T s="small" style={{ color: C.muted }}>
@@ -76,23 +89,46 @@ export default function PolicyScreen() {
           ) : (
             /* The rules arrive one after another, so they read as a list of
                separate rules rather than one block of text. */
-            policy.sentences.map((sentence, i) => (
-              <Stagger key={i} index={i}>
-                <Card style={{ marginBottom: 8 }}>
-                  <T s="small" style={{ color: C.ink }}>{sentence}</T>
-                </Card>
-              </Stagger>
-            ))
+            policy.sentences.map((sentence, i) => {
+              const g = ruleGlyph(sentence);
+              return (
+                <Stagger key={i} index={i}>
+                  <Card style={{ marginBottom: 8, paddingVertical: 14, flexDirection: 'row', gap: 12 }}>
+                    <Glyph shapes={g.shapes} size={20} color={g.color} />
+                    <T s="small" style={{ color: C.ink, flex: 1 }}>{sentence}</T>
+                  </Card>
+                </Stagger>
+              );
+            })
           )}
 
-          <View style={{ marginTop: 14 }}>
-            <T s="caption">
-              Your day is paid using these same rules, on this phone and in the office.
-              If an amount looks wrong, show these rules.
+          <View style={{ flexDirection: 'row', gap: 8, paddingTop: 6, paddingHorizontal: 6 }}>
+            <Glyph shapes={GLYPH.shieldTick} size={16} color={C.success} />
+            <T style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
+              The same rules pay your day here and in the office. An amount looks wrong? Show these rules.
             </T>
           </View>
         </>
       )}
     </AppFrame>
   );
+}
+
+/**
+ * The mark beside a rule. The sentences are generated on the server and carry
+ * no kind, so the glyph is read off the words — and a sentence nothing matches
+ * gets the plain receipt, never a wrong picture.
+ */
+function ruleGlyph(sentence: string): { shapes: GlyphShape[]; color: string } {
+  const t = sentence.toLowerCase();
+  if (/breakfast/.test(t)) return { shapes: GLYPH.breakfast, color: C.primaryDeep };
+  if (/lunch|meal|food/.test(t)) return { shapes: GLYPH.bowl, color: C.primaryDeep };
+  if (/dinner/.test(t)) return { shapes: GLYPH.moon, color: C.primaryDeep };
+  if (/hotel|lodg/.test(t)) return { shapes: GLYPH.bed, color: C.primaryDeep };
+  if (/dorm/.test(t)) return { shapes: GLYPH.bunk, color: C.primaryDeep };
+  if (/bus|train|auto|taxi|travel|fare/.test(t)) return { shapes: GLYPH.bus, color: C.primaryDeep };
+  if (/bike|car|kilomet|\bkm\b/.test(t)) {
+    return { shapes: GLYPH.bike, color: /not paid/.test(t) ? C.faint : C.primaryDeep };
+  }
+  return { shapes: GLYPH.receipt, color: C.warnInk };
 }

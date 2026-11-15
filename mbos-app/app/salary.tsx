@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
@@ -7,6 +7,7 @@ import { CountUp, Stagger } from '../src/components/ui/motion';
 import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { listSalary, type SalaryMonth } from '../src/data/salary';
+import { GLYPH, Glyph, type GlyphShape } from '../src/components/me/kit';
 
 /**
  * Salary — and now there IS one on this handset.
@@ -54,12 +55,23 @@ export default function SalaryScreen() {
   const hasFigures = current && (current.netSalaryPaise != null || current.employeeCode != null);
 
   return (
-    <AppFrame title="Salary" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame
+      title="Salary"
+      activeTab={null}
+      onBack={back.go}
+      hero={
+        <View
+          accessible
+          accessibilityLabel="These figures come from the office. If something looks wrong, tell the office."
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+          <Glyph shapes={OFFICE} size={14} color={C.lavenderMuted} />
+          <T style={{ fontSize: 12, lineHeight: 17, color: C.lavenderMuted, flex: 1 }}>
+            From the office. Looks wrong? Tell the office.
+          </T>
+        </View>
+      }
+      contentStyle={{ padding: 14, paddingBottom: 24, gap: 12 }}>
       <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Salary</T>
-      <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 16 }}>
-        These figures come from the office. If something looks wrong, tell the office.
-      </T>
 
       {/* THREE ANSWERS, NOT TWO. The read being in flight, the table being
           empty and the account being unmatched used to share one card — the
@@ -105,65 +117,125 @@ export default function SalaryScreen() {
   );
 }
 
+const OFFICE: GlyphShape[] = [{ p: 'M4 21V9l8-5 8 5v12M9 21v-6h6v6' }];
+const TICK: GlyphShape[] = [{ p: 'M5 12l5 5 9-10' }];
+
 function PayCard({ m }: { m: SalaryMonth }) {
   return (
-    <Card style={{ marginBottom: 10 }}>
-      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your salary, as HR holds it</T>
-      {m.employeeCode ? (
-        <T s="caption" style={{ marginTop: 2 }}>
-          {m.employeeCode}
-          {m.employeeStatus ? ' · ' + m.employeeStatus : ''}
-        </T>
-      ) : null}
+    <View style={{ backgroundColor: C.navy, borderRadius: 24, padding: 18 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <T style={[{ flex: 1, fontSize: 13, color: C.onNavyMuted }, weight(700)]}>Your salary, as HR holds it</T>
+        {m.employeeCode ? (
+          <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
+            <T style={[{ fontSize: 12, color: C.onNavy }, weight(700)]}>
+              {m.employeeCode}
+              {m.employeeStatus ? ' · ' + m.employeeStatus : ''}
+            </T>
+          </View>
+        ) : null}
+      </View>
 
-      <View style={{ marginTop: 14, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <T s="small" style={{ color: C.muted }}>Net salary a month</T>
-        {/* Not from zero: a salary is a statement, not a reveal. It counts only
-            if a later sync corrects the figure, which is the one time movement
-            is the news. */}
+      {/* Not from zero: a salary is a statement, not a reveal. It counts only
+          if a later sync corrects the figure, which is the one time movement
+          is the news. */}
+      <View accessible accessibilityLabel={`Net salary a month ${m.netSalaryPaise != null ? inrFromPaise(m.netSalaryPaise) : 'not known'}`} style={{ marginTop: 10 }}>
         {m.netSalaryPaise != null ? (
           <CountUp
             value={m.netSalaryPaise}
             format={(n) => inrFromPaise(Math.round(n))}
-            style={[typeScale.body, { fontSize: 22 }, weight(600), tabular]}
+            style={[typeScale.body, { fontSize: 36, lineHeight: 42, letterSpacing: -1, color: C.onNavy }, weight(800), tabular]}
           />
         ) : (
-          <T style={[{ fontSize: 22 }, weight(600), tabular]}>—</T>
+          <T style={[{ fontSize: 36, lineHeight: 42, color: C.onNavy }, weight(800), tabular]}>—</T>
         )}
+        <T style={{ fontSize: 12, color: C.onNavyMuted }}>net a month</T>
       </View>
 
-      <View style={{ marginTop: 10, gap: 6 }}>
-        {m.conveyancePaise != null ? <Row label="Conveyance" value={inrFromPaise(m.conveyancePaise)} /> : null}
-        {m.otherSalaryPaise != null ? <Row label="Other" value={inrFromPaise(m.otherSalaryPaise)} /> : null}
+      {m.conveyancePaise != null || m.otherSalaryPaise != null ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+          {m.conveyancePaise != null ? <NavyFigure label="Conveyance" value={inrFromPaise(m.conveyancePaise)} /> : null}
+          {m.otherSalaryPaise != null ? <NavyFigure label="Other" value={inrFromPaise(m.otherSalaryPaise)} /> : null}
+        </View>
+      ) : null}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+        <Glyph shapes={GLYPH.info} size={13} color={C.onNavyMuted} />
+        <Text
+          accessibilityLabel="This is the figure on your HR record, not a payslip for a month."
+          style={[{ flex: 1, fontSize: 12, lineHeight: 17, color: C.onNavyMuted }, weight(400)]}>
+          The HR record figure, not a month’s payslip
+        </Text>
       </View>
-      <T s="caption" style={{ marginTop: 10 }}>
-        This is the figure on your HR record, not a payslip for a month.
-      </T>
-    </Card>
+    </View>
+  );
+}
+
+function NavyFigure({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12 }}>
+      <T style={{ fontSize: 11, lineHeight: 15, color: C.onNavyMuted }}>{label}</T>
+      <T style={[{ fontSize: 17, lineHeight: 22, color: C.onNavy }, weight(800), tabular]}>{value}</T>
+    </View>
   );
 }
 
 function MonthCard({ m }: { m: SalaryMonth }) {
   return (
-    <Card style={{ marginBottom: 10, gap: 6 }}>
-      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{monthName(m.period)}</T>
-      <Row label="Days worked" value={m.daysWorked != null ? plural(m.daysWorked, 'day') : '—'} />
-      {m.daysOnLeave ? <Row label="Days on leave" value={plural(m.daysOnLeave, 'day')} /> : null}
-      {/* Beside the pay, never added to it — money owed back is not earnings.
-          And APPROVED is all the office can say: approved to pay back is not
-          the same as already in his account. */}
-      {m.reimbursedPaise ? (
-        <Row label="Expenses approved to pay back" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
-      ) : null}
+    <Card style={{ borderRadius: 22 }}>
+      <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(800)]}>{monthName(m.period)}</T>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+        <Figure
+          icon={TICK}
+          iconColor={C.success}
+          value={m.daysWorked != null ? plural(m.daysWorked, 'day') : '—'}
+          valueColor={m.daysWorked != null ? C.ink : C.faint}
+          label="worked"
+          a11y="Days worked"
+        />
+        {m.daysOnLeave ? (
+          <Figure icon={GLYPH.cal} iconColor={C.primaryDeep} value={plural(m.daysOnLeave, 'day')} label="on leave" a11y="Days on leave" />
+        ) : null}
+        {/* Beside the pay, never added to it — money owed back is not earnings.
+            And APPROVED is all the office can say: approved to pay back is not
+            the same as already in his account. */}
+        {m.reimbursedPaise ? (
+          <Figure
+            icon={GLYPH.receipt}
+            iconColor={C.success}
+            value={inrFromPaise(m.reimbursedPaise)}
+            valueColor={C.success}
+            label="expenses approved to pay back"
+            a11y="Expenses approved to pay back"
+          />
+        ) : null}
+        {/* Three columns always, so a month with one figure lines up with one
+            carrying three. */}
+        {!m.daysOnLeave ? <View style={{ flex: 1 }} /> : null}
+        {!m.reimbursedPaise ? <View style={{ flex: 1 }} /> : null}
+      </View>
     </Card>
   );
 }
 
-function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function Figure({
+  icon,
+  iconColor,
+  value,
+  valueColor = C.ink,
+  label,
+  a11y,
+}: {
+  icon: GlyphShape[];
+  iconColor: string;
+  value: string;
+  valueColor?: string;
+  label: string;
+  a11y: string;
+}) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-      <T s="small" style={{ color: C.muted }}>{label}</T>
-      <T s="small" style={[{ color: tone ?? C.ink }, weight(500), tabular]}>{value}</T>
+    <View style={{ flex: 1 }} accessible accessibilityLabel={`${a11y}: ${value}`}>
+      <Glyph shapes={icon} size={16} color={iconColor} />
+      <T style={[{ fontSize: 19, lineHeight: 25, color: valueColor }, weight(800), tabular]}>{value}</T>
+      <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{label}</T>
     </View>
   );
 }
