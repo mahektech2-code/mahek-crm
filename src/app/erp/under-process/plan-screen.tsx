@@ -7,6 +7,7 @@ import { Badge, Button, Callout, Card, CardHeader, cx, EmptyState, Field, Input,
 import { ComboBox } from "@/components/ui/combo-box";
 import { RowMenu } from "@/components/ui/overlays";
 import { clock, stamp } from "@/lib/format";
+import { addDays } from "@/lib/business-date";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { erpPlanHref, erpPlanPrintHref } from "@/lib/erp/trace-links";
 import { erpLink } from "@/lib/erp/registry";
@@ -27,13 +28,6 @@ import { useErpUi } from "../_ui/erp-ui";
  * ------------------------------------------------------------------------- */
 
 const planName = (n: number) => `PLAN-${n}`;
-
-/** "2026-11-15" → "2026-11-16". Calendar arithmetic on the date alone, so no zone can move it. */
-function nextDay(date: string): string {
-  const d = new Date(`${date}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
 
 const NOT_PRINTED = "Not printed yet — open the plan and print it there.";
 
@@ -187,7 +181,7 @@ export function PlanList({
         )}
       </Card>
 
-      {creating ? <CreateDialog today={today} start={todays ? nextDay(today) : today} onClose={() => setCreating(false)} /> : null}
+      {creating ? <CreateDialog today={today} start={todays ? addDays(today, 1) : today} onClose={() => setCreating(false)} /> : null}
     </div>
   );
 }
