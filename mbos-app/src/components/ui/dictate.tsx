@@ -847,18 +847,19 @@ export function MicButton({
       }
       style={[
         {
-          width: 38,
-          height: 38,
-          borderRadius: radius.pill,
+          /* Version 3: a filled purple disc, so the mic reads as something
+             offered rather than part of the box. */
+          width: 44,
+          height: 44,
+          borderRadius: 22,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: disabled ? C.wash : C.primaryTint,
-          borderWidth: 1,
-          borderColor: disabled ? C.border : C.primaryEdge,
+          backgroundColor: disabled ? C.canvas : C.primary,
+          boxShadow: disabled ? undefined : '0 6px 14px -6px rgba(104,53,251,0.55)',
         },
         style,
       ]}>
-      <Icon name="mic" size={19} color={disabled ? C.faint : C.primaryDeep} strokeWidth={1.6} />
+      <Icon name="mic" size={20} color={disabled ? C.faint : '#FFFFFF'} strokeWidth={2} />
     </Pressable>
   );
 }
