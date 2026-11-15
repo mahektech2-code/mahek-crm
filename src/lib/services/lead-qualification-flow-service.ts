@@ -221,12 +221,12 @@ export async function settleQualificationState(
     if (!gate) return { handedTo: null };
     const complete = qualificationReadyForReview(gate);
     const review = lead.leadQualificationReview;
-    /* THE REVIEWER IS THE SALES MANAGER THE LEAD IS UNDER. The lead-manager seat
-       is the fall-through for a lead raised before every lead carried a Sales
-       Manager seat; where both exist, the seat the verification was owed to
-       comes first. */
-    const approver = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
-    const manager = approver?.id ?? (await activeUser(lead.salesManagerId)) ?? lead.leadManagerId;
+    /* THE REVIEWER IS THE ONE THE VERDICT WILL ACCEPT: the Org Chart above
+       whoever collected the answers, then the seats
+       (`designatedQualificationApprover`). Handing the review to anybody else
+       tells a person to do something the review action then refuses them. */
+    const { designatedQualificationApprover } = await import("./qualification-approver");
+    const manager = (await designatedQualificationApprover(customerId))?.id ?? null;
     const owner = await collectorOf(lead);
 
     /* ONLY WHERE THERE IS NO STANDING VERDICT. A negative review is a note the

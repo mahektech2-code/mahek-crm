@@ -9231,8 +9231,15 @@ verifies it — never whoever owns the lead. `orgChartVerifierFor` in
 `services/org-verifier-resolver.ts` is the one resolver; the routing of the
 request (`preparePromotion`), the act of verifying (`orgDesignatedGate`, which
 the console, the Sales Manager pipeline and the handset all pass through) and the
-Qualification review (`requireQualificationApprover`, from whoever completed it)
-all ask it, so a screen cannot offer a call the permission check then refuses.
+Qualification review all ask it, so a screen cannot offer a call the permission
+check then refuses. **The review has ONE reviewer**, `designatedQualificationApprover`
+(`services/qualification-approver.ts`): the Org Chart above whoever collected the
+answers, then the self-raised setting, the Sales Manager seat and the lead-manager
+seat. The hand-off (`settleQualificationState`, first submit and resubmit), the
+action (`requireQualificationApprover`, which lets that person in without
+`lead.verify`), the verdict, GST validation and the screens all read it. They used
+to read the chart in one place and the seats in another, and where the two named
+different people each was refused and the lead could not be reviewed at all.
 The walk is `engines/org-verifier-chain` and is unchanged: it skips a leaver,
 someone with no account, an inactive one, one who cannot verify, and never names
 the requester.

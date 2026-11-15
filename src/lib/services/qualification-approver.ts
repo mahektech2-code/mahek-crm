@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, users } from "@/db/schema";
-import { approverFor, canVerifyLeadById, qualificationApproverRefusalById } from "./lead-verifier";
+import { approverFor } from "./lead-verifier";
 
 /* ---------------------------------------------------------------------------
  * THE ONE PERSON WHO APPROVES A LEAD'S QUALIFICATION.
@@ -24,10 +24,15 @@ import { approverFor, canVerifyLeadById, qualificationApproverRefusalById } from
  *   2. the ACTIVE Sales Manager the lead sits under (`sales_manager_id`);
  *   3. the lead manager seat.
  *
- * No routing rule lives in this file: it adds no setting, reads no org chart and
- * chooses no one. `qualification-approver.test` pins it to the hand-off, so the
- * person told to review and the person allowed to are the same person by test
- * and not by hope.
+ * THE ORG CHART COMES FIRST, here and nowhere else. Whoever COLLECTED the
+ * answers is the starting point and the nearest eligible person above them on
+ * the Org Chart reviews (`orgChartVerifierFor`, the same walk that names a
+ * Prospect's verifier). Only where the chart cannot answer do the three seats
+ * below decide. This used to be split: the review action read the chart and
+ * this function read the seats, so where the two named different people each
+ * was refused by the other's rule and the lead could never be reviewed. Now
+ * the hand-off (`settleQualificationState`), the verdict and the screens all
+ * read this one answer.
  *
  * NOBODY IS DESIGNATED is an answer, and it refuses everyone. A lead with no
  * Sales Manager and no lead manager has nobody to be asked, and quietly letting
@@ -61,6 +66,20 @@ export async function designatedQualificationApprover(customerId: string): Promi
   if (!lead) return null;
 
   const designated = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
+
+  /* The collector: the owner, or — on a lead its Sales Manager raised herself
+     with somebody designated to approve it — her, where nobody owns it. The
+     same rule `collectorOf` in the hand-off follows. */
+  const collector = lead.ownerId ?? (designated ? lead.salesManagerId : null);
+  if (collector) {
+    const { orgChartVerifierFor } = await import("./org-verifier-resolver");
+    const org = await orgChartVerifierFor(collector);
+    if (org.ok) {
+      const person = await activeUser(org.id);
+      if (person) return person;
+    }
+  }
+
   if (designated) return designated;
 
   const seat = await activeUser(lead.salesManagerId);
@@ -104,21 +123,26 @@ export async function assertDesignatedQualificationApprover(
  * MAY THIS PERSON ACT AS THE QUALIFICATION REVIEWER OF THIS LEAD — the screens'
  * form of the authority the review's verdict asks, as a boolean.
  *
- * The same two questions, in the same order, that `reviewLeadQualification`
- * asks: may they review at all (`canVerifyLeadById` and the ownership refusals
- * of `qualificationApproverRefusalById`, which is `requireQualificationApprover`
- * without a request), and are they THE designated person
- * (`assertDesignatedQualificationApprover`). It is asked by anything that draws
- * a control only the reviewer may use — the Sales Manager's choice of next
- * stage — so what is drawn and what the action allows cannot differ. It grants
- * nothing and reads no level: an Associate who holds the seat is the reviewer,
- * and a manager who is not the designated person is not.
+ * Exactly the person `reviewLeadQualification` lets decide: the designated
+ * reviewer (`assertDesignatedQualificationApprover`), never the lead's owner.
+ * It is asked by anything that draws a control only the reviewer may use, so
+ * what is drawn and what the action allows cannot differ. It grants nothing
+ * and reads no level: an Associate the chart or the seat names is the
+ * reviewer, and a manager who is not the designated person is not.
  */
 export async function canActAsQualificationApprover(
   user: { id: string; role: string },
   customerId: string,
 ): Promise<boolean> {
-  if (!(await canVerifyLeadById(user, customerId))) return false;
-  if (await qualificationApproverRefusalById(user, customerId)) return false;
-  return (await assertDesignatedQualificationApprover(customerId, user.id)).ok;
+  /* The designated reviewer, and nobody else — whatever else they hold. The
+     Org Chart can name somebody who carries the Sales Manager screens but not
+     `lead.verify`, so the capability is not asked first. The owner collected
+     the answers and never reviews them. */
+  if (!(await assertDesignatedQualificationApprover(customerId, user.id)).ok) return false;
+  return !(await ownsLead(customerId, user.id));
+}
+
+async function ownsLead(customerId: string, userId: string): Promise<boolean> {
+  const [row] = await db.select({ ownerId: customers.ownerId }).from(customers).where(eq(customers.id, customerId)).limit(1);
+  return row?.ownerId === userId;
 }
