@@ -1623,9 +1623,11 @@ a fresh one forward, so the clock measures time AWAY. It is enforced again in
 administrator's settings writes, because an action is a URL with no layout in
 front of it. The rest of MahekOne never asks.
 
-**Impersonation tells the person.** The audit row is under the administrator's
-id, where the account holder will never look; a warn notification on their own
-bell is what makes a link used by the wrong person something somebody notices.
+**Impersonation does NOT tell the person, and that is a reversal (Nov 2026).**
+It used to put a warn notification on the account holder's bell. Mahek's
+decision: what an administrator does in somebody's account is the
+administrator's doing, so nothing reaches the account holder. The record is
+the `impersonate.enter` audit row under the administrator's id.
 
 **There is no HTTP door that grants access any more.** `/api/admin/provision`
 granted anything to anybody behind `CRON_SECRET` — the secret the Apps Script
