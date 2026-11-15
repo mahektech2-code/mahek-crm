@@ -99,14 +99,9 @@ test("the top rung carries its arrivals rather than drawing zero", () => {
   assert.equal(f.rungs.find((r) => r.stage === "customer")!.total, 40);
 });
 
-test("won is never counted onto a rung it was not on", () => {
-  /* `arrived` sums three stages. Reaching for it instead of `arrivedByStage`
-     would put legacy `won` leads on the direct ladder's `customer` rung. */
-  const f = sharedFunnel([
-    tally("direct", DIRECT_LADDER, {}, { arrived: 7, arrivedByStage: { won: rung("won", 7) } }),
-  ]);
-  assert.equal(f.rungs.find((r) => r.stage === "customer")!.total, 0);
-});
+/* "won is never counted onto a rung it was not on" was retired with the one
+   ladder (Nov 2026): `foldStage` reads `won` as Customer, and every conversion
+   writes it, so the Customer row counts it — see the test at the foot. */
 
 test("delivery, payment and the second order are counted under First order", () => {
   const f = sharedFunnel([
@@ -188,4 +183,20 @@ test("every track the funnel can draw is one the list filter accepts", () => {
   /* And the fourth answer, which is not in the enum at all: a lead carrying no
      sales type is a population, and `in (…)` never matches NULL. */
   assert.ok(offered.has(LEGACY_SALES_TYPE));
+});
+
+test("the Customer row counts `won` (what every conversion writes) beside `customer`", () => {
+  const f = sharedFunnel([
+    tally("direct", DIRECT_LADDER, {}, {
+      arrived: 7,
+      arrivedByStage: { won: rung("won", 5), customer: rung("customer", 2) },
+    }),
+  ]);
+  const customer = f.rungs.find((r) => r.stage === "customer")!;
+  assert.equal(customer.total, 7);
+});
+
+test("Delivery and Payment are counted on the First order row", () => {
+  const f = sharedFunnel([tally("direct", DIRECT_LADDER, { first_order: 1, delivery: 2, payment: 3 })]);
+  assert.equal(f.rungs.find((r) => r.stage === "first_order")!.total, 6);
 });

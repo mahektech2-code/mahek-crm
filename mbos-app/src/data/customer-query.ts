@@ -13,6 +13,7 @@
  */
 
 import { isoDate } from '../lib/format';
+import { leadCustomerClause } from './lead-query';
 
 /**
  * A PAGE OF THE BOOK IS FIFTEEN SHOPS, however big the territory is.
@@ -61,9 +62,9 @@ export type BookView = 'all' | 'customers' | 'leads';
  * is the ledger's statement about the account, so it wins; a null `kind` (an
  * older payload) keeps the old reading.
  */
-const IS_LEAD = `(EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
-      AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')
-    AND COALESCE(customers.kind, 'lead') <> 'customer')`;
+/* The rule itself is `leadCustomerClause` in `lead-query.ts`, shared with the
+   reconcile's `CONVERTED_LEAD` so the chip and the sweep cannot disagree. */
+const IS_LEAD = leadCustomerClause('customers');
 
 /**
  * WHAT THE CARD NEEDS TO SAY WHAT A ROW IS, added to the projection of both
@@ -92,6 +93,9 @@ const IS_LEAD = `(EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.
  * placeholder order true: the six in the projection are still the CASE's own,
  * and they still come before the WHERE's.
  */
+/* `leadStage` is NOT NULL on every `leads` row, so a non-null `leadStage`
+   here is also the proof a live lead row exists — which is what decides
+   whether a tap opens `/lead` (see `opensLeadRecord` in `lib/account-label.ts`). */
 const LEAD_FACTS = `${IS_LEAD} AS isLead,
     (SELECT l.funnelStage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadFunnelStage,
     (SELECT l.stage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadStage`;

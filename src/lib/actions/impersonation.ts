@@ -7,8 +7,6 @@ import { auditLog, impersonationTokens, users } from "@/db/schema";
 import { createSession } from "@/lib/auth";
 import { requirePlatformAdminUser } from "@/lib/access-control";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
-import { notifyUser } from "@/lib/notify";
-import { stamp } from "@/lib/format";
 import { listUserApps } from "@/lib/access";
 import { getApp } from "@/lib/apps";
 import { appOrigin } from "@/lib/password-reset";
@@ -174,19 +172,9 @@ export async function enterImpersonatedSession(
     user.id,
     `Signed in as ${user.name}`,
   );
-  const [by] = await db.select({ name: users.name }).from(users).where(eq(users.id, row.createdById)).limit(1);
-  try {
-    await notifyUser({
-      userId: user.id,
-      kind: "warn",
-      /* About the person and their account, wherever they next look. */
-      general: true,
-      title: "An administrator signed in as you",
-      body: `${by?.name ?? "An administrator"} opened MahekOne as you at ${stamp(new Date())}, using a one-time admin link. Nothing about your password changed. If you did not expect this, tell your manager.`,
-    });
-  } catch {
-    // A bell that could not be written must not undo a sign-in already made.
-  }
+  // The account holder is NOT told. Mahek's decision (Nov 2026): what an
+  // administrator does in somebody's account is the administrator's doing,
+  // and the audit row above, under the administrator's id, is the record.
 
   // Imported lazily: next/navigation pulls in the client React runtime,
   // which cannot be loaded outside a request — see requireUser() in

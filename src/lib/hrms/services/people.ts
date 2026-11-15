@@ -1,7 +1,7 @@
 import "server-only";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { employees, hrmsOffices, hrmsRefLists, hrmsStaffTimings } from "@/db/schema";
+import { employees, hrmsOffices, hrmsOfficeTimings, hrmsRefLists, hrmsStaffTimings } from "@/db/schema";
 import type { HrmsContext, Scope } from "../access";
 import { isHeadPosition } from "../access";
 
@@ -96,10 +96,37 @@ export async function offices() {
   return db.select().from(hrmsOffices).orderBy(asc(hrmsOffices.name));
 }
 
-/** Every timing row, keyed "employeeId|Weekday". */
+/**
+ * Every timing in force, keyed "employeeId|Weekday": a person's own rows, and
+ * for anybody with none, their office's week. Own rows replace the office's
+ * week whole — a person given Monday to Friday is not also given the
+ * office's Saturday.
+ */
 export async function timingMap(): Promise<Map<string, { inTime: string; outTime: string; presentMin: number | null; halfMin: number | null }>> {
-  const rows = await db.select().from(hrmsStaffTimings);
-  return new Map(rows.map((r) => [`${r.employeeId}|${r.weekday}`, { inTime: r.inTime, outTime: r.outTime, presentMin: r.presentMin, halfMin: r.halfMin }]));
+  const [rows, officeRows] = await Promise.all([db.select().from(hrmsStaffTimings), db.select().from(hrmsOfficeTimings)]);
+  const map = new Map(rows.map((r) => [`${r.employeeId}|${r.weekday}`, { inTime: r.inTime, outTime: r.outTime, presentMin: r.presentMin, halfMin: r.halfMin }]));
+  if (!officeRows.length) return map;
+  const own = new Set(rows.map((r) => r.employeeId));
+  const [offs, people] = await Promise.all([
+    db.select({ id: hrmsOffices.id, name: hrmsOffices.name }).from(hrmsOffices),
+    db.select({ id: employees.id, office: employees.officeName }).from(employees),
+  ]);
+  const nameOf = new Map(offs.map((o) => [o.id, o.name]));
+  const week = new Map<string, typeof officeRows>();
+  for (const r of officeRows) {
+    const n = nameOf.get(r.officeId);
+    if (n) week.set(n, [...(week.get(n) ?? []), r]);
+  }
+  for (const p of people) {
+    if (own.has(p.id) || !p.office) continue;
+    for (const r of week.get(p.office) ?? []) map.set(`${p.id}|${r.weekday}`, { inTime: r.inTime, outTime: r.outTime, presentMin: r.presentMin, halfMin: r.halfMin });
+  }
+  return map;
+}
+
+/** One office's week, Monday first; a weekday with no row is a week off. */
+export async function officeWeek(officeId: string) {
+  return db.select().from(hrmsOfficeTimings).where(eq(hrmsOfficeTimings.officeId, officeId));
 }
 
 /** One editable value list (spec §3), e.g. "Bank names". */

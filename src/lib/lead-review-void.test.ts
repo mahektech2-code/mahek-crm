@@ -141,16 +141,27 @@ describe("what counts as a material change", () => {
 });
 
 describe("a changed GSTIN is not the validated one", () => {
+  const at = new Date("2026-11-10T10:00:00+05:30");
   test("changing it clears the validation; saving the same number, or a number with none to clear, does not", () => {
-    assert.deepEqual(gstinChangeClear({ gstin: "A", gstVerified: true }, "B"), {
+    assert.deepEqual(gstinChangeClear({ gstin: "A", gstVerified: true, gstVerifiedAt: at }, "B"), {
       gstVerified: false,
       gstVerifiedAt: null,
       gstVerifiedById: null,
     });
-    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: true }, "A"), null);
-    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: true }, " A "), null);
-    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: false }, "B"), null);
-    assert.deepEqual(gstinChangeClear({ gstin: "A", gstVerified: true }, null)?.gstVerified, false);
+    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: true, gstVerifiedAt: at }, "A"), null);
+    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: true, gstVerifiedAt: at }, " A "), null);
+    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: false, gstVerifiedAt: null }, "B"), null);
+    assert.deepEqual(gstinChangeClear({ gstin: "A", gstVerified: true, gstVerifiedAt: at }, null)?.gstVerified, false);
+  });
+
+  test("correcting a REFUSED number takes the refusal away, so the lead goes back for review", () => {
+    assert.deepEqual(gstinChangeClear({ gstin: "A", gstVerified: false, gstVerifiedAt: at }, "B"), {
+      gstVerified: false,
+      gstVerifiedAt: null,
+      gstVerifiedById: null,
+    });
+    /* Re-saving the refused number is not a correction: the refusal stands. */
+    assert.equal(gstinChangeClear({ gstin: "A", gstVerified: false, gstVerifiedAt: at }, "A"), null);
   });
 });
 

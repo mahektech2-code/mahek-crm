@@ -2,6 +2,7 @@ import { all, getKv, one, run, setKv, tx } from '../db';
 import { deviceId, type PullPayload, type TerritoryState } from './api';
 import { isoDate } from '../lib/format';
 import { CONVERTED_LEAD } from '../data/lead-query';
+import { noPending, noPendingLead, PENDING_STATES } from './pending';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
 export const TERRITORY_KEY = 'territory';
@@ -371,11 +372,9 @@ function normalise(v: unknown): string | number | null {
  * asked of the outbox directly: anything queued, in flight, exhausted or
  * blocked is still his to send, and only then does the local row stand.
  */
-export const PENDING_STATES = "('queued','syncing','failed','blocked')";
-
-function noPending(table: string): string {
-  return `NOT EXISTS (SELECT 1 FROM sync_queue q WHERE q.entityId = ${table}.id AND q.state IN ${PENDING_STATES})`;
-}
+/* The guards themselves live in `pending.ts`, which is pure, so they can be
+   run against a real SQLite. Re-exported because callers import it from here. */
+export { PENDING_STATES };
 
 /* ---------------------------------------------------------------- tables */
 
@@ -908,8 +907,13 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          -- Kept on conflict as well as inserted. A lead is on this phone long
          -- before anybody asks how old it is, so a value written once and
          -- never restated is one that stays null on every row already here.
-         createdAt = excluded.createdAt, syncState = 'synced'
-       WHERE ${noPending('leads')}`,
+         createdAt = excluded.createdAt, syncState = 'synced',
+         -- A ROW THE OFFICE SENDS IS LIVE, by definition: a lead it has filed
+         -- away arrives as a tombstone, never as a row. Without this a lead
+         -- an administrator restored came back to this phone still archived,
+         -- off every Leads screen, with nothing saying why.
+         archived = 0
+       WHERE ${noPendingLead('leads')}`,
       [
         l.id,
         l.name,
@@ -1505,9 +1509,12 @@ async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
    * very pull that answered the create, so his orders were left pointing at a
    * shop that was gone from his own phone. Anything with a create still in
    * the outbox, refused or not, is his work; it is kept. */
+  /* LIVE leads only: an ARCHIVED lead row is the office saying the lead
+     left this book (lost, filed, reassigned), so it must not hold a shop
+     the office no longer sends on the phone for ever. */
   const local = await all<{ id: string }>(
     `SELECT id FROM customers
-      WHERE id NOT IN (SELECT id FROM leads)
+      WHERE id NOT IN (SELECT id FROM leads WHERE archived = 0)
         AND NOT EXISTS (SELECT 1 FROM sync_queue q
                          WHERE q.entityId = customers.id AND q.state <> 'synced')`,
   );
@@ -1597,7 +1604,7 @@ export async function missingCustomerIds(): Promise<string[]> {
  * own work, and it waits in the outbox until the office has heard it.
  */
 async function releaseConvertedLeads(): Promise<number> {
-  const where = `${noPending('leads')} AND ${CONVERTED_LEAD}`;
+  const where = `${noPendingLead('leads')} AND ${CONVERTED_LEAD}`;
   const rows = await all<{ id: string }>(`SELECT id FROM leads WHERE ${where}`);
   if (!rows.length) return 0;
   await run(`DELETE FROM leads WHERE ${where}`);
@@ -1622,7 +1629,8 @@ async function applyDeletions(deletions: { entity: string; ids: string[] }[] | u
 async function applyDeletionChunk(entity: string, ids: string[]): Promise<number> {
   const marks = ids.map(() => '?').join(',');
   /*
-   * A LEAD MOVED TO THE OFFICE'S TRASH is ARCHIVED here, never deleted. A
+   * A LEAD THE OFFICE STOPS SENDING — trashed, lost, archived, moved to
+   * somebody else — is ARCHIVED here, never deleted. A
    * lead is something the salesman works and may still have changes queued
    * in the outbox for, and nothing he authored is deleted by a sync. Every
    * Leads screen reads `archived = 0`, so it leaves them all; if an

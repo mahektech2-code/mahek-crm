@@ -63,6 +63,7 @@ import {
   type LeadStage,
 } from '../../engines/funnel';
 import { compactInrFromPaise, dmy, grouped, isoDate, pretty } from '../../lib/format';
+import { stageOf } from '../../lib/wire';
 import { cleanDecimal, parseDecimal } from '../../lib/decimal-input';
 import { cleanAmount, paiseFromTyped } from '../../lib/money-input';
 import { useStore } from '../../state/store';
@@ -185,9 +186,12 @@ function LeadRow({
   const alert = cfg ? leadAlert(lead, today, cfg) : null;
   const quiet = owed && owed.source === 'promise' && owed.daysLate > 0 ? null : alert;
 
-  const rung = (lead.funnelStage as LeadStage | null) ?? null;
+  /* FOLDED by `stageOf`, the one reading the record's badge, its ladder and
+     the Customers card all take — a retired word like `new` or `qualified`
+     printed raw here named a rung no ladder has. */
+  const rung: LeadStage = stageOf(lead);
   const facts = {
-    stage: (rung ?? 'new') as LeadStage,
+    stage: rung,
     salesType: lead.salesType as LeadSalesType | null,
     hasCommitment: lead.hasCommitment === 1,
     hasOrder: lead.hasOrder === 1,

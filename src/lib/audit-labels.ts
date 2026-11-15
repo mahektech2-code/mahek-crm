@@ -1107,6 +1107,8 @@ export const VERBS: Record<string, string> = {
   restore: "restored",
   restored: "restored",
   approve: "approved",
+  decline: "declined",
+  timings: "set the working week of",
   approved: "approved",
   reject: "rejected",
   rejected: "rejected",

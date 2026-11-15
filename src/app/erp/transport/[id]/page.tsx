@@ -92,14 +92,11 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
               {fact("Litres", c.litres)}
               {fact("Freight", c.paymentType)}
               {fact(
-                "Vehicle trip",
-                c.tripNo != null ? (
-                  <NavLink href={erpLink("trips")} className={linkClass()}>
-                    Trip {c.tripNo}
-                    {c.vehicleNo ? ` · ${c.vehicleNo}` : ""}
+                "Vehicle",
+                c.vehicleNo ? (
+                  <NavLink href={erpLink("freight")} className={linkClass()} title="Its transport bill is on Transport expenses.">
+                    {c.vehicleNo}
                   </NavLink>
-                ) : c.vehicleNo ? (
-                  `Vehicle ${c.vehicleNo} · on no trip`
                 ) : (
                   <span className="text-warn">No vehicle recorded</span>
                 ),

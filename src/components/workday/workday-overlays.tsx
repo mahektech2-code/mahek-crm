@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import { signOut } from "@/lib/actions/auth";
-import { longDate } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
 import { useWorkday, type OpResult } from "./workday-context";
-import { at, greeting, hmOf, locate, msOf, VERDICT_WORDS } from "./format";
+import { at, dayDate, greeting, hmOf, locate, msOf, VERDICT_WORDS } from "./format";
+import { ampm, DayTimeline } from "./day-parts";
 
 /* ---------------------------------------------------------------------------
  * WHAT IS DRAWN OVER EVERY APP: the lock screen while somebody is locked out
@@ -44,7 +44,7 @@ function LockScreen() {
   const phase = state.phase;
   const pill =
     phase === "none"
-      ? { text: "Locked until you punch in", cls: "border-brand-softer bg-surface text-brand-deep" }
+      ? { text: "Locked", cls: "border-brand-softer bg-surface text-brand-deep" }
       : phase === "break" || phase === "auto_break"
         ? { text: "On a break", cls: "border-warn-line bg-warn-soft text-warn-ink" }
         : phase === "auto_out"
@@ -52,7 +52,7 @@ function LockScreen() {
           : { text: "Punched out", cls: "border-success/30 bg-success-soft text-success" };
   const last = state.sessions[state.sessions.length - 1];
   const breakMs = last?.out != null ? now - last.out : 0;
-  const bigClock = phase === "break" || phase === "auto_break" ? msOf(breakMs) : at(now).replace(/ (am|pm)$/, "");
+  const bigClock = phase === "break" || phase === "auto_break" ? msOf(breakMs) : at(now).replace(/ (am|pm)$/i, "");
   const suffix = phase === "break" || phase === "auto_break" ? null : at(now).slice(-2).toUpperCase();
 
   return (
@@ -73,12 +73,15 @@ function LockScreen() {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <div className="text-right leading-tight">
+          <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full bg-brand-deep text-[12px] font-extrabold text-white">
+            {initials(state.name)}
+          </span>
+          <div className="leading-tight">
             <div className="text-[13.5px] font-semibold">{state.name}</div>
-            {state.office ? <div className="text-[12px] text-muted">{state.office}</div> : null}
+            {state.role || state.office ? <div className="text-[12px] text-muted">{state.role ?? state.office}</div> : null}
           </div>
           <form action={signOut}>
-            <button type="submit" className="h-[34px] rounded-[9px] border border-brand-softer bg-surface px-3.5 text-[13px] font-semibold text-ink hover:bg-canvas">
+            <button type="submit" className="ml-1.5 h-[34px] rounded-[9px] border border-brand-softer bg-surface px-3.5 text-[13px] font-semibold text-ink hover:bg-canvas">
               Sign out
             </button>
           </form>
@@ -89,14 +92,14 @@ function LockScreen() {
         <div className="text-center">
           {phase === "break" || phase === "auto_break" ? (
             <div className="text-[13px] font-semibold uppercase tracking-[0.06em] text-warn-ink">
-              {phase === "auto_break" ? "No activity since" : last?.reason ? `${last.reason} since` : "On a break since"} {at(last?.out)}
+              {phase === "auto_break" ? "No activity since" : last?.reason ? `${last.reason} · since` : "On a break since"} {at(last?.out)}
             </div>
           ) : null}
           <div className="mt-2 text-[88px] leading-none font-light tracking-[-0.04em] tabular-nums">
             {bigClock}
             {suffix ? <span className="ml-2 text-[32px] font-normal tracking-normal text-muted">{suffix}</span> : null}
           </div>
-          <div className="mt-2 text-[16px] text-muted">{phase === "break" || phase === "auto_break" ? "break time · your work timer is paused" : longDate(state.date)}</div>
+          <div className="mt-2 text-[16px] text-muted">{phase === "break" || phase === "auto_break" ? "break time · your work timer is paused" : dayDate(state.date)}</div>
         </div>
 
         <section className="w-full max-w-[460px] overflow-hidden rounded-[20px] border border-line bg-surface shadow-[0_16px_40px_rgba(15,27,51,0.12)]">
@@ -111,11 +114,27 @@ function LockScreen() {
         </section>
       </main>
 
-      <footer className="px-7 pb-6 text-center text-[13px] text-muted">
-        {state.official ? `Office hours today ${state.official} · ` : ""}Present at {hmOf(state.presentMin * 60_000)} worked, half day at {hmOf(state.halfMin * 60_000)} · breaks are not counted
-      </footer>
+      <footer className="px-7 pt-[18px] pb-6 text-center text-[13px] text-muted">{footerFor(state)}</footer>
     </div>
   );
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((x) => x[0]!.toUpperCase())
+    .join("");
+}
+
+function footerFor(state: NonNullable<ReturnType<typeof useWorkday>>["state"]): string {
+  const firstIn = state.sessions[0]?.in;
+  if (state.phase === "none")
+    return `${state.officialIn && state.officialOut ? `Office hours today ${ampm(state.officialIn)} – ${ampm(state.officialOut)} · ` : ""}breaks and time away are not counted as work`;
+  if (state.phase === "break" || state.phase === "auto_break") return `${dayDate(state.date)} · punched in at ${at(firstIn)}`;
+  if (state.phase === "auto_out") return "Punching in again checks your office location, like the morning punch-in";
+  return "Punching in again adds to today · the time in between is recorded as away";
 }
 
 function LockGlyph() {
@@ -175,54 +194,152 @@ export async function withLocation(run: (fix: { lat: number | null; lng: number 
   return run(fix);
 }
 
+type Where = { office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null };
+
+/**
+ * Where the gate says somebody is before they press the button. Asked only
+ * when the browser already holds location permission — a permission prompt
+ * on a page nobody has touched teaches people to press Block — and only a
+ * preview: the punch-in measures again and decides.
+ */
+function useWhere(): Where | "ask" | null {
+  const [where, setWhere] = React.useState<Where | "ask" | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const p = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
+        if (!p || p.state !== "granted") {
+          if (live) setWhere("ask");
+          return;
+        }
+        const fix = await locate();
+        if (fix === "denied" || fix.lat == null) {
+          if (live) setWhere("ask");
+          return;
+        }
+        const res = await fetch("/api/workday", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "where", lat: fix.lat, lng: fix.lng }) });
+        const j = (await res.json()) as { where?: Where };
+        if (live) setWhere(j.where ?? "ask");
+      } catch {
+        if (live) setWhere("ask");
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+  return where;
+}
+
+function PinGlyph() {
+  return (
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 21s-7-6.2-7-11a7 7 0 1 1 14 0c0 4.8-7 11-7 11z" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
+  );
+}
+
+function kmOrM(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+}
+
+function WhereBanner({ where, office }: { where: Where | "ask" | null; office: string | null }) {
+  const name = (where && where !== "ask" ? where.office : null) ?? office ?? "your office";
+  const tone =
+    where && where !== "ask" && where.inside === true
+      ? { box: "bg-success-soft", icon: "text-success", title: "text-success", line1: `You are at ${name}`, line2: `${kmOrM(where.distanceM!)} from the office pin` }
+      : where && where !== "ask" && where.inside === false
+        ? { box: "bg-warn-soft", icon: "text-warn-ink", title: "text-warn-ink", line1: `You are ${kmOrM(where.distanceM!)} from ${name}`, line2: `Punch-in works within ${kmOrM(where.radiusM)} of the office pin` }
+        : where === null
+          ? { box: "bg-canvas", icon: "text-muted", title: "text-ink", line1: "Finding where you are…", line2: name }
+          : { box: "bg-canvas", icon: "text-muted", title: "text-ink", line1: name, line2: "Your location is read once, when you press Punch in" };
+  return (
+    <div className={cx("flex items-center gap-3 rounded-[12px] px-3.5 py-3", tone.box)}>
+      <span className={cx("flex size-[34px] flex-none items-center justify-center rounded-[10px] bg-surface", tone.icon)}>
+        <PinGlyph />
+      </span>
+      <div>
+        <div className={cx("text-[14px] font-semibold", tone.title)}>{tone.line1}</div>
+        <div className="text-[12.5px] text-body">{tone.line2}</div>
+      </div>
+    </div>
+  );
+}
+
 function PunchInCard() {
   const w = useWorkday()!;
+  const where = useWhere();
   const [res, setRes] = React.useState<OpResult | null>(null);
-  const [lateText, setLateText] = React.useState("");
+  const [ask, setAsk] = React.useState<null | "late" | "away">(null);
+  const [text, setText] = React.useState("");
   const [sent, setSent] = React.useState<string | null>(null);
-  const go = async () => setRes(await withLocation((fix) => w.act({ op: "punchIn", ...fix })));
+  const go = async () => {
+    const r = await withLocation((fix) => w.act({ op: "punchIn", ...fix }));
+    setRes(r);
+    if (!r.ok && r.refusal === "late" && w.state.canLateHelp) setAsk("late");
+  };
+  const send = async () => {
+    const r = await w.act({ op: "lateHelp", text, kind: ask === "away" ? "away" : "late" });
+    if (r.ok) setSent(r.message ?? "Sent to your manager.");
+    else setRes(r);
+  };
   return (
     <>
       <div>
         <h1 className="text-[22px] font-bold">{greeting(w.now, w.state.name)}</h1>
         <p className="mt-1 text-[14px] text-muted">Punch in to open your apps.</p>
       </div>
-      {res && !res.ok ? (
-        res.refusal === "late" && w.state.canLateHelp ? (
-          <div className="grid gap-2 rounded-[10px] border border-danger/40 bg-danger-soft px-3.5 py-3">
-            <div className="text-[14px] font-semibold text-danger">{res.error}</div>
-            {res.detail ? <div className="text-[13px] text-body">{res.detail}</div> : null}
-            {sent ? (
-              <div className="text-[13px] font-medium text-success">{sent}</div>
-            ) : (
-              <>
-                <label className="text-[13px] font-semibold" htmlFor="wd-late">
-                  What happened?
-                </label>
-                <textarea id="wd-late" value={lateText} onChange={(e) => setLateText(e.target.value)} rows={2} className="w-full rounded-[8px] border border-line bg-surface px-2.5 py-2 text-[13px]" />
-                <button
-                  type="button"
-                  disabled={!lateText.trim() || w.busy}
-                  onClick={async () => {
-                    const r = await w.act({ op: "lateHelp", text: lateText });
-                    if (r.ok) setSent(r.message ?? "Sent. Your manager will set your punch-in time.");
-                    else setRes(r);
-                  }}
-                  className="h-10 rounded-[10px] bg-brand text-[14px] font-semibold text-white disabled:opacity-50"
-                >
-                  Send “I am late today”
-                </button>
-              </>
-            )}
-          </div>
-        ) : (
-          <Refusal r={res} onClose={() => setRes(null)} />
-        )
-      ) : null}
+      <WhereBanner where={where} office={w.state.office} />
+      {res && !res.ok && !ask ? <Refusal r={res} onClose={() => setRes(null)} /> : null}
       <Primary onClick={go} disabled={w.busy}>
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+          <path d="m10 17 5-5-5-5M15 12H3" />
+        </svg>
         {w.busy ? "Punching in…" : "Punch in"}
       </Primary>
-      <p className="text-center text-[12.5px] text-muted">Your office location is read once, when you press the button.</p>
+      {sent ? (
+        <div className="rounded-[10px] bg-success-soft px-3.5 py-3 text-[13px] font-medium text-success">{sent}</div>
+      ) : ask ? (
+        <div className="grid gap-2 rounded-[12px] border border-line bg-canvas px-3.5 py-3">
+          {res && !res.ok ? (
+            <div>
+              <div className="text-[14px] font-semibold text-danger">{res.error}</div>
+              {res.detail ? <div className="mt-0.5 text-[13px] text-body">{res.detail}</div> : null}
+            </div>
+          ) : null}
+          <label className="text-[13px] font-semibold" htmlFor="wd-ask">
+            {ask === "away" ? "Where are you working from, and why?" : "What happened?"} <span className="text-danger">*</span>
+          </label>
+          <textarea
+            id="wd-ask"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={2}
+            placeholder={ask === "away" ? "e.g. At the Thane customer meeting first, coming to office by 12" : ""}
+            className="w-full rounded-[8px] border border-line bg-surface px-2.5 py-2 text-[13px]"
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[12.5px] text-muted">Your manager decides and sets your punch-in time.</span>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setAsk(null)} className="h-9 rounded-[9px] border border-line-strong bg-surface px-3 text-[13px] font-semibold">
+                Cancel
+              </button>
+              <button type="button" disabled={!text.trim() || w.busy} onClick={send} className="h-9 rounded-[9px] bg-brand px-3.5 text-[13px] font-semibold text-white disabled:opacity-50">
+                Send to my manager
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : w.state.canLateHelp ? (
+        <div className="flex justify-center text-[13.5px] font-semibold">
+          <button type="button" onClick={() => setAsk("away")} className="text-brand hover:underline">
+            I’m not at the office
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -301,28 +418,26 @@ function BackFromBreakCard() {
   const w = useWorkday()!;
   const last = w.state.sessions[w.state.sessions.length - 1];
   const [res, setRes] = React.useState<OpResult | null>(null);
-  const [claiming, setClaiming] = React.useState(false);
+  const from = last?.out ?? w.now;
+  const mins = Math.max(0, Math.round((w.now - from) / 60_000));
   return (
     <>
-      <span className="self-start rounded-full border border-warn-line bg-warn-soft px-2.5 py-0.5 text-[12px] font-bold text-warn-ink">Recorded as a break</span>
-      <h1 className="text-[22px] font-bold">Welcome back</h1>
-      <p className="text-[14.5px] leading-relaxed text-body">
-        There was no activity from <b>{at(last?.out)}</b> until now, so that time is recorded as a break and is not counted as work.
-      </p>
-      {res && !res.ok ? <Refusal r={res} onClose={() => setRes(null)} /> : null}
-      <Primary onClick={async () => setRes(await w.act({ op: "resume" }))} disabled={w.busy}>
-        Resume work
-      </Primary>
-      {claiming ? (
-        <div className="border-t border-divider pt-4">
-          <div className="mb-3 text-[14px] font-bold">I was working away from the screen</div>
-          <ClaimForm label="Send and resume" sending={w.busy} onSend={async (claim) => setRes(await w.act({ op: "resume", claim }))} />
-        </div>
-      ) : (
-        <button type="button" onClick={() => setClaiming(true)} className="text-[13.5px] font-semibold text-brand hover:underline">
-          I was working away from the screen
-        </button>
-      )}
+      <div className="grid gap-3">
+        <span className="justify-self-start rounded-full border border-warn-line bg-warn-soft px-2.5 py-0.5 text-[12px] font-bold text-warn-ink">Recorded as a break</span>
+        <h1 className="text-[22px] font-bold">Welcome back, {w.state.name.split(" ")[0]}</h1>
+        <p className="text-[14.5px] leading-relaxed text-body">
+          There was no activity from <b>{at(from)} to {at(w.now)}</b>, so {mins === 1 ? "that minute is" : `those ${mins} minutes are`} recorded as a break and are not counted as work.
+        </p>
+        <DayTimeline labels="gap" />
+        {res && !res.ok ? <Refusal r={res} onClose={() => setRes(null)} /> : null}
+        <Primary onClick={async () => setRes(await w.act({ op: "resume" }))} disabled={w.busy}>
+          Resume work
+        </Primary>
+      </div>
+      <div className="-mx-6 -mb-6 border-t border-divider bg-canvas px-6 pt-4 pb-6">
+        <div className="mb-3 text-[14px] font-bold">I was working away from the screen</div>
+        <ClaimForm label="Send and resume" sending={w.busy} onSend={async (claim) => setRes(await w.act({ op: "resume", claim }))} />
+      </div>
     </>
   );
 }
@@ -337,7 +452,7 @@ function AutoOutCard() {
     <>
       <h1 className="text-[22px] leading-tight font-bold">You were punched out at {at(last?.out)}</h1>
       <p className="text-[14px] leading-relaxed text-body">
-        There was no activity for {w.state.cfg.outMinutes} minutes, so your day was closed at your last activity. That time is not counted.
+        No activity for {w.state.cfg.outMinutes === 60 ? "an hour" : `${w.state.cfg.outMinutes} minutes`}, so your day was closed at your last activity. That {w.state.cfg.outMinutes === 60 ? "hour is" : "time is"} not counted.
       </p>
       <div className="grid grid-cols-3 gap-2">
         <Fact l="In" v={w.state.firstIn ? at(w.state.sessions[0]?.in) : "—"} />
@@ -367,7 +482,9 @@ function AutoOutCard() {
         </div>
       ) : (
         <div className="flex flex-wrap justify-between gap-2 text-[13.5px]">
-          <span className="text-muted">The time in between shows as away.</span>
+          <span className="text-muted">
+            {at(last?.out)} – {at(w.now)} will show as away.
+          </span>
           <button type="button" onClick={() => setClaiming(true)} className="font-semibold text-brand hover:underline">
             I was working · ask to correct
           </button>
@@ -388,7 +505,7 @@ function DayDoneCard() {
     <>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-[22px] font-bold">Your day is done, {w.state.name.split(" ")[0]}</h1>
+          <h1 className="text-[22px] font-bold">Good work today, {w.state.name.split(" ")[0]}</h1>
           <p className="mt-1 text-[14px] text-muted">Punched out at {at(last?.out)}</p>
         </div>
         {v ? <VerdictPill v={v} /> : null}
@@ -396,7 +513,10 @@ function DayDoneCard() {
       <div className="grid gap-1.5">
         <div className="flex items-baseline justify-between">
           <span className="text-[34px] font-semibold tracking-[-0.02em] tabular-nums">{hmOf(w.workedMs)}</span>
-          <span className="text-[13px] text-muted">worked · present at {hmOf(w.state.presentMin * 60_000)}</span>
+          <span className="text-[13px] text-muted">
+            worked · present at {hmOf(w.state.presentMin * 60_000)}
+            {w.workedMs >= w.state.presentMin * 60_000 ? " ✓" : ""}
+          </span>
         </div>
         <div className="h-2 overflow-hidden rounded bg-divider">
           <div className={cx("h-full", pct >= 100 ? "bg-success" : "bg-warn")} style={{ width: `${pct}%` }} />
@@ -423,7 +543,6 @@ function DayDoneCard() {
           </button>
         </form>
       </div>
-      <p className="text-center text-[12.5px] text-muted">Punching in again adds to today. The time in between is recorded as away.</p>
     </>
   );
 }
@@ -443,6 +562,23 @@ export function VerdictPill({ v }: { v: { label: string; tone: string } }) {
 }
 
 /* ---------------------------------------------------------------- idle */
+
+/** The idle warning reaches another window as a desktop notification, where allowed — and says so, or offers it. */
+function DesktopNote() {
+  const [perm, setPerm] = React.useState<NotificationPermission | "none">(() => (typeof Notification === "undefined" ? "none" : Notification.permission));
+  if (perm === "none" || perm === "denied") return null;
+  return (
+    <div className="-mx-6 -mb-6 rounded-b-[16px] border-t border-divider bg-canvas px-6 py-3 text-[12.5px] text-muted">
+      {perm === "granted" ? (
+        "Also sent as a desktop notification, so you see it even with another window open."
+      ) : (
+        <button type="button" onClick={async () => setPerm(await Notification.requestPermission())} className="font-semibold text-brand hover:underline">
+          Also tell me in a desktop notification when another window is open
+        </button>
+      )}
+    </div>
+  );
+}
 
 function IdleWarning() {
   const w = useWorkday()!;
@@ -481,6 +617,7 @@ function IdleWarning() {
             Start a break
           </button>
         </div>
+        <DesktopNote />
       </div>
     </div>
   );

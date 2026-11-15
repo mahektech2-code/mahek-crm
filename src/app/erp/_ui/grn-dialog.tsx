@@ -128,8 +128,15 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
     if (Object.keys(e).length) return;
     setBusy(true);
     setTopError("");
-    const res = await kit.submitForm(spec.screen, spec.id, h, lines, spec.recordId);
-    setBusy(false);
+    let res: Awaited<ReturnType<typeof kit.submitForm>>;
+    try {
+      res = await kit.submitForm(spec.screen, spec.id, h, lines, spec.recordId);
+    } catch {
+      setTopError("That could not be saved. Check the connection and try again.");
+      return;
+    } finally {
+      setBusy(false);
+    }
     if (res.ok) return onSaved(res.message ?? "Saved");
     const fe: Record<string, string> = {};
     res.fieldErrors?.forEach((x) => {

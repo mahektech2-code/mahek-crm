@@ -32,8 +32,8 @@ test("only the hand moves a person may make are offered", () => {
   assert.equal(manualMove("available", "hold"), null);
   assert.ok(manualMove("dispatched", "hold"));
   assert.equal(manualMove("hold", "available"), null);
-  assert.equal(manualMove("dispatched", "returned"), null);
-  assert.ok(manualMove("available", "returned"));
+  assert.ok(manualMove("returned", "available"));
+  assert.ok(manualMove("returned", "rejected"));
   assert.ok(manualMove("scanned", "rejected"));
 });
 

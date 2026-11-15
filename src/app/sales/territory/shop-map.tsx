@@ -1,5 +1,6 @@
 "use client";
 
+import { accountTypeLabel } from "@/lib/account-types";
 import * as React from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -631,7 +632,7 @@ function shopFeatures(list: ShopPin[]): GeoJSON.FeatureCollection {
         closed: isClosed(s.status),
         label:
           `${s.name} · ${s.city}${s.salesmanName ? ` · ${s.salesmanName}` : ""}` +
-          (s.kind === "lead" ? " · lead" : "") +
+          ` · ${accountTypeLabel(s).toLowerCase()}` +
           (isClosed(s.status) ? ` · ${s.status}` : "") +
           (s.approximate ? " · approximate, from the address" : ""),
       },

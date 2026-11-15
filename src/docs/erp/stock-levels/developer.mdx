@@ -120,7 +120,7 @@ Finished-goods levels, and raw materials the planner has not read, still use the
   min_qty: "Cans for a loose SKU, boxes for a boxed one — the unit is the SKU's, not the form's.",
 }} />
 
-Both carry a unique index on `(godown_id, item)`; the insert uses `onConflictDoNothing` and answers *Duplicate Entry!* when nothing was inserted.
+Both carry a unique index on `(godown_id, item)`; the insert uses `onConflictDoNothing` and answers *That item already has a level at this godown.* when nothing was inserted.
 
 ## Access
 
@@ -133,7 +133,7 @@ Both carry a unique index on `(godown_id, item)`; the insert uses `onConflictDoN
 
 | Suite | File | What it pins |
 |---|---|---|
-| `npm run test` | `src/lib/erp/engines/production.test.ts` | `rmReorderPercent` at and below the midpoint, `rmRequired` blank at or above max, `fgReorderPercent` |
+| `npm run test` | `src/lib/erp/engines/production.test.ts` | `rmReorderPercent` as available over minimum, `rmRequired` blank at or above max, `fgReorderPercent` |
 | `npm run test` | `src/lib/erp/registry.test.ts` | `erpLink("reorderRm")` lands on `/erp/rm-levels` |
 | `npm run test:integration` | `src/lib/erp/erp-production.test.ts` | Levels for cans and boxes, the duplicate refusal, a filled batch moving a can level onto `reorderRm` |
 | `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `suggested levels (AI-7)` | A suggestion is cover days of recent use, applied only when a person presses it |

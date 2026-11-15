@@ -132,9 +132,8 @@ export function DeliveryStatusBadge({ c, today }: { c: Pick<Consignment, "phase"
   return <Badge label={st} tone={DELIVERY_STATUS_TONE[st]} />;
 }
 
-/** "Trip 12 · MH04 AB 1234", "Vehicle MH04…", or that dispatch named no vehicle. */
+/** "Vehicle MH04 AB 1234", or that dispatch named no vehicle. Trips have no screen of their own any more. */
 export function vehicleWords(c: Pick<Consignment, "tripNo" | "vehicleNo">): string {
-  if (c.tripNo != null) return `Trip ${c.tripNo}${c.vehicleNo ? ` · ${c.vehicleNo}` : ""}`;
   return c.vehicleNo ? `Vehicle ${c.vehicleNo}` : "No vehicle recorded";
 }
 
@@ -252,7 +251,7 @@ export function ReasonDialog({
       </DialogBody>
       <DialogFooter>
         <Button onClick={onClose}>{keepLabel}</Button>
-        <Button variant={tone} disabled={pending || reason.trim().length < 3} onClick={() => onConfirm(reason)}>
+        <Button variant={tone} disabled={pending || reason.trim().length < 3} title={reason.trim().length < 3 ? "Write a reason first." : undefined} onClick={() => onConfirm(reason)}>
           {confirmLabel}
         </Button>
       </DialogFooter>

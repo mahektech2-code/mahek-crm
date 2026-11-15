@@ -204,7 +204,7 @@ const transfers: ScreenModule = {
         download: true,
         ...(await newFormIn(s, () => transferForm(ctx))),
         newLabel: "New transfer",
-        noDataLine: "No transfers yet.",
+        noDataLine: "No transfers in this period.",
       },
       tooWide: wide,
       rows: rows.map((x): ListRow => {
@@ -227,29 +227,29 @@ const transfers: ScreenModule = {
   forms: {
     async new(ctx, h) {
       const type = text(h.type) as ItemType | null;
-      if (!type || !TYPES.includes(type)) return fieldErr("type", "Item type is required");
+      if (!type || !TYPES.includes(type)) return fieldErr("type", "Pick the item type.");
       const fromId = await godownIdByName(text(h.from));
-      if (!fromId) return fieldErr("from", "From godown is required");
+      if (!fromId) return fieldErr("from", "Pick the godown it moves from.");
       const toId = await godownIdByName(text(h.to));
-      if (!toId) return fieldErr("to", "Transfer to godown is required");
-      if (toId === fromId) return fieldErr("to", "You Selected The Same Location, Change To Location");
+      if (!toId) return fieldErr("to", "Pick the godown it moves to.");
+      if (toId === fromId) return fieldErr("to", "Pick a different godown to move it to.");
       const [toG] = await db.select().from(erpGodowns).where(eq(erpGodowns.id, toId));
       const [fromG] = await db.select().from(erpGodowns).where(eq(erpGodowns.id, fromId));
-      if (fromG?.reserved) return fieldErr("from", "Stock is never moved out of Item Lost Record");
-      if (toG?.reserved && !ctx.powers.has("lostStock")) return fieldErr("to", "Writing stock off to Item Lost Record needs the lost-stock power");
-      if (toG?.status !== "active") return fieldErr("to", "That godown is not active");
+      if (fromG?.reserved) return fieldErr("from", "Stock is never moved out of Item Lost Record.");
+      if (toG?.reserved && !ctx.powers.has("lostStock")) return fieldErr("to", "Writing stock off to Item Lost Record needs the lost-stock power.");
+      if (toG?.status !== "active") return fieldErr("to", "That godown is not active.");
       const item = text(h.item);
       const lot = text(h.lot);
-      if (!item) return fieldErr("item", "Item is required");
-      if (!lot) return fieldErr("lot", "Lot is required");
+      if (!item) return fieldErr("item", "Pick the item.");
+      if (!lot) return fieldErr("lot", "Pick the lot.");
       const qty = num(h.qty);
-      if (qty == null || qty <= 0) return fieldErr("qty", "Select Correct Quantity!");
+      if (qty == null || qty <= 0) return fieldErr("qty", "Enter a quantity above 0 and no more than the lot holds.");
       let id = "";
       const res = await inTx(async (tx) => {
         await lockLot(tx, type, lot, fromId);
         const src = (await transferable(tx))[type].find((l) => l.lot === lot && l.godownId === fromId && l.item === item);
-        if (!src) return refuse(fieldErr("lot", "Pick a lot of this item with stock at this godown"));
-        if (qty > src.stock + 1e-9) return refuse(fieldErr("qty", "Select Correct Quantity!"));
+        if (!src) return refuse(fieldErr("lot", "Pick a lot of this item with stock at this godown."));
+        if (qty > src.stock + 1e-9) return refuse(fieldErr("qty", "Enter a quantity above 0 and no more than the lot holds."));
         id = erpId("TRF");
         const [t] = await tx
           .insert(erpTransfers)
@@ -364,7 +364,7 @@ async function rmLevelRows(): Promise<RmLevelRow[]> {
       status: x.l.status,
       available,
       required: rmRequired(available, x.l.maxQty),
-      pct: rmReorderPercent(available, x.l.minQty, x.l.maxQty),
+      pct: rmReorderPercent(available, x.l.minQty),
       by: x.by,
       updatedAt: x.l.updatedAt,
       suggestion,
@@ -394,9 +394,9 @@ export async function rmReorderRows(): Promise<RmLevelRow[]> {
 async function saveRmLevel(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {
   const min = num(h.min);
   const max = num(h.max);
-  if (min == null || min < 0) return fieldErr("min", "Minimum quantity is required");
-  if (max == null || max < 0) return fieldErr("max", "Maximum quantity is required");
-  if (max < min) return fieldErr("max", "The maximum is below the minimum");
+  if (min == null || min < 0) return fieldErr("min", "Enter the minimum quantity.");
+  if (max == null || max < 0) return fieldErr("max", "Enter the maximum quantity.");
+  if (max < min) return fieldErr("max", "The maximum cannot be below the minimum.");
   const status = text(h.status) === "UnFollow" ? "UnFollow" : "Follow";
   if (id) {
     const [before] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, id));
@@ -408,17 +408,17 @@ async function saveRmLevel(ctx: ErpContext, h: Record<string, string>, id?: stri
     return okVoid("Level saved");
   }
   const godownId = await godownIdByName(text(h.godown));
-  if (!godownId) return fieldErr("godown", "Godown is required");
+  if (!godownId) return fieldErr("godown", "Pick the godown.");
   const type = text(h.type);
   const [m] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.name, text(h.item) ?? ""));
-  if (!m || !type) return fieldErr("item", "Raw item is required");
+  if (!m || !type) return fieldErr("item", "Pick the raw item.");
   const newId = erpId("rmmq");
   const inserted = await db
     .insert(erpRmLevels)
     .values({ id: newId, godownId, materialType: type, rawMaterialId: m.id, minQty: min, maxQty: max, status, updatedById: ctx.user.id })
     .onConflictDoNothing()
     .returning();
-  if (!inserted.length) return fieldErr("item", "Duplicate Entry!");
+  if (!inserted.length) return fieldErr("item", "That item already has a level at this godown.");
   await erpAudit(ctx, "erp.rmLevel.create", "erp_rm_level", newId, null, { item: m.name, min, max });
   return okVoid(`Level set for ${m.name}`);
 }
@@ -436,13 +436,13 @@ function planFields(r: RmLevelRow): { l: string; v: string; der: boolean }[] {
   return [
     { l: "Set by", v: r.auto ? "The planner, every night" : "By hand — the planner's figures are shown beside it and never applied", der: true },
     { l: "How it was worked out", v: p.basis, der: true },
-    { l: "Statistical level", v: `min ${p.statMin} · max ${p.statMax} (${p.confidence} confidence)`, der: true },
+    { l: "Statistical level", v: `min ${nf(p.statMin)} · max ${nf(p.statMax)} (${p.confidence} confidence)`, der: true },
     ...(p.aiReason ? [{ l: p.aiFactor === 1 ? "AI review" : `AI review (×${p.aiFactor})`, v: p.aiReason, der: true }] : []),
     ...(p.notes.length ? [{ l: "Pattern", v: p.notes.join(" "), der: true }] : []),
     { l: "Month factors", v: seasons, der: true },
     { l: "Week of month", v: weeks, der: true },
     ...(r.daysCover != null ? [{ l: "Days of stock now", v: `${r.daysCover} days at today's rate`, der: true }] : []),
-    ...(r.plannedAt ? [{ l: "Planned", v: stampLine(null, r.plannedAt).replace(/^Created/, "Planned"), der: true }] : []),
+    ...(r.plannedAt ? [{ l: "Planned", v: stampLine(null, r.plannedAt).replace(/^Created /, ""), der: true }] : []),
   ];
 }
 
@@ -455,13 +455,13 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
       const planCover = cfg["erp.levels.coverDays"];
       const cols: ColSpec[] = [
         { k: "item", l: "Item", t: "b" },
-        ...(reorder ? [] : ([{ k: "required", l: "Required", t: "n" }] as ColSpec[])),
+        { k: "required", l: "Required", t: "n" },
         { k: "available", l: "Available", t: "n" },
         { k: "days", l: "Days of stock", t: "n" },
-        { k: "pct", l: "Re-order %", t: "n" },
+        { k: "pct", l: "Of minimum", t: "n" },
         { k: "min", l: "Min", t: "n" },
         ...(reorder ? [] : ([{ k: "max", l: "Max", t: "n" }, { k: "managed", l: "Set by", t: "s" }, { k: "status", l: "Status", t: "s" }] as ColSpec[])),
-        ...(reorder ? [] : ([{ k: "sMin", l: "Planned min", t: "n" }, { k: "sMax", l: "Planned max", t: "n" }] as ColSpec[])),
+        ...(reorder ? [] : ([{ k: "sMin", l: "Suggested min", t: "n" }, { k: "sMax", l: "Suggested max", t: "n" }] as ColSpec[])),
         { k: "godown", l: "Godown", t: "t" },
         { k: "type", l: "Material type", t: "s" },
         { k: "f", l: "Flags", t: "f" },
@@ -477,12 +477,12 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
             ? [
                 { l: "To re-order" },
                 { l: "Items", kind: "distinct", k: "item" },
-                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+                { l: "Below minimum", where: { flag: "below" }, tone: "danger" },
               ]
             : [
                 { l: "Levels" },
                 { l: "Items", kind: "distinct", k: "item" },
-                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+                { l: "Below minimum", where: { flag: "below" }, tone: "danger" },
                 { l: "Planner keeps", where: { flag: "autoLevel" }, tone: "brand" },
                 { l: "Not followed", where: { k: "status", in: ["UnFollow"] }, tone: "muted" },
               ],
@@ -511,9 +511,9 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
             if (reorder || (r.required ?? 0) > 0)
               actions.push({ id: "raise", l: "Raise requirement", primary: true, loadsForm: true });
             if (!reorder && !r.auto && r.plan)
-              actions.push({ id: "autoOn", l: "Let the planner keep it", confirm: `Hand ${r.item} at ${r.godown} to the planner? It is set to min ${r.plan.min}, max ${r.plan.max} now and re-planned every night.` });
+              actions.push({ id: "autoOn", l: "Let the planner keep it", confirm: `Hand ${r.item} at ${r.godown} to the planner? It is set to min ${nf(r.plan.min)}, max ${nf(r.plan.max)} now and re-planned every night.` });
             else if (!reorder && !r.auto && r.suggestion && (r.suggestion.min !== r.min || r.suggestion.max !== r.max))
-              actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${r.suggestion.min}, max ${r.suggestion.max}? ${r.suggestion.basis}` });
+              actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${nf(r.suggestion.min)}, max ${nf(r.suggestion.max)}? ${r.suggestion.basis}` });
             if (!reorder) {
               actions.push({ id: "edit", l: "Edit", loadsForm: true });
               actions.push({ id: "copy", l: "Add another", loadsForm: true });
@@ -687,7 +687,7 @@ export async function fgReorderRows(): Promise<FgLevelRow[]> {
 
 async function saveFgLevel(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {
   const min = num(h.min);
-  if (min == null || min < 0) return fieldErr("min", "Minimum quantity is required");
+  if (min == null || min < 0) return fieldErr("min", "Enter the minimum quantity.");
   const status = text(h.status) === "UnFollow" ? "UnFollow" : "Follow";
   if (id) {
     const [before] = await db.select().from(erpFgLevels).where(eq(erpFgLevels.id, id));
@@ -697,12 +697,12 @@ async function saveFgLevel(ctx: ErpContext, h: Record<string, string>, id?: stri
     return okVoid("Level saved");
   }
   const godownId = await godownIdByName(text(h.godown));
-  if (!godownId) return fieldErr("godown", "Godown is required");
+  if (!godownId) return fieldErr("godown", "Pick the godown.");
   const [p] = await db.select({ id: products.id, name: products.name }).from(products).where(eq(products.name, text(h.sku) ?? ""));
-  if (!p) return fieldErr("sku", "Product is required");
+  if (!p) return fieldErr("sku", "Pick the product.");
   const newId = erpId("fgmq");
   const inserted = await db.insert(erpFgLevels).values({ id: newId, godownId, productId: p.id, minQty: min, status, updatedById: ctx.user.id }).onConflictDoNothing().returning();
-  if (!inserted.length) return fieldErr("sku", "Duplicate Entry!");
+  if (!inserted.length) return fieldErr("sku", "That product already has a level at this godown.");
   await erpAudit(ctx, "erp.fgLevel.create", "erp_fg_level", newId, null, { sku: p.name, min });
   return okVoid(`Level set for ${p.name}`);
 }
@@ -715,7 +715,7 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
       const rows = reorder ? await fgReorderRows() : await fgLevelRows();
       const cols: ColSpec[] = reorder
         ? [
-            { k: "pct", l: "Re-order %", t: "n" },
+            { k: "pct", l: "Of minimum", t: "n" },
             { k: "sku", l: "Product", t: "b", w: 260 },
             { k: "available", l: "Available", t: "n" },
             { k: "godown", l: "Godown", t: "t" },
@@ -728,7 +728,7 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
             { k: "min", l: "Min", t: "n" },
             { k: "available", l: "Available", t: "n" },
             { k: "godown", l: "Godown", t: "t" },
-            { k: "pct", l: "Re-order %", t: "n" },
+            { k: "pct", l: "Of minimum", t: "n" },
             { k: "status", l: "Status", t: "s" },
             { k: "sMin", l: "Suggested min", t: "n" },
             { k: "kind", l: "Type", t: "s" },
@@ -745,16 +745,16 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
             ? [
                 { l: "To re-order" },
                 { l: "Products", kind: "distinct", k: "sku" },
-                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+                { l: "Below minimum", where: { flag: "below" }, tone: "danger" },
               ]
             : [
                 { l: "Levels" },
                 { l: "Products", kind: "distinct", k: "sku" },
-                { l: "Below level", where: { flag: "below" }, tone: "danger" },
+                { l: "Below minimum", where: { flag: "below" }, tone: "danger" },
                 { l: "Not followed", where: { k: "status", in: ["UnFollow"] }, tone: "muted" },
               ],
           godownKey: "godown",
-          sortDefault: reorder ? ["pct", -1] : ["sku", 1],
+          sortDefault: reorder ? ["pct", 1] : ["sku", 1],
           readOnly: reorder,
           bulk: reorder ? undefined : [{ id: "apply", l: "Apply suggestions", confirm: "Set every selected minimum to its suggestion?" }],
           newForm: reorder ? undefined : ((await fgLevelForm(ctx)) ?? undefined),

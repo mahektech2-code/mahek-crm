@@ -14789,6 +14789,30 @@ export const hrmsStaffTimings = pgTable(
 );
 
 /**
+ * An office's working week (the Workday Clock design's "Office timings"). A
+ * row per WORKING weekday — no row is a week off. Everybody at the office
+ * works this week unless they have rows of their own in `hrms_staff_timings`,
+ * which replace it whole for that person.
+ */
+export const hrmsOfficeTimings = pgTable(
+  "hrms_office_timings",
+  {
+    id: text("id").primaryKey(),
+    officeId: text("office_id")
+      .notNull()
+      .references(() => hrmsOffices.id, { onDelete: "cascade" }),
+    /** "Monday" … "Sunday". */
+    weekday: text("weekday").notNull(),
+    inTime: text("in_time").notNull(),
+    outTime: text("out_time").notNull(),
+    presentMin: integer("present_min"),
+    halfMin: integer("half_min"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_office_timings_key").on(t.officeId, t.weekday)],
+);
+
+/**
  * One attendance day per employee (spec §6). The official in/out time and
  * the target are STAMPED at check-in from that weekday's timing, the way the
  * source's app formulas were computed when the row was written: changing a
@@ -18213,3 +18237,49 @@ export const lockerAudit = pgTable("locker_audit", {
   index("locker_audit_entity_idx").on(t.entityType, t.entityId),
   index("locker_audit_actor_idx").on(t.actorId, t.at),
 ]);
+
+/* ---------------------------------------------------------------------------
+ * THE ACCOUNTS DEADLINE (0342). One row per thing that went past its working-
+ * hours deadline on the ledger desk — written once, resolved when it is
+ * decided. `lib/engines/accounts-sla.ts` is the clock; the service writes.
+ * ------------------------------------------------------------------------- */
+export const accountsSlaBreaches = pgTable(
+  "accounts_sla_breaches",
+  {
+    id: text("id").primaryKey(),
+    /** order · payment · credit_note · order_change (`SLA_KINDS`). */
+    kind: text("kind").notNull(),
+    recordId: text("record_id").notNull(),
+    waitingSince: timestamp("waiting_since", { withTimezone: true }).notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
+    adminsNotifiedAt: timestamp("admins_notified_at", { withTimezone: true }),
+    escalations: integer("escalations").notNull().default(0),
+    lastEscalatedAt: timestamp("last_escalated_at", { withTimezone: true }),
+    acknowledgedById: text("acknowledged_by_id").references(() => users.id, { onDelete: "set null" }),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("accounts_sla_breaches_record_key").on(t.kind, t.recordId)],
+);
+
+/** Append-only: the accounts team's reasons (with a reminder) and the admins' nudges. */
+export const accountsSlaRemarks = pgTable(
+  "accounts_sla_remarks",
+  {
+    id: text("id").primaryKey(),
+    breachId: text("breach_id")
+      .notNull()
+      .references(() => accountsSlaBreaches.id, { onDelete: "cascade" }),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => users.id),
+    /** accounts · admin */
+    side: text("side").notNull(),
+    body: text("body").notNull(),
+    remindAt: timestamp("remind_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("accounts_sla_remarks_breach_idx").on(t.breachId, t.createdAt)],
+);

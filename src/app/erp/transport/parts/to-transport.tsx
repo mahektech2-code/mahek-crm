@@ -9,6 +9,7 @@ import { addDays, MAHEK_VEHICLE, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
 import { BillRef, CallLink, DuePill, Empty, plural, sumLitres, sumPackages, useAct, useTicks, vehicleWords } from "./common";
 import { cleanWhole } from "@/lib/format";
+import { nf } from "@/lib/erp/ui";
 
 /**
  * STEP 1 AND 2. Bills that have left the factory and are on their way to the
@@ -80,7 +81,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
               <div className="min-w-0">
                 <SubTitle className="mb-0">{transporter}</SubTitle>
                 <div className="text-meta text-muted">
-                  {plural(bills.length, "bill")} · {boxes != null ? plural(boxes, "box", "boxes") : "boxes not counted"} · {sumLitres(bills)} L{dueToday ? ` · ${dueToday} due today or late` : ""}
+                  {plural(bills.length, "bill")} · {boxes != null ? plural(boxes, "box", "boxes") : "boxes not counted"} · {nf(sumLitres(bills))} L{dueToday ? ` · ${dueToday} due today or late` : ""}
                 </div>
               </div>
               <div className="ml-auto flex items-center gap-3">
@@ -115,7 +116,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
                 </span>
                 <span className="text-meta text-body">{b.billDate ? shortDay(b.billDate) : "—"}</span>
                 <span>{canWrite ? <BoxInput id={b.id} value={b.packages} /> : (b.packages ?? "—")}</span>
-                <span className="tabular-nums text-meta">{b.litres ?? "—"}</span>
+                <span className="tabular-nums text-meta">{b.litres == null ? "—" : nf(b.litres)}</span>
                 <span>{b.transportDueOn ? <DuePill day={b.transportDueOn} today={today} /> : <Badge label="Not planned" tone="muted" />}</span>
               </div>
             ))}

@@ -1,4 +1,4 @@
-import { isParked, isTerminal, type LeadStage } from './funnel';
+import { foldStage, isParked, isTerminal, type LeadStage } from './funnel';
 
 /**
  * §24 on the phone — what is owed on a lead, and by when.
@@ -140,7 +140,9 @@ export const VIEW_TEXT: Record<LeadActionView, { chip: string; title: string; su
  * on. Null is the honest answer and every caller below reads it as one.
  */
 export function rungOf(lead: Pick<WorklistLead, 'funnelStage'>): LeadStage | null {
-  return (lead.funnelStage as LeadStage | null) ?? null;
+  /* Folded, so a retired word (`new`, `qualified`, `won`…) is badged as the
+     rung every other screen names. No rung stays no rung. */
+  return lead.funnelStage ? foldStage(lead.funnelStage as LeadStage) : null;
 }
 
 /**

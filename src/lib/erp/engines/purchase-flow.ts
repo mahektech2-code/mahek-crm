@@ -66,7 +66,7 @@ export function methodByLabel(label: string | null | undefined): PurchaseMethod 
 export const FLOW_STEPS = ["Requirement", "Purchase method", "PO number", "Receipt"] as const;
 
 /** Where each step sits in FLOW_STEPS — named, so a step moved in the list moves every reader. */
-const STEP = { method: 1, po: 2, receipt: 3 } as const;
+export const STEP = { method: 1, po: 2, receipt: 3 } as const;
 
 /** A PO that still stands — one that was cancelled or sent back no longer holds its requirements. */
 export const LIVE_PO = ["Pending approval", "Approved", "Sent", "Partly received", "Received", "Closed"];

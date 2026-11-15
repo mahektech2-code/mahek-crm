@@ -24,6 +24,7 @@ import type { ActionSpec, ListRow, ListSpec } from "@/lib/erp/ui";
 import { ListScreen } from "../../_ui/list-screen";
 import { fd, inr, inrRate, nf } from "@/lib/erp/ui";
 import { Empty, plural, ReasonDialog, useAct } from "./common";
+import { actionFailure } from "@/lib/version-skew";
 
 /* ---------------------------------------------------------------------------
  * LOGISTICS → TRANSPORT EXPENSES (the Transportation Expense PRD). Two
@@ -683,22 +684,33 @@ function AddBillDialog({
     if (!chosen) return;
     setLoading(true);
     setProblem(null);
-    const r = await erpFreightVehicleLines(chosen.vehicleNo, chosen.dispatchOn, bill?.id ?? null);
-    setLoading(false);
-    if (!r.ok) return setProblem(r.error);
-    /* Lines of the bill being edited that left on another vehicle stay on it. */
-    const extra = bill ? bill.shares.filter((s) => !r.data.some((l) => l.orderId === s.orderId)).map((s) => s.orderNo) : [];
-    const more = extra.length ? await erpFreightOrderLines(extra, bill?.id ?? null) : null;
-    const all = [...r.data, ...(more?.ok ? more.data : [])];
-    setLines(all);
-    setTicked((cur) => (bill ? cur : new Set(all.filter((l) => lineEligibility(l).ok).map((l) => l.orderId))));
+    /* Loading always clears, and a call that throws says so rather than spinning for ever. */
+    try {
+      const r = await erpFreightVehicleLines(chosen.vehicleNo, chosen.dispatchOn, bill?.id ?? null);
+      if (!r.ok) return setProblem(r.error);
+      /* Lines of the bill being edited that left on another vehicle stay on it. */
+      const extra = bill ? bill.shares.filter((s) => !r.data.some((l) => l.orderId === s.orderId)).map((s) => s.orderNo) : [];
+      const more = extra.length ? await erpFreightOrderLines(extra, bill?.id ?? null) : null;
+      const all = [...r.data, ...(more?.ok ? more.data : [])];
+      setLines(all);
+      setTicked((cur) => (bill ? cur : new Set(all.filter((l) => lineEligibility(l).ok).map((l) => l.orderId))));
+    } catch (e) {
+      setProblem(actionFailure(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const addOrder = async () => {
     const no = Number(extraNo.trim());
     if (!Number.isInteger(no) || no <= 0) return setProblem("Type an order number.");
     setProblem(null);
-    const r = await erpFreightOrderLines([no], bill?.id ?? null);
+    let r: Awaited<ReturnType<typeof erpFreightOrderLines>>;
+    try {
+      r = await erpFreightOrderLines([no], bill?.id ?? null);
+    } catch (e) {
+      return setProblem(actionFailure(e));
+    }
     if (!r.ok) return setProblem(r.error);
     if (!r.data.length) return setProblem(`Order ${no} has no dispatched line.`);
     setLines((cur) => [...(cur ?? []), ...r.data.filter((l) => !(cur ?? []).some((c) => c.orderId === l.orderId))]);

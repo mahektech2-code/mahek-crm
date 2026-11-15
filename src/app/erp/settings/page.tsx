@@ -1,5 +1,6 @@
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
+import { nf } from "@/lib/erp/ui";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { SEAT_LABEL } from "@/lib/erp/departments";
@@ -27,7 +28,7 @@ export default async function ErpSettings() {
             />
             <div className="mt-2 text-meta text-muted">
               {ctx.assignedGodowns.length
-                ? `Assigned to ${ctx.assignedGodowns.length} godown${ctx.assignedGodowns.length > 1 ? "s" : ""}${ctx.workingGodown ? ` · current: ${ctx.workingGodown.name}` : ""}`
+                ? `Assigned to ${nf(ctx.assignedGodowns.length)} godown${ctx.assignedGodowns.length > 1 ? "s" : ""}`
                 : "You are not assigned to any godown yet. Ask an ERP administrator to add you on the Godowns screen."}
             </div>
           </div>

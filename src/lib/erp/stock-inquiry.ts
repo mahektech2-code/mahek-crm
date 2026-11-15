@@ -119,7 +119,7 @@ function movementUnion(stage: AdjustStage, itemId: string): SQL {
       select l.batch_date, 'Used in SFG batch', 'SFG-' || l.sfg_no::text, l.rm_lot_no, l.godown_id, -l.total_use::float8, null, null, l.created_at
         from erp_sfg_lines l where l.raw_material_id = ${itemId}
       union all
-      select coalesce(o.dispatch_date, ${day(sql`o.confirmed_at`)}), 'Returned to vendor', 'RO-' || o.outward_no::text, o.lot_no, o.godown_id, -o.stock_qty::float8, null, null, o.created_at
+      select coalesce(o.dispatch_date, ${day(sql`o.confirmed_at`)}), 'Returned to supplier', 'RO-' || o.outward_no::text, o.lot_no, o.godown_id, -o.stock_qty::float8, null, null, o.created_at
         from erp_return_outwards o where o.status = 'confirmed' and o.raw_material_id = ${itemId}
       union all
       select f.fill_date, 'Cans used in filling', 'Fill ' || f.fg_num::text, null, f.godown_id, -f.cans::float8, null, null, f.created_at

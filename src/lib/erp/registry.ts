@@ -120,7 +120,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     icon: "cart",
     screens: [
       s("requisitions", "requisitions", "Requirements", "What each department needs bought, from its purchase method through the PO to the goods.", true),
-      s("purchaseOrders", "purchase-orders", "Purchase orders", "Raised from requirements, approved, sent and received against.", true),
+      s("purchaseOrders", "purchase-orders", "Purchase orders", "Created from requirements or linked from the Quotation manager, shared and received against.", true),
       s("register", "register", "Purchases", "Goods received against a PO, and the lots they become.", true, [
         v("inward", "Goods receipt (GRN)"),
         v("register", "Register"),
@@ -184,7 +184,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("verifyOrders", "To verify"),
         v("readyOrders", "Production"),
         v("toBill", "Ready to bill"),
-        v("invoiceCheck", "Invoice print"),
+        v("invoiceCheck", "Invoice check"),
         v("labels", "Dispatch stickers"),
         v("orderDetails", "Billing & dispatch"),
         v("pendingOrders", "On hold"),
@@ -242,7 +242,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Material returns",
     icon: "swap",
     screens: [
-      s("vendorReturns", "vendor-returns", "Vendor returns", "Material sent back to a supplier, its debit note and the outward.", true, [
+      s("vendorReturns", "vendor-returns", "Supplier returns", "Material sent back to a supplier, its debit note and the outward.", true, [
         v("vendorReturns", "Purchase returns"),
         v("debitNotes", "Debit notes"),
         v("returnOutwards", "Return outward"),
@@ -262,7 +262,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     screens: [
       s("emptyDrums", "empty-drums", "Empty drums", "Every emptied drum, weighed and linked to its GRN.", true, [
         v("emptyDrums", "Mahek stock"),
-        v("drumReturnable", "Vendor returnable"),
+        v("drumReturnable", "Supplier returnable"),
         v("drumReview", "Needs review"),
         v("drumVariance", "Tare variance"),
         v("drumAdjustments", "Corrections"),

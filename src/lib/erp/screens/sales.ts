@@ -1176,13 +1176,13 @@ export function isInvoiceToCheckLine(l: OrderLine): boolean {
  * Dispatch stickers due: every line being made or ready, billed or not, until
  * it leaves. It used to wait for the invoice check's approval, and Mahek
  * stickers the boxes while they are still on the floor — so the tab stood
- * empty while the godown stickered by hand. The check stays, optional: a
- * pending one holds nothing here. A billed line counts whatever its status
+ * empty while the godown stickered by hand. A pending check holds nothing
+ * here (dispatch itself waits for it); a rejected invoice does. A billed line counts whatever its status
  * now says; an old sheet line finished outside the ERP (entry Done, never
  * billed here) does not.
  */
 export function isStickerLine(l: OrderLine): boolean {
-  return l.o.status !== "Cancel" && !l.dispatched && (isWorkingLine(l) || l.inDetails);
+  return l.o.status !== "Cancel" && !l.dispatched && l.invoiceCheck !== "Rejected" && (isWorkingLine(l) || l.inDetails);
 }
 
 function inScope(scope: Scope, l: OrderLine, detailedOrders: Set<number>): boolean {
@@ -1462,7 +1462,7 @@ function orderList(scope: Scope): ScreenModule {
                         why: blockers.length ? `Needs ${blockers.join("; ")}` : "",
                         prompt: invoicePrompt(
                           `Bill order ${l.o.orderNo}`,
-                          `Enter the invoice made in Tally for the whole order — ${live.length} line${live.length === 1 ? "" : "s"}. The invoice check is optional; only a rejected invoice holds dispatch.`,
+                          `Enter the invoice made in Tally for the whole order — ${live.length} line${live.length === 1 ? "" : "s"}. The invoice is checked before the order can be dispatched.`,
                           { invoiceNo: l.o.tallyBillNo ?? "", invoiceDate: today() },
                           true,
                         ),
@@ -1472,10 +1472,10 @@ function orderList(scope: Scope): ScreenModule {
                   ? [
                       {
                         id: "approveInvoice",
-                        l: "Publish invoice",
+                        l: "Approve invoice",
                         primary: checking && l.invoiceCheck !== "Approved",
                         why: l.invoiceCheck === "Approved" ? "Already approved" : !hasPdf ? "Add the invoice PDF first" : ownBill && !ctx.administrator ? "You entered this bill; somebody else checks it" : "",
-                        confirm: `Publish invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
+                        confirm: `Approve invoice ${l.o.tallyBillNo ?? ""} for order ${l.o.orderNo}? You have checked the customer, goods, quantities, rate and discount against the order.`,
                       } as ActionSpec,
                       {
                         id: "rejectInvoice",
@@ -1504,10 +1504,10 @@ function orderList(scope: Scope): ScreenModule {
                       } as ActionSpec,
                     ]
                   : []),
-                { id: "select", l: "Show the whole order", href: erpLink(scope, { f: order.map((x) => x.o.id).join(","), fl: `Order ${l.o.orderNo}` }) },
+                { id: "select", l: "Show the whole order", href: erpLink("orders", { f: order.map((x) => x.o.id).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: erpLink("customers", { open: l.billing.id }) },
                 ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: erpDispatchHref(l.o.orderNo) } as ActionSpec] : []),
-                ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch stickers", href: printable ? erpLabelsHref({ order: l.o.orderNo }) : undefined, why: printable ? "" : l.dispatched ? "It has left" : "Once it is under process or ready" } as ActionSpec] : []),
+                ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch stickers", href: printable ? erpLabelsHref({ order: l.o.orderNo }) : undefined, why: printable ? "" : l.dispatched ? "It has left." : l.invoiceCheck === "Rejected" ? "The invoice was rejected." : "Once it is under process or ready." } as ActionSpec] : []),
                 { id: "trace", l: "Trace this order", href: erpTraceHref(orderTraceCode(l.o.orderNo)) },
                 {
                   id: "delete",
@@ -1571,7 +1571,7 @@ function orderList(scope: Scope): ScreenModule {
                 ? [
                     { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
                     {
-                      l: "Invoice print",
+                      l: "Invoice check",
                       v:
                         l.invoiceCheck === "Approved"
                           ? l.invoiceCheckedAt
@@ -2951,7 +2951,7 @@ const orderDetails: ScreenModule = {
       { k: "billTotal", l: "Bill total", t: "m", pw: "viewSalesAmounts" },
       orderCol("discount"),
       { k: "dispatchDate", l: "Dispatch date", t: "d" },
-      { k: "invoiceCheck", l: "Invoice print", t: "s" },
+      { k: "invoiceCheck", l: "Invoice check", t: "s" },
       { k: "verification", l: "Dispatch", t: "s" },
       { k: "vehicle", l: "Vehicle", t: "mono" },
       { k: "follow", l: "Transport follow-up", t: "t" },
@@ -3014,14 +3014,15 @@ const orderDetails: ScreenModule = {
           if (d.verification === "Verified" && !d.vehicleNo) flags.push("noVehicle");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
           const verifiable = !d.verification || d.verification === "Pending";
-          /* The invoice check is optional: only a REJECTED invoice holds the goods — the checker found the bill wrong. */
-          const approved = d.invoiceCheck !== "Rejected";
+          /* The invoice check is required before dispatch: a pending check holds the goods as a rejected one does. */
+          const approved = d.invoiceCheck === "Approved";
+          const rejected = d.invoiceCheck === "Rejected";
           const actions: ActionSpec[] = [
             {
               id: "verify",
-              l: d.verification === "Verified" ? "Dispatched" : "Confirm dispatch",
+              l: "Confirm dispatch",
               primary: verifiable && !gate && approved,
-              why: d.verification === "Verified" ? "Already dispatched" : !approved ? "The invoice was rejected; correct it first" : gate ? `Boxes to scan: ${gate}` : "",
+              why: d.verification === "Verified" ? "Already dispatched." : rejected ? "The invoice was rejected; correct it first." : !approved ? "Waiting for the invoice check." : gate ? `Boxes to scan: ${gate}.` : "",
               prompt: DISPATCH_PROMPT(`Order ${l.o.orderNo} leaves whole — every billed line of it.`),
             },
             ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", impact: { kind: "erp-dispatch-unverify", id: d.orderId } } as ActionSpec] : []),
@@ -3031,11 +3032,12 @@ const orderDetails: ScreenModule = {
               why: d.extraExpensesPaise != null ? "Already entered" : "",
               prompt: EXTRA_EXPENSE_PROMPT,
             },
+            { id: "invoiceFile", l: invoiceFiles.has(l.o.orderNo) ? "Replace invoice PDF" : "Add invoice PDF", primary: !invoiceFiles.has(l.o.orderNo), prompt: INVOICE_FILE_PROMPT(l.o.orderNo, invoiceFiles.has(l.o.orderNo)) },
             { id: "gst", l: "Change GST", why: d.verification === "Verified" ? "The line has been dispatch-verified" : "", prompt: { title: "GST", submit: "Save", fields: [{ k: "gst", l: "GST", t: "select", req: true, opts: ["18%", "0%"] }], init: { gst: d.gstBp ? "18%" : "0%" } } },
             { id: "select", l: "Show the whole order", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
-            { id: "view", l: "View order", href: erpLink("orders", { open: l.o.id }) },
+            { id: "view", l: "Open the order", href: erpLink("orders", { open: l.o.id }) },
             { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: erpDispatchHref(l.o.orderNo) },
-            { id: "labels", l: "Print dispatch stickers", href: approved && d.verification !== "Verified" ? erpLabelsHref({ order: l.o.orderNo }) : undefined, why: d.verification === "Verified" ? "It has left" : approved ? "" : "After the invoice is approved" },
+            { id: "labels", l: "Print dispatch stickers", href: !rejected && d.verification !== "Verified" ? erpLabelsHref({ order: l.o.orderNo }) : undefined, why: d.verification === "Verified" ? "It has left." : rejected ? "The invoice was rejected." : "" },
             { id: "trace", l: "Trace this order", href: erpTraceHref(orderTraceCode(l.o.orderNo)) },
           ];
           const credit = l.billing.creditDays ?? null;
@@ -3053,7 +3055,7 @@ const orderDetails: ScreenModule = {
                 discount: l.o.discountBp == null ? null : l.o.discountBp / 100,
                 dispatchDate: d.dispatchDate,
                 invoiceCheck: d.invoiceCheck,
-                verification: d.verification === "Verified" ? "Dispatched" : d.verification === "Not Verify" ? "Not verified" : gate ? "Scanning" : approved ? "Ready to dispatch" : "Pending",
+                verification: d.verification === "Verified" ? "Dispatched" : d.verification === "Not Verify" ? "Not verified" : gate ? "Scanning" : approved ? "Ready to dispatch" : rejected ? "Invoice rejected" : "Waiting for the invoice check",
                 vehicle: d.vehicleNo,
                 qty: l.o.qtyCans,
                 monthly: r.monthId ? monthSale : null,
@@ -3081,7 +3083,7 @@ const orderDetails: ScreenModule = {
             fields: [
               { l: "Delivery party", v: l.delivery.name },
               { l: "Type", v: l.type === "Drum" ? "Drum" : "Can", der: true },
-              { l: "Quantity dispatch in litre", v: nf(r.litres), der: true },
+              { l: "Litres dispatched", v: nf(r.litres), der: true },
               { l: "GST", v: d.gstBp ? "18%" : "0%" },
               { l: "Company", v: r.company, der: true },
               ...(r.freight && cost
@@ -3099,11 +3101,11 @@ const orderDetails: ScreenModule = {
               { l: "Credit days", v: credit == null ? "—" : String(credit), der: true },
               { l: "Due date", v: d.dispatchDate && credit != null ? fd(addDaysIso(d.dispatchDate, credit)) : "—", der: true },
               { l: "Segment and counter type", v: `${l.delivery.p?.segment ?? ""} ${(l.delivery.p?.counterTypes ?? []).join(", ")}`.trim() || "—", der: true },
-              { l: "Sales man", v: l.delivery.salesPerson ?? "—", der: true },
+              { l: "Salesman", v: l.delivery.salesPerson ?? "—", der: true },
               ...(amounts ? [{ l: "Monthly target", v: target == null ? "—" : inr(target), der: true }] : []),
               { l: "Dispatch status", v: d.dispatchStatus },
               { l: "Tally invoice", v: `${l.o.tallyBillNo ?? "—"}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` },
-              { l: "Invoice print", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
+              { l: "Invoice check", v: d.invoiceCheck === "Approved" ? (d.invoiceCheckedAt ? `Approved · ${stamp(d.invoiceCheckedAt)}` : "Approved") : d.invoiceCheck === "Rejected" ? `Rejected — ${d.invoiceCheckNote ?? ""}` : "Waiting for the checker" },
               ...(d.verification === "Verified" ? [{ l: "Vehicle", v: d.vehicleNo ?? "Not recorded" }, { l: "Driver / transporter", v: d.driver ?? "—" }, { l: "Dispatch remark", v: d.dispatchRemark ?? "—" }] : []),
             ],
             actions,
@@ -3120,6 +3122,7 @@ const orderDetails: ScreenModule = {
   actions: {
     verify: (ctx, id, values) => verify(ctx, [id], values),
     extra: (ctx, id, values) => setExtraExpenses(ctx, [id], values),
+    invoiceFile: (ctx, id, values) => doInvoiceFile(ctx, id, values ?? {}),
     async notVerify(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator marks a line not verified.", "not_permitted");
       const refusal = await confirmImpact("erp-dispatch-unverify", id, readConfirmation(values));
@@ -3420,6 +3423,13 @@ export function isRegisterLine(l: OrderLine): boolean {
 
 const DUE_SHORT: Record<NonNullable<Due>, string> = { today: "Today", tomorrow: "Tomorrow", late: "Late" };
 
+/** The line's transporter, the delivery party's default said as one rather than drawn as set on the line. */
+function registerTransporter(l: OrderLine): string {
+  if (l.o.transporter) return l.o.transporter;
+  const def = l.delivery.p?.transporter;
+  return def ? `${def} (party default)` : "No transporter";
+}
+
 const dispatchRegister: ScreenModule = {
   key: "dispatchRegister",
   async load(ctx, s) {
@@ -3433,7 +3443,6 @@ const dispatchRegister: ScreenModule = {
       orderCol("weight", { l: "Weight" }),
       orderCol("transporter", { l: "Transport" }),
       orderCol("status"),
-      { k: "dispatchOn", l: "Dispatch on", t: "d" },
       { k: "when", l: "Due", t: "t" },
       orderCol("qty", { l: "Cans" }),
       orderCol("boxes"),
@@ -3456,6 +3465,7 @@ const dispatchRegister: ScreenModule = {
           { l: "Boxes", kind: "sum", k: "boxes" },
           { l: "Weight", kind: "sum", k: "weight", missing: "without a weight" },
           { l: "Today", where: { k: "when", in: ["Today"] }, tone: "brand" },
+          { l: "Tomorrow", where: { k: "when", in: ["Tomorrow"] } },
           { l: "Late", where: { k: "when", in: ["Late"] }, tone: "danger" },
         ],
         /* Ticking rows reads what they add up to — the lorry is booked by the weight. */
@@ -3484,9 +3494,8 @@ const dispatchRegister: ScreenModule = {
           delivery: l.delivery.name,
           sku: l.sku.name,
           weight: l.weightKg,
-          transporter: l.o.transporter ?? l.delivery.p?.transporter ?? "—",
+          transporter: registerTransporter(l),
           status: l.o.status,
-          dispatchOn: l.o.dispatchOn,
           when: l.due ? DUE_SHORT[l.due] : l.o.dispatchOn ? "Later" : "Not planned",
           qty: l.o.qtyCans,
           boxes: l.boxed ? l.boxes : null,
@@ -3503,14 +3512,14 @@ const dispatchRegister: ScreenModule = {
           { l: "Delivery party", v: `${l.delivery.name}${l.delivery.city ? ` · ${l.delivery.city}` : ""}` },
           { l: "Product", v: `${l.sku.name} · ${nf(l.o.qtyCans)} cans${l.boxed ? ` · ${nf(l.boxes)} boxes` : ""}` },
           { l: "Weight", v: l.weightKg == null ? "No weight in the catalogue for this SKU" : `${nf(l.weightKg)} kg`, der: true },
-          { l: "Transport", v: l.o.transporter ?? l.delivery.p?.transporter ?? "—" },
+          { l: "Transport", v: registerTransporter(l) },
           { l: "Dispatch on", v: l.o.dispatchOn ? fd(l.o.dispatchOn) : "Not planned" },
           { l: "Tally invoice", v: l.o.tallyBillNo ? `${l.o.tallyBillNo}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` : "Not billed yet" },
           { l: "Standing instructions", v: l.si || "—", der: true },
           { l: "Remark / customer instructions", v: l.o.remark || "—" },
         ],
         actions: [
-          { id: "open", l: "Open the order", primary: true, href: erpLink("readyOrders", { f: l.o.id, fl: `Order ${l.o.orderNo}` }) },
+          { id: "open", l: "Open the order", primary: true, href: erpLink("orders", { f: l.o.id, fl: `Order ${l.o.orderNo}` }) },
           ...(l.o.status === "Ready" ? [{ id: "scan", l: "Scan boxes at dispatch", href: erpDispatchHref(l.o.orderNo) } as ActionSpec] : []),
           { id: "labels", l: "Print dispatch stickers", href: erpLabelsHref({ order: l.o.orderNo }) },
         ],

@@ -22,11 +22,11 @@ The numbers on this page that come from settings — how far back the suggestion
   <WfBar><WfText muted>Grouped by godown and material type</WfText><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Item", "Available", "Days of stock", "Re-order %", "Min", "Godown", "Material type", "Flags"]}
+    columns={["Item", "Required", "Available", "Days of stock", "Of minimum", "Min", "Godown", "Material type", "Flags"]}
     rows={[
-      [<span key="a"><b>Toluene</b> <Hotspot n={3} /></span>, "120", "6", "-60", "200", "Godown A", "Chemical", <WfPill key="b" tone="danger">Below level</WfPill>],
-      [<b key="c">Tin can 5L</b>, "340", "13", "-15", "300", "Godown A", "Can", <WfPill key="d" tone="danger">Below level</WfPill>],
-      [<b key="e">Box6</b>, "55", "16", "-8", "40", "Godown A", "Box", <span key="f"><WfPill tone="danger">Below level</WfPill> <Hotspot n={4} /></span>],
+      [<span key="a"><b>Toluene</b> <Hotspot n={3} /></span>, "380", "120", "6", "60", "200", "Godown A", "Chemical", <WfPill key="b" tone="danger">Below minimum</WfPill>],
+      [<b key="c">Tin can 5L</b>, "260", "280", "13", "93", "300", "Godown A", "Can", <WfPill key="d" tone="danger">Below minimum</WfPill>],
+      [<b key="e">Box6</b>, "45", "35", "16", "88", "40", "Godown A", "Box", <span key="f"><WfPill tone="danger">Below minimum</WfPill> <Hotspot n={4} /></span>],
     ]}
   />
   <WfPanel title="Toluene" side>
@@ -38,8 +38,8 @@ The numbers on this page that come from settings — how far back the suggestion
 <Hotspots items={[
   <span key="1"><b>New level.</b> Only on the <i>All levels</i> tab. Sets a minimum and maximum for one item at one godown.</span>,
   <span key="2"><b>Groups.</b> Rows are grouped by godown and by material type, and the list follows your working godown when you pick one.</span>,
-  <span key="3"><b>Re-order %.</b> How far the stock is from the middle of its minimum and maximum. Zero is exactly in the middle; a negative figure is below it. The most short rows sit at the top.</span>,
-  <span key="4"><b>Below level.</b> The red flag on any followed row that needs buying.</span>,
+  <span key="3"><b>Of minimum.</b> The stock as a percentage of its minimum: 100 is exactly at the minimum, 50 is half of it. The emptiest rows sit at the top.</span>,
+  <span key="4"><b>Below minimum.</b> The red flag on any followed row that needs buying.</span>,
   <span key="5"><b>Raise requirement.</b> Opens a new purchase requirement with the godown, the item and the quantity to buy already filled in.</span>,
 ]} />
 
@@ -61,14 +61,14 @@ The planner sets a level for every raw material that has been used or bought at 
 | Column | What it means |
 |---|---|
 | **Item / Product** | The raw material, or the SKU. |
-| **Required** (raw material, All levels only) | How much to buy to bring the stock up to the maximum. Blank when you are already at or above it. |
+| **Required** (raw material) | How much to buy to bring the stock up to the maximum. Blank when you are already at or above it. |
 | **Available** | What is in stock at that godown now, read from the lots. Raw material is in litres or pieces; a loose SKU in cans; a boxed SKU in boxes. |
-| **Re-order %** | Raw material: stock against the midpoint of min and max (0 means bang in the middle, -50 means half of it). Finished goods: stock as a percentage of the minimum (100 means exactly at the minimum). |
+| **Of minimum** | Stock as a percentage of the minimum, for raw material and finished goods alike (100 means exactly at the minimum). |
 | **Min / Max** | The level somebody set. Finished goods have no maximum. |
 | **Status** | **Follow** — the ERP watches this level. **UnFollow** — it is kept but never flagged. |
 | **Days of stock** (raw material) | How many days today's stock lasts at the planned rate. |
 | **Set by** (raw material) | **Planner** — rewritten every night — or **By hand**. |
-| **Planned min / max** (raw material) | What the planner works out from history. On a level set by hand it is shown for comparison and never applied. |
+| **Suggested min / max** (raw material) | What the planner works out from history. On a level set by hand it is shown for comparison and never applied. |
 | **Suggested min** (finished goods) | What the ERP would set from recent dispatches. See [Suggested levels](#suggested-levels). |
 | **Material type / Type** | For raw material: Chemical, Can, Drum, Box or Stationary. For finished goods: *Finish Goods Inventory* (a loose SKU) or *FG Packing Inventory* (a boxed SKU). |
 
@@ -89,7 +89,7 @@ The maximum may not be below the minimum. The finished-goods form reminds you: *
 Follow is the default. UnFollow keeps the level on the list but never puts the item on Below minimum, never flags it and never raises an alert.
 </Step>
 <Step title="Save">
-One level per item per godown. Saving a second one for the same item and godown is refused with *Duplicate Entry!* — edit the existing one instead.
+One level per item per godown. Saving a second one for the same item and godown is refused with *That item already has a level at this godown.* — edit the existing one instead.
 </Step>
 </Steps>
 

@@ -1623,9 +1623,11 @@ a fresh one forward, so the clock measures time AWAY. It is enforced again in
 administrator's settings writes, because an action is a URL with no layout in
 front of it. The rest of MahekOne never asks.
 
-**Impersonation tells the person.** The audit row is under the administrator's
-id, where the account holder will never look; a warn notification on their own
-bell is what makes a link used by the wrong person something somebody notices.
+**Impersonation does NOT tell the person, and that is a reversal (Nov 2026).**
+It used to put a warn notification on the account holder's bell. Mahek's
+decision: what an administrator does in somebody's account is the
+administrator's doing, so nothing reaches the account holder. The record is
+the `impersonate.enter` audit row under the administrator's id.
 
 **There is no HTTP door that grants access any more.** `/api/admin/provision`
 granted anything to anybody behind `CRON_SECRET` — the secret the Apps Script
@@ -2254,7 +2256,7 @@ line fields. Every line carries its own `po`, so one GRN may span several POs �
 of ONE vendor: "Add another item from this truck" searches only that vendor's
 open lines, and `inward.new` refuses a second vendor. The pick is pure in
 `engines/grn-pick.ts`; an item with no open line is listed as "Cannot receive",
-never hidden. "Receive goods" on a PO and "Add more" on a PR keep the
+never hidden. "Receive goods" on a PO and "Add another" on a PR keep the
 PO-in-the-header form, and a line naming no PO takes the header's.
 
 **The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
@@ -2791,7 +2793,7 @@ supplier's `returnable` ones, both BY QUANTITY and OLDEST FIRST (`fifoPick`,
 over a pool selected `for update`). The allocation is stored on the drums
 (`scrap_sale_id`, `return_id`) for traceability; it does not claim anybody
 checked those physical drums. A returnable drum named in a sale is refused
-with "This drum is vendor-returnable. Please use Returnable Drum Outward."
+with "This drum goes back to its supplier. Use Return drums instead."
 whatever button sent it. Nothing holds a balance: every stock figure is a
 count of records, and every change is a row in `erp_drum_events`, which a
 trigger makes append-only.
@@ -2886,6 +2888,32 @@ recorded going in and out of each account — and on a bank account each row
 says **✓ Bank** once a bank line is matched to it. Its "Bank statement" tab is
 gone from the registry (the `bankLines` module stays, unreached); the bank's own
 record lives in Accounts.
+
+## The accounts deadline
+
+**ANYTHING WAITING ON THE LEDGER DESK PAST `accountsSla.hours` WORKING HOURS IS
+REPORTED, AND STAYS THE DESK'S.** Orders to approve, payments to confirm
+(holds only with `accountsSla.includeHeldPayments`), credit notes and order
+changes. `lib/engines/accounts-sla.ts` is the clock, pure: `working_days`
+counts every hour of a working day (Saturday 4 pm is due Monday 4 pm),
+`office_hours` only the shift; days off and company holidays count nothing.
+`sweepAccountsSla` (hourly as `accounts-sla`, and at most once a minute from
+the Accounts layout) writes one `accounts_sla_breaches` row per item (0342),
+resolves it the moment the record leaves its queue, and tells — each claimed
+by a conditional update so nobody is told twice — every platform and Founder
+administrator plus the desk at the deadline, then the admins again every
+`accountsSla.escalateEveryHours` with the desk's latest reason. Nothing is
+reassigned: admins are informed, accounts decide.
+
+**THE DESK OWES A REASON.** `app/accounts/deadline-gate.tsx` opens on every
+Accounts screen a dialog that closes only on a reason (10+ characters) per
+item and a reminder (1 hour, tomorrow, 2 days, or a time within 7 days);
+it asks again when the reminder comes round. It does not open on the four
+work screens — a bar offers it there — so "Open and decide" is never blocked.
+A reason is shared by the desk; `accounts_sla_remarks` is append-only and
+`remarkProblem` is checked in the dialog and in `explainAccountsDelays`.
+Command Centre → Accounts deadlines (`founder.accounts-deadlines`) is the
+founder's view, also on Needs you; Mark seen and Nudge accounts never move it.
 
 ## Bank statement management (Accounts)
 
@@ -3598,7 +3626,7 @@ It promoted a lead to `kind = 'customer'` on one tap — a Suspect included, no
 It also could not work: the handset created a customer under its own id and
 the office promoted the LEAD's row instead, so every order taken against the
 phone's copy was refused as "not on MahekOne". A lead becomes a customer at its
-first order (`promotesToCustomerAt`) and an order can be taken against a lead,
+second order (`promotesToCustomerAt`) and an order can be taken against a lead,
 so `handleCustomerCreate` refuses a `fromLeadId` in words that say so, and
 `convertedCustomerId` on a lead update converts nothing.
 
@@ -3840,16 +3868,17 @@ checklist people learn to complete.
 put the reason a lead is stuck inside the function that draws its progress, and
 the console needs the second without the first.
 
-**§22 SAYS CUSTOMER AT THE SECOND ORDER AND THIS CODEBASE SAYS OTHERWISE, so
-the two words are separated rather than reconciled.** A lead here IS an account
-that has never ordered, and about thirty places read `customers.kind` on exactly
-that understanding — the Call Log's prospect cadence, sales attribution, the
-buying cycle, the owner's funnel. Honouring §22 literally would leave an account
-with one order, one bill and one confirmed payment sitting at `kind = 'lead'`,
-and every one of those readers would get it wrong. So `kind` flips at the FIRST
-order — `promotesToCustomerAt` is the one place that is decided — and the ladder
-keeps its own `second_order` and `customer` rungs, which are the funnel's
-statement about the relationship rather than the ledger's about the account.
+**A LEAD BECOMES A CUSTOMER AT ITS SECOND ORDER, as §22 says — and that is a
+reversal of what this paragraph used to say.** It said `kind` flipped at the
+FIRST order, on the reasoning that about thirty readers of `customers.kind`
+mean "has never ordered" by `lead`. The client corrected it: a shop that has
+ordered once is still a lead being won, and `promotesToCustomerAt` now answers
+`second_order` (`distributor_approval` for a distributor), with
+`convertLeadOnSecondOrder` the one writer of the conversion. So a `kind = 'lead'`
+row may carry one order, one bill and one confirmed payment, and a reader of
+`kind` must not read `lead` as "never ordered" — `lead_converted_at`, the
+order counts and `notConverted` are what say whether it has converted. Accounts
+converted at the first order before the rule moved keep `kind = 'customer'`.
 
 **A working lead is held back from the Call Log, and SHOWN.** A lead that stays
 a lead through eleven rungs would otherwise sit on the telecaller's prospect
@@ -5851,7 +5880,7 @@ for the account to become a customer on the second order and for the
 relationship to pass to a customer manager in the same breath. That is a
 sentence about what the account IS and a sentence about who RUNS it, joined by
 an "and" that hides the fact they are independent. `kind` answers the first and
-flips on the FIRST order — `lead-conversion-service.ts` has the whole argument,
+flips on the SECOND order — `lead-conversion-service.ts` has the whole argument,
 and it is settled. `relationship_owner_id` answers the second, and nothing
 derives one from the other.
 
@@ -6637,12 +6666,16 @@ it shipped off and Mahek asked for it on). Every app is covered — header and s
 break and after punching out, and `requireUser` REFUSES SERVER ACTIONS for
 that person — every one that signs in through it, which is every app's
 context and capability check (it asks `serverLocked` when the request carries
-`next-action`; pages still render, behind the lock). That is why punching in,
+`next-action`), and REFUSES PAGES too: a locked page request is redirected to
+`/apps?next=<address>`, where the lock screen is drawn, and punching in carries
+on to that address (`lib/workday-lock-paths.ts`; `x-mahek-path` from the proxy
+says which page). Only the launcher, sign-in and `/api/*` are left open. That is why punching in,
 resuming and punching out go through `/api/workday`, a route: the way out of
 the lock is never behind it. Never locked: no HRMS grant, no employee link, a
 `field` app holder (the handset holds their day), a day off, a day already on
-the handset, and — while `exemptPlatformAdmins` is on — a platform
-administrator, so nobody is locked out of the console that turns it off.
+the handset. Platform administrators are locked like everybody else since
+`0341` (Mahek: "literally no one"); `exemptPlatformAdmins` is off by default,
+and the lock screen always offers Punch in, so nobody is locked out for good.
 `serverLocked` caches its answer ten seconds per person and guards its own
 re-entry (`hrmsContext` calls `requireUser`).
 
@@ -9225,8 +9258,15 @@ verifies it — never whoever owns the lead. `orgChartVerifierFor` in
 `services/org-verifier-resolver.ts` is the one resolver; the routing of the
 request (`preparePromotion`), the act of verifying (`orgDesignatedGate`, which
 the console, the Sales Manager pipeline and the handset all pass through) and the
-Qualification review (`requireQualificationApprover`, from whoever completed it)
-all ask it, so a screen cannot offer a call the permission check then refuses.
+Qualification review all ask it, so a screen cannot offer a call the permission
+check then refuses. **The review has ONE reviewer**, `designatedQualificationApprover`
+(`services/qualification-approver.ts`): the Org Chart above whoever collected the
+answers, then the self-raised setting, the Sales Manager seat and the lead-manager
+seat. The hand-off (`settleQualificationState`, first submit and resubmit), the
+action (`requireQualificationApprover`, which lets that person in without
+`lead.verify`), the verdict, GST validation and the screens all read it. They used
+to read the chart in one place and the seats in another, and where the two named
+different people each was refused and the lead could not be reviewed at all.
 The walk is `engines/org-verifier-chain` and is unchanged: it skips a leaver,
 someone with no account, an inactive one, one who cannot verify, and never names
 the requester.

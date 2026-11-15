@@ -30,7 +30,7 @@ const DANGER = /^(delete|cancel|retire|remove|deactivate|withdraw|void|reject|un
 /** What each screen-drawn panel's tab is called. A kind not named here is "Overview". */
 export const PANEL_TAB: Record<string, string> = {
   purchaseFlow: "Purchase flow",
-  purchaseOrder: "Receiving",
+  purchaseOrder: "Purchase flow",
   returnFlow: "Return",
   scrap: "Drum",
   stockCount: "Count",

@@ -45,6 +45,13 @@
  * ------------------------------------------------------------------------- */
 
 import { SALES_TYPES } from "./lead-labels";
+import { rawStagesOf } from "./lead-display";
+import type { DisplayStage } from "./engines/lead-ladder";
+
+/** The `stage=` filter value for one display stage: every stored rung under it. */
+function stageParam(display: DisplayStage): string {
+  return rawStagesOf(display).join(",");
+}
 
 /**
  * The views, and `all` is the absence of one.
@@ -272,38 +279,39 @@ export const LEAD_TILES: readonly LeadTile[] = [
   {
     id: "suspects",
     label: "New suspects",
-    /* `new` beside `suspect` because the legacy six-rung ladder is still under
-       every lead raised before the funnel shipped — `lead-labels.ts` keeps it
-       first in the enum and nothing backfills a sales type onto one. A tile
-       that counted only the new word would quietly leave those leads out of
-       the one figure that is supposed to say how much unworked book there is. */
+    /* EVERY stored rung drawn as Suspect — `new` and `contacted` included, as
+       `foldStage` reads them — derived from the ladder's display map, so the
+       tile, the record's bar and the board's column count one population. */
     hint: "New leads not yet looked at.",
     tone: "brand",
-    params: { stage: "suspect,new" },
+    params: { stage: stageParam("suspect") },
   },
   {
     id: "prospects",
     label: "Prospects",
-    /* `contacted` is the legacy ladder's second rung and is the same fact:
-       somebody has spoken to them and nobody has qualified them. */
+    /* `contacted` is NOT here: the one ladder reads it as a Suspect
+       (`foldStage`), and counting it twice — once on each tile — was a lead in
+       two figures at once. */
     hint: "Interested, not yet qualified.",
     tone: "brand",
-    params: { stage: "prospect,contacted" },
+    params: { stage: stageParam("prospect") },
   },
   {
     id: "sample",
     label: "In sample",
-    /* Both sample rungs, and the older sample_received, are "in sample". */
+    /* Every rung drawn as Sample / trial, the older sample_received included. */
     hint: "Sample asked for, sent or with the customer, waiting for feedback.",
     tone: "warn",
-    params: { stage: "sample_trial,sample_received,sample_review" },
+    params: { stage: stageParam("sample_trial") },
   },
   {
     id: "negotiation",
     label: "Negotiations",
+    /* Every rung drawn as Negotiation — the commercial discussion and the
+       distributor rungs too, which the record draws under the same word. */
     hint: "Talking price and terms.",
     tone: "brand",
-    params: { stage: "negotiation" },
+    params: { stage: stageParam("negotiation") },
   },
   {
     id: "expected",

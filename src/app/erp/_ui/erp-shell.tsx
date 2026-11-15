@@ -56,49 +56,34 @@ const SCREEN_ICON: Record<string, string> = {
   products: "can",
   customers: "person",
   godowns: "home",
-  employees: "people",
-  powers: "lock",
   refLists: "clipboard",
   requisitions: "clipboard",
   purchaseOrders: "book",
-  inward: "truck",
-  testing: "beaker",
   register: "book",
-  barcode: "scan",
-  rmStock: "flask",
-  rmLog: "history",
+  testing: "beaker",
+  quoteManager: "calc",
   sfgBatches: "beaker",
-  sfgStock: "can",
-  sfgLog: "history",
   fgFill: "can",
-  fgStock: "box",
-  fgLog: "history",
   packBatches: "box",
-  packStock: "box",
-  packLog: "history",
+  recipes: "file",
+  stock: "db",
+  stockCheck: "check",
+  units: "grid",
   transfers: "swap",
   rmLevels: "chart",
   fgLevels: "chart",
-  reorderRm: "refresh",
-  reorderFg: "refresh",
-  orderInbox: "mail",
   orders: "clipboard",
-  pendingOrders: "clock",
-  readyOrders: "check",
-  batchCodes: "scan",
-  labels: "doc",
-  orderDetails: "receipt",
+  underProcess: "clock",
+  dispatch: "scan",
+  dispatchRegister: "doc",
+  trace: "pin",
   transport: "truck",
-  pendingLr: "clock",
-  trackLr: "pin",
-  freight: "rupee",
   requests: "chat",
-  issueCn: "receipt",
-  complaints: "warning",
-  pendingCn: "clock",
-  followup: "phone",
-  pivot: "chart",
-  credits: "wallet",
+  vendorReturns: "upload",
+  customerReturns: "dl",
+  emptyDrums: "bin",
+  drumReturns: "truck",
+  scrapSales: "wallet",
   expenses: "rupee",
   videos: "play",
   myTasks: "check",
@@ -244,7 +229,7 @@ export function ErpShell({
                   order — or, typed as a question, ask the ERP in the drawer. */}
               <SmartSearch
                 endpoint="/api/erp/search"
-                placeholder={ask ? "Search lots, PRs, POs, boxes, orders — or ask a question" : "Search customers, lots, PRs, POs, boxes, orders…"}
+                placeholder={ask ? "Search customers, lots, PRs, POs, boxes, orders — or ask a question" : "Search customers, lots, PRs, POs, boxes, orders"}
                 ask={ask ? ERP_ASK.title : undefined}
                 className="max-w-[520px]"
               />
@@ -332,19 +317,33 @@ export function ErpShell({
 function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: ErpViewingAs | null; self: { id: string; name: string } } }) {
   const router = useRouter();
   const { push } = useToast();
+  const [busy, setBusy] = useState(false);
   const value = preview.current ? `${preview.current.kind}:${preview.current.id}` : "";
-  const pick = (v: string) => {
+  const pick = async (v: string) => {
     const [kind, ...rest] = v.split(":");
     const id = rest.join(":");
-    const done = (r: { ok: boolean; message?: string; error?: string }) => {
-      if (!r.ok) return push(r.error ?? "That did not work.", "error");
-      push(r.message ?? "Done");
+    setBusy(true);
+    try {
+      if (!v) {
+        /* Leaving a preview stays on this screen, as the banner's button does: every
+           screen a preview could open, the administrator holds. */
+        const r = await erpStopViewAs();
+        if (!r.ok) return push(r.error, "error");
+        push(r.message ?? "Back to your own ERP");
+        router.refresh();
+        return;
+      }
+      const r = await erpStartViewAs({ kind: kind as "designation" | "user", id });
+      if (!r.ok) return push(r.error, "error");
+      push(r.message ?? "Previewing");
       /* The dashboard, because the screen in view may be one this preview does not hold. */
       router.push("/erp");
       router.refresh();
-    };
-    if (!v) void erpStopViewAs().then(done);
-    else void erpStartViewAs({ kind: kind as "designation" | "user", id }).then(done);
+    } catch {
+      push("That did not go through. Check the connection and try again.", "error");
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="flex-none border-t border-line p-2">
@@ -361,7 +360,8 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
           <span className="text-2xs text-faint">View the ERP as</span>
       <select
         value={value}
-        onChange={(e) => pick(e.target.value)}
+        onChange={(e) => void pick(e.target.value)}
+        disabled={busy}
         aria-label="Preview access as"
         className={cx(
           "-ml-1 w-full min-w-0 cursor-pointer truncate border-0 bg-transparent text-meta font-semibold outline-none",
@@ -401,6 +401,20 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
 function PreviewBanner({ current }: { current: ErpViewingAs }) {
   const router = useRouter();
   const { push } = useToast();
+  const [busy, setBusy] = useState(false);
+  const leave = async () => {
+    setBusy(true);
+    try {
+      const r = await erpStopViewAs();
+      if (!r.ok) return push(r.error, "error");
+      push(r.message ?? "Back to your own ERP");
+      router.refresh();
+    } catch {
+      push("That did not go through. Check the connection and try again.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-meta text-ink">
       <Icon n="lock" s={14} />
@@ -410,17 +424,7 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
         {current.kind === "designation" ? ", and lists that belong to a person show yours" : ""}.
       </span>
       <span className="flex-1" />
-      <Button
-        type="button"
-        size="sm"
-        onClick={() =>
-          void erpStopViewAs().then((r) => {
-            if (!r.ok) return push(r.error, "error");
-            push(r.message ?? "Back to your own ERP");
-            router.refresh();
-          })
-        }
-      >
+      <Button type="button" size="sm" disabled={busy} onClick={() => void leave()}>
         Back to my ERP
       </Button>
     </div>
@@ -509,22 +513,27 @@ function WorkingAt({
   const find = (asked: boolean) => {
     setFinding(true);
     remember();
-    void readFix(asked).then(async (fix) => {
-      if ("error" in fix) {
+    void (async () => {
+      try {
+        const fix = await readFix(asked);
+        if ("error" in fix) {
+          if (asked) push(fix.error, "error");
+          return;
+        }
+        const res = await erpLocateWorkingGodown(fix);
+        if (!res.ok) {
+          if (asked) push(res.error, "error");
+          return;
+        }
+        const line = locateLine(res.data, asked);
+        if (line) push(line.text, line.tone);
+        if ("status" in res.data && res.data.status === "switched") router.refresh();
+      } catch {
+        if (asked) push("Could not find your godown just now. Check the connection and try again.", "error");
+      } finally {
         setFinding(false);
-        if (asked) push(fix.error, "error");
-        return;
       }
-      const res = await erpLocateWorkingGodown(fix);
-      setFinding(false);
-      if (!res.ok) {
-        if (asked) push(res.error, "error");
-        return;
-      }
-      const line = locateLine(res.data, asked);
-      if (line) push(line.text, line.tone);
-      if ("status" in res.data && res.data.status === "switched") router.refresh();
-    });
+    })();
   };
 
   const multiple = godowns.length > 1;
@@ -567,12 +576,14 @@ function WorkingAt({
         onPick={(id) => {
           if (!id) return;
           remember();
-          void erpSetWorkingGodown(id).then((res) => {
-            if (res.ok) {
-              push(res.message ?? "Working location changed");
-              router.refresh();
-            } else push(res.error, "error");
-          });
+          void erpSetWorkingGodown(id)
+            .then((res) => {
+              if (res.ok) {
+                push(res.message ?? "Working location changed");
+                router.refresh();
+              } else push(res.error, "error");
+            })
+            .catch(() => push("The working location did not change. Check the connection and try again.", "error"));
         }}
       />
       {locate && multiple ? (

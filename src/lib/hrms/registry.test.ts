@@ -65,7 +65,7 @@ test("the grant migration moves every tab that used to be a screen onto the scre
   }
   /* A tab that was never a screen is new, and says so. */
   const fresh = tabs.filter((x) => !pairs.has(x.tab.key)).map((x) => x.tab.key);
-  assert.deepEqual(fresh, ["teamToday", "workdayClaims", "roles"]);
+  assert.deepEqual(fresh, ["myAttendance", "teamToday", "workdayClaims", "attendanceRules", "officeTimings", "roles"]);
 });
 
 test("the simplification's migration removes exactly the screens that were taken out", () => {

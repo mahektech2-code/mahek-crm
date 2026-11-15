@@ -15,6 +15,9 @@ import { queueUrgency } from "@/lib/services/accounts-queue-service";
 import { overduePayoutCount } from "@/lib/services/vendor-payout-service";
 import { bankToDoCount } from "@/lib/services/bank-statement-service";
 import { AccountsShell } from "./accounts-shell";
+import { DeadlineGate } from "./deadline-gate";
+import { deadlineItemsFor, sweepAccountsSla } from "@/lib/services/accounts-sla-service";
+import { nowMs } from "@/lib/format";
 
 /**
  * The Accounts app's own shell.
@@ -54,6 +57,14 @@ export default async function OrdersLayout({
     modules.some((m) => m.key === "accounts.bank-reconcile") ? bankToDoCount() : Promise.resolve(0),
   ]);
   const staleHours = config["payments.confirmationAgeWarningHours"];
+
+  // The accounts deadline: a quick sweep (at most once a minute per process,
+  // so the hourly job is not the only thing that notices), then what this
+  // person owes reasons for — only the queues whose screens they hold.
+  await sweepAccountsSla({ quick: true }).catch((e) => console.error("Accounts deadline sweep failed:", e));
+  const deadlineItems = config["accountsSla.enabled"]
+    ? await deadlineItemsFor(modules.map((m) => m.key)).catch(() => [])
+    : [];
   const hat = await hatForHeader(user, "accounts");
 
   return (
@@ -89,6 +100,7 @@ export default async function OrdersLayout({
       >
         {children}
       </AccountsShell>
+      <DeadlineGate items={deadlineItems} nowMs={nowMs()} />
     </ToastProvider>
   );
 }

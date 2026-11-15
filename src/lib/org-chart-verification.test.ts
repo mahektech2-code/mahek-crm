@@ -34,6 +34,11 @@ import { getConfig, invalidateConfig, seedConfig, updateSetting } from "@/lib/co
 import { convertLeadToProspect } from "@/lib/actions/lead-calling-desk";
 import { canVerifyLeadById, requireQualificationApprover } from "@/lib/services/lead-verifier";
 import { orgChartVerifierFor } from "@/lib/services/org-verifier-resolver";
+import {
+  assertDesignatedQualificationApprover,
+  canActAsQualificationApprover,
+  designatedQualificationApprover,
+} from "@/lib/services/qualification-approver";
 import { CRM_EVENT } from "@/lib/timeline";
 import { testPhone } from "@/lib/test-phone";
 
@@ -290,6 +295,28 @@ describe("the Qualification review", () => {
     as(mira);
     const ok = await requireQualificationApprover(lead.id);
     assert.equal(ok.ok, true, ok.ok ? "" : ok.message);
+  });
+
+  test("where the chart and the seat name different people, the chart's pick reviews and nobody is stuck", async () => {
+    /* The deadlock this guards: Tara reports to Mira, but the lead sits under
+       Seema's seat. The review action used to read the chart (Mira) and the
+       verdict the seat (Seema), so each refused the other and nobody could
+       review. One answer now: Mira, for the hand-off, the action and the screen. */
+    const lead = await makeLead(tele, { leadStage: "qualification", salesManagerId: seema.id });
+    assert.equal((await designatedQualificationApprover(lead.id))?.id, mira.id);
+
+    as(mira);
+    const ok = await requireQualificationApprover(lead.id);
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.message);
+    assert.equal((await assertDesignatedQualificationApprover(lead.id, mira.id)).ok, true);
+    assert.equal(await canActAsQualificationApprover(mira, lead.id), true);
+
+    as(seema);
+    const refused = await requireQualificationApprover(lead.id);
+    assert.equal(refused.ok, false);
+    assert.match(!refused.ok ? refused.message : "", /reviewed by Mira Manager/);
+    assert.equal(await canActAsQualificationApprover(seema, lead.id), false);
+    assert.equal(await canActAsQualificationApprover(tele, lead.id), false, "the collector never");
   });
 
   test("where the collector is not on the chart, the review is judged as it always was", async () => {

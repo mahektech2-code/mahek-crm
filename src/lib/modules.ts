@@ -974,6 +974,12 @@ export const APP_MODULES: AppModule[] = [
   cc("service", "service", "Service", "Operate", "Complaints end to end."),
   cc("money", "money", "Money", "Operate", "Bills, receipts, outstanding, collections and credit notes — the whole accounts desk."),
   founder(
+    "accounts-deadlines",
+    "Accounts deadlines",
+    "Operate",
+    "Orders, payments, credit notes and order changes the accounts desk has not decided inside its working-hours deadline — with the reason they gave and when they will look again — and what was decided late.",
+  ),
+  founder(
     "price-lists",
     "Price lists",
     "Founder desks",

@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { attachments, bills, complaints, complaintStatusHistory, customers, employees, users } from "@/db/schema";
 import { canFor } from "@/lib/access-control";
 import { calendarDate } from "@/lib/business-date";
-import { categoryLabel } from "@/lib/complaint-labels";
+import { categoryLabel, CN_STATUS_LABEL } from "@/lib/complaint-labels";
 import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import { createComplaint } from "@/lib/services/complaint-create";
@@ -280,7 +280,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
   if (word === "Accepted" && c.requestCn)
     actions.push({
       id: "issue",
-      l: "Issue Credit Note",
+      l: "Issue credit note",
       primary: true,
       why: canIssue ? "" : "Accounts issue credit notes — it comes off the bill in the ledger",
       prompt: {
@@ -300,7 +300,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
   if (word === "Accepted" && !c.requestCn)
     actions.push({
       id: "resolve",
-      l: "Resolve Complaint",
+      l: "Resolve complaint",
       primary: true,
       why,
       prompt: {
@@ -341,7 +341,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
       ...(ai?.summary ? [{ l: "Summary (confirmed)", v: ai.summary }] : []),
       { l: "Area", v: x.area ?? "—", der: true },
       { l: "Bill date", v: x.billDate ? fd(x.billDate) : "—" },
-      { l: "Credit note", v: c.cnStatus === "issued" ? `${inr(c.cnAmount)} · ${c.cnReference ?? "no number"}${c.cnDate ? ` · ${fd(c.cnDate)}` : ""}` : c.requestCn ? (c.cnStatus ?? "requested").replace("_", " ") : "Not asked for" },
+      { l: "Credit note", v: c.cnStatus === "issued" ? `${inr(c.cnAmount)} · ${c.cnReference ?? "no number"}${c.cnDate ? ` · ${fd(c.cnDate)}` : ""}` : c.requestCn ? (CN_STATUS_LABEL[c.cnStatus ?? "requested"] ?? c.cnStatus ?? "Requested") : "Not asked for" },
       { l: "Resolution", v: c.resolutionNotes ?? "—" },
       { l: "Response time", v: response == null ? "—" : response < 48 ? `${response} h` : `${Math.round(response / 24)} days`, der: true },
       { l: "Month", v: calendarDate(c.createdAt).slice(0, 7), der: true },
@@ -394,12 +394,10 @@ function complaintList(scope: ComplaintScope): ScreenModule {
           stats: [
             { l: "Complaints" },
             { l: "Customers", kind: "distinct", k: "party" },
-            { l: "CN amount", kind: "sum", k: "amount", missing: "without an amount" },
-            { l: "Requested", where: { k: "status", in: ["Requested"] }, tone: "warn" },
-            { l: "Accepted", where: { k: "status", in: ["Accepted"] }, tone: "info" },
-            { l: "Resolved", where: { k: "status", in: ["Resolved"] }, tone: "success" },
+            /* A complaint without a credit note has no amount; its statuses are the Breakdown card, drawn from the chips. */
+            ...(scope === "complaints" ? [] : [{ l: "CN amount", kind: "sum" as const, k: "amount", missing: "without an amount" }]),
           ],
-          filters: scope === "requests" ? ["salesman", "party", "cn", "amount"] : ["salesman", "party", "amount"],
+          filters: scope === "requests" ? ["salesman", "party", "cn", "amount"] : scope === "complaints" ? ["salesman", "party"] : ["salesman", "party", "amount"],
           bulk: decider ? [{ id: "accept", l: "Accept" }, { id: "reject", l: "Reject", confirm: "Reject every selected complaint?" }] : undefined,
           ...(await newFormIn(s, () => requestForm(ctx))),
           newLabel: "Raise product quality complaint",

@@ -1,5 +1,5 @@
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
-import Link from "next/link";
+import { SalesmanLink } from "@/components/leads/salesman-link";
 import { shortDate, stamp } from "@/lib/format";
 import { fieldSamples } from "@/lib/services/sales-service";
 import { Decide } from "@/components/console/decide";
@@ -220,12 +220,7 @@ export async function Body({
                 <CustomerName id={s.customerId} name={s.customerName} />
               </Cell>
               <Cell truncate={160}>
-                <Link
-                  href={leadHref(workspace, `people/${s.salesmanId}`)}
-                  className="no-underline"
-                >
-                  {s.salesmanName}
-                </Link>
+                <SalesmanLink workspace={workspace} id={s.salesmanId} name={s.salesmanName} />
               </Cell>
               <Cell truncate={240}>
                 {s.productName ?? (

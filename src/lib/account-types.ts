@@ -2,7 +2,8 @@
  * WHAT AN ACCOUNT IS TO US, as one question with three answers.
  *
  * Direct customer — we sell to them and we invoice them.
- * Lead            — they have never ordered, and we are trying to change that.
+ * Lead            — not yet a customer: no order, or only the first (a lead
+ *                   converts at its SECOND order), and we are winning them.
  * Third-party customer — a shop we DELIVER to and do not bill; a distributor
  *                   buys the goods and sells them on.
  *
@@ -35,7 +36,7 @@ export function accountTypeLabel(row: {
  * The type filter, and two of its options are not types at all.
  *
  * THE CUSTOMER TABLE HAS TWO TYPES, and a lead is not one of them. A lead is
- * an account that has never ordered, and the whole of the work on one — the
+ * an account we are still winning (it converts at its second order), and the whole of the work on one — the
  * ladder, the gates, the qualification, the capture form — lives in Lead
  * Management. Leaving it on this list meant the largest single category on
  * the customer table was accounts that are not customers yet, worked from a

@@ -99,11 +99,11 @@ async function groupForm(id?: string): Promise<FormSpec | null> {
 
 async function saveGroup(ctx: ErpContext, h: Record<string, string>, id?: string) {
   const name = text(h.name);
-  if (!name) return fieldErr("name", "Group name is required");
-  if (await nameTaken(name, id)) return fieldErr("name", "There is already a group of that name");
+  if (!name) return fieldErr("name", "Name the group.");
+  if (await nameTaken(name, id)) return fieldErr("name", "There is already a group of that name.");
   const cans = await canOptions();
   const members = resolveMembers(multi(h.members), cans);
-  if ("unknown" in members) return fieldErr("members", `${members.unknown} is no longer an active can`);
+  if ("unknown" in members) return fieldErr("members", `${members.unknown} is no longer an active can.`);
   const photos = photosFrom(h);
   if (photos.length > MAX_GROUP_PHOTOS) return err(`A group takes up to ${MAX_GROUP_PHOTOS} photos.`);
   const groupId = id ?? erpId("erpmg");
@@ -151,7 +151,6 @@ const canGroups: ScreenModule = {
           { k: "name", l: "Group", t: "b" },
           { k: "count", l: "Cans", t: "n" },
           { k: "members", l: "Cans in it", t: "t" },
-          { k: "photos", l: "Group photos", t: "n" },
           { k: "state", l: "Photos", t: "s" },
         ],
         hidden: [],
@@ -164,7 +163,7 @@ const canGroups: ScreenModule = {
           {
             id: "groupByName",
             l: ungrouped.length ? `Group cans by name (${ungrouped.length} not grouped)` : "Group cans by name",
-            why: ungrouped.length ? undefined : "Every active can is already in a group",
+            why: ungrouped.length ? undefined : "Every active can is already in a group.",
             confirm: "Put every can that is not in a group into a group of look-alikes, read from its name? Cans already in a group are left where they are, and every group can be renamed or changed afterwards.",
           },
         ],
@@ -175,12 +174,8 @@ const canGroups: ScreenModule = {
         const firstMemberPhoto = g.members.map((m) => canPhotos.get(m.id)?.[0]).find(Boolean);
         const img = gp[0] ?? firstMemberPhoto;
         const actions: ActionSpec[] = [
+          /* Edit group renames it too: one way to change a group's name. */
           { id: "edit", l: "Edit group", primary: true, loadsForm: true },
-          {
-            id: "rename",
-            l: "Rename",
-            prompt: { title: "Rename group", sub: g.name, submit: "Rename", init: { name: g.name }, fields: [{ k: "name", l: "Group name", t: "text", req: true }] },
-          },
           {
             id: "delete",
             l: "Delete group",
@@ -195,7 +190,6 @@ const canGroups: ScreenModule = {
             count: g.members.length,
             countLine: `${g.members.length} can${g.members.length === 1 ? "" : "s"} · ${gp.length} group photo${gp.length === 1 ? "" : "s"}`,
             members: g.members.map((m) => m.name).join(", ") || "—",
-            photos: gp.length,
             state: gp.length ? "Has photos" : "No photo",
             img: img ? photoUrl(img) : "",
           },
@@ -224,12 +218,13 @@ const canGroups: ScreenModule = {
     edit: (ctx, h, _l, id) => saveGroup(ctx, h, id),
   },
   actions: {
+    /* No longer offered (Edit group renames); kept so a page loaded before still answers. */
     async rename(ctx, id, values) {
       const name = text(values.name);
-      if (!name) return fieldErr("name", "Group name is required");
+      if (!name) return fieldErr("name", "Name the group.");
       const [g] = await db.select({ name: erpMaterialGroups.name }).from(erpMaterialGroups).where(eq(erpMaterialGroups.id, id));
       if (!g) return err("That group no longer exists.", "not_found");
-      if (await nameTaken(name, id)) return fieldErr("name", "There is already a group of that name");
+      if (await nameTaken(name, id)) return fieldErr("name", "There is already a group of that name.");
       await db.update(erpMaterialGroups).set({ name, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpMaterialGroups.id, id));
       await erpAudit(ctx, "erp.canGroup.rename", "erp_material_group", id, { name: g.name }, { name });
       return okVoid(`Renamed to ${name}`);

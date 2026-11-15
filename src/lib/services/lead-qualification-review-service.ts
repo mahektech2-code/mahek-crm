@@ -164,10 +164,13 @@ export async function loadQualificationReview(
     if (pstate === "pending" && (await canDecideProspect(viewer, customerId))) canDecide = true;
   } else if (!access.writable) {
     why = access.reason;
-  } else if (await canVerifyLeadById(viewer, customerId)) {
+  } else {
+    /* The designated reviewer decides, whether or not they hold `lead.verify`
+       (the Org Chart can name a Sales Manager who does not). Anybody else who
+       could review is told who does; everybody else is told nothing. */
     const check = await assertDesignatedQualificationApprover(customerId, viewer.id);
-    canDecide = check.ok;
-    why = check.ok ? null : check.message;
+    if (check.ok && lead.ownerId !== viewer.id) canDecide = true;
+    else if (await canVerifyLeadById(viewer, customerId)) why = check.ok ? null : check.message;
   }
 
   /* Where the CRM keeps Qualification answers for the Salesman who collects, the

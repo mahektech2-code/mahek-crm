@@ -1,5 +1,7 @@
 "use client";
 
+import { displayStageLabel } from "@/lib/lead-display";
+import { displayStageOf } from "@/lib/engines/lead-ladder";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
@@ -919,10 +921,16 @@ export function LeadsScreen({
                     <Cell truncate={170}>
                       <Pill
                         tone={
-                          l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
+                          displayStageOf(l.stage as LeadStage) === "customer"
+                            ? "success"
+                            : l.stage === "lost"
+                              ? "danger"
+                              : "brand"
                         }
                       >
-                        {stageLabel(l.stage as LeadStage)}
+                        {/* The seven stages people see — `won` reads Customer,
+                            as on the record's bar and the board. */}
+                        {displayStageLabel(l.stage as LeadStage)}
                       </Pill>
                       <span
                         className="mt-0.5 block truncate text-[12px] text-muted"

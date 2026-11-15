@@ -32,7 +32,7 @@ export function InvoiceButtons({ v, row, screen }: { v: unknown; row?: ListRow; 
     return (
       <button
         type="button"
-        title="No invoice PDF — add one"
+        title={add ? "No invoice PDF — add one." : "No invoice PDF. It is added on Orders → Invoice check."}
         disabled={!add}
         onClick={(e) => {
           stop(e);

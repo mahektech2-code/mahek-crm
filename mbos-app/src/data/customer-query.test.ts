@@ -334,3 +334,39 @@ test('a lead the office has made a customer is a customer', () => {
   assert.deepEqual(leads, ['c-lead']);
   assert.deepEqual(customers, ['c-won']);
 });
+
+/* ONE RULE for the chip, the card and the reconcile: `leadCustomerClause`
+   beside `CONVERTED_LEAD`, and `isLiveLead` in JavaScript. */
+test('the Leads chip reads the same rule the reconcile and the card do', () => {
+  const db = handset();
+  const shops: [string, string, number | null, number | null][] = [
+    ['c-live', 'Live Lead', null, null], //            live lead row
+    ['c-kind-only', 'Kind Only', null, null], //       kind lead, no lead row on this phone
+    ['c-archived', 'Archived Lead', null, null], //    kind lead, archived lead row
+    ['c-third', 'Third Party Lead', null, null], //    live lead row, marked third party
+    ['c-appointed', 'Appointed', null, null], //       lead row at active_distributor
+    ['c-plain', 'Plain Customer', null, null], //      kind customer, no lead row
+  ];
+  seed(db, shops);
+  db.exec(`UPDATE customers SET kind = 'lead' WHERE id IN ('c-live','c-kind-only','c-archived','c-third','c-appointed')`);
+  db.exec(`UPDATE customers SET kind = 'customer' WHERE id = 'c-plain'`);
+  db.exec(`UPDATE customers SET thirdParty = 1 WHERE id = 'c-third'`);
+  const lead = db.prepare(
+    `INSERT INTO leads (id, name, stage, funnelStage, archived, clientCreatedAt, deviceId) VALUES (?, ?, ?, ?, ?, 1, 'dev')`,
+  );
+  lead.run('c-live', 'c-live', 'New', 'prospect', 0);
+  lead.run('c-archived', 'c-archived', 'New', 'suspect', 1);
+  lead.run('c-third', 'c-third', 'New', 'suspect', 0);
+  lead.run('c-appointed', 'c-appointed', 'Converted', 'active_distributor', 0);
+
+  const leads = run(db, customerPageQuery({ view: 'leads', limit: 50 }));
+  assert.deepEqual(leads.map((r) => r.id).sort(), ['c-kind-only', 'c-live']);
+  const customers = run(db, customerPageQuery({ view: 'customers', limit: 50 })).map((r) => r.id).sort();
+  assert.deepEqual(customers, ['c-appointed', 'c-archived', 'c-plain', 'c-third']);
+
+  /* The card can tell the two leads apart: only one has a row to open. */
+  const byId = Object.fromEntries(leads.map((r) => [r.id, r]));
+  assert.equal(byId['c-live'].leadStage, 'New');
+  assert.equal(byId['c-kind-only'].leadStage, null);
+  db.close();
+});

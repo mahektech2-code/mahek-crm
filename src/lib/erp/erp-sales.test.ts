@@ -390,15 +390,15 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(l.invoiceDate, TODAY);
     const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d.invoiceCheck, "Pending", "a new bill waits for the invoice check");
-    assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice print");
+    assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice check");
     assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), `Order ${l.orderNo} is billed. One order is one bill — take a new order for these goods.`);
   });
 
-  test("the invoice check is optional, and the checker is not the person who billed", async () => {
+  test("the invoice check comes before dispatch, and the checker is not the person who billed", async () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);
     const pending = (await mod("orderDetails").load(ctx)).rows.find((r) => r.id === loose.id);
-    assert.equal(pending?.actions?.find((x) => x.id === "verify")?.why, "", "a pending invoice check holds nothing at dispatch");
+    assert.equal(pending?.actions?.find((x) => x.id === "verify")?.why, "Waiting for the invoice check.", "a pending invoice check holds dispatch");
     await db.insert(erpUserPowers).values({ userId: clerk.id, power: "checkInvoices" });
     await db.update(erpOrderDetails).set({ createdById: clerk.id }).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "You entered this bill, so somebody else checks it.");

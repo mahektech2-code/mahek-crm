@@ -189,10 +189,29 @@ export function sharedFunnel(ladders: readonly LadderTally[]): SharedFunnel {
      (Sample received & review under Sample / trial; Delivery, Payment and the
      second order under First order) are added into its row. A median is kept
      only where one step holds the leads — two medians cannot be added. */
+  /*
+   * ARRIVALS THE LADDER DOES NOT NAME ARE STILL ON ITS ROW. `won` is what every
+   * conversion writes and it is on no ladder — `foldStage` reads it as Customer
+   * — so the Customer row read `arrivedByStage.customer` alone and drew zero on
+   * a book full of converted leads. Every arrived stage that DISPLAYS under a
+   * row and is not one of the ladder's own rungs (those are already in `build`)
+   * is added to it here, once.
+   */
+  const extraArrivals = (tally: LadderTally | null, display: DisplayStage, ladder: readonly LeadStage[]) =>
+    tally
+      ? (Object.entries(tally.arrivedByStage) as [LeadStage, RungTally | undefined][])
+          .filter(([s, c]) => c && !ladder.includes(s) && displayStageOf(s) === display)
+          .map(([, c]) => c as RungTally)
+      : [];
+
   const merge = (display: DisplayStage): SharedRung => {
     const parts = DIRECT_LADDER.filter((r) => displayStageOf(r) === display).map(build);
+    const extras = tracks.map((t) => extraArrivals(t.tally, display, t.ladder));
     const segments: TrackSegment[] = tracks.map((t, i) => {
-      const cells = parts.map((p) => p.segments[i]);
+      const cells = [
+        ...parts.map((p) => p.segments[i]),
+        ...extras[i].map((c) => ({ ...c, carried: true })),
+      ];
       const live = cells.filter((c) => c.count > 0);
       return {
         salesType: t.salesType,
@@ -205,7 +224,9 @@ export function sharedFunnel(ladders: readonly LadderTally[]): SharedFunnel {
     return {
       stage: display,
       total: segments.reduce((n, s) => n + s.count, 0),
-      potentialPaise: parts.reduce((n, p) => n + p.potentialPaise, 0),
+      potentialPaise:
+        parts.reduce((n, p) => n + p.potentialPaise, 0) +
+        extras.flat().reduce((n, c) => n + c.potentialPaise, 0),
       segments,
     };
   };

@@ -138,28 +138,42 @@ export async function requireReader(): Promise<User> {
 
 /**
  * THE WORKDAY LOCK, ON THE SERVER. A lock drawn only on the screen is a curtain
- * anybody can open by typing a URL, so a SERVER ACTION — every save in
- * MahekOne — is refused while somebody is locked out (before punching in, on a
- * break, after punching out). Only actions: a page still renders behind the
- * lock screen, and punching in itself goes through `/api/workday`, a route,
- * so the way out of the lock is never behind it. Switched by
- * `hrms.workday.lockEnabled` (on by default), and outside a request — a job, a test — there
- * is no action to refuse.
+ * anybody can open by typing a URL, so it is enforced here twice:
+ *
+ * - a SERVER ACTION — every save in MahekOne — is refused while somebody is
+ *   locked out (before punching in, on a break, after punching out);
+ * - a PAGE is not rendered at all: the request is sent to the launcher, where
+ *   the lock screen is drawn, carrying the address in `next` so punching in
+ *   lands them where they were going. Nothing of the app is sent to the
+ *   browser before they punch in.
+ *
+ * The launcher itself and `/api/*` are left alone: the launcher is where the
+ * lock is drawn, and punching in goes through `/api/workday`, a route, so the
+ * way out of the lock is never behind it. Switched by
+ * `hrms.workday.lockEnabled`, and outside a request — a job, a test — there is
+ * nothing to refuse.
  */
 async function refuseWhileLocked(user: User) {
   if (process.env.NODE_ENV === "test") return;
   let isAction = false;
+  let path: string | null = null;
   try {
     const { headers } = await import("next/headers");
-    isAction = !!(await headers()).get("next-action");
+    const h = await headers();
+    isAction = !!h.get("next-action");
+    path = h.get("x-mahek-path");
   } catch {
     return;
   }
-  if (!isAction) return;
+  const { lockGuardsPage } = await import("./workday-lock-paths");
+  if (!isAction && !lockGuardsPage(path)) return;
   const { serverLocked } = await import("@/lib/hrms/services/workday");
-  if (await serverLocked(user)) {
+  if (!(await serverLocked(user))) return;
+  if (isAction) {
     throw new Error("MahekOne is locked. Punch in, or resume from your break, before saving anything.");
   }
+  const { redirect } = await import("next/navigation");
+  redirect(`/apps?next=${encodeURIComponent(path!)}`);
 }
 
 export async function requireManager(): Promise<User> {

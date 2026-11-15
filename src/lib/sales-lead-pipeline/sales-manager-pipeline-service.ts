@@ -17,7 +17,7 @@ import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { gateAction } from "@/lib/engines/lead-gate-action";
 import { gateForNext, gateTo, mustDecideSuspect, checklistFor, qualificationAnswerSummary, type LeadGateInput } from "@/lib/engines/lead-gates";
-import { isParked } from "@/lib/engines/lead-ladder";
+import { DISPLAY_STAGES, displayStageOf, isParked, type DisplayStage } from "@/lib/engines/lead-ladder";
 import { isReopenTransition, reopenTarget } from "@/lib/engines/lead-reopen";
 import { isRecentLead } from "@/lib/lead-recent";
 import { stageAgeDays } from "@/lib/sales-lead-pipeline/stage-age";
@@ -173,46 +173,32 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
 
 /* ═════════════════════════════════════════════════════════════ dashboard */
 
-const BAND_TO_DIRECT: Partial<Record<string, Stage>> = {
-  /* The legacy six-rung ladder, read as the rung it stands for. The tiles above
-     the funnel already fold these the same way (`suspect,new`, `prospect,
-     contacted`), so a legacy lead is counted at one rung on the bar and on the
-     tile beside it. */
-  new: "suspect",
-  contacted: "prospect",
-  qualified: "qualification",
-  won: "customer",
-};
-
-const DIRECT_BARS: Stage[] = [
-  "suspect",
-  "prospect",
-  "qualification",
-  "sample_trial",
-  "sample_review",
-  "negotiation",
-  "first_order",
-  "second_order",
-  "customer",
-];
-
+/*
+ * THE SEVEN STAGES PEOPLE SEE, folded by `displayStageOf` — the same map the
+ * CRM's funnel (`sharedFunnel`), the record's bar and the board's columns draw
+ * from. This used to be its own nine bars with its own legacy map, which read
+ * `contacted` as a Prospect where the ladder reads a Suspect, left Delivery and
+ * Payment off every bar, and dropped `customer` arrivals the ladder already
+ * listed — so the two funnels disagreed about one book. Every rung and every
+ * arrival lands on the one display stage it is drawn under, once.
+ */
 function foldDirect(funnels: RungFunnel[]): FunnelBar[] {
-  const counts = new Map<Stage, number>();
+  const counts = new Map<DisplayStage, number>();
   const add = (stage: string, n: number) => {
-    const at = (BAND_TO_DIRECT[stage] ?? stage) as Stage;
-    counts.set(at, (counts.get(at) ?? 0) + n);
+    const at = displayStageOf(stage as LeadStage);
+    if (at) counts.set(at, (counts.get(at) ?? 0) + n);
   };
   for (const f of funnels) {
     if (f.salesType === "distributor") continue;
     for (const r of f.rungs) add(r.stage, r.count);
+    for (const r of f.offLadder) add(r.stage, r.count);
     for (const [stage, cell] of Object.entries(f.arrivedByStage)) {
-      /* `customer` / `won` are top rungs already listed in `rungs` for a ladder
-         that has them; `arrivedByStage` is where the engine keeps the ones it
-         separates. Counted once, by which map holds them. */
-      if (cell && !f.rungs.some((r) => r.stage === stage)) add(stage, cell.count);
+      /* A top rung the ladder lists is filled in `rungs` with a zero
+         placeholder; its arrivals are here. Counted once either way. */
+      if (cell) add(stage, cell.count);
     }
   }
-  return DIRECT_BARS.map((stage) => ({ stage, label: STAGE_LABEL[stage], count: counts.get(stage) ?? 0 }));
+  return DISPLAY_STAGES.map((stage) => ({ stage, label: STAGE_LABEL[stage], count: counts.get(stage) ?? 0 }));
 }
 
 function distributorBars(funnels: RungFunnel[]): FunnelBar[] {
@@ -262,8 +248,8 @@ function focusLabel(r: PageRow, extra: RowExtra | undefined): string | undefined
   if (r.stage === "lost") return undefined;
   const stage = r.stage as Stage;
   if (stage === "sample_trial") return r.sampleAwaitingDispatch ? "Mark the sample dispatched" : "Follow the sample";
-  if ((stage === "new" || stage === "suspect") && extra?.desk) return "Verify the calling desk's request";
-  if ((stage === "prospect" || stage === "contacted") && extra?.verified) return "Move to Qualification";
+  if ((stage === "new" || stage === "suspect" || stage === "contacted") && extra?.desk) return "Verify the calling desk's request";
+  if (stage === "prospect" && extra?.verified) return "Move to Qualification";
   return gateAction({
     stage,
     salesType: salesTypeOf(r.salesType),
@@ -324,8 +310,11 @@ async function verificationCounts(day: string): Promise<{ verified: number; fail
   const scope = await managerScope();
   const [row] = await db.execute<{ verified: number; failed: number }>(sql`
     select count(*) filter (
-             where c.lead_stage::text in ('prospect', 'contacted')
+             /* Prospect by the ONE fold (foldStage reads contacted as a
+                Suspect), and still a lead by the ONE open predicate. */
+             where c.lead_stage = 'prospect'
                and c.lead_verified_at is not null
+               and ${notConverted()}
            )::int as verified,
            count(*) filter (
              where c.lead_stage = 'lost'
@@ -336,6 +325,7 @@ async function verificationCounts(day: string): Promise<{ verified: number; fail
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = false
+       and c.deleted_at is null
        ${leadsVisible(scope)}
   `);
   return { verified: Number(row?.verified ?? 0), failed: Number(row?.failed ?? 0) };
