@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
+import { syncLeadHolders } from "./lead-tombstone";
 import {
   auditLog,
   customerAmChanges,
@@ -427,6 +428,13 @@ export async function applyAccountManagerChange(
         values.amDecidedAt = now;
         values.updatedAt = now;
         await tx.update(customers).set(values).where(eq(customers.id, row.id));
+        /* A LEAD MOVED OFF SOMEBODY LEAVES THEIR HANDSET. The leads channel
+           stops sending it to a person in no seat, and only a tombstone says
+           so; the new holder's standing one (if it was theirs before) is
+           withdrawn. See `lead-tombstone.ts`. */
+        if (row.kind === "lead") {
+          await syncLeadHolders(tx, row.id, [row.ownerId, row.salesAmId, row.backOfficeAmId]);
+        }
 
         audits.push({
           id: id("aud"),

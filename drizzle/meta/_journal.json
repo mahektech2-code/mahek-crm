@@ -2339,6 +2339,13 @@
       "when": 1793800600000,
       "tag": "0338_one_lead_ladder",
       "breakpoints": true
+    },
+    {
+      "idx": 334,
+      "version": "7",
+      "when": 1793800700000,
+      "tag": "0339_leads_resync_and_tombstones",
+      "breakpoints": true
     }
   ]
 }

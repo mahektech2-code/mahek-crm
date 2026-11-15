@@ -14,7 +14,7 @@ import { daysBetween, reorderState } from '../src/engines/leads';
 import { distanceLabel, grouped, inrFromPaise, isoDate, plural, shopName } from '../src/lib/format';
 import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
 import {
-  accountType,
+  accountLine,
   addFieldShop,
   billableCustomers,
   cityOrigins,
@@ -39,6 +39,7 @@ import { territoryState } from '../src/sync/pull';
 import type { TerritoryState } from '../src/sync/api';
 import { measureFrom } from '../src/native/where';
 import { LeadsBook } from '../src/components/leads/leads-book';
+import { opensLeadRecord } from '../src/lib/account-label';
 import { countLeads, openLeadCount } from '../src/data/leads';
 import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import { STAGGER_CAP } from '../src/components/ui/route-motion';
@@ -206,10 +207,15 @@ const CustomerRow = React.memo(function CustomerRow({
      of a town he picked is not how far HE has to walk. */
   const away = showDistance ? distanceLabel(metresFromDist2(x.dist2)) : null;
   const stage = customerStage(x);
-  const third = accountType(x) === 'Third party';
+  /* WHAT IT IS AND WHICH RUNG — "Lead · Prospect", "Third party" — off
+     `accountLine`, the rule the chips above the list read. A plain customer
+     says nothing here: on a list that is mostly customers, the word on every
+     row would be the one row in it carrying no information. */
+  const line = accountLine(x);
+  const kindWord = line && line !== 'Customer' ? line : null;
   const due = dueWords(x, today);
   const owed = x.outstandingPaise > 0;
-  const where = [third ? 'Third party' : null, x.contactPerson, x.city ? shortPlace(x.city, 28) : null]
+  const where = [kindWord, x.contactPerson, x.city ? shortPlace(x.city, 28) : null]
     .filter(Boolean)
     .join(' · ');
 
@@ -642,9 +648,12 @@ export default function Customers() {
    * gates are; everything else opens the record.
    */
   const openAccount = React.useCallback(
-    (x: { id: string; isLead?: number | boolean | null }) => {
+    (x: { id: string; isLead?: number; leadStage?: string | null }) => {
       set({ custId: x.id, pTab: 0 });
-      if (x.isLead) router.push(`/lead?id=${x.id}&from=customers`);
+      /* `/lead` only where the lead row is on this phone — see
+         `opensLeadRecord`. A shop the office calls a lead whose row never
+         arrived opens the record, which says it is a lead. */
+      if (opensLeadRecord(x)) router.push(`/lead?id=${x.id}&from=customers`);
       else router.push('/customer');
     },
     [set],
@@ -902,7 +911,10 @@ export default function Customers() {
                         lng: x.gpsLng ?? NaN,
                         isLead: Boolean(x.isLead),
                       }))}
-                      onPress={openAccount}
+                      onPress={(p) => {
+                        const row = rows.find((r) => r.id === p.id);
+                        if (row) openAccount(row);
+                      }}
                     />
                     <Text style={[type.caption, { marginTop: 8 }]}>
                       {rows.length < total

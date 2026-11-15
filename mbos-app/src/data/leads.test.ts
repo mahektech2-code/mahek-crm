@@ -38,6 +38,13 @@ test('a number already being worked names the LEAD', () => {
   assert.deepEqual(hit, { kind: 'lead', id: 'mbos_lead_1', name: 'Shree Hardware' });
 });
 
+test('a customers row that IS a lead is reported as the lead it is', () => {
+  /* The office keeps one customers row for a lead, so the customers half is
+     searched first and used to answer "already a customer" for every lead. */
+  const rows = [{ id: 'c-lead', name: 'Lead Shop', phone: '9822011009', isLead: 1 }];
+  assert.deepEqual(matchDuplicate('9822011009', rows, []), { kind: 'lead', id: 'c-lead', name: 'Lead Shop' });
+});
+
 test('a number nobody has is not a duplicate', () => {
   assert.equal(matchDuplicate('9876543210', customers, leads), null);
 });

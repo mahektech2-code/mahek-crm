@@ -6,6 +6,16 @@ import { orderCountsSql } from "../order-status";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { leadsVisible, managerScope } from "./sales-service";
 import { commitmentRecordedSql, confirmedCommitmentSql } from "../lead-commitment";
+import { notConverted, openLead } from "../lead-action-window";
+import { rawStagesOf } from "../lead-display";
+
+/* Every stored rung the record draws as Negotiation — derived from the
+   ladder's display map, never typed, so `commercial_discussion` and the
+   distributor rungs are on the desk the record says they are on. */
+const NEGOTIATION_STAGES = sql.join(
+  rawStagesOf("negotiation").map((s) => sql`${s}`),
+  sql`, `,
+);
 
 /* ---------------------------------------------------------------------------
  * Group 5 — the COMMERCIAL end of the funnel, and the three questions it asks.
@@ -140,8 +150,8 @@ export async function negotiationDesk(
   const scope = await managerScope();
 
   const where = sql`
-     where customers.lead_stage = 'negotiation'
-       and customers.lead_archived = false
+     where customers.lead_stage::text in (${NEGOTIATION_STAGES})
+       and ${openLead("customers")}
        ${leadsVisible(scope, "customers.owner_id")}
   `;
 
@@ -336,6 +346,7 @@ export async function commitments(
       and customers.lead_archived = false
       and customers.lead_stage is not null
       and customers.lead_stage <> 'lost'
+      and customers.deleted_at is null
       ${leadsVisible(scope, "customers.owner_id")}
   `;
 
@@ -361,17 +372,22 @@ export async function commitments(
               BACKTICKS in here - this sits inside a sql template literal and
               one backtick ends the literal. */
            ${sql.raw(confirmedCommitmentSql("customers"))} as confirmed,
-           (${COUNTING_ORDERS}) > 0 as ordered
+           (${COUNTING_ORDERS}) > 0 as ordered,
+           /* Still a lead, by the ONE predicate Lead Management reads. Only the
+              Converted view may hold an account that has stopped being one: a
+              third-party shop or an invoiced account is not an open, due or
+              slipped forecast on a leads desk. */
+           ${notConverted("customers")} as still_lead
       from customers
      where ${population}
   `;
 
   const viewClause: Record<CommitmentView, SQL> = {
-    open: sql`not b.ordered and b.expected >= ${day}::date`,
-    due: sql`not b.ordered
+    open: sql`b.still_lead and not b.ordered and b.expected >= ${day}::date`,
+    due: sql`b.still_lead and not b.ordered
              and b.expected >= ${day}::date
              and b.expected < ${day}::date + 7`,
-    slipped: sql`not b.ordered and b.expected < ${day}::date`,
+    slipped: sql`b.still_lead and not b.ordered and b.expected < ${day}::date`,
     converted: sql`b.ordered`,
   };
 
@@ -559,7 +575,7 @@ export async function firstOrderDesk(
 
   const where = sql`
      where customers.lead_stage::text in (${stages})
-       and customers.lead_archived = false
+       and ${openLead("customers")}
        ${leadsVisible(scope, "customers.owner_id")}
   `;
 

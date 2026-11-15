@@ -30,7 +30,7 @@ import {
   type CustomerPayment,
   type TimelineEvent,
 } from '../src/data/customers';
-import { accountType } from '../src/lib/account-label';
+import { accountType, isLiveLead } from '../src/lib/account-label';
 import {
   buildStatement,
   countsAsMoney,
@@ -165,6 +165,8 @@ export default function CustomerRecord() {
    * cannot answer this — hence a second read rather than another column.
    */
   const [lead, setLead] = React.useState<Lead | null>(null);
+  /* Whether the phone holds ANY lead row for this shop, live or not. */
+  const [leadRowHeld, setLeadRowHeld] = React.useState(false);
   const pTab = useStore((s) => s.pTab);
   const tlFilter = useStore((s) => s.tlFilter);
   const set = useStore((s) => s.set);
@@ -336,17 +338,19 @@ export default function CustomerRecord() {
   React.useEffect(() => {
     let live = true;
     if (!c?.id) return;
-    /* A lead that has ordered is the office's customer, whatever rung the
-       ladder still carries — see `IS_LEAD` in `data/customer-query.ts`. */
-    const onTheBook = c.kind === 'customer';
+    /* Still a lead by the ONE rule the list's chips use — `isLiveLead`, the
+       JavaScript twin of `leadCustomerClause` — so the record cannot call a
+       shop a lead that the list filed under Customers, or the other way. */
+    const facts = { kind: c.kind ?? null, thirdParty: c.thirdParty };
     void getLead(c.id).then((row) => {
-      const won = row?.funnelStage === 'won' || row?.stage === 'Converted';
-      if (live) setLead(row && !row.archived && !won && !onTheBook ? row : null);
+      if (!live) return;
+      setLeadRowHeld(!!row);
+      setLead(row && isLiveLead(facts, row) ? row : null);
     });
     return () => {
       live = false;
     };
-  }, [c?.id, c?.kind]);
+  }, [c?.id, c?.kind, c?.thirdParty]);
 
   /* A record that has not arrived on this handset yet is said plainly rather
      than rendered as somebody else's figures under a blank name. */
@@ -369,7 +373,12 @@ export default function CustomerRecord() {
   /* WHAT KIND OF ACCOUNT THIS IS, from the shared pure rule rather than from
      `c.kind` — the office keeps one row for a lead and a customer, and the
      lead arrives down its own channel. See `lib/account-label.ts`. */
-  const accountKind = accountType({ ...c, isLead: lead ? 1 : 0 });
+  const accountKind = accountType({
+    ...c,
+    /* A live lead row, or — where the phone holds no lead row at all — the
+       office's own `kind = 'lead'`, exactly as the list reads it. */
+    isLead: lead || (!leadRowHeld && isLiveLead({ kind: c.kind ?? null, thirdParty: c.thirdParty }, null)) ? 1 : 0,
+  });
 
   /* The statement for the window on screen. Derived rather than held in state:
      it is a pure function of three things already here, and a copy in state is
@@ -454,6 +463,7 @@ export default function CustomerRecord() {
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[{ fontSize: 14, color: C.ink }, weight(500)]}>
+                {/* Folded by `stageOf`, so this names the rung `/lead` highlights. */}
                 {'Lead · ' + stageLabel(stageOf(lead))}
               </Text>
               <Text style={[type.caption, { marginTop: 2 }]}>

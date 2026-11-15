@@ -67,9 +67,65 @@ export function accountType(
    * and it is used exactly as before.
    */
   if (c.isLead) return 'Lead';
-  if (c.kind === 'lead') return 'Lead';
+  /*
+   * AND WHERE `isLead` WAS ASKED, ITS "NO" STANDS. `kind = 'lead'` alone used
+   * to answer "Lead" here for a row the chips had put under Customers (an
+   * archived lead, a lead row already converted), so the card and the chip
+   * said opposite things about one shop. `isLead` is now the whole rule —
+   * `leadCustomerClause` in SQL, `isLiveLead` below in JS — and it already
+   * reads `kind = 'lead'` where no lead row is held. A `kind` of lead that the
+   * rule says is NOT a live lead gets no word rather than a contradiction.
+   */
+  if (c.isLead === undefined && c.kind === 'lead') return 'Lead';
   if (c.kind === 'customer') return 'Customer';
   return null;
+}
+
+/** The lead row's own facts that `isLiveLead` reads. */
+export type LeadRowFacts = {
+  archived: number;
+  thirdParty?: number | null;
+  funnelStage: string | null;
+  stage: string | null;
+};
+
+/**
+ * IS THIS SHOP STILL A LEAD — the JavaScript twin of `leadCustomerClause` in
+ * `data/lead-query.ts`, for a screen holding one customer and its lead row
+ * rather than running the list's SQL. One rule, so the record cannot call a
+ * shop a lead that the list filed under Customers, or the other way round.
+ *
+ * `lead` is the row from `leads` (archived or not), or null where the phone
+ * holds none.
+ */
+export function isLiveLead(c: Pick<AccountFacts, 'kind' | 'thirdParty'>, lead: LeadRowFacts | null): boolean {
+  if (c.thirdParty || c.kind === 'customer') return false;
+  if (!lead) return c.kind === 'lead';
+  if (lead.archived) return false;
+  return !leadRowConverted(lead);
+}
+
+/** `leadRowConverted` in `lead-query.ts`, in JavaScript. */
+export function leadRowConverted(lead: LeadRowFacts): boolean {
+  return (
+    !!lead.thirdParty ||
+    lead.funnelStage === 'won' ||
+    lead.funnelStage === 'customer' ||
+    lead.funnelStage === 'active_distributor' ||
+    lead.stage === 'Converted'
+  );
+}
+
+/**
+ * WHETHER A TAP OPENS `/lead`. Only a live lead whose lead row is on this
+ * phone: `/lead` draws the ladder from that row, and a shop the office calls a
+ * lead whose row never reached the phone would open on "not on this phone".
+ * Such a shop opens `/customer`, which says "Nothing billed to a lead" — true,
+ * because it is one. `leadStage` is NOT NULL on every lead row, so its being
+ * present is the proof the row exists.
+ */
+export function opensLeadRecord(c: Pick<AccountFacts, 'isLead' | 'leadStage'>): boolean {
+  return !!c.isLead && c.leadStage != null;
 }
 
 /**
@@ -93,6 +149,9 @@ export function accountLine(
   const type = accountType(c);
   if (!type) return null;
   if (!c.isLead) return type;
+  /* No lead row on this phone, no rung to name: "Lead · Suspect" invented from
+     nothing would be a statement nobody made. */
+  if (c.leadFunnelStage == null && c.leadStage == null) return type;
   const rung = stageLabel(stageOf({ funnelStage: c.leadFunnelStage ?? null, stage: c.leadStage ?? null }));
   return rung ? `${type} · ${rung}` : type;
 }
