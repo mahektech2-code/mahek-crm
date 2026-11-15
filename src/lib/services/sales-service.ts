@@ -9,7 +9,7 @@ import {
   type FilterOption,
   type LeadFilters,
 } from "../lead-filters";
-import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import type { LeadSalesType } from "../lead-labels";
 import { foldStageOptions, stagesForFilterKey } from "../lead-display";
 import type { LeadView } from "../lead-views";
 import { orderCountsSql } from "../order-status";

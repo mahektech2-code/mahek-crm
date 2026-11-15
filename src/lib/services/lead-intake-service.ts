@@ -245,6 +245,8 @@ export type DuplicateSide = {
   phone: string | null;
   gstin: string | null;
   kind: "lead" | "customer";
+  /** The mark wins over the kind in the word (`accountTypeLabel`). */
+  thirdParty: boolean;
   stage: LeadStage | null;
   salesType: LeadSalesType | null;
   source: string | null;
@@ -404,6 +406,7 @@ export async function duplicateCandidates({
         `${alias}.phone as "${prefix}Phone"`,
         `${alias}.gstin as "${prefix}Gstin"`,
         `${alias}.kind::text as "${prefix}Kind"`,
+        `${alias}.third_party as "${prefix}ThirdParty"`,
         `${alias}.lead_stage::text as "${prefix}Stage"`,
         `${alias}.lead_sales_type::text as "${prefix}SalesType"`,
         `${alias}.lead_source as "${prefix}Source"`,
@@ -450,6 +453,7 @@ export async function duplicateCandidates({
     phone: (r[`${prefix}Phone`] as string | null) ?? null,
     gstin: (r[`${prefix}Gstin`] as string | null) ?? null,
     kind: (r[`${prefix}Kind`] as "lead" | "customer") ?? "lead",
+    thirdParty: Boolean(r[`${prefix}ThirdParty`]),
     stage: (r[`${prefix}Stage`] as LeadStage | null) ?? null,
     salesType: (r[`${prefix}SalesType`] as LeadSalesType | null) ?? null,
     source: (r[`${prefix}Source`] as string | null) ?? null,

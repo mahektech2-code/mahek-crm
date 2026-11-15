@@ -312,7 +312,7 @@ describe("the filters", () => {
     const nobody = options.owners.find((o) => o.value === UNASSIGNED);
     assert.equal(nobody?.label, "Nobody", "an unheld lead is an option, not a gap");
     assert.equal(nobody?.count, 1);
-    assert.deepEqual(options.stages.map((s) => s.value), ["new"]);
+    assert.deepEqual(options.stages.map((s) => s.value), ["suspect"], "a legacy rung is offered as the stage it is drawn as");
   });
 
   test("each one narrows, and two of them narrow together", async () => {

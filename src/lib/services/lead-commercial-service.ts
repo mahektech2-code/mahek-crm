@@ -493,9 +493,10 @@ export type FirstOrderRow = {
   /**
    * THE SENTENCE PEOPLE GET WRONG, as a column.
    *
-   * `kind` flips at the FIRST order — `promotesToCustomerAt()` is the one
-   * place that is decided — so an account on this screen is already a customer
-   * in the ledger while it is still climbing the funnel's last three rungs.
+   * `kind` flips at the SECOND order — `promotesToCustomerAt()` is the one
+   * place that is decided — so an account on this screen is still a lead in
+   * the ledger with its first order behind it (one converted at the first
+   * order before the rule moved is a customer, and is off this desk).
    * It is selected rather than inferred from the rung because the two really
    * can disagree: an order declined by accounts leaves a lead on
    * `first_order` with `kind` still `lead`, and a screen that guessed would
@@ -545,14 +546,11 @@ export type FirstOrderRow = {
  * counts below are that list and its complement rather than statuses typed out
  * here.
  *
- * **`kind` flipped at the first order, not the second.** §22 asks for the
- * second; this codebase promotes at the first, because about thirty readers of
- * `customers.kind` mean "has never ordered" by it and an account with an
- * order, a bill and a confirmed receipt sitting at `kind = 'lead'` would get
- * every one of them wrong. So the funnel keeps its own `second_order` and
- * `customer` rungs, which say something about the RELATIONSHIP, and the ledger
- * has already moved on. `kind` rides on every row so the screen can say it in
- * words.
+ * **`kind` flips at the SECOND order**, as §22 asks (`promotesToCustomerAt`).
+ * An account here may carry an order, a bill and a confirmed receipt and still
+ * be `kind = 'lead'`; once it converts it leaves this desk with every other
+ * Lead Management list (`openLead`). `kind` rides on every row so the screen
+ * can say it in words.
  */
 export async function firstOrderDesk(
   day: string,

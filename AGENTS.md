@@ -3598,7 +3598,7 @@ It promoted a lead to `kind = 'customer'` on one tap — a Suspect included, no
 It also could not work: the handset created a customer under its own id and
 the office promoted the LEAD's row instead, so every order taken against the
 phone's copy was refused as "not on MahekOne". A lead becomes a customer at its
-first order (`promotesToCustomerAt`) and an order can be taken against a lead,
+second order (`promotesToCustomerAt`) and an order can be taken against a lead,
 so `handleCustomerCreate` refuses a `fromLeadId` in words that say so, and
 `convertedCustomerId` on a lead update converts nothing.
 
@@ -3840,16 +3840,17 @@ checklist people learn to complete.
 put the reason a lead is stuck inside the function that draws its progress, and
 the console needs the second without the first.
 
-**§22 SAYS CUSTOMER AT THE SECOND ORDER AND THIS CODEBASE SAYS OTHERWISE, so
-the two words are separated rather than reconciled.** A lead here IS an account
-that has never ordered, and about thirty places read `customers.kind` on exactly
-that understanding — the Call Log's prospect cadence, sales attribution, the
-buying cycle, the owner's funnel. Honouring §22 literally would leave an account
-with one order, one bill and one confirmed payment sitting at `kind = 'lead'`,
-and every one of those readers would get it wrong. So `kind` flips at the FIRST
-order — `promotesToCustomerAt` is the one place that is decided — and the ladder
-keeps its own `second_order` and `customer` rungs, which are the funnel's
-statement about the relationship rather than the ledger's about the account.
+**A LEAD BECOMES A CUSTOMER AT ITS SECOND ORDER, as §22 says — and that is a
+reversal of what this paragraph used to say.** It said `kind` flipped at the
+FIRST order, on the reasoning that about thirty readers of `customers.kind`
+mean "has never ordered" by `lead`. The client corrected it: a shop that has
+ordered once is still a lead being won, and `promotesToCustomerAt` now answers
+`second_order` (`distributor_approval` for a distributor), with
+`convertLeadOnSecondOrder` the one writer of the conversion. So a `kind = 'lead'`
+row may carry one order, one bill and one confirmed payment, and a reader of
+`kind` must not read `lead` as "never ordered" — `lead_converted_at`, the
+order counts and `notConverted` are what say whether it has converted. Accounts
+converted at the first order before the rule moved keep `kind = 'customer'`.
 
 **A working lead is held back from the Call Log, and SHOWN.** A lead that stays
 a lead through eleven rungs would otherwise sit on the telecaller's prospect
@@ -5851,7 +5852,7 @@ for the account to become a customer on the second order and for the
 relationship to pass to a customer manager in the same breath. That is a
 sentence about what the account IS and a sentence about who RUNS it, joined by
 an "and" that hides the fact they are independent. `kind` answers the first and
-flips on the FIRST order — `lead-conversion-service.ts` has the whole argument,
+flips on the SECOND order — `lead-conversion-service.ts` has the whole argument,
 and it is settled. `relationship_owner_id` answers the second, and nothing
 derives one from the other.
 

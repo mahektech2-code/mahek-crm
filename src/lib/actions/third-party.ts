@@ -15,6 +15,7 @@ import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { checkDistributors as distributorProblem } from "@/lib/services/distributor-service";
 import { voidReviewForDistributorChange } from "@/lib/services/lead-qualification-flow-service";
 import { confirmImpact } from "@/lib/impact/registry";
+import { liftLeadTombstones, tombstoneLeadFor } from "@/lib/services/lead-tombstone";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -191,6 +192,10 @@ export async function convertToThirdParty(
           .update(customers)
           .set({ thirdParty: true, updatedAt: now, updatedById: ctx.user.id })
           .where(inArray(customers.id, converted));
+        /* A third-party shop is off the leads channel (`openLeads` stops
+           sending it), and a pull only says what exists — so every handset
+           holding it is told it left, in the same transaction. */
+        await tombstoneLeadFor(tx, converted, null, "lead_third_party");
       }
 
       for (const customerId of customerIds) {
@@ -319,6 +324,10 @@ export async function revertThirdParty(
       }
 
       if (changed.length) {
+        /* A lead again: withdraw the standing third-party tombstone so a phone
+           that has not synced since is not told to archive it. */
+        const leads = changed.filter((c) => c.kind === "lead").map((c) => c.id);
+        if (leads.length) await liftLeadTombstones(tx, leads, null, ["lead_third_party"]);
         await tx.insert(auditLog).values({
           id: id("aud"),
           actorId: ctx.user.id,

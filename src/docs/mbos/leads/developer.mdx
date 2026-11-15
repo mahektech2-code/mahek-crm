@@ -16,7 +16,7 @@ On the handset a lead is a row in SQLite `leads` (keyed on the same id as the of
 | Data | `mbos-app/src/data/lead-funnel.ts` | `leadGateInput`, `advanceStage`, `decideSuspect`, `markLost`, `putOnHold`, the field saves |
 | Data | `mbos-app/src/data/lead-samples.ts`, `validations.ts` | Sample transitions, review, chase; validation answers |
 | Wire words | `mbos-app/src/lib/wire.ts` | Handset vocabulary to the office's (`wireStage`, `wireNotes`) |
-| Pull | `mbos-app/src/sync/pull.ts` | `upsertLeads`, `upsertSamples`, guarded by `noPending` |
+| Pull | `mbos-app/src/sync/pull.ts` | `upsertLeads`, `upsertSamples`, guarded by `noPendingLead` / `noPending` (`mbos-app/src/sync/pending.ts`) |
 | Handlers | `src/lib/actions/mbos.ts` | `handleLead`, `handleLeadUpdate`, `moveLeadFromHandset`, `handleSample`, `afterSampleVerdict`, `handleLeadValidation` |
 | Service | `src/lib/services/lead-qualification-service.ts` | `qualifyLead` |
 
@@ -82,11 +82,13 @@ The visit handler's cap is in `handleVisit`: it counts `mbos_visits` for the cus
 
 ## Pull protection
 
-<Code file="mbos-app/src/sync/pull.ts" symbol="noPending" />
+<Code file="mbos-app/src/sync/pending.ts" symbol="noPending" />
 
-<Code file="mbos-app/src/sync/pull.ts" symbol="PENDING_STATES" />
+<Code file="mbos-app/src/sync/pending.ts" symbol="PENDING_STATES" />
 
-`leads` and `samples` are upserted with that guard on the `ON CONFLICT` clause. The lead note list is written on **insert only**: it is appended to locally and the wire carries one flattened string, so restating it each pull would replace the salesman's notes with the office's rendering.
+<Code file="mbos-app/src/sync/pending.ts" symbol="noPendingLead" />
+
+`samples` are upserted with `noPending` on the `ON CONFLICT` clause, and `leads` with `noPendingLead`, which also holds a lead back while a pending visit carrying its Suspect decision is still in the outbox. A row the office sends is written `archived = 0`; a `leads` tombstone archives it. The lead note list is written on **insert only**: it is appended to locally and the wire carries one flattened string, so restating it each pull would replace the salesman's notes with the office's rendering.
 
 ## Tables
 
