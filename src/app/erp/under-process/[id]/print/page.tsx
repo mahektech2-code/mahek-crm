@@ -4,7 +4,8 @@ import { planPrint, planView } from "@/lib/erp/production-plan";
 import { PLAN_CATEGORIES, printMarks } from "@/lib/erp/engines/production-plan";
 import { erpPlanHref } from "@/lib/erp/trace-links";
 import { fdLong, nf } from "@/lib/erp/ui";
-import { stamp } from "@/lib/format";
+import { stamp, stampDate } from "@/lib/format";
+import { calendarDate } from "@/lib/business-date";
 import { cx, Td, Th } from "@/components/ui/primitives";
 import { linkClass } from "../../../_ui/look";
 import { PrintButton } from "../../../po/[id]/print-button";
@@ -38,6 +39,8 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
     );
   const { rows, removed } = printMarks(print.current.lines, print.previous?.lines ?? null);
   const marked = rows.some((r) => r.mark) || removed.length > 0;
+  /* A sheet printed on a later day than the one it plans says so, or it reads as a fresh sheet for that day. */
+  const printedLate = calendarDate(new Date(print.current.printedAt)) !== plan.planDate;
 
   return (
     <div className="mx-auto grid w-full max-w-[640px] gap-4 p-6">
@@ -74,13 +77,15 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
             <div className="mt-1 inline-block border border-ink px-1.5 font-bold">
               PRINT {print.current.printNo} · {stamp(print.current.printedAt)}
             </div>
+            {printedLate ? <div className="mt-1 text-2xs font-bold">Printed on {stampDate(print.current.printedAt)}, not on the plan&apos;s day</div> : null}
           </div>
         </header>
 
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-ink">
-              <Th className="static w-[45%] bg-white px-1 text-ink">Product</Th>
+              <Th className="static w-[40%] bg-white px-1 text-ink">Product</Th>
+              <Th className="static bg-white px-1 text-ink">Size</Th>
               <Th align="right" className="static bg-white px-1 text-ink">
                 Qty
               </Th>
@@ -94,7 +99,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
               if (!mine.length) return null;
               return [
                 <tr key={`h-${c.key}`} className="bg-canvas">
-                  <Td colSpan={4} className="px-1 py-1 text-2xs font-bold">
+                  <Td colSpan={5} className="px-1 py-1 text-2xs font-bold">
                     {c.label}
                   </Td>
                 </tr>,
@@ -105,7 +110,9 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                       <Td className={cx("px-1 py-1 whitespace-normal", r.mark && "font-bold")}>
                         {r.mark ? "★ " : ""}
                         <U>{r.productName}</U>
+                        {r.productCode ? <span className="block font-mono text-2xs font-normal text-muted">{r.productCode}</span> : null}
                       </Td>
+                      <Td className="px-1 py-1">{r.size ?? "—"}</Td>
                       <Td align="right" className="px-1 py-1 font-bold tabular-nums">
                         <U>{nf(r.quantity)}</U>
                       </Td>
@@ -130,7 +137,13 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         ) : null}
 
         <footer className="mt-2 flex justify-between gap-4 border-t border-divider pt-1.5 text-2xs text-muted">
-          <span>{marked && print.previous ? `★ underlined = new or changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)})` : `Printed ${stamp(print.current.printedAt)}`}</span>
+          <span>
+            {!print.previous
+              ? `First print · ${stamp(print.current.printedAt)}`
+              : marked
+                ? `★ underlined = new or changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)})`
+                : `Nothing changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)}) — the same work as that sheet.`}
+          </span>
         </footer>
       </article>
     </div>

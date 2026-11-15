@@ -96,3 +96,14 @@ test("Under Process order lines become one plan line per product", async () => {
   assert.deepEqual([by.get("packing:nc1")!.quantity, by.get("packing:nc1")!.unit], [30, "Cans"]);
   assert.equal(d[0].category, "loose");
 });
+
+test("an order's loose line carries the code a typed loose line would", async () => {
+  const { orderDemand } = await import("./production-plan");
+  const base = { orderNo: 1, millilitres: 20000, finishedGoodId: "fg20", finishedGoodName: "M126 Thinner - 20 Liter", cansPerBox: 1, qtyCans: 5 };
+  const [a] = orderDemand([{ ...base, skuId: "l1", skuName: "M126 (Loose)", skuCode: null, looseCode: "M126-20L" }]);
+  assert.equal(a.productCode, "M126-20L");
+  const [b] = orderDemand([{ ...base, skuId: "l1", skuName: "M126 (Loose)", skuCode: "OWN" }]);
+  assert.equal(b.productCode, "OWN");
+  const [c] = orderDemand([{ ...base, skuId: "b1", skuName: "M126 (4 Can/Box)", skuCode: "BOX", looseCode: "M126-20L", cansPerBox: 4, qtyCans: 8 }]);
+  assert.equal(c.productCode, "BOX");
+});

@@ -149,6 +149,8 @@ export type UnderProcessLine = {
   finishedGoodId: string | null;
   finishedGoodName: string | null;
   qtyCans: number;
+  /** The code a loose line of this finished good carries when it is typed in, so both kinds of line read alike. */
+  looseCode?: string | null;
 };
 
 export type OrderDemand = {
@@ -180,7 +182,7 @@ export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
           category,
           itemId: loose && !l.finishedGoodId ? null : itemId,
           productName: loose ? (l.finishedGoodName ?? l.skuName) : l.skuName,
-          productCode: l.skuCode,
+          productCode: loose ? (l.looseCode ?? l.skuCode) : l.skuCode,
           size: sizeName(l.millilitres),
         },
         cans: 0,

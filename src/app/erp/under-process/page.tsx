@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
 import { listPlans, planCatalogue, planView, syncPlanFromOrders, underProcessLines } from "@/lib/erp/production-plan";
+import { orderDemand } from "@/lib/erp/engines/production-plan";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
 import { Page } from "../_ui/page-head";
@@ -29,18 +30,29 @@ export default async function UnderProcess({ searchParams }: { searchParams: Pro
     /* The orders under process come in by themselves; a preview writes nothing. */
     if (!readOnly) await syncPlanFromOrders(planId);
     const [plan, items] = await Promise.all([planView(planId), planCatalogue()]);
-    if (plan) return <PlanEditor plan={plan} items={items} today={today} readOnly={readOnly} />;
+    /* A past day's plan is the record of that day: shown, never changed or printed again. */
+    if (plan) return <PlanEditor plan={plan} items={items} today={today} readOnly={readOnly || plan.planDate < today} past={plan.planDate < today} />;
   }
 
   const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : null;
-  const [todays, previous, waiting] = await Promise.all([
-    listPlans({ date: today }),
-    listPlans({ date, limit: 60 }),
-    underProcessLines(ctx.workingGodown?.id ?? null),
-  ]);
+  const [todays, previous] = await Promise.all([listPlans({ date: today }), listPlans({ date, limit: 60 })]);
+  const todaysPlan = todays[0] ?? null;
+  /* The banner counts the orders the plan would carry: today's plan's godown where there is a plan, else where this person works. */
+  const godownId = todaysPlan ? todaysPlan.godownId : (ctx.workingGodown?.id ?? null);
+  const godown = todaysPlan ? todaysPlan.godown : (ctx.workingGodown?.name ?? null);
+  const waiting = await underProcessLines(godownId);
+  const products = orderDemand(waiting).length;
   return (
     <Page title={SCREEN.label}>
-      <PlanList today={today} todays={todays[0] ?? null} previous={previous.filter((p) => p.planDate !== today || date)} date={date} underProcess={{ lines: waiting.length, orders: new Set(waiting.map((w) => w.orderNo)).size, godown: ctx.workingGodown?.name ?? null }} readOnly={readOnly} missing={planId != null} />
+      <PlanList
+        today={today}
+        todays={todaysPlan}
+        previous={previous.filter((p) => p.planDate !== today || date)}
+        date={date}
+        underProcess={{ lines: waiting.length, orders: new Set(waiting.map((w) => w.orderNo)).size, products, godown }}
+        readOnly={readOnly}
+        missing={planId != null}
+      />
     </Page>
   );
 }
