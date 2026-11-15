@@ -1,11 +1,11 @@
 import React from 'react';
-import { Animated, View, Text, Pressable, TextInput } from 'react-native';
+import { Animated, View, Text, Pressable, TextInput, type StyleProp, type ViewStyle } from 'react-native';
 import { router, useNavigation } from 'expo-router';
-import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
-import { Icon } from '../src/components/ui/Icon';
+import { color as C, HIT, weight } from '../src/theme/tokens';
+import { Icon, type IconName } from '../src/components/ui/Icon';
 import { Pop, Presence, PressableScale, Pulse, Swap, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
-import { Card, Choice, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { HERO } from '../src/components/shell/Chrome';
 import { skuText } from '../src/components/ui/sku';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
@@ -31,7 +31,7 @@ import { suspectFor, visitCapThresholds } from '../src/data/leads';
 import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { restoreVisitDraft, useCustomer, useStore, type VisitForm, type VisitLinked } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { hhmm, isoDate, pretty } from '../src/lib/format';
+import { hhmm, isoDate, pretty, distanceLabel } from '../src/lib/format';
 import { cleanDecimal, cleanWhole, parseDecimal, parseWhole, wholeOnly } from '../src/lib/decimal-input';
 import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
 import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES, outcomeLabel } from '../src/data/fixtures';
@@ -53,7 +53,7 @@ import { fixOf, getFix, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { VoiceField } from '../src/components/ui/dictate';
-import { VisitAssistant, type VisitAssistantHandlers } from '../src/components/visit-assistant';
+import { OUTCOME_ICON, VisitAssistant, type VisitAssistantHandlers } from '../src/components/visit-assistant';
 import {
   cartFrom,
   complaintDraft,
@@ -727,9 +727,11 @@ export default function Visit() {
       if (gate.needsConfirmation && !confirmedHere) {
         const shopName = leg?.toLabel ?? c?.name ?? 'this shop';
         askConfirm({
-          title: `Are you at ${shopName}?`,
-          body: `${shopName} has no saved location yet. Check in only if you are standing at the shop — where you are now is saved as its location, and every check-in after this one is measured against it.`,
+          title: `At ${shopName}?`,
+          body: 'No saved location yet. Where you stand now becomes its pin, and every later check-in is measured against it. Only say yes at the shop.',
           confirmLabel: 'Yes, I am at the shop',
+          tone: 'navy',
+          lead: { icon: 'pin', tint: C.warnInk, bg: C.warnBg },
           run: () => {
             void arriveHere(undefined, true);
           },
@@ -869,9 +871,12 @@ export default function Visit() {
     askConfirm({
       title: 'Are you at the shop?',
       body:
-        'Say yes and the visit is saved from here, as not checked. Your reason goes to your manager. Some saved shop locations are wrong, and this is how they get fixed.',
+        'Saved from here as not checked. Your reason goes to your manager. Some saved pins are wrong, and this is how they get fixed.',
       reasonLabel: 'Where you are now · needed',
+      placeholder: 'Inside the shop. The map pin is on the main road.',
       confirmLabel: 'I am at the shop',
+      tone: 'navy',
+      lead: { icon: 'pin' },
       run: (reason) => {
         void arriveHere(reason);
       },
@@ -1386,56 +1391,69 @@ export default function Visit() {
    * the app putting words in his mouth on the record his day is read from.
    */
   if (legLoaded && arrival && arrival.customerId === custId && arrival.checkedInAt == null) {
+    const shopName = c?.name ?? arrival.customerName;
     return (
       <AppFrame
-        title="Arrived"
+        title={shopName}
         activeTab="customers"
         onBack={() => router.back()}
-        contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+        showTitle={false}
+        heroTop={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text accessibilityRole="header" style={[{ fontSize: 20, color: HERO.lavender.ink, flex: 1 }, weight(800)]}>
+              Arrived
+            </Text>
+            <View
+              accessible
+              accessibilityLabel={'Arrived ' + hhmm(arrival.arrivedAt) + ', trip ended'}
+              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Icon name="clock" size={14} color={C.ink} strokeWidth={2.2} />
+              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{hhmm(arrival.arrivedAt) + ' · trip ended'}</Text>
+            </View>
+          </View>
+        }
+        hero={
+          <Text numberOfLines={2} style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.48, color: HERO.lavender.ink, marginTop: 14 }, weight(800)]}>
+            {shopName}
+          </Text>
+        }
+        contentStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 24 }}>
         {/* The three phases of this screen are one card changing its mind —
             on the road, at the door, inside — so each sits in the same `Swap`
             slot, first child of the frame, and moving between them settles
             the new card in rather than cutting to it. */}
         <Swap id="arrived">
-          <Card style={{ padding: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Icon name="shop" size={20} color={C.primaryDeep} strokeWidth={1.8} />
-              <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? arrival.customerName}</Text>
-            </View>
-            <Text style={[type.caption, { marginTop: 8 }]}>
-              {'Arrived ' + hhmm(arrival.arrivedAt) + ' · trip ended'}
-            </Text>
-
-            <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 14 }}>
-              Do you want to check in?
-            </Text>
+          <Panel>
+            <Text style={[{ fontSize: 18, color: C.ink }, weight(800)]}>Check in?</Text>
             {/* WHAT THE TWO ANSWERS COST, said before they are pressed. The whole
                 reason this screen exists is the number underneath it, and a
                 salesman who does not know the clock starts here will read his own
                 dwell figures later and not recognise his day. */}
-            <Text style={[type.caption, { marginTop: 4 }]}>
-              Check in when you go inside the shop, not while you are parking.
-              This starts your visit time.
-            </Text>
+            <View
+              style={{ marginTop: 4 }}
+              accessible
+              accessibilityLabel="Check in when you go inside the shop, not while you are parking. This starts your visit time.">
+              <Fact icon="clock" text="Inside the shop, not while parking. Starts visit time." />
+            </View>
 
-            <View style={{ marginTop: 16 }}>
-              <PrimaryButton
-                label={checkingIn ? 'One moment…' : 'Check in at the shop'}
-                onPress={() => void checkIn()}
-                disabled={checkingIn}
-                whyDisabled="Saving your check-in."
-              />
-            </View>
-            <View style={{ marginTop: 10 }}>
-              <SecondaryButton
-                label="Not yet"
-                onPress={() => {
-                  notify('Check in when you go inside. The bar at the bottom brings you back.', 'info');
-                  router.replace('/journey');
-                }}
-              />
-            </View>
-          </Card>
+            <Btn
+              label={checkingIn ? 'One moment…' : 'Check in at the shop'}
+              onPress={() => void checkIn()}
+              disabled={checkingIn}
+              hint={checkingIn ? 'Saving your check-in.' : undefined}
+              height={60}
+              style={{ marginTop: 14 }}
+            />
+            <Btn
+              label="Not yet"
+              look="grey"
+              onPress={() => {
+                notify('Check in when you go inside. The bar at the bottom brings you back.', 'info');
+                router.replace('/journey');
+              }}
+              style={{ marginTop: 10 }}
+            />
+          </Panel>
         </Swap>
       </AppFrame>
     );
@@ -1452,61 +1470,62 @@ export default function Visit() {
   if (needsDoor) {
     return (
       <AppFrame
-        title="Check in"
+        title={c?.name ?? 'Check in'}
         activeTab="customers"
         onBack={() => router.back()}
-        contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+        showTitle={false}
+        heroTop={
+          <Text accessibilityRole="header" style={[{ fontSize: 20, color: HERO.lavender.ink }, weight(800)]}>
+            Check in
+          </Text>
+        }
+        hero={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
+            <Icon name="shop" size={22} color={C.primaryDeep} strokeWidth={2} />
+            <Text numberOfLines={2} style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: HERO.lavender.ink, flex: 1, minWidth: 0 }, weight(800)]}>
+              {c?.name ?? ''}
+            </Text>
+          </View>
+        }
+        contentStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 24 }}>
         <Swap id="door">
-          <Card style={{ padding: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Icon name="shop" size={20} color={C.primaryDeep} strokeWidth={1.8} />
-              <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? ''}</Text>
+          <Panel>
+            <Text style={[{ fontSize: 16, color: C.ink }, weight(700)]}>Check in when you are inside.</Text>
+            <View
+              style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: 10 }}
+              accessible
+              accessibilityLabel="Your location is checked against the shop. This starts your visit time.">
+              <Fact icon="locate" text="Checked against the shop" />
+              <Fact icon="clock" text="Starts visit time" />
             </View>
-            <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 14 }}>
-              Check in when you are inside the shop.
-            </Text>
-            <Text style={[type.caption, { marginTop: 4 }]}>
-              Your location is checked against the shop. This starts your visit time.
-            </Text>
 
             <Presence show={!!refused}>
-            {refused ? (
-              <View
-                style={{
-                  marginTop: 14,
-                  borderWidth: 1,
-                  borderColor: C.warnEdge,
-                  backgroundColor: C.warnBg,
-                  borderRadius: radius.lg,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                }}>
-                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                  {refused.sentence}
-                </Text>
-                <Text style={[type.caption, { marginTop: 6 }]}>
-                  {refused.reason === 'too_far'
-                    ? 'Walk to the shop and press again. Nothing is saved yet.'
-                    : 'Nothing is saved yet.'}
-                </Text>
-              </View>
-            ) : null}
+              {refused ? <RefusalBox verdict={refused} radiusM={maxMetres} /> : null}
             </Presence>
 
             <Animated.View style={[{ marginTop: 14 }, refuseShake.style]}>
-              <PrimaryButton
+              <Btn
                 label={arriving ? 'One moment…' : refused ? 'Check again' : 'Check in at the shop'}
+                icon={refused && !arriving ? 'locate' : undefined}
                 onPress={() => void arriveHere()}
                 disabled={arriving}
-                whyDisabled="Checking where you are."
+                hint={arriving ? 'Checking where you are.' : undefined}
+                height={60}
               />
             </Animated.View>
+            {/* Only for a refusal on DISTANCE: a missing or weak reading is not a
+                wrong pin, and there is no way past it but a reading. */}
             <Presence show={refused?.reason === 'too_far'}>
-              <View style={{ marginTop: 10 }}>
-                <SecondaryButton label="I am here. Shop location is wrong" onPress={overrideRefusal} />
-              </View>
+              <Btn
+                label="I am here. Pin is wrong"
+                a11y="I am here. Shop location is wrong"
+                look="dashed"
+                icon="pin"
+                onPress={overrideRefusal}
+                style={{ marginTop: 10 }}
+              />
             </Presence>
-          </Card>
+          </Panel>
         </Swap>
       </AppFrame>
     );
@@ -1538,151 +1557,174 @@ export default function Visit() {
       fixAgeSeconds: roadFix ? Math.round((now - roadFix.at) / 1000) : null,
       staleAfterSeconds: staleAfterS,
     });
+    const distance = roadFix && shopPin ? distanceLabel(haversineMetres(roadFix, shopPin)) : null;
+    const nav = HERO.navy;
     return (
       <AppFrame
-        title="On your way"
+        title={c?.name ?? leg.toLabel ?? 'On your way'}
+        tone="navy"
         activeTab="customers"
         onBack={() => router.back()}
-        contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
-        <Swap id="travelling">
-          <Card style={{ padding: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        showTitle={false}
+        heroTop={
+          <Text accessibilityRole="header" style={[{ fontSize: 20, color: nav.ink }, weight(800)]}>
+            On your way
+          </Text>
+        }
+        hero={
+          <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
               {/* Breathing while the leg is open: the one live thing on the card. */}
               <Pulse active>
-                <Icon name="nav" size={20} color={C.primaryDeep} strokeWidth={1.8} />
+                <Icon name="nav" size={22} color={C.lime} strokeWidth={2} />
               </Pulse>
-              <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? leg.toLabel ?? ''}</Text>
-            </View>
-            <Text style={[type.caption, { marginTop: 8 }]}>
-              {legLine({
-                modeLabel: legMode?.label ?? leg.modeKey,
-                odometerStartKm: null,
-                odometerEndKm: null,
-                ticketAmountPaise: null,
-              }) +
-                ' · travelling ' +
-                travellingFor(leg.startedAt ?? Date.now(), now)}
-            </Text>
-            {leg.odometerStartKm != null ? (
-              <Text style={[type.caption, { marginTop: 2 }]}>
-                {'Meter at start: ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'}
+              <Text numberOfLines={2} style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: nav.ink, flex: 1, minWidth: 0 }, weight(800)]}>
+                {c?.name ?? leg.toLabel ?? ''}
               </Text>
-            ) : null}
+            </View>
+            <View
+              style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 16, marginTop: 10 }}
+              accessible
+              accessibilityLabel={
+                legLine({ modeLabel: legMode?.label ?? leg.modeKey, odometerStartKm: null, odometerEndKm: null, ticketAmountPaise: null }) +
+                ', travelling ' +
+                travellingFor(leg.startedAt ?? Date.now(), now) +
+                (leg.odometerStartKm != null ? ', meter at start ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km' : '')
+              }>
+              <Fact
+                icon={legMode?.requiresOdometer ? 'bike' : 'route'}
+                color="#DCE3EE"
+                text={legLine({
+                  modeLabel: legMode?.label ?? leg.modeKey,
+                  odometerStartKm: null,
+                  odometerEndKm: null,
+                  ticketAmountPaise: null,
+                })}
+              />
+              <Fact icon="clock" color="#DCE3EE" text={travellingFor(leg.startedAt ?? Date.now(), now)} />
+              {leg.odometerStartKm != null ? (
+                <Fact icon="gauge" color="#DCE3EE" text={leg.odometerStartKm.toLocaleString('en-IN') + ' km'} />
+              ) : null}
+            </View>
+          </View>
+        }
+        contentStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 24 }}>
+        <Swap id="travelling">
+          <View style={{ gap: 12 }}>
             {/*
               NAVIGATION SITS WITH THE JOURNEY, above the line about ending it.
-              The card is two halves and they are read at two different moments:
-              the top is the ride he is on and is read as he sets off, the bottom
-              is how the ride stops and is read when he gets there. Dropping the
-              button between the prompt and the button that answers it would split
-              the only pair on the card that belongs together.
+              The ride he is on is read as he sets off; how it stops is read
+              when he gets there, so the two halves sit in two cards.
             */}
-            <NavigateButton
-              lat={c?.gpsLat}
-              lng={c?.gpsLng}
-              name={c?.name ?? leg.toLabel}
-              city={c?.area ?? c?.city}
-              detail={away}
-              style={{ marginTop: 12 }}
-            />
-
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 14 }}>{prompt.line}</Text>
-
-            {/*
-              THE REFUSAL, said with its number.
-              It sits above the button rather than in a toast because a toast is
-              gone before it has been read, and the one thing he needs from this
-              screen is how far off he is — which tells him whether to walk
-              twenty steps or whether the book has the shop in the wrong town.
-            */}
-            <Presence show={!!refused}>
-            {refused ? (
-              <View
-                style={{
-                  marginTop: 14,
-                  borderWidth: 1,
-                  borderColor: C.warnEdge,
-                  backgroundColor: C.warnBg,
-                  borderRadius: radius.lg,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                }}>
-                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                  {refused.sentence}
-                </Text>
-                <Text style={[type.caption, { marginTop: 6 }]}>
-                  {refused.reason === 'too_far'
-                    ? 'Walk to the shop and press again. Nothing is saved yet.'
-                    : 'Nothing is saved yet.'}
+            <Panel style={{ paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <NavigateButton
+                variant="icon"
+                look="round"
+                size={48}
+                lat={c?.gpsLat}
+                lng={c?.gpsLng}
+                name={c?.name ?? leg.toLabel}
+                city={c?.area ?? c?.city}
+              />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                {distance ? (
+                  <Text style={[{ fontSize: 22, letterSpacing: -0.44, color: C.ink }, weight(800)]}>{distance}</Text>
+                ) : (
+                  <Text style={[{ fontSize: 16, color: C.ink }, weight(700)]}>Navigate</Text>
+                )}
+                {/* `navigationLine` carries the age of a stale reading and the
+                    no-pin sentence; nothing is shown while there is no reading
+                    yet, because the header already says GPS is being found. */}
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: C.muted }, weight(500)]}>
+                  {away ? (distance ? 'Navigate · ' + away : away) : 'Navigate to the shop'}
                 </Text>
               </View>
-            ) : null}
-            </Presence>
+            </Panel>
 
-            <Animated.View style={[{ marginTop: 14 }, refuseShake.style]}>
-              <PrimaryButton
-                label={arriving ? 'One moment…' : refused ? 'Check again' : prompt.button}
-                onPress={() => void arriveHere()}
-                disabled={arriving}
-                whyDisabled="Saving where you are."
-              />
-            </Animated.View>
-            {/*
-              OFFERED ONLY ONCE HE HAS BEEN REFUSED. Drawn from the start it
-              would be a way round the radius that nobody had to be refused by
-              first, which is a different feature.
-            */}
-            {/* And only for a refusal on DISTANCE. A missing reading is not a
-                wrong pin, and there is no way past it but a reading. */}
-            <Presence show={refused?.reason === 'too_far'}>
-              <View style={{ marginTop: 10 }}>
-                <SecondaryButton
-                  label="I am here. Shop location is wrong"
-                  onPress={overrideRefusal}
+            <Panel>
+              <Fact icon={needsMeter ? 'gauge' : 'pin'} text={prompt.line} color={C.body} />
+
+              {/*
+                THE REFUSAL, said with its number.
+                It sits above the button rather than in a toast because a toast is
+                gone before it has been read, and the one thing he needs from this
+                screen is how far off he is — which tells him whether to walk
+                twenty steps or whether the book has the shop in the wrong town.
+              */}
+              <Presence show={!!refused}>
+                {refused ? <RefusalBox verdict={refused} radiusM={maxMetres} /> : null}
+              </Presence>
+
+              <Animated.View style={[{ marginTop: 14 }, refuseShake.style]}>
+                <Btn
+                  label={arriving ? 'One moment…' : refused ? 'Check again' : prompt.button}
+                  icon={arriving ? undefined : refused ? 'locate' : needsMeter ? 'camera' : 'pin'}
+                  onPress={() => void arriveHere()}
+                  disabled={arriving}
+                  hint={arriving ? 'Saving where you are.' : undefined}
+                  height={60}
+                />
+              </Animated.View>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                {/*
+                  OFFERED ONLY ONCE HE HAS BEEN REFUSED, and only on DISTANCE.
+                  Drawn from the start it would be a way round the radius that
+                  nobody had to be refused by first; and a missing reading is not
+                  a wrong pin, so there is no way past it but a reading.
+                */}
+                {refused?.reason === 'too_far' ? (
+                  <Btn
+                    label="Here. Pin is wrong"
+                    a11y="I am here. Shop location is wrong"
+                    look="dashed"
+                    onPress={overrideRefusal}
+                    style={{ flex: 1 }}
+                  />
+                ) : null}
+                {/*
+                  CALLING IT OFF IS THE WAY OUT THAT IS NOT AN ARRIVAL, and it is
+                  not a skip. The meter has already moved, so there is no version
+                  of this where nothing happened — what he chooses is whether the
+                  journey is recorded against a shop he reached or against a trip
+                  he abandoned, and the second still needs a sentence or the next
+                  departure's reading follows on from a gap.
+                */}
+                <Btn
+                  label={refused?.reason === 'too_far' ? 'Not going' : 'I am not going after all'}
+                  a11y="I am not going after all"
+                  look="grey"
+                  style={{ flex: 1 }}
+                  onPress={() =>
+                    askConfirm({
+                      title: 'Cancel this trip?',
+                      body:
+                        'It stays on your record with your reason and 0 km. The meter has already moved, so removing the trip would leave a gap before your next one.',
+                      reasonLabel: 'Why · needed',
+                      confirmLabel: 'Cancel trip',
+                      cancelLabel: 'Back',
+                      tone: 'danger',
+                      run: (reason) => {
+                        void abandonLeg(leg.id, reason)
+                          .then(() => {
+                            setArrival(null);
+                            void clearArrival();
+                            notify('Trip cancelled');
+                            router.replace('/journey');
+                          })
+                          .catch(() => notify('The trip could not be cancelled on this phone. Try again.', 'error'));
+                      },
+                    })
+                  }
                 />
               </View>
-            </Presence>
-            {/*
-              CALLING IT OFF IS THE WAY OUT THAT IS NOT AN ARRIVAL, and it is
-              not a skip. (It was the only other way out before the radius could
-              refuse one; the override above is the second, and it ends with him
-              in the shop rather than on his way home.)
-              The meter has already moved, so there is no version of this where
-              nothing happened — what he chooses is whether the journey is
-              recorded against a shop he reached or against a trip he abandoned,
-              and the second still needs a sentence or the next departure's
-              reading follows on from a gap.
-            */}
-            <View style={{ marginTop: 10 }}>
-              <SecondaryButton
-                label="I am not going after all"
-                onPress={() =>
-                  askConfirm({
-                    title: 'Cancel this trip?',
-                    body:
-                      'The trip stays on your record, with your reason and 0 km. The meter has already moved. Removing the trip would leave a gap before your next one.',
-                    reasonLabel: 'Why · needed',
-                    confirmLabel: 'Cancel trip',
-                    run: (reason) => {
-                      void abandonLeg(leg.id, reason)
-                        .then(() => {
-                          setArrival(null);
-                          void clearArrival();
-                          notify('Trip cancelled');
-                          router.replace('/journey');
-                        })
-                        .catch(() => notify('The trip could not be cancelled on this phone. Try again.', 'error'));
-                    },
-                  })
-                }
-              />
-            </View>
-          </Card>
+            </Panel>
+          </View>
         </Swap>
 
         <OdometerCamera
           open={metering}
-          title="Take meter photo"
-          subtitle="You have arrived. The trip is measured up to this reading."
+          title="Meter photo"
+          subtitle="Arrived. The trip is measured up to this reading."
           cancelLabel="Cancel. I have not arrived"
           previousKm={leg.odometerStartKm}
           maxLegKilometres={maxLegKm}
@@ -1696,29 +1738,59 @@ export default function Visit() {
     );
   }
 
+  const left = verdict.failed.length;
   return (
     <AppFrame
-      title="Visit"
+      title={c?.name ?? 'Visit'}
       activeTab="customers"
       onBack={() => router.back()}
-      contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
+      heroTop={
+        visitStart != null ? (
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+            {/* CHECKED IN, and the clock says how long ago — the same figure
+                as the check-out bar, so the hero never needs scrolling back to. */}
+            <View
+              accessible
+              accessibilityLabel={'In the shop for ' + elapsedLabel(dwellSeconds)}
+              style={{ height: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: C.navy, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Icon name="clock" size={16} color={C.lime} strokeWidth={2.2} />
+              <Text style={[{ fontSize: 14, color: C.lime }, weight(700)]}>{elapsedLabel(dwellSeconds)}</Text>
+            </View>
+          </View>
+        ) : undefined
+      }
+      hero={
+        c?.contactPerson || c?.city ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 14, marginTop: 8 }}>
+            {c?.contactPerson ? <Fact icon="person" text={c.contactPerson} color={HERO.lavender.muted} /> : null}
+            {c?.city ? <Fact icon="pin" text={c.city} color={HERO.lavender.muted} /> : null}
+          </View>
+        ) : null
+      }
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}
       footer={
-        <View style={{ backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.hairline, paddingHorizontal: 16, paddingVertical: 12, boxShadow: shadow.saveBar }}>
+        <View style={{ backgroundColor: C.navy, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 18 }}>
           {/* `warning` rather than `firstFailure`: a visit whose check-in was
               overridden has nothing outstanding and is still not a clean one,
               and that line used to be blank — the bar said nothing while the
               panel above it said "Everything checks out". */}
           {verdict.warning ? (
-            <Text style={{ fontSize: 13, lineHeight: 18, color: C.warnInk, marginBottom: 8 }}>{verdict.warning}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 10 }}>
+              <Icon name="warn" size={15} color={AMBER_ON_NAVY} strokeWidth={2} />
+              <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: AMBER_ON_NAVY }}>{verdict.warning}</Text>
+            </View>
           ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {/* CHECKED IN, and the clock says how long ago. The button beside
-                  it is the other end of the same pair — he checks in at the
-                  door and checks out at it, and calling that button "Save
-                  visit" named the filing rather than the act. */}
-              <Text style={type.label}>In the shop</Text>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{elapsedLabel(dwellSeconds)}</Text>
+            {/* CHECKED IN, and the clock says how long ago. The button beside
+                it is the other end of the same pair — he checks in at the
+                door and checks out at it, and calling that button "Save
+                visit" named the filing rather than the act. */}
+            <View
+              accessible
+              accessibilityLabel={'In the shop, ' + elapsedLabel(dwellSeconds)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Icon name="clock" size={20} color={C.lime} strokeWidth={2} />
+              <Text style={[{ fontSize: 20, letterSpacing: -0.4, color: '#FFFFFF' }, weight(800)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
             {/* Live on `complete`, never on `verified`. An override is not a
                 missing requirement, and greying the button on one would demand
@@ -1726,93 +1798,77 @@ export default function Visit() {
                 door. */}
             <Pressable
               onPress={() => (verdict.complete ? saveWhenDecided() : setAsking(true))}
+              accessibilityRole="button"
               accessibilityLabel={verdict.complete ? 'Check out of the shop and save the visit' : verdict.firstFailure}
-              style={[
-                { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline },
-                verdict.complete && { boxShadow: shadow.primary },
-              ]}>
-              <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
-                {saving ? 'Checking out…' : 'Check out'}
+              style={({ pressed }) => ({
+                flex: 1,
+                height: 56,
+                borderRadius: 28,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: verdict.complete ? C.lime : 'rgba(255,255,255,0.14)',
+                opacity: pressed ? 0.85 : 1,
+              })}>
+              <Text style={[{ fontSize: 16, color: verdict.complete ? C.navy : C.onNavyMuted }, weight(700)]}>
+                {saving ? 'Checking out…' : verdict.complete ? 'Check out' : 'Check out · ' + left + ' left'}
               </Text>
             </Pressable>
           </View>
         </View>
       }>
       <Swap id="in">
-        <Text style={type.h2}>{c?.name ?? ''}</Text>
-        <Text style={[type.caption, { marginTop: 2 }]}>
-          {[c?.contactPerson, c?.city].filter(Boolean).join(' · ')}
-        </Text>
-
+        <View style={{ gap: 12 }}>
         {/* ---- he walked out without checking out ----
             Said at the top, in words, because the button below now closes the
             visit at a time he did not press it — and he should know that before
             he does. */}
         <Presence show={leftAt != null}>
         {leftAt != null ? (
-          <View
-            style={{
-              borderWidth: 1,
-              borderColor: C.warnEdge,
-              backgroundColor: C.warnBg,
-              borderRadius: radius.xl,
-              paddingVertical: 12,
-              paddingHorizontal: 16,
-              marginBottom: 12,
-            }}>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>You left the shop without checking out</Text>
-            <Text style={[type.caption, { color: C.body, marginTop: 2 }]}>
-              {'Noticed at ' +
-                hhmm(leftAt) +
-                (arrival?.leftShopMetres ? ', about ' + arrival.leftShopMetres + ' m away' : '') +
-                '. Check out from here — no need to go back. The visit closes at ' +
-                hhmm(leftAt) +
-                '.'}
-            </Text>
+          <View style={{ backgroundColor: C.warnBg, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', gap: 12 }}>
+            <Icon name="warn" size={22} color={C.warnInk} strokeWidth={2} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[{ fontSize: 15, color: C.ink }, weight(800)]}>You left without checking out</Text>
+              <Text style={{ fontSize: 13, lineHeight: 18, color: C.body, marginTop: 2 }}>
+                {'Seen ' +
+                  hhmm(leftAt) +
+                  (arrival?.leftShopMetres ? ', about ' + arrival.leftShopMetres + ' m away' : '') +
+                  '. Check out from here, no need to go back. The visit closes at ' +
+                  hhmm(leftAt) +
+                  '.'}
+              </Text>
+            </View>
           </View>
         ) : null}
         </Presence>
 
         {/* ---- where you are ---- */}
-        <View
-          style={{
-            borderWidth: 1,
-            borderColor: gpsLocked ? C.primaryEdge : gps === 'off' ? C.warnEdge : C.hairline,
-            backgroundColor: gpsLocked ? C.primaryTint : gps === 'off' ? C.warnBg : C.surface,
-            borderRadius: radius.xl,
-            paddingVertical: 10,
-            paddingHorizontal: 14,
-            marginTop: 12,
-          }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 5,
-                backgroundColor: gpsLocked ? C.success : gps === 'off' ? C.warn : C.faint,
-              }}
-            />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                {gpsLocked ? 'Checked in here' : gps === 'off' ? 'No GPS' : 'Finding you…'}
-              </Text>
-              <Text style={[type.caption, { color: C.body }]}>
-                {gpsLocked
-                  ? fixReason ?? verdictGeo.sentence
-                  : gps === 'off'
-                    ? fixReason ?? 'The visit will be saved. Your manager will check it.'
-                    : 'Inside a shop this can take a moment.'}
-              </Text>
-            </View>
-            {gps === 'off' ? (
-              <Pressable
-                onPress={() => notify('Going on without location. At check-out, choose "Save as not checked" and say why. Your manager will see it had no location.', 'warn')}
-                style={{ height: HIT, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Carry on</Text>
-              </Pressable>
-            ) : null}
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 12, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Icon
+            name={gpsLocked ? 'shield' : gps === 'off' ? 'warn' : 'locate'}
+            size={22}
+            color={gpsLocked ? C.success : gps === 'off' ? C.warnInk : C.faint}
+            strokeWidth={2}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>
+              {gpsLocked ? 'Checked in here' : gps === 'off' ? 'No GPS' : 'Finding you…'}
+            </Text>
+            <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+              {gpsLocked
+                ? fixReason ?? verdictGeo.sentence
+                : gps === 'off'
+                  ? fixReason ?? 'The visit will be saved. Your manager will check it.'
+                  : 'Inside a shop this can take a moment.'}
+            </Text>
           </View>
+          {gps === 'off' ? (
+            <Pressable
+              onPress={() => notify('Going on without location. At check-out, choose "Save as not checked" and say why. Your manager will see it had no location.', 'warn')}
+              accessibilityRole="button"
+              style={({ pressed }) => ({ height: HIT, paddingHorizontal: 14, borderRadius: HIT / 2, backgroundColor: pressed ? C.line : C.wash, alignItems: 'center', justifyContent: 'center' })}>
+              <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Carry on</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* ---- what was said last time ----
@@ -1822,30 +1878,29 @@ export default function Visit() {
             worth reading back rather than trusted from memory. */}
         {lastTime ? (
           <View
-            style={{
-              borderWidth: 1,
-              borderColor: C.hairline,
-              backgroundColor: C.wash,
-              borderRadius: radius.xl,
-              paddingVertical: 12,
-              paddingHorizontal: 16,
-              marginTop: 12,
-            }}>
-            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-              <Text style={type.label}>Last time — {pretty(isoDate(new Date(lastTime.checkInAt)))}</Text>
+            style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 12, paddingHorizontal: 16 }}
+            accessible
+            accessibilityLabel={'Last time, ' + pretty(isoDate(new Date(lastTime.checkInAt))) + (lastTime.outcome ? ', ' + outcomeLabel(lastTime.outcome) : '') + '. ' + lastTime.note}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Icon name="clock" size={15} color={C.muted} strokeWidth={2} />
+              <Text style={[{ fontSize: 13, color: C.muted, flex: 1 }, weight(700)]}>
+                {'Last time · ' + pretty(isoDate(new Date(lastTime.checkInAt)))}
+              </Text>
               {lastTime.outcome ? (
-                <Text style={[type.caption, { color: C.body }]}>{outcomeLabel(lastTime.outcome)}</Text>
+                <View style={{ height: 24, paddingHorizontal: 8, borderRadius: 12, backgroundColor: C.wash, justifyContent: 'center' }}>
+                  <Text style={[{ fontSize: 12, color: C.body }, weight(600)]}>{outcomeLabel(lastTime.outcome)}</Text>
+                </View>
               ) : null}
             </View>
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 4 }} numberOfLines={3}>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 6 }} numberOfLines={3}>
               {lastTime.note}
             </Text>
           </View>
         ) : null}
 
         {/* ---- what was said ---- */}
-        <Card style={{ marginTop: 12 }}>
-          <Text style={type.label}>What was said</Text>
+        <Panel>
+          <FieldLabel text="What was said" />
 
           {/*
             ONE MICROPHONE, and what it does depends on the signal.
@@ -1872,7 +1927,7 @@ export default function Visit() {
             of what a customer said rather than a keyboard, and the office keeps
             it either way.
           */}
-          <View style={{ marginTop: 12 }}>
+          <View style={{ marginTop: 10 }}>
             <VoiceField
               value={note}
               onChangeText={(v) => set({ note: v })}
@@ -1881,12 +1936,12 @@ export default function Visit() {
               onHeard={setHeard}
             />
             {voiceNoteId ? (
-              <Text style={[type.caption, { marginTop: 6 }]}>
-                The recording goes to the office with this visit.
-              </Text>
+              <View style={{ marginTop: 8 }}>
+                <Fact icon="upload" text="The recording goes to the office with this visit." />
+              </View>
             ) : null}
           </View>
-        </Card>
+        </Panel>
 
         {/* ---- what the assistant made of it ----
             Directly under the note, because the note is what it reads, and above
@@ -1896,51 +1951,30 @@ export default function Visit() {
         ) : null}
 
         {/* ---- how it went ---- */}
-        <View style={{ marginTop: 16 }}>
-          <Text style={[type.label, { marginBottom: 10 }]}>How did it go</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {OUTCOMES.map((o) => {
-              const on = outcome === o.k;
-              return (
-                <Pressable
-                  key={o.k}
-                  onPress={() => pickOutcome(o.k)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: on }}
-                  style={{
-                    height: HIT,
-                    paddingHorizontal: 14,
-                    borderRadius: radius.pill,
-                    borderWidth: 1,
-                    borderColor: on ? C.primary : C.border,
-                    backgroundColor: on ? C.primaryTint : C.surface,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}>
-                  <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
-                    {o.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+        <View>
+          <FieldLabel text="How did it go" style={{ paddingHorizontal: 4, paddingTop: 4, marginBottom: 8 }} />
+          <OutcomeGrid value={outcome} onPick={pickOutcome} />
         </View>
 
         {/* ---- the follow-on the outcome implies ---- */}
         <Presence show={!!followOn}>
         {followOn ? (
-          <View style={{ backgroundColor: C.primaryTint, borderWidth: 1, borderColor: C.primaryEdge, borderRadius: radius.card, paddingVertical: 14, paddingHorizontal: 16, marginTop: 14 }}>
+          <Panel style={{ paddingVertical: 14, borderWidth: 1, borderColor: C.primaryEdge }}>
             {doneLine ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: C.successBg, alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon name="task" size={13} color={C.success} strokeWidth={2.4} />
-                </View>
-                <Text style={[{ fontSize: 15, color: C.ink, flex: 1 }, weight(500)]}>{doneLine}</Text>
+              <View
+                style={{ alignSelf: 'flex-start', minHeight: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: C.successBg, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Icon name="tick" size={14} color={C.success} strokeWidth={2.4} />
+                <Text style={[{ fontSize: 13, color: C.success, flexShrink: 1 }, weight(700)]}>{doneLine}</Text>
               </View>
             ) : (
               <View>
-                <Text style={[type.body, { color: C.ink }]}>{followOn.line}</Text>
-                <Pressable
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon name={outcome ? OUTCOME_ICON[outcome] ?? 'visit' : 'visit'} size={22} color={C.primary} strokeWidth={2} />
+                  <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }}>{followOn.line}</Text>
+                </View>
+                <Btn
+                  label={followOn.cta}
+                  look="primary"
                   onPress={() => {
                     if (outcome === 'order') return router.push('/order?from=visit');
                     if (outcome === 'payment') return router.push('/pay?from=visit');
@@ -1948,12 +1982,11 @@ export default function Visit() {
                     setFormErr(null);
                     setForm(outcome === 'complaint' ? 'complaint' : 'sample');
                   }}
-                  style={{ width: '100%', height: 52, marginTop: 12, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
-                  <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>{followOn.cta}</Text>
-                </Pressable>
+                  style={{ marginTop: 10 }}
+                />
               </View>
             )}
-          </View>
+          </Panel>
         ) : null}
         </Presence>
 
@@ -1967,39 +2000,45 @@ export default function Visit() {
             makes `capState` something other than `ok` is a Suspect stage, which
             is the only thing `visitCapLabel` returns null for. */}
         {capState !== 'ok' && suspect && capLabel ? (
-          <Card
-            style={{
-              marginTop: 12,
-              borderLeftWidth: 3,
-              borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
-            }}>
+          <Panel style={{ borderLeftWidth: 4, borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline }}>
             {/* The engine's own wording, counting the visit being MADE. Retyped
                 here it read "Visit 2 / 3" on the third visit — one in hand,
                 under a card demanding the decision. */}
-            <Text style={type.label}>{capLabel + ' · still a Suspect'}</Text>
-            <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            <PanelTitle
+              icon="person"
+              text="Suspect"
+              right={
+                <View
+                  accessible
+                  accessibilityLabel={capLabel + ', still a Suspect'}
+                  style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, justifyContent: 'center' }}>
+                  <Text style={[{ fontSize: 13, color: C.warnInk }, weight(800)]}>{capLabel}</Text>
+                </View>
+              }
+            />
+            <Text style={{ fontSize: 13, lineHeight: 18, marginTop: 6, color: C.body }}>
               {capState === 'decide'
-                ? 'Choose which way this lead goes before you close the visit. The visit is saved either way.'
+                ? 'Decide which way this lead goes before you close the visit. The visit saves either way.'
                 : 'On the next visit you must decide. Think about it now.'}
             </Text>
 
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
               {[
-                { v: 'qualified', label: 'A prospect' },
+                { v: 'qualified', label: 'A prospect', tint: { bg: C.successBg, fg: C.success } },
                 { v: 'contacted', label: 'Keep trying' },
                 { v: 'on_hold', label: 'On hold' },
                 { v: 'still_suspect', label: 'Still a Suspect' },
-                { v: 'lost', label: 'Lost' },
+                { v: 'lost', label: 'Lost', tint: { bg: C.dangerBg, fg: C.danger } },
               ].map((o) => (
-                <Choice
+                <Chip
                   key={o.v}
                   label={o.label}
+                  tint={o.tint}
                   selected={decision === o.v}
                   onPress={() => {
                     setDecision(decision === o.v ? null : o.v);
                     setDecisionErr(null);
                   }}
-                  style={{ paddingHorizontal: 14 }}
                 />
               ))}
             </View>
@@ -2018,19 +2057,20 @@ export default function Visit() {
                 }}
                 placeholder={
                   decision === 'lost'
-                    ? 'Why we will not go back'
-                    : 'What we are waiting for'
+                    ? 'Why we will not go back *'
+                    : 'What we are waiting for *'
                 }
+                accessibilityLabel={decision === 'lost' ? 'Why we will not go back, needed' : 'What we are waiting for, needed'}
                 placeholderTextColor={C.faint}
                 multiline
                 style={{
-                  marginTop: 12,
-                  minHeight: 64,
-                  borderWidth: 1,
-                  borderColor: C.border,
-                  borderRadius: radius.sm,
-                  padding: 12,
-                  fontSize: 15,
+                  marginTop: 10,
+                  minHeight: 56,
+                  backgroundColor: C.wash,
+                  borderRadius: 16,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
                   color: C.ink,
                   textAlignVertical: 'top',
                 }}
@@ -2039,11 +2079,11 @@ export default function Visit() {
             </Presence>
 
             <Presence show={!!decisionErr}>
-              <Text style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }, weight(500)]}>
+              <Text style={[{ fontSize: 13, lineHeight: 18, marginTop: 8, color: C.danger }, weight(700)]}>
                 {decisionErr}
               </Text>
             </Presence>
-          </Card>
+          </Panel>
         ) : null}
 
         {/* ---- §G · what they actually need ----
@@ -2051,10 +2091,14 @@ export default function Visit() {
             unlike the validation call's answers: this is the same person asking
             the same question better informed, not a second party's account. */}
         {suspect ? (
-          <Card style={{ marginTop: 12 }}>
-            <Text style={type.label}>What they need</Text>
-            <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
-              Fill it after you show the price list and ask them.
+          <Panel>
+            <PanelTitle icon="list" text="What they need" />
+            {/* §G's business rule, said on the screen where it applies rather
+                than only refused at the server. */}
+            <Text
+              style={{ fontSize: 12, lineHeight: 16, marginTop: 2, color: C.muted }}
+              accessibilityLabel="Fill it after you show the price list and ask them. Do not promise any price or delivery now. The Lead Manager handles price talk.">
+              After the price list. Promise no price or delivery. The Lead Manager does price talk.
             </Text>
 
             <TextInput
@@ -2062,83 +2106,75 @@ export default function Visit() {
               onChangeText={setReqWhat}
               placeholder="What they want, e.g. thinner for a spray booth"
               placeholderTextColor={C.faint}
-              style={{
-                marginTop: 12, minHeight: 48, borderWidth: 1, borderColor: C.border,
-                borderRadius: radius.sm, paddingHorizontal: 12, fontSize: 15, color: C.ink,
-              }}
+              style={{ marginTop: 10, minHeight: 48, backgroundColor: C.wash, borderRadius: 16, paddingHorizontal: 14, fontSize: 14, color: C.ink }}
             />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <View style={{ flex: 1, minHeight: 48, backgroundColor: C.wash, borderRadius: 16, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 6 }}>
                 <TextInput
                   value={reqLitres}
                   onChangeText={(v) => setReqLitres(cleanDecimal(v, 2))}
-                  placeholder="Litres a month"
+                  placeholder="Litres"
+                  accessibilityLabel="Litres a month"
                   placeholderTextColor={C.faint}
                   keyboardType="decimal-pad"
-                  style={{
-                    minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
-                    paddingHorizontal: 12, fontSize: 15, color: C.ink,
-                  }}
+                  style={[{ flex: 1, minWidth: 0, minHeight: 48, fontSize: reqLitres ? 18 : 14, color: C.ink }, reqLitres ? weight(800) : null]}
                 />
+                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>L / month</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                {/* Cans, because that is what an ORDER is counted in — the litres
-                    beside it are what the shop says its consumption is. Two
-                    different questions, and the units say which is which. */}
+              {/* Cans, because that is what an ORDER is counted in — the litres
+                  beside it are what the shop says its consumption is. Two
+                  different questions, and the units say which is which. */}
+              <View style={{ flex: 1, minHeight: 48, backgroundColor: C.wash, borderRadius: 16, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 6 }}>
                 <TextInput
                   value={reqCans}
                   onChangeText={(v) => setReqCans(cleanWhole(v))}
-                  placeholder="Cans to start"
+                  placeholder="to start"
+                  accessibilityLabel="Cans to start"
                   placeholderTextColor={C.faint}
                   keyboardType="number-pad"
-                  style={{
-                    minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
-                    paddingHorizontal: 12, fontSize: 15, color: C.ink,
-                  }}
+                  style={[{ flex: 1, minWidth: 0, minHeight: 48, fontSize: reqCans ? 18 : 14, color: C.ink }, reqCans ? weight(800) : null]}
                 />
-                {wholeOnly(reqCans) ? (
-                  <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Whole cans only.</Text>
-                ) : null}
+                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>cans</Text>
               </View>
             </View>
-
-            {/* §G's business rule, said on the screen where it applies rather
-                than only refused at the server. */}
-            <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted }}>
-              Do not promise any price or delivery now. The Lead Manager handles price talk.
-            </Text>
-          </Card>
+            {wholeOnly(reqCans) ? (
+              <Text style={{ fontSize: 12, color: C.danger, marginTop: 4, textAlign: 'right' }}>Whole cans only.</Text>
+            ) : null}
+          </Panel>
         ) : null}
 
         {/* ---- photos ---- */}
-        <Card style={{ marginTop: 16 }}>
-          <Text style={type.label}>Photos</Text>
-          <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+        <View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
             {[
-              { k: 'shop' as const, ic: 'shop', on: 'Shop ✓', off: 'Shop photo' },
-              { k: 'cust' as const, ic: 'person', on: 'Owner ✓', off: 'Owner photo' },
+              { k: 'shop' as const, ic: 'shop' as IconName, on: 'Shop ✓', off: 'Shop photo' },
+              { k: 'cust' as const, ic: 'person' as IconName, on: 'Owner ✓', off: 'Owner photo' },
             ].map((b) => {
               const has = !!shots[b.k];
               return (
                 <PressableScale
                   key={b.k}
                   onPress={() => shoot(b.k)}
+                  accessibilityRole="button"
+                  accessibilityLabel={has ? b.on.replace(' ✓', ' photo taken, take again') : 'Take ' + b.off.toLowerCase()}
                   outerStyle={{ flex: 1 }}
                   style={{
-                    height: 86,
-                    borderRadius: radius.md,
-                    borderWidth: 1,
-                    borderColor: has ? C.primary : C.border,
-                    backgroundColor: has ? C.primaryTint : C.surface,
+                    height: 88,
+                    borderRadius: 20,
+                    borderWidth: has ? 2 : 1.5,
+                    borderStyle: has ? 'solid' : 'dashed',
+                    borderColor: has ? C.primary : '#B9A6FF',
+                    backgroundColor: has ? '#F7F4FF' : C.surface,
                     alignItems: 'center',
                     justifyContent: 'center',
+                    gap: 6,
                   }}>
                   {/* Pops as the photograph comes back from the camera: the tile
-                      turning blue is the only sign it was kept. */}
+                      turning purple is the only sign it was kept. */}
                   <Pop trigger={has}>
-                    <Icon name={b.ic} size={24} color={has ? C.primaryDeep : C.body} strokeWidth={1.5} />
+                    <Icon name={has ? 'tick' : 'camera'} size={22} color={has ? C.primaryDeep : C.ink} strokeWidth={2} />
                   </Pop>
-                  <Text style={[{ fontSize: 14, marginTop: 6, color: has ? C.primaryDeep : C.body }, weight(500)]}>
+                  <Text style={[{ fontSize: 13, color: has ? C.primaryDeep : C.ink }, weight(700)]}>
                     {has ? b.on : b.off}
                   </Text>
                 </PressableScale>
@@ -2146,28 +2182,21 @@ export default function Visit() {
             })}
           </View>
           <Presence show={!!(shots.shop || shots.cust)}>
-            <Text style={[type.caption, { marginTop: 10 }]}>Saved on this phone. They send when you have signal.</Text>
+            <View style={{ marginTop: 8, paddingHorizontal: 4 }}>
+              <Fact icon="upload" text="Saved on this phone. Sends with signal." />
+            </View>
           </Presence>
-        </Card>
+        </View>
 
         {/* ---- next contact: how, and when ----
             How is asked beside when because they are one promise — "I will
             ring you Thursday" is not "I will come by Thursday", and the task it
             raises is named by the answer. */}
-        <Card style={{ marginTop: 12 }}>
-          <Text style={[type.label, { marginBottom: 10 }]}>Next contact</Text>
-          {/* "NONE" IS AN ANSWER. The day was filled from the cycle and there
-              was no way to empty it, so every visit — a shut shop included —
-              raised a follow-up task he had promised nobody. */}
-          <Choice
-            label="No follow-up needed"
-            selected={noFollowUp}
-            onPress={() => setForm2({ noFollowUp: !noFollowUp })}
-            style={{ alignItems: 'flex-start', paddingHorizontal: 14, marginBottom: noFollowUp ? 0 : 10 }}
-          />
+        <Panel>
+          <PanelTitle icon="cal" text="Next contact" />
           {noFollowUp ? null : (
           <>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }} accessibilityRole="radiogroup">
             {FOLLOW_UP_MODES.map((m) => {
               const on = nextMode === m.k;
               return (
@@ -2179,45 +2208,82 @@ export default function Visit() {
                   }}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: on }}
+                  accessibilityLabel={m.label}
                   style={{
                     flex: 1,
                     height: HIT,
-                    borderRadius: radius.pill,
-                    borderWidth: 1,
-                    borderColor: on ? C.primary : C.border,
-                    backgroundColor: on ? C.primaryTint : C.surface,
+                    borderRadius: HIT / 2,
+                    backgroundColor: on ? C.navy : C.wash,
+                    flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    gap: 6,
                   }}>
-                  <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
-                    {m.label}
-                  </Text>
+                  <Icon name={m.k === 'call' ? 'call' : m.k === 'whatsapp' ? 'chat' : 'visit'} size={15} color={on ? C.lime : C.ink} strokeWidth={2} />
+                  <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{m.label}</Text>
                 </Pressable>
               );
             })}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 }}>
-            <Text style={[{ fontSize: 15, color: C.body, flex: 1 }]}>On</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
             <Pressable
               onPress={() => setCalOpen('next')}
+              accessibilityRole="button"
               accessibilityLabel={'Next contact on ' + pretty(nextDate) + ', change'}
-              style={{ height: HIT, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.surface }}>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{pretty(nextDate)}</Text>
-              <Icon name="cal" size={16} color={C.body} strokeWidth={1.6} />
+              style={({ pressed }) => ({ height: HIT, borderRadius: HIT / 2, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.navy, opacity: pressed ? 0.85 : 1 })}>
+              <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>{pretty(nextDate)}</Text>
+              <Icon name="cal" size={16} color={C.lime} strokeWidth={2} />
             </Pressable>
+            <Text style={{ flex: 1, fontSize: 12, lineHeight: 16, color: C.muted }}>
+              {outcome === 'closed' || outcome === 'closed_now'
+                ? nextDatePicked
+                  ? 'A task is set for this day.'
+                  : 'No task is set for a shut shop unless you pick a day.'
+                : c?.cycleDays
+                  ? 'Set from their ' + c.cycleDays + '-day buying pattern. Change it if they said another day.'
+                  : 'Change it if they said another day.'}
+            </Text>
           </View>
-          <Text style={[type.caption, { marginTop: 8 }]}>
-            {outcome === 'closed' || outcome === 'closed_now'
-              ? nextDatePicked
-                ? 'A task is set for this day.'
-                : 'No task is set for a shut shop unless you pick a day.'
-              : c?.cycleDays
-                ? 'Set from their ' + c.cycleDays + '-day buying pattern. Change it if they said another day.'
-                : 'Change it if they said another day.'}
-          </Text>
           </>
           )}
-        </Card>
+          {/* "NONE" IS AN ANSWER. The day was filled from the cycle and there
+              was no way to empty it, so every visit — a shut shop included —
+              raised a follow-up task he had promised nobody. */}
+          <Pressable
+            onPress={() => {
+              feedback('select');
+              setForm2({ noFollowUp: !noFollowUp });
+            }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: noFollowUp }}
+            accessibilityLabel="No follow-up needed"
+            style={({ pressed }) => ({
+              marginTop: 10,
+              minHeight: HIT,
+              borderRadius: HIT / 2,
+              backgroundColor: noFollowUp ? C.primaryTint : C.wash,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              paddingHorizontal: 14,
+              opacity: pressed ? 0.85 : 1,
+            })}>
+            <View
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 10,
+                borderWidth: 2,
+                borderColor: noFollowUp ? C.primary : C.faint,
+                backgroundColor: noFollowUp ? C.primary : 'transparent',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              {noFollowUp ? <Icon name="tick" size={12} color="#FFFFFF" strokeWidth={3} /> : null}
+            </View>
+            <Text style={[{ fontSize: 14, color: C.ink }, weight(600)]}>No follow-up needed</Text>
+          </Pressable>
+        </Panel>
 
         {/* ---- what is missing, and why the rule exists ----
             Drawn only while something is outstanding, and listing only that.
@@ -2226,38 +2292,31 @@ export default function Visit() {
         {/* Leaves as the last thing is answered, rather than vanishing from
             under the thumb that answered it. */}
         <Presence show={!verdict.verified}>
-        <View
-          style={{
-            borderWidth: 1,
-            borderColor: C.warnEdge,
-            backgroundColor: C.warnBg,
-            borderRadius: radius.xl,
-            paddingVertical: 14,
-            paddingHorizontal: 16,
-            marginTop: 16,
-          }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{verdict.title}</Text>
+        <Panel>
+          <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+            {verdict.title + (left ? ' · ' + left : '')}
+          </Text>
 
-          <View style={{ marginTop: 6 }}>
+          <View style={{ marginTop: 2 }}>
             {verdict.failed.map((k, i) => (
-              <View key={k.key} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 10, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
-                <View style={{ width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: k.ok ? C.successBg : C.dangerBg }}>
+              <View key={k.key} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 10, borderTopWidth: i ? 1 : 0, borderTopColor: C.hairline }}>
+                <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: k.ok ? C.successBg : C.dangerBg }}>
                   {k.ok ? (
-                    <Icon name="task" size={12} color={C.success} strokeWidth={2.4} />
+                    <Icon name="tick" size={13} color={C.success} strokeWidth={2.4} />
                   ) : (
-                    <Text style={[{ fontSize: 12, color: C.danger }, weight(600)]}>!</Text>
+                    <Text style={[{ fontSize: 13, color: C.danger }, weight(800)]}>!</Text>
                   )}
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[{ fontSize: 14, color: k.ok ? C.ink : C.danger }, weight(k.ok ? 400 : 500)]}>{k.line}</Text>
-                  {!k.ok ? <Text style={[type.caption, { marginTop: 2 }]}>{k.why}</Text> : null}
+                  <Text style={[{ fontSize: 14, color: k.ok ? C.ink : C.danger }, weight(k.ok ? 400 : 700)]}>{k.line}</Text>
+                  {!k.ok ? <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }}>{k.why}</Text> : null}
                 </View>
               </View>
             ))}
           </View>
 
           {/* The override is logged, not hidden. Nobody parks outside and fakes it. */}
-          <Pressable
+          <SaveAsNotChecked
             onPress={() =>
               owed.length
                 ? setAsking(true)
@@ -2266,18 +2325,16 @@ export default function Visit() {
                 body: verdict.overrideBody,
                 reasonLabel: 'Why · needed',
                 confirmLabel: 'Save as not checked',
+                tone: 'navy',
                 run: (reason) => saveWhenDecided(reason),
               })
             }
-            style={{ width: '100%', minHeight: HIT, marginTop: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: C.faint, borderRadius: radius.md, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }}>
-              Cannot do these? Save as not checked. Your manager sees your reason.
-            </Text>
-          </Pressable>
-        </View>
+          />
+        </Panel>
         </Presence>
 
         <View style={{ height: 96 }} />
+        </View>
       </Swap>
 
       {/*
@@ -2310,37 +2367,35 @@ export default function Visit() {
         which the answers still have to be given for.
       */}
       <BottomSheet open={asking} onClose={() => setAsking(false)} scroll>
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>Before you check out</Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-            {verdict.complete
-              ? 'All answered.'
-              : `${verdict.failed.length} ${verdict.failed.length === 1 ? 'thing' : 'things'} left for this visit.`}
-          </Text>
+        <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 22, letterSpacing: -0.44, color: C.ink }, weight(800)]}>
+              Before you check out
+            </Text>
+            <View
+              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: verdict.complete ? C.successBg : C.dangerBg }}
+              accessible
+              accessibilityLabel={verdict.complete ? 'All answered.' : `${left} ${left === 1 ? 'thing' : 'things'} left for this visit.`}>
+              <Text style={[{ fontSize: 14, color: verdict.complete ? C.success : C.danger }, weight(800)]}>
+                {verdict.complete ? 'All answered' : left + ' left'}
+              </Text>
+            </View>
+          </View>
 
           {!checks.find((k) => k.key === 'outcome')?.ok ? (
-            <View style={{ marginTop: 16 }}>
-              <Text style={[type.label, { marginBottom: 8 }]}>How did it go</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {OUTCOMES.map((o) => (
-                  <Pressable
-                    key={o.k}
-                    onPress={() => pickOutcome(o.k)}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: outcome === o.k }}
-                    style={{ height: HIT, paddingHorizontal: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: outcome === o.k ? C.primary : C.border, backgroundColor: outcome === o.k ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={[{ fontSize: 15, color: outcome === o.k ? C.primaryDeep : C.ink }, weight(outcome === o.k ? 600 : 500)]}>{o.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
+            <View style={{ marginTop: 14 }}>
+              <FieldLabel text="How did it go" style={{ marginBottom: 8 }} />
+              <OutcomeGrid value={outcome} onPick={pickOutcome} compact />
             </View>
           ) : null}
 
           {!checks.find((k) => k.key === 'note')?.ok ? (
             <View style={{ marginTop: 16 }}>
-              <Text style={type.label}>What happened in this visit</Text>
-              <Text style={[type.caption, { marginTop: 2, marginBottom: 8 }]}>
-                What you talked about, what they said, what happens next. You can speak instead of typing.
+              <FieldLabel text="What happened" />
+              <Text
+                style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginBottom: 8 }}
+                accessibilityLabel="What you talked about, what they said, what happens next. You can speak instead of typing.">
+                Talked about · they said · what’s next. Speak if easier.
               </Text>
               <VoiceField
                 value={note}
@@ -2349,17 +2404,23 @@ export default function Visit() {
                 onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
                 onHeard={setHeard}
               />
-              <Text style={[type.caption, { marginTop: 6, color: C.danger }]}>
+              <Text style={[{ fontSize: 13, marginTop: 6, color: C.danger }, weight(700)]}>
                 {checks.find((k) => k.key === 'note')?.line}
               </Text>
             </View>
           ) : null}
 
           {followOn && !checks.find((k) => k.key === 'followon')?.ok ? (
-            <View style={{ marginTop: 16 }}>
-              <Text style={type.label}>{followOn.label}</Text>
-              <Text style={[type.caption, { marginTop: 2, marginBottom: 8 }]}>{followOn.line}</Text>
-              <Pressable
+            <View style={{ marginTop: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#F7F4FF', borderRadius: 20, paddingVertical: 10, paddingLeft: 14, paddingRight: 10 }}>
+              <Icon name={outcome ? OUTCOME_ICON[outcome] ?? 'visit' : 'visit'} size={20} color={C.primary} strokeWidth={2} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{followOn.label}</Text>
+                <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{followOn.line}</Text>
+              </View>
+              <Btn
+                label={followOn.cta}
+                look="primary"
+                height={44}
                 onPress={() => {
                   setAsking(false);
                   if (outcome === 'order') return router.push('/order?from=visit');
@@ -2368,118 +2429,128 @@ export default function Visit() {
                   setFormErr(null);
                   setForm(outcome === 'complaint' ? 'complaint' : 'sample');
                 }}
-                style={{ height: 48, borderRadius: radius.lg, borderWidth: 1, borderColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 15, color: C.primary }, weight(600)]}>{followOn.cta}</Text>
-              </Pressable>
+              />
             </View>
           ) : null}
 
-          {checks
-            .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell'))
-            .map((k) => (
-              <View key={k.key} style={{ marginTop: 14 }}>
-                <Text style={[{ fontSize: 14, color: C.danger }, weight(500)]}>{k.line}</Text>
-                <Text style={[type.caption, { marginTop: 2 }]}>{k.why}</Text>
-              </View>
-            ))}
+          <View style={{ marginTop: 12, gap: 8 }}>
+            {checks
+              .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell'))
+              .map((k) => (
+                <View key={k.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Icon name={k.key === 'gps' ? 'locate' : 'clock'} size={20} color={C.danger} strokeWidth={2} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[{ fontSize: 13, color: C.danger }, weight(700)]}>{k.line}</Text>
+                    <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{k.why}</Text>
+                  </View>
+                </View>
+              ))}
+          </View>
 
-          <View style={{ marginTop: 20, gap: 10 }}>
-            <Pressable
-              disabled={!verdict.complete || saving}
+          <Pressable
+            disabled={!verdict.complete || saving}
+            onPress={() => {
+              setAsking(false);
+              saveWhenDecided();
+            }}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !verdict.complete || saving }}
+            style={({ pressed }) => ({
+              marginTop: 18,
+              height: 60,
+              borderRadius: 30,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: verdict.complete ? C.navy : C.line,
+              opacity: pressed ? 0.85 : 1,
+            })}>
+            <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.muted }, weight(700)]}>
+              {verdict.complete ? 'Check out' : owed.length ? 'Answer the questions above' : 'Some things are missing'}
+            </Text>
+          </Pressable>
+          {!verdict.complete && owed.length === 0 ? (
+            <SaveAsNotChecked
               onPress={() => {
                 setAsking(false);
-                saveWhenDecided();
+                askConfirm({
+                  title: 'Save anyway?',
+                  body: verdict.overrideBody,
+                  reasonLabel: 'Why · needed',
+                  confirmLabel: 'Save as not checked',
+                  tone: 'navy',
+                  run: (reason) => saveWhenDecided(reason),
+                });
               }}
-              style={{ height: 52, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline }}>
-              <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
-                {verdict.complete ? 'Check out' : owed.length ? 'Answer the questions above' : 'Some things are missing'}
-              </Text>
-            </Pressable>
-            {!verdict.complete && owed.length === 0 ? (
-              <Pressable
-                onPress={() => {
-                  setAsking(false);
-                  askConfirm({
-                    title: 'Save anyway?',
-                    body: verdict.overrideBody,
-                    reasonLabel: 'Why · needed',
-                    confirmLabel: 'Save as not checked',
-                    run: (reason) => saveWhenDecided(reason),
-                  });
-                }}
-                style={{ minHeight: HIT, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 14, color: C.muted, textAlign: 'center' }}>
-                  Cannot do these? Save as not checked. Your manager sees your reason.
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
+            />
+          ) : null}
         </View>
       </BottomSheet>
 
       <BottomSheet open={pinAsk} onClose={() => void answerPin(false)}>
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
-            Is this shop in the wrong place?
-          </Text>
+        <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20 }}>
+          <SheetHead icon="pin" title="Shop in the wrong place?" />
           {/* The distance, from the refusal where the fresh reading has none.
               `metresAway` comes off a SECOND acquisition taken at the save and
               can be null while the refusal that opened this sheet was measured
               — leaving the question reading "about ? m", which is the one
               number that makes it answerable. */}
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-            The saved location for {c?.name ?? 'this shop'} is about {metresAway ?? refusedMetres ?? '?'} m from
-            where you checked in. If the shop is here and the map is wrong, ask your manager to
-            move it. Then no visit here will be stopped again.
-          </Text>
+          <View
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 }}
+            accessible
+            accessibilityLabel={
+              'The saved location for ' + (c?.name ?? 'this shop') + ' is about ' + (metresAway ?? refusedMetres ?? 'an unknown number of') +
+              ' metres from where you checked in. If the shop is here and the map is wrong, ask your manager to move it. Then no visit here will be stopped again.'
+            }>
+            <Text style={[{ fontSize: 26, letterSpacing: -0.52, color: C.ink }, weight(800)]}>
+              {'≈ ' + (metresAway ?? refusedMetres ?? '?') + ' m'}
+            </Text>
+            <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: C.muted }}>
+              {'from the saved pin of ' + (c?.name ?? 'this shop') + ' to where you checked in. If the map is wrong, your manager moves it and no visit here is stopped again.'}
+            </Text>
+          </View>
 
-          <View style={{ marginTop: 16, gap: 8 }}>
-            <PrimaryButton
-              label="Yes, ask my manager to move it"
-              onPress={() => void answerPin(true)}
-            />
-            <SecondaryButton
-              label="No, leave it as it is"
-              onPress={() => void answerPin(false)}
-            />
+          <View style={{ marginTop: 14, gap: 8 }}>
+            <Btn label="Yes, ask my manager to move it" height={56} onPress={() => void answerPin(true)} />
+            <Btn label="No, leave it as it is" look="grey" onPress={() => void answerPin(false)} />
           </View>
         </View>
       </BottomSheet>
 
       {/* ---- complaint, logged without leaving the visit ---- */}
       <BottomSheet open={form === 'complaint'} onClose={() => setForm(null)} scroll>
-        <Text style={[type.h2, { letterSpacing: -0.285 }]}>Add a complaint</Text>
-        <Text style={[type.small, { color: C.muted, marginTop: 2 }]}>{(c?.name ?? '') + ' · goes to the office today'}</Text>
+        <SheetHead icon="alert" title="Complaint" sub={(c?.name ?? '') + ' · goes to the office today'} />
 
-        <Text style={[type.label, { marginTop: 16, marginBottom: 8 }]}>What is it about</Text>
-        {COMPLAINT_CATEGORIES.map((x) => (
-          <Choice
-            key={x}
-            label={x}
-            selected={draft.cat === x}
-            onPress={() => { setDraft({ ...draft, cat: x }); setFormErr(null); }}
-            style={{ width: '100%', alignItems: 'flex-start', marginBottom: 8, paddingHorizontal: 14 }}
-          />
-        ))}
-        {formErr === 'cat' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick what it is about.</Text> : null}
+        <FieldLabel text="What is it about" style={{ marginTop: 14, marginBottom: 8 }} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }} accessibilityRole="radiogroup">
+          {COMPLAINT_CATEGORIES.map((x) => (
+            <Chip
+              key={x}
+              label={x}
+              selected={draft.cat === x}
+              onPress={() => { setDraft({ ...draft, cat: x }); setFormErr(null); }}
+            />
+          ))}
+        </View>
+        {formErr === 'cat' ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick what it is about.</Text> : null}
 
         {/* Laid out across rather than down: three short words fit one row,
             and a second scrolling list under the first would push the box he
             actually has to type in off the screen. */}
-        <Text style={[type.label, { marginTop: 14, marginBottom: 8 }]}>How urgent</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        <FieldLabel text="How urgent" style={{ marginTop: 12, marginBottom: 8 }} />
+        <View style={{ flexDirection: 'row', gap: 6 }} accessibilityRole="radiogroup">
           {COMPLAINT_PRIORITIES.map((p) => (
-            <Choice
+            <Chip
               key={p.value}
               label={p.label}
+              tint={p.value === 'high' ? { bg: C.warnBg, fg: C.warnInk } : p.value === 'critical' ? { bg: C.dangerBg, fg: C.danger } : undefined}
               selected={(draft.priority ?? 'medium') === p.value}
               onPress={() => setDraft({ ...draft, priority: p.value })}
-              style={{ flex: 1, paddingHorizontal: 6 }}
+              style={{ flex: 1, minHeight: 44, borderRadius: 22 }}
             />
           ))}
         </View>
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>In their words</Text>
+        <FieldLabel text="In their words" style={{ marginTop: 12, marginBottom: 6 }} />
         <VoiceField
           value={draft.what ?? ''}
           onChangeText={(v) => { setDraft({ ...draft, what: v }); setFormErr(null); }}
@@ -2500,61 +2571,83 @@ export default function Visit() {
           </Text>
         ) : null}
 
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <Pressable onPress={() => setForm(null)} style={{ flex: 1, height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
-          </Pressable>
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <Btn label="Cancel" look="grey" height={56} onPress={() => setForm(null)} style={{ flex: 1 }} />
           {/* ONE COMPLAINT PER PRESS. `submitComplaint` holds the ref guard —
               see the note beside it. Written inline here, a second tap on a
               slow write logged two complaints and kept only the second. */}
-          <Pressable
-            onPress={() => void submitComplaint()}
+          <Btn
+            label={formSaving ? 'Saving…' : 'Save'}
+            look={formSaving ? 'off' : 'navy'}
+            height={56}
             disabled={formSaving}
-            accessibilityState={{ disabled: formSaving }}
-            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
-            <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
-              {formSaving ? 'Saving…' : 'Save'}
-            </Text>
-          </Pressable>
+            onPress={() => void submitComplaint()}
+            style={{ flex: 1.4 }}
+          />
         </View>
       </BottomSheet>
 
       {/* ---- sample request ---- */}
       <BottomSheet open={form === 'sample'} onClose={() => setForm(null)} scroll>
-        <Text style={[type.h2, { letterSpacing: -0.285 }]}>Ask for a sample</Text>
-        <Text style={[type.small, { color: C.muted, marginTop: 2 }]}>{c?.name ?? ''}</Text>
+        <SheetHead icon="sample" title="Sample" right={c?.name ?? ''} />
 
-        <Text style={[type.label, { marginTop: 16, marginBottom: 8 }]}>Which product</Text>
-        {products.map((x) => (
-          <Choice
-            key={x.id}
-            label={x.name}
-            sub={skuText(x.sku) ?? undefined}
-            selected={draft.sku === x.id}
-            onPress={() => { setDraft({ ...draft, sku: x.id, skuName: x.name }); setFormErr(null); }}
-            style={{ width: '100%', alignItems: 'flex-start', marginBottom: 8, paddingHorizontal: 14 }}
-          />
-        ))}
-        {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick the product they want to try.</Text> : null}
+        <FieldLabel text="Which product" style={{ marginTop: 14, marginBottom: 8 }} />
+        <View style={{ gap: 6 }} accessibilityRole="radiogroup">
+          {products.map((x) => (
+            <Chip
+              key={x.id}
+              block
+              label={x.name}
+              sub={skuText(x.sku) ?? undefined}
+              selected={draft.sku === x.id}
+              onPress={() => { setDraft({ ...draft, sku: x.id, skuName: x.name }); setFormErr(null); }}
+            />
+          ))}
+        </View>
+        {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick the product they want to try.</Text> : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>How many cans</Text>
         {/* A REAL FIGURE, because the godown picks stock against it. This was
             `cans: 1` in the handler with no box on the sheet, so a trial of six
             cans was requested as one and the salesman found out when it
             arrived. Digits only — a pack size is a count, and a keyboard that
-            offers letters invites "one". */}
-        <Input
-          value={draft.cans ?? '1'}
-          onChangeText={(v) => { setDraft({ ...draft, cans: cleanWhole(v) }); setFormErr(null); }}
-          keyboardType="number-pad"
-          wholeHint="Whole cans only."
-          invalid={formErr === 'cans'}
-        />
+            offers letters invites "one". The stepper is the quick way; the
+            number between its buttons is still typed into. */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 }}>
+          <Text style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>How many cans</Text>
+          <StepButton
+            label="One can fewer"
+            glyph="−"
+            onPress={() => {
+              const n = parseWhole(draft.cans ?? '1') ?? 1;
+              setDraft({ ...draft, cans: String(Math.max(1, n - 1)) });
+              setFormErr(null);
+            }}
+          />
+          <TextInput
+            value={draft.cans ?? '1'}
+            onChangeText={(v) => { setDraft({ ...draft, cans: cleanWhole(v) }); setFormErr(null); }}
+            keyboardType="number-pad"
+            accessibilityLabel="How many cans"
+            style={[{ width: 48, minHeight: 44, textAlign: 'center', fontSize: 22, color: C.ink, padding: 0 }, weight(800)]}
+          />
+          <StepButton
+            label="One can more"
+            glyph="+"
+            onPress={() => {
+              const n = parseWhole(draft.cans ?? '1') ?? 0;
+              setDraft({ ...draft, cans: String(n + 1) });
+              setFormErr(null);
+            }}
+          />
+        </View>
+        {wholeOnly(draft.cans ?? '1') ? (
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6, textAlign: 'right' }}>Whole cans only.</Text>
+        ) : null}
         {formErr === 'cans' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>How many cans?</Text>
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6, textAlign: 'right' }}>How many cans?</Text>
         ) : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>What they will use it on</Text>
+        <FieldLabel text="What they will use it on" style={{ marginTop: 12, marginBottom: 6 }} />
         {/* Prose, so it gets the microphone: this is spoken far better than it
             is typed, one-handed, standing in a shop. It is the sample's own
             "why he wants it" made specific — a trial nobody can judge is a can
@@ -2572,21 +2665,20 @@ export default function Visit() {
           </Text>
         ) : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why they want a trial</Text>
+        <FieldLabel text="Why a trial" style={{ marginTop: 12, marginBottom: 6 }} />
         {/* A CODE AND NOT A SENTENCE — the same rule the lost reason and the
             hold reason follow. A sentence cannot be counted, so "how many
             trials did we give away on a price comparison this quarter" is a
             grep over free text; the list is configuration, so the office can
             reword one without an APK nobody can recall. */}
         {reasons.length ? (
-          <View style={{ gap: 8 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }} accessibilityRole="radiogroup">
             {reasons.map((o) => (
-              <Choice
+              <Chip
                 key={o.code}
                 label={o.label}
                 selected={draft.reasonCode === o.code}
                 onPress={() => { setDraft({ ...draft, reasonCode: o.code }); setFormErr(null); }}
-                style={{ width: '100%', alignItems: 'flex-start', paddingHorizontal: 14 }}
               />
             ))}
           </View>
@@ -2596,7 +2688,7 @@ export default function Visit() {
              is empty is an office that emptied it — and a heading with nothing
              under it reads as a broken screen rather than as a decision
              somebody made. */
-          <Text style={[type.caption, { color: C.muted }]}>
+          <Text style={{ fontSize: 13, color: C.muted }}>
             No trial reasons are set up yet. Ask the office to add them.
           </Text>
         )}
@@ -2606,19 +2698,24 @@ export default function Visit() {
           </Text>
         ) : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Come back on</Text>
-        <Pressable
-          onPress={() => setCalOpen('trial')}
-          style={{ width: '100%', height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.lg, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: C.surface }}>
-          {/* `trialDefault`, the day worked out when the screen opened, and not
-              a fresh clock read — the date shown here and the one `submitSample`
-              stores have to be the same day on a screen open across midnight. */}
-          <Text style={{ fontSize: 16, color: C.ink }}>{pretty(draft.trial ?? trialDefault)}</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+          <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={2} />
+          <Text style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>Come back on</Text>
+          <Pressable
+            onPress={() => setCalOpen('trial')}
+            accessibilityRole="button"
+            accessibilityLabel={'Trial follow-up on ' + pretty(draft.trial ?? trialDefault) + ', change'}
+            style={({ pressed }) => ({ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.navy, justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
+            {/* `trialDefault`, the day worked out when the screen opened, and not
+                a fresh clock read — the date shown here and the one `submitSample`
+                stores have to be the same day on a screen open across midnight. */}
+            <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>{pretty(draft.trial ?? trialDefault)}</Text>
+          </Pressable>
+        </View>
 
-        <Text style={[type.caption, { marginTop: 10 }]}>
-          Samples need your manager’s approval. The trial follow-up is set for you.
-        </Text>
+        <View style={{ marginTop: 8 }}>
+          <Fact icon="shield" text="Samples need your manager’s approval. The trial follow-up is set for you." />
+        </View>
 
         {formErr === 'save' ? (
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
@@ -2626,26 +2723,23 @@ export default function Visit() {
           </Text>
         ) : null}
 
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <Pressable onPress={() => setForm(null)} style={{ flex: 1, height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
-          </Pressable>
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <Btn label="Cancel" look="grey" height={56} onPress={() => setForm(null)} style={{ flex: 1 }} />
           {/* ONE SAMPLE PER PRESS, the same guard as the complaint above. */}
-          <Pressable
-            onPress={() => void submitSample()}
+          <Btn
+            label={formSaving ? 'Sending…' : 'Send request'}
+            look={formSaving ? 'off' : 'navy'}
+            height={56}
             disabled={formSaving}
-            accessibilityState={{ disabled: formSaving }}
-            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
-            <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
-              {formSaving ? 'Sending…' : 'Send request'}
-            </Text>
-          </Pressable>
+            onPress={() => void submitSample()}
+            style={{ flex: 1.4 }}
+          />
         </View>
       </BottomSheet>
 
       {/* ---- the date picker both of the above share ---- */}
       <BottomSheet open={!!calOpen} onClose={() => setCalOpen(null)}>
-        <Text style={[{ fontSize: 17, color: C.ink, marginBottom: 10 }, weight(600)]}>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, letterSpacing: -0.4, color: C.ink, marginBottom: 10 }, weight(800)]}>
           {calOpen === 'trial' ? 'Trial follow-up' : 'Next contact on'}
         </Text>
         <Calendar
@@ -2668,3 +2762,313 @@ export default function Visit() {
 function defaultTrial(): string {
   return isoDate(new Date(Date.now() + 7 * 86_400_000));
 }
+
+/* ═══════════════════════════════════════════ the Version 3 pieces, local */
+
+/** The amber we use for a warning line on navy, where `warnInk` cannot be read. */
+const AMBER_ON_NAVY = '#FFC24A';
+
+/**
+ * A pill button in the colours this screen's artboards draw — navy for the
+ * act, the canvas grey for the way out, the dashed lavender for "the pin is
+ * wrong". Local because the shared `PillButton` has no grey or dashed look and
+ * puts its style on the wrapper, where a fill cannot reach.
+ */
+function Btn({
+  label,
+  onPress,
+  look = 'navy',
+  height = 52,
+  icon,
+  disabled = false,
+  a11y,
+  hint,
+  style,
+}: {
+  label: string;
+  onPress: () => void;
+  look?: 'navy' | 'grey' | 'dashed' | 'primary' | 'lime' | 'off';
+  height?: number;
+  icon?: IconName;
+  disabled?: boolean;
+  a11y?: string;
+  hint?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const bg =
+    look === 'navy' ? C.navy : look === 'primary' ? C.primary : look === 'lime' ? C.lime : look === 'dashed' ? '#F7F4FF' : look === 'off' ? C.line : C.wash;
+  const fg =
+    look === 'navy' || look === 'primary' ? '#FFFFFF' : look === 'lime' ? C.navy : look === 'dashed' ? C.primaryDeep : look === 'off' ? C.muted : C.ink;
+  return (
+    <PressableScale
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={a11y ?? label}
+      accessibilityHint={hint}
+      accessibilityState={{ disabled }}
+      outerStyle={style}
+      style={{
+        minHeight: height,
+        borderRadius: height / 2,
+        backgroundColor: bg,
+        borderWidth: look === 'dashed' ? 1.5 : 0,
+        borderStyle: look === 'dashed' ? 'dashed' : 'solid',
+        borderColor: '#B9A6FF',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 16,
+        opacity: disabled ? 0.7 : 1,
+      }}>
+      {icon ? <Icon name={icon} size={height >= 56 ? 20 : 18} color={look === 'navy' ? C.lime : fg} strokeWidth={2} /> : null}
+      <Text style={[{ fontSize: height >= 60 ? 17 : height >= 52 ? 15 : 14, color: fg, textAlign: 'center' }, weight(700)]}>{label}</Text>
+    </PressableScale>
+  );
+}
+
+/** A small icon and a short fact beside it — "Checked against the shop". */
+function Fact({ icon, text, color = C.muted }: { icon: IconName; text: string; color?: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+      <Icon name={icon} size={16} color={color} strokeWidth={2} />
+      <Text style={{ fontSize: 13, lineHeight: 18, color, flexShrink: 1 }}>{text}</Text>
+    </View>
+  );
+}
+
+/** A white card at Version 3's radius, padding and no border. */
+function Panel({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
+  return <View style={[{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }, style]}>{children}</View>;
+}
+
+/** A card's own heading: an icon and the 15/800 title. */
+function PanelTitle({ icon, text, right }: { icon?: IconName; text: string; right?: React.ReactNode }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      {icon ? <Icon name={icon} size={18} color={C.primaryDeep} strokeWidth={2} /> : null}
+      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink, flex: 1, minWidth: 0 }, weight(800)]}>
+        {text}
+      </Text>
+      {right}
+    </View>
+  );
+}
+
+/**
+ * THE REFUSAL, said with its number. A distance is drawn big — it tells him
+ * whether to walk twenty steps or whether the book has the shop in the wrong
+ * town — with the radius it was measured against beside it. A missing or weak
+ * reading has no distance to show, so it is said in words instead.
+ */
+function RefusalBox({ verdict, radiusM }: { verdict: CheckInVerdict; radiusM: number }) {
+  const far = verdict.reason === 'too_far' && verdict.metresAway != null;
+  return (
+    <View
+      accessible
+      accessibilityLiveRegion="polite"
+      style={{ marginTop: 14, backgroundColor: C.warnBg, borderRadius: 18, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+      {far ? (
+        <View style={{ alignItems: 'center' }}>
+          <Text style={[{ fontSize: 30, lineHeight: 32, letterSpacing: -0.6, color: C.warnInk }, weight(800)]}>
+            {distanceLabel(verdict.metresAway) ?? Math.round(verdict.metresAway ?? 0) + ' m'}
+          </Text>
+          <Text style={[{ fontSize: 12, color: C.warnInk }, weight(700)]}>{'need ≤ ' + radiusM + ' m'}</Text>
+        </View>
+      ) : (
+        <Icon name="locate" size={24} color={C.warnInk} strokeWidth={2} />
+      )}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[{ fontSize: 13, lineHeight: 18, color: C.body }, weight(far ? 400 : 600)]}>{verdict.sentence}</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.body, marginTop: 2 }}>
+          {verdict.reason === 'too_far'
+            ? 'Walk to the shop and press again. Nothing is saved yet.'
+            : 'Nothing is saved yet.'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The seven outcome tiles: four across, each a glyph over its word. Drawn by
+ * hand rather than with `Choice` so they tick the way `Choice` would — the
+ * press goes through `pickOutcome`, which buzzes only when the answer moves.
+ */
+function OutcomeGrid({
+  value,
+  onPick,
+  compact = false,
+}: {
+  value: string | null;
+  onPick: (k: (typeof OUTCOMES)[number]['k']) => void;
+  compact?: boolean;
+}) {
+  return (
+    <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: compact ? 6 : 8 }}>
+      {OUTCOMES.map((o) => {
+        const on = value === o.k;
+        return (
+          <Pressable
+            key={o.k}
+            onPress={() => onPick(o.k)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on }}
+            accessibilityLabel={o.label}
+            style={({ pressed }) => ({
+              width: '23%',
+              flexGrow: 1,
+              maxWidth: '24%',
+              height: compact ? 60 : 76,
+              borderRadius: compact ? 16 : 18,
+              borderWidth: on ? 2 : 0,
+              borderColor: C.primary,
+              backgroundColor: on ? (compact ? C.navy : '#F7F4FF') : compact ? C.wash : C.surface,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              paddingHorizontal: 4,
+              opacity: pressed ? 0.85 : 1,
+            })}>
+            {compact ? null : (
+              <Icon name={OUTCOME_ICON[o.k] ?? 'visit'} size={20} color={on ? C.primary : C.ink} strokeWidth={2} />
+            )}
+            <Text
+              numberOfLines={2}
+              style={[{ fontSize: compact ? 11 : 12, lineHeight: 14, textAlign: 'center', color: on && compact ? '#FFFFFF' : C.ink }, weight(700)]}>
+              {o.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+/** A selectable pill: navy when chosen, a tint (or the canvas grey) when not. */
+function Chip({
+  label,
+  sub,
+  selected,
+  onPress,
+  tint,
+  block = false,
+  style,
+}: {
+  label: string;
+  sub?: string;
+  selected: boolean;
+  onPress: () => void;
+  tint?: { bg: string; fg: string };
+  /** A full-width rounded row rather than a pill — the product list. */
+  block?: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Pressable
+      onPress={() => {
+        if (!selected) feedback('select');
+        onPress();
+      }}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      accessibilityLabel={sub ? label + ', ' + sub : label}
+      style={({ pressed }) => [
+        {
+          minHeight: block ? 44 : 36,
+          paddingHorizontal: block ? 14 : 12,
+          paddingVertical: block ? 10 : 0,
+          borderRadius: block ? 16 : 18,
+          justifyContent: 'center',
+          alignItems: block ? 'flex-start' : 'center',
+          backgroundColor: selected ? C.navy : tint?.bg ?? C.wash,
+          opacity: pressed ? 0.85 : 1,
+        },
+        style,
+      ]}>
+      <Text style={[{ fontSize: block ? 14 : 13, color: selected ? '#FFFFFF' : tint?.fg ?? C.ink }, weight(700)]}>
+        {label}
+        {sub ? (
+          <Text style={[{ fontSize: 12, color: selected ? C.onNavyMuted : C.muted }, weight(400)]}>{' · ' + sub}</Text>
+        ) : null}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** A Version 3 sheet's heading: an icon, the 22/800 title, and what it is for. */
+function SheetHead({ icon, title, sub, right }: { icon: IconName; title: string; sub?: string; right?: string }) {
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Icon name={icon} size={22} color={C.primaryDeep} strokeWidth={2} />
+        <Text accessibilityRole="header" style={[{ fontSize: 22, letterSpacing: -0.44, color: C.ink, flex: 1 }, weight(800)]}>
+          {title}
+        </Text>
+        {right ? (
+          <Text numberOfLines={1} style={{ fontSize: 13, color: C.muted, maxWidth: '50%' }}>
+            {right}
+          </Text>
+        ) : null}
+      </View>
+      {sub ? <Text style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+/** A label above a field, 13/700 ink as the artboards set them. */
+function FieldLabel({ text, style }: { text: string; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={style}>
+      <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{text}</Text>
+    </View>
+  );
+}
+
+/** The way past an unmet checklist — dashed, quiet, and always saying the cost. */
+function SaveAsNotChecked({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Cannot do these? Save as not checked. Your manager sees your reason."
+      style={({ pressed }) => ({
+        width: '100%',
+        minHeight: 48,
+        marginTop: 6,
+        borderWidth: 1.5,
+        borderStyle: 'dashed',
+        borderColor: C.line,
+        borderRadius: 24,
+        backgroundColor: C.surface,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: pressed ? 0.7 : 1,
+      })}>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }, weight(600)]}>
+        Can’t? Save as not checked. Your manager sees why.
+      </Text>
+    </Pressable>
+  );
+}
+
+/** A 44 round − / + beside a count. */
+function StepButton({ label, glyph, onPress }: { label: string; glyph: string; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={() => {
+        feedback('select');
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={4}
+      style={({ pressed }) => ({ width: 44, height: 44, borderRadius: 22, backgroundColor: pressed ? C.line : C.wash, alignItems: 'center', justifyContent: 'center' })}>
+      <Text style={{ fontSize: 20, color: C.ink }}>{glyph}</Text>
+    </Pressable>
+  );
+}
+
