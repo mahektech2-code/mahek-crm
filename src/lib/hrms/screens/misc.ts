@@ -53,11 +53,11 @@ const noEmployee = () => err("Your account is not linked to an employee record y
 
 /* Never stored: a problem with the app goes to MahekOne's Tell us. */
 const APP_ISSUE = HELP.appIssue;
-const HELP_TYPES: string[] = [HELP.forgotCheckIn, HELP.lateCheckIn, HELP.forgotCheckOut, HELP.runningLate, HELP.overtime, HELP.learnApp, APP_ISSUE, HELP.other];
-const IN_TYPES: string[] = [HELP.forgotCheckIn, HELP.lateCheckIn, HELP.runningLate];
+const HELP_TYPES: string[] = [HELP.forgotCheckIn, HELP.lateCheckIn, HELP.forgotCheckOut, HELP.runningLate, HELP.notAtOffice, HELP.overtime, HELP.learnApp, APP_ISSUE, HELP.other];
+const IN_TYPES: string[] = [HELP.forgotCheckIn, HELP.lateCheckIn, HELP.runningLate, HELP.notAtOffice];
 const OUT_TYPES: string[] = [HELP.forgotCheckIn, HELP.forgotCheckOut];
 /** The issues about an attendance day, which the resolver corrects there (§6.3). */
-const ATTENDANCE_TYPES: string[] = [HELP.forgotCheckIn, HELP.lateCheckIn, HELP.forgotCheckOut, HELP.runningLate];
+const ATTENDANCE_TYPES: string[] = [HELP.forgotCheckIn, HELP.lateCheckIn, HELP.forgotCheckOut, HELP.runningLate, HELP.notAtOffice];
 
 function helpForm(): FormSpec {
   return {

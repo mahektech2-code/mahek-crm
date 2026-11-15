@@ -8,7 +8,7 @@ import { hrmsAudit, hrmsId, today, first } from "./server";
 import { attendanceCfg } from "./services/attendance";
 import { decideCheckIn, type CheckInRefusal } from "./engines/attendance";
 import { closeFromBreak, endSession, openSession, phaseOf, startSession, type WorkdayPhase, type WorkdaySession } from "./engines/workday";
-import { approvedSpans, forgetLock, mirrorPatch, sessionsOf, settledToday, workdayCfg } from "./services/workday";
+import { approvedSpans, forgetLock, mirrorPatch, sessionsOf, settledToday } from "./services/workday";
 import { metresBetween, nowHM } from "./time";
 import { managerUserIdsOf, powerHolderUserIds, usersOfEmployees } from "./services/notify";
 import { notifyUsers } from "@/lib/notify";
@@ -86,14 +86,15 @@ export async function punchInAgain(
 }
 
 /** Start a break. The reason is optional and no reason has a limit of its own. */
-export async function startBreak(ctx: HrmsContext, reason: string | null): Promise<WorkdayResult> {
+export async function startBreak(ctx: HrmsContext, reason: string | null, note: string | null = null): Promise<WorkdayResult> {
   const row = await todayRow(ctx);
   if (!row) return err("You have not punched in today.");
   const s = sessionsOf(row);
   if (!openSession(s)) return err("You are not working right now, so there is no break to start.");
-  const cfg = await workdayCfg();
-  const why = reason?.trim() ? reason.trim().slice(0, 80) : null;
-  if (why && !cfg.breakReasons.includes(why) && why.length > 80) return err("That reason is too long.");
+  /* The picked reason and the optional note are one line on the session,
+     "Lunch · Bank visit for the cheque", because a break carries one reason. */
+  const parts = [reason?.trim(), note?.trim()].filter(Boolean) as string[];
+  const why = parts.length ? parts.join(" · ").slice(0, 80) : null;
   const now = Date.now();
   const next = endSession(s, now, "break", why)!;
   await write(ctx, row, next);
@@ -228,4 +229,19 @@ export async function decideClaim(ctx: HrmsContext, id: string, approve: boolean
     })),
   );
   return okVoid(approve ? "Counted as work" : "Kept as a break");
+}
+
+/**
+ * Where the punch-in gate says somebody is, before they press the button:
+ * their office and how far its pin is from the fix. Read-only, and only ever
+ * a preview — the punch-in measures again and decides.
+ */
+export async function previewLocation(ctx: HrmsContext, fix: Fix): Promise<{ office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null }> {
+  const me = ctx.employee;
+  const name = me?.office ?? null;
+  const [o] = name ? await db.select().from(hrmsOffices).where(eq(hrmsOffices.name, name)).limit(1) : [];
+  const radiusM = o?.radiusM ?? 200;
+  if (!o || o.lat == null || o.lng == null || fix.lat == null || fix.lng == null) return { office: name, distanceM: null, radiusM, inside: null };
+  const distanceM = Math.round(metresBetween({ lat: fix.lat, lng: fix.lng }, { lat: o.lat, lng: o.lng }));
+  return { office: name, distanceM, radiusM, inside: distanceM <= radiusM };
 }

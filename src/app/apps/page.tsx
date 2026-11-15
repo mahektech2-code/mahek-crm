@@ -13,7 +13,8 @@ import { AccountMenu } from "@/components/shell/account-menu";
 import { levelLabel } from "@/lib/hat-labels";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { cx } from "@/components/ui/primitives";
-import { clock, longDate, today } from "@/lib/format";
+import { clock, today } from "@/lib/format";
+import { dayDate } from "@/components/workday/format";
 import { AppShortcuts } from "./app-shortcuts";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LauncherCheckIn } from "@/components/checkin/launcher-check-in";
@@ -89,8 +90,8 @@ export default async function LauncherPage() {
               {greeting}, {user.name.split(" ")[0]}
             </h1>
             <p className="mt-1 text-sm text-muted">
-              {longDate(today())}
-              {attendance ? ` · signed in at ${clock(attendance.signedInAt)}` : ""}
+              {dayDate(today())}
+              {attendance ? ` · signed in at ${clock(attendance.signedInAt).toUpperCase()}` : ""}
               {pending ? ` · ${pending} waiting across ${waiting.length} ${waiting.length === 1 ? "app" : "apps"}` : ""}
             </p>
           </div>

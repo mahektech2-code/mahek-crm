@@ -17,7 +17,7 @@ import { appAccess, employeeReporting, employees, hrmsAttendance, hrmsHolidays, 
 import { setTestUser } from "@/lib/auth";
 import { hrmsContext } from "@/lib/hrms/access";
 import { hrmsCheckIn, hrmsCheckOut } from "@/lib/actions/hrms-checkin";
-import { resumeWork, startBreak, decideClaim, beat } from "@/lib/hrms/workday-ops";
+import { resumeWork, startBreak, decideClaim, beat, previewLocation } from "@/lib/hrms/workday-ops";
 import { lockApplies, sessionsOf, settledToday, workdayState } from "@/lib/hrms/services/workday";
 import { attendanceRows } from "@/lib/hrms/services/attendance";
 import { phaseOf } from "@/lib/hrms/engines/workday";
@@ -102,6 +102,26 @@ describe("the workday clock", () => {
     row = (await settledToday(e.id))!;
     assert.equal(sessionsOf(row).length, 2);
     assert.equal(phaseOf(sessionsOf(row)), "working");
+  });
+
+  test("a break note rides on the reason, and the gate previews the distance to the office", async () => {
+    const e = await person("Nita Note", office);
+    const ctx = await as(await account("Nita Note", e));
+    const here = await previewLocation(ctx, { lat: PIN.lat + 0.0003, lng: PIN.lng });
+    assert.equal(here.office, office);
+    assert.equal(here.inside, true);
+    assert.ok(here.distanceM! > 20 && here.distanceM! < 50, String(here.distanceM));
+    const far = await previewLocation(ctx, { lat: PIN.lat + 0.05, lng: PIN.lng });
+    assert.equal(far.inside, false);
+    assert.equal((await previewLocation(ctx, { lat: null, lng: null })).inside, null, "no fix, no verdict");
+
+    assert.ok((await hrmsCheckIn({ ...PIN, photoId: null, code: null })).ok);
+    assert.ok((await startBreak(ctx, "Personal", "Bank visit for the cheque")).ok);
+    const s = sessionsOf((await settledToday(e.id))!);
+    assert.equal(s[0].reason, "Personal · Bank visit for the cheque");
+    const state = await workdayState(ctx);
+    assert.equal(state.breaks[0].reason, "Personal · Bank visit for the cheque");
+    assert.equal(state.role, "Telecaller");
   });
 
   test("an idle half hour is a break from the last activity; claimed as work, the manager decides", async () => {

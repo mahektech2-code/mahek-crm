@@ -3,8 +3,8 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* The workday's own spellings, shared by the chip, the lock and the card. */
 
-/** 9:28 am */
-export const at = (ms: number | null | undefined) => (ms ? clock(new Date(ms)) : "—");
+/** 9:28 AM — the design writes the suffix in capitals. */
+export const at = (ms: number | null | undefined) => (ms ? clock(new Date(ms)).toUpperCase() : "—");
 
 /** 3:42 — hours and minutes. */
 export function hmOf(ms: number): string {
@@ -62,4 +62,10 @@ export function greeting(ms: number, name: string): string {
     new Intl.DateTimeFormat("en-GB", { timeZone: APP_TIMEZONE, hour: "numeric", hour12: false }).format(new Date(ms)),
   );
   return `Good ${h < 12 ? "morning" : h < 17 ? "afternoon" : "evening"}, ${name.split(" ")[0]}`;
+}
+
+/** "Sunday, 15 November" — the design's date under the clock. */
+export function dayDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long" }).format(new Date(Date.UTC(y, m - 1, d)));
 }
