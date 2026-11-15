@@ -34,6 +34,8 @@ import { publicRouting } from "@/lib/public-links";
 export const APP_HEADER = "x-mahek-app";
 /** The native Factory app's session, sent where a browser would send a cookie. */
 export const FACTORY_SESSION_HEADER = "x-factory-session";
+/** The page path, for the workday lock in `requireUser`. Only this function writes it. */
+export const PATH_HEADER = "x-mahek-path";
 const SESSION_COOKIE_NAME = "mahekone_session";
 
 /* Which app a path belongs to lives in `lib/app-routes.ts`, pure, because the
@@ -136,6 +138,12 @@ export function proxy(request: NextRequest) {
   headers.delete(WORKSPACE_HEADER);
   const workspace = workspaceFor(request.nextUrl.pathname);
   if (workspace) headers.set(WORKSPACE_HEADER, workspace);
+
+  /* The path, so `requireUser` can send somebody who is locked out of their
+     workday to the lock screen and back again. Stripped first, like the two
+     above: only this function may write it. */
+  headers.delete(PATH_HEADER);
+  headers.set(PATH_HEADER, request.nextUrl.pathname + request.nextUrl.search);
 
   /*
    * THE FACTORY APP ON A PHONE HAS NO COOKIE JAR. The native app holds the

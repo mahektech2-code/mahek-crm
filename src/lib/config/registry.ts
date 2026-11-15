@@ -4393,7 +4393,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Lock MahekOne until people punch in",
     description:
-      "On, every app is locked for an office employee before they punch in, while they are on a break and after they punch out, and saves are refused on the server. Field salesmen (who punch in on the MBOS handset), people not linked to an employee record, and days off are never locked.",
+      "On, every app is locked for an office employee before they punch in, while they are on a break and after they punch out: no page opens (they are sent to the lock screen) and saves are refused on the server. Field salesmen (who punch in on the MBOS handset), people not linked to an employee record, and days off are never locked.",
     default: true,
   },
   {
@@ -4402,8 +4402,8 @@ export const SETTINGS = [
     category: "hrms",
     label: "Platform administrators are never locked",
     description:
-      "On, a platform administrator can always use MahekOne without punching in, so nobody is ever locked out of the console that turns the lock off.",
-    default: true,
+      "On, a platform administrator can use MahekOne without punching in. Off (the default), everybody punches in, administrators included — the lock screen always offers Punch in, so nobody is ever locked out for good.",
+    default: false,
   },
   {
     key: "hrms.workday.idleWarnMinutes",

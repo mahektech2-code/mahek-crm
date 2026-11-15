@@ -2346,6 +2346,13 @@
       "when": 1793800700000,
       "tag": "0339_office_timings",
       "breakpoints": true
+    },
+    {
+      "idx": 336,
+      "version": "7",
+      "when": 1793800900000,
+      "tag": "0341_workday_lock_everyone",
+      "breakpoints": true
     }
   ]
 }

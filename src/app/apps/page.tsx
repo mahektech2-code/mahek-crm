@@ -20,11 +20,14 @@ import { CardGrid } from "@/components/ui/card-grid";
 import { LauncherCheckIn } from "@/components/checkin/launcher-check-in";
 import { WorkdayProvider } from "@/components/workday/workday-context";
 import { WorkdayChip } from "@/components/workday/workday-chip";
+import { ResumeAfterUnlock } from "@/components/workday/resume-after-unlock";
 
 export const metadata = { title: "Your apps - MahekOne" };
 
-export default async function LauncherPage() {
+export default async function LauncherPage({ searchParams }: { searchParams: Promise<{ next?: string | string[] }> }) {
   const user = await requireUser();
+  const nextParam = (await searchParams).next;
+  const next = typeof nextParam === "string" ? nextParam : null;
   const [apps, ids, attendance] = await Promise.all([
     launcherApps(user),
     listUserApps(user.id),
@@ -51,6 +54,7 @@ export default async function LauncherPage() {
 
   return (
     <WorkdayProvider>
+    <ResumeAfterUnlock next={next} />
     <div className="animate-fade-in flex min-h-screen flex-col bg-canvas">
       {apps.length > 1 ? (
         <AppShortcuts hrefs={apps.map((a) => a.href)} />
