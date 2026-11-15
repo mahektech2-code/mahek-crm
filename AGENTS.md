@@ -2889,6 +2889,32 @@ says **✓ Bank** once a bank line is matched to it. Its "Bank statement" tab is
 gone from the registry (the `bankLines` module stays, unreached); the bank's own
 record lives in Accounts.
 
+## The accounts deadline
+
+**ANYTHING WAITING ON THE LEDGER DESK PAST `accountsSla.hours` WORKING HOURS IS
+REPORTED, AND STAYS THE DESK'S.** Orders to approve, payments to confirm
+(holds only with `accountsSla.includeHeldPayments`), credit notes and order
+changes. `lib/engines/accounts-sla.ts` is the clock, pure: `working_days`
+counts every hour of a working day (Saturday 4 pm is due Monday 4 pm),
+`office_hours` only the shift; days off and company holidays count nothing.
+`sweepAccountsSla` (hourly as `accounts-sla`, and at most once a minute from
+the Accounts layout) writes one `accounts_sla_breaches` row per item (0342),
+resolves it the moment the record leaves its queue, and tells — each claimed
+by a conditional update so nobody is told twice — every platform and Founder
+administrator plus the desk at the deadline, then the admins again every
+`accountsSla.escalateEveryHours` with the desk's latest reason. Nothing is
+reassigned: admins are informed, accounts decide.
+
+**THE DESK OWES A REASON.** `app/accounts/deadline-gate.tsx` opens on every
+Accounts screen a dialog that closes only on a reason (10+ characters) per
+item and a reminder (1 hour, tomorrow, 2 days, or a time within 7 days);
+it asks again when the reminder comes round. It does not open on the four
+work screens — a bar offers it there — so "Open and decide" is never blocked.
+A reason is shared by the desk; `accounts_sla_remarks` is append-only and
+`remarkProblem` is checked in the dialog and in `explainAccountsDelays`.
+Command Centre → Accounts deadlines (`founder.accounts-deadlines`) is the
+founder's view, also on Needs you; Mark seen and Nudge accounts never move it.
+
 ## Bank statement management (Accounts)
 
 **THE BANK'S PDF, READ BY AI, CHECKED, AND EVERY LINE EXPLAINED ONCE.** Its own

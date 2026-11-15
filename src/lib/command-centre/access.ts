@@ -29,6 +29,7 @@ export const SECTION_MODULE: Record<SectionKey, string> = {
   field: "founder.field",
   service: "founder.service",
   money: "founder.money",
+  deadlines: "founder.accounts-deadlines",
   prices: "founder.price-lists",
   whatsapp: "founder.whatsapp",
   people: "founder.people",

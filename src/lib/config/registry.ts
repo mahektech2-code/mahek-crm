@@ -932,6 +932,56 @@ export const SETTINGS = [
     default: [],
   },
   {
+    key: "accountsSla.enabled",
+    type: "boolean",
+    category: "payments",
+    label: "Accounts approval deadline",
+    description:
+      "When on, anything waiting on the accounts team — an order to approve, a payment to confirm, a credit note or an order change to decide — that is still waiting after the deadline below is reported to the admins, put on the Founder Command Centre's Accounts deadlines page, and the accounts team is asked for a reason until it is decided.",
+    default: true,
+  },
+  {
+    key: "accountsSla.hours",
+    type: "integer",
+    category: "payments",
+    label: "Deadline (working hours)",
+    description:
+      "How many working hours accounts have to decide something before the admins are told. Sundays (or whichever days are not in the working week) and company holidays are not counted.",
+    default: 24,
+    min: 1,
+    max: 240,
+  },
+  {
+    key: "accountsSla.clock",
+    type: "text",
+    category: "payments",
+    label: "How working hours are counted",
+    description:
+      "working_days: every hour of a working day counts (Saturday 4 pm is due Monday 4 pm). office_hours: only the hours between shift start and shift end count, so 24 hours of a ten-hour shift is two and a half days.",
+    default: "working_days",
+    options: ["working_days", "office_hours"],
+  },
+  {
+    key: "accountsSla.escalateEveryHours",
+    type: "integer",
+    category: "payments",
+    label: "Tell the admins again every (working hours)",
+    description:
+      "After the first notice, the admins are told again each time something has waited this many further working hours, with the accounts team's latest reason. 0 tells them once only.",
+    default: 24,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "accountsSla.includeHeldPayments",
+    type: "boolean",
+    category: "payments",
+    label: "Count held payments",
+    description:
+      "A held payment is one somebody in accounts is already looking for in the bank statement. Off, holds are left to their own ageing on the payments queue; on, a hold past the deadline is reported like any other payment.",
+    default: false,
+  },
+  {
     key: "payments.confirmationAgeWarningHours",
     type: "integer",
     category: "payments",
@@ -6866,6 +6916,11 @@ export type Config = {
 
   "payments.modes": string[];
   "payments.referenceRequiredModes": string[];
+  "accountsSla.enabled": boolean;
+  "accountsSla.hours": number;
+  "accountsSla.clock": string;
+  "accountsSla.escalateEveryHours": number;
+  "accountsSla.includeHeldPayments": boolean;
   "payments.confirmationAgeWarningHours": number;
   "payments.datedModes": string[];
   "payments.holdStaleDays": number;

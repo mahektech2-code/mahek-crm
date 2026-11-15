@@ -24,6 +24,8 @@ export type SectionKey =
   | "field"
   | "service"
   | "money"
+  /** Accounts deadlines — a desk at /founder/accounts-deadlines. */
+  | "deadlines"
   | "prices"
   | "whatsapp"
   | "people"
@@ -46,6 +48,7 @@ export const SECTION_KEYS: readonly SectionKey[] = [
   "field",
   "service",
   "money",
+  "deadlines",
   "prices",
   "whatsapp",
   "people",
