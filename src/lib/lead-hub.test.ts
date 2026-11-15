@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { APP_MODULES } from "@/lib/modules";
-import { HUB_AREAS, allHubLinks, hubFor, hubHref, hubLanding, hubPlace } from "@/lib/lead-hub";
+import { HUB_DESKS, allHubLinks, hubFor, hubHref, hubLanding, hubNav, hubPlace } from "@/lib/lead-hub";
 
 const crmLeadModules = APP_MODULES.filter(
   (m) =>
@@ -37,10 +37,9 @@ describe("the Leads frame covers every lead module and invents none", () => {
 
 describe("what a person sees", () => {
   it("only what they hold", () => {
-    const areas = hubFor(new Set(["crm.samples"]));
     assert.deepEqual(
-      areas.map((a) => a.key),
-      ["pipeline", "insights"],
+      hubNav(new Set(["crm.samples"])).map((d) => d.key),
+      ["samples", "reports"],
     );
     assert.equal(hubLanding(new Set(["crm.samples"])), "/crm/samples/desk");
     assert.equal(hubLanding(new Set()), null);
@@ -54,15 +53,25 @@ describe("what a person sees", () => {
     const sample = hubPlace(all, "/crm/samples/smp_1");
     assert.equal(sample?.desk.key, "samples");
     const tab = hubPlace(all, "/crm/leads/actions/overdue");
-    assert.equal(tab?.area.key, "today");
+    assert.equal(tab?.desk.key, "follow-ups");
     assert.equal(tab?.link?.label, "Overdue");
-    assert.equal(hubPlace(all, "/crm/leads/actions/nurture")?.area.key, "insights");
+    assert.equal(hubPlace(all, "/crm/leads/actions/nurture")?.desk.key, "reports");
   });
 
-  it("four areas, in the order the work happens", () => {
+  it("the sidebar rows, in the order the work happens", () => {
     assert.deepEqual(
-      HUB_AREAS.map((a) => a.label),
-      ["Today", "Leads", "Pipeline", "Insights"],
+      HUB_DESKS.filter((d) => d.nav !== false).map((d) => d.label),
+      [
+        "My day",
+        "All leads",
+        "Calling desk",
+        "Sales Manager desk",
+        "Verify & qualify",
+        "Samples & trials",
+        "Negotiation",
+        "Handovers",
+        "Lead reports",
+      ],
     );
   });
 });

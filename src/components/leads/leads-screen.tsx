@@ -1751,14 +1751,12 @@ function PotentialCell({ lead }: { lead: LeadRow }) {
  * `salesTypeLabel` is the only vocabulary — a second set of words for the same
  * three codes typed into a screen is how one shop comes to read two ways — and
  * the hints come off `SALES_TYPES` for the same reason. The fourth answer gets
- * the one sentence that is genuinely about this screen rather than about the
- * code: a lead raised before the funnel existed climbs the six rungs this
- * product shipped with, and nothing backfills a ladder onto it, because
- * guessing which of three somebody was on decides which GATES apply.
+ * one sentence: a lead with no sales type climbs the same stages as every
+ * other (one ladder, Nov 2026), so all it is missing is who bills them.
  */
 function salesTypeSentence(type: LeadSalesType | null): string {
   if (!type) {
-    return "Raised before the funnel, so it is on no ladder — it climbs the six original rungs. Nothing guesses one for it, because the ladder decides which gates apply.";
+    return "Not set yet — the lead climbs the same stages as every other. Set it to say who bills them.";
   }
   const hint = SALES_TYPES.find((s) => s.code === type)?.hint;
   return hint ? `${salesTypeLabel(type)} — ${hint}` : salesTypeLabel(type);

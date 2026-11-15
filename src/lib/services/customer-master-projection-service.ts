@@ -357,7 +357,8 @@ export async function projectCustomerMaster(
           leadSource: "Mahek EMP 2.0",
           ...(suspect
             ? { leadSalesType: "direct" as const, leadStage: "suspect" as const, leadStageSince: sql`(now() at time zone ${APP_TIMEZONE})::date` }
-            : {}),
+            : /* Every lead has a stage: one without is on no Lead Management screen. */
+              { leadStage: "suspect" as const, leadStageSince: sql`(now() at time zone ${APP_TIMEZONE})::date` }),
           gpsLat: pin?.lat,
           gpsLng: pin?.lng,
           // ownerId is deliberately null. On an imported book it would be

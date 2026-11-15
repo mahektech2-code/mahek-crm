@@ -1,5 +1,6 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { db } from "@/db";
 import { randomUUID } from "node:crypto";
 import { customers, sheetPartyRows, syncConflicts, users } from "@/db/schema";
@@ -461,6 +462,9 @@ export async function projectParties(
         city: party.area ?? "",
         region: party.state,
         kind: "lead",
+        /* A lead with no stage is on no Lead Management screen. */
+        leadStage: "suspect",
+        leadStageSince: sql`(now() at time zone ${APP_TIMEZONE})::date`,
         leadSource: party.counterType ?? party.segment,
         status: party.partyStatus?.trim().toLowerCase() === "deactive"
           ? "deactivated"

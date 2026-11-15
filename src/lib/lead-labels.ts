@@ -218,13 +218,13 @@ const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
     long: "The shop has the sample. Confirm it, then write down what they thought and the verdict.",
   },
   first_order: {
-    short: "1st order",
+    short: "First order",
     long: "They have ordered. They are now our customer.",
   },
   delivery: { short: "Delivery", long: "Follow the goods until they reach them." },
   payment: { short: "Payment", long: "Follow up the payment on the agreed terms." },
   second_order: {
-    short: "2nd order",
+    short: "Second order",
     long: "They ordered again. This is real business now, not a trial.",
   },
   customer: {

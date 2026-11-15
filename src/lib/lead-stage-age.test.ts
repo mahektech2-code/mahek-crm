@@ -95,8 +95,8 @@ describe("stage date stays in step with the stage", () => {
     assert.match(mbos, /leadStage: "negotiation", leadStageSince: await today\(\)/);
   });
 
-  test("a legacy-ladder stage write dates itself only on a real change", () => {
-    assert.match(mbos, /if \(p\.stage !== existing\.leadStage\) changed\.leadStageSince = await today\(\)/);
+  test("no handset write puts a stage on a lead without asking the gate (one ladder)", () => {
+    assert.doesNotMatch(mbos, /changed\.leadStage = p\.stage/);
   });
 
   test("the verification fallback re-dates only when the rung changes", () => {

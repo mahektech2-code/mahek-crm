@@ -21,7 +21,6 @@ import { readFileSync } from "node:fs";
 import {
   DIRECT_LADDER,
   DISTRIBUTOR_LADDER,
-  LEGACY_LADDER,
   THIRD_PARTY_LADDER,
   isUndecidedSuspect,
   ladderFor,
@@ -42,7 +41,6 @@ test("the funnel's foot is `suspect` and the legacy foot is `new`, by name", () 
      just as happily if both feet were renamed together — and the server's
      refusal sentences, the handset's card and §B's own wording all say these
      two words out loud. */
-  assert.equal(LEGACY_LADDER[0], "new");
   assert.equal(DIRECT_LADDER[0], "suspect");
   assert.equal(THIRD_PARTY_LADDER[0], "suspect");
   assert.equal(DISTRIBUTOR_LADDER[0], "suspect");
@@ -118,9 +116,12 @@ test("a create is planted at the foot, whatever rung it names", () => {
 test("what the deployed handset actually sends is planted exactly as sent", () => {
   /* The other half of the argument for correcting rather than refusing: no
      honest payload is touched by any of this. `captureLead` sends `suspect`
-     where the salesman answered §2 and `new` where the build never asked. */
+     where the salesman answered §2 and `new` where the build never asked.
+     One ladder (Nov 2026): an old build's `new` is planted at the foot every
+     lead now shares, Suspect. */
   assert.equal(plantableStage("suspect", "direct"), "suspect");
-  assert.equal(plantableStage("new", null), "new");
+  assert.equal(plantableStage("new", null), "suspect");
+  assert.equal(plantableStage("suspect", null), "suspect");
 });
 
 /**

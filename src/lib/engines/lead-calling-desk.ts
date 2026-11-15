@@ -101,7 +101,8 @@ export const DESK_FIELDS: readonly DeskField[] = [
     label: "Customer type",
     kind: "choice",
     required: false,
-    prospect: false,
+    /* The Prospect gate asks for it, so "ready" must too. */
+    prospect: true,
     suggestCall: 1,
     options: [
       { value: "dealer", label: "Dealer" },
@@ -113,7 +114,7 @@ export const DESK_FIELDS: readonly DeskField[] = [
   },
   { key: "decisionMaker", label: "Decision maker", kind: "text", required: false, prospect: false, suggestCall: 2, hint: "Ask if known" },
   { key: "buyer", label: "Buyer", kind: "text", required: false, prospect: false, suggestCall: 3 },
-  { key: "gstin", label: "GST", kind: "text", required: false, prospect: false, suggestCall: 2 },
+  { key: "gstin", label: "GST", kind: "text", required: false, prospect: true, suggestCall: 2 },
   { key: "monthlyLitres", label: "Monthly requirement", kind: "litres", required: false, prospect: true, suggestCall: 1, hint: "Litres a month" },
   { key: "creditDaysWanted", label: "Credit days", kind: "days", required: false, prospect: false, suggestCall: 3 },
   { key: "requiredProductId", label: "Product", kind: "product", required: false, prospect: true, suggestCall: 1 },

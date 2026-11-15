@@ -349,10 +349,10 @@ function ConvertDialog({
     >
       <div className="mb-2 flex items-center gap-2.5 text-xs text-muted">
         <span>
-          <b className="text-ink">{answered} of 7</b> answers in
+          <b className="text-ink">{answered} of {PROSPECT_ANSWERS.length}</b> answers in
         </span>
         <div className="h-[5px] flex-1 overflow-hidden rounded-[3px] bg-divider">
-          <div className="h-full bg-brand" style={{ width: `${(answered / 7) * 100}%` }} />
+          <div className="h-full bg-brand" style={{ width: `${(answered / PROSPECT_ANSWERS.length) * 100}%` }} />
         </div>
       </div>
 

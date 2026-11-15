@@ -22,9 +22,10 @@ describe("where a Lost lead comes back", () => {
     }
   });
 
-  test("a failed verification on a ladder with no Prospect rung falls to the foot, not an invalid state", () => {
+  test("a failed verification on a lead with no sales type returns to Prospect, like any other lead (one ladder)", () => {
     const t = reopenTarget({ lostFrom: "contacted", salesType: null, lostReason: VERIFICATION_FAILED_CODE });
-    assert.equal(t.stage, ladderFor(null)[0]);
+    assert.equal(t.stage, "prospect");
+    assert.equal(ladderFor(null)[0], "suspect");
   });
 
   test("a rung the ladder no longer has starts again at the foot of the CURRENT ladder", () => {

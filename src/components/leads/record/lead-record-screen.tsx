@@ -65,12 +65,7 @@ import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-mana
 import { ReassignLead, type Assignee } from "./reassign-lead";
 import { WhosUp } from "./where-it-stands";
 import { CardGrid } from "@/components/ui/card-grid";
-import {
-  DIRECT_LADDER,
-  DISTRIBUTOR_LADDER,
-  LEGACY_LADDER,
-  THIRD_PARTY_LADDER,
-} from "@/lib/engines/lead-ladder";
+import { DISPLAY_STAGES } from "@/lib/engines/lead-ladder";
 import {
   Card,
   GateCard,
@@ -263,18 +258,9 @@ export const RECORD_TABS: ReadonlyArray<{
  */
 const CLOSED_STAGES = new Set<LeadStage>(["lost", "won", "customer", "active_distributor"]);
 
-/** Which of the four ladders this is, said in words rather than implied. */
+/** The stage bar's name for screen readers: every lead has the same seven stages. */
 function ladderName(salesType: LeadRecord["salesType"]): string {
-  switch (salesType) {
-    case "direct":
-      return `Direct customer — ${DIRECT_LADDER.length} stages`;
-    case "third_party":
-      return `Third-party customer — ${THIRD_PARTY_LADDER.length} stages`;
-    case "distributor":
-      return `Distributor — ${DISTRIBUTOR_LADDER.length} stages`;
-    default:
-      return `Older lead — ${LEGACY_LADDER.length} stages`;
-  }
+  return `${salesTypeLabel(salesType)} — ${DISPLAY_STAGES.length} stages`;
 }
 
 export function LeadRecordScreen({
@@ -1474,7 +1460,7 @@ function QualificationPanel({
     return (
       <Panel
         title="Qualification"
-        hint="Nothing to qualify on the original ladder — these leads predate the funnel and climb the six rungs they were raised on. Nothing backfills a sales type, because guessing which of three ladders somebody was on is a decision dressed up as a migration."
+        hint="This lead has no checklist at its stage."
       >
         <p className="text-[13px] text-muted">No checklist applies.</p>
       </Panel>

@@ -68,10 +68,11 @@ describe("funnelPosition", () => {
     assert.ok(!p.skipped.some((s) => s.stage === "customer"), "the landing rung is not skipped");
   });
 
-  test("a legacy lead with no sales type climbs the old ladder", () => {
+  test("a lead with no sales type, still on a legacy word, is placed on the one ladder", () => {
     const p = funnelPosition("contacted", null);
-    assert.deepEqual(p.passed.map((s) => s.stage), ["new"]);
-    assert.deepEqual(p.skipped.map((s) => s.stage), ["contacted", "qualified", "negotiation"]);
+    assert.deepEqual(p.passed.map((s) => s.stage), []);
+    assert.equal(p.skipped[0].stage, "suspect");
+    assert.ok(!p.skipped.some((s) => (s.stage as string) === "contacted"));
   });
 
   test("a lead off its ladder (lost, on hold) skips every working rung", () => {

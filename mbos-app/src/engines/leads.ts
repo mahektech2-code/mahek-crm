@@ -17,7 +17,6 @@
 import {
   DIRECT_LADDER,
   DISTRIBUTOR_LADDER,
-  LEGACY_LADDER,
   THIRD_PARTY_LADDER,
   TERMINAL_STAGES,
   bandOf,
@@ -470,7 +469,11 @@ export function reorderLabel(
 /** Every rung anything can stand on, built from the ladders and never typed. */
 export const ALL_RUNGS: readonly FunnelRung[] = Array.from(
   new Set<FunnelRung>([
-    ...LEGACY_LADDER,
+    /* The retired legacy words: an older row may still carry one. */
+    'new',
+    'contacted',
+    'qualified',
+    'won',
     ...DIRECT_LADDER,
     ...THIRD_PARTY_LADDER,
     ...DISTRIBUTOR_LADDER,
