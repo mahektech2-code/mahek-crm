@@ -112,6 +112,22 @@ const nextConfig: NextConfig = {
      * the limit in words. `publish-limits.test.ts` holds the two together.
      */
     proxyClientMaxBodySize: "32mb",
+
+    /*
+     * NO SOURCE MAPS IN A PRODUCTION BUILD, because nothing reads them and
+     * writing them is the larger part of what the build costs in memory.
+     *
+     * Turbopack writes a map beside every server chunk — about 19,000 files —
+     * and holds them while it does: measured on this repository, `next build`
+     * peaked at 13.6 GB with them and 9.3 GB without, and with them it was
+     * being killed for lack of memory on GitHub's 16 GB runners, which is the
+     * `stack` check failing at random. The browser is sent none either way
+     * (`productionBrowserSourceMaps` is off by default), and the server starts
+     * as plain `node server.js` with no `--enable-source-maps`, so a stack
+     * trace in production was never mapped back through them. Development
+     * keeps them, where a readable stack trace is the point.
+     */
+    turbopackSourceMaps: process.env.NODE_ENV !== "production",
   },
 
   /*

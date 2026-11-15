@@ -70,7 +70,17 @@ export type PlaceTreeImport = {
 export async function importPlaceTree(
   options: { dryRun?: boolean; file?: string } = {},
 ): Promise<PlaceTreeImport> {
-  const rows = parseCsv(readFileSync(options.file ?? DATA_FILE, "utf8"));
+  /* TWO READS, NOT `options.file ?? DATA_FILE`. The bundler traces every file a
+     server module might read, and a path that could be anything a caller
+     passes makes it trace THE WHOLE REPOSITORY — mbos-app and all — for every
+     route that reaches this module through the MBOS sign-in. That one
+     expression took `next build` to ~14 GB and got it killed in CI. The
+     default is a fixed path the trace can see; the override is a test's, and
+     is told to the bundler as something it must not follow. */
+  const text = options.file
+    ? readFileSync(/* turbopackIgnore: true */ options.file, "utf8")
+    : readFileSync(DATA_FILE, "utf8");
+  const rows = parseCsv(text);
 
   /* ---- the tree the file describes ---- */
   const roots = new Map<string, TreeNode>();
