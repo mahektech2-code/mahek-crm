@@ -242,7 +242,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Material returns",
     icon: "swap",
     screens: [
-      s("vendorReturns", "vendor-returns", "Vendor returns", "Material sent back to a supplier, its debit note and the outward.", true, [
+      s("vendorReturns", "vendor-returns", "Supplier returns", "Material sent back to a supplier, its debit note and the outward.", true, [
         v("vendorReturns", "Purchase returns"),
         v("debitNotes", "Debit notes"),
         v("returnOutwards", "Return outward"),
@@ -262,7 +262,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     screens: [
       s("emptyDrums", "empty-drums", "Empty drums", "Every emptied drum, weighed and linked to its GRN.", true, [
         v("emptyDrums", "Mahek stock"),
-        v("drumReturnable", "Vendor returnable"),
+        v("drumReturnable", "Supplier returnable"),
         v("drumReview", "Needs review"),
         v("drumVariance", "Tare variance"),
         v("drumAdjustments", "Corrections"),

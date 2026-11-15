@@ -28,7 +28,7 @@ flowchart LR
 
 <Steps>
 <Step title="Raise the purchase return">
-**Vendor returns → Purchase returns → New purchase return.** Pick the GRN lot the material came on. The supplier, GRN, purchase invoice, material, batch, original quantity and what is still returnable fill themselves in. Enter the quantity to return, the reason and your remarks, and attach a photo.
+**Supplier returns → Purchase returns → New purchase return.** Pick the GRN lot the material came on. The supplier, GRN, purchase invoice, material, batch, original quantity and what is still returnable fill themselves in. Enter the quantity to return, the reason and your remarks, and attach a photo.
 </Step>
 <Step title="Approval issues the debit note">
 Somebody other than the person who raised it presses **Approve**. If the return is worth more than the owner-approval limit, the owner approves it next. The last approval issues the **debit note**. It reduces what is owed to the vendor and moves no stock.
@@ -41,9 +41,9 @@ Somebody other than the person who raised it presses **Approve**. If the return 
 </Step>
 </Steps>
 
-<Wireframe url="/erp/vendor-returns" nav={["Dashboard", "#Material returns", "Vendor returns", "Customer returns"]} active="Vendor returns" caption="Vendor returns → Purchase returns">
+<Wireframe url="/erp/vendor-returns" nav={["Dashboard", "#Material returns", "Supplier returns", "Customer returns"]} active="Supplier returns" caption="Supplier returns → Purchase returns">
   <WfBar>
-    <WfTitle sub="Material sent back to a supplier, its debit note and the outward.">Vendor returns</WfTitle>
+    <WfTitle sub="Material sent back to a supplier, its debit note and the outward.">Supplier returns</WfTitle>
     <WfSpacer />
     <WfButton primary>New purchase return</WfButton>
   </WfBar>

@@ -81,7 +81,7 @@ function roundOffWords(amount: unknown, tax: unknown, total: unknown): string {
 /* ---------------------------------------------------------------------------
  * MATERIAL RETURNS — two screens, seven tabs.
  *
- *   Vendor returns   · Purchase returns · Debit notes · Return outward
+ *   Supplier returns · Purchase returns · Debit notes · Return outward
  *   Customer returns · Returns · Quarantine & QC · Rework · Waste disposal
  *
  * Financial documents adjust the ledger; physical transactions adjust stock.

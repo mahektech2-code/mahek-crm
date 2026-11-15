@@ -71,7 +71,7 @@ import {
 /* ---------------------------------------------------------------------------
  * EMPTY DRUMS AND SCRAP — the ERP screens.
  *
- *   Empty drums            Mahek stock · Vendor returnable · Needs review ·
+ *   Empty drums            Mahek stock · Supplier returnable · Needs review ·
  *                          Tare variance · Corrections · All drums
  *   Returnable drum outward  Outwards · Pending by supplier
  *   Scrap sales            Sales · Receivables & ageing · Scrap stock ·

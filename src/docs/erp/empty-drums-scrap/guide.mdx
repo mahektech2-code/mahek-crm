@@ -6,7 +6,7 @@ flowchart LR
   E --> S[Scan the label and weigh the empty drum]
   S --> O{Who owns it?}
   O -- Mahek --> M[Mahek empty drum stock]
-  O -- Supplier --> V[Vendor returnable stock]
+  O -- Supplier --> V[Supplier returnable stock]
   O -- Not recorded --> R[Needs review by the Production Head]
   M --> SS[Scrap sale by quantity, oldest first]
   SS --> RV[Scrap receivable]
@@ -46,7 +46,7 @@ A torn or missing label: keep the drum aside and tell the Production Head. Never
     <WfButton>Sell as scrap</WfButton>
     <WfButton primary>New empty drum</WfButton>
   </WfBar>
-  <WfTabs items={["Mahek stock", "Vendor returnable", "Needs review", "Tare variance", "Corrections", "All drums"]} active="Mahek stock" />
+  <WfTabs items={["Mahek stock", "Supplier returnable", "Needs review", "Tare variance", "Corrections", "All drums"]} active="Mahek stock" />
   <WfTable
     highlight={0}
     columns={["Drum", "Material", "Supplier", "Lot", "Actual empty", "Variance", "Emptied"]}
@@ -64,7 +64,7 @@ A torn or missing label: keep the drum aside and tell the Production Head. Never
 | Tab | What it lists |
 |---|---|
 | **Mahek stock** | Mahek-owned empty drums in the factory — what can be sold as scrap. |
-| **Vendor returnable** | Suppliers' drums waiting to go back, with how long each has waited. They are never sold. |
+| **Supplier returnable** | Suppliers' drums waiting to go back, with how long each has waited. They are never sold. |
 | **Needs review** | Drums whose GRN and supplier say nothing about who owns them. The Production Head classifies them. |
 | **Tare variance** | Declared tare against actual empty weight, by supplier, material, GRN and lot. |
 | **Corrections** | Opening stock, write-offs and changes of owner, each asked for by one person and approved by another. |
