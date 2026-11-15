@@ -242,7 +242,12 @@ export function QuoteGrid({
     await queue.current;
     const ops = held.ops.map((o, i) => (i === held.op && (o.op === "cell" || o.op === "deleteRow") ? { ...o, impact: confirmation } : o));
     const inverse = invertSheetOps(stateRef.current, ops);
-    const res = await erpQuoteApply(ops);
+    let res: Awaited<ReturnType<typeof erpQuoteApply>>;
+    try {
+      res = await erpQuoteApply(ops);
+    } catch {
+      return { ok: false as const, error: "That change could not be saved. Check the connection and try again." };
+    }
     if (res.ok) {
       setBoth(applySheetOps(stateRef.current, ops));
       if (held.recordUndo) setUndo((u) => [...u.slice(-49), inverse]);
@@ -711,10 +716,10 @@ export function QuoteGrid({
         actions={
           <>
             <Button onClick={exportCsv}>Export CSV</Button>
-            <Button onClick={() => setColEdit({ id: null, at: cols.length })} disabled={readOnly}>
+            <Button onClick={() => setColEdit({ id: null, at: cols.length })} disabled={readOnly} title={readOnly ? "Preview — read only." : undefined}>
               Add column
             </Button>
-            <Button variant="primary" onClick={() => addRow()} disabled={readOnly}>
+            <Button variant="primary" onClick={() => addRow()} disabled={readOnly} title={readOnly ? "Preview — read only." : undefined}>
               Add row
             </Button>
           </>
@@ -767,7 +772,7 @@ export function QuoteGrid({
           >
             <option value="3">Last 3 months</option>
             <option value="6">Last 6 months</option>
-            <option value="all">Every date</option>
+            <option value="all">All time</option>
             {preset === "custom" ? <option value="custom">Chosen dates</option> : null}
           </Select>
           <span className="inline-flex items-center gap-1.5">
@@ -784,7 +789,7 @@ export function QuoteGrid({
             <Dot tone={failed ? "danger" : saving ? "brand" : readOnly ? "muted" : "success"} />
             {saving ? "Saving…" : failed ? "Last change not saved" : readOnly ? "Preview — read only" : "All changes saved"}
           </span>
-          <Button size="sm" variant="ghost" onClick={doUndo} disabled={!undo.length || readOnly} title="Undo (Ctrl+Z)">
+          <Button size="sm" variant="ghost" onClick={doUndo} disabled={!undo.length || readOnly} title={readOnly ? "Preview — read only." : "Undo (Ctrl+Z)"}>
             Undo
           </Button>
           {archived.length ? (
@@ -798,21 +803,21 @@ export function QuoteGrid({
         <div className="flex flex-wrap items-center gap-2 border-b border-divider bg-canvas px-4 py-2">
           <span className={cx("mr-1", eyebrowClass)}>Mark selected</span>
           {canReady ? (
-            <MarkButton status="ready" disabled={readOnly} onClick={() => colour("ready")} title="Choose this rate to buy — the cell turns grey and the team can buy it" />
+            <MarkButton status="ready" disabled={readOnly} onClick={() => colour("ready")} title={readOnly ? "Preview — read only." : "Choose this rate to buy — the cell turns grey and the team can buy it"} />
           ) : null}
           <Button
             size="sm"
             variant="primary"
             disabled={readOnly || (focusedStatus !== "ready" && focusedStatus !== "po")}
             onClick={() => openPurchase(focusedRef())}
-            title={focusedStatus === "ready" || focusedStatus === "po" ? "Record the drums for this rate; the PO number is made for you" : "Select a grey (Ready to buy) rate to buy it"}
+            title={readOnly ? "Preview — read only." : focusedStatus === "ready" || focusedStatus === "po" ? "Record the drums for this rate; the PO number is made for you" : "Select a grey (Ready to buy) rate to buy it"}
           >
             <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH.po)} />
             {focusedStatus === "po" ? "Edit purchase" : "Purchase it"}
           </Button>
-          <MarkButton status="cancel" disabled={readOnly} onClick={() => colour("cancel")} />
-          <MarkButton status="pickup" disabled={readOnly} onClick={() => colour("pickup")} />
-          <LinkButton tone="muted" disabled={readOnly} onClick={() => colour(null)} className="px-2 text-meta">
+          <MarkButton status="cancel" disabled={readOnly} onClick={() => colour("cancel")} title={readOnly ? "Preview — read only." : undefined} />
+          <MarkButton status="pickup" disabled={readOnly} onClick={() => colour("pickup")} title={readOnly ? "Preview — read only." : undefined} />
+          <LinkButton tone="muted" disabled={readOnly} title={readOnly ? "Preview — read only." : undefined} onClick={() => colour(null)} className="px-2 text-meta">
             Clear mark
           </LinkButton>
           <span className="ml-auto text-xs text-muted">Right-click a cell for more · Ctrl+V pastes from Excel · Ctrl+Z undoes</span>

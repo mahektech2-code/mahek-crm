@@ -176,7 +176,7 @@ async function createPurchase(
   if (!sup || !mat) return err("The supplier or the item no longer exists.", "not_found");
   const lotNo = lotNumber(sup.partyCode, mat.code, v.prNumber);
   const [clash] = await tx.select({ id: erpPurchases.id }).from(erpPurchases).where(eq(erpPurchases.lotNo, lotNo));
-  if (clash) return fieldErr("prNumber", "! Please Change 4 Digit PR Num Manually or Generate New PR Num!");
+  if (clash) return fieldErr("prNumber", "That PR number is already taken. Change it, or generate a new one.");
   const unit = v.unit === "Kg" || v.unit === "Litre" || v.unit === "Pcs" ? v.unit : mat.unit === "Kg" ? "Kg" : mat.unit === "Litre" ? "Litre" : "Pcs";
   const density = v.density ?? mat.density ?? null;
   const fig = purchaseFigures({
@@ -287,7 +287,7 @@ function readPrCosts(
   const rate = mode !== "own_vehicle" ? null : kept?.transportMode === "own_vehicle" && kept.km === km && kept.ratePerKmPaise ? kept.ratePerKmPaise : ratePerKmPaise;
   if (mode === "own_vehicle" && !rate) return fieldErr("km", "No approved ₹/KM rate yet — an admin sets it in ERP settings");
   const other = paise(h.otherCost) ?? 0;
-  if (other < 0) return fieldErr("otherCost", "Minus Quantity Not Allowed");
+  if (other < 0) return fieldErr("otherCost", "Other cost cannot be below 0.");
   const transport = transportCostPaise({ mode, billedPaise: billed, km, ratePerKmPaise: rate }) ?? 0;
   return {
     ok: true,
@@ -422,10 +422,10 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
         opts: poInit && !rx.byLabel.has(poInit) ? [...rx.byLabel.keys(), poInit] : [...rx.byLabel.keys()],
         readOnly: !!(fixedPo || opts.fixed),
         hint: rx.byLabel.size
-          ? "Type the PO number — from the Quotation manager or created on a requirement; the vendor and items fill in. No goods are received without a PO."
+          ? "Type the PO number — from the Quotation manager or created on a requirement; the supplier and items fill in. No goods are received without a PO."
           : "No PO is waiting for goods. Link one from the Quotation manager or create one on a requirement.",
       },
-      { k: "supplier", l: "Vendor", t: "derived", calc: "inward.supplier" },
+      { k: "supplier", l: "Supplier", t: "derived", calc: "inward.supplier" },
       { k: "date", l: "Date received", t: "date", req: true },
       godownField(gds, { fillBy: { by: ["po"], map: rx.godownOf }, hint: "The PO's deliver-to godown, unless the goods came somewhere else." }),
       ...COST_FIELDS,
@@ -612,7 +612,7 @@ const inward: ScreenModule = {
       { k: "weight", l: "Weight with drum", t: "n" },
       { k: "emptyDrum", l: "Empty drum weight", t: "n" },
       { k: "drumOwner", l: "Drums belong to", t: "s" },
-      { k: "qty", l: "Weight without drum", t: "n" },
+      { k: "qty", l: "Quantity", t: "n" },
       { k: "unit", l: "Unit", t: "t" },
       { k: "godown", l: "Godown", t: "t" },
       { k: "transport", l: "Transport", t: "s" },
@@ -663,7 +663,7 @@ const inward: ScreenModule = {
             { l: "Before POs", where: { flag: "noPo" }, tone: "muted" },
           ],
           /* kg, litres and pieces do not add, so the net weight is said per unit. */
-          sumBy: { k: "qty", by: "unit", l: "Weight without drum" },
+          sumBy: { k: "qty", by: "unit", l: "Quantity" },
           words: { pr: "PR" },
         },
         noDataLine: "No goods received yet. Goods are received against a PO.",
@@ -679,7 +679,7 @@ const inward: ScreenModule = {
         const receivableHere = !!poText && RECEIVABLE_PO.includes(x.poStatus ?? "");
         actions.push({
           id: "addMore",
-          l: "Add more",
+          l: "Add another",
           why: !x.r.poId ? "Received before POs — receive new goods against a PO" : receivableHere ? "" : `${poLabel(x.poNumber!)} is ${x.poStatus} — nothing more is received against it`,
           form: receivableHere
             ? {
@@ -779,7 +779,7 @@ const inward: ScreenModule = {
         const po = poText ? rx.find(poText) : undefined;
         if (!po) return fieldErr(`l${i}.poLine`, poText ? gone : "Pick the purchase order this item came against");
         if (parsed.length && po.po.supplierId !== parsed[0].po.po.supplierId)
-          return fieldErr(`l${i}.poLine`, `One receipt is one vendor's delivery: ${po.supplier} is not ${parsed[0].po.supplier}. Receive it on its own GRN.`);
+          return fieldErr(`l${i}.poLine`, `One receipt is one supplier's delivery: ${po.supplier} is not ${parsed[0].po.supplier}. Receive it on its own GRN.`);
         const line = po.lines.find((x) => x.label === l.poLine);
         if (!line) return fieldErr(`l${i}.poLine`, "Pick an item on this PO");
         const m = all.find((x) => x.id === line.rawMaterialId)!;
@@ -790,12 +790,12 @@ const inward: ScreenModule = {
           /* Net off the scale, whatever was typed into a quantity box. */
           if (!(num(l.weight)! > 0)) return fieldErr(`l${i}.weight`, "Weight with drum is required for an item bought in kg");
           const empty = num(l.emptyDrum);
-          if (empty == null || empty < 0) return fieldErr(`l${i}.emptyDrum`, empty != null ? "Minus Quantity Not Allowed" : "Empty drum weight is required");
+          if (empty == null || empty < 0) return fieldErr(`l${i}.emptyDrum`, empty != null ? "Empty drum weight cannot be below 0." : "Empty drum weight is required");
           qty = netWeight(num(l.weight), int(l.drums), empty);
           if (qty == null) return fieldErr(`l${i}.weight`, "The empty drums weigh as much as the load — check the scale");
         } else {
           qty = num(l.qty);
-          if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity received is required");
+          if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity received is required");
         }
         const already = taking.get(line.id) ?? 0;
         const room = receivableQuantity(line.quantity, line.received + already, tolerance);
@@ -917,12 +917,12 @@ const inward: ScreenModule = {
       let quantity: number | null;
       if (scale) {
         if (!(weight! > 0)) return fieldErr("weight", "Weight with drum is required for an item bought in kg");
-        if (empty == null || empty < 0) return fieldErr("emptyDrum", empty != null ? "Minus Quantity Not Allowed" : "Empty drum weight is required");
+        if (empty == null || empty < 0) return fieldErr("emptyDrum", empty != null ? "Empty drum weight cannot be below 0." : "Empty drum weight is required");
         quantity = netWeight(weight, drums, empty);
         if (quantity == null) return fieldErr("weight", "The empty drums weigh as much as the load — check the scale");
       } else {
         quantity = num(h.qty);
-        if (quantity == null || quantity <= 0) return fieldErr("qty", quantity != null && quantity < 0 ? "Minus Quantity Not Allowed" : "Quantity received is required");
+        if (quantity == null || quantity <= 0) return fieldErr("qty", quantity != null && quantity < 0 ? "Quantity cannot be below 0." : "Quantity received is required");
       }
       /* Taking more than the PO allows is refused here exactly as it is on the way in. A cut, or no change, never is. */
       if (r.poLineId && quantity > r.quantity) {
@@ -1049,7 +1049,7 @@ const inward: ScreenModule = {
         }
         return okVoid("Sent to the purchase register · it posts to stock once a rate is entered");
       }).catch((e: unknown) => (e instanceof Error && e.message === "Rollback" ? null : Promise.reject(e)));
-      if (!res) return err("! Please Change 4 Digit PR Num Manually or Generate New PR Num!", "conflict");
+      if (!res) return err("That PR number is already taken. Change it, or generate a new one.", "conflict");
       if (res.ok) await erpAudit(ctx, "erp.inward.toPurchase", "erp_inward", id);
       return res;
     },
@@ -1153,7 +1153,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
     data: { testsOf, lineId },
     init: { tester: ctx.user.name, date: today(), godown: ctx.workingGodown?.name ?? "" },
     header: [
-      { k: "line", l: "Inward line", t: "select", req: true, sec: "Lot", opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Send one to testing from Purchase inward." },
+      { k: "line", l: "Inward line", t: "select", req: true, sec: "Lot", opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Lines needing a test arrive here as they are received on Purchases → Goods receipt (GRN)." },
       { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
       ...evidence("line").map((f, i) => (i === 0 ? { ...f, sec: "Readings" } : f)),
       { k: "video", l: "Test video", t: "video", when: { k: "line", notEmpty: true } },
@@ -1240,7 +1240,7 @@ const testing: ScreenModule = {
         ],
         filters: ["item", "tester", "smell", "density"],
         newForm: newForm ?? undefined,
-        newLabel: "Record a test",
+        newLabel: "New test",
         noDataLine: "No tests yet. Chemical lots arrive here as they are received.",
       },
       tooWide: wide,
@@ -1273,7 +1273,7 @@ const testing: ScreenModule = {
           actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
         } else if (x.t.status !== "Verified" && photosOn && (x.t.densityPhotoId || x.t.phPhotoId))
           actions.push({ id: "aiTestRead", l: "Read test photos", ai: true });
-        actions.push({ id: "addLot", l: "Add another lot", loadsForm: true });
+        actions.push({ id: "addLot", l: "Add another", loadsForm: true });
         return {
           id: x.t.id,
           v: {
@@ -1413,7 +1413,7 @@ const testing: ScreenModule = {
           return okVoid(`Verified · a purchase register row was created for lot ${lot}`);
         })
         .catch((e: unknown) => (e instanceof Error && e.message === "Rollback" ? null : Promise.reject(e)));
-      if (!res) return err("! Please Change 4 Digit PR Num Manually or Generate New PR Num!", "conflict");
+      if (!res) return err("That PR number is already taken. Change it, or generate a new one.", "conflict");
       await erpAudit(ctx, "erp.test.verify", "erp_test", id);
       return res;
     },
@@ -1442,7 +1442,7 @@ async function saveTest(
   const tests = from.existing?.tests ?? mat.testingList;
   const [tester] = await db.select({ id: users.id }).from(users).where(eq(users.name, text(h.tester) ?? ctx.user.name));
   const density = num(h.density);
-  if (tests.includes("Density") && density != null && (density < 0.5 || density > 1.5)) return fieldErr("density", "INVALID");
+  if (tests.includes("Density") && density != null && (density < 0.5 || density > 1.5)) return fieldErr("density", "Density must be between 0.5 and 1.5.");
   const photoIds: Record<string, string | null> = {};
   for (const [k, col] of Object.entries(PHOTO_COL)) photoIds[col as string] = text(h[k]);
   const values = {
@@ -2186,7 +2186,7 @@ async function refreshCache(tx: Tx, id: string) {
 async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {
   const money = ctx.powers.has("viewPurchaseMoney");
   const qty = num(h.qty);
-  if (qty == null || qty <= 0) return fieldErr("qty", qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+  if (qty == null || qty <= 0) return fieldErr("qty", qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity is required");
   const unit = text(h.unit);
   if (!unit || !["Kg", "Litre", "Pcs"].includes(unit)) return fieldErr("unit", "Unit is required");
   const godownId = await godownIdByName(text(h.godown));

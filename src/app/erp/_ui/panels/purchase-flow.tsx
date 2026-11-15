@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Callout, checkboxClass, cx, Input, Select, SectionLabel } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
 import { stamp } from "@/lib/format";
-import { inr, inrRate, qty } from "@/lib/erp/ui";
+import { fd, inr, inrRate, qty } from "@/lib/erp/ui";
 import { erpRunAction } from "@/lib/actions/erp";
 import { erpRequirementPoLookup } from "@/lib/actions/erp-requirement-po";
 import type { LinkPreview } from "@/lib/erp/screens/requirement-po";
@@ -126,7 +126,7 @@ function LinkPo({ id }: { id: string }) {
             invalid={!!miss}
           />
           <span className={cx("text-meta", miss ? "text-danger" : "text-muted")}>
-            {miss ?? (q && (looking || !hit) ? "Looking it up on the Quotation manager…" : "The vendor, rate and drums are fetched from it — nothing else to fill.")}
+            {miss ?? (q && (looking || !hit) ? "Looking it up on the Quotation manager…" : "The supplier, rate and drums are fetched from it — nothing else to fill.")}
           </span>
         </label>
         {hit ? (
@@ -134,7 +134,7 @@ function LinkPo({ id }: { id: string }) {
             <div className="bg-success-soft px-3 py-1.5 text-meta font-medium text-success">✓ Found in the Quotation manager</div>
             <dl className="grid grid-cols-2 gap-x-5 gap-y-2 px-3 py-2.5 text-meta">
               {[
-                ["Vendor", hit.vendor],
+                ["Supplier", hit.vendor],
                 ["Material", hit.material],
                 ...(hit.rate ? [["Rate", `${hit.rate} · GST ${hit.gst}`]] : [["GST", hit.gst]]),
                 ["Drums", hit.drums == null ? "—" : String(hit.drums)],
@@ -166,7 +166,7 @@ function LinkPo({ id }: { id: string }) {
   );
 }
 
-const PAGES = ["Vendor", "Delivery", "Review"] as const;
+const PAGES = ["Supplier", "Delivery", "Review"] as const;
 
 /** Create PO: three pages over the record. The rate is the item's price and is shown, never asked. */
 function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose: () => void }) {
@@ -204,7 +204,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
   function check(p: number): boolean {
     const e: Record<string, string> = {};
     if (p === 0) {
-      if (!vendorOk) e.vendor = "Pick a vendor from the list";
+      if (!vendorOk) e.vendor = "Pick a supplier from the list.";
       if (!(qty > 0)) e.qty = "Quantity is required";
       const short = ticked.find((o) => !(Number(also[o.id].qty) > 0));
       if (short) e.also = `${short.item}: quantity is required`;
@@ -247,16 +247,16 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
         {page === 0 ? (
           <div className="grid gap-3">
             <label className="grid gap-1">
-              <span className={labelClass}>Vendor</span>
+              <span className={labelClass}>Supplier</span>
               <ComboBox
-                label="Vendor"
+                label="Supplier"
                 value={v.vendor}
                 options={d.vendors.map((x) => x.name)}
                 onChange={pickVendor}
-                placeholder="Search the vendors"
-                emptyHint="No vendor by that name"
+                placeholder="Search the suppliers"
+                emptyHint="No supplier by that name"
               />
-              {err("vendor") ?? <span className="text-meta text-muted">{d.defaultVendor ? (v.vendor === d.defaultVendor ? "The item's default vendor." : `The item's default vendor is ${d.defaultVendor}.`) : "The item has no default vendor."}</span>}
+              {err("vendor") ?? <span className="text-meta text-muted">{d.defaultVendor ? (v.vendor === d.defaultVendor ? "The item's default supplier." : `The item's default supplier is ${d.defaultVendor}.`) : "The item has no default supplier."}</span>}
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="grid gap-1">
@@ -266,7 +266,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
               <label className="grid gap-1">
                 <span className={labelClass}>Quantity ({d.unit})</span>
                 <Input inputMode="decimal" value={v.qty} onChange={(e) => set("qty", e.target.value)} invalid={!!errors.qty} />
-                {err("qty") ?? <span className="text-meta text-muted">From the requirement; change it if the vendor packs differently.</span>}
+                {err("qty") ?? <span className="text-meta text-muted">From the requirement; change it if the supplier packs differently.</span>}
               </label>
             </div>
             {eligible.length ? (
@@ -284,7 +284,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                         />
                         <span className="min-w-0 text-sm text-ink">
                           {o.item}
-                          <span className="block text-meta text-muted">{[o.reqNo, o.vendor ? `vendor ${o.vendor}` : "no vendor yet"].filter(Boolean).join(" · ")}</span>
+                          <span className="block text-meta text-muted">{[o.reqNo, o.vendor ? `supplier ${o.vendor}` : "no supplier yet"].filter(Boolean).join(" · ")}</span>
                         </span>
                       </label>
                       <Input
@@ -301,7 +301,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                 </div>
                 {err("also") ?? (
                   <span className="text-meta text-muted">
-                    Other requirements ready for a PO, with no vendor yet or with {v.vendor || "the vendor picked"}. Each is ordered at its own price in Raw materials.
+                    Other requirements ready for a PO, with no supplier yet or with {v.vendor || "the supplier picked"}. Each is ordered at its own price in Raw materials.
                   </span>
                 )}
               </div>
@@ -351,6 +351,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
               <label className="grid gap-1">
                 <span className={labelClass}>Deliver to</span>
                 <Select value={v.deliverTo} onChange={(e) => set("deliverTo", e.target.value)} className="w-full">
+                  <option value="">Choose…</option>
                   {d.godowns.map((g) => (
                     <option key={g}>{g}</option>
                   ))}
@@ -379,7 +380,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
               </label>
             </div>
             <label className="grid gap-1">
-              <span className={labelClass}>Remarks for the vendor</span>
+              <span className={labelClass}>Remarks for the supplier</span>
               <Input value={v.remarks} onChange={(e) => set("remarks", e.target.value)} placeholder="Optional" />
             </label>
           </div>
@@ -387,8 +388,8 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
           <div className="grid gap-3 text-meta">
             <dl className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-control border border-line px-3 py-2.5">
               {[
-                ["Vendor", v.vendor],
-                ["Deliver to", `${v.deliverTo}${v.deliveryDate ? ` · by ${v.deliveryDate}` : ""}`],
+                ["Supplier", v.vendor],
+                ["Deliver to", `${v.deliverTo}${v.deliveryDate ? ` · by ${fd(v.deliveryDate)}` : ""}`],
                 ["Payment terms", v.terms],
                 ["For", d.reqNo ?? d.item],
               ].map(([l, x]) => (
@@ -440,7 +441,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
               ) : null;
             })()}
             <Callout tone="brand" className="mb-0 block text-brand-hover">
-              On save the PO number is made from the PO series. No approval — it is ready to send to the vendor and receive against.
+              On save the PO number is made from the PO series. No approval — it is ready to share with the supplier and receive against.
             </Callout>
           </div>
         )}
@@ -509,12 +510,12 @@ function PurchaseFlow({ data }: PanelProps) {
           </div>
           <dl className="grid grid-cols-2 gap-x-5 gap-y-2 px-3 py-2.5 text-meta">
             {[
-              ["Vendor", f.po.vendor],
+              ["Supplier", f.po.vendor],
               ["Status", f.po.status],
               ...(f.po.rate ? [["Rate", `${f.po.rate} · GST ${f.po.gst}`]] : []),
               ...(f.po.drums != null ? [["Drums", String(f.po.drums)]] : []),
               ["Received", f.po.received],
-              ["From", f.po.fromQuotationManager ? "Quotation manager · no approval needed" : "Created on the requirement · no approval needed"],
+              ["From", `${f.po.fromQuotationManager ? "Quotation manager" : "Created on the requirement"}${f.po.status === "Pending approval" ? "" : " · no approval needed"}`],
             ].map(([l, v]) => (
               <div key={l} className="min-w-0">
                 <dt className={eyebrowClass}>{l}</dt>
@@ -549,7 +550,7 @@ function PurchaseFlow({ data }: PanelProps) {
               <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-meta">
                 <span className="text-body">
                   Direct purchase — <b>no quotation needed</b>.{" "}
-                  {f.entry.create.defaultVendor ? <>Default vendor <b>{f.entry.create.defaultVendor}</b>, </> : null}
+                  {f.entry.create.defaultVendor ? <>Default supplier <b>{f.entry.create.defaultVendor}</b>, </> : null}
                   {f.entry.create.money ? (f.entry.create.hasPrice ? <>at the item&apos;s price <b>{f.entry.create.rate}</b>.</> : <><b>no price</b> on the item — ordered at ₹0.</>) : "at the item's price."}
                 </span>
                 <Button variant="primary" className="shrink-0" disabled={!!f.entry.create.why} title={f.entry.create.why || undefined} onClick={() => setCreating(true)}>
@@ -584,7 +585,7 @@ function PurchaseOrder({ data }: PanelProps) {
         <SectionLabel>Purchase flow</SectionLabel>
         {p.print ? (
           <a href={p.print} className={linkClass("brand", "text-xs")}>
-            Open the printable PO
+            Print PO
           </a>
         ) : null}
       </div>
@@ -600,7 +601,7 @@ function PurchaseOrder({ data }: PanelProps) {
               </a>
               {p.money ? <span className="flex-none font-semibold text-ink tabular-nums">{l.total}</span> : null}
             </div>
-            <dl className="mt-1 grid grid-cols-5 gap-x-3 text-xs">
+            <dl className={cx("mt-1 grid gap-x-3 text-xs", p.money ? "grid-cols-5" : "grid-cols-4")}>
               {[
                 ["Ordered", l.ordered, ""],
                 ["Received", l.received, l.done ? "text-success" : ""],

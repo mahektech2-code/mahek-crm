@@ -28,7 +28,7 @@ flowchart LR
 
 <Steps>
 <Step title="Raise the purchase return">
-**Vendor returns → Purchase returns → Raise purchase return.** Pick the GRN lot the material came on. The vendor, GRN, purchase invoice, material, batch, original quantity and what is still returnable fill themselves in. Enter the quantity to return, the reason and your remarks, and attach a photo.
+**Vendor returns → Purchase returns → New purchase return.** Pick the GRN lot the material came on. The supplier, GRN, purchase invoice, material, batch, original quantity and what is still returnable fill themselves in. Enter the quantity to return, the reason and your remarks, and attach a photo.
 </Step>
 <Step title="Approval issues the debit note">
 Somebody other than the person who raised it presses **Approve**. If the return is worth more than the owner-approval limit, the owner approves it next. The last approval issues the **debit note**. It reduces what is owed to the vendor and moves no stock.
@@ -37,7 +37,7 @@ Somebody other than the person who raised it presses **Approve**. If the return 
 **Prepare goods return outward**: choose the godown the goods leave from and the dispatch date. Add the transporter, vehicle, LR, packing and a document if you have them. Stock is still unchanged at this point.
 </Step>
 <Step title="Confirm the dispatch">
-**Confirm dispatch (stock minus)** takes the quantity out of that lot's stock. It is refused if the godown no longer holds enough. Stock never goes negative.
+**Confirm dispatch** takes the quantity out of that lot's stock. It is refused if the godown no longer holds enough. Stock never goes negative.
 </Step>
 </Steps>
 
@@ -45,7 +45,7 @@ Somebody other than the person who raised it presses **Approve**. If the return 
   <WfBar>
     <WfTitle sub="Material sent back to a supplier, its debit note and the outward.">Vendor returns</WfTitle>
     <WfSpacer />
-    <WfButton primary>Raise purchase return</WfButton>
+    <WfButton primary>New purchase return</WfButton>
   </WfBar>
   <WfTabs items={["Purchase returns", "Debit notes", "Return outward"]} active="Purchase returns" />
   <WfTable
@@ -66,7 +66,7 @@ Somebody other than the person who raised it presses **Approve**. If the return 
 
 <Steps>
 <Step title="Record the return">
-**Customer returns → Returns → Record customer return.** Pick the order line the goods went out on — type the order number, customer or product to find it. The customer, invoice, outward, product and batch fill themselves in. An older line that went out with **no lot allocated** (orders from the Taken Order sheet, or stock dispatched before batch codes) is listed as *no lot allocated*: for those, enter the batch printed on the label of the cans that came back. Such lines are offered in cans, for orders up to <Setting k="erp.returns.unallocatedDays" /> days old. Enter whole cans, or whole boxes on a boxed line, along with the reason, the customer's remarks and the transport details.
+**Customer returns → Returns → New customer return.** Pick the order line the goods went out on — type the order number, customer or product to find it. The customer, invoice, outward, product and batch fill themselves in. An older line that went out with **no lot allocated** (orders from the Taken Order sheet, or stock dispatched before batch codes) is listed as *no lot allocated*: for those, enter the batch printed on the label of the cans that came back. Such lines are offered in cans, for orders up to <Setting k="erp.returns.unallocatedDays" /> days old. Enter whole cans, or whole boxes on a boxed line, along with the reason, the customer's remarks and the transport details.
 </Step>
 <Step title="Receive it into quarantine">
 When the goods arrive, press **Receive into quarantine** and choose the godown holding them. They now sit in **Customer Return / Quarantine**. That is not saleable stock, and dispatch cannot pick it.

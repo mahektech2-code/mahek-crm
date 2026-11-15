@@ -20,7 +20,7 @@ The designated production person does this **when the drum becomes empty**, whil
 
 <Steps>
 <Step title="Open Empty drum entry">
-On the factory phone: your name → **Empty drum entry**. In the ERP: **Empty drums → Record empty drum**.
+On the factory phone: your name → **Empty drum entry**. In the ERP: **Empty drums → New empty drum**.
 </Step>
 <Step title="Scan the drum's GRN label">
 The phone shows the material, the supplier, the GRN (PR number), which drum of the lot this is — "drum 3 of 4" — who owns it and the empty weight the supplier declared.
@@ -43,8 +43,8 @@ A torn or missing label: keep the drum aside and tell the Production Head. Never
   <WfBar>
     <WfTitle sub="Every emptied drum, weighed and linked to its GRN.">Empty drums</WfTitle>
     <WfSpacer />
-    <WfButton>Sell drums</WfButton>
-    <WfButton primary>Record empty drum</WfButton>
+    <WfButton>Sell as scrap</WfButton>
+    <WfButton primary>New empty drum</WfButton>
   </WfBar>
   <WfTabs items={["Mahek stock", "Vendor returnable", "Needs review", "Tare variance", "Corrections", "All drums"]} active="Mahek stock" />
   <WfTable
@@ -76,7 +76,7 @@ A torn or missing label: keep the drum aside and tell the Production Head. Never
 
 Say whether an **external invoice** was issued. If none was, choose **No external invoice**: the sale is traced by its own number (SCR-12) and no invoice number is made up for it.
 
-Vendor-returnable drums never appear in a scrap sale. Pressing **Sell as scrap** on one says: *"This drum is vendor-returnable. Please use Returnable Drum Outward."*
+Drums that go back to a supplier never appear in a scrap sale, and their tab offers no **Sell as scrap**. A sale that names one anyway is refused: *"This drum goes back to its supplier. Use Return drums instead."*
 
 ## Returning a supplier's drums
 

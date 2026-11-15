@@ -29,7 +29,7 @@ sequenceDiagram
     F->>S: rmLots(tx) - stock read inside the transaction
     F->>F: avail = stock - what earlier lines of this save already take
     alt total use above avail
-      F-->>F: refuse(fieldErr qty Low Stock!) - whole save rolls back
+      F-->>F: refuse(fieldErr qty not enough stock) - whole save rolls back
     end
   end
   F->>DB: nextNumber(sfg) unless adding to a batch, lot code from the first line

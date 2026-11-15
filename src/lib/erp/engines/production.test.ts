@@ -49,9 +49,9 @@ test("a can fill is costed per can, a drum fill per litre, and a Naket fill pays
 test("each failed fill check says its own thing (A-11)", () => {
   const base = { useLitres: 50, sfgAvailable: 100, cans: 10, packingAvailable: 20, packingType: "Can" };
   assert.equal(fillRefusal(base), null);
-  assert.equal(fillRefusal({ ...base, cans: 0 }), "Minus Quantity Not Allowed");
-  assert.equal(fillRefusal({ ...base, useLitres: 101 }), "Low SFG Stock");
-  assert.equal(fillRefusal({ ...base, packingAvailable: 0 }), "Low Packing Quantity");
+  assert.equal(fillRefusal({ ...base, cans: 0 }), "Cans must be above 0.");
+  assert.equal(fillRefusal({ ...base, useLitres: 101 }), "There is not enough SFG in this lot.");
+  assert.equal(fillRefusal({ ...base, packingAvailable: 0 }), "No packing of this kind is available here.");
   assert.equal(fillRefusal({ ...base, packingAvailable: null, packingType: "Naket" }), null);
 });
 

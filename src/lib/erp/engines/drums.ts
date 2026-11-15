@@ -24,7 +24,7 @@ export const OWNERSHIP_LABEL: Record<DrumOwnership, string> = {
 /** The PRD's lifecycle names, as a person reads them. */
 export const DRUM_STATUS_LABEL: Record<DrumStatus, string> = {
   available: "Empty – available",
-  returnable: "Empty – returnable to vendor",
+  returnable: "Empty – returnable to supplier",
   review: "Needs review",
   sold: "Sold",
   returned: "Returned to vendor",
@@ -190,4 +190,4 @@ export const drumReturnLabel = (n: number) => `RET-${n}`;
 export const receiptLabel = (n: number) => `RCPT-${n}`;
 
 /** The one sentence a returnable drum offered for sale is refused with. */
-export const RETURNABLE_NOT_FOR_SALE = "This drum is vendor-returnable. Please use Returnable Drum Outward.";
+export const RETURNABLE_NOT_FOR_SALE = "This drum goes back to its supplier. Use Return drums instead.";

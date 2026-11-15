@@ -376,10 +376,10 @@ describe("inward", () => {
     assert.ok(!r.ok && /More than the PO allows/.test(r.fieldErrors?.[0].message ?? ""), JSON.stringify(r));
   });
 
-  test("a minus quantity is refused in the source's words", async () => {
+  test("a minus quantity is refused in a sentence", async () => {
     const ctx = await as(admin);
     const r = await mod("inward").forms!.new(ctx, { date: TODAY, po: flowPo, godown: "Bhiwandi", transportMode: NONE }, [{ poLine: flowLine["1 L Tin Can"], qty: "-4" }]);
-    assert.ok(!r.ok && r.fieldErrors?.[0].message === "Minus Quantity Not Allowed");
+    assert.ok(!r.ok && r.fieldErrors?.[0].message === "Quantity cannot be below 0.");
   });
 
   test("a line routes once: a tested item cannot skip testing, and it cannot be sent again", async () => {
@@ -424,11 +424,11 @@ describe("testing", () => {
     assert.ok(!refused.ok && refused.code === "not_permitted");
   });
 
-  test("a density outside 0.5–1.5 is INVALID", async () => {
+  test("a density outside 0.5–1.5 is refused", async () => {
     const ctx = await as(admin);
     const [t] = await db.select().from(erpTests);
     const r = await mod("testing").forms!.edit(ctx, { smell: "Good", density: "2", tester: "Kavita Admin", date: TODAY }, [], t.id);
-    assert.ok(!r.ok && r.fieldErrors?.[0].message === "INVALID");
+    assert.ok(!r.ok && r.fieldErrors?.[0].message === "Density must be between 0.5 and 1.5.");
   });
 
   test("verifying creates the register row once, carrying the tested density", async () => {
@@ -456,7 +456,7 @@ describe("register and stock", () => {
     const ctx = await as(admin);
     const po = await approvedPo("Asian Solvents", [{ item: "Toluene", quantity: 10 }]);
     const r = await mod("register").forms!.new(ctx, { pr: "1001", date: TODAY, po: po.po, poLine: po.lines["Toluene"], qty: "10", unit: "Litre", godown: "Bhiwandi" }, []);
-    assert.ok(!r.ok && r.fieldErrors?.[0].message.startsWith("! Please Change 4 Digit PR Num"));
+    assert.ok(!r.ok && r.fieldErrors?.[0].message.startsWith("That PR number is already taken"));
   });
 
   test("a typed PR number of 0 is refused rather than saved as PR 0", async () => {

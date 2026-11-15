@@ -326,7 +326,7 @@ async function saleForm(ctx: ErpContext): Promise<FormSpec> {
     screen: "scrapSales",
     id: "new",
     title: "New scrap sale",
-    sub: `Enter how many were sold — empty drums are allocated oldest first (${have} Mahek-owned empty drum${have === 1 ? "" : "s"} available). Vendor-returnable drums are never offered.`,
+    sub: `Enter how many were sold — empty drums are allocated oldest first (${have} Mahek-owned empty drum${have === 1 ? "" : "s"} available). Drums that go back to a supplier are never offered.`,
     submit: "Save sale",
     init: { date: today(), category: "", quantity: "", refKind: REF_KIND.invoice, unit: "Kg" },
     header: [
@@ -430,8 +430,8 @@ const emptyDrums: ScreenModule = {
         filters: ["material", "supplier", "kg", "variance"],
         sortDefault: ["emptied", 1],
         newForm: form,
-        newLabel: "Record empty drum",
-        tools: [{ id: "sell", l: "Sell drums", href: erpLink("scrapSales"), why: sellWhy }],
+        newLabel: "New empty drum",
+        tools: [{ id: "sell", l: "Sell as scrap", href: erpLink("scrapSales"), why: sellWhy }],
         noDataLine: "No Mahek-owned empty drums. Drums appear once scanned empty and weighed.",
       },
       rows: rows.map((d) => drumRow(ctx, d, limits, hist, [{ id: "sell", l: "Sell as scrap", primary: true, why: sellWhy, form: oneDrumSale(base, d) }])),
@@ -475,7 +475,7 @@ const drumReturnable: ScreenModule = {
         noDataLine: "No supplier-owned drums waiting to be returned.",
       },
       rows: rows.map((d) => {
-        const row = drumRow(ctx, d, limits, hist, [{ id: "sellReturnable", l: "Sell as scrap", why: RETURNABLE_NOT_FOR_SALE }]);
+        const row = drumRow(ctx, d, limits, hist, []);
         row.v.age = returnBucket(d.emptiedOn, day);
         return row;
       }),
@@ -612,7 +612,7 @@ const drumRegister: ScreenModule = {
         stats: [
           { l: "Drums" },
           { l: "Available", where: { k: "status", in: ["Empty – available"] }, tone: "success" },
-          { l: "Returnable", where: { k: "status", in: ["Empty – returnable to vendor"] }, tone: "info" },
+          { l: "Returnable", where: { k: "status", in: ["Empty – returnable to supplier"] }, tone: "info" },
           { l: "Needs review", where: { k: "status", in: ["Needs review"] }, tone: "warn" },
           { l: "Sold", where: { k: "status", in: ["Sold"] }, tone: "neutral" },
           { l: "High variance", where: { flag: "drumVariance" }, tone: "danger" },
@@ -1127,7 +1127,7 @@ const scrapStockScreen: ScreenModule = {
         v: { category: DRUM_CATEGORY, godown: d.godown, onHand: Number(d.n), unit: "Pcs" },
         flags: [],
         title: `${DRUM_CATEGORY} · ${d.godown}`,
-        header: "Mahek-owned empty drums only. Vendor-returnable drums are never scrap.",
+        header: "Mahek-owned empty drums only. Drums that go back to a supplier are never scrap.",
         actions: [{ id: "open", l: "Open the drums", href: erpLink("emptyDrums") }],
       })),
       ...stock
@@ -1174,7 +1174,7 @@ const scrapStockScreen: ScreenModule = {
             { k: "note", l: "Note", t: "area", mic: true },
           ],
         },
-        newLabel: "Record scrap",
+        newLabel: "New scrap entry",
         noDataLine: "No scrap on hand.",
       },
       rows,
@@ -1422,7 +1422,7 @@ const cashReceipts: ScreenModule = {
         ],
         filters: ["from", "mode", "amount", "left"],
         newForm: acc ? form : undefined,
-        newLabel: "Record receipt",
+        newLabel: "New receipt",
         noDataLine: "No receipts yet. A payment is recorded here, then matched to its sales.",
       },
       rows: rows.map((r) => {

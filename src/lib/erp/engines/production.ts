@@ -87,9 +87,9 @@ export function fillFigures(p: {
  * check (spec §14 A-11), or null.
  */
 export function fillRefusal(p: { useLitres: number; sfgAvailable: number; cans: number; packingAvailable: number | null; packingType: string }): string | null {
-  if (!(p.cans > 0)) return "Minus Quantity Not Allowed";
-  if (!(p.sfgAvailable > 0) || p.useLitres > p.sfgAvailable + 1e-9) return "Low SFG Stock";
-  if (p.packingType !== "Naket" && (p.packingAvailable == null || p.packingAvailable <= 0)) return "Low Packing Quantity";
+  if (!(p.cans > 0)) return "Cans must be above 0.";
+  if (!(p.sfgAvailable > 0) || p.useLitres > p.sfgAvailable + 1e-9) return "There is not enough SFG in this lot.";
+  if (p.packingType !== "Naket" && (p.packingAvailable == null || p.packingAvailable <= 0)) return "No packing of this kind is available here.";
   return null;
 }
 
