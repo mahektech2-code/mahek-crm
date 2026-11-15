@@ -472,6 +472,8 @@ export default function PickScreen() {
               lat: c.gpsLat ?? NaN,
               lng: c.gpsLng ?? NaN,
               picked: picked.includes(c.id),
+              /* The visiting order, so a picked pin carries its number. */
+              order: picked.includes(c.id) ? picked.indexOf(c.id) + 1 : null,
             }))}
             onPress={(pin) => toggle(pin.id)}
           />

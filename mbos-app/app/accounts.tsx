@@ -1,17 +1,17 @@
 import React from 'react';
-import { Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Pressable, TextInput, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, ListCard, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { Badge, Card, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { Chip } from '../src/components/ui/account-parts';
 import { bookMoney, listAccountsPage, type BookMoney } from '../src/data/customer-account';
 import type { AccountFilter, AccountSort } from '../src/data/customer-query';
 import type { Customer } from '../src/data/customers';
 import { creditUse, longDay } from '../src/engines/account-view';
-import { compactInrFromPaise, inrFromPaise, plural, shopName } from '../src/lib/format';
-import { color as C, radius, tabular, weight } from '../src/theme/tokens';
+import { compactInrFromPaise, inrFromPaise, shopName } from '../src/lib/format';
+import { color as C, tabular, weight } from '../src/theme/tokens';
 import { Stagger } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 
@@ -95,111 +95,123 @@ export default function AccountsScreen() {
     router.push(`/account?id=${encodeURIComponent(c.id)}&from=accounts`);
 
   return (
-    <AppFrame title="Customer accounts" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 32 }}>
-      <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Customer accounts</T>
-      <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        Your customers&apos; accounts, as the accounts team sees them. Open one for its bills,
-        payments and statement.
-      </T>
+    <AppFrame
+      title="Customer accounts"
+      activeTab={null}
+      tone="navy"
+      onBack={back.go}
+      contentStyle={{ padding: 14, paddingBottom: 32 }}
+      hero={
+        <View style={{ marginTop: 4 }}>
+          {/* The intro, kept whole for a screen reader: V3 cut it to one line. */}
+          <View
+            accessible
+            accessibilityLabel="Your customers' accounts, as the accounts team sees them. Open one for its bills, payments and statement.">
+            <T style={[{ fontSize: 12, color: C.lime }, weight(700)]}>As accounts see your book</T>
+          </View>
 
-      {/* ---- the book's money ----
+          {/* ---- the book's money ----
 
-          The book, not the filter: these do not move as chips are tapped,
-          because a total that changes under your thumb is a total nobody can
-          quote. Each figure is also a way in — tapping it sets the chip that
-          lists what it counts. */}
-      <Card style={{ marginTop: 14, padding: 0, overflow: 'hidden' }}>
-        <View style={{ padding: 16, borderLeftWidth: 3, borderLeftColor: money?.owedPaise ? C.danger : C.border }}>
-          <T s="label">Owed to us across your book</T>
-          <T style={[{ fontSize: 28, lineHeight: 34, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
+              The book, not the filter: these do not move as chips are tapped,
+              because a total that changes under your thumb is a total nobody
+              can quote. Each figure is also a way in — tapping it sets the chip
+              that lists what it counts. */}
+          <T style={{ fontSize: 12, color: C.onNavyMuted, marginTop: 14 }}>Owed across your book · confirmed money</T>
+          <T
+            style={[
+              { fontSize: 38, lineHeight: 44, letterSpacing: -0.8, color: money?.owedPaise ? '#FF8A80' : '#FFFFFF' },
+              weight(800),
+              tabular,
+            ]}>
             {money ? inrFromPaise(money.owedPaise) : '—'}
           </T>
-          <T s="caption" style={{ marginTop: 2 }}>
-            {money
-              ? `${plural(money.owing, 'account')} of ${money.accounts} owe money · confirmed money only`
-              : 'Loading…'}
+          <T style={{ fontSize: 12, color: C.onNavyMuted }}>
+            {money ? `${money.owing} of ${money.accounts} accounts owe` : 'Loading…'}
           </T>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+            <Stat
+              label="Owe money"
+              value={money ? String(money.owing) : '—'}
+              on={filter === 'owing'}
+              onPress={() => setFilter(filter === 'owing' ? 'all' : 'owing')}
+            />
+            <Stat
+              label="Over limit"
+              value={money ? String(money.over) : '—'}
+              tone={money?.over ? 'danger' : undefined}
+              on={filter === 'over'}
+              onPress={() => setFilter(filter === 'over' ? 'all' : 'over')}
+            />
+            <Stat
+              label="Supply stopped"
+              value={money ? String(money.blocked) : '—'}
+              tone={money?.blocked ? 'warn' : undefined}
+              on={filter === 'blocked'}
+              onPress={() => setFilter(filter === 'blocked' ? 'all' : 'blocked')}
+            />
+          </View>
         </View>
-        <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: C.hairline }}>
-          <Stat
-            label="Owe money"
-            value={money ? String(money.owing) : '—'}
-            on={filter === 'owing'}
-            onPress={() => setFilter(filter === 'owing' ? 'all' : 'owing')}
-          />
-          <Stat
-            label="Over limit"
-            value={money ? String(money.over) : '—'}
-            tone={money?.over ? C.danger : undefined}
-            on={filter === 'over'}
-            onPress={() => setFilter(filter === 'over' ? 'all' : 'over')}
-            divider
-          />
-          <Stat
-            label="Supply stopped"
-            value={money ? String(money.blocked) : '—'}
-            tone={money?.blocked ? C.warnInk : undefined}
-            on={filter === 'blocked'}
-            onPress={() => setFilter(filter === 'blocked' ? 'all' : 'blocked')}
-            divider
-          />
-        </View>
-      </Card>
-
+      }>
       {/* ---- search ---- */}
       <View
         style={{
-          marginTop: 14,
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 8,
-          height: 52,
-          paddingHorizontal: 14,
-          borderRadius: radius.lg,
-          borderWidth: 1,
-          borderColor: C.border,
+          gap: 10,
+          height: 48,
+          paddingHorizontal: 16,
+          borderRadius: 24,
           backgroundColor: C.surface,
         }}>
-        <Icon name="search" size={20} color={C.muted} strokeWidth={1.6} />
+        <Icon name="search" size={18} color={C.muted} strokeWidth={2} />
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Shop, owner, city, phone or GST"
+          placeholder="Shop, owner, city, phone, GST"
           placeholderTextColor={C.faint}
           autoCorrect={false}
           autoCapitalize="none"
           returnKeyType="search"
           accessibilityLabel="Search customer accounts"
-          style={{ flex: 1, fontSize: 16, color: C.ink, height: '100%' }}
+          style={{ flex: 1, fontSize: 15, color: C.ink, height: '100%' }}
         />
         {query ? (
           <Pressable
             onPress={() => setQuery('')}
             accessibilityRole="button"
             accessibilityLabel="Clear search"
-            hitSlop={12}>
-            <Icon name="close" size={18} color={C.muted} strokeWidth={1.6} />
+            hitSlop={10}
+            style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.canvas, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="close" size={12} color={C.ink} strokeWidth={2.4} />
           </Pressable>
         ) : null}
       </View>
 
       {/* ---- the chips ---- */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8, paddingRight: 16 }}
-        style={{ flexGrow: 0, marginTop: 12, marginHorizontal: -16, paddingHorizontal: 16 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         {FILTERS.map((f) => (
-          <Chip key={f.key} label={f.label} on={filter === f.key} onPress={() => setFilter(f.key)} />
+          <Chip
+            key={f.key}
+            label={f.label}
+            ink={f.key === 'owing' ? C.danger : undefined}
+            on={filter === f.key}
+            onPress={() => setFilter(f.key)}
+          />
         ))}
-      </ScrollView>
+      </View>
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>
-        <T s="caption">
-          {rows === null ? 'Loading…' : query || filter !== 'all' ? `${plural(total, 'account')} match` : plural(total, 'account')}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+        <T style={{ flex: 1, fontSize: 13, color: C.muted }}>
+          {rows === null ? (
+            'Loading…'
+          ) : (
+            <>
+              <T style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{String(total)}</T>
+              {query || filter !== 'all' ? ' match' : total === 1 ? ' account' : ' accounts'}
+            </>
+          )}
         </T>
-        <View style={{ flexDirection: 'row', gap: 4 }}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
           {SORTS.map((s) => (
             <Pressable
               key={s.key}
@@ -209,8 +221,9 @@ export default function AccountsScreen() {
               }}
               accessibilityRole="button"
               accessibilityState={{ selected: sort === s.key }}
-              style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm, backgroundColor: sort === s.key ? C.primaryTint : 'transparent' }}>
-              <T style={[{ fontSize: 13, color: sort === s.key ? C.primaryDeep : C.muted }, weight(sort === s.key ? 500 : 400)]}>
+              hitSlop={8}
+              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: sort === s.key ? C.navy : C.surface }}>
+              <T style={[{ fontSize: 12, color: sort === s.key ? '#FFFFFF' : C.ink }, weight(700)]}>
                 {s.label}
               </T>
             </Pressable>
@@ -220,8 +233,8 @@ export default function AccountsScreen() {
 
       {/* ---- the list ---- */}
       {rows === null ? null : rows.length === 0 ? (
-        <Card style={{ marginTop: 10, paddingVertical: 28 }}>
-          <T style={{ fontSize: 15, lineHeight: 22, color: C.ink, textAlign: 'center' }}>
+        <Card style={{ marginTop: 10, paddingVertical: 24, borderRadius: 24 }}>
+          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink, textAlign: 'center' }, weight(800)]}>
             {query ? `No account matches “${query}”` : 'No accounts here'}
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
@@ -233,30 +246,34 @@ export default function AccountsScreen() {
           </T>
         </Card>
       ) : (
-        <ListCard style={{ marginTop: 10 }}>
+        <View style={{ marginTop: 10, backgroundColor: C.surface, borderRadius: 22, paddingVertical: 4, paddingHorizontal: 16 }}>
           {rows.map((c, i) => (
             <Stagger key={c.id} index={i}>
               <AccountRow c={c} first={i === 0} onPress={() => open(c)} />
             </Stagger>
           ))}
-        </ListCard>
+        </View>
       )}
 
       {hasMore ? (
         <Pressable
           onPress={more}
           accessibilityRole="button"
-          style={{ marginTop: 12, height: 48, borderRadius: radius.lg, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-          <T style={[{ fontSize: 15, color: C.primary }, weight(500)]}>
+          style={({ pressed }) => ({ marginTop: 12, height: 52, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
             {loadingMore ? 'Loading…' : `Show more · ${total - (rows?.length ?? 0)} left`}
           </T>
         </Pressable>
       ) : null}
 
       {money?.syncedAt ? (
-        <T s="caption" style={{ marginTop: 14, textAlign: 'center' }}>
-          Figures from the office, last refreshed on this phone with the sync.
-        </T>
+        <View
+          accessible
+          accessibilityLabel="Figures from the office, last refreshed on this phone with the sync."
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12 }}>
+          <Icon name="synced" size={14} color={C.muted} strokeWidth={2} />
+          <T style={{ fontSize: 12, color: C.muted }}>Office figures, refreshed with the sync</T>
+        </View>
       ) : null}
     </AppFrame>
   );
@@ -274,20 +291,20 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
       accessibilityRole="button"
       accessibilityLabel={`${c.name}, ${owed > 0 ? inrFromPaise(owed) + ' outstanding' : 'nothing outstanding'}`}
       style={({ pressed }) => [
-        { paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: first ? 0 : 1, borderTopColor: C.wash },
-        pressed && { backgroundColor: C.wash },
+        { paddingVertical: 12, borderTopWidth: first ? 0 : 1, borderTopColor: C.hairline },
+        pressed && { opacity: 0.7 },
       ]}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]} numberOfLines={1}>
+          <T style={[{ fontSize: 16, lineHeight: 21, color: C.ink }, weight(700)]} numberOfLines={1}>
             {shopName(c.name)}
           </T>
           <T s="caption" numberOfLines={1}>
-            {[c.city, c.lastOrderDate ? 'last order ' + longDay(c.lastOrderDate) : null].filter(Boolean).join(' · ') || '—'}
+            {[c.city, c.lastOrderDate ? 'ordered ' + longDay(c.lastOrderDate) : null].filter(Boolean).join(' · ') || '—'}
           </T>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <T style={[{ fontSize: 16, lineHeight: 22, color: owed > 0 ? (over ? C.danger : C.ink) : C.muted }, weight(600), tabular]}>
+          <T style={[{ fontSize: 17, lineHeight: 22, color: owed > 0 ? (over ? C.danger : C.ink) : C.muted }, weight(owed > 0 ? 800 : 600), tabular]}>
             {owed > 0 ? inrFromPaise(owed) : 'Nothing due'}
           </T>
           {c.creditLimitPaise ? (
@@ -296,17 +313,17 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
             </T>
           ) : null}
         </View>
-        <Icon name="forward" size={18} color={C.faint} strokeWidth={1.5} />
+        <Icon name="forward" size={16} color={C.faint} strokeWidth={2} />
       </View>
 
       {/* How much of the limit is used — drawn only where there IS a limit.
           A bar with no limit behind it would be a percentage of nothing. */}
       {use != null ? (
-        <View style={{ marginTop: 8, height: 4, borderRadius: 2, backgroundColor: C.hairline, overflow: 'hidden', marginRight: 30 }}>
+        <View style={{ marginTop: 8, height: 6, borderRadius: 3, backgroundColor: C.hairline, overflow: 'hidden' }}>
           <View
             style={{
               width: `${Math.min(100, use)}%`,
-              height: 4,
+              height: 6,
               backgroundColor: over ? C.danger : use >= 80 ? C.warn : C.success,
             }}
           />
@@ -316,7 +333,7 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
       {c.creditBlocked || over || c.thirdParty ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {c.creditBlocked ? <Badge tone="danger">Supply stopped</Badge> : null}
-          {over ? <Badge tone="danger">{use}% of limit</Badge> : null}
+          {over ? <Badge tone="danger">{use + '%'}</Badge> : null}
           {c.thirdParty ? <Badge tone="neutral">Billed to distributor</Badge> : null}
         </View>
       ) : null}
@@ -330,17 +347,17 @@ function Stat({
   tone,
   on,
   onPress,
-  divider,
 }: {
   label: string;
   value: string;
-  tone?: string;
+  tone?: 'danger' | 'warn';
   on: boolean;
   onPress: () => void;
-  divider?: boolean;
 }) {
   /* A figure here is also a filter, so pressing one moves the chips below —
-     on, or back off to everything — and ticks like they do. */
+     on, or back off to everything — and ticks like they do. Chosen, it turns
+     lime, as V3 draws a filter that is on in the navy block. */
+  const ink = tone === 'danger' ? (on ? C.danger : '#FF8A80') : tone === 'warn' ? (on ? C.warnInk : '#FFD27A') : on ? C.navy : '#FFFFFF';
   return (
     <Pressable
       onPress={() => {
@@ -349,19 +366,18 @@ function Stat({
       }}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
-      style={({ pressed }) => [
-        {
-          flex: 1,
-          paddingVertical: 12,
-          paddingHorizontal: 12,
-          borderLeftWidth: divider ? 1 : 0,
-          borderLeftColor: C.hairline,
-          backgroundColor: on ? C.primaryTint : C.surface,
-        },
-        pressed && { backgroundColor: C.wash },
-      ]}>
-      <T style={[{ fontSize: 18, lineHeight: 24, color: tone ?? C.ink }, weight(600), tabular]}>{value}</T>
-      <T s="micro" numberOfLines={1}>
+      accessibilityLabel={label + ', ' + value}
+      style={({ pressed }) => ({
+        flex: 1,
+        height: 64,
+        borderRadius: 18,
+        paddingHorizontal: 12,
+        justifyContent: 'center',
+        backgroundColor: on ? C.lime : C.navySoft,
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      <T style={[{ fontSize: 20, lineHeight: 25, color: ink }, weight(800), tabular]}>{value}</T>
+      <T style={[{ fontSize: 11, lineHeight: 14, color: on ? C.navy : C.onNavyMuted }, weight(on ? 600 : 500)]} numberOfLines={1}>
         {label}
       </T>
     </Pressable>
