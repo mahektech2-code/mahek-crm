@@ -34,7 +34,7 @@ export const uomsScreen: ScreenModule = {
   key: "uoms",
   async load() {
     const units = await listUoms();
-    const newForm: FormSpec = { screen: "uoms", id: "new", title: "Add a unit", submit: "Add unit", header: fields() };
+    const newForm: FormSpec = { screen: "uoms", id: "new", title: "New unit", submit: "Add unit", header: fields() };
     const cols: ColSpec[] = [
       { k: "name", l: "Unit", t: "b" },
       { k: "measure", l: "Measures", t: "t" },
@@ -42,7 +42,7 @@ export const uomsScreen: ScreenModule = {
       { k: "status", l: "Status", t: "s" },
     ];
     return {
-      spec: { screen: "uoms", cols, hidden: [], groups: ["measure"], newForm, newLabel: "Add unit", noDataLine: "No units yet." },
+      spec: { screen: "uoms", cols, hidden: [], groups: ["measure"], newForm, newLabel: "New unit", noDataLine: "No units yet." },
       rows: units.map((u) => {
         const actions: ActionSpec[] = u.builtIn
           ? []

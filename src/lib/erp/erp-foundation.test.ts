@@ -129,7 +129,7 @@ describe("raw materials", () => {
     const b = await mod("rawMaterials").forms!.new(ctx, { name: "1 L Tin Can", code: "CAN1", unit: "Unit", materialType: "Can" }, []);
     assert.ok(b.ok);
     const dup = await mod("rawMaterials").forms!.new(ctx, { name: "toluene", code: "X", unit: "Litre", materialType: "Can" }, []);
-    assert.ok(!dup.ok && dup.fieldErrors?.[0].message === "Duplicate Entry!");
+    assert.ok(!dup.ok && dup.fieldErrors?.[0].message === "That name is already taken.");
     const rows = await db.select().from(erpRawMaterials).orderBy(erpRawMaterials.serialNo);
     assert.deepEqual(rows.map((r) => [r.serialNo, r.name]), [[1, "Toluene"], [2, "1 L Tin Can"]]);
     assert.equal(rows[0].pricePaise, 9200);

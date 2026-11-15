@@ -5,7 +5,8 @@ import { attachments, customers, erpTransports, erpVideos, users } from "@/db/sc
 import { err, fieldErr, okVoid } from "@/lib/result";
 import { bindErpFiles } from "../attachments";
 import { erpAudit, erpId, multi, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import type { ActionSpec, CellValue, ColSpec, ListRow } from "../ui";
+import type { ActionSpec, CellValue, ColSpec, FormSpec, ListRow } from "../ui";
+import type { ErpContext } from "../access";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { type Col, has, isErpManager, today } from "./common";
@@ -232,10 +233,88 @@ function youtubeId(url: string): string | null {
   return m ? m[1] : null;
 }
 
+const YT = "YouTube link";
+const UPLOAD = "Uploaded file";
+
+/** YouTube serves a still for every video at a fixed address. */
+function youtubeThumb(id: string | null): string {
+  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : "";
+}
+
+/** The help video form, new or for one video. */
+async function videoForm(id?: string): Promise<FormSpec | null> {
+  const tags = await refValues("videoTag");
+  let init: Record<string, string> = { source: YT };
+  if (id) {
+    const [v] = await db.select().from(erpVideos).where(eq(erpVideos.id, id));
+    if (!v) return null;
+    init = {
+      title: v.title,
+      source: v.source === "youtube" ? YT : UPLOAD,
+      url: v.youtubeUrl ?? "",
+      file: v.fileId ?? "",
+      tags: v.tags.join("|"),
+      description: v.description ?? "",
+    };
+  }
+  return {
+    screen: "videos",
+    id: id ? "edit" : "new",
+    recordId: id,
+    title: id ? "Edit help video" : "New help video",
+    submit: id ? "Save changes" : "Add video",
+    init,
+    header: [
+      { k: "title", l: "Title", t: "text", req: true },
+      { k: "source", l: "Video from", t: "select", req: true, opts: [YT, UPLOAD] },
+      { k: "url", l: "YouTube link", t: "text", req: true, when: { k: "source", eq: YT } },
+      { k: "file", l: "Video file", t: "video", req: true, when: { k: "source", eq: UPLOAD } },
+      { k: "tags", l: "Search tags", t: "multi", opts: tags },
+      { k: "description", l: "Description", t: "area" },
+    ],
+  };
+}
+
+async function saveVideo(ctx: ErpContext, h: Record<string, string>, id?: string) {
+  if (!isErpManager(ctx)) return err("A manager adds and edits help videos.", "not_permitted");
+  const title = text(h.title);
+  if (!title) return fieldErr("title", "Give the video a title.");
+  /* "From File Upload" is what a page loaded before the rename still sends. */
+  const youtube = h.source !== UPLOAD && h.source !== "From File Upload";
+  const url = youtube ? text(h.url) : null;
+  if (youtube && (!url || !youtubeId(url))) return fieldErr("url", "Paste a YouTube link.");
+  const file = youtube ? null : text(h.file);
+  if (!youtube && !file) return fieldErr("file", "Upload the video.");
+  const values = { title, source: youtube ? "youtube" : "file", youtubeUrl: url, fileId: file, tags: multi(h.tags), description: text(h.description) };
+  if (id) {
+    const [before] = await db.select().from(erpVideos).where(eq(erpVideos.id, id));
+    if (!before) return err("That video was already removed.", "not_found");
+    await db.transaction(async (tx) => {
+      await tx.update(erpVideos).set(values).where(eq(erpVideos.id, id));
+      /* A replaced upload is taken off with the change, as a deleted video's is. */
+      if (before.fileId && before.fileId !== file)
+        await tx
+          .update(attachments)
+          .set({ status: "removed", removedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(attachments.parentType, "erp_video"), eq(attachments.parentId, id), eq(attachments.id, before.fileId), eq(attachments.status, "available")));
+      if (file && file !== before.fileId) await bindErpFiles(tx as unknown as typeof db, [file], "erp_video", id, ctx.user.id);
+    });
+    await erpAudit(ctx, "erp.video.edit", "erp_video", id, before, values);
+    return okVoid(`"${title}" saved`);
+  }
+  const newId = erpId("vid");
+  await db.transaction(async (tx) => {
+    await tx.insert(erpVideos).values({ id: newId, ...values, createdById: ctx.user.id });
+    await bindErpFiles(tx as unknown as typeof db, [file], "erp_video", newId, ctx.user.id);
+  });
+  await erpAudit(ctx, "erp.video.create", "erp_video", newId, null, { title });
+  return okVoid(`"${title}" added`);
+}
+
 const videos: ScreenModule = {
   key: "videos",
   async load(ctx) {
-    const [rows, tags] = await Promise.all([db.select({ v: erpVideos, by: users.name }).from(erpVideos).leftJoin(users, eq(users.id, erpVideos.createdById)).orderBy(desc(erpVideos.createdAt)), refValues("videoTag")]);
+    const rows = await db.select({ v: erpVideos, by: users.name }).from(erpVideos).leftJoin(users, eq(users.id, erpVideos.createdById)).orderBy(desc(erpVideos.createdAt));
     const cols: ColSpec[] = [
       { k: "title", l: "Title", t: "b" },
       { k: "tags", l: "Tags", t: "t" },
@@ -248,24 +327,8 @@ const videos: ScreenModule = {
         screen: "videos",
         cols,
         hidden: [],
-        newForm: editor
-          ? {
-              screen: "videos",
-              id: "new",
-              title: "Add a help video",
-              submit: "Add video",
-              init: { source: "From YouTube URL" },
-              header: [
-                { k: "title", l: "Title", t: "text", req: true },
-                { k: "source", l: "Video from", t: "select", req: true, opts: ["From YouTube URL", "From File Upload"] },
-                { k: "url", l: "YouTube URL", t: "text", req: true, when: { k: "source", eq: "From YouTube URL" } },
-                { k: "file", l: "Video file", t: "video", req: true, when: { k: "source", eq: "From File Upload" } },
-                { k: "tags", l: "Search tags", t: "multi", opts: tags },
-                { k: "description", l: "Description", t: "area" },
-              ],
-            }
-          : undefined,
-        newLabel: "Add video",
+        newForm: editor ? ((await videoForm()) ?? undefined) : undefined,
+        newLabel: "New video",
         noDataLine: "No help videos yet.",
         cards: { img: "thumb", title: "title", lines: ["tags", "description"], empty: "", play: true, toggle: true },
       },
@@ -273,35 +336,28 @@ const videos: ScreenModule = {
         const yt = r.v.youtubeUrl ? youtubeId(r.v.youtubeUrl) : null;
         return {
           id: r.v.id,
-          v: { title: r.v.title, tags: r.v.tags.join(", "), description: r.v.description, source: r.v.source === "youtube" ? "YouTube" : "File", thumb: "" },
+          v: { title: r.v.title, tags: r.v.tags.join(", "), description: r.v.description, source: r.v.source === "youtube" ? "YouTube" : "File", thumb: youtubeThumb(yt) },
           flags: [],
           title: r.v.title,
           header: r.v.tags.join(" · "),
           panel: { kind: "video", data: { youtube: yt, file: r.v.fileId, url: r.v.youtubeUrl } },
-          actions: editor ? [{ id: "delete", l: "Delete", impact: { kind: "erp-video", id: r.v.id } }] : [],
+          actions: editor
+            ? [
+                { id: "edit", l: "Edit", primary: true, loadsForm: true },
+                { id: "delete", l: "Delete", impact: { kind: "erp-video", id: r.v.id } },
+              ]
+            : [],
           by: stampLine(r.by, r.v.createdAt),
         };
       }),
     };
   },
+  formLoaders: {
+    edit: async (ctx, id) => (isErpManager(ctx) ? videoForm(id) : null),
+  },
   forms: {
-    async new(ctx, h) {
-      if (!isErpManager(ctx)) return err("A manager adds help videos.", "not_permitted");
-      const title = text(h.title);
-      if (!title) return fieldErr("title", "Title is required");
-      const youtube = h.source !== "From File Upload";
-      const url = youtube ? text(h.url) : null;
-      if (youtube && (!url || !youtubeId(url))) return fieldErr("url", "Paste a YouTube link");
-      const file = youtube ? null : text(h.file);
-      if (!youtube && !file) return fieldErr("file", "Upload the video");
-      const id = erpId("vid");
-      await db.transaction(async (tx) => {
-        await tx.insert(erpVideos).values({ id, title, source: youtube ? "youtube" : "file", youtubeUrl: url, fileId: file, tags: multi(h.tags), description: text(h.description), createdById: ctx.user.id });
-        await bindErpFiles(tx as unknown as typeof db, [file], "erp_video", id, ctx.user.id);
-      });
-      await erpAudit(ctx, "erp.video.create", "erp_video", id, null, { title });
-      return okVoid(`"${title}" added`);
-    },
+    new: (ctx, h) => saveVideo(ctx, h),
+    edit: (ctx, h, _l, id) => saveVideo(ctx, h, id),
   },
   actions: {
     async delete(ctx, id, values) {

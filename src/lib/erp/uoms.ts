@@ -34,7 +34,7 @@ export async function addUom(ctx: ErpContext, d: UomDraft): Promise<Result<Uom>>
   if (bad) return bad;
   const row = { id: erpId("uom"), name: cleanUomName(d.name), measure: d.measure, perBase: Number(d.perBase), createdById: ctx.actor.id };
   const [made] = await db.insert(erpUoms).values(row).onConflictDoNothing().returning();
-  if (!made) return fieldErr("name", "There is already a unit of that name");
+  if (!made) return fieldErr("name", "There is already a unit of that name.");
   await erpAudit(ctx, "erp.uom.add", "erp_uom", made.id, null, { name: made.name, measure: made.measure, perBase: made.perBase });
   return ok(asUom(made));
 }
