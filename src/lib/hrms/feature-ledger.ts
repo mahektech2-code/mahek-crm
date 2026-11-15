@@ -123,6 +123,8 @@ export const ADDED: Partial<Record<HandlerRef, string>> = {
   /* The workday clock (Nov 2026): a manager decides "I was working away from the screen". */
   "workdayClaims.actions.approve": "A manager counts an automatic break as work",
   "workdayClaims.actions.decline": "A manager keeps an automatic break as a break, with a reason",
+  /* Team today's "To review" (Nov 2026): a punch-in from outside the office is turned down with a reason. */
+  "help.actions.decline": "Whoever resolves help turns a request down, with the reason they are told",
 };
 
 /**

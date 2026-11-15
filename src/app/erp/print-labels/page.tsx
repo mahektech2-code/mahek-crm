@@ -104,7 +104,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
     }
   } else if (kind === "purchase") {
     title = "Purchase label";
-    empty = "That purchase was not found. Open it from the Purchase barcode list.";
+    empty = "That purchase was not found. Open it from Purchases → Drum labels.";
     const r = await purchaseLabel(purchase);
     if (r) {
       title = `Purchase label · lot ${r.label.lot}`;
@@ -132,7 +132,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   const sub = !n
     ? empty
     : kind === "box"
-      ? `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm. Each QR carries the box's own id; scan it in Trace for the lot and the batch.`
+      ? `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm. Each QR carries the unit's own id; scan it in Trace for the lot and the batch.`
       : kind === "dispatch"
         ? `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm: one for every box or can on ${orders.length > 1 ? `orders ${orders.join(", ")}` : "the order"}. The lot size on each is the pieces on the whole order.`
         : `${n} ${what}${n === 1 ? "" : "s"}, ${mm} × ${mm} mm. The QR carries the lot; scan it in Trace.`;
@@ -181,10 +181,10 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       `}</style>
       {unlabelled.map((u) =>
         batch ? (
-          <GiveIds key={u.godownId} kind="batch" code={batch} godownId={u.godownId} godown={u.godown} room={u.room} can={!ctx.viewingAs && (ctx.screens.has("packStock") || ctx.screens.has("packBatches"))} />
+          <GiveIds key={`${u.godownId}:${u.room}`} kind="batch" code={batch} godownId={u.godownId} godown={u.godown} room={u.room} can={!ctx.viewingAs && (ctx.screens.has("packStock") || ctx.screens.has("packBatches"))} />
         ) : (
           <GiveIds
-            key={u.godownId}
+            key={`${u.godownId}:${u.room}`}
             kind="lot"
             code={lot}
             godownId={u.godownId}

@@ -20,10 +20,10 @@ import { WorkdayOverlays } from "./workday-overlays";
 
 export type WorkdayOp =
   | { op: "punchIn" | "punchOut"; lat?: number | null; lng?: number | null; accuracy?: number | null }
-  | { op: "break"; reason?: string | null }
+  | { op: "break"; reason?: string | null; note?: string | null }
   | { op: "resume"; claim?: { category: string; note: string } | null }
   | { op: "claimOut"; category: string; note: string }
-  | { op: "lateHelp"; text: string }
+  | { op: "lateHelp"; text: string; kind?: "late" | "away" }
   | { op: "beat" };
 
 export type OpResult = { ok: boolean; error?: string; message?: string; refusal?: string; detail?: string };

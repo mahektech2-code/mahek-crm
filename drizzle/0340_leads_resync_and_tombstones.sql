@@ -24,7 +24,7 @@ UPDATE "customers"
    AND "deleted_at" IS NULL;
 --> statement-breakpoint
 INSERT INTO "mbos_deletions" ("id", "entity", "entity_id", "user_id", "at", "reason")
-SELECT 'del_0339_' || c."id",
+SELECT 'del_0340_' || c."id",
        'leads',
        c."id",
        NULL,

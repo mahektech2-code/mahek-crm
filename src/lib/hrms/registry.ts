@@ -111,7 +111,8 @@ export const HRMS_GROUPS: HrmsGroup[] = [
       s("attendance", "attendance", "Attendance", "check", "", {
         views: [
           t("attendance", "Days", "Every check-in and check-out, newest first."),
-          t("teamToday", "Team today", "Who is working, on a break or not in, right now.", "list", MANAGER),
+          t("myAttendance", "My attendance", "Your month: every day, what it counted as, and why.", "custom"),
+          t("teamToday", "Team today", "Who is working, on a break or not in, right now, and what is waiting for you to decide.", "custom", MANAGER),
           t("workdayClaims", "Corrections", "Automatic breaks somebody says were work. Their manager decides."),
           t("pendingOut", "Not checked out", "Days with a check-in and no check-out. An open day holds up that month’s salary."),
           t("absentees", "Absent", "People with no attendance on the day who are not on leave or a holiday.", "list", MANAGER),
@@ -207,6 +208,8 @@ export const HRMS_GROUPS: HrmsGroup[] = [
         ...hr("admin"),
         views: [
           t("settings", "Rules", "The rules HRMS runs on, and who changes them.", "custom"),
+          t("attendanceRules", "Attendance", "The lock, idleness, break reasons, and what counts as present.", "custom"),
+          t("officeTimings", "Office timings", "Each office's working week, the late grace, and who has timings of their own.", "custom"),
           t("roles", "Roles", "What each of the three HRMS roles sees and decides.", "custom"),
           t("refLists", "Pick lists", "The values every form picks from."),
         ],

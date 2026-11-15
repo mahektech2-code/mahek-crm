@@ -304,7 +304,7 @@ describe("tracing", () => {
     const d = await traceDashboard();
     const today = Object.fromEntries(d.today.map((x) => [x.l, x.v]));
     assert.equal(today["Refilled"], "56 cans");
-    assert.equal(today["Boxes dispatched"], "3");
+    assert.equal(today["Units dispatched"], "3");
     const ex = Object.fromEntries(d.exceptions.map((x) => [x.l, x.n]));
     assert.equal(ex["Pack-size / product mismatches today"], 1);
     assert.equal(ex["Duplicate scans today"], 2);

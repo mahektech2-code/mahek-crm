@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { useToast } from "@/components/ui/toast";
 import type { Result } from "@/lib/result";
+import { actionFailure } from "@/lib/version-skew";
 
 /** The sentence a refused write is reported in, everywhere in the ERP: the first field's own reason, else the refusal. */
 export function resultError(r: { error: string; fieldErrors?: { message: string }[] }): string {
@@ -22,7 +23,13 @@ export function useAct() {
   const run = <T,>(fn: () => Promise<Result<T>>, after?: (r: Result<T>) => void) =>
     new Promise<Result<T>>((resolve) =>
       start(async () => {
-        const r = await fn();
+        /* A call that throws (a tab older than the deploy, a dropped connection) answers like one that refused. */
+        let r: Result<T>;
+        try {
+          r = await fn();
+        } catch (e) {
+          r = { ok: false, error: actionFailure(e) };
+        }
         if (r.ok) push(r.message ?? "Saved");
         else push(resultError(r), "error");
         after?.(r);

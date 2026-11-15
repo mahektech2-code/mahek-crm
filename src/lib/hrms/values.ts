@@ -40,6 +40,7 @@ export const HELP = {
   lateCheckIn: "Checked in late",
   forgotCheckOut: "Forgot to check out",
   runningLate: "Running late today",
+  notAtOffice: "Not at the office",
   overtime: "Overtime not approved",
   learnApp: "Help learning the app",
   appIssue: "Problem with the app",

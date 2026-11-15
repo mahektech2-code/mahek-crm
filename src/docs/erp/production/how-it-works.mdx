@@ -61,7 +61,7 @@ The verdict is kept against the **lot code**, so a transfer of the lot to anothe
 | Rate | per can for a can fill, per litre for a drum or Naket fill |
 
 <Rule title="The checks speak for themselves">
-"Minus Quantity Not Allowed" for no cans; "Low SFG Stock" when the lot does not hold the litres; "Low Packing Quantity" when there are no cans or drums of the packing item — each failed check says its own thing.
+"Cans must be above 0." for no cans; "There is not enough SFG in this lot." when the lot does not hold the litres; "No packing of this kind is available here." when there are no cans or drums of the packing item — each failed check says its own thing.
 </Rule>
 
 The cans a fill uses come out of the can item's stock at that godown, **oldest lot first**, because the fill does not name a can lot. Correcting cans adjusted is refused if it would take back cans already packed or moved, and it trims any loose-can labels the lot can no longer carry.
@@ -82,7 +82,7 @@ On a batch's first line, its empty boxes (boxes × empty boxes per box, of the S
 | Total cans | boxes × cans per box |
 | Line costing | its cans × their FG lot's per-can rate + a share of the batch's box cost by cans, so a two-line batch pays for its boxes once |
 
-A line may not draw more cans than its FG lot holds ("Low Stock"), nor more than the batch still needs ("You Cant Select More Than … Can"). Cans that leave an FG lot into a box take any loose-can labels the lot can no longer carry with them.
+A line may not draw more cans than its FG lot holds ("There is not enough stock in this lot."), nor more than the batch still needs ("This batch needs only … more cans."). Cans that leave an FG lot into a box take any loose-can labels the lot can no longer carry with them.
 
 ## Where production costs come from
 

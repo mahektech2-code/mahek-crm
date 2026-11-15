@@ -145,7 +145,7 @@ describe("semi-finished", () => {
       { item: "Toluene", lot: "ASTOL1", qty: "300" },
       { item: "Toluene", lot: "ASTOL1", qty: "300" },
     ]);
-    assert.equal(fieldMsg(r), "Low Stock!");
+    assert.equal(fieldMsg(r), "There is not enough stock in this lot.");
     assert.equal((await db.select().from(erpSfgLines)).length, 0, "a refused batch writes nothing");
   });
 
@@ -210,8 +210,8 @@ describe("filling", () => {
   test("each failed check says its own thing (A-11)", async () => {
     const ctx = await as(admin);
     const base = { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L" };
-    assert.equal(fieldMsg(await mod("fgFill").forms!.new(ctx, { ...base, cans: "80" }, [])), "Low SFG Stock");
-    assert.equal(fieldMsg(await mod("fgFill").forms!.new(ctx, { ...base, cans: "0" }, [])), "Minus Quantity Not Allowed");
+    assert.equal(fieldMsg(await mod("fgFill").forms!.new(ctx, { ...base, cans: "80" }, [])), "There is not enough SFG in this lot.");
+    assert.equal(fieldMsg(await mod("fgFill").forms!.new(ctx, { ...base, cans: "0" }, [])), "Cans must be above 0.");
   });
 
   test("a fill posts its cans net of the ones lost (A-12), costed from SFG and the can", async () => {
@@ -231,7 +231,7 @@ describe("packing", () => {
   test("a line cannot draw more cans than its lot holds", async () => {
     const ctx = await as(admin);
     const r = await mod("packBatches").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", fg: FG, sku: BOXED, boxes: "10", lot: "FG1BH" }, []);
-    assert.equal(fieldMsg(r), "Low Stock");
+    assert.equal(fieldMsg(r), "There is not enough stock in this lot.");
   });
 
   test("a batch reaches packing stock only when its lines draw exactly its cans, once", async () => {
@@ -254,7 +254,7 @@ describe("packing", () => {
     assert.equal((await fgLots()).find((l) => l.lotCode === "FG2BH")?.stock, 2);
 
     const over = await mod("packBatches").forms!.more(ctx, { date: TODAY, godown: "Bhiwandi", fg: FG, sku: BOXED, boxes: "10", lot: "FG2BH", serialFixed: "1", cans: "1" }, []);
-    assert.equal(fieldMsg(over), "You Cant Select More Than 0 Can");
+    assert.equal(fieldMsg(over), "This batch already has all its cans.");
     assert.equal((await db.select().from(erpPackEntries)).length, 1);
   });
 });
@@ -263,8 +263,8 @@ describe("transfers", () => {
   test("moves boxes between godowns, and refuses the same godown or more than the lot holds", async () => {
     const ctx = await as(admin);
     const base = { date: TODAY, type: "FG Packing", from: "Bhiwandi", item: BOXED, lot: "FP1BH" };
-    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "3", to: "Bhiwandi" }, [])), "You Selected The Same Location, Change To Location");
-    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "11", to: "Ambernath" }, [])), "Select Correct Quantity!");
+    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "3", to: "Bhiwandi" }, [])), "Pick a different godown to move it to.");
+    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "11", to: "Ambernath" }, [])), "Enter a quantity above 0 and no more than the lot holds.");
     const ok = await mod("transfers").forms!.new(ctx, { ...base, qty: "3", to: "Ambernath" }, []);
     assert.ok(ok.ok, JSON.stringify(ok));
     const packs = await packLots();
@@ -291,7 +291,7 @@ describe("re-order levels", () => {
     assert.ok((await mod("rmLevels").forms!.new(ctx, { godown: "Bhiwandi", type: "Can", item: "Tin can 5L", min: "50", max: "100", status: "Follow" }, [])).ok);
     assert.ok((await mod("rmLevels").forms!.new(ctx, { godown: "Bhiwandi", type: "Box", item: "Box6", min: "10", max: "60", status: "Follow" }, [])).ok);
     const dup = await mod("rmLevels").forms!.new(ctx, { godown: "Bhiwandi", type: "Can", item: "Tin can 5L", min: "1", max: "2", status: "Follow" }, []);
-    assert.equal(fieldMsg(dup), "Duplicate Entry!");
+    assert.equal(fieldMsg(dup), "That item already has a level at this godown.");
     const { rows } = await mod("rmLevels").load(ctx);
     const can = rows.find((r) => r.v.item === "Tin can 5L");
     const box = rows.find((r) => r.v.item === "Box6");

@@ -28,6 +28,7 @@ import { fd, inr, inrRate, nf } from "../ui";
 import {
   FLOW_STEPS,
   LIVE_PO,
+  STEP,
   RECEIVABLE_PO,
   methodByLabel,
   itemPickLabels,
@@ -377,10 +378,10 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     const vendor = m.preferredSupplierId ? supName.get(m.preferredSupplierId) : null;
     ruleOf[label] =
       rule === "direct"
-        ? `Direct purchase${vendor ? ` · ${vendor} is offered as the vendor` : " · a vendor is chosen next"}`
+        ? `Direct purchase${vendor ? ` · ${vendor} is offered as the supplier` : " · a supplier is chosen on the PO"}`
         : rule === "quotation"
-          ? "Quotation required · quotations are collected and compared before the PO"
-          : "Buyer decision · the buyer chooses direct purchase or quotations";
+          ? "Quotation · bought on the Quotation manager, whose PO number is linked here"
+          : "Buyer decision · the buyer creates the PO or links one from the Quotation manager";
     ruleShortOf[label] = rule === "direct" ? `Direct${vendor ? ` · ${vendor}` : ""}` : rule === "quotation" ? "Quotations" : "Buyer decides";
   }
   /* Every item the department may ask for, across its categories — a requirement lists them all in one table. */
@@ -640,7 +641,7 @@ const requisitions: ScreenModule = {
       { k: "priority", l: "Priority", t: "s" },
       { k: "method", l: "Method", t: "s" },
       { k: "stage", l: "Stage", t: "s" },
-      { k: "vendor", l: "Vendor", t: "t" },
+      { k: "vendor", l: "Supplier", t: "t" },
       { k: "po", l: "PO", t: "mono" },
       { k: "remarks", l: "Remarks", t: "t" },
       { k: "f", l: "Flags", t: "f" },
@@ -751,7 +752,7 @@ const requisitions: ScreenModule = {
       if (m !== "direct" && m !== "quotation") return fieldErr("method", "Choose direct purchase or quotation");
       const [v] = await requirementViews({ ids: [id] });
       if (!v) return err("That requirement no longer exists.", "not_found");
-      if (stageOf(v).stage !== "Buyer decision") return err("This requirement's method is already decided.", "conflict");
+      if (stageOf(v).stage !== "Create or link PO") return err("This requirement's method is already decided.", "conflict");
       const preset = m === "direct" && v.preferredSupplierId ? v.preferredSupplierId : null;
       await db
         .update(erpRequisitions)
@@ -766,22 +767,22 @@ const requisitions: ScreenModule = {
         })
         .where(eq(erpRequisitions.id, id));
       await erpAudit(ctx, "erp.requisition.decideMethod", "erp_requisition", id, null, { method: m, note: text(values.note) });
-      return okVoid(m === "direct" ? `Direct purchase${preset ? " · the item's default vendor is offered" : " · select the vendor next"}` : "Quotation · buy it on the Quotation manager, then link its PO number here");
+      return okVoid(m === "direct" ? `Direct purchase${preset ? " · the item's default supplier is offered" : ""} · create the PO next` : "Quotation · buy it on the Quotation manager, then link its PO number here");
     },
     async vendor(ctx, id, values) {
       const [sup] = await db.select().from(erpSuppliers).where(and(eq(erpSuppliers.name, text(values.vendor) ?? ""), eq(erpSuppliers.active, true)));
-      if (!sup) return fieldErr("vendor", "Pick an active vendor");
+      if (!sup) return fieldErr("vendor", "Pick an active supplier.");
       const [v] = await requirementViews({ ids: [id] });
       if (!v) return err("That requirement no longer exists.", "not_found");
       if (v.r.status === "Cancelled") return err("This requirement is cancelled.", "conflict");
-      if (v.po) return err(`It is on ${v.po.name} — the vendor is the PO's now.`, "conflict");
-      if (v.method !== "direct") return err("Only a direct purchase has its vendor picked; a quotation item's vendor comes with the Quotation manager's PO.", "rule_violation");
+      if (v.po) return err(`It is on ${v.po.name} — the supplier is the PO's now.`, "conflict");
+      if (v.method !== "direct") return err("Only a direct purchase has its supplier picked; a quotation item's supplier comes with the Quotation manager's PO.", "rule_violation");
       await db
         .update(erpRequisitions)
         .set({ method: "direct", supplierId: sup.id, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(erpRequisitions.id, id));
       await erpAudit(ctx, "erp.requisition.selectVendor", "erp_requisition", id, { supplierId: v.r.supplierId }, { supplierId: sup.id });
-      return okVoid(`${sup.name} is the vendor · raise the PO next`);
+      return okVoid(`${sup.name} is the supplier · create the PO next`);
     },
     /* The person saw what cancelling it leaves behind — the counts and quotations it opened (`erp-requirement-cancel`). */
     async cancel(ctx, id, values) {
@@ -800,7 +801,7 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
   const department = text(h.department);
   if (!department) return fieldErr("department", "Department is required");
   const qty = num(h.required);
-  if (qty == null || qty <= 0) return fieldErr("required", qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+  if (qty == null || qty <= 0) return fieldErr("required", qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity is required");
   const priority = text(h.priority) ?? "Medium";
   if (!["Urgent", "Medium", "For Stock"].includes(priority)) return fieldErr("priority", "Priority is required");
   if (id) {
@@ -910,7 +911,7 @@ export async function raiseRequirementWith(
       const refused = requirementRefusal(ctx.department, department, m.materialType);
       if (refused) return fieldErr(at(i, "item"), refused.message);
       const qty = num(l.required);
-      if (qty == null || qty <= 0) return fieldErr(at(i, "required"), qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+      if (qty == null || qty <= 0) return fieldErr(at(i, "required"), qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity is required");
       if (seen.has(m.id)) return fieldErr(at(i, "item"), `Already on line ${seen.get(m.id)! + 1} — change that line's quantity instead`);
       seen.set(m.id, i);
       items.push({ m, qty });
@@ -927,7 +928,7 @@ export async function raiseRequirementWith(
     const refused = requirementRefusal(ctx.department, department, m.materialType);
     if (refused) return fieldErr(refused.field === "type" && !single ? at(i, "item") : refused.field, refused.message);
     const qty = num(l.required);
-    if (qty == null || qty <= 0) return fieldErr(at(i, "required"), qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+    if (qty == null || qty <= 0) return fieldErr(at(i, "required"), qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity is required");
     if (seen.has(m.id)) return fieldErr(at(i, "item"), `Already on line ${seen.get(m.id)! + 1} — change that line's quantity instead`);
     seen.set(m.id, i);
     items.push({ m, qty });
@@ -1003,8 +1004,8 @@ export async function raiseRequirementWith(
         : rule === "quotation"
           ? "buy it on the Quotation manager, then link its PO number"
           : m.preferredSupplierId
-            ? "direct purchase from the item's default vendor — raise the PO next"
-            : "direct purchase — select the vendor next";
+            ? "direct purchase from the item's default supplier — create the PO next"
+            : "direct purchase — create the PO next";
     return ok(
       { reqNo, items: raisedItems },
       `${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${next}`,
@@ -1100,7 +1101,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
     title: po ? `Edit ${poName(po.po)}` : "New purchase order",
     sub: po
       ? "Only a PO not yet sent or received against is edited."
-      : "No approval: the PO is ready to send to the vendor and receive against as soon as it is saved.",
+      : "No approval: the PO is ready to share with the supplier and receive against as soon as it is saved.",
     submit: po ? "Save PO" : "Create PO",
     lineLabel: "Item",
     init: {
@@ -1120,18 +1121,18 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
       { k: "date", l: "PO date", t: "date", req: true },
       {
         k: "vendor",
-        l: "Vendor",
+        l: "Supplier",
         t: "select",
         req: true,
         opts: vendors,
         readOnly: !!vendor,
-        hint: vendors.length ? undefined : "No requirement is ready for a PO. A requirement is ready once its vendor is chosen.",
+        hint: vendors.length ? undefined : "No requirement is ready for a PO. A requirement is ready once its supplier is chosen.",
       },
       { k: "deliverTo", l: "Deliver to", t: "select", req: true, opts: gds.map((g) => g.name) },
       { k: "deliveryDate", l: "Delivery date", t: "date", req: true },
       { k: "terms", l: "Payment terms", t: "select", req: true, opts: term && !terms.includes(term) ? [...terms, term] : terms },
       { k: "freight", l: "Freight (₹)", t: "num", min: 0, hint: "Freight on the whole PO, beyond the items. Blank when delivery is free." },
-      { k: "remarks", l: "Remarks for the vendor", t: "area", mic: true },
+      { k: "remarks", l: "Remarks for the supplier", t: "area", mic: true },
     ],
     line: [
       { k: "requirement", l: "Requirement", t: "select", req: true, optsBy: { by: "vendor", map: byVendor } },
@@ -1148,7 +1149,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
 async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lines: Record<string, string>[], poId?: string): Promise<Result<unknown>> {
   if (!ctx.powers.has("viewPurchaseMoney")) return err(`${MONEY_WHY}.`, "not_permitted");
   const [vendor] = await db.select().from(erpSuppliers).where(eq(erpSuppliers.name, text(h.vendor) ?? ""));
-  if (!vendor) return fieldErr("vendor", "Vendor is required");
+  if (!vendor) return fieldErr("vendor", "Supplier is required");
   const godownId = await godownIdByName(text(h.deliverTo));
   if (!godownId) return fieldErr("deliverTo", "Deliver to is required");
   const date = text(h.date) ?? today();
@@ -1158,7 +1159,7 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
   const terms = text(h.terms);
   if (!terms) return fieldErr("terms", "Payment terms are required");
   const freight = paise(h.freight) ?? 0;
-  if (freight < 0) return fieldErr("freight", "Minus Quantity Not Allowed");
+  if (freight < 0) return fieldErr("freight", "Freight cannot be below 0.");
   if (!lines.length) return err("Add at least one item.");
   const { map } = await poFormData(poId);
   const parsed: { v: ReqView; qty: number; rate: number; gstBp: number }[] = [];
@@ -1169,9 +1170,9 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
     if (!v) return fieldErr(`l${i}.requirement`, "Pick a requirement ready for a PO");
     if (seen.has(v.r.id)) return fieldErr(`l${i}.requirement`, "This requirement is already on the PO");
     seen.add(v.r.id);
-    if (v.r.supplierId !== vendor.id) return fieldErr(`l${i}.requirement`, `This requirement's vendor is not ${vendor.name}`);
+    if (v.r.supplierId !== vendor.id) return fieldErr(`l${i}.requirement`, `This requirement's supplier is not ${vendor.name}`);
     const qty = num(l.qty);
-    if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+    if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity is required");
     const rate = paise(l.rate);
     if (rate == null || rate <= 0) return fieldErr(`l${i}.rate`, "Rate is required");
     const gst = num(l.gst);
@@ -1234,7 +1235,7 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
       });
     await refreshPurchaseOrder(tx, id);
     const t = poTotals(parsed.map((p) => ({ quantity: p.qty, ratePaise: p.rate, gstBp: p.gstBp })), freight);
-    return ok({ id }, `${poLabel(number)} ${poId ? "saved" : "created"} · ${inr(t.totalPaise)} · send it to the vendor`);
+    return ok({ id }, `${poLabel(number)} ${poId ? "saved" : "created"} · ${inr(t.totalPaise)} · share it with the supplier`);
   });
   if (res.ok) await erpAudit(ctx, poId ? "erp.purchaseOrder.edit" : "erp.purchaseOrder.create", "erp_purchase_order", id, null, { number, vendor: vendor.name, lines: parsed.length });
   return res;
@@ -1242,10 +1243,10 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
 
 function poPanel(p: PoView, money: boolean) {
   const t = poTotals(p.lines, p.po.freightPaise);
-  const step = ["Pending approval"].includes(p.po.status) ? 3 : p.po.status === "Approved" ? 4 : ["Sent", "Partly received"].includes(p.po.status) ? 5 : ["Received", "Closed"].includes(p.po.status) ? 6 : -1;
+  const step = ["Pending approval", "Approved"].includes(p.po.status) ? STEP.po : ["Sent", "Partly received"].includes(p.po.status) ? STEP.receipt : ["Received", "Closed"].includes(p.po.status) ? FLOW_STEPS.length : -1;
   const history: { l: string; v: string }[] = [{ l: "Raised", v: stampLine(p.by, p.po.createdAt).replace(/^Created /, "") }];
   if (p.po.approvedAt) history.push({ l: p.po.status === "Rejected" ? "Sent back" : "Approved", v: stampLine(p.approver, p.po.approvedAt).replace(/^Created /, "") + (p.po.decisionNote ? ` — ${p.po.decisionNote}` : "") });
-  if (p.po.sentAt) history.push({ l: "Sent to vendor", v: `${p.po.sentVia ?? ""} · ${stampLine(null, p.po.sentAt).replace(/^Created /, "")}` });
+  if (p.po.sentAt) history.push({ l: "Sent to supplier", v: `${p.po.sentVia ?? ""} · ${stampLine(null, p.po.sentAt).replace(/^Created /, "")}` });
   if (p.po.closedAt) history.push({ l: p.po.status === "Cancelled" ? "Cancelled" : "Closed", v: `${stampLine(null, p.po.closedAt).replace(/^Created /, "")}${p.po.closeReason ? ` — ${p.po.closeReason}` : ""}` });
   return {
     kind: "purchaseOrder",
@@ -1301,7 +1302,7 @@ const purchaseOrders: ScreenModule = {
     const all: Col[] = [
       { k: "po", l: "PO no", t: "mono" },
       { k: "date", l: "PO date", t: "d" },
-      { k: "vendor", l: "Vendor", t: "b" },
+      { k: "vendor", l: "Supplier", t: "b" },
       { k: "items", l: "Items", t: "t" },
       { k: "deliverTo", l: "Deliver to", t: "t" },
       { k: "deliveryDate", l: "Delivery date", t: "d" },
@@ -1333,7 +1334,7 @@ const purchaseOrders: ScreenModule = {
           id: "sendBack",
           l: "Send back",
           why: approveWhy,
-          prompt: { title: `Send back ${poName(p.po)}`, sub: "Its requirements return to Ready for PO, to be raised again corrected.", submit: "Send back", fields: [{ k: "reason", l: "What needs changing", t: "area", req: true }] },
+          prompt: { title: `Send back ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, to be raised again corrected.", submit: "Send back", fields: [{ k: "reason", l: "What needs changing", t: "area", req: true }] },
         });
       }
       if (s === "Pending approval" || (s === "Approved" && !anyReceived)) actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
@@ -1342,7 +1343,7 @@ const purchaseOrders: ScreenModule = {
           id: "share",
           l: "Share…",
           primary: s === "Approved",
-          why: money ? "" : "Sharing sends the PO with its rates to the vendor, so it needs purchase money on your account — Print / PDF gives you a copy without rates",
+          why: money ? "" : "Sharing sends the PO with its rates to the supplier, so it needs purchase money on your account. Print PO gives you a copy without rates.",
           share: shareSpecs.get(p.po.id),
         });
       }
@@ -1361,10 +1362,10 @@ const purchaseOrders: ScreenModule = {
           id: "cancel",
           l: "Cancel PO",
           why: anyReceived ? "Goods were received against it — close it short instead" : "",
-          prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements return to Ready for PO, keeping their vendor.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
+          prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, keeping their supplier.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
           impact: { kind: "erp-po-cancel", id: p.po.id },
         });
-      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print / PDF", href: erpPoHref(p.po.id) });
+      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
       const flags: string[] = [];
       if (s === "Pending approval") flags.push("awaitingApproval");
       if (RECEIVABLE_PO.includes(s) && p.po.deliveryDate < day) flags.push("deliveryLate");
@@ -1414,9 +1415,10 @@ const purchaseOrders: ScreenModule = {
         chips: "status",
         stats: [
           { l: "POs" },
-          { l: "Vendors", kind: "distinct", k: "vendor" },
+          { l: "Suppliers", kind: "distinct", k: "vendor" },
           { l: "PO value", kind: "sum", k: "value" },
-          { l: "Awaiting approval", where: { flag: "awaitingApproval" }, tone: "warn" },
+          /* Only POs raised the old way wait on an approver; the card goes once none is left. */
+          ...(rows.some((r) => r.flags?.includes("awaitingApproval")) ? [{ l: "Awaiting approval", where: { flag: "awaitingApproval" }, tone: "warn" as const }] : []),
           { l: "Delivery late", where: { flag: "deliveryLate" }, tone: "danger" },
         ],
         filters: ["vendor", "deliverTo", "terms", "value"],
@@ -1455,7 +1457,7 @@ const purchaseOrders: ScreenModule = {
           .where(eq(erpPurchaseOrders.id, id));
         const reqs = (await tx.select({ id: erpPoLines.requisitionId }).from(erpPoLines).where(eq(erpPoLines.poId, id))).map((r) => r.id);
         if (reqs.length) await tx.update(erpRequisitions).set({ status: "Order Placed", updatedAt: new Date() }).where(inArray(erpRequisitions.id, reqs));
-        return okVoid(`${poName(po)} approved · send it to the vendor`);
+        return okVoid(`${poName(po)} approved · share it with the supplier`);
       });
       if (res.ok) await erpAudit(ctx, "erp.purchaseOrder.approve", "erp_purchase_order", id, null, { note: text(values.note) });
       return res;

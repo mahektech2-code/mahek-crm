@@ -9,10 +9,10 @@ export function checkField(f: FieldSpec, v: string): string {
   if (f.req && (v == null || v === "")) return `${f.l} is required`;
   if (v !== "" && f.t === "num") {
     const n = Number(v);
-    if (!Number.isFinite(n)) return "INVALID";
-    if (n < 0 && (f.min == null || f.min >= 0)) return "Minus Quantity Not Allowed";
-    if (f.min != null && n < f.min) return "INVALID";
-    if (f.max != null && n > f.max) return "INVALID";
+    if (!Number.isFinite(n)) return "Enter a number.";
+    if (n < 0 && (f.min == null || f.min >= 0)) return "This cannot be below 0.";
+    if (f.min != null && n < f.min) return `This cannot be below ${f.min}.`;
+    if (f.max != null && n > f.max) return `This cannot be above ${f.max}.`;
   }
   return "";
 }

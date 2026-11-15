@@ -38,7 +38,7 @@ registerCalc("sfg.yield", ({ h, l }) => {
 
 registerCalc("sfg.rate", ({ l, data }) => {
   const r = map<number | null>(data, "rate")[l.lot ?? ""];
-  return r == null ? (l.lot ? "No rate on this lot" : "") : `₹${fmt(r / 100)} / Ltr`;
+  return r == null ? (l.lot ? "No rate on this lot" : "") : `₹${fmt(r / 100)} / L`;
 });
 
 registerCalc("sfg.editTotal", ({ h, data }) => {
@@ -47,7 +47,7 @@ registerCalc("sfg.editTotal", ({ h, data }) => {
   if (!b || !q) return "";
   const t = sfgTotalUse(b, q);
   const own = data.availOwn as number | undefined;
-  return own != null && t > own ? `${fmt(t)} — Low Stock! (${fmt(own)} available)` : fmt(t);
+  return own != null && t > own ? `${fmt(t)} — not enough stock (${fmt(own)} available)` : fmt(t);
 });
 
 registerCalc("sfgBatches.summary", ({ h, lines, data }) => {
@@ -63,9 +63,9 @@ registerCalc("sfgBatches.summary", ({ h, lines, data }) => {
   }
   for (const [lot, t] of taking) {
     const s = avail[key(h.godown, lot)];
-    if (lot && s != null && t > s + 1e-9) return `warn:Low Stock! Lot ${lot} has ${fmt(s)} Ltr and this batch takes ${fmt(t)}.`;
+    if (lot && s != null && t > s + 1e-9) return `warn:Not enough stock: lot ${lot} has ${fmt(s)} L and this batch takes ${fmt(t)} L.`;
   }
-  return made > 0 ? `ok:Makes ${fmt(made)} Ltr of ${h.product || "SFG"}.` : "";
+  return made > 0 ? `ok:Makes ${fmt(made)} L of ${h.product || "SFG"}.` : "";
 });
 
 /* ---- FG filling ---- */
@@ -121,10 +121,10 @@ registerCalc("fgFill.summary", ({ h, data }) => {
   const cans = n(h.cans);
   if (!size || !cans) return "";
   const s = map<number>(data, "avail")[key(h.godown, h.sfgLot)];
-  if (s != null && size * cans > s + 1e-9) return `warn:Low SFG Stock — ${fmt(size * cans)} Ltr needed, ${fmt(s)} Ltr in the lot.`;
+  if (s != null && size * cans > s + 1e-9) return `warn:Not enough SFG: ${fmt(size * cans)} L needed, ${fmt(s)} L in the lot.`;
   if (h.canUse) {
     const p = map<number>(data, "packAvail")[key(h.godown, h.canUse)];
-    if (p != null && p <= 0) return "warn:Low Packing Quantity — no packing of this kind is available here.";
+    if (p != null && p <= 0) return "warn:No packing of this kind is available here.";
   }
   return `ok:Puts ${fmt(cans - (n(h.adjusted) ?? 0), 0)} cans into FG stock.`;
 });
@@ -154,8 +154,8 @@ registerCalc("packBatches.summary", ({ h, data }) => {
   const need = h.remaining ? Number(h.remaining) : b * cpb;
   const cans = n(h.cans) ?? need;
   const avail = map<number>(data, "avail")[key(h.godown, h.fg, h.lot)];
-  if (cans > need) return `warn:You Cant Select More Than ${need} Can`;
-  if (avail != null && cans > avail) return `warn:Low Stock — this lot has ${fmt(avail, 0)} cans. Take ${fmt(avail, 0)} here and the rest from another lot.`;
+  if (cans > need) return need > 0 ? `warn:This batch needs only ${need} more can${need === 1 ? "" : "s"}.` : "warn:This batch already has all its cans.";
+  if (avail != null && cans > avail) return `warn:Not enough stock: this lot has ${fmt(avail, 0)} cans. Take ${fmt(avail, 0)} here and the rest from another lot.`;
   return cans === need ? "ok:Completes the batch · its boxes reach packing stock." : `ok:${fmt(need - cans, 0)} cans still to draw from another lot.`;
 });
 
@@ -170,7 +170,7 @@ registerCalc("transfers.summary", ({ h, data }) => {
   const q = n(h.qty);
   const s = map<number>(data, "avail")[key(h.type, h.from, h.lot)];
   if (!q || s == null) return "";
-  if (q > s + 1e-9) return `warn:Select Correct Quantity! ${fmt(s)} available.`;
+  if (q > s + 1e-9) return `warn:More than the lot holds. ${fmt(s)} available.`;
   if (map<number>(data, "lost")[h.to]) return "warn:This writes the stock off.";
   return "";
 });

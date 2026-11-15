@@ -129,6 +129,32 @@ export function BankMatch({ t, dup }: { t: TxnRow; dup?: boolean }) {
   return <Pill tone="warn">Not matched</Pill>;
 }
 
+/** The bank match, review and paid-from cells as plain words, for the export. */
+function bankMatchText(t: TxnRow, dup?: boolean): string {
+  if (t.status === "cancelled") return "Cancelled";
+  if (dup) return "Duplicate?";
+  const bankLegs = (t.fromKind === "bank" ? 1 : 0) + (t.toKind === "bank" ? 1 : 0);
+  if (!bankLegs) return t.kind === "transfer" ? "No bank side" : "Cash — none";
+  const need = t.amountPaise * bankLegs;
+  if (t.matchedPaise >= need) return bankLegs > 1 ? "Both legs matched" : "Matched";
+  if (t.matchedPaise > 0) return bankLegs > 1 ? "One leg matched" : "Part matched";
+  return "Not matched";
+}
+
+function reviewText(t: TxnRow): string {
+  if (t.status === "cancelled") return "Cancelled";
+  if (t.review === "to_review") return "To review";
+  if (t.review === "sent_back") return "Sent back";
+  if (t.review === "approved") return "Approved";
+  return "Paid";
+}
+
+function paidFromText(t: TxnRow): string {
+  if (t.advanceId && !t.from) return `Advance · ${t.advanceEmployee ?? ""}`;
+  const how = accountKind(t.fromKind) === "bank" ? (t.mode === "Cheque" ? `cheque ${t.reference ?? ""}`.trim() : t.mode) : null;
+  return [t.from ?? "", how, t.sourceLabel ? `from ${t.sourceLabel}` : null].filter(Boolean).join(" · ");
+}
+
 export function ReviewPill({ t }: { t: TxnRow }) {
   if (t.status === "cancelled") return <Pill tone="muted">Cancelled</Pill>;
   if (t.review === "to_review") return <Pill tone="brand">To review</Pill>;
@@ -183,17 +209,38 @@ export function TxnTable({
   const H = (l: string, align?: "right", w?: string) => ({ l, align, w });
   const head =
     kind === "receipts"
-      ? [H("TXN ID", undefined, "w-40"), H("Date", undefined, "w-24"), H("Received from"), H("Into"), H("Mode / ref"), H("Applied to"), H("Amount", "right"), H("Bank match")]
+      ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Received from"), H("Into"), H("Mode / ref"), H("Applied to"), H("Amount", "right"), H("Bank match")]
       : kind === "transfers"
-        ? [H("TXN ID", undefined, "w-40"), H("Date", undefined, "w-24"), H("From → To"), H("Slip / ref"), H("Amount", "right"), H("Bank match")]
+        ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("From → To"), H("Slip / ref"), H("Amount", "right"), H("Bank match")]
         : kind === "review"
-          ? [H("TXN ID", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Paid from"), H("Amount", "right"), H("Submitted by"), H("")]
+          ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Paid from"), H("Amount", "right"), H("Submitted by"), H("Decision", "right")]
           : kind === "cancelled"
-            ? [H("TXN ID", undefined, "w-40"), H("Date", undefined, "w-24"), H("Type"), H("Party"), H("Amount", "right"), H("Why")]
+            ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Type"), H("Party"), H("Amount", "right"), H("Why")]
             : kind === "petty"
-              ? [H("TXN ID", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Bill no."), H("Amount", "right"), H("Paid from"), H("Status")]
-              : [H("TXN ID", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Vendor / payee"), H("Invoice no."), H("Amount", "right"), H("Paid from"), H("Bank match")];
-  const csv = [head.map((h) => h.l).filter(Boolean), ...rows.map((t) => [t.label, t.date, t.category ?? "", t.payee ?? t.customer ?? t.payer ?? "", t.invoiceNo ?? t.reference ?? "", String(t.amountPaise / 100), t.from ?? t.to ?? ""])];
+              ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Bill no."), H("Amount", "right"), H("Paid from"), H("Status")]
+              : [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Invoice no."), H("Amount", "right"), H("Paid from"), H("Bank match")];
+  /* Each exported row is the same columns as its tab's header, in the same order. */
+  const rupees = (t: TxnRow) => String(t.amountPaise / 100);
+  const csvRow = (t: TxnRow & { dup: boolean }): string[] =>
+    kind === "receipts"
+      ? [t.label, t.date, t.customer ?? t.payer ?? "", t.to ?? "", t.toKind === "bank" ? [t.mode, t.reference].filter(Boolean).join(" · ") : "Cash", t.billsText ?? "", rupees(t), bankMatchText(t)]
+      : kind === "transfers"
+        ? [t.label, t.date, `${t.from ?? ""} → ${t.to ?? ""}`, t.reference ?? "", rupees(t), bankMatchText(t)]
+        : kind === "review"
+          ? [t.label, t.date, t.category ?? "", t.payee ?? "", paidFromText(t), rupees(t), t.by ?? "", reviewText(t)]
+          : kind === "cancelled"
+            ? [t.label, t.date, MONEY_KIND_LABEL[t.kind], t.payee ?? t.customer ?? t.payer ?? t.advanceEmployee ?? "", rupees(t), t.cancelReason ?? ""]
+            : [
+                t.label,
+                t.date,
+                t.category ?? "",
+                t.payee ?? "",
+                t.invoiceNo ?? (t.noBillReason ? "no bill" : ""),
+                rupees(t),
+                paidFromText(t),
+                kind === "petty" || (kind === "all" && t.status === "cancelled") ? reviewText(t) : bankMatchText(t, t.dup),
+              ];
+  const csv = [head.map((h) => h.l), ...rows.map(csvRow)];
   return (
     <>
       <FilterBar filters={filters} count={total} sum={sum} csv={csv} csvName={`petty-cash-${kind}`} />
@@ -625,7 +672,7 @@ export function AdvancePage({
             />
           </div>
         ) : (
-          <div className="mt-3 text-sm text-muted">This advance is {a.status}.</div>
+          <div className="mt-3 text-sm text-muted">This advance is {a.status === "settled" ? "settled" : a.status === "cancelled" ? "cancelled" : "open"}.</div>
         )}
         <div className="mt-6 border-t border-divider pt-5">
           <div className={cx(labelClass, "mb-4 font-semibold")}>History</div>

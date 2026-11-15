@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/toast";
 import { erpLogisticsMessageRetry, erpLogisticsMessageSent, erpLogisticsMessageSkip } from "@/lib/actions/erp-logistics";
 import { waLink } from "@/lib/erp/engines/logistics";
 import type { OutboxMessage } from "@/lib/erp/logistics";
-import { Empty, plural, useAct } from "./common";
+import { Empty, lrLabel, plural, useAct } from "./common";
 
 /**
  * Every WhatsApp the flow wrote for a customer. Those Wati could not send wait
@@ -72,7 +72,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
       </div>
       {!shown.length ? (
         <Card>
-          <Empty>{f === "waiting" ? "Nothing waiting to be sent." : "No messages yet."}</Empty>
+          <Empty>{f === "waiting" ? "Nothing waiting to be sent." : f === "skipped" ? "Every message could be sent." : "No messages yet."}</Empty>
         </Card>
       ) : null}
       {shown.map((m) => {
@@ -87,7 +87,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
                   <span className="font-semibold text-ink">{m.customer}</span>
                   <Badge label={KIND[m.kind] ?? m.kind} tone="neutral" />
                   <Badge label={st.l} tone={st.tone} />
-                  {m.lrNo ? <span className="font-mono text-xs text-muted">LR {m.lrNo}</span> : null}
+                  {m.lrNo ? <span className="font-mono text-xs text-muted">{lrLabel(m.lrNo)}</span> : null}
                 </div>
                 <div className="mt-0.5 text-meta text-muted">
                   {m.phone ?? "No number"} · written {stamp(m.createdAt)}

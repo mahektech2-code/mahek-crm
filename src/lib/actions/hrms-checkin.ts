@@ -200,7 +200,8 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
 }
 
 /** "Running late today", raised from the refusal itself so nobody has to find the help screen first. */
-export async function hrmsRaiseLateHelp(text: string): Promise<Result<undefined>> {
+export async function hrmsRaiseLateHelp(text: string, kind: "late" | "away" = "late"): Promise<Result<undefined>> {
+  const type = kind === "away" ? HELP.notAtOffice : HELP.runningLate;
   const ctx = await hrmsContext();
   const me = ctx.employee;
   if (!ctx.level || !me) return err("Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.", "not_permitted");
@@ -210,11 +211,11 @@ export async function hrmsRaiseLateHelp(text: string): Promise<Result<undefined>
   const body = text.trim();
   if (!body) return err("Write what happened before sending.");
   const id = hrmsId("hhlp");
-  await db.insert(hrmsHelp).values({ id, date: today(), employeeId: me.id, type: HELP.runningLate, inTime: now(), text: body, createdById: ctx.user.id });
-  await hrmsAudit(ctx, "hrms.help.raise", "hrms_help", id, null, { type: HELP.runningLate });
+  await db.insert(hrmsHelp).values({ id, date: today(), employeeId: me.id, type, inTime: now(), text: body, createdById: ctx.user.id });
+  await hrmsAudit(ctx, "hrms.help.raise", "hrms_help", id, null, { type });
   /* Raised here or on the Help screen, the people who decide it are told —
      this door used to write the request and tell nobody. */
-  await tellPowerHolders(ctx.user.id, "resolve", { title: `Help request from ${me.name}`, body: `${HELP.runningLate} · ${body}`, kind: "warn", href: hrmsLink("help", { scope: "all", open: id }) });
+  await tellPowerHolders(ctx.user.id, "resolve", { title: `Help request from ${me.name}`, body: `${type} · ${body}`, kind: "warn", href: hrmsLink("help", { scope: "all", open: id }) });
   refresh();
   return okVoid(`Help request sent, ${first(me.name)}. The person who resolves help requests will decide and set your check-in time.`);
 }

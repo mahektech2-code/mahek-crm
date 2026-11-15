@@ -166,7 +166,14 @@ export type WorkdayState = {
   date: string;
   name: string;
   office: string | null;
+  /** Their job title in HRMS, for the lock screen's header. */
+  role: string | null;
   official: string | null;
+  /** "09:30" and "18:30", the office hours today; null on a day with none. */
+  officialIn: string | null;
+  officialOut: string | null;
+  /** Minutes after opening that still count as on time. */
+  graceMinutes: number;
   sessions: WorkdaySession[];
   lastActivity: number | null;
   workedMs: number;
@@ -190,7 +197,7 @@ export type WorkdayState = {
 export async function workdayState(ctx: HrmsContext): Promise<WorkdayState> {
   const now = Date.now();
   const date = today();
-  const [cfg, who] = await Promise.all([workdayCfg(), subjectOf(ctx)]);
+  const [cfg, who, attCfg] = await Promise.all([workdayCfg(), subjectOf(ctx), attendanceCfg()]);
   const me = ctx.employee;
   const timings = me ? await timingMap() : new Map();
   const tm = me ? timings.get(`${me.id}|${weekdayOf(date)}`) : undefined;
@@ -204,7 +211,11 @@ export async function workdayState(ctx: HrmsContext): Promise<WorkdayState> {
     date,
     name: me?.name ?? ctx.user.name,
     office: me?.office ?? null,
+    role: me?.position ?? null,
     official: tm ? `${tm.inTime} – ${tm.outTime}` : null,
+    officialIn: tm?.inTime ?? null,
+    officialOut: tm?.outTime ?? null,
+    graceMinutes: attCfg.graceMinutes,
     sessions: [],
     lastActivity: null,
     workedMs: 0,

@@ -130,7 +130,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     />
   );
   const shell = (body: React.ReactNode) => (
-    <Page title="Petty Cash" sub="Expenses, receipts, cash and bank — each transaction entered once" actions={canWrite ? <NewMenu items={newMenu()} /> : null}>
+    <Page title="Petty Cash" actions={canWrite ? <NewMenu items={newMenu()} /> : null}>
       <SectionNav sections={sections} />
       {body}
       {host}
@@ -221,7 +221,8 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
       { l: "Advances with bills late", n: o.advancesOpen.late, v: "", href: erpLink("advances"), danger: true, hide: !o.advancesOpen.late },
       { l: "Receipts not matched to bank", n: o.receiptsNotInBank.n, v: inr(o.receiptsNotInBank.paise), href: erpLink("receiptsUnmatched") },
       { l: "Bank lines not matched", n: o.unmatchedLines.n, v: inr(o.unmatchedLines.paise), href: "/accounts/bank-reconcile", hide: !approver || !o.unmatchedLines.n },
-      { l: "Possible duplicates", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true },
+      /* No list narrows to just these, so the line says where they are marked. */
+      { l: "Possible duplicates — marked Duplicate? on Expenses", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true, hide: !o.duplicates.n },
     ];
     const maxCat = Math.max(1, ...o.byCategory.map((c) => c.paise));
     const month = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][Number(day.slice(5, 7)) - 1];

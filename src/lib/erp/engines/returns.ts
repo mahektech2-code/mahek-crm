@@ -205,7 +205,7 @@ export const VENDOR_STAGE_LABEL: Record<VendorStage, string> = {
   awaiting_owner: "Awaiting owner approval",
   to_dispatch: "Debit note issued · to dispatch",
   outward_drafted: "Outward prepared · not confirmed",
-  dispatched: "Returned to vendor",
+  dispatched: "Returned to supplier",
   rejected: "Rejected",
   cancelled: "Cancelled",
 };

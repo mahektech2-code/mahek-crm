@@ -27,8 +27,8 @@ A **Drum** level reads every drum bought on a purchase less every drum sold on a
 
 | Figure | Raw material | Finished goods |
 |---|---|---|
-| **Re-order %** | available ÷ midpoint of min and max, minus one | available ÷ minimum |
-| At the level | 0 at the midpoint | 100 at the minimum |
+| **Of minimum** | available ÷ minimum × 100 | available ÷ minimum × 100 |
+| At the level | 100 at the minimum | 100 at the minimum |
 | **Required** | maximum − available, blank when at or above the maximum | — |
 
 A raw-material item with min 100 and max 200 holding 75 reads **-50%** and needs **125**. A finished good with min 60 holding 30 reads **50%**.
@@ -91,7 +91,7 @@ Where <Setting k="erp.ai.levels.enabled" /> is on, an AI model reads each item's
 </Rule>
 
 <Rule title="A level a person set is never changed">
-A level the planner created is marked **Planned automatically** and rewritten every night. Editing its minimum or maximum by hand takes it off the planner for good, unless somebody presses **Let the planner keep it**. A level typed by hand keeps its figures; the planner's figures are shown beside it as **Planned min / Planned max** for comparison.
+A level the planner created is marked **Planned automatically** and rewritten every night. Editing its minimum or maximum by hand takes it off the planner for good, unless somebody presses **Let the planner keep it**. A level typed by hand keeps its figures; the planner's figures are shown beside it as **Suggested min / Suggested max** for comparison.
 </Rule>
 
 The planner runs nightly, on every deploy (once a day), from **Plan levels now** on the Raw-material levels screen, and by hand with `npm run jobs -- erp-levels-plan --dry-run`.

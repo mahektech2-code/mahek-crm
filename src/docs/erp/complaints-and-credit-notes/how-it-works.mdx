@@ -38,7 +38,7 @@ Accepting moves the credit note to *under review*; rejecting a credit-note reque
 ## Credit notes are Accounts'
 
 <Rule title="Issuing needs Accounts' creditnote.issue">
-The ERP's **Issue Credit Note** calls the same service Accounts use. It checks the person holds `creditnote.issue`, refuses a complaint that never asked for a credit note, and limits the amount to what is still open on the bill. The credit note is written as a confirmed receipt against the bill, so it reduces what the customer owes like every other credit note. Only then is the complaint marked resolved, with the number and remark.
+The ERP's **Issue credit note** calls the same service Accounts use. It checks the person holds `creditnote.issue`, refuses a complaint that never asked for a credit note, and limits the amount to what is still open on the bill. The credit note is written as a confirmed receipt against the bill, so it reduces what the customer owes like every other credit note. Only then is the complaint marked resolved, with the number and remark.
 </Rule>
 
 <CapabilityGrid names={["creditnote.issue"]} />

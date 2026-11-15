@@ -10,6 +10,10 @@ import { offices } from "@/lib/hrms/services/people";
 import { hrmsModuleTitle } from "./title";
 import { HrmsList } from "../_ui/hrms-list";
 import { RolesView, SettingsView } from "../_ui/settings-view";
+import { MyAttendanceView } from "../_ui/my-attendance";
+import { TeamTodayView } from "../_ui/team-today";
+import { AttendanceRulesView, OfficeTimingsView } from "../_ui/attendance-settings";
+import type { HrmsContext } from "@/lib/hrms/access";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +22,13 @@ export async function generateMetadata({ params, searchParams }: { params: Promi
 }
 
 /** The tabs that are not lists, and what draws them. */
-const CUSTOM_TABS: Record<string, () => Promise<React.ReactNode>> = {
+const CUSTOM_TABS: Record<string, (ctx: HrmsContext, sp: Record<string, string | undefined>) => Promise<React.ReactNode>> = {
   settings: async () => <SettingsView />,
   roles: async () => <RolesView />,
+  myAttendance: async (ctx, sp) => <MyAttendanceView ctx={ctx} sp={sp} />,
+  teamToday: async (ctx, sp) => <TeamTodayView ctx={ctx} sp={sp} />,
+  attendanceRules: async (ctx) => <AttendanceRulesView ctx={ctx} />,
+  officeTimings: async (ctx, sp) => <OfficeTimingsView ctx={ctx} sp={sp} />,
 };
 
 /**
@@ -78,7 +86,7 @@ export default async function HrmsScreenPage({
       <div className="px-6 pt-6 pb-10">
         <PageHeader title={screen.label} subtitle={sub} />
         {tabs.length > 1 ? <ListTabs label={screen.label} tabs={tabs} /> : null}
-        {await draw()}
+        {await draw(ctx, sp)}
       </div>
     );
   }

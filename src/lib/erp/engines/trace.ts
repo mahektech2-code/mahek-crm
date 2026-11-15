@@ -78,13 +78,15 @@ export const UNIT_STATUS_LABEL: Record<UnitStatus, string> = {
 /**
  * The hand moves a person may make on a unit's status, and nothing else:
  * scanning and dispatch move it through the dispatch desk, transfers and
- * write-offs through the transfer, minting and cancelling through packing.
+ * write-offs through the transfer, minting and cancelling through packing,
+ * and a box a customer sends back through Material returns → Customer
+ * returns, which posts the ledger entry a hand move never could.
  */
-export function manualMove(from: UnitStatus, to: "hold" | "available" | "rejected" | "returned"): string | null {
+export function manualMove(from: UnitStatus, to: "hold" | "available" | "rejected"): string | null {
+  if (from === "returned") return "A returned box is decided on Material returns → Customer returns.";
   if (to === "hold") return from === "available" ? null : "Only a box in stock can be put on hold.";
-  if (to === "available") return from === "hold" || from === "returned" ? null : "Only a box on hold, or returned, goes back into stock.";
-  if (to === "rejected") return from === "available" || from === "hold" || from === "returned" ? null : "Only a box in stock, on hold or returned can be rejected.";
-  return from === "dispatched" ? null : "Only a dispatched box can come back as returned.";
+  if (to === "available") return from === "hold" ? null : "Only a box on hold goes back into stock.";
+  return from === "available" || from === "hold" ? null : "Only a box in stock or on hold can be rejected.";
 }
 
 /* ======================================================== the scan */

@@ -2254,7 +2254,7 @@ line fields. Every line carries its own `po`, so one GRN may span several POs â€
 of ONE vendor: "Add another item from this truck" searches only that vendor's
 open lines, and `inward.new` refuses a second vendor. The pick is pure in
 `engines/grn-pick.ts`; an item with no open line is listed as "Cannot receive",
-never hidden. "Receive goods" on a PO and "Add more" on a PR keep the
+never hidden. "Receive goods" on a PO and "Add another" on a PR keep the
 PO-in-the-header form, and a line naming no PO takes the header's.
 
 **The ITEM MASTER says how an item is bought** â€” `erp_raw_materials.purchase_method`:
@@ -2791,7 +2791,7 @@ supplier's `returnable` ones, both BY QUANTITY and OLDEST FIRST (`fifoPick`,
 over a pool selected `for update`). The allocation is stored on the drums
 (`scrap_sale_id`, `return_id`) for traceability; it does not claim anybody
 checked those physical drums. A returnable drum named in a sale is refused
-with "This drum is vendor-returnable. Please use Returnable Drum Outward."
+with "This drum goes back to its supplier. Use Return drums instead."
 whatever button sent it. Nothing holds a balance: every stock figure is a
 count of records, and every change is a row in `erp_drum_events`, which a
 trigger makes append-only.

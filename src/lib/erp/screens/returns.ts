@@ -81,7 +81,7 @@ function roundOffWords(amount: unknown, tax: unknown, total: unknown): string {
 /* ---------------------------------------------------------------------------
  * MATERIAL RETURNS — two screens, seven tabs.
  *
- *   Vendor returns   · Purchase returns · Debit notes · Return outward
+ *   Supplier returns · Purchase returns · Debit notes · Return outward
  *   Customer returns · Returns · Quarantine & QC · Rework · Waste disposal
  *
  * Financial documents adjust the ledger; physical transactions adjust stock.
@@ -232,7 +232,7 @@ function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[], ca
   if (stage === "awaiting_owner")
     out.push({ id: "ownerApprove", l: "Owner approval · issue debit note", primary: true, why: why(ctx.administrator, "Only the owner (an ERP administrator) gives the second approval"), confirm: `Give the owner's approval to ${purchaseReturnLabel(r.no)} and issue its debit note?` });
   if (stage === "awaiting_approval" || stage === "awaiting_owner")
-    out.push({ id: "reject", l: "Reject", why: why(can, "Rejecting a return needs the returns power"), prompt: { title: `Reject ${purchaseReturnLabel(r.no)}`, sub: "Nothing has moved: no debit note, no stock.", submit: "Reject", fields: [{ k: "note", l: "Why", t: "area", req: true }] } });
+    out.push({ id: "reject", l: "Reject the return", why: why(can, "Rejecting a return needs the returns power"), prompt: { title: `Reject ${purchaseReturnLabel(r.no)}`, sub: "Nothing has moved: no debit note, no stock.", submit: "Reject the return", fields: [{ k: "note", l: "Why", t: "area", req: true }] } });
   if (stage === "to_dispatch")
     out.push({
       id: "prepareOutward",
@@ -257,7 +257,7 @@ function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[], ca
       },
     });
   if (r.outStatus === "draft") {
-    out.push({ id: "confirmOutward", l: "Confirm dispatch (stock minus)", primary: true, why: why(can || ctx.level === "manager", "A manager or somebody who approves returns confirms the dispatch"), confirm: `Confirm ${returnOutwardLabel(r.outNo!)} left ${r.outGodown}? ${nf(r.stockQty)} ${r.unit === "Pcs" ? "Pcs" : "L"} of lot ${r.lot} comes out of stock now.` });
+    out.push({ id: "confirmOutward", l: "Confirm dispatch", primary: true, why: why(can || ctx.level === "manager", "A manager or somebody who approves returns confirms the dispatch"), confirm: `Confirm ${returnOutwardLabel(r.outNo!)} left ${r.outGodown}? ${nf(r.stockQty)} ${r.unit === "Pcs" ? "Pcs" : "L"} of lot ${r.lot} comes out of stock now.` });
     out.push({ id: "cancelOutward", l: "Cancel outward", why: why(can || ctx.level === "manager", "A manager or somebody who approves returns cancels it"), prompt: { title: "Cancel the outward", sub: "It was never confirmed, so no stock moved.", submit: "Cancel outward", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-return-outward-cancel", id: r.id } });
   }
   if (r.outStatus === "confirmed")
@@ -281,7 +281,7 @@ async function vendorForm(ctx: ErpContext) {
   const money = seesMoney(ctx);
   const header: FieldSpec[] = [
     { k: "lot", l: "Original GRN lot", t: "select", req: true, opts: lots.map(opt), hint: "Lots with stock still on a shelf and something left to return.", wide: true },
-    { k: "vendor", l: "Vendor", t: "text", readOnly: true, fillBy: fill((l) => l.supplier) },
+    { k: "vendor", l: "Supplier", t: "text", readOnly: true, fillBy: fill((l) => l.supplier) },
     { k: "grn", l: "GRN", t: "text", readOnly: true, fillBy: fill((l) => `${l.grn ?? `PR ${l.prNumber}`} · ${l.purchaseDate}`) },
     { k: "invoice", l: "Purchase invoice", t: "text", readOnly: true, fillBy: fill((l) => l.billNumber ?? "Bill not recorded") },
     { k: "material", l: "Material · batch", t: "text", readOnly: true, fillBy: fill((l) => `${l.item} · ${l.lotNo}`) },
@@ -306,7 +306,7 @@ const vendorReturns: ScreenModule = {
     const cols: ColSpec[] = [
       { k: "no", l: "Return", t: "mono" },
       { k: "stage", l: "Stage", t: "s" },
-      { k: "supplier", l: "Vendor", t: "b" },
+      { k: "supplier", l: "Supplier", t: "b" },
       { k: "item", l: "Material", t: "t" },
       { k: "lot", l: "Batch", t: "mono" },
       { k: "qty", l: "Quantity", t: "n" },
@@ -325,7 +325,7 @@ const vendorReturns: ScreenModule = {
         chips: "stage",
         stats: [
           { l: "Returns" },
-          { l: "Vendors", kind: "distinct", k: "supplier" },
+          { l: "Suppliers", kind: "distinct", k: "supplier" },
           { l: "Debit value", kind: "sum", k: "total", missing: "without a rate" },
           { l: "Awaiting approval", where: { k: "stage", in: ["Awaiting approval"] }, tone: "warn" },
           { l: "To dispatch", where: { k: "stage", in: ["Debit note issued · to dispatch"] }, tone: "info" },
@@ -334,13 +334,13 @@ const vendorReturns: ScreenModule = {
         filters: ["supplier", "item", "reason", "qty", "total"],
         sortDefault: ["date", -1],
         ...(await newFormIn(s, () => vendorForm(ctx))),
-        newLabel: "Raise purchase return",
+        newLabel: "New purchase return",
         noDataLine: "No purchase returns. Raise one against a defective or wrong GRN lot.",
       },
       rows: rows.map((r): ListRow => {
         const stage = vStage(r);
         const fields: RowField[] = [
-          { l: "Vendor", v: r.supplier },
+          { l: "Supplier", v: r.supplier },
           { l: "GRN · PR", v: `PR ${r.pr}` },
           { l: "Purchase invoice", v: r.bill ?? "Bill not recorded" },
           { l: "Material · batch", v: `${r.item} · ${r.lot}` },
@@ -604,7 +604,7 @@ const debitNotes: ScreenModule = {
           { k: "no", l: "Debit note", t: "mono" },
           { k: "status", l: "Status", t: "s" },
           { k: "date", l: "Date", t: "d" },
-          { k: "supplier", l: "Vendor", t: "b" },
+          { k: "supplier", l: "Supplier", t: "b" },
           { k: "item", l: "Material", t: "t" },
           { k: "lot", l: "Batch", t: "mono" },
           { k: "qty", l: "Quantity", t: "n" },
@@ -616,7 +616,7 @@ const debitNotes: ScreenModule = {
         chips: "status",
         stats: [
           { l: "Debit notes", where: { k: "status", in: ["Issued"] } },
-          { l: "Vendors", kind: "distinct", k: "supplier" },
+          { l: "Suppliers", kind: "distinct", k: "supplier" },
           { l: "Total debited", kind: "sum", k: "total", where: { k: "status", in: ["Issued"] } },
           { l: "Cancelled", where: { k: "status", in: ["Cancelled"] }, tone: "muted" },
         ],
@@ -632,7 +632,7 @@ const debitNotes: ScreenModule = {
         title: `${debitNoteLabel(Number(r.no))} · ${r.supplier}`,
         header: `${fd(String(r.date))} · against ${purchaseReturnLabel(Number(r.returnNo))} · a financial adjustment: no stock moves`,
         fields: [
-          { l: "Vendor", v: String(r.supplier) },
+          { l: "Supplier", v: String(r.supplier) },
           { l: "Original GRN · PR", v: `PR ${r.pr}` },
           { l: "Original purchase invoice", v: r.bill ? String(r.bill) : "Bill not recorded" },
           { l: "Purchase return", v: purchaseReturnLabel(Number(r.returnNo)) },
@@ -646,7 +646,7 @@ const debitNotes: ScreenModule = {
               ]
             : []),
           { l: "Return reason", v: reasonLabel(String(r.reason), "vendor") },
-          { l: "Payables", v: r.status === "issued" ? "Reduces the vendor's unpaid purchase payout on Accounts → Cash flow → Payables." : "Cancelled — no longer reduces the payout." },
+          { l: "Payables", v: r.status === "issued" ? "Reduces the supplier's unpaid purchase payout on Accounts → Cash flow → Payables." : "Cancelled — no longer reduces the payout." },
           ...(r.cancelReason ? [{ l: "Cancelled because", v: String(r.cancelReason) }] : []),
         ],
         actions: [{ id: "openReturn", l: `Open ${purchaseReturnLabel(Number(r.returnNo))}`, href: erpLink("vendorReturns", { open: String(r.returnId) }) }],
@@ -683,7 +683,7 @@ const returnOutwards: ScreenModule = {
           { k: "no", l: "Outward", t: "mono" },
           { k: "status", l: "Status", t: "s" },
           { k: "date", l: "Dispatch", t: "d" },
-          { k: "supplier", l: "Vendor", t: "b" },
+          { k: "supplier", l: "Supplier", t: "b" },
           { k: "item", l: "Material", t: "t" },
           { k: "lot", l: "Batch", t: "mono" },
           { k: "qty", l: "Quantity", t: "n" },
@@ -696,8 +696,8 @@ const returnOutwards: ScreenModule = {
         godownKey: "godown",
         stats: [
           { l: "Outwards" },
-          { l: "Vendors", kind: "distinct", k: "supplier" },
-          { l: "Not confirmed", where: { k: "status", in: ["Draft"] }, tone: "warn" },
+          { l: "Suppliers", kind: "distinct", k: "supplier" },
+          { l: "Draft", where: { k: "status", in: ["Draft"] }, tone: "warn" },
           { l: "Confirmed", where: { k: "status", in: ["Confirmed"] }, tone: "success" },
         ],
         filters: ["supplier", "item", "transporter", "qty"],
@@ -709,7 +709,7 @@ const returnOutwards: ScreenModule = {
         const can = approves(ctx) || ctx.level === "manager";
         const actions: ActionSpec[] = [];
         if (status === "draft") {
-          actions.push({ id: "confirm", l: "Confirm dispatch (stock minus)", primary: true, why: why(can, "A manager or somebody who approves returns confirms the dispatch"), confirm: `Confirm ${returnOutwardLabel(Number(r.no))} left ${r.godown}? ${nf(Number(r.stockQty))} of lot ${r.lot} comes out of stock now.` });
+          actions.push({ id: "confirm", l: "Confirm dispatch", primary: true, why: why(can, "A manager or somebody who approves returns confirms the dispatch"), confirm: `Confirm ${returnOutwardLabel(Number(r.no))} left ${r.godown}? ${nf(Number(r.stockQty))} ${String(r.unit) === "Pcs" ? "Pcs" : "L"} of lot ${r.lot} comes out of stock now.` });
           actions.push({ id: "cancel", l: "Cancel outward", why: why(can, "A manager or somebody who approves returns cancels it"), prompt: { title: "Cancel the outward", submit: "Cancel outward", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-return-outward-cancel", id: String(r.returnId) } });
         }
         if (status === "confirmed")
@@ -722,7 +722,7 @@ const returnOutwards: ScreenModule = {
           title: `${returnOutwardLabel(Number(r.no))} · ${r.supplier}`,
           header: `${r.item} · lot ${r.lot} · ${status === "confirmed" ? "stock reduced" : status === "draft" ? "stock not yet reduced" : "cancelled"}`,
           fields: [
-            { l: "Vendor", v: String(r.supplier) },
+            { l: "Supplier", v: String(r.supplier) },
             { l: "Purchase return", v: purchaseReturnLabel(Number(r.returnNo)) },
             { l: "Material · batch", v: `${r.item} · ${r.lot}` },
             { l: "Quantity", v: `${nf(Number(r.qty))} ${r.unit}` },
@@ -932,7 +932,7 @@ function customerActions(ctx: ErpContext, r: CustomerRow, ds: DecisionRow[], god
         ],
       },
     });
-    out.push({ id: "reject", l: "Reject the return", why: why(can, "Rejecting a return needs the returns power"), prompt: { title: `Reject ${customerReturnLabel(r.no)}`, sub: "The material is not accepted back. Nothing has moved.", submit: "Reject", fields: [{ k: "note", l: "Why", t: "area", req: true }] } });
+    out.push({ id: "reject", l: "Reject the return", why: why(can, "Rejecting a return needs the returns power"), prompt: { title: `Reject ${customerReturnLabel(r.no)}`, sub: "The material is not accepted back. Nothing has moved.", submit: "Reject the return", fields: [{ k: "note", l: "Why", t: "area", req: true }] } });
   }
   if (r.received != null && r.status === "open" && !r.complaintId) {
     if (!r.approvedAt)
@@ -1075,7 +1075,7 @@ async function customerScreen(ctx: ErpContext, key: "customerReturns" | "returnQ
       ],
       filters: ["customer", "sku", "credit", "qty", "quarantine", "total"],
       sortDefault: ["date", -1] as [string, 1 | -1],
-      ...(key === "customerReturns" ? { ...(await newFormIn(s, customerForm)), newLabel: "Record customer return" } : {}),
+      ...(key === "customerReturns" ? { ...(await newFormIn(s, customerForm)), newLabel: "New customer return" } : {}),
       noDataLine:
         key === "customerReturns"
           ? "No customer returns. Record one against the dispatched order line."
