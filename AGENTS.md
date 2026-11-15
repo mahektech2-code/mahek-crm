@@ -2898,7 +2898,7 @@ changes. `lib/engines/accounts-sla.ts` is the clock, pure: `working_days`
 counts every hour of a working day (Saturday 4 pm is due Monday 4 pm),
 `office_hours` only the shift; days off and company holidays count nothing.
 `sweepAccountsSla` (hourly as `accounts-sla`, and at most once a minute from
-the Accounts layout) writes one `accounts_sla_breaches` row per item (0340),
+the Accounts layout) writes one `accounts_sla_breaches` row per item (0342),
 resolves it the moment the record leaves its queue, and tells — each claimed
 by a conditional update so nobody is told twice — every platform and Founder
 administrator plus the desk at the deadline, then the admins again every
