@@ -263,8 +263,8 @@ describe("transfers", () => {
   test("moves boxes between godowns, and refuses the same godown or more than the lot holds", async () => {
     const ctx = await as(admin);
     const base = { date: TODAY, type: "FG Packing", from: "Bhiwandi", item: BOXED, lot: "FP1BH" };
-    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "3", to: "Bhiwandi" }, [])), "You Selected The Same Location, Change To Location");
-    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "11", to: "Ambernath" }, [])), "Select Correct Quantity!");
+    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "3", to: "Bhiwandi" }, [])), "Pick a different godown to move it to.");
+    assert.equal(fieldMsg(await mod("transfers").forms!.new(ctx, { ...base, qty: "11", to: "Ambernath" }, [])), "Enter a quantity above 0 and no more than the lot holds.");
     const ok = await mod("transfers").forms!.new(ctx, { ...base, qty: "3", to: "Ambernath" }, []);
     assert.ok(ok.ok, JSON.stringify(ok));
     const packs = await packLots();
@@ -291,7 +291,7 @@ describe("re-order levels", () => {
     assert.ok((await mod("rmLevels").forms!.new(ctx, { godown: "Bhiwandi", type: "Can", item: "Tin can 5L", min: "50", max: "100", status: "Follow" }, [])).ok);
     assert.ok((await mod("rmLevels").forms!.new(ctx, { godown: "Bhiwandi", type: "Box", item: "Box6", min: "10", max: "60", status: "Follow" }, [])).ok);
     const dup = await mod("rmLevels").forms!.new(ctx, { godown: "Bhiwandi", type: "Can", item: "Tin can 5L", min: "1", max: "2", status: "Follow" }, []);
-    assert.equal(fieldMsg(dup), "Duplicate Entry!");
+    assert.equal(fieldMsg(dup), "That item already has a level at this godown.");
     const { rows } = await mod("rmLevels").load(ctx);
     const can = rows.find((r) => r.v.item === "Tin can 5L");
     const box = rows.find((r) => r.v.item === "Box6");

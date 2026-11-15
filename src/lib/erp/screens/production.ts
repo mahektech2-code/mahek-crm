@@ -1399,14 +1399,14 @@ const sfgStock: ScreenModule = {
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "product", l: "SFG product", t: "b" },
-      { k: "stock", l: "Current stock (Ltr)", t: "n" },
-      { k: "lot", l: "Lot code", t: "mono" },
+      { k: "stock", l: "Stock (L)", t: "n" },
+      { k: "lot", l: "Lot", t: "mono" },
       { k: "qc", l: "QC", t: "s" },
       { k: "godown", l: "Godown", t: "t" },
       { k: "batchSize", l: "Batch size", t: "n" },
       { k: "type", l: "Type", t: "s" },
-      { k: "rate", l: "SFG rate", t: "m", pw: "viewCost" },
-      { k: "value", l: "Stock value", t: "m", pw: "viewCost" },
+      { k: "rate", l: "Rate per L", t: "m", pw: "viewCost" },
+      { k: "value", l: "Value", t: "m", pw: "viewCost" },
       { k: "batches", l: "Batches", t: "n" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
@@ -1442,11 +1442,11 @@ const sfgStock: ScreenModule = {
         ),
         flags: [],
         title: `${l.product} · ${l.lotCode}`,
-        header: `${nf(l.stock)} Ltr at ${l.godown}`,
+        header: `${nf(l.stock)} L at ${l.godown}`,
         actions: [
           { id: "label", l: "Print SFG label", primary: true, href: erpLabelsHref({ sfg: l.lotCode, godown: l.godownId }) },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
-          ...stockRowActions(ctx, { stage: "sfg", itemId: l.formulationId, item: l.product, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "Ltr" }),
+          ...stockRowActions(ctx, { stage: "sfg", itemId: l.formulationId, item: l.product, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "L" }),
         ],
       })),
     };
@@ -1470,13 +1470,13 @@ const fgStock: ScreenModule = {
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "product", l: "FG product", t: "b" },
-      { k: "stock", l: "Current stock (cans)", t: "n" },
-      { k: "lot", l: "Finished lot", t: "mono" },
+      { k: "stock", l: "Stock (cans)", t: "n" },
+      { k: "lot", l: "Lot", t: "mono" },
       { k: "sku", l: "Description of goods", t: "t", w: 240 },
       { k: "packing", l: "Packing", t: "s" },
       { k: "godown", l: "Godown", t: "t" },
-      { k: "rate", l: "Rate", t: "m", pw: "viewCost" },
-      { k: "value", l: "Stock value", t: "m", pw: "viewCost" },
+      { k: "rate", l: "Rate per L", t: "m", pw: "viewCost" },
+      { k: "value", l: "Value", t: "m", pw: "viewCost" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
@@ -1489,7 +1489,10 @@ const fgStock: ScreenModule = {
         ],
         agg: { k: "stock", l: "cans" }, godownKey: "godown", readOnly: true, noDataLine: "No finished goods in stock. Stock appears as filling is saved." },
       tooWide: wide,
-      rows: lots.map((l) => ({
+      rows: lots.map((l) => {
+        const carry = labelled.get(`${l.lotCode}|${l.godownId}`) ?? 0;
+        const room = Math.floor(l.stock) - carry;
+        return {
         id: `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`,
         v: withoutHidden(
           {
@@ -1508,26 +1511,27 @@ const fgStock: ScreenModule = {
         flags: [],
         title: `${l.product} · ${l.lotCode}`,
         header: `${nf(l.stock)} cans at ${l.godown}`,
-        fields: [{ l: "Loose labels on the shelf", v: `${nf(labelled.get(`${l.lotCode}|${l.godownId}`) ?? 0)} of these cans carry their own unit id`, der: true }],
+        fields: [{ l: "Loose labels on the shelf", v: `${nf(carry)} of these cans carry their own unit id`, der: true }],
         actions: [
           {
             id: "labelLoose",
             l: "Label loose units",
-            primary: true,
-            why: l.skuId ? "" : "This lot has no loose SKU to sell as; box it instead",
+            primary: room > 0,
+            why: !l.skuId ? "This lot has no loose SKU to sell as; box it instead." : room <= 0 ? "Every can of this lot already carries a unit id." : "",
             prompt: {
               title: `Label loose units · ${l.lotCode}`,
               sub: `${l.sku ?? l.product} at ${l.godown}. One unit id per can or drum, for cans that leave LOOSE — cans that will be boxed get their box's id when the batch completes.`,
               submit: "Create unit ids",
               fields: [{ k: "count", l: "How many cans or drums", t: "num", qtyUnit: { base: "cans" }, req: true, min: 1, max: Math.floor(l.stock) }],
-              init: { count: String(Math.max(0, Math.floor(l.stock) - (labelled.get(`${l.lotCode}|${l.godownId}`) ?? 0))) },
+              init: { count: String(Math.max(0, room)) },
             },
           },
           { id: "labels", l: "Print loose labels", href: erpLabelsHref({ lot: l.lotCode }) },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
           ...stockRowActions(ctx, { stage: "fg", itemId: l.finishedGoodId, item: l.product, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "cans" }),
         ],
-      })),
+        };
+      }),
     };
   },
   actions: {
@@ -1535,7 +1539,7 @@ const fgStock: ScreenModule = {
     async labelLoose(ctx, id, values) {
       const [fg, lotCode, godownId] = id.split("|");
       const count = int(values.count);
-      if (count == null || count <= 0) return fieldErr("count", "How many is required");
+      if (count == null || count <= 0) return fieldErr("count", "Say how many cans or drums to label.");
       let made: string[] = [];
       const res = await inTx(async (tx) => {
         await lockLot(tx, "fg", lotCode, godownId);
@@ -1543,7 +1547,7 @@ const fgStock: ScreenModule = {
         if (!lot) return refuse(err("That lot has no stock here any more.", "not_found"));
         if (!lot.skuId) return refuse(err("This lot has no loose SKU to sell as.", "rule_violation"));
         const h = await looseHeadroom(tx, { lotCode, finishedGoodId: fg, godownId, ledgerStock: lot.stock });
-        if (count > h.room) return refuse(fieldErr("count", h.room ? `Only ${h.room} more can be labelled: ${h.labelled} of this lot's cans already carry an id` : "Every can of this lot already carries an id"));
+        if (count > h.room) return refuse(fieldErr("count", h.room ? `Only ${nf(h.room)} more can be labelled: ${nf(h.labelled)} of this lot's cans already carry an id.` : "Every can of this lot already carries an id."));
         made = await mintLooseUnits(tx, { lotCode, finishedGoodId: fg, skuId: lot.skuId, godownId, count, byId: ctx.user.id });
         return okVoid(`${count} unit id${count === 1 ? "" : "s"} created · print them from “Print loose labels”`);
       });

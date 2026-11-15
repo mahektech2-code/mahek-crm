@@ -10,7 +10,7 @@ The Stock group answers "what do we have, where is it, and where did it go?". **
   <WfBar><WfInput placeholder="Search" /><WfButton>All godowns ▾</WfButton><Hotspot n={1} /><WfSpacer /><WfButton>Show every entry</WfButton><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Date", "FG product", "Current stock (cans)", "Finished lot", "Description of goods", "Packing", "Godown", "Rate", "Stock value"]}
+    columns={["Date", "FG product", "Stock (cans)", "Lot", "Description of goods", "Packing", "Godown", "Rate per L", "Value"]}
     rows={[
       ["6 Oct", <b key="a">Nano Thinner 5 L</b>, "118", "FG14NA", "Nano Thinner - 5 Liter (Loose)", "Can", "Godown A", <span key="b">— <Hotspot n={3} /></span>, "—"],
       ["4 Oct", <b key="c">Nano Thinner 1 L</b>, "240", "FG13NA", "Nano Thinner - 1 Liter (Loose)", "Can", "Godown A", "—", "—"],
@@ -102,7 +102,7 @@ Every box a packing batch made and every labelled loose can or drum, by its own 
   <WfTabs items={["In stock & at dispatch", "Every box"]} active="In stock & at dispatch" />
   <WfBar><WfButton>Print labels</WfButton><WfButton>Put on hold</WfButton><WfButton>Release hold</WfButton><Hotspot n={1} /></WfBar>
   <WfTable
-    columns={["Box id", "Status", "Description of goods", "Pack", "Cans", "Batch / lot", "No.", "Godown", "Order", "Customer", "Label printed"]}
+    columns={["Unit id", "Status", "Description of goods", "Pack", "Cans", "Batch / lot", "No.", "Godown", "Order", "Customer", "Label printed"]}
     rows={[
       ["BX-261006-000125", <WfPill key="a" tone="success">In stock</WfPill>, "Nano Thinner - 1 Liter (12 Can/Box)", "1 L", "12", "FP40NA", "1", "Godown A", "—", "—", <span key="b">— <Hotspot n={2} /></span>],
       ["BX-261006-000126", <WfPill key="c" tone="brand">Scanned for dispatch</WfPill>, "Nano Thinner - 1 Liter (12 Can/Box)", "1 L", "12", "FP40NA", "2", "Godown A", "1256", "Customer A", "6 Oct"],
@@ -121,7 +121,7 @@ Every box a packing batch made and every labelled loose can or drum, by its own 
 | **Scanned for dispatch** | Scanned onto an order at the dispatch desk, not yet gone |
 | **Dispatched** | Left with its order |
 | **On hold** | Cannot be scanned until released |
-| **Returned** | Came back from the customer; back at the godown it left from |
+| **Returned** | Came back from the customer; decided on Material returns → Customer returns |
 | **Rejected** | Never leaves |
 | **Written off** | Moved to Item Lost Record |
 | **Cancelled** | Its packing batch was un-completed |
@@ -130,9 +130,9 @@ Every box a packing batch made and every labelled loose can or drum, by its own 
 |---|---|---|
 | **Print label / Reprint label** | Anyone on the screen | Opens the label sheet for this box |
 | **Put on hold** | Anyone on the screen, with a reason | Only a box in stock |
-| **Release hold / Back into stock** | Anyone on the screen | A box on hold, or returned |
-| **Reject** | Dispatch-override approver, with a reason | A box in stock, on hold or returned |
-| **Mark returned by customer** | Dispatch-override approver, with a reason | Only a dispatched box |
+| **Release hold** | Anyone on the screen | Only a box on hold |
+| **Reject** | Dispatch-override approver, with a reason | A box in stock or on hold |
+| **Open customer returns** | Anyone on the screen | A returned box: it is received, checked and put back through Material returns, which posts the stock |
 | **Trace this box** | Anyone | Opens [Traceability](/docs/erp/traceability) |
 
 ### Printing labels
@@ -179,10 +179,10 @@ Stock never moves **out** of Item Lost Record, and it never appears in the "From
 
 | Refusal | Means |
 |---|---|
-| You Selected The Same Location, Change To Location | From and To are the same godown |
-| Select Correct Quantity! | Zero, or more than the lot holds |
-| Writing stock off to Item Lost Record needs the lost-stock power | You do not hold it |
-| That godown is not active | The destination is switched off |
+| Pick a different godown to move it to. | From and To are the same godown |
+| Enter a quantity above 0 and no more than the lot holds. | Zero, or more than the lot holds |
+| Writing stock off to Item Lost Record needs the lost-stock power. | You do not hold it |
+| That godown is not active. | The destination is switched off |
 
 ## Common questions
 

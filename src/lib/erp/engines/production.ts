@@ -137,11 +137,12 @@ export function packCosting(
 
 /* =============================================================== levels */
 
-/** Re-order % of a raw-material level: available ÷ midpoint − 1 (spec §10.2). */
-export function rmReorderPercent(available: number | null, min: number, max: number): number | null {
-  const mid = (min + max) / 2;
-  if (available == null || mid <= 0) return null;
-  return Math.round((available / mid - 1) * 1000) / 10;
+/**
+ * "Of minimum" of a raw-material level: available ÷ minimum × 100, the same
+ * reading finished goods use, so 100 means exactly at the minimum on both.
+ */
+export function rmReorderPercent(available: number | null, min: number): number | null {
+  return available == null ? null : fgReorderPercent(available, min);
 }
 
 /** What to buy to reach the maximum; blank when already at or above it. */
@@ -151,7 +152,7 @@ export function rmRequired(available: number | null, max: number): number | null
   return need > 0 ? need : null;
 }
 
-/** Re-order % of a finished-goods level: available ÷ minimum. */
+/** "Of minimum" of a finished-goods level: available ÷ minimum × 100. */
 export function fgReorderPercent(available: number, min: number): number | null {
   return min > 0 ? Math.round((available / min) * 1000) / 10 : null;
 }

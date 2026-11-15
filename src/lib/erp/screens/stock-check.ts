@@ -28,7 +28,7 @@ import { countLabel, judgeOnShelf, missingRecords, notifyStockFlag, openCount, o
 import { lockLot, rmLots } from "../stock";
 import { checkableItems, floorCheckRows, recordFloorCheck, STAGE_LABEL, type CheckStage, type FloorCheckRow } from "../floor-checks";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow } from "../ui";
-import { nf } from "../ui";
+import { fd, nf } from "../ui";
 import { godownField, godownOptions, inTx, isErpManager, materials, refuse, type Tx } from "./common";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
@@ -302,9 +302,9 @@ const countTasks: ScreenModule = {
           v: { no: countLabel(c.no), due: c.due, kind: COUNT_KIND_LABEL[c.kind], item: c.item, godown: c.godown, unit: c.unit, reason: c.reason, assignee: c.assignee ?? "Anybody at the godown" },
           flags: [...(c.due < day ? ["countOverdue"] : []), ...(c.parent ? ["recount"] : [])],
           title: `${countLabel(c.no)} · ${c.item}`,
-          header: `${c.godown} · ${COUNT_KIND_LABEL[c.kind]} · due ${c.due}`,
+          header: `${c.godown} · ${COUNT_KIND_LABEL[c.kind]} · due ${fd(c.due)}`,
           actions: [
-            { id: "count", l: "Count it", primary: true, prompt: countPrompt(c), why: sameCounter ? "A recount is done by somebody other than whoever counted first" : "" },
+            { id: "count", l: "Count it", primary: true, prompt: countPrompt(c), why: sameCounter ? "A recount is done by somebody other than whoever counted first." : "" },
             ...(runsCounts(ctx) ? [{ id: "cancel", l: "Cancel count", prompt: { title: "Cancel this count", sub: `${countLabel(c.no)} · ${c.item} at ${c.godown}`, submit: "Cancel count", fields: [{ k: "reason", l: "Why", t: "area" as const, req: true }] }, impact: { kind: "erp-stock-count", id: c.id } }] : []),
           ],
           panel: panelFor(c, rows, null, null),
@@ -369,8 +369,8 @@ const countTasks: ScreenModule = {
 /**
  * Writes a counted figure onto an open count, judged against the book read
  * NOW, inside the caller's transaction. The one write both a count submitted
- * on Stock accuracy and the in-charge's count raised with a requirement on the
- * factory floor make, so the two cannot be judged two ways.
+ * on Stock accuracy and a count an older factory phone still sends with a
+ * requirement make, so the two cannot be judged two ways.
  */
 export async function writeCounted(
   tx: Tx,
@@ -481,7 +481,6 @@ const stockFlags: ScreenModule = {
       { k: "book", l: "Book", t: "n" },
       { k: "diff", l: "Difference", t: "n" },
       { k: "unit", l: "Unit", t: "t" },
-      { k: "requirement", l: "Requirement", t: "mono" },
       { k: "counter", l: "Counted by", t: "t" },
       { k: "f", l: "Flags", t: "f" },
     ];
@@ -544,7 +543,7 @@ const stockFlags: ScreenModule = {
               },
             });
         }
-        if (runsCounts(ctx)) actions.push({ id: "cancelFlag", l: "Cancel", prompt: { title: "Cancel this check", sub: "Only for a count opened by mistake. A real difference is resolved, not cancelled.", submit: "Cancel check", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-stock-check", id: c.id } });
+        if (runsCounts(ctx)) actions.push({ id: "cancelFlag", l: "Cancel count", prompt: { title: "Cancel this count", sub: "Only for a count opened by mistake. A real difference is resolved, not cancelled.", submit: "Cancel count", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-stock-check", id: c.id } });
         return {
           id: c.id,
           v: {
@@ -556,7 +555,6 @@ const stockFlags: ScreenModule = {
             book: reconciledOf(latest),
             diff: latest.difference,
             unit: c.unit,
-            requirement: c.reqNo ? requirementLabel(c.reqNo) : null,
             counter: latest.counter,
           },
           flags: [...(adj ? ["adjustmentPending"] : [])],
@@ -901,7 +899,7 @@ const stockCounts: ScreenModule = {
     const [rows, adjs] = await Promise.all([countRows(), adjustmentRows()]);
     const cols: ColSpec[] = [
       { k: "no", l: "Count", t: "mono" },
-      { k: "date", l: "Counted", t: "d" },
+      { k: "date", l: "Date", t: "d" },
       { k: "kind", l: "Kind", t: "s" },
       { k: "status", l: "Status", t: "s" },
       { k: "item", l: "Item", t: "b" },
@@ -995,9 +993,9 @@ const floorChecks: ScreenModule = {
       { k: "counted", l: "Counted", t: "n" },
       { k: "book", l: "Book", t: "n" },
       { k: "diff", l: "Difference", t: "n" },
+      { k: "unit", l: "Unit", t: "t" },
       { k: "reason", l: "Their reason", t: "t", w: 220 },
       { k: "counter", l: "Checked by", t: "t" },
-      { k: "unit", l: "Unit", t: "t" },
       { k: "kind", l: "Kind", t: "t" },
       { k: "from", l: "From", t: "t" },
     ];
@@ -1007,7 +1005,7 @@ const floorChecks: ScreenModule = {
       godownField(gds, { def: ctx.workingGodown?.name }),
       { k: "qty", l: "Counted", t: "num", req: true, min: 0, hint: "The book is shown only after you save.", qtyUnit: { by: ["kind", "item"], map: unitOf } },
       { k: "bin", l: "Where", t: "text", hint: "Bay, rack or bin." },
-      { k: "reason", l: "If it differs, why (optional)", t: "area", mic: true },
+      { k: "reason", l: "If it differs, why", t: "area", mic: true },
     ];
     return {
       spec: {

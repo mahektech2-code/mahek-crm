@@ -10,6 +10,7 @@ import { Page, QuickFind } from "../_ui/page-head";
 import { Badge } from "../_ui/badge";
 import { Eyebrow, eyebrowClass, labelClass, linkClass, SectionTitle, SubTitle } from "../_ui/look";
 import { erpDispatchHref, erpTraceHref } from "@/lib/erp/trace-links";
+import { nf } from "@/lib/erp/ui";
 
 /**
  * TRACEABILITY — one search box that takes anything a person has in hand: a
@@ -60,15 +61,22 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
       <section>
         <SectionTitle>Today</SectionTitle>
         <CardGrid min={170}>
-          {d.today.map((t) => (
-            <NavLink key={t.l} href={t.href ?? "#"} className="no-underline hover:no-underline">
-              <Card className="h-full px-4 py-3 hover:border-brand">
+          {d.today.map((t) => {
+            const card = (
+              <Card className={cx("h-full px-4 py-3", t.href && "hover:border-brand")}>
                 <Eyebrow>{t.l}</Eyebrow>
                 <span className="block text-xl leading-7 font-semibold text-ink tabular-nums">{t.v}</span>
                 {t.sub ? <span className="block text-xs text-muted">{t.sub}</span> : null}
               </Card>
-            </NavLink>
-          ))}
+            );
+            return t.href ? (
+              <NavLink key={t.l} href={t.href} className="no-underline hover:no-underline">
+                {card}
+              </NavLink>
+            ) : (
+              <div key={t.l}>{card}</div>
+            );
+          })}
         </CardGrid>
       </section>
       <section>
@@ -276,7 +284,7 @@ function TraceView({ r }: { r: TraceResult }) {
                   </span>
                   <span className="text-right">
                     <span className="block text-sm tabular-nums text-ink">
-                      {c.qty} {c.unit}
+                      {nf(c.qty)} {c.unit}
                     </span>
                     {c.dispatched ? <Badge label={`Dispatched${c.dispatched === "yes" ? "" : ` ${c.dispatched}`}`} tone="success" /> : <Badge label="Not dispatched" tone="warn" />}
                   </span>

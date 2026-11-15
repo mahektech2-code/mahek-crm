@@ -248,11 +248,17 @@ export function LabelPrinter({ ids, count, what, mm, setup, fileName }: { ids: s
       }
     });
 
+  /* The dialog first: a label is marked printed only once the print dialog has been shown and closed. */
   const dialog = () =>
     start(async () => {
-      await mark();
+      setNote(null);
       window.print();
-      router.refresh();
+      try {
+        await mark();
+        router.refresh();
+      } catch {
+        setNote({ tone: "bad", text: "The labels could not be marked printed. Refresh and check the Label printed column." });
+      }
     });
 
   return (

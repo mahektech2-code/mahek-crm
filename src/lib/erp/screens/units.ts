@@ -5,7 +5,8 @@ import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, stampLine, text, type ScreenModule } from "../server";
-import type { ActionSpec, BulkSpec, ColSpec, ListRow, ToolResult } from "../ui";
+import { nf, type ActionSpec, type BulkSpec, type ColSpec, type ListRow, type ToolResult } from "../ui";
+import { erpLink } from "../registry";
 import { manualMove, packLabel, UNIT_STATUS_LABEL, type UnitStatus } from "../engines/trace";
 import { unitEvent } from "../units";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref } from "../trace-links";
@@ -18,8 +19,9 @@ import { readConfirmation } from "@/lib/impact/types";
  * BOXES & LABELS — the unit register. Every box a packing batch made and
  * every loose can or drum somebody labelled, by id, with where it is and
  * where it stands. Labels are printed from here (one, a selection or a whole
- * batch), and the few moves a person makes by hand — hold, release, reject,
- * return — are made here, each one an event on the box's history.
+ * batch), and the few moves a person makes by hand — hold, release, reject —
+ * are made here, each one an event on the box's history. A box a customer
+ * sends back goes through Material returns → Customer returns.
  * ------------------------------------------------------------------------- */
 
 type UnitRow = {
@@ -44,6 +46,17 @@ type UnitRow = {
   by: string | null;
 };
 
+/** The register reads at most this many units, newest first, and says so when there are more. */
+const UNIT_CAP = 5000;
+
+async function unitTotal(scope: "stock" | "all"): Promise<number> {
+  const [r] = (await db.execute(sql`
+    select count(*)::int as n from erp_units u
+     where ${scope === "stock" ? sql`u.status in ('available', 'hold', 'scanned', 'returned')` : sql`true`}
+  `)) as unknown as { n: number }[];
+  return Number(r?.n ?? 0);
+}
+
 async function unitRows(scope: "stock" | "all"): Promise<UnitRow[]> {
   return (await db.execute(sql`
     select u.id, u.kind, u.status, u.status_note as note, p.name as sku, coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres,
@@ -60,7 +73,7 @@ async function unitRows(scope: "stock" | "all"): Promise<UnitRow[]> {
       left join users us on us.id = u.created_by_id
      where ${scope === "stock" ? sql`u.status in ('available', 'hold', 'scanned', 'returned')` : sql`true`}
      order by u.created_at desc, u.id desc
-     limit 5000
+     limit ${UNIT_CAP + 1}
   `)) as unknown as UnitRow[];
 }
 
@@ -68,10 +81,16 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
   return {
     key,
     async load(ctx) {
-      const rows = await unitRows(key === "units" ? "stock" : "all");
+      const scope = key === "units" ? "stock" : "all";
+      const read = await unitRows(scope);
+      /* Past the cap the list is the newest UNIT_CAP, and the line under the
+         toolbar says how many there are, so the cards are read as a slice. */
+      const capped = read.length > UNIT_CAP;
+      const rows = capped ? read.slice(0, UNIT_CAP) : read;
+      const total = capped ? await unitTotal(scope) : rows.length;
       const power = ctx.powers.has("dispatchOverride");
       const cols: ColSpec[] = [
-        { k: "id", l: "Box id", t: "mono" },
+        { k: "id", l: "Unit id", t: "mono" },
         { k: "status", l: "Status", t: "s" },
         { k: "sku", l: "Description of goods", t: "b", w: 240 },
         { k: "pack", l: "Pack", t: "t" },
@@ -99,7 +118,7 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
           agg: { k: "cans", l: "cans" },
           filters: ["status", "sku", "pack", "customer"],
           stats: [
-            { l: "Boxes" },
+            { l: "Units" },
             { l: "Lots", kind: "distinct", k: "lot" },
             { l: "Cans", kind: "sum", k: "cans", u: "cans" },
             key === "units"
@@ -109,6 +128,7 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
             { l: "No label printed", where: { flag: "unlabelled" }, tone: "danger" },
           ],
           godownKey: "godown",
+          ...(capped ? { scopedLine: `Showing the newest ${nf(UNIT_CAP)} of ${nf(total)} units; the figures above count these only. Trace finds an older one by its id.` } : {}),
           bulk,
           sortDefault: ["id", -1],
           noDataLine:
@@ -118,16 +138,16 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
         },
         rows: rows.map((r): ListRow => {
           const status = r.status;
-          const can = (to: "hold" | "available" | "rejected" | "returned") => manualMove(status, to);
-          const needPower = (to: "rejected" | "returned") => can(to) ?? (power ? "" : "Only a dispatch-override approver rejects or returns a box");
+          const can = (to: "hold" | "available" | "rejected") => manualMove(status, to);
+          const needPower = (to: "rejected") => can(to) ?? (power ? "" : "Only a dispatch-override approver rejects a box.");
           const actions: ActionSpec[] = [
             { id: "print", l: r.printedAt ? "Reprint label" : "Print label", primary: !r.printedAt && status === "available", href: erpLabelsHref({ ids: [r.id] }) },
             { id: "trace", l: "Trace this box", href: erpTraceHref(r.id) },
             ...(status === "scanned" && r.orderNo ? [{ id: "desk", l: `Open order ${r.orderNo} at the dispatch desk`, href: erpDispatchHref(r.orderNo) } as ActionSpec] : []),
             { id: "hold", l: "Put on hold", why: can("hold") ?? "", prompt: { title: `Hold ${r.id}`, sub: "A box on hold cannot be scanned for dispatch until it is released.", submit: "Hold", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
-            { id: "release", l: status === "returned" ? "Back into stock" : "Release hold", why: can("available") ?? "", impact: { kind: "erp-unit-release", id: r.id } },
+            ...(status === "returned" ? [{ id: "returns", l: "Open customer returns", href: erpLink("customerReturns") } as ActionSpec] : []),
+            { id: "release", l: "Release hold", why: can("available") ?? "", impact: { kind: "erp-unit-release", id: r.id } },
             { id: "reject", l: "Reject", why: needPower("rejected"), prompt: { title: `Reject ${r.id}`, sub: "A rejected box never leaves. The reason stays on its history.", submit: "Reject", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
-            { id: "return", l: "Mark returned by customer", why: needPower("returned"), prompt: { title: `${r.id} came back`, sub: "It returns to the godown it left from, as Returned, until somebody puts it back into stock or rejects it.", submit: "Mark returned", fields: [{ k: "note", l: "What came back and why", t: "area", req: true }] } },
           ];
           const flags: string[] = [];
           if (status === "hold") flags.push("unitHold");
@@ -170,7 +190,6 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
         return refusal ?? move(ctx, [id], "available", null);
       },
       reject: (ctx, id, v) => move(ctx, [id], "rejected", text(v.note)),
-      return: (ctx, id, v) => move(ctx, [id], "returned", text(v.note)),
     },
     bulk: {
       async print(_ctx, ids) {
@@ -185,11 +204,11 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
   };
 }
 
-const EVENT: Record<"hold" | "available" | "rejected" | "returned", string> = { hold: "hold", available: "release", rejected: "reject", returned: "return" };
+const EVENT: Record<"hold" | "available" | "rejected", string> = { hold: "hold", available: "release", rejected: "reject" };
 
-async function move(ctx: ErpContext, ids: string[], to: "hold" | "available" | "rejected" | "returned", note: string | null): Promise<Result<unknown>> {
-  if ((to === "hold" || to === "rejected" || to === "returned") && !note) return fieldErr("note", "Say why");
-  if ((to === "rejected" || to === "returned") && !ctx.powers.has("dispatchOverride")) return err("Only a dispatch-override approver rejects or returns a box.", "not_permitted");
+async function move(ctx: ErpContext, ids: string[], to: "hold" | "available" | "rejected", note: string | null): Promise<Result<unknown>> {
+  if ((to === "hold" || to === "rejected") && !note) return fieldErr("note", "Say why.");
+  if (to === "rejected" && !ctx.powers.has("dispatchOverride")) return err("Only a dispatch-override approver rejects a box.", "not_permitted");
   let moved = 0;
   let refused = "";
   const res = await inTx(async (tx) => {
@@ -201,8 +220,7 @@ async function move(ctx: ErpContext, ids: string[], to: "hold" | "available" | "
         refused = refused || `${r.id}: ${why}`;
         continue;
       }
-      /* A returned box keeps the order it came back from on its history, and
-         leaves the order once it is back in stock. */
+      /* A box released from hold leaves any order it was scanned onto. */
       const clearOrder = to === "available";
       await tx.execute(sql`update erp_units set status = ${to}, status_note = ${note}, ${clearOrder ? sql`order_id = null, scanned_at = null, scanned_by_id = null,` : sql``} updated_at = now() where id = ${r.id}`);
       await unitEvent(tx, { unitId: r.id, event: EVENT[to], from: r.status, to, orderId: r.order, godownId: r.godown, note, byId: ctx.user.id });
@@ -213,7 +231,7 @@ async function move(ctx: ErpContext, ids: string[], to: "hold" | "available" | "
   });
   if (!res.ok) return res;
   await erpAudit(ctx, `erp.unit.${EVENT[to]}`, "erp_unit", ids.join(","), null, { to, note });
-  const word = { hold: "on hold", available: "back in stock", rejected: "rejected", returned: "marked returned" }[to];
+  const word = { hold: "on hold", available: "back in stock", rejected: "rejected" }[to];
   return okVoid(`${moved} box${moved === 1 ? "" : "es"} ${word}${refused && moved < ids.length ? ` · ${ids.length - moved} could not be (${refused})` : ""}`);
 }
 

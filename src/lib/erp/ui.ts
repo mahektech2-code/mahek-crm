@@ -696,7 +696,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   reserved: ["Reserved godown", "danger"],
   detailed: ["In order details", "neutral"],
   cnSync: ["CN out of sync", "warn"],
-  below: ["Below level", "danger"],
+  below: ["Below minimum", "danger"],
   autoLevel: ["Planned automatically", "brand"],
   aiAdjusted: ["Adjusted by AI", "info"],
   noLevel: ["No level set", "neutral"],
