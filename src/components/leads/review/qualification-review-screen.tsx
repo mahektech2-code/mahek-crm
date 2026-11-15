@@ -64,7 +64,7 @@ export function QualificationReviewScreen({
   /** Where Close goes back to, where this is not the CRM record's own Qualify screen. */
   closeHref?: string;
 }) {
-  const closeTo = closeHref ?? leadHref(workspace, `${model.customerId}/qualify`);
+  const closeTo = closeHref ?? leadHref(workspace, `leads/${model.customerId}/qualify`);
   const router = useRouter();
   const toast = useToast();
   const canEdit = model.viewer.canDecide;

@@ -59,7 +59,7 @@ export async function Body({
         key={reviewModel.customerId}
         workspace={workspace}
         model={reviewModel}
-        closeHref={leadHref(workspace, reviewModel.customerId)}
+        closeHref={leadHref(workspace, `leads/${reviewModel.customerId}`)}
       />
     );
   }
