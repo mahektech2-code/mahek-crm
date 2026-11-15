@@ -63,16 +63,19 @@ export type PlanSummary = {
   lines: number;
   prints: number;
   lastPrintedAt: string | null;
+  godownId: string | null;
+  godown: string | null;
 };
 
 /** Plans newest first, or the one for a date. */
 export async function listPlans(opts: { date?: string | null; limit?: number } = {}): Promise<PlanSummary[]> {
   const rows = (await db.execute(sql`
-    select p.id, p.plan_no as "planNo", p.plan_date::text as "planDate", u.name as "createdBy", p.updated_at as "updatedAt",
+    select p.id, p.plan_no as "planNo", p.plan_date::text as "planDate", u.name as "createdBy", p.updated_at as "updatedAt", p.godown_id as "godownId",
            (select count(*)::int from erp_production_plan_lines l where l.plan_id = p.id and l.deleted_at is null) as lines,
            (select count(*)::int from erp_production_plan_prints x where x.plan_id = p.id) as prints,
-           (select max(x.printed_at) from erp_production_plan_prints x where x.plan_id = p.id) as "lastPrintedAt"
-      from erp_production_plans p left join users u on u.id = p.created_by_id
+           (select max(x.printed_at) from erp_production_plan_prints x where x.plan_id = p.id) as "lastPrintedAt",
+           g.name as godown
+      from erp_production_plans p left join users u on u.id = p.created_by_id left join erp_godowns g on g.id = p.godown_id
      where ${opts.date ? sql`p.plan_date = ${opts.date}` : sql`true`}
      order by p.plan_date desc limit ${opts.limit ?? 60}
   `)) as unknown as (Omit<PlanSummary, "updatedAt" | "lastPrintedAt"> & { updatedAt: Date | string; lastPrintedAt: Date | string | null })[];
@@ -184,11 +187,23 @@ export async function planPrint(id: string, printNo: number) {
 
 /* ------------------------------------------------------------------ writes */
 
+/** Today's business date. A plan dated before it is the record of its day. */
+function todayDate(): string {
+  return calendarDate(new Date(nowMs()));
+}
+
+export function isPastPlan(planDate: string): boolean {
+  return planDate < todayDate();
+}
+
+const PAST_PLAN = "This plan is for a day that has passed. It is the record of that day and cannot be changed or printed again.";
+
 /** Opens the plan for a date, making it if there is none — one plan per day. */
 export async function openPlanFor(ctx: ErpContext, date: string): Promise<Result<{ id: string; created: boolean }>> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fieldErr("date", "Pick the plan date.");
   const [have] = await db.select({ id: erpProductionPlans.id }).from(erpProductionPlans).where(eq(erpProductionPlans.planDate, date));
   if (have) return ok({ id: have.id, created: false });
+  if (isPastPlan(date)) return fieldErr("date", "That day has passed and has no plan. A plan can be made for today or a later day.");
   const res = await db.transaction(async (tx) => {
     const planNo = await nextNumber(tx, "plan");
     const id = erpId("eplan");
@@ -213,6 +228,7 @@ export async function openPlanFor(ctx: ErpContext, date: string): Promise<Result
 export async function savePlanLine(ctx: ErpContext, planId: string, input: LineInput, lineId?: string): Promise<Result<{ id: string }>> {
   const [plan] = await db.select().from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
   if (!plan) return err("That plan no longer exists.", "not_found");
+  if (isPastPlan(plan.planDate)) return err(PAST_PLAN);
   const items = await planCatalogue();
   const item = items.find((i) => i.id === input.itemId && i.category === input.category) ?? null;
   const problems = lineProblems(input, { itemExists: !!item, size: item?.size ?? null });
@@ -251,6 +267,8 @@ export async function deletePlanLine(ctx: ErpContext, lineId: string): Promise<R
   const [line] = await db.select().from(erpProductionPlanLines).where(and(eq(erpProductionPlanLines.id, lineId), isNull(erpProductionPlanLines.deletedAt)));
   if (!line) return err("That line is already deleted.", "not_found");
   if (line.source === "order") return err(FROM_ORDERS);
+  const [plan] = await db.select({ planDate: erpProductionPlans.planDate }).from(erpProductionPlans).where(eq(erpProductionPlans.id, line.planId));
+  if (plan && isPastPlan(plan.planDate)) return err(PAST_PLAN);
   await db.transaction(async (tx) => {
     await tx.update(erpProductionPlanLines).set({ deletedAt: new Date(), deletedById: ctx.user.id }).where(eq(erpProductionPlanLines.id, lineId));
     await tx.update(erpProductionPlans).set({ updatedById: ctx.user.id, updatedAt: new Date() }).where(eq(erpProductionPlans.id, line.planId));
@@ -264,6 +282,9 @@ export async function deletePlanLine(ctx: ErpContext, lineId: string): Promise<R
  * nothing changed answers with the last print instead of a second copy of it.
  */
 export async function recordPlanPrint(ctx: ErpContext, planId: string): Promise<Result<{ printNo: number }>> {
+  const [plan] = await db.select({ planDate: erpProductionPlans.planDate }).from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
+  if (!plan) return err("That plan no longer exists.", "not_found");
+  if (isPastPlan(plan.planDate)) return err(PAST_PLAN);
   /* The sheet carries the orders as they stand at the moment it is printed. */
   await syncPlanFromOrders(planId);
   const lines = await db
@@ -298,7 +319,8 @@ export async function underProcessLines(godownId: string | null): Promise<UnderP
   return (await db.execute(sql`
     select o.order_no as "orderNo", p.id as "skuId", p.name as "skuName", p.external_code as "skuCode",
            p.cans_per_box as "cansPerBox", coalesce(p.millilitres_per_can, fg.millilitres) as millilitres,
-           fg.id as "finishedGoodId", fg.name as "finishedGoodName", o.qty_cans as "qtyCans"
+           fg.id as "finishedGoodId", fg.name as "finishedGoodName", o.qty_cans as "qtyCans",
+           (select p2.external_code from products p2 where p2.finished_good_id = fg.id and p2.active and p2.cans_per_box = 1 order by p2.name limit 1) as "looseCode"
       from erp_orders o
       join products p on p.id = o.sku_id
       left join finished_goods fg on fg.id = p.finished_good_id
@@ -310,7 +332,7 @@ export async function underProcessLines(godownId: string | null): Promise<UnderP
 /** Brings the plan's order lines in step with the orders. Answers how many lines moved. */
 export async function syncPlanFromOrders(planId: string): Promise<number> {
   const [plan] = await db.select().from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
-  if (!plan || plan.planDate < calendarDate(new Date(nowMs()))) return 0;
+  if (!plan || isPastPlan(plan.planDate)) return 0;
   const demand = orderDemand(await underProcessLines(plan.godownId));
   return db.transaction(async (tx) => {
     /* One sync per plan at a time: two tabs opening the plan must not both insert a line. */
@@ -330,7 +352,7 @@ export async function syncPlanFromOrders(planId: string): Promise<number> {
       if (!l) {
         await tx.insert(erpProductionPlanLines).values({ id: erpId("eplnl"), planId, source: "order", sourceKey: d.key, sort: ++sort, ...values });
         moved++;
-      } else if (l.deletedAt || l.quantity !== d.quantity || l.unit !== d.unit || l.orderRefs !== d.orderRefs || l.productName !== d.productName || l.size !== d.size) {
+      } else if (l.deletedAt || l.quantity !== d.quantity || l.unit !== d.unit || l.orderRefs !== d.orderRefs || l.productName !== d.productName || l.productCode !== d.productCode || l.size !== d.size) {
         await tx.update(erpProductionPlanLines).set({ ...values, deletedAt: null, deletedById: null, updatedAt: now, updatedById: null }).where(eq(erpProductionPlanLines.id, l.id));
         moved++;
       }

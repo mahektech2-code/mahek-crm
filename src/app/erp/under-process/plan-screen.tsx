@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { Badge, Button, Callout, Card, CardHeader, cx, EmptyState, Field, Input, SectionLabel, Select, Td, Th, Tr } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
 import { RowMenu } from "@/components/ui/overlays";
-import { stamp } from "@/lib/format";
+import { clock, stamp } from "@/lib/format";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { erpPlanHref, erpPlanPrintHref } from "@/lib/erp/trace-links";
 import { erpLink } from "@/lib/erp/registry";
@@ -15,7 +15,7 @@ import { categorySpec, PLAN_CATEGORIES, type LineState, type PlanCategory } from
 import type { PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
 import { erpPlanDeleteLine, erpPlanOpen, erpPlanPrint, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
 import { Page, PageLinks } from "../_ui/page-head";
-import { linkClass, LinkButton, toggleClass } from "../_ui/look";
+import { linkClass, toggleClass } from "../_ui/look";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog } from "../_ui/dialog";
 import { useErpUi } from "../_ui/erp-ui";
 
@@ -27,6 +27,15 @@ import { useErpUi } from "../_ui/erp-ui";
  * ------------------------------------------------------------------------- */
 
 const planName = (n: number) => `PLAN-${n}`;
+
+/** "2026-11-15" → "2026-11-16". Calendar arithmetic on the date alone, so no zone can move it. */
+function nextDay(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+const NOT_PRINTED = "Not printed yet — open the plan and print it there.";
 
 const STATE: Record<LineState, { label: string; tone: "success" | "warn" | "danger" }> = {
   given: { label: "Given", tone: "success" },
@@ -56,7 +65,7 @@ export function PlanList({
   readOnly: boolean;
   missing: boolean;
   /** The order lines whose status is Under Process now — they come into the plan by themselves. */
-  underProcess: { lines: number; orders: number; godown: string | null };
+  underProcess: { lines: number; orders: number; products: number; godown: string | null };
 }) {
   const [creating, setCreating] = useState(false);
   return (
@@ -67,7 +76,10 @@ export function PlanList({
           <span>
             {underProcess.lines} order {underProcess.lines === 1 ? "line is" : "lines are"} Under Process on Orders → Production ({underProcess.orders}{" "}
             {underProcess.orders === 1 ? "order" : "orders"}
-            {underProcess.godown ? ` at ${underProcess.godown}` : ""}). {todays ? "They are in today's plan." : "They come into today's plan the moment it is created."}
+            {underProcess.godown ? ` at ${underProcess.godown}` : ""}).{" "}
+            {todays
+              ? `They are in today's plan as ${underProcess.products} ${underProcess.products === 1 ? "line" : "lines"}, one per product.`
+              : `They come into today's plan the moment it is created, one line per product (${underProcess.products}).`}
           </span>
         </Callout>
       ) : null}
@@ -75,7 +87,9 @@ export function PlanList({
         <CardHeader
           title={`Today · ${fdLong(today)}`}
           action={
-            readOnly ? null : (
+            readOnly ? null : todays ? (
+              <Button onClick={() => setCreating(true)}>＋ Plan another day</Button>
+            ) : (
               <Button variant="primary" onClick={() => setCreating(true)}>
                 ＋ Create daily plan
               </Button>
@@ -88,7 +102,7 @@ export function PlanList({
               <span className="text-sm font-semibold text-ink">{planName(todays.planNo)}</span>
               <span className="text-meta text-muted">
                 {todays.lines} {todays.lines === 1 ? "line" : "lines"} ·{" "}
-                {todays.prints ? `printed ${todays.prints === 1 ? "once" : `${todays.prints} times`}, last at ${stamp(todays.lastPrintedAt)}` : "not printed yet"} · updated {stamp(todays.updatedAt)}
+                {todays.prints ? `printed ${todays.prints === 1 ? "once" : `${todays.prints} times`}, last at ${todays.lastPrintedAt ? clock(new Date(todays.lastPrintedAt)) : "—"}` : "not printed yet"} · updated {clock(new Date(todays.updatedAt))}
               </span>
             </div>
             <div className="flex gap-2">
@@ -154,10 +168,12 @@ export function PlanList({
                         </NavLink>
                         {p.prints ? (
                           <NavLink href={erpPlanPrintHref(p.id, p.prints)} className={linkClass()}>
-                            Print
+                            Last print
                           </NavLink>
                         ) : (
-                          <span className="text-faint">Print</span>
+                          <span className="cursor-not-allowed text-faint" title={NOT_PRINTED}>
+                            Last print
+                          </span>
                         )}
                       </span>
                     </Td>
@@ -171,7 +187,7 @@ export function PlanList({
         )}
       </Card>
 
-      {creating ? <CreateDialog today={today} onClose={() => setCreating(false)} /> : null}
+      {creating ? <CreateDialog today={today} start={todays ? nextDay(today) : today} onClose={() => setCreating(false)} /> : null}
     </div>
   );
 }
@@ -183,9 +199,9 @@ function buttonLink(variant: "primary" | "secondary" = "secondary"): string {
   );
 }
 
-function CreateDialog({ today, onClose }: { today: string; onClose: () => void }) {
+function CreateDialog({ today, start: startDate, onClose }: { today: string; start: string; onClose: () => void }) {
   const router = useRouter();
-  const [date, setDate] = useState(today);
+  const [date, setDate] = useState(startDate);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const go = () =>
@@ -202,9 +218,9 @@ function CreateDialog({ today, onClose }: { today: string; onClose: () => void }
       <DialogBody>
         <div className="grid gap-4">
           <Field label="Plan date" required error={error}>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} />
           </Field>
-          <p className="text-meta text-muted">One plan per day. If this day already has a plan, it opens.</p>
+          <p className="text-meta text-muted">One plan per day, for today or a later day. If the day already has a plan, it opens.</p>
         </div>
       </DialogBody>
       <DialogFooter>
@@ -221,7 +237,7 @@ function CreateDialog({ today, onClose }: { today: string; onClose: () => void }
 
 type Editing = { category: PlanCategory; line: PlanLineView | null } | null;
 
-export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; items: PlanItem[]; today: string; readOnly: boolean }) {
+export function PlanEditor({ plan, items, today, readOnly, past }: { plan: PlanView; items: PlanItem[]; today: string; readOnly: boolean; past: boolean }) {
   const router = useRouter();
   const ui = useErpUi();
   const [editing, setEditing] = useState<Editing>(null);
@@ -254,12 +270,21 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
               ← All plans
             </NavLink>
           </PageLinks>
-          {readOnly ? null : (
-            <Button onClick={() => setEditing({ category: "loose", line: null })}>＋ Add more</Button>
+          {lastPrint && (past || !plan.changed) ? (
+            /* Nothing new to hand the floor: this opens the sheet already printed, it records no print. */
+            <NavLink href={erpPlanPrintHref(plan.id, lastPrint.printNo)} className={buttonLink(past ? "secondary" : "primary")}>
+              Open Print {lastPrint.printNo}
+            </NavLink>
+          ) : past ? null : (
+            <Button
+              variant="primary"
+              onClick={print}
+              disabled={printing || readOnly || !live.length}
+              title={!live.length ? "Add at least one line before printing." : readOnly ? "You are previewing the ERP as somebody else." : undefined}
+            >
+              {printing ? "Preparing…" : `Print plan (Print ${nextPrint})`}
+            </Button>
           )}
-          <Button variant="primary" onClick={print} disabled={printing || readOnly || !live.length}>
-            {printing ? "Preparing…" : lastPrint && !plan.changed ? `Print again (Print ${lastPrint.printNo})` : `Print plan (Print ${nextPrint})`}
-          </Button>
         </>
       }
     >
@@ -268,18 +293,25 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
         <Meta label="Plan date" value={fdLong(plan.planDate)} />
         <Meta label="Created by" value={plan.createdBy ?? "—"} />
         <Meta label="Last updated" value={`${stamp(plan.updatedAt)}${plan.updatedBy ? ` · ${plan.updatedBy}` : ""}`} />
-        <Meta label="Stock read at" value={plan.godown ?? "No godown"} />
+        <Meta label="Godown" value={plan.godown ?? "No godown"} />
         <Meta label="Prints" value={lastPrint ? `${plan.prints.length} · last ${stamp(lastPrint.printedAt)}` : "Not printed yet"} />
       </div>
 
-      {plan.planDate !== today ? <Callout tone="neutral">This is the plan for {fdLong(plan.planDate)}, not today.</Callout> : null}
-      {lastPrint && plan.changed ? (
+      {past ? (
+        <Callout tone="neutral">
+          This is the plan for {fdLong(plan.planDate)}, a day that has passed. It is the record of that day: its lines no longer follow the orders, and it
+          cannot be changed or printed again.
+        </Callout>
+      ) : plan.planDate !== today ? (
+        <Callout tone="neutral">This is the plan for {fdLong(plan.planDate)}, not today.</Callout>
+      ) : null}
+      {!past && lastPrint && plan.changed ? (
         <Callout tone="warn">
           {plan.changed} {plan.changed === 1 ? "line has" : "lines have"} changed since Print {lastPrint.printNo} at {stamp(lastPrint.printedAt)}. Print again to hand the floor the new sheet — the changes are underlined on it.
         </Callout>
       ) : null}
 
-      {plan.lines.some((l) => l.source === "order" && l.state !== "removed") ? (
+      {!past && plan.lines.some((l) => l.source === "order" && l.state !== "removed") ? (
         <Callout tone="info">
           <span>
             Lines marked <b>From orders</b>{" "}are the order lines Under Process on Orders → Production, added by themselves. They change when an order&apos;s status
@@ -293,9 +325,9 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
 
       <div className="mb-3 flex flex-wrap gap-4 text-meta text-muted">
         <Key className="bg-success" label="Given — on the last sheet the floor has" />
-        <Key className="bg-warn" label="New or edited — not printed yet" />
-        <Key className="bg-danger" label="Removed — the next print tells the floor" />
-        <span>Every change is saved as you make it.</span>
+        <Key className="bg-warn" label={past ? "New or edited — never printed" : "New or edited — not printed yet"} />
+        <Key className="bg-danger" label={past ? "Removed — after the last print" : "Removed — the next print tells the floor"} />
+        {past ? null : <span>Every change is saved as you make it.</span>}
       </div>
 
       <div className="grid gap-4">
@@ -324,10 +356,10 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
                         {c.sizeLabel ? <Th>{c.sizeLabel}</Th> : null}
                         <Th align="right">{c.key === "loose" ? "Cans" : "Quantity"}</Th>
                         <Th>Unit</Th>
-                        <Th align="right">Current available</Th>
+                        {past ? null : <Th align="right">Available now</Th>}
                         <Th>Remarks</Th>
                         <Th>Status</Th>
-                        <Th align="right"> </Th>
+                        {readOnly ? null : <Th align="right">Change</Th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -358,17 +390,20 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
                             {nf(l.quantity)}
                           </Td>
                           <Td>{l.unit}</Td>
-                          <Td align="right" className={cx("tabular-nums", l.available === 0 ? "text-danger" : "text-muted")}>
-                            {l.available == null ? "—" : `${nf(l.available)} ${STOCK_UNIT[c.key]}`}
-                          </Td>
+                          {past ? null : (
+                            <Td align="right" className={cx("tabular-nums", l.available === 0 ? "text-danger" : "text-muted")}>
+                              {l.available == null ? "—" : `${nf(l.available)} ${STOCK_UNIT[c.key]}`}
+                            </Td>
+                          )}
                           <Td className="whitespace-normal text-body">{l.remarks ?? ""}</Td>
                           <Td>
                             <Badge tone={STATE[l.state].tone}>{STATE[l.state].label}</Badge>
                           </Td>
+                          {readOnly ? null : (
                           <Td align="right">
-                            {readOnly || l.state === "removed" ? null : l.source === "order" ? (
+                            {l.state === "removed" ? null : l.source === "order" ? (
                               <NavLink href={erpLink("readyOrders")} className={linkClass("brand", "text-meta")} title="This line follows the orders. Change it on Orders → Production.">
-                                Orders
+                                Change on Orders
                               </NavLink>
                             ) : (
                               <RowMenu
@@ -379,18 +414,14 @@ export function PlanEditor({ plan, items, today, readOnly }: { plan: PlanView; i
                               />
                             )}
                           </Td>
+                          )}
                         </Tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <div className="px-5 py-4 text-meta text-muted">
-                  Nothing planned.{" "}
-                  {readOnly ? null : (
-                    <LinkButton onClick={() => setEditing({ category: c.key, line: null })}>Add a line</LinkButton>
-                  )}
-                </div>
+                <div className="px-5 py-4 text-meta text-muted">Nothing planned.</div>
               )}
             </Card>
           );
