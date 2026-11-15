@@ -1,13 +1,14 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { View, Pressable, Text, TextInput } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { T } from '../src/components/ui/primitives';
+import { Disc } from '../src/components/ui/v3';
 import { Calendar } from '../src/components/ui/overlays';
 import { Icon, type IconName } from '../src/components/ui/Icon';
 import { Presence, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
-import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
+import { color as C, tabular, weight } from '../src/theme/tokens';
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { cleanAmount, paiseFromTyped, typedFromPaise } from '../src/lib/money-input';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
@@ -110,27 +111,31 @@ const CHEQUE_DATE_LINE = 'Pick the date written on the cheque.';
 const SEARCH_PAUSE_MS = 250;
 
 /** A step's number and name, so the three read as a sequence rather than three forms. */
-function StepHead({ n, title, done }: { n: number; title: string; done: boolean }) {
+function StepHead({ n, title, done, right }: { n: number; title: string; done: boolean; right?: string }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10, paddingHorizontal: 6 }}>
       <View
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={'Step ' + n + (done ? ', done' : '')}
         style={{
           width: 24,
           height: 24,
           borderRadius: 12,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: done ? C.primary : C.wash,
+          backgroundColor: done ? C.primary : C.surface,
           borderWidth: done ? 0 : 1,
-          borderColor: C.hairline,
+          borderColor: C.border,
         }}>
         {done ? (
           <Icon name="tick" size={14} color="#FFFFFF" strokeWidth={2.6} />
         ) : (
-          <T style={[{ fontSize: 13, color: C.body }, weight(600)]}>{String(n)}</T>
+          <T style={[{ fontSize: 12, color: C.ink }, weight(800)]}>{String(n)}</T>
         )}
       </View>
-      <SectionLabel>{title}</SectionLabel>
+      <T style={[{ flex: 1, fontSize: 15, lineHeight: 20, color: C.ink }, weight(800)]}>{title}</T>
+      {right ? <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{right}</T> : null}
     </View>
   );
 }
@@ -509,90 +514,212 @@ export default function PayScreen() {
     back.go();
   };
 
-  return (
-    <AppFrame title="Collect payment" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
+  /* Where the three steps have got to, for the bar in the hero: a step is lit
+     once it is done or is the one he is on. */
+  const stepsLit = !current ? 1 : !billsAnswered ? 2 : 3;
+  const whyOff = busy
+    ? 'The last one is still being recorded.'
+    : needsCheque
+      ? 'A cheque needs its number, the date written on it, and a photograph.'
+      : 'Pick how they are paying and enter the amount first.';
+  /* What a cheque still needs, said under its two buttons. */
+  const chequeMissing = [!chequeDate ? CHEQUE_DATE_LINE : null, !chequePhotoId ? CHEQUE_PHOTO_LINE : null]
+    .filter(Boolean)
+    .join(' ');
 
-      {/* ------------------------------------------------ 1 · the customer */}
-      <StepHead n={1} title="Shop" done={!!current} />
-      {custId ? (
-        <Card>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <T numberOfLines={1} style={[{ fontSize: 16, color: C.ink }, weight(600)]}>
-                {current?.name ?? 'Reading…'}
-              </T>
-              <T s="caption" style={{ marginTop: 2 }}>
-                {current
-                  ? [current.area, current.city].filter(Boolean).join(', ') +
-                    (current.area || current.city ? ' · ' : '') +
-                    (current.outstandingPaise > 0 ? 'Owes ' + inrFromPaise(current.outstandingPaise) : 'Nothing outstanding')
-                  : ' '}
-              </T>
-            </View>
-            {/* From a visit the customer is the shop he is standing in. */}
-            {lockedToVisit ? null : (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => chooseCustomer(null)}
-                hitSlop={8}
-                style={{ paddingVertical: 8, paddingHorizontal: 4 }}>
-                <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>Change</T>
-              </Pressable>
-            )}
-          </View>
-        </Card>
-      ) : (
-        <View>
-          <Input value={typed} onChangeText={setTyped} placeholder="Search name, phone or city" />
-          <T s="caption" style={{ marginTop: 10, marginBottom: 8 }}>
-            {asked ? 'Matching “' + asked + '”' : 'Shops that owe money, most first'}
+  const cashCard =
+    !custId ? (
+      <View style={{ marginTop: 14, backgroundColor: C.navy, borderRadius: 22, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Disc icon="wallet" size={44} bg={C.limeOnNavy} ink={C.lime} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <T style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>Cash on you</T>
+          {/* "₹0 · No cash on you" is a definite claim, and it was being made
+              while `cashInHand` was still reading — so he took more cash without
+              the reminder this card exists to give. Nothing is asserted until
+              the read lands. */}
+          <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: '#FFFFFF' }, weight(800), tabular]}>
+            {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
           </T>
-          <View style={{ gap: 8 }}>
-            {(results ?? []).map((r) => (
-              <Pressable
-                key={r.id}
-                accessibilityRole="button"
-                onPress={() => chooseCustomer(r.id)}
-                style={({ pressed }) => ({
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderRadius: radius.xl,
-                  borderWidth: 1,
-                  borderColor: C.hairline,
-                  backgroundColor: pressed ? C.wash : C.surface,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                })}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{r.name}</T>
-                  <T numberOfLines={1} s="caption" style={{ marginTop: 2 }}>
-                    {[r.area, r.city].filter(Boolean).join(', ') || ' '}
-                  </T>
-                </View>
-                <T style={[{ fontSize: 15, color: r.outstandingPaise > 0 ? C.ink : C.muted }, weight(600), tabular]}>
-                  {r.outstandingPaise > 0 ? inrFromPaise(r.outstandingPaise) : 'Nil'}
-                </T>
-              </Pressable>
-            ))}
-            {results !== null && results.length === 0 ? (
-              <T style={{ fontSize: 15, color: C.muted, paddingVertical: 8 }}>
-                {asked ? 'No shop on your book matches that.' : 'Nobody on your book owes anything. Search for the shop by name.'}
+          <T style={{ fontSize: 13, lineHeight: 18, color: '#FCE3A6' }}>
+            {cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…')}
+          </T>
+        </View>
+      </View>
+    ) : (
+      <View style={{ marginTop: 14, backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Icon name="wallet" size={22} color={C.warnInk} strokeWidth={2} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <T style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800), tabular]}>
+            {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
+          </T>
+          <T style={{ fontSize: 12, lineHeight: 17, color: C.warnInk }}>
+            {'Cash on you · ' +
+              (cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…'))}
+          </T>
+        </View>
+      </View>
+    );
+
+  return (
+    <AppFrame
+      title={custId ? 'Collect payment' : 'Collect from?'}
+      activeTab={null}
+      onBack={back.go}
+      showTitle={!custId}
+      heroTop={<StepBar lit={stepsLit} />}
+      hero={
+        !custId ? <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }}>Step 1 · Shop</T> : undefined
+      }
+      footer={
+        billsAnswered ? (
+          <View style={{ backgroundColor: C.canvas, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 12 }}>
+            <CollectButton
+              amount={amtPaise > 0 ? inrFromPaise(amtPaise) : null}
+              busy={busy}
+              disabled={!payOk || busy}
+              whyDisabled={whyOff}
+              onPress={collect}
+            />
+            {!payOk || busy ? (
+              <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, textAlign: 'center', marginTop: 6 }}>
+                {busy ? 'Recording it…' : whyOff}
               </T>
             ) : null}
           </View>
+        ) : undefined
+      }
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 24 }}>
+      <BackLink label={back.label} onPress={back.go} />
+
+      {/* ------------------------------------------------ 1 · the customer */}
+      {custId ? (
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={current ? 'Step 1, shop, done' : 'Step 1, shop'}
+            style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: current ? C.primary : C.wash, alignItems: 'center', justifyContent: 'center' }}>
+            {current ? <Icon name="tick" size={16} color="#FFFFFF" strokeWidth={2.6} /> : <T style={[{ fontSize: 12, color: C.body }, weight(800)]}>1</T>}
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.ink }, weight(800)]}>
+              {current?.name ?? 'Reading…'}
+            </T>
+            {current ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 10 }}>
+                {current.area || current.city ? (
+                  <T style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{[current.area, current.city].filter(Boolean).join(', ')}</T>
+                ) : null}
+                <T
+                  style={[
+                    { fontSize: 12, lineHeight: 17, color: current.outstandingPaise > 0 ? C.danger : C.muted },
+                    weight(current.outstandingPaise > 0 ? 700 : 400),
+                    tabular,
+                  ]}>
+                  {current.outstandingPaise > 0 ? 'Owes ' + inrFromPaise(current.outstandingPaise) : 'Nothing outstanding'}
+                </T>
+              </View>
+            ) : null}
+          </View>
+          {/* From a visit the customer is the shop he is standing in. */}
+          {lockedToVisit ? (
+            <View accessible accessibilityRole="image" accessibilityLabel="The shop of this visit, cannot be changed">
+              <Icon name="lock" size={18} color={C.faint} strokeWidth={2} />
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Change the shop"
+              onPress={() => chooseCustomer(null)}
+              hitSlop={6}
+              style={({ pressed }) => ({
+                height: 36,
+                paddingHorizontal: 12,
+                borderRadius: 18,
+                backgroundColor: C.primaryTint,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: pressed ? 0.85 : 1,
+              })}>
+              <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>Change</T>
+            </Pressable>
+          )}
+        </View>
+      ) : (
+        <View>
+          <View style={{ height: 48, borderRadius: 24, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }}>
+            <Icon name="search" size={18} color={C.muted} strokeWidth={2} />
+            <TextInput
+              value={typed}
+              onChangeText={setTyped}
+              placeholder="Name, phone or city"
+              placeholderTextColor={C.faint}
+              accessibilityLabel="Search name, phone or city"
+              style={[{ flex: 1, height: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
+            />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 8, marginHorizontal: 6 }}>
+            <Icon name={asked ? 'search' : 'money'} size={14} color={C.muted} strokeWidth={2.2} />
+            <Text
+              accessibilityLabel={asked ? 'Matching “' + asked + '”' : 'Shops that owe money, most first'}
+              style={[{ flex: 1, fontSize: 12, lineHeight: 16, color: C.muted }, weight(700)]}>
+              {asked ? 'Matching “' + asked + '”' : 'Owe money, most first'}
+            </Text>
+          </View>
+          {(results ?? []).length ? (
+            <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16 }}>
+              {(results ?? []).map((r, i) => (
+                <Pressable
+                  key={r.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={r.name + ', ' + (r.outstandingPaise > 0 ? 'owes ' + inrFromPaise(r.outstandingPaise) : 'owes nothing')}
+                  onPress={() => chooseCustomer(r.id)}
+                  style={({ pressed }) => ({
+                    minHeight: 60,
+                    paddingVertical: 10,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    borderTopWidth: i ? 1 : 0,
+                    borderTopColor: C.hairline,
+                    opacity: pressed ? 0.8 : 1,
+                  })}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T numberOfLines={1} style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{r.name}</T>
+                    <T numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                      {[r.area, r.city].filter(Boolean).join(', ') || ' '}
+                    </T>
+                  </View>
+                  {r.outstandingPaise > 0 ? (
+                    <T style={[{ fontSize: 16, color: C.danger }, weight(800), tabular]}>{inrFromPaise(r.outstandingPaise)}</T>
+                  ) : (
+                    <T style={[{ fontSize: 14, color: C.faint }, weight(700)]}>Nil</T>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {results !== null && results.length === 0 ? (
+            <T style={{ fontSize: 14, lineHeight: 19, color: C.muted, paddingVertical: 8, paddingHorizontal: 6 }}>
+              {asked ? 'No shop on your book matches that.' : 'Nobody on your book owes anything. Search for the shop by name.'}
+            </T>
+          ) : null}
         </View>
       )}
 
       {/* ------------------------------------------------ 2 · the bill */}
       {current ? (
-        <View style={{ marginTop: 20 }}>
-          <StepHead n={2} title="Which bill" done={billsAnswered} />
+        <View style={{ marginTop: 14 }}>
+          <StepHead
+            n={2}
+            title="Which bill"
+            done={billsAnswered}
+            right={openBills.length > 0 ? plural(openBills.length, 'unpaid bill') + ' · newest first' : undefined}
+          />
           {bills === null ? (
-            <T style={{ fontSize: 15, color: C.muted }}>Reading their bills…</T>
+            <T style={{ fontSize: 14, color: C.muted, paddingHorizontal: 6 }}>Reading their bills…</T>
           ) : openBills.length === 0 ? (
-            <T style={{ fontSize: 15, lineHeight: 20, color: C.body }}>
+            <T style={{ fontSize: 14, lineHeight: 20, color: C.body, paddingHorizontal: 6 }}>
               No unpaid bills for {current.name} on this phone. What you take goes on their account.
             </T>
           ) : null}
@@ -600,20 +727,11 @@ export default function PayScreen() {
       ) : null}
 
       {current && openBills.length > 0 ? (
-        <View style={{ marginTop: 16 }}>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'baseline',
-              justifyContent: 'space-between',
-              gap: 12,
-              marginBottom: 10,
-            }}>
-            <T s="caption">{plural(openBills.length, 'unpaid bill') + ' · newest first'}</T>
-          </View>
-          <View style={{ gap: 8 }}>
-            {shownBills.map((b) => {
+        <View>
+          <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 6 }}>
+            {shownBills.map((b, i) => {
               const on = picked.has(b.id);
+              const prevOn = i > 0 && picked.has(shownBills[i - 1].id);
               /*
                * An `unstated` bill is NOT a debt. Its balance is the full
                * amount purely because nobody has recorded anything against it
@@ -624,22 +742,37 @@ export default function PayScreen() {
                */
               const unstated = b.paymentPosition === 'unstated';
               const overdue = (b.overdueDays ?? 0) > 0;
+              const when =
+                (b.billDate ? pretty(b.billDate) : 'No date') +
+                (overdue ? ` · ${b.overdueDays} d overdue` : '') +
+                (b.disputed ? ' · disputed' : '');
               return (
                 <Pressable
                   key={b.id}
                   onPress={() => toggleBill(b)}
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: on }}
+                  accessibilityLabel={
+                    (b.billNo ?? 'Bill') +
+                    ', ' +
+                    (b.billDate ? pretty(b.billDate) : 'no date') +
+                    (overdue ? `, ${b.overdueDays} days overdue` : '') +
+                    (b.disputed ? ', disputed' : '') +
+                    ', ' +
+                    (unstated ? 'no payment info yet' : inrFromPaise(b.balancePaise ?? 0))
+                  }
                   style={{
+                    minHeight: 56,
+                    borderRadius: 16,
+                    backgroundColor: on ? C.primaryTint : C.surface,
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 12,
-                    borderRadius: radius.xl,
-                    borderWidth: 1,
-                    borderColor: on ? C.primary : C.hairline,
-                    backgroundColor: on ? C.primaryTint : C.surface,
-                    paddingVertical: 12,
-                    paddingHorizontal: 14,
+                    gap: 10,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    marginTop: i && on ? 4 : 0,
+                    borderTopWidth: i && !on && !prevOn ? 1 : 0,
+                    borderTopColor: C.hairline,
                   }}>
                   {/* `tick`, not `check` — there is no `check` in the glyph
                       map, and `Icon` falls back with `ICONS[name] ?? ICONS.dots`
@@ -648,78 +781,90 @@ export default function PayScreen() {
                       against is the one decision on this screen that changes
                       where the payment lands, and its affordance read as a
                       menu. */}
-                  <Icon name={on ? 'tick' : 'note'} size={20} color={on ? C.primaryDeep : C.muted} />
-                  <View style={{ flex: 1 }}>
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(on ? 600 : 500)]}>
-                      {b.billNo ?? 'Bill'}
-                    </T>
-                    <T style={{ fontSize: 13, lineHeight: 18, color: overdue ? C.danger : C.muted, marginTop: 2 }}>
-                      {b.billDate ? pretty(b.billDate) : 'No date'}
-                      {overdue ? ` · ${b.overdueDays} days overdue` : ''}
-                      {b.disputed ? ' · disputed' : ''}
+                  <Tick on={on} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>{b.billNo ?? 'Bill'}</T>
+                    <T
+                      style={[
+                        { fontSize: 12, lineHeight: 16, color: overdue ? C.danger : C.muted },
+                        weight(overdue ? 700 : 400),
+                      ]}>
+                      {when}
                     </T>
                   </View>
                   {unstated ? (
-                    <T style={{ fontSize: 13, color: C.muted, textAlign: 'right', maxWidth: 110 }}>
+                    <T style={{ fontSize: 12, lineHeight: 16, color: C.faint, textAlign: 'right', maxWidth: 96 }}>
                       No payment info yet
                     </T>
                   ) : (
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
-                      {inrFromPaise(b.balancePaise ?? 0)}
-                    </T>
+                    <T style={[{ fontSize: 15, color: C.ink }, weight(800), tabular]}>{inrFromPaise(b.balancePaise ?? 0)}</T>
                   )}
                 </Pressable>
               );
             })}
-          </View>
 
-          {!allBills && newestFirst.length > BILLS_SHOWN ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                animateLayoutFor(newestFirst.length);
-                setAllBills(true);
-              }}
-              hitSlop={8}
-              style={{ paddingVertical: 12 }}>
-              <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>
-                {'Show the other ' + (newestFirst.length - BILLS_SHOWN)}
-              </T>
-            </Pressable>
-          ) : null}
+            {!allBills && newestFirst.length > BILLS_SHOWN ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  animateLayoutFor(newestFirst.length);
+                  setAllBills(true);
+                }}
+                style={{ height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                  {'Show the other ' + (newestFirst.length - BILLS_SHOWN)}
+                </T>
+              </Pressable>
+            ) : null}
+
+            {chosen.length === 0 ? (
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: noBill }}
+                accessibilityLabel="Not against a particular bill"
+                accessibilityHint="It goes against their oldest bills first, and anything over sits on account."
+                onPress={() => {
+                  feedback('select');
+                  animateLayout();
+                  setNoBill((v) => !v);
+                }}
+                style={{
+                  marginTop: 4,
+                  minHeight: 52,
+                  borderRadius: 16,
+                  backgroundColor: noBill ? C.primaryTint : C.surface,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                }}>
+                <Tick on={noBill} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <T style={[{ fontSize: 14, lineHeight: 19, color: noBill ? C.primaryDeep : C.ink }, weight(700)]}>
+                    Not against a bill
+                  </T>
+                  <Presence show={noBill}>
+                    <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>Oldest bills first; any extra on account.</T>
+                  </Presence>
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
 
           {/* What naming nothing DOES, said rather than assumed — and what a
               remainder becomes, because money on account is a real outcome the
               salesman will be asked about. */}
-          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 10 }}>
-            {chosen.length === 0
-              ? 'Pick the bill they are paying.'
-              : onAccountPaise > 0 && amtPaise > 0
-                ? `${chosen.length} picked · ${inrFromPaise(onAccountPaise)} extra. It is kept as advance on the account.`
-                : `${chosen.length} picked.`}
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 10, paddingHorizontal: 6 }}>
+            {chosen.length === 0 ? (
+              noBill ? null : 'Pick the bill they are paying.'
+            ) : (
+              <>
+                <T style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{chosen.length + ' picked'}</T>
+                {onAccountPaise > 0 && amtPaise > 0 ? ` · ${inrFromPaise(onAccountPaise)} extra kept as advance on the account.` : '.'}
+              </>
+            )}
           </T>
-          {chosen.length === 0 ? (
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: noBill }}
-              onPress={() => {
-                feedback('select');
-                animateLayout();
-                setNoBill((v) => !v);
-              }}
-              hitSlop={8}
-              style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Icon name={noBill ? 'tick' : 'note'} size={18} color={noBill ? C.primaryDeep : C.muted} />
-              <T style={[{ fontSize: 15, color: noBill ? C.primaryDeep : C.body }, weight(500)]}>
-                Not against a particular bill
-              </T>
-            </Pressable>
-          ) : null}
-          <Presence show={noBill}>
-            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
-              It goes against their oldest bills first, and anything over sits on account.
-            </T>
-          </Presence>
         </View>
       ) : null}
 
@@ -729,60 +874,68 @@ export default function PayScreen() {
       <Presence show={billsAnswered} distance={8}>
       {billsAnswered ? (
         <View>
-          <View style={{ marginTop: 20 }}>
-            <StepHead n={3} title="Payment" done={false} />
-          </View>
           <View style={{ marginTop: 16 }}>
-            <SectionLabel style={{ marginBottom: 10 }}>How are they paying</SectionLabel>
-            <View style={{ gap: 12 }}>
-              {[modes.slice(0, 2), modes.slice(2, 4), modes.slice(4, 6), modes.slice(6)].filter((row) => row.length).map((row, ri) => (
-                <View key={ri} style={{ flexDirection: 'row', gap: 12 }}>
-                  {row.map((m) => {
-                    const on = payMode === m.label;
-                    return (
-                      <Pressable
-                        key={m.label}
-                        onPress={() => {
-                          /* These tiles are hand-drawn rather than `Choice`, so
-                             they tick here; picking the one already picked is
-                             not a choice moving. */
-                          if (!on) feedback('select');
-                          set({ payMode: m.label });
-                        }}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: on }}
-                        style={{
-                          flex: 1,
-                          minHeight: 72,
-                          borderRadius: radius.xl,
-                          borderWidth: 1,
-                          borderColor: on ? C.primary : C.hairline,
-                          backgroundColor: on ? C.primaryTint : C.surface,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 6,
-                          boxShadow: shadow.soft,
-                        }}>
-                        <Icon name={m.glyph} size={24} color={on ? C.primaryDeep : C.body} />
-                        <T style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 400)]}>
-                          {m.label}
-                        </T>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ))}
-            </View>
+            <StepHead n={3} title="Payment · how?" done={false} />
+          </View>
+          <View accessibilityRole="radiogroup" accessibilityLabel="How are they paying" style={{ gap: 8 }}>
+            {chunk(modes, 4).map((row, ri) => (
+              <View key={ri} style={{ flexDirection: 'row', gap: 8 }}>
+                {row.map((m) => {
+                  const on = payMode === m.label;
+                  return (
+                    <Pressable
+                      key={m.label}
+                      onPress={() => {
+                        /* These tiles are hand-drawn rather than `Choice`, so
+                           they tick here; picking the one already picked is
+                           not a choice moving. */
+                        if (!on) feedback('select');
+                        set({ payMode: m.label });
+                      }}
+                      accessibilityRole="radio"
+                      accessibilityLabel={m.label}
+                      accessibilityState={{ selected: on }}
+                      style={{
+                        flex: 1,
+                        height: 76,
+                        borderRadius: 20,
+                        borderWidth: on ? 2 : 0,
+                        borderColor: C.primary,
+                        backgroundColor: on ? '#F7F4FF' : C.surface,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        paddingHorizontal: 4,
+                      }}>
+                      <Icon name={m.glyph} size={22} color={on ? C.primaryDeep : C.ink} strokeWidth={2} />
+                      <T numberOfLines={1} style={[{ fontSize: 12, color: on ? C.primaryDeep : C.ink }, weight(700)]}>
+                        {SHORT_MODE[m.label] ?? m.label}
+                      </T>
+                    </Pressable>
+                  );
+                })}
+                {/* A short last row keeps the tiles their width. */}
+                {Array.from({ length: 4 - row.length }).map((_, k) => (
+                  <View key={'gap' + k} style={{ flex: 1 }} />
+                ))}
+              </View>
+            ))}
           </View>
 
-          <Card style={{ marginTop: 16 }}>
-            <SectionLabel style={{ marginBottom: 6 }}>Amount</SectionLabel>
-            <Input
+          <View style={{ marginTop: 10, backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+            <FieldTitle>Amount</FieldTitle>
+            <TextInput
               value={payAmt}
               onChangeText={(v) => set({ payAmt: cleanAmount(v) })}
               placeholder="42500"
+              placeholderTextColor={C.faint}
               keyboardType="decimal-pad"
-              style={[{ borderRadius: radius.md, fontSize: 18 }, weight(600), tabular]}
+              accessibilityLabel="Amount"
+              style={[
+                { marginTop: 6, height: 56, borderRadius: 16, backgroundColor: C.canvas, paddingHorizontal: 14, fontSize: 24, color: C.ink },
+                weight(800),
+                tabular,
+              ]}
             />
             {/* The digits read back as money, as he types them. An ungrouped string
                 is where one extra zero hides: ₹42,500 and ₹4,25,000 are one
@@ -790,8 +943,8 @@ export default function PayScreen() {
                 alike here. */}
             <T
               style={[
-                { fontSize: 15, lineHeight: 20, marginTop: 8, color: amtPaise > 0 ? C.ink : C.muted },
-                weight(amtPaise > 0 ? 600 : 400),
+                { fontSize: amtPaise > 0 ? 15 : 13, lineHeight: 20, marginTop: 6, color: amtPaise > 0 ? C.ink : C.muted },
+                weight(amtPaise > 0 ? 800 : 400),
                 tabular,
               ]}>
               {amtPaise > 0 ? inrFromPaise(amtPaise) : 'Type what they handed over.'}
@@ -803,14 +956,18 @@ export default function PayScreen() {
                 receipt rather than improve it. */}
             <Presence show={isTransfer}>
             {isTransfer ? (
-              <View style={{ marginTop: 16 }}>
-                <SectionLabel style={{ marginBottom: 6 }}>Transaction ID (UTR) · if they have it</SectionLabel>
-                <Input
+              <View style={{ marginTop: 14 }}>
+                <FieldTitle>
+                  UTR <T style={[{ fontSize: 12, color: C.faint }, weight(500)]}>· if they have it</T>
+                </FieldTitle>
+                <TextInput
                   value={utr}
                   onChangeText={setUtr}
                   placeholder="From their payment message"
+                  placeholderTextColor={C.faint}
                   autoCapitalize="characters"
-                  style={{ borderRadius: radius.md, fontSize: 15 }}
+                  accessibilityLabel="Transaction ID (UTR) · if they have it"
+                  style={[boxInput, weight(600)]}
                 />
               </View>
             ) : null}
@@ -820,13 +977,15 @@ export default function PayScreen() {
                 mind — rather than the form jumping by three fields. */}
             <Presence show={needsCheque}>
             {needsCheque ? (
-              <View style={{ marginTop: 16 }}>
-                <SectionLabel style={{ marginBottom: 6 }}>Cheque number and bank</SectionLabel>
-                <Input
+              <View style={{ marginTop: 14 }}>
+                <FieldTitle>Cheque no. and bank</FieldTitle>
+                <TextInput
                   value={payChq}
                   onChangeText={(v) => set({ payChq: v })}
                   placeholder="448210 · HDFC"
-                  style={{ borderRadius: radius.md, fontSize: 15 }}
+                  placeholderTextColor={C.faint}
+                  accessibilityLabel="Cheque number and bank"
+                  style={[boxInput, weight(600)]}
                 />
 
                 {/* THE DATE WRITTEN ACROSS IT, which nothing on this handset ever
@@ -834,101 +993,213 @@ export default function PayScreen() {
                     the day it was handed over, and a customer who had written next
                     month's date got chased for money sitting in our own drawer. He
                     is holding the cheque and can read it off the paper, which is
-                    why it is asked of everybody. */}
-                <View style={{ marginTop: 16 }}>
-                  <SectionLabel style={{ marginBottom: 6 }}>Date on the cheque</SectionLabel>
-                  <Choice
-                    label={chequeDate ? dmy(chequeDate) : 'Pick the date'}
-                    selected={!!chequeDate}
-                    onPress={() => setPickingDate((v) => !v)}
-                    style={{ alignItems: 'flex-start', paddingHorizontal: 14, minHeight: 52 }}
-                  />
-                  <Presence show={pickingDate}>
-                  {pickingDate ? (
-                    <View style={{ marginTop: 10 }}>
-                      {/* Neither bounded: a cheque handed over today can be dated
-                          last week or next month, and both are ordinary. */}
-                      <Calendar
-                        selected={chequeDate}
-                        onPick={(iso) => {
-                          setChequeDate(iso);
-                          setPickingDate(false);
-                        }}
-                      />
-                    </View>
-                  ) : null}
-                  </Presence>
-                  {!chequeDate ? (
-                    <T s="caption" style={{ marginTop: 8 }}>
-                      {CHEQUE_DATE_LINE}
-                    </T>
-                  ) : null}
-                </View>
+                    why it is asked of everybody.
 
-                {/* The design's own sentence, made the control that does it — the
-                    cheque leaves his hand in the next thirty seconds, so the
-                    instruction and the camera cannot be two separate things. */}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={CHEQUE_PHOTO_LINE}
-                  onPress={photographCheque}
-                  hitSlop={12}>
-                  <T s="caption" style={{ marginTop: 8, color: chequePhotoId ? C.success : undefined }}>
-                    {chequePhotoId ? 'Cheque photographed' : CHEQUE_PHOTO_LINE}
+                    And the PHOTOGRAPH beside it: the design's own sentence, made
+                    the control that does it — the cheque leaves his hand in the
+                    next thirty seconds, so the instruction and the camera cannot
+                    be two separate things. */}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <DashedPill
+                    icon="cal"
+                    label={chequeDate ? dmy(chequeDate) : 'Date on it'}
+                    a11y={chequeDate ? 'Date on the cheque, ' + dmy(chequeDate) : 'Date on the cheque. Pick the date'}
+                    done={!!chequeDate}
+                    onPress={() => setPickingDate((v) => !v)}
+                  />
+                  <DashedPill
+                    icon="camera"
+                    label={chequePhotoId ? 'Photographed' : 'Photo'}
+                    a11y={chequePhotoId ? 'Cheque photographed' : CHEQUE_PHOTO_LINE}
+                    done={!!chequePhotoId}
+                    onPress={photographCheque}
+                  />
+                </View>
+                <Presence show={pickingDate}>
+                {pickingDate ? (
+                  <View style={{ marginTop: 10 }}>
+                    {/* Neither bounded: a cheque handed over today can be dated
+                        last week or next month, and both are ordinary. */}
+                    <Calendar
+                      selected={chequeDate}
+                      onPick={(iso) => {
+                        setChequeDate(iso);
+                        setPickingDate(false);
+                      }}
+                    />
+                  </View>
+                ) : null}
+                </Presence>
+                {chequeMissing ? (
+                  <T style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 8 }}>{chequeMissing}</T>
+                ) : (
+                  <T style={[{ fontSize: 12, lineHeight: 17, color: C.success, marginTop: 8 }, weight(700)]}>
+                    Cheque photographed
                   </T>
-                </Pressable>
+                )}
               </View>
             ) : null}
             </Presence>
-          </Card>
-
-          <PrimaryButton
-            label={busy ? 'Recording it…' : 'Collect and make receipt'}
-            onPress={collect}
-            disabled={!payOk || busy}
-            whyDisabled={
-              busy
-                ? 'The last one is still being recorded.'
-                : needsCheque
-                  ? 'A cheque needs its number, the date written on it, and a photograph.'
-                  : 'Pick how they are paying and enter the amount first.'
-            }
-            style={{ marginTop: 16 }}
-          />
+          </View>
         </View>
       ) : null}
       </Presence>
 
       {/* What he is already carrying, so he is reminded before he takes more. */}
-      <View style={{ marginTop: 24 }}>
-        <View
-          style={{
-            borderWidth: 1,
-            borderColor: C.warnEdge,
-            backgroundColor: C.warnBg,
-            borderRadius: radius.card,
-            padding: 16,
-          }}>
-          <T
-            style={[
-              { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.warnInk },
-              weight(500),
-            ]}>
-            Cash on you
-          </T>
-          {/* "₹0 · No cash on you" is a definite claim, and it was being made
-              while `cashInHand` was still reading — so he took more cash without
-              the reminder this card exists to give. Nothing is asserted until
-              the read lands. */}
-          <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.65, color: C.ink, marginTop: 4 }, weight(600), tabular]}>
-            {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
-          </T>
-          <T style={{ fontSize: 15, color: C.warnInk, marginTop: 2 }}>
-            {cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…')}
-          </T>
-        </View>
-      </View>
+      {cashCard}
       <View style={{ height: 8 }} />
     </AppFrame>
+  );
+}
+
+/* ------------------------------------------------------------------ parts */
+
+/** A shorter word for a tile a quarter of the screen wide. */
+const SHORT_MODE: Record<string, string> = { 'Bank transfer': 'Bank' };
+
+/** The office's modes, four to a row. */
+function chunk<X>(xs: X[], n: number): X[][] {
+  const out: X[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+}
+
+const boxInput = {
+  marginTop: 6,
+  height: 48,
+  borderRadius: 16,
+  backgroundColor: C.canvas,
+  paddingHorizontal: 14,
+  fontSize: 15,
+  color: C.ink,
+} as const;
+
+/** The 12/700 label over a box inside the amount card. */
+function FieldTitle({ children }: { children: React.ReactNode }) {
+  return <T style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(700)]}>{children}</T>;
+}
+
+/** The square tick a bill is picked with. */
+function Tick({ on }: { on: boolean }) {
+  return (
+    <View
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: 7,
+        backgroundColor: on ? C.primary : 'transparent',
+        borderWidth: on ? 0 : 2,
+        borderColor: '#C7D0DE',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+      {on ? <Icon name="tick" size={14} color="#FFFFFF" strokeWidth={2.8} /> : null}
+    </View>
+  );
+}
+
+/** The cheque's two dashed buttons — its date and its photograph. */
+function DashedPill({
+  icon,
+  label,
+  a11y,
+  done,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  a11y: string;
+  done: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      style={({ pressed }) => ({
+        flex: 1,
+        height: 52,
+        borderRadius: 26,
+        borderWidth: 1.5,
+        borderStyle: done ? 'solid' : 'dashed',
+        borderColor: done ? C.success : '#B9A6FF',
+        backgroundColor: done ? C.successBg : '#F7F4FF',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      <Icon name={done ? 'tick' : icon} size={16} color={done ? C.success : C.primaryDeep} strokeWidth={2.2} />
+      <T numberOfLines={1} style={[{ fontSize: 14, color: done ? C.success : C.primaryDeep }, weight(700)]}>
+        {label}
+      </T>
+    </Pressable>
+  );
+}
+
+/**
+ * The one button, pinned. Off it stays pressable while there is a reason, so
+ * `collect` refuses in words — `PrimaryButton`'s `whyDisabled` contract.
+ */
+function CollectButton({
+  amount,
+  busy,
+  disabled,
+  whyDisabled,
+  onPress,
+}: {
+  amount: string | null;
+  busy: boolean;
+  disabled: boolean;
+  whyDisabled: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={() => {
+        if (disabled) feedback('warning');
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={busy ? 'Recording it…' : 'Collect' + (amount ? ' ' + amount : '') + ' and make receipt'}
+      accessibilityState={{ disabled, busy }}
+      accessibilityHint={disabled ? whyDisabled : undefined}
+      style={({ pressed }) => ({
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: disabled ? 'rgba(15,27,51,0.45)' : C.navy,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        paddingHorizontal: 18,
+        opacity: pressed && !disabled ? 0.88 : 1,
+      })}>
+      <T numberOfLines={1} style={[{ flexShrink: 1, fontSize: 17, color: '#FFFFFF' }, weight(700)]}>
+        {busy ? 'Recording it…' : 'Collect' + (amount ? ' ' + amount : '')}
+      </T>
+      {busy ? null : (
+        <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+          <T style={[{ fontSize: 13, color: C.navy }, weight(700)]}>Receipt</T>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+/** The three steps as a bar across the hero, lit up to where he is. */
+function StepBar({ lit }: { lit: number }) {
+  return (
+    <View
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={'Step ' + lit + ' of 3'}
+      style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 4 }}>
+      {[1, 2, 3].map((i) => (
+        <View key={i} style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: i <= lit ? C.primary : C.primaryEdge }} />
+      ))}
+    </View>
   );
 }
