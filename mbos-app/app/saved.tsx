@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { router } from 'expo-router';
-import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, weight } from '../src/theme/tokens';
 import { DrawnTick, Stagger } from '../src/components/ui/motion';
-import { Card, PrimaryButton } from '../src/components/ui/primitives';
+import { Icon, type IconName } from '../src/components/ui/Icon';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
@@ -102,89 +102,141 @@ export default function Saved() {
     };
   }, [visitId]);
 
-  const items = [
+  const items: { l: string; ok: boolean; icon: IconName }[] = [
     gps === 'locked'
-      ? { l: 'Location and time saved', ok: true }
-      : { l: 'Saved without location. Your manager will check it', ok: false },
-    shotCount ? { l: plural(shotCount, 'photo') + ' saved, waiting to send', ok: false } : null,
+      ? { l: 'Location and time saved', ok: true, icon: 'locate' as IconName }
+      : { l: 'Saved without location. Your manager will check it', ok: false, icon: 'locate' as IconName },
+    shotCount ? { l: plural(shotCount, 'photo') + ' saved, waiting to send', ok: false, icon: 'image' as IconName } : null,
     /* Two different facts, and the old code could report neither: `done` was
        never set by anything and a successful recording set `failed`, so a
        voice note that had uploaded perfectly said it was waiting for signal. */
     voice === 'dictated'
-      ? { l: 'What you said is in the note. The recording goes with it', ok: true }
+      ? { l: 'What you said is in the note. The recording goes with it', ok: true, icon: 'mic' as IconName }
       : voice === 'queued'
-        ? { l: 'Voice note kept. The office will type it out when you are online', ok: false }
+        ? { l: 'Voice note kept. The office will type it out when you are online', ok: false, icon: 'mic' as IconName }
         : null,
     /* The day the save actually set — none, where he said no follow-up or the
        shop was shut. It printed the form's date whether or not a task was
        raised. */
     saved && saved.followUpDate == null
-      ? { l: 'No follow-up set', ok: true }
+      ? { l: 'No follow-up set', ok: true, icon: 'cal' as IconName }
       : {
           l: (FOLLOW_UP_MODES.find((m) => m.k === nextMode)?.label ?? 'Visit') + ' set for ' + pretty(saved?.followUpDate ?? nextDate),
           ok: true,
+          icon: 'cal' as IconName,
         },
     saved?.unverified
-      ? { l: 'Saved as not checked. Your manager will read your reason', ok: false }
+      ? { l: 'Saved as not checked. Your manager will read your reason', ok: false, icon: 'warn' as IconName }
       : null,
     sent === 'refused'
-      ? { l: 'The office did not accept it. Open Not accepted', ok: false }
+      ? { l: 'The office did not accept it. Open Not accepted', ok: false, icon: 'alert' as IconName }
       : sent === 'sent'
-        ? { l: 'Your manager is told', ok: true }
-        : { l: 'Your manager will see it when this phone sends', ok: false },
-  ].filter((x): x is { l: string; ok: boolean } => x !== null);
+        ? { l: 'Your manager is told', ok: true, icon: 'synced' as IconName }
+        : { l: 'Your manager will see it when this phone sends', ok: false, icon: 'upload' as IconName },
+  ].filter((x): x is { l: string; ok: boolean; icon: IconName } => x !== null);
+
+  const chip = (text: string, icon?: IconName) => (
+    <View
+      key={text}
+      style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      {icon ? <Icon name={icon} size={14} color={C.ink} strokeWidth={2.2} /> : null}
+      <Text numberOfLines={1} style={[{ fontSize: 13, color: C.ink, flexShrink: 1 }, weight(700)]}>
+        {text}
+      </Text>
+    </View>
+  );
 
   return (
-    <AppFrame title="Visit saved" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingVertical: 24 }}>
-      <Card style={{ padding: 20 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {/* DRAWN, and the one success buzz of the whole save. The visit
-              screen deliberately says nothing as it hands over — no toast, no
-              buzz — so this tick landing is the moment the visit is felt to
-              be done, once. */}
-          <DrawnTick size={36} color={C.success} background={C.successBg} />
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Visit saved</Text>
+    <AppFrame
+      title="Visit saved"
+      activeTab="customers"
+      showTitle={false}
+      footer={
+        <View style={{ backgroundColor: C.canvas, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 }}>
+          {/*
+            THE NEXT VISIT IS PLANNED FROM THE ROUTE, where there is one.
+            This always went to the Customers list — the whole book, A to Z —
+            which is the right answer for a walk-in and the wrong one for a man
+            working a route he agreed on Sunday: his next stop is already chosen,
+            and he was being asked to find it again among two thousand shops. The
+            label says which screen it opens, because "Next stop" meaning two
+            different destinations on two different days is how somebody learns
+            not to trust a button.
+          */}
+          <Pressable
+            onPress={() => router.replace(hasRoute ? '/journey' : '/customers')}
+            accessibilityRole="button"
+            accessibilityLabel={hasRoute ? 'Next stop on your route' : 'Pick the next shop'}
+            style={({ pressed }) => ({
+              height: 60,
+              borderRadius: 30,
+              backgroundColor: C.navy,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+              opacity: pressed ? 0.88 : 1,
+            })}>
+            <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>
+              {hasRoute ? 'Next stop on your route' : 'Pick the next shop'}
+            </Text>
+            <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="forward" size={16} color={C.navy} strokeWidth={2.4} />
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={() => router.replace('/home')}
+            accessibilityRole="button"
+            style={{ width: '100%', height: Math.max(HIT, 48), marginTop: 4, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>Back to home</Text>
+          </Pressable>
         </View>
+      }
+      contentStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24 }}>
+      {/* DRAWN, and the one success buzz of the whole save. The visit
+          screen deliberately says nothing as it hands over — no toast, no
+          buzz — so this tick landing is the moment the visit is felt to
+          be done, once. */}
+      <DrawnTick size={64} color={C.success} background={C.successBg} />
+      <Text accessibilityRole="header" style={[{ fontSize: 28, lineHeight: 34, letterSpacing: -0.56, color: C.ink, marginTop: 14 }, weight(800)]}>
+        Visit saved
+      </Text>
 
-        <Text style={[type.small, { color: C.body, marginTop: 10 }]}>
-          {[c?.name, picked.label, spent ? spent + ' in the shop' : null].filter(Boolean).join(' · ')}
-        </Text>
+      <View
+        accessible
+        accessibilityLabel={[c?.name, picked.label, spent ? spent + ' in the shop' : null].filter(Boolean).join(' · ')}
+        style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        {c?.name ? chip(c.name) : null}
+        {chip(picked.label, 'tick')}
+        {spent ? chip(spent, 'clock') : null}
+      </View>
 
-        <View style={{ marginTop: 14 }}>
-          {/* One after another, under the tick. Keyed on the sentence, so the
-              manager line settles in again the moment the outbox drains and it
-              turns from amber to green — that line changing IS news. */}
-          {items.map((s, i) => (
-            <Stagger key={s.l} index={i}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: C.wash }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.ok ? C.success : C.warn }} />
-                <Text style={{ fontSize: 15, color: C.body, flex: 1 }}>{s.l}</Text>
-              </View>
-            </Stagger>
-          ))}
-        </View>
-
-        {/*
-          THE NEXT VISIT IS PLANNED FROM THE ROUTE, where there is one.
-          This always went to the Customers list — the whole book, A to Z —
-          which is the right answer for a walk-in and the wrong one for a man
-          working a route he agreed on Sunday: his next stop is already chosen,
-          and he was being asked to find it again among two thousand shops. The
-          label says which screen it opens, because "Next stop" meaning two
-          different destinations on two different days is how somebody learns
-          not to trust a button.
-        */}
-        <PrimaryButton
-          label={hasRoute ? 'Next stop on your route' : 'Pick the next shop'}
-          onPress={() => router.replace(hasRoute ? '/journey' : '/customers')}
-          style={{ marginTop: 16, borderRadius: radius.sm }}
-        />
-        <Pressable
-          onPress={() => router.replace('/home')}
-          style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>Back to home</Text>
-        </Pressable>
-      </Card>
+      <View style={{ marginTop: 16, backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 4 }}>
+        {/* One after another, under the tick. Keyed on the sentence, so the
+            manager line settles in again the moment the outbox drains and it
+            turns from amber to green — that line changing IS news. The icon's
+            colour carries the difference: green done, amber saved but not
+            finished yet. */}
+        {items.map((s, i) => (
+          <Stagger key={s.l} index={i}>
+            <View
+              accessible
+              accessibilityLabel={s.l + (s.ok ? ', done' : ', not finished yet')}
+              style={{
+                minHeight: 46,
+                paddingVertical: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                borderTopWidth: i ? 1 : 0,
+                borderTopColor: C.hairline,
+              }}>
+              <Icon name={s.icon} size={18} color={s.ok ? C.success : C.warnInk} strokeWidth={2.2} />
+              <Text style={{ fontSize: 14, lineHeight: 19, color: C.ink, flex: 1 }}>{s.l}</Text>
+            </View>
+          </Stagger>
+        ))}
+      </View>
     </AppFrame>
   );
 }

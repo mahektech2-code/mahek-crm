@@ -407,6 +407,9 @@ export default function PayScreen() {
         (needsCheque ? ` — cheque ${payChq.trim()}, dated ${dmy(chequeDate)}` : '') +
         '. The receipt is made when you say yes. You cannot change it later on this phone.',
       confirmLabel: 'Yes, take it',
+      cancelLabel: 'Cancel',
+      tone: 'navy',
+      subtitle: c.name + ' · ' + payMode,
       run: () => void write(payMode as PaymentMode, c),
     });
   };
@@ -505,6 +508,9 @@ export default function PayScreen() {
         ? `${inrFromPaise(amtNow)} saved for ${cust.name}. WhatsApp will open with the receipt ready. You press send.`
         : `${inrFromPaise(amtNow)} saved for ${cust.name}. This shop has no number saved, so you can only copy the receipt.`,
       confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
+      cancelLabel: 'Cancel',
+      tone: 'navy',
+      subtitle: inrFromPaise(amtNow) + ' saved · ' + cust.name,
       run: async () => {
         const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
         if (out.status !== 'handed_off') notify(out.reason, phone ? 'warn' : 'success');
