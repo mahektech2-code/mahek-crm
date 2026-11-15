@@ -94,7 +94,8 @@ export function DispatchQueue({ queue, current, today }: { queue: DispatchQueueR
                 go();
               }
             }}
-            autoFocus
+            /* With an order open the scan box owns the cursor, not this one. */
+            autoFocus={current == null}
             placeholder="Party, area, transporter, product or order no."
             aria-label="Find an order"
             className="h-9 w-full pl-9"
@@ -163,7 +164,8 @@ export function DispatchQueue({ queue, current, today }: { queue: DispatchQueueR
 
       {shown.length ? (
         shown.map((o) => {
-          const done = o.target > 0 && o.scanned >= Math.round(o.target);
+          const target = Math.round(o.target);
+          const done = target > 0 && o.scanned >= target;
           const pct = o.target ? Math.min(100, Math.round((100 * o.scanned) / o.target)) : 0;
           return (
             <NavLink
@@ -183,15 +185,20 @@ export function DispatchQueue({ queue, current, today }: { queue: DispatchQueueR
                 {o.godown} · <span className={cx(o.dispatchOn && o.dispatchOn < today ? "text-danger" : undefined)}>{o.dispatchOn ? `leaves ${fd(o.dispatchOn)}` : "no date"}</span> ·{" "}
                 {o.billed ? `billed ${o.billed} of ${o.lines}` : <span className="text-warn-ink">not billed</span>}
               </span>
+              {o.billing && o.billing !== o.delivery ? <span className="truncate text-xs text-muted">Billed to {o.billing}</span> : null}
               {o.area || o.transporter ? <span className="truncate text-xs text-muted">{[o.area, o.transporter].filter(Boolean).join(" · ")}</span> : null}
-              <span className="flex items-center gap-3">
-                <span className="h-1 flex-1 overflow-hidden rounded-full bg-divider">
-                  <span className={cx("block h-full rounded-full", done ? "bg-success" : "bg-brand")} style={{ width: `${pct}%` }} />
+              {target > 0 ? (
+                <span className="flex items-center gap-3">
+                  <span className="h-1 flex-1 overflow-hidden rounded-full bg-divider">
+                    <span className={cx("block h-full rounded-full", done ? "bg-success" : "bg-brand")} style={{ width: `${pct}%` }} />
+                  </span>
+                  <span className="flex-none text-meta text-body tabular-nums">
+                    {nf(Math.min(o.scanned, target))}/{nf(target)}
+                  </span>
                 </span>
-                <span className="flex-none text-meta text-body tabular-nums">
-                  {o.scanned}/{Math.round(o.target)}
-                </span>
-              </span>
+              ) : (
+                <span className="text-meta text-muted">Nothing to scan</span>
+              )}
             </NavLink>
           );
         })

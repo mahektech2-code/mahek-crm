@@ -7,7 +7,7 @@ import { lrUploadKit } from "@/lib/erp/logistics";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "@/lib/erp/trace-links";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
-import { Card, EmptyState } from "@/components/ui/primitives";
+import { Card, cx, EmptyState } from "@/components/ui/primitives";
 import { Page, PageLinks } from "../_ui/page-head";
 import { linkClass } from "../_ui/look";
 import { UploadLrsButton } from "../transport/parts/upload-lrs-button";
@@ -73,10 +73,19 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
       }
     >
       <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <DispatchQueue queue={queue} current={orderNo} today={today} />
+        {/* On a wide screen the queue stays in view beside the desk and scrolls on
+            its own. Narrower (the godown tablet) the columns stack, so the order
+            being scanned comes FIRST: nobody scrolls past every waiting order to
+            reach the scan box. */}
+        <div className={cx("lg:sticky lg:top-0 lg:max-h-[calc(100dvh-8rem)] lg:overflow-y-auto lg:pr-1", board && "order-2 lg:order-none")}>
+          <DispatchQueue queue={queue} current={orderNo} today={today} />
+        </div>
 
         {board ? (
           <DispatchDesk
+            /* A new order is a new desk: nothing scanned, typed or shown for the
+               last order may carry over onto this one. */
+            key={board.orderNo}
             board={board}
             boxes={boxes}
             me={ctx.user.id}
