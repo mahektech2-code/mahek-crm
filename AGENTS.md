@@ -9270,6 +9270,16 @@ The walk is `engines/org-verifier-chain` and is unchanged: it skips a leaver,
 someone with no account, an inactive one, one who cannot verify, and never names
 the requester.
 
+**EVERY DOOR THAT MAKES A PROSPECT HANDS IT TO ITS VERIFIER.** Who verifies is
+`resolveProspectVerifier` (`services/prospect-verifier-route.ts`), the chain that
+used to live inside `preparePromotion`. The Calling desk asks it before converting,
+and `applyLeadStageMove` asks it for any other move into Prospect (the record's
+stage button, the board, a bulk move, the handset): the next action becomes the
+verification call owed to that person, and they are told. Skipped where the move
+is already routed or the lead already verified. Where nobody can be named the move
+is NOT refused (a handset move would become a rejection); the lead's history says
+why nobody was told.
+
 **The requester is never the verifier or the reviewer**, whatever else they hold.
 Where the chart names someone else, only that person (or the one the request was
 addressed to, or an administrator) may verify. When the chart CANNOT answer — the

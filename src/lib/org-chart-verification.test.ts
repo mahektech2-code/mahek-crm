@@ -32,6 +32,9 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { getConfig, invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
 import { convertLeadToProspect } from "@/lib/actions/lead-calling-desk";
+import { advanceLeadStage } from "@/lib/actions/leads";
+import { QUAL_NEXT } from "@/lib/qualification-next";
+import { notifications } from "@/db/schema";
 import { canVerifyLeadById, requireQualificationApprover } from "@/lib/services/lead-verifier";
 import { orgChartVerifierFor } from "@/lib/services/org-verifier-resolver";
 import {
@@ -282,6 +285,33 @@ describe("the act of verifying", () => {
     assert.ok((await convert(lead.id)).ok);
     assert.equal(await canVerifyLeadById(loose, lead.id, { designated: true }), false, "the requester never");
     assert.equal(await canVerifyLeadById(pritesh, lead.id, { designated: true }), true, "the fallback account");
+  });
+});
+
+describe("every door that makes a Prospect hands it to its verifier", () => {
+  test("a stage move (the record button, the board, a bulk move) owes the verification to the manager above, and tells her", async () => {
+    const lead = await makeLead(tele, {
+      customerType: "manufacturer",
+      gstin: "27ABCDE1234F1Z5",
+      leadNextAction: "Call back",
+      leadNextActionDate: "2026-12-01",
+      leadNextActionOwnerId: tele.id,
+    });
+    as(tele);
+    const r = await advanceLeadStage({
+      customerId: lead.id,
+      to: "prospect",
+      reasonCode: "regular_requirement",
+      nextAction: { action: "Call back with the price list", date: "2026-12-01", ownerId: tele.id },
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.leadNextAction, QUAL_NEXT.verify, "the next action is the verification call");
+    assert.equal(after.leadNextActionOwnerId, mira.id, "owed to the manager above the person who moved it");
+    const told = await db.select().from(notifications).where(eq(notifications.userId, mira.id));
+    assert.equal(told.length, 1, "and she is told");
+    assert.equal(await canVerifyLeadById(mira, lead.id, { designated: true }), true);
   });
 });
 

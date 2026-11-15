@@ -7,14 +7,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, products, users } from "@/db/schema";
-import { canAny, hatsFor, requireCapability } from "@/lib/access-control";
-import {
-  approverFor,
-  fieldRouteFor,
-  holdsLeadSeat,
-  orgDesignatedGate,
-  telecallerRouteFor,
-} from "@/lib/services/lead-verifier";
+import { requireCapability } from "@/lib/access-control";
+import { orgDesignatedGate } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -56,8 +50,8 @@ import {
   type ProspectFault,
 } from "@/lib/engines/lead-prospect-answers";
 import { ladderFor } from "@/lib/engines/lead-ladder";
-import { orgChartVerifierFor, orgFallbackWords } from "@/lib/services/org-verifier-resolver";
-import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
+import { leadGateInput, leadRow } from "@/lib/services/lead-service";
+import { resolveProspectVerifier } from "@/lib/services/prospect-verifier-route";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
 import { latestReopen, lostFromOf, reopenLostLead, reopenedAtOf } from "@/lib/services/lead-reopen-service";
@@ -892,112 +886,11 @@ async function preparePromotion(
    * lead stays a Suspect — ready, waiting for somebody to be set — rather than
    * becoming a Prospect nobody can verify.
    */
-  /* A LEAD A SALESMAN RAISED OR NOW HOLDS IS ASKED FIRST, BEFORE THE CHART. The
-     person Mahek designates for exactly that (`leads.fieldVerifierEmail`)
-     verifies it, whoever is converting it: a Telecaller who happens to report to
-     Pritesh must not carry a Salesman's lead to Pritesh. Only the two
-     Salesman reasons take this precedence — the field verifier's own lead, a
-     refusal, an unknown creator and every desk lead are left to what follows,
-     exactly as before. Blank setting: this is off and nothing changes. */
-  const fieldFirst = await fieldRouteFor({ id: p.customerId, ownerId: lead.ownerId }, ctx.user.id);
-  const salesmanFirst =
-    fieldFirst.kind === "verifier" && (fieldFirst.reason === "assigned" || fieldFirst.reason === "salesman_created");
-
-  /* THE ORG CHART IS ASKED NEXT, starting from whoever is making this request:
-     the nearest eligible manager above them verifies it. Everything below is the
-     FALLBACK for a chart that cannot answer, kept exactly as it was. */
-  const orgPick = salesmanFirst ? null : await orgChartVerifierFor(ctx.user.id);
-  let managerId: string | null = salesmanFirst ? fieldFirst.id : orgPick?.ok ? orgPick.id : null;
-  const fallbackNote =
-    salesmanFirst || orgPick?.ok || !orgPick
-      ? null
-      : `Routed through Settings, not the Org Chart: ${orgFallbackWords(orgPick.reason)}.`;
-  /* Where the chart answered, the field route has nothing to add (as before);
-     where it did not, its own answer — a refusal included — stands. */
-  const fieldRoute = managerId && !salesmanFirst ? ({ kind: "off" } as typeof fieldFirst) : fieldFirst;
-  if (fieldRoute.kind === "refuse") return err(fieldRoute.message, "rule_violation");
-  if (fieldRoute.kind === "verifier") managerId = fieldRoute.id;
-  /* THE LEAD'S OWN SALES MANAGER COMES FIRST. Verification follows `sales_manager_id`,
-     so where the seat is filled and its holder can verify (the capability, or the
-     seat itself) the call is owed to them, not to some other `lead.verify` holder
-     the region happens to default to. */
-  /* A LEAD THE SALES MANAGER RAISED HERSELF IS VERIFIED BY THE PERSON MAHEK
-     DESIGNATES, not by her: the verification is the check on her own work. */
-  const selfRaisedApprover = managerId
-    ? null
-    : await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
-  if (selfRaisedApprover) managerId = selfRaisedApprover.id;
-  /* A LEAD A TELECALLER WORKS is verified by the person Mahek designates for
-     exactly that (`leads.telecallerVerifierEmail`), with nothing to choose. STRICT:
-     it wins over an org-chart-derived Sales Manager seat and needs no regional
-     coverage - what keeps it off a lead is a Sales Manager's or a salesman's own
-     workflow (a seat a PERSON decided, a field owner, the self-raised rule above),
-     never the seat merely existing. Configured but unusable, it REFUSES in words
-     rather than routing the lead somewhere the setting did not say. Blank, it is
-     off and everything below is exactly what it was. */
-  if (!managerId) {
-    const route = await telecallerRouteFor(
-      {
-        ownerId: lead.ownerId,
-        salesManagerDecidedAt: lead.salesManagerDecidedAt,
-        leadManagerDecidedAt: lead.leadManagerDecidedAt,
-      },
-      ctx.user.id,
-    );
-    if (route.kind === "refuse") return err(route.message, "rule_violation");
-    if (route.kind === "verifier") managerId = route.id;
-  }
-  if (!managerId && lead.salesManagerId) {
-    const [sm] = await db
-      .select({ id: users.id, role: users.role, active: users.active })
-      .from(users)
-      .where(eq(users.id, lead.salesManagerId))
-      .limit(1);
-    if (
-      sm?.active &&
-      ((await holdsLeadSeat(sm, lead.salesManagerId)) ||
-        canAny(await hatsFor({ id: sm.id, role: sm.role }), "lead.verify"))
-    ) {
-      managerId = sm.id;
-    }
-  }
-  if (!managerId && lead.leadManagerId) {
-    const decided = Boolean(lead.leadManagerDecidedAt);
-    const seat = await db
-      .select({ id: users.id, role: users.role, active: users.active })
-      .from(users)
-      .where(eq(users.id, lead.leadManagerId))
-      .limit(1);
-    const seatHolder = seat[0];
-    if (
-      seatHolder?.active &&
-      (decided || canAny(await hatsFor({ id: seatHolder.id, role: seatHolder.role }), "lead.verify"))
-    ) {
-      managerId = seatHolder.id;
-    }
-  }
-  /* NOTHING ABOVE ANSWERED and nobody can say who raised the lead: the desk
-     verifier, rather than a regional guess. Only for an unknown creator — a known
-     one keeps the regional default it always had. */
-  if (!managerId && fieldRoute.kind === "fallback") managerId = fieldRoute.id;
-  if (!managerId) {
-    const candidates = await leadManagerCandidatesFor(p.customerId);
-    managerId = candidates[0]?.id ?? null;
-  }
-  if (!managerId) {
-    return err(
-      "No Sales Manager covers this lead's region. Ask an administrator.",
-      "rule_violation",
-    );
-  }
-  /* THE REQUESTER IS NEVER THE VERIFIER. If the fallback would send it to the person
-     asking, refuse and say what to fix, rather than a Prospect nobody else can verify. */
-  if (managerId === ctx.user.id) {
-    return err(
-      "Nobody can verify this but you, and nobody verifies their own request. Ask HR to link you to your manager in HRMS, or an administrator to name another verifier in Settings.",
-      "rule_violation",
-    );
-  }
+  /* WHO VERIFIES is one answer for every door that makes a Prospect: see
+     `resolveProspectVerifier`. The requester is never the verifier. */
+  const route = await resolveProspectVerifier(lead, ctx.user.id);
+  if (!route.ok) return err(route.message, "rule_violation");
+  const { managerId, fallbackNote } = route;
   const nextActionOwnerId: string = managerId;
 
   /* THE DRY RUN. The same gate the promotion will be asked, with what this
