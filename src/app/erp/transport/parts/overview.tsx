@@ -47,7 +47,7 @@ export function Overview({
 
   const steps = [
     { n: "1", l: "Going to the transporter", v: toT.length, sub: dueToday.length ? `${dueToday.length} due today or late` : `${sumPackages(toT) ?? "—"} boxes`, href: erpLink("toTransport"), tone: dueToday.length ? "warn" : undefined },
-    { n: "2", l: "Waiting for the LR", v: lrP.length, sub: lrsWaiting ? `${plural(lrsWaiting, "LR")} uploaded to attach` : "No LR uploaded yet", href: erpLink("pendingLr"), tone: lrsWaiting ? "brand" : undefined },
+    { n: "2", l: "Waiting for the LR", v: lrP.length, sub: lrsWaiting ? `${plural(lrsWaiting, "LR")} uploaded to attach` : "No uploaded LR waiting to attach", href: erpLink("pendingLr"), tone: lrsWaiting ? "brand" : undefined },
     { n: "3", l: "On the road", v: roadGroups.length, sub: `${plural(road.length, "bill")} · ${calls.length} call${calls.length === 1 ? "" : "s"} due`, href: erpLink("trackLr"), tone: calls.length ? "warn" : undefined },
     { n: "4", l: "Delivered this week", v: doneWeek.length, sub: "bills received by the party", href: erpLink("delivered"), tone: "success" },
   ] as const;
@@ -109,12 +109,12 @@ export function Overview({
           </div>
           <Attention label="Problems on the road" tone="danger" href={erpLink("trackLr", { filter: "issue" })} items={issues.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].party}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
           <Attention label="Running late" tone="warn" href={erpLink("trackLr", { filter: "late" })} items={late.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].party}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
-          <Attention label="At the transporter 2+ days with no LR" tone="warn" href={erpLink("pendingLr")} items={stuck.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`, sub: `${c.transporter ?? "—"} since ${shortDay(c.atTransportAt!.slice(0, 10))}` }))} />
+          <Attention label={`At the transporter ${AT_TRANSPORT_STUCK_DAYS}+ days with no LR`} tone="warn" href={erpLink("pendingLr")} items={stuck.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`, sub: `${c.transporter ?? "—"} since ${shortDay(c.atTransportAt!.slice(0, 10))}` }))} />
           <Attention
             label="Left in the last 3 days with no vehicle recorded"
             tone="warn"
-            href={erpLink("trips")}
-            items={noVehicle.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`, sub: `${c.transporter ?? "No transporter"} · put it on a trip under Trips & freight` }))}
+            href={erpLink("freight")}
+            items={noVehicle.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`, sub: `${c.transporter ?? "No transporter"} · no transport bill can be split onto it without a vehicle` }))}
           />
           <Attention label="Customer messages to send by hand" tone="warn" href={erpLink("lrMessages")} items={messagesWaiting ? [{ key: "m", main: plural(messagesWaiting, "message"), sub: "Open WhatsApp from the Customer messages tab and mark each sent." }] : []} />
           {!issues.length && !late.length && !stuck.length && !messagesWaiting && !noVehicle.length ? <Empty>Nothing needs attention.</Empty> : null}

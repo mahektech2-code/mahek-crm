@@ -49,7 +49,8 @@ import {
   type ScreenModule,
 } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { inr } from "../ui";
+import { inr, nf } from "../ui";
+import { getConfig } from "@/lib/config/store";
 import { rmTotalsByItem } from "../stock";
 import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel, type DrumOwnership } from "../engines/drums";
@@ -132,15 +133,15 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         req: true,
         sec: "Buying",
         opts: PURCHASE_METHODS.map((m) => m.label),
-        hint: "Direct: pick the vendor and raise the PO. Quotation: bought on the Quotation manager, whose PO number the requirement links. Buyer decides: chosen per requirement.",
+        hint: "Direct: pick the supplier and raise the PO. Quotation: bought on the Quotation manager, whose PO number the requirement links. Buyer decides: chosen per requirement.",
       },
       {
         k: "preferredSupplier",
-        l: "Default vendor",
+        l: "Default supplier",
         t: "select",
         opts: sups.filter((x) => x.active).map((x) => x.name),
         when: { k: "purchaseMethod", in: [methodLabel("direct"), methodLabel("buyer")] },
-        hint: "Offered as the vendor when a direct purchase is raised. Blank: the vendor is chosen on each requirement.",
+        hint: "Offered as the supplier when a direct purchase is raised. Blank: the supplier is chosen on each requirement.",
       },
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
@@ -171,7 +172,7 @@ const rawMaterials: ScreenModule = {
       { k: "density", l: "Density", t: "n" },
       { k: "tests", l: "Testing list", t: "t" },
       { k: "rule", l: "Purchase rule", t: "s" },
-      { k: "vendor", l: "Default vendor", t: "t" },
+      { k: "vendor", l: "Default supplier", t: "t" },
       { k: "price", l: "Price", t: "m", pw: "viewPurchaseMoney" },
       { k: "stock", l: "Total stock", t: "n" },
       { k: "status", l: "Status", t: "s" },
@@ -203,7 +204,9 @@ const rawMaterials: ScreenModule = {
             code: r.code,
             unit: r.unit,
             type: r.materialType,
-            group: r.materialType === "Can" ? (r.groupId ? (groupName.get(r.groupId) ?? null) : "Not grouped") : null,
+            /* Only an active can is "not grouped": a retired one is not waiting for a group, and the
+               Can groups tab counts active cans only. */
+            group: r.materialType === "Can" ? (r.groupId ? (groupName.get(r.groupId) ?? null) : r.active ? "Not grouped" : null) : null,
             photos: r.materialType === "Can" ? (canPhotos.get(r.id)?.length ?? 0) : null,
             density: r.density,
             tests: r.testingList.join(", ") || "—",
@@ -211,7 +214,7 @@ const rawMaterials: ScreenModule = {
             vendor: r.preferredSupplierId ? (supName.get(r.preferredSupplierId) ?? null) : null,
             price: r.pricePaise,
             stock: totals.get(r.id) ?? 0,
-            status: r.active ? "Active" : "Inactive",
+            status: r.active ? "Active" : "Retired",
           },
           hiddenKeys,
         );
@@ -280,26 +283,26 @@ const rawMaterials: ScreenModule = {
 
 async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: string) {
   const name = text(h.name);
-  if (!name) return fieldErr("name", "Raw item is required");
+  if (!name) return fieldErr("name", "Name the raw item.");
   const unit = text(h.unit);
-  if (!unit || !RM_UNITS.includes(unit)) return fieldErr("unit", "Item unit is required");
+  if (!unit || !RM_UNITS.includes(unit)) return fieldErr("unit", "Pick the item unit.");
   const materialType = text(h.materialType);
-  if (!materialType) return fieldErr("materialType", "Material type is required");
+  if (!materialType) return fieldErr("materialType", "Pick the material type.");
   const chemical = materialType === "Chemical";
   const density = num(h.density);
   const tests = multi(h.testingList);
-  if (chemical && (density == null || density <= 0)) return fieldErr("density", "Density is required for a chemical");
-  if (chemical && tests.length === 0) return fieldErr("testingList", "Testing list is required for a chemical");
+  if (chemical && (density == null || density <= 0)) return fieldErr("density", "A chemical needs its density.");
+  if (chemical && tests.length === 0) return fieldErr("testingList", "A chemical needs its testing list.");
   /* The form always asks; a save that names no rule keeps the stored one, or starts from the
      category's usual answer — chemicals are price-sensitive, everything else is routine. */
   const stored = id ? (await db.select({ m: erpRawMaterials.purchaseMethod }).from(erpRawMaterials).where(eq(erpRawMaterials.id, id)))[0]?.m : null;
   const typed = text(h.purchaseMethod);
   const purchaseMethod = typed ? methodByLabel(typed) : ((stored as PurchaseMethod | null) ?? (chemical ? "quotation" : "direct"));
-  if (!purchaseMethod) return fieldErr("purchaseMethod", "Purchase rule is required");
+  if (!purchaseMethod) return fieldErr("purchaseMethod", "Pick the purchase rule.");
   const keepVendor = id && !typed && h.preferredSupplier === undefined;
   const vendorName = purchaseMethod === "quotation" ? null : text(h.preferredSupplier);
   const [vendor] = vendorName ? await db.select({ id: erpSuppliers.id }).from(erpSuppliers).where(eq(erpSuppliers.name, vendorName)) : [];
-  if (vendorName && !vendor) return fieldErr("preferredSupplier", "Pick a vendor from the list");
+  if (vendorName && !vendor) return fieldErr("preferredSupplier", "Pick a supplier from the list.");
 
   /* A can's group: blank takes it out of one; a save that does not name the field keeps it. */
   const groupTyped = materialType === "Can" ? h.group : "";
@@ -311,7 +314,7 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
         .select({ id: erpMaterialGroups.id })
         .from(erpMaterialGroups)
         .where(and(eq(erpMaterialGroups.materialType, "Can"), sql`lower(${erpMaterialGroups.name}) = lower(${gName})`));
-      if (!g) return fieldErr("group", "Pick a group from the list");
+      if (!g) return fieldErr("group", "Pick a group from the list.");
       groupId = g.id;
     } else groupId = null;
   }
@@ -320,7 +323,7 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
     .select({ id: erpRawMaterials.id })
     .from(erpRawMaterials)
     .where(sql`lower(${erpRawMaterials.name}) = lower(${name})`);
-  if (dup.some((d) => d.id !== id)) return fieldErr("name", "Duplicate Entry!");
+  if (dup.some((d) => d.id !== id)) return fieldErr("name", "That name is already taken.");
 
   const values = {
     name,
@@ -424,21 +427,21 @@ async function supplierForm(id?: string): Promise<FormSpec> {
     screen: "suppliers",
     id: id ? "edit" : "new",
     recordId: id,
-    title: id ? "Edit purchase party" : "New purchase party",
+    title: id ? "Edit supplier" : "New supplier",
     sub: "The party code is part of every lot number bought from them, so keep it stable.",
-    submit: id ? "Save changes" : "Add purchase party",
+    submit: id ? "Save changes" : "Add supplier",
     init,
     header: [
-      { k: "name", l: "Party name", t: "text", req: true, sec: "Party" },
+      { k: "name", l: "Supplier name", t: "text", req: true, sec: "Supplier" },
       { k: "partyCode", l: "Own party code", t: "text", req: true },
       { k: "grade", l: "Grade", t: "text" },
       { k: "broker", l: "Broker name", t: "text" },
       { k: "area", l: "Area", t: "select", opts: areas, sec: "Where and how to reach them" },
       { k: "location", l: "Location", t: "text" },
       { k: "state", l: "State", t: "select", opts: states },
-      { k: "mobile", l: "Mobile no.", t: "text" },
+      { k: "mobile", l: "Mobile", t: "text" },
       { k: "whatsapp", l: "WhatsApp contact", t: "text" },
-      { k: "email", l: "Party email", t: "text" },
+      { k: "email", l: "Email", t: "text" },
       { k: "creditDays", l: "Credit days", t: "num", min: 0, sec: "Terms" },
       { k: "gstin", l: "GSTIN", t: "text" },
       {
@@ -462,7 +465,7 @@ const suppliers: ScreenModule = {
     const purchases = await purchaseCountsBySupplier();
     const form = await supplierForm();
     const cols: ColSpec[] = [
-      { k: "name", l: "Party", t: "b" },
+      { k: "name", l: "Supplier", t: "b" },
       { k: "code", l: "Party code", t: "mono" },
       { k: "area", l: "Area", t: "t" },
       { k: "state", l: "State", t: "t" },
@@ -479,14 +482,14 @@ const suppliers: ScreenModule = {
         hidden: [],
         groups: ["state"],
         stats: [
-          { l: "Parties" },
+          { l: "Suppliers" },
           { l: "States", kind: "distinct", k: "state" },
           { l: "Brokers", kind: "distinct", k: "broker" },
           { l: "Retired", where: { flag: "inactive" }, tone: "muted" },
         ],
         filters: ["state", "area", "grade", "broker", "credit"],
         newForm: form,
-        newLabel: "New purchase party",
+        newLabel: "New supplier",
       },
       rows: rows.map((r) => ({
         id: r.id,
@@ -508,7 +511,7 @@ const suppliers: ScreenModule = {
           { l: "Location", v: r.location || "—" },
           { l: "GSTIN", v: r.gstin || "—" },
           { l: "Their drums are", v: r.drumOwnership ? OWNERSHIP_LABEL[r.drumOwnership as DrumOwnership] : DRUM_UNKNOWN },
-          { l: "Purchases", v: `${purchases.get(r.id) ?? 0} purchases`, der: true },
+          { l: "Purchases", v: purchaseCount(purchases.get(r.id) ?? 0), der: true },
         ],
         contacts: phoneContacts(r.mobile, r.email),
         actions: [
@@ -550,14 +553,14 @@ const suppliers: ScreenModule = {
 
 async function saveSupplier(ctx: ErpContext, h: Record<string, string>, id?: string) {
   const name = text(h.name);
-  if (!name) return fieldErr("name", "Party name is required");
+  if (!name) return fieldErr("name", "Name the supplier.");
   const code = text(h.partyCode);
-  if (!code) return fieldErr("partyCode", "Own party code is required");
+  if (!code) return fieldErr("partyCode", "Give the supplier its own party code.");
   const dup = await db
     .select({ id: erpSuppliers.id })
     .from(erpSuppliers)
     .where(sql`lower(${erpSuppliers.name}) = lower(${name})`);
-  if (dup.some((d) => d.id !== id)) return fieldErr("name", "Duplicate Entry!");
+  if (dup.some((d) => d.id !== id)) return fieldErr("name", "That name is already taken.");
   const values = {
     name,
     partyCode: code,
@@ -577,7 +580,7 @@ async function saveSupplier(ctx: ErpContext, h: Record<string, string>, id?: str
   };
   if (id) {
     const [before] = await db.select().from(erpSuppliers).where(eq(erpSuppliers.id, id));
-    if (!before) return err("That party no longer exists.", "not_found");
+    if (!before) return err("That supplier no longer exists.", "not_found");
     await db.update(erpSuppliers).set(values).where(eq(erpSuppliers.id, id));
     await erpAudit(ctx, "erp.supplier.edit", "erp_supplier", id, before, values);
     return okVoid(`${name} saved`);
@@ -586,6 +589,10 @@ async function saveSupplier(ctx: ErpContext, h: Record<string, string>, id?: str
   await db.insert(erpSuppliers).values({ id: newId, createdById: ctx.user.id, ...values });
   await erpAudit(ctx, "erp.supplier.create", "erp_supplier", newId, null, values);
   return okVoid(`${name} added`);
+}
+
+function purchaseCount(n: number): string {
+  return `${nf(n)} purchase${n === 1 ? "" : "s"}`;
 }
 
 /** Purchases per supplier, once the purchase register exists (Phase 2). */
@@ -600,7 +607,7 @@ async function purchaseCountsBySupplier(): Promise<Map<string, number>> {
 
 /* ============================================================ products */
 
-async function packingForm(productId: string): Promise<FormSpec | null> {
+async function packingForm(ctx: ErpContext, productId: string): Promise<FormSpec | null> {
   const [p] = await db
     .select({ name: products.name, pk: erpProductPacking })
     .from(products)
@@ -617,6 +624,7 @@ async function packingForm(productId: string): Promise<FormSpec | null> {
     const [m] = await db.select({ name: erpRawMaterials.name }).from(erpRawMaterials).where(eq(erpRawMaterials.id, p.pk.canUseMaterialId));
     canUse = m?.name ?? "";
   }
+  const cost = ctx.powers.has("viewCost");
   return {
     screen: "products",
     id: "packing",
@@ -628,13 +636,14 @@ async function packingForm(productId: string): Promise<FormSpec | null> {
       canUse,
       emptyBoxes: String(p.pk?.emptyBoxesRequired ?? 0),
       boxType: p.pk?.boxType ?? "",
-      boxRate: rupeesField(p.pk?.boxRatePaise),
+      /* The box rate is a cost: only somebody holding the cost power is sent it, or asked it. */
+      ...(cost ? { boxRate: rupeesField(p.pk?.boxRatePaise) } : {}),
     },
     header: [
       { k: "canUse", l: "Can use (packing item)", t: "select", opts: packItems.map((x) => x.name), hint: "A raw material of type Can or Drum." },
       { k: "emptyBoxes", l: "No. of empty boxes required", t: "num", min: 0, hint: "0 with 1 can per box makes this a loose SKU." },
       { k: "boxType", l: "Box type", t: "select", opts: BOX_TYPES },
-      { k: "boxRate", l: "Box rate (₹)", t: "num", min: 0, hint: "Used in packing costing." },
+      ...(cost ? [{ k: "boxRate", l: "Box rate (₹)", t: "num" as const, min: 0, hint: "Used in packing costing." }] : []),
     ],
   };
 }
@@ -736,7 +745,7 @@ const productsScreen: ScreenModule = {
     };
   },
   formLoaders: {
-    packing: (_ctx, id) => packingForm(id),
+    packing: (ctx, id) => packingForm(ctx, id),
   },
   forms: {
     async packing(ctx, h, _l, id) {
@@ -748,13 +757,13 @@ const productsScreen: ScreenModule = {
           .select({ id: erpRawMaterials.id })
           .from(erpRawMaterials)
           .where(and(eq(erpRawMaterials.name, canUse), inArray(erpRawMaterials.materialType, ["Can", "Drum"])));
-        if (!m) return fieldErr("canUse", "Pick a raw material of type Can or Drum");
+        if (!m) return fieldErr("canUse", "Pick a raw material of type Can or Drum.");
         canUseId = m.id;
       }
       const emptyBoxes = int(h.emptyBoxes) ?? 0;
-      if (emptyBoxes < 0) return fieldErr("emptyBoxes", "Minus Quantity Not Allowed");
+      if (emptyBoxes < 0) return fieldErr("emptyBoxes", "Empty boxes cannot be below 0.");
       const boxType = text(h.boxType);
-      if (boxType && !BOX_TYPES.includes(boxType)) return fieldErr("boxType", "INVALID");
+      if (boxType && !BOX_TYPES.includes(boxType)) return fieldErr("boxType", "Pick a box type from the list.");
       const values = {
         canUseMaterialId: canUseId,
         emptyBoxesRequired: emptyBoxes,
@@ -911,10 +920,10 @@ async function customerEditForm(id: string): Promise<FormSpec | null> {
         hint: "The name on the bill and on every list. The Sales Party and order sheets still find this party under the name they use.",
       },
       { k: "company", l: "Company name", t: "text", hint: "Only where the registered company is named differently from the party." },
-      { k: "mobile", l: "Mobile no.", t: "text" },
+      { k: "mobile", l: "Mobile", t: "text" },
       { k: "whatsapp", l: "WhatsApp contact", t: "text" },
-      { k: "email", l: "Party email", t: "text" },
-      { k: "gstin", l: "GST number", t: "text" },
+      { k: "email", l: "Email", t: "text" },
+      { k: "gstin", l: "GSTIN", t: "text" },
       { k: "area", l: "Area", t: "select", opts: areas, sec: "Where" },
       { k: "city", l: "Location", t: "text" },
       { k: "state", l: "State", t: "select", opts: states },
@@ -968,7 +977,7 @@ function customerFields(r: CustomerRow, canSeeTarget: boolean): { l: string; v: 
     ...(canSeeTarget ? [{ l: "Monthly target", v: r.monthlyTargetPaise ? `${inr(r.monthlyTargetPaise)} this month · set in Monthly Targets` : "Not set · Monthly Targets in the CRM or Accounts" }] : []),
     { l: "Counter type", v: (r.p?.counterTypes ?? []).join(", ") || "—" },
     { l: "Segment", v: r.p?.segment || "—" },
-    { l: "GST number", v: r.gstin || "—" },
+    { l: "GSTIN", v: r.gstin || "—" },
     { l: "Company name", v: r.companyName || "—" },
     ...(r.sheetName ? [{ l: "Name on the sheets", v: r.sheetName }] : []),
     { l: "Allocated to", v: r.p?.allocateEmail || "—" },
@@ -992,7 +1001,7 @@ const customersScreen: ScreenModule = {
       { k: "grade", l: "Grade", t: "s" },
       { k: "f", l: "Flags", t: "f" },
     ];
-    const why = canStatus ? "" : "Only an admin or the office changes a customer's status";
+    const why = canStatus ? "" : "Only an admin or the office changes a customer's status.";
     return {
       spec: {
         screen: "customers",
@@ -1114,14 +1123,14 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
   const [before] = await loadCustomers(eq(customers.id, id));
   if (!before) return err("That customer no longer exists.", "not_found");
   const grade = text(h.grade);
-  if (grade && !GRADES.includes(grade)) return fieldErr("grade", "INVALID");
+  if (grade && !GRADES.includes(grade)) return fieldErr("grade", "Pick a grade from the list.");
   const mobileDigits = (h.mobile ?? "").replace(/\D/g, "");
-  if (mobileDigits && mobileDigits.length !== 10) return fieldErr("mobile", "INVALID");
+  if (mobileDigits && mobileDigits.length !== 10) return fieldErr("mobile", "A mobile number has 10 digits.");
   /* City and phone are required on every MahekOne customer, so an emptied
      field keeps what was there rather than blanking a column the CRM relies on. */
   /* The party's name. A rename keeps the name the sheets use, so they go on
      finding the party and stop writing the old name back (customer-rename). */
-  if (h.name !== undefined && !text(h.name)) return fieldErr("name", "REQUIRED");
+  if (h.name !== undefined && !text(h.name)) return fieldErr("name", "Name the customer.");
   const rename = h.name === undefined ? null : renameValues({ name: before.name, sheetName: before.sheetName }, h.name);
   if (rename) {
     const clash = await db
@@ -1135,7 +1144,7 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
         ),
       )
       .limit(1);
-    if (clash.length) return err(`Another party is already called ${clash[0].name}. Pick a name that tells them apart.`, "validation", [{ field: "name", message: "TAKEN" }]);
+    if (clash.length) return err(`Another party is already called ${clash[0].name}. Pick a name that tells them apart.`, "validation", [{ field: "name", message: "That name is already taken." }]);
   }
   const carrier = await listedTransporterName(db, text(h.transporter), before.p?.transporter);
   if (!carrier.ok) return fieldErr("transporter", carrier.error);
@@ -1180,6 +1189,8 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
 /* ============================================================= godowns */
 
 async function godownForm(id?: string): Promise<FormSpec> {
+  const radiusM = (await getConfig())["erp.location.godownRadiusM"];
+  const fence = radiusM >= 1000 ? `${nf(radiusM / 1000)} km` : `${nf(radiusM)} m`;
   const cities = await refOptions("godownCity");
   const states = await refOptions("state");
   let init: Record<string, string> | undefined;
@@ -1204,15 +1215,15 @@ async function godownForm(id?: string): Promise<FormSpec> {
     screen: "godowns",
     id: id ? "edit" : "new",
     recordId: id,
-    title: id ? "Edit godown" : "Register a godown",
-    sub: "The map pin is what lets a form default to the godown somebody is standing in (within 5 km).",
-    submit: id ? "Save changes" : "Register godown",
+    title: id ? "Edit godown" : "New godown",
+    sub: `The map pin is what lets a form default to the godown somebody is standing in (within ${fence}).`,
+    submit: id ? "Save changes" : "Add godown",
     init,
     header: [
       { k: "name", l: "Godown name", t: "text", req: true, sec: "Godown" },
-      { k: "phone", l: "Phone number", t: "text" },
-      { k: "email", l: "Email ID", t: "text" },
-      { k: "gstin", l: "GSTIN number", t: "text" },
+      { k: "phone", l: "Phone", t: "text" },
+      { k: "email", l: "Email", t: "text" },
+      { k: "gstin", l: "GSTIN", t: "text" },
       { k: "city", l: "Location (city)", t: "select", opts: cities.length ? cities : undefined, sec: "Where" },
       { k: "state", l: "State", t: "select", opts: states },
       { k: "region", l: "Region", t: "select", opts: REGIONS },
@@ -1247,8 +1258,9 @@ const godowns: ScreenModule = {
     const byGodown = new Map<string, string[]>();
     staff.forEach((s) => byGodown.set(s.godownId, [...(byGodown.get(s.godownId) ?? []), s.name]));
     const admin = ctx.powers.has("employeeAdmin");
-    const why = admin ? "" : "Only an ERP administrator changes a godown's status and staff";
-    const newForm = await godownForm();
+    const why = admin ? "" : "Only an ERP administrator changes a godown's status and staff.";
+    /* Only somebody who can save a godown is offered a new one: saveGodown needs employeeAdmin. */
+    const newForm = admin ? await godownForm() : undefined;
     const cols: ColSpec[] = [
       { k: "name", l: "Godown", t: "b" },
       { k: "region", l: "Region", t: "t" },
@@ -1259,7 +1271,6 @@ const godowns: ScreenModule = {
       { k: "gstin", l: "GSTIN", t: "t" },
       { k: "emp", l: "Employees", t: "n" },
       { k: "status", l: "Status", t: "s" },
-      { k: "f", l: "Flags", t: "f" },
     ];
     return {
       spec: {
@@ -1270,18 +1281,16 @@ const godowns: ScreenModule = {
         chips: "state",
         stats: [
           { l: "Godowns" },
-          { l: "Employees", kind: "sum", k: "emp", u: "people" },
-          { l: "Inactive", where: { k: "status", in: ["Inactive"] }, tone: "muted" },
+          /* A person at two godowns is two assignments: the sum counts assignments, not people. */
+          { l: "Assignments", kind: "sum", k: "emp" },
+          { l: "Retired", where: { k: "status", in: ["Retired"] }, tone: "muted" },
         ],
         filters: ["region", "city", "status"],
-        newForm,
-        newLabel: "Register godown",
+        ...(newForm ? { newForm, newLabel: "New godown" } : {}),
       },
       rows: rows.map((g) => {
         const names = byGodown.get(g.id) ?? [];
-        const actions: ActionSpec[] = g.reserved
-          ? []
-          : [
+        const actions: ActionSpec[] = [
               {
                 id: "staff",
                 l: "Assign employees",
@@ -1296,7 +1305,7 @@ const godowns: ScreenModule = {
                 },
               },
               { id: "edit", l: "Edit", why, loadsForm: true },
-              { id: "toggle", l: g.status === "active" ? "Mark Inactive" : "Mark Active", why },
+              { id: "toggle", l: g.status === "active" ? "Retire" : "Restore", why },
             ];
         return {
           id: g.id,
@@ -1309,11 +1318,11 @@ const godowns: ScreenModule = {
             phone: g.phone,
             gstin: g.gstin,
             emp: names.length,
-            status: g.status === "active" ? "Active" : "Inactive",
+            status: g.status === "active" ? "Active" : "Retired",
           },
-          flags: g.reserved ? ["reserved"] : [],
+          flags: [],
           title: g.name,
-          header: g.reserved ? "Reserved · write-offs only. Stock moved here is recorded as lost." : names.length ? `Assigned: ${names.join(", ")}` : "Nobody assigned yet",
+          header: names.length ? `Assigned: ${names.join(", ")}` : "Nobody assigned yet",
           fields: [
             { l: "Email", v: g.email || "—" },
             { l: "Remark", v: g.remark || "—" },
@@ -1352,7 +1361,7 @@ const godowns: ScreenModule = {
       const status = g.status === "active" ? "inactive" : "active";
       await db.update(erpGodowns).set({ status, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpGodowns.id, id));
       await erpAudit(ctx, "erp.godown.status", "erp_godown", id, { status: g.status }, { status });
-      return okVoid(`${g.name} is ${status === "active" ? "Active" : "Inactive"}`);
+      return okVoid(status === "active" ? `${g.name} restored` : `${g.name} retired`);
     },
     async staff(ctx, id, values) {
       if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator assigns godown staff.", "not_permitted");
@@ -1372,9 +1381,9 @@ const godowns: ScreenModule = {
 async function saveGodown(ctx: ErpContext, h: Record<string, string>, id?: string) {
   if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator registers or edits godowns.", "not_permitted");
   const name = text(h.name);
-  if (!name) return fieldErr("name", "Godown name is required");
+  if (!name) return fieldErr("name", "Name the godown.");
   const dup = await db.select({ id: erpGodowns.id }).from(erpGodowns).where(sql`lower(${erpGodowns.name}) = lower(${name})`);
-  if (dup.some((d) => d.id !== id)) return fieldErr("name", "Duplicate Entry!");
+  if (dup.some((d) => d.id !== id)) return fieldErr("name", "That name is already taken.");
   const values = {
     name,
     city: text(h.city),
@@ -1401,7 +1410,7 @@ async function saveGodown(ctx: ErpContext, h: Record<string, string>, id?: strin
   const newId = erpId("erpg");
   await db.insert(erpGodowns).values({ id: newId, createdById: ctx.user.id, ...values });
   await erpAudit(ctx, "erp.godown.create", "erp_godown", newId, null, values);
-  return okVoid(`${name} registered`);
+  return okVoid(`${name} added`);
 }
 
 /* ====================================================== reference lists */
@@ -1415,7 +1424,7 @@ const refListsScreen: ScreenModule = {
       .orderBy(asc(erpRefValues.listKey), asc(erpRefValues.sortOrder), asc(erpRefValues.value));
     const cols: ColSpec[] = [
       { k: "list", l: "List", t: "b" },
-      { k: "count", l: "Values", t: "n" },
+      { k: "count", l: "Count", t: "n" },
       { k: "sample", l: "Values", t: "t", w: 360 },
     ];
     return {
@@ -1474,13 +1483,13 @@ const refListsScreen: ScreenModule = {
   actions: {
     async add(ctx, listKey, values) {
       const v = text(values.v);
-      if (!v) return fieldErr("v", "Value is required");
-      if (!REF_LISTS.some((l) => l.key === listKey)) return err("Not a list.", "not_found");
+      if (!v) return fieldErr("v", "Type the value.");
+      if (!REF_LISTS.some((l) => l.key === listKey)) return err("That is not one of the reference lists.", "not_found");
       const dup = await db
         .select({ id: erpRefValues.id })
         .from(erpRefValues)
         .where(and(eq(erpRefValues.listKey, listKey), sql`lower(${erpRefValues.value}) = lower(${v})`));
-      if (dup.length) return fieldErr("v", "Duplicate Entry!");
+      if (dup.length) return fieldErr("v", "That value is already on the list.");
       const [{ n }] = (await db.execute(
         sql`select coalesce(max(sort_order), 0) + 1 as n from erp_ref_values where list_key = ${listKey}`,
       )) as unknown as { n: number }[];
@@ -1490,14 +1499,14 @@ const refListsScreen: ScreenModule = {
     },
     async retire(ctx, listKey, values) {
       const v = text(values.v);
-      if (!v) return fieldErr("v", "Value is required");
+      if (!v) return fieldErr("v", "Type the value.");
       await db.update(erpRefValues).set({ active: false }).where(and(eq(erpRefValues.listKey, listKey), eq(erpRefValues.value, v)));
       await erpAudit(ctx, "erp.ref.retire", "erp_ref_value", listKey, null, { value: v });
       return okVoid(`Retired “${v}”`);
     },
     async restore(ctx, listKey, values) {
       const v = text(values.v);
-      if (!v) return fieldErr("v", "Value is required");
+      if (!v) return fieldErr("v", "Type the value.");
       await db.update(erpRefValues).set({ active: true }).where(and(eq(erpRefValues.listKey, listKey), eq(erpRefValues.value, v)));
       await erpAudit(ctx, "erp.ref.restore", "erp_ref_value", listKey, null, { value: v });
       return okVoid(`Restored “${v}”`);

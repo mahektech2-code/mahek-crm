@@ -348,7 +348,7 @@ export async function createRequirementPo(ctx: ErpContext, id: string, values: R
   const terms = text(values.terms);
   if (!terms) return fieldErr("terms", "Payment terms are required");
   const freight = paise(values.freight) ?? 0;
-  if (freight < 0) return fieldErr("freight", "Minus Quantity Not Allowed");
+  if (freight < 0) return fieldErr("freight", "Freight cannot be below 0.");
   const rate = (await itemPricePaise(v!.r.rawMaterialId!)) ?? 0;
   const gstBp = (await getConfig())["erp.purchase.poGstPercent"] * 100;
   const alsoIn = readAlso(values.also);

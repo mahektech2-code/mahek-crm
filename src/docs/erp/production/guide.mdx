@@ -45,11 +45,11 @@ An SFG batch blends raw-material lots into one lot of semi-finished liquid. One 
 **Quantity per batch** × batches = **Total use incl. batches**. Enter any **Litres adjusted (loss)**; **Available SFG** is what reaches stock.
 </Step>
 <Step title="Save batch">
-"SFG 12 saved · 406 Ltr of Nano Thinner in stock · lot 12SDSOA1230 waits for QC before it can be filled."
+"SFG 12 saved · 406 L of Nano Thinner in stock · lot 12SDSOA1230 waits for QC before it can be filled."
 </Step>
 </Steps>
 
-If a lot has less than a line needs, the save is refused with "Low Stock!" — including when two lines of the same save draw on the same lot. **Add another** adds another lot to the same batch, **Show the whole SFG** lists only that batch's lines, **Print SFG label** prints the lot's 80 × 80 mm label, and **Trace this lot** opens [Traceability](/docs/erp/traceability).
+If a lot has less than a line needs, the save is refused with "There is not enough stock in this lot." — including when two lines of the same save draw on the same lot. **Add another** adds another lot to the same batch, **Show the whole batch** lists only that batch's lines, **Print SFG label** prints the lot's 80 × 80 mm label, and **Trace this lot** opens [Traceability](/docs/erp/traceability).
 
 ### SFG QC
 
@@ -78,12 +78,12 @@ To decide several at once, tick the lines — a ticked line stands for its whole
 
 | Refusal | Means |
 |---|---|
-| Low SFG Stock | The lot does not hold the litres the fill uses |
-| Low Packing Quantity | No cans (or drums) of that packing item are available |
-| Minus Quantity Not Allowed | Cans must be above zero |
+| There is not enough SFG in this lot. | The lot does not hold the litres the fill uses |
+| No packing of this kind is available here. | No cans (or drums) of that packing item are available |
+| Cans must be above 0. | Cans must be above zero |
 | SFG lot … is waiting for QC approval / was rejected at QC | Only an approved lot can be filled |
 
-On a filling: **Add to this run** adds another fill under the same FG number, **Edit cans adjusted** corrects the cans lost (refused if those cans were already packed or moved), **Trace this lot** opens [Traceability](/docs/erp/traceability).
+On a filling: **Add another** adds another fill under the same FG number, **Edit cans adjusted** corrects the cans lost (refused if those cans were already packed or moved), **Trace this lot** opens [Traceability](/docs/erp/traceability).
 
 ## Packing batches
 
@@ -112,7 +112,7 @@ Until the lines draw exactly boxes × cans per box, the batch's boxes are **not*
 
 A recipe is what **one batch** of an SFG product takes, in litres, of each raw material.
 
-- **Set a recipe** adds an SFG product's raw materials and litres per batch; **Change quantity** and **Remove from recipe** are on each line.
+- **New recipe** adds an SFG product's raw materials and litres per batch; **Change quantity** and **Remove from recipe** are on each line.
 - **Edit recipe**, on any line, opens the product's whole recipe in one form: change a quantity or a note, add a raw material, take one out. **Save recipe** writes the recipe exactly as the form shows it, and the batch sheet on the Factory phones follows. A raw material can be on a recipe only once.
 - **Start a batch** on a recipe line opens a new SFG batch with the recipe's lines already listed — you still pick each lot.
 - A batch line that used more than the recipe allows (plus a tolerance) is flagged **Above the recipe** on the SFG batches list. Nothing is refused.

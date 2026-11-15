@@ -149,7 +149,7 @@ export const recipesScreen: ScreenModule = {
     const cols: ColSpec[] = [
       { k: "product", l: "SFG product", t: "b" },
       { k: "item", l: "Raw material", t: "t" },
-      { k: "qty", l: "Per batch (Ltr)", t: "n" },
+      { k: "qty", l: "Per batch (L)", t: "n" },
       { k: "note", l: "Note", t: "t" },
     ];
     const byProduct = new Map<string, Row[]>();
@@ -171,7 +171,7 @@ export const recipesScreen: ScreenModule = {
           ? {
               screen: "recipes",
               id: "new",
-              title: "Set a recipe",
+              title: "New recipe",
               sub: "What one batch takes, in litres, for every raw material.",
               submit: "Save recipe",
               lineLabel: "Raw material (litres)",
@@ -179,7 +179,7 @@ export const recipesScreen: ScreenModule = {
               line: recipeLine(choices.items),
             }
           : undefined,
-        newLabel: "Set a recipe",
+        newLabel: "New recipe",
         noDataLine: "No recipes yet. A recipe is what one batch of an SFG product takes, in litres.",
       },
       rows: rows.map(
@@ -188,7 +188,7 @@ export const recipesScreen: ScreenModule = {
           v: { product: x.product, item: x.item, qty: Number(x.r.qtyPerBatch), note: x.r.note },
           flags: [],
           title: `${x.product} · ${x.item}`,
-          header: `${nf(Number(x.r.qtyPerBatch))} Ltr per batch`,
+          header: `${nf(Number(x.r.qtyPerBatch))} L per batch`,
           actions: [
             { id: "start", l: "Start a batch", primary: true, loadsForm: true },
             { id: "edit", l: "Edit recipe", why, loadsForm: true },
@@ -200,7 +200,7 @@ export const recipesScreen: ScreenModule = {
             },
             { id: "remove", l: "Remove from recipe", why, impact: { kind: "erp-recipe-line", id: x.r.id } },
           ],
-          fields: [{ l: "Unit", v: "Litres (Ltr)" }, { l: "The whole recipe (litres per batch)", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))} Ltr`).join(" · ") }],
+          fields: [{ l: "Unit", v: "Litres (L)" }, { l: "The whole recipe (litres per batch)", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))} L`).join(" · ") }],
           by: stampLine(x.by, x.r.updatedAt).replace(/^Created/, "Set"),
         }),
       ),
@@ -296,7 +296,7 @@ export const recipesScreen: ScreenModule = {
       const res = await db.update(erpRecipes).set({ qtyPerBatch: qty, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRecipes.id, id)).returning({ id: erpRecipes.id });
       if (!res.length) return err("That recipe line no longer exists.", "not_found");
       await erpAudit(ctx, "erp.recipe.qty", "erp_recipe", id, null, { qty });
-      return okVoid(`Recipe updated · ${nf(qty)} Ltr per batch`);
+      return okVoid(`Recipe updated · ${nf(qty)} L per batch`);
     },
     async remove(ctx, id, values) {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");

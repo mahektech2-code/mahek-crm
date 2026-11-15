@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { boxLots, looksLikeUnitId, normaliseCode, packLabel, UNIT_STATUS_LABEL, type UnitStatus } from "./engines/trace";
-import { erpLink } from "./registry";
+import { erpHref, erpLink, erpScreen } from "./registry";
+import { fd, nf } from "./ui";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "./trace-links";
 
 /* ---------------------------------------------------------------------------
@@ -269,7 +270,7 @@ async function destinations(lotFrom: "pack" | "fg", lots: string[]): Promise<Des
       sku: s(r.sku),
       qty: 0,
       unit: lotFrom === "pack" ? "boxes" : "cans",
-      dispatched: r.verification === "Verified" ? (r.dispatched ? String(r.dispatched).slice(0, 10) : "yes") : null,
+      dispatched: r.verification === "Verified" ? (r.dispatched ? fd(String(r.dispatched).slice(0, 10)) : "yes") : null,
       lots: [],
       href: erpTraceHref(orderTraceCode(n(r.orderNo))),
     };
@@ -283,9 +284,9 @@ async function destinations(lotFrom: "pack" | "fg", lots: string[]): Promise<Des
 async function stockOf(kind: "sfg" | "fg" | "pack", lots: string[]): Promise<{ where: string; qty: string; lot: string }[]> {
   if (!lots.length) return [];
   const { sfgLots, fgLots, packLots } = await import("./stock");
-  if (kind === "sfg") return (await sfgLots()).filter((l) => lots.includes(l.lotCode) && l.stock > 0).map((l) => ({ where: l.godown, qty: `${l.stock} L`, lot: l.lotCode }));
-  if (kind === "fg") return (await fgLots()).filter((l) => lots.includes(l.lotCode) && l.stock > 0).map((l) => ({ where: l.godown, qty: `${l.stock} cans`, lot: l.lotCode }));
-  return (await packLots()).filter((l) => lots.includes(l.batchNo) && l.stock > 0).map((l) => ({ where: l.godown, qty: `${l.stock} boxes`, lot: l.batchNo }));
+  if (kind === "sfg") return (await sfgLots()).filter((l) => lots.includes(l.lotCode) && l.stock > 0).map((l) => ({ where: l.godown, qty: `${nf(l.stock)} L`, lot: l.lotCode }));
+  if (kind === "fg") return (await fgLots()).filter((l) => lots.includes(l.lotCode) && l.stock > 0).map((l) => ({ where: l.godown, qty: `${nf(l.stock)} cans`, lot: l.lotCode }));
+  return (await packLots()).filter((l) => lots.includes(l.batchNo) && l.stock > 0).map((l) => ({ where: l.godown, qty: `${nf(l.stock)} boxes`, lot: l.batchNo }));
 }
 
 /** FG lots → the packing batches and loose orders they reached. */
@@ -335,7 +336,7 @@ async function traceUnit(id: string): Promise<TraceResult> {
   }
   const sfg = back.back.filter((b) => b.stage === "SFG batch").map((b) => b.title).join(", ");
   const customers: Destination[] = u.order_id
-    ? [{ customer: s(u.customer), customerId: "", orderNo: n(u.orderNo), bill: u.bill == null ? null : s(u.bill), sku: s(u.sku), qty: 1, unit: u.kind === "box" ? "box" : "unit", dispatched: status === "dispatched" ? (u.dispatchDate ? String(u.dispatchDate).slice(0, 10) : "yes") : null, lots: lots.map((l) => l.lot), href: erpTraceHref(orderTraceCode(n(u.orderNo))) }]
+    ? [{ customer: s(u.customer), customerId: "", orderNo: n(u.orderNo), bill: u.bill == null ? null : s(u.bill), sku: s(u.sku), qty: 1, unit: u.kind === "box" ? "box" : "unit", dispatched: status === "dispatched" ? (u.dispatchDate ? fd(String(u.dispatchDate).slice(0, 10)) : "yes") : null, lots: lots.map((l) => l.lot), href: erpTraceHref(orderTraceCode(n(u.orderNo))) }]
     : [];
   return {
     kind: "unit",
@@ -532,24 +533,26 @@ export async function traceDashboard(): Promise<TraceDashboard> {
     q(sql`select s.at, s.code, s.order_no as "orderNo", s.result, s.message, u.name as by from erp_dispatch_scans s left join users u on u.id = s.by_id order by s.at desc limit 25`),
   ]);
   const today = [
-    { l: "SFG produced", v: `${Math.round(n(f.sfg))} L`, sub: `${n(f.sfgLots)} lot${n(f.sfgLots) === 1 ? "" : "s"}`, href: erpLink("sfgBatches") },
-    { l: "Refilled", v: `${n(f.refilled)} cans`, href: erpLink("fgFill") },
-    { l: "Packed", v: `${n(f.packed)} boxes`, sub: `${n(f.minted)} box ids minted`, href: erpLink("packBatches") },
-    { l: "Labels printed", v: String(n(f.printed)), href: erpLink("units") },
-    { l: "Scanned at dispatch", v: String(n(f.scanned)), href: erpDispatchHref() },
-    { l: "Boxes dispatched", v: String(n(f.dispatched)), href: erpLink("allUnits") },
-    { l: "Packing batches open", v: String(n(f.packOpen)), sub: "cans still to draw", href: erpLink("packBatches") },
+    { l: "SFG produced", v: `${nf(Math.round(n(f.sfg)))} L`, sub: `${nf(n(f.sfgLots))} lot${n(f.sfgLots) === 1 ? "" : "s"}`, href: erpLink("sfgBatches") },
+    { l: "Refilled", v: `${nf(n(f.refilled))} cans`, href: erpLink("fgFill") },
+    { l: "Packed", v: `${nf(n(f.packed))} boxes`, sub: `${nf(n(f.minted))} box ids minted`, href: erpLink("packBatches") },
+    { l: "Labels printed", v: nf(n(f.printed)), href: erpLink("units") },
+    { l: "Scanned at dispatch", v: nf(n(f.scanned)), href: erpDispatchHref() },
+    { l: "Units dispatched", v: nf(n(f.dispatched)), href: erpLink("allUnits", { cf: JSON.stringify({ status: { in: ["Dispatched"] } }) }) },
+    { l: "Packing batches open", v: nf(n(f.packOpen)), sub: "cans still to draw", href: erpLink("packBatches") },
   ];
+  const traceScreen = erpScreen("trace");
+  const scansHref = `${traceScreen ? erpHref(traceScreen) : erpLink("trace")}#scans`;
   const ex: TraceDashboard["exceptions"] = [
-    { l: "Pack-size / product mismatches today", n: n(f.mismatches), tone: "bad", href: "/erp/trace#scans", sub: "Scans stopped at the desk" },
-    { l: "Duplicate scans today", n: n(f.duplicates), tone: "bad", href: "/erp/trace#scans", sub: "A box already scanned or already gone" },
-    { l: "Other refused scans today", n: n(f.blocked), tone: "warn", href: "/erp/trace#scans", sub: "Unknown code, wrong godown, box on hold" },
+    { l: "Pack-size / product mismatches today", n: n(f.mismatches), tone: "bad", href: scansHref, sub: "Scans stopped at the desk" },
+    { l: "Duplicate scans today", n: n(f.duplicates), tone: "bad", href: scansHref, sub: "A box already scanned or already gone" },
+    { l: "Other refused scans today", n: n(f.blocked), tone: "warn", href: scansHref, sub: "Unknown code, wrong godown, box on hold" },
     { l: "Overrides waiting for approval", n: n(f.overrides), tone: "warn", href: erpDispatchHref(), sub: "A mismatched box somebody asked to send" },
-    { l: "Boxes scanned, not yet dispatched", n: n(f.awaitingDispatch), tone: "warn", href: erpLink("units"), sub: "On an order, waiting for Do Verified" },
-    { l: "Boxes on hold", n: n(f.held), tone: "warn", href: erpLink("units"), sub: "Cannot be scanned until released" },
-    { l: "Boxes in stock without a printed label", n: n(f.unlabelled), tone: "warn", href: erpLink("units"), sub: "Print before they go to the shelf" },
-    { l: "SFG lots waiting for QC", n: n(f.qcPending), tone: "warn", href: erpLink("sfgBatches"), sub: "They cannot be refilled until approved" },
-    { l: "SFG lots rejected at QC", n: n(f.qcRejected), tone: "bad", href: erpLink("sfgBatches"), sub: "Trace them to see what was filled" },
+    { l: "Boxes scanned, not yet dispatched", n: n(f.awaitingDispatch), tone: "warn", href: erpLink("units", { cf: JSON.stringify({ status: { in: ["Scanned for dispatch"] } }) }), sub: "On an order, waiting for dispatch" },
+    { l: "Boxes on hold", n: n(f.held), tone: "warn", href: erpLink("units", { flg: "unitHold" }), sub: "Cannot be scanned until released" },
+    { l: "Boxes in stock without a printed label", n: n(f.unlabelled), tone: "warn", href: erpLink("units", { flg: "unlabelled" }), sub: "Print before they go to the shelf" },
+    { l: "SFG lots waiting for QC", n: n(f.qcPending), tone: "warn", href: erpLink("sfgBatches", { flg: "qcPending" }), sub: "They cannot be refilled until approved" },
+    { l: "SFG lots rejected at QC", n: n(f.qcRejected), tone: "bad", href: erpLink("sfgBatches", { flg: "qcRejected" }), sub: "Trace them to see what was filled" },
   ];
   return {
     today,

@@ -8,7 +8,7 @@ import { inquiryGodowns, inquiryItems, stockInquiry } from "@/lib/erp/stock-inqu
 import { stockRowActions } from "@/lib/erp/stock-adjust";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpLink } from "@/lib/erp/registry";
-import { nf } from "@/lib/erp/ui";
+import { fd, nf } from "@/lib/erp/ui";
 import { Card, cx, EmptyState, MetricStrip, SectionLabel, Td, Th, Tr } from "@/components/ui/primitives";
 import { Page, PageLinks } from "../_ui/page-head";
 import { linkClass, SectionTitle, SubTitle } from "../_ui/look";
@@ -83,7 +83,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
               { label: "In stock now", value: `${nf(inq.stockNow)} ${u}`, sub: `${nf(inq.lots.length)} ${inq.lots.length === 1 ? "lot" : "lots"}${godownId ? "" : ` · ${nf(new Set(inq.lots.map((l) => l.godown)).size)} godowns`}` },
               { label: `In · ${periodLabel(pd)}`, value: `${nf(inq.totalIn)} ${u}`, tone: "success" },
               { label: `Out · ${periodLabel(pd)}`, value: `${nf(inq.totalOut)} ${u}`, tone: inq.totalOut ? "danger" : "ink" },
-              { label: "Adjusted by hand", value: `${inq.adjusted > 0 ? "+" : ""}${nf(inq.adjusted)} ${u}` },
+              { label: `Adjusted by hand · ${periodLabel(pd)}`, value: `${inq.adjusted > 0 ? "+" : ""}${nf(inq.adjusted)} ${u}` },
             ]}
           />
 
@@ -114,7 +114,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
                           </NavLink>
                         </Td>
                         <Td>{l.godown}</Td>
-                        <Td className="text-muted">{l.since}</Td>
+                        <Td className="text-muted">{fd(l.since)}</Td>
                         <Td align="right" className={cx("tabular-nums", l.stock < 0 && "text-danger")}>
                           {nf(l.stock)} {u}
                         </Td>
@@ -157,7 +157,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
                 <tbody>
                   {window.from && !inq.capped ? (
                     <Tr>
-                      <Td className="text-muted">{window.from}</Td>
+                      <Td className="text-muted">{fd(window.from)}</Td>
                       <Td className="text-muted">Opening balance</Td>
                       <Td />
                       <Td />
@@ -178,7 +178,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
                   ) : (
                     inq.movements.map((m, i) => (
                       <Tr key={i}>
-                        <Td className="whitespace-nowrap">{m.date}</Td>
+                        <Td className="whitespace-nowrap">{fd(m.date)}</Td>
                         <Td>
                           <span className="block">{m.kind}</span>
                           {m.note || m.by ? <span className="block text-meta text-muted">{[m.note, m.by].filter(Boolean).join(" · ")}</span> : null}

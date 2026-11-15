@@ -53,6 +53,8 @@ export const dynamic = "force-dynamic";
 const BOARD = new Set(["transport", "toTransport", "pendingLr", "trackLr", "delivered", "lrMessages", "freight", "transporters"]);
 /* Trips & freight and Paid freight became Transport expenses. */
 const RETIRED_VIEWS = new Set(["trips", "paidFreight"]);
+/* One limit, so Today's count and the Customer messages tab read the same messages. */
+const MESSAGE_LIMIT = 500;
 
 export default async function LogisticsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();
@@ -105,7 +107,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     consignments(),
     /* The desk compares each copy with the ones attached lately, so it reads those too. */
     view === "pendingLr" ? uploadedLrs({ status: "all", recentDays: 120 }) : view === "transport" ? uploadedLrs() : view === "trackLr" ? uploadedLrs({ kind: "signed_copy" }) : Promise.resolve([]),
-    view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
+    view === "lrMessages" || view === "transport" ? messages({ limit: MESSAGE_LIMIT }) : Promise.resolve([]),
     view === "transporters" || view === "pendingLr" || view === "freight" || view === "trackLr" ? transporters() : Promise.resolve([]),
     canWrite ? lrUploadKit() : Promise.resolve(null),
   ]);
@@ -134,7 +136,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
         </div>
       ) : null}
 
-      {view === "transport" ? <Overview rows={rows} lrsWaiting={lrs.filter((l) => l.status === "unassigned").length} messagesWaiting={waitingMessages} today={today} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} /> : null}
+      {view === "transport" ? <Overview rows={rows} lrsWaiting={lrs.filter((l) => l.status === "unassigned" && l.kind === "lr").length} messagesWaiting={waitingMessages} today={today} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} /> : null}
       {view === "toTransport" ? <ToTransport rows={rows.filter((c) => c.phase === "toTransport")} today={today} canWrite={canWrite} /> : null}
       {view === "pendingLr" ? (
         <DocumentsDesk

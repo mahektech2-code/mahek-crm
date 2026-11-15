@@ -32,7 +32,7 @@ export default async function ErpDashboard() {
     <div className="px-6 pt-6 pb-10">
       {/* The v4 greeting: the day and the place above, the person in large type. */}
       <div className="text-meta text-muted">
-        {today} · {where ?? "All godowns"}
+        {today} · {where ?? "No working location · figures for every godown"}
       </div>
       <PageHeader title={<span className="text-2xl leading-8">{`${hello}, ${first}`}</span>} />
       {moneyOff ? <p className="-mt-3 mb-5 text-meta text-muted">Money figures are not on your account.</p> : null}
