@@ -28,17 +28,20 @@ export function SearchBox({
   onClear,
   placeholder,
   autoFocus = false,
+  bg = C.surface,
 }: {
   value: string;
   onChange: (v: string) => void;
   onClear: () => void;
   placeholder: string;
   autoFocus?: boolean;
+  /** The pill's fill — white on the canvas and in a lavender hero, wash inside a white sheet. */
+  bg?: string;
 }) {
   return (
     <View style={{ flex: 1, minWidth: 0, position: 'relative', justifyContent: 'center' }}>
-      <View style={{ position: 'absolute', left: 12, zIndex: 1 }}>
-        <Icon name="search" size={18} color={C.muted} strokeWidth={1.5} />
+      <View style={{ position: 'absolute', left: 16, zIndex: 1 }}>
+        <Icon name="search" size={18} color={C.muted} strokeWidth={2} />
       </View>
       <TextInput
         value={value}
@@ -50,15 +53,13 @@ export function SearchBox({
         accessibilityLabel={placeholder}
         autoFocus={autoFocus}
         style={{
-          minHeight: 46,
-          paddingLeft: 38,
-          paddingRight: value ? 44 : 12,
-          borderWidth: 1,
-          borderColor: C.border,
-          borderRadius: radius.md,
+          minHeight: 48,
+          paddingLeft: 44,
+          paddingRight: value ? 48 : 16,
+          borderRadius: 24,
           fontSize: 15,
           color: C.ink,
-          backgroundColor: C.surface,
+          backgroundColor: bg,
         }}
       />
       {value ? (
@@ -67,8 +68,18 @@ export function SearchBox({
           accessibilityRole="button"
           accessibilityLabel="Clear the search"
           hitSlop={4}
-          style={{ position: 'absolute', right: 0, width: 44, height: 46, alignItems: 'center', justifyContent: 'center' }}>
-          <Icon name="close" size={18} color={C.muted} strokeWidth={1.5} />
+          style={{ position: 'absolute', right: 2, width: 44, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+          <View
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 14,
+              backgroundColor: bg === C.surface ? C.canvas : C.surface,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <Icon name="close" size={12} color={C.ink} strokeWidth={2.4} />
+          </View>
         </Pressable>
       ) : null}
     </View>
@@ -87,9 +98,11 @@ export function ToolButton({
   label: string;
   onPress: () => void;
   on?: boolean;
-  tone?: 'plain' | 'primary';
+  /** `navy` is the V3 sort button — navy disc, lime glyph. */
+  tone?: 'plain' | 'primary' | 'navy';
 }) {
-  const filled = tone === 'primary';
+  const filled = tone === 'primary' || on;
+  const navy = tone === 'navy';
   return (
     <Pressable
       onPress={onPress}
@@ -97,17 +110,15 @@ export function ToolButton({
       accessibilityLabel={label}
       accessibilityState={{ selected: on }}
       style={({ pressed }) => ({
-        width: 46,
-        height: 46,
-        borderRadius: radius.md,
-        borderWidth: 1,
-        borderColor: filled ? C.primary : on ? C.primaryEdge : C.border,
-        backgroundColor: filled ? C.primary : on ? C.primaryTint : pressed ? C.wash : C.surface,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: navy ? C.navy : filled ? C.primary : pressed ? C.wash : C.surface,
         alignItems: 'center',
         justifyContent: 'center',
-        opacity: pressed && filled ? 0.85 : 1,
+        opacity: pressed && (filled || navy) ? 0.85 : 1,
       })}>
-      <Icon name={icon} size={20} color={filled ? C.surface : on ? C.primaryDeep : C.body} />
+      <Icon name={icon} size={20} color={navy ? C.lime : filled ? C.surface : C.ink} strokeWidth={2} />
     </Pressable>
   );
 }
@@ -126,23 +137,39 @@ export function ChipRow<K extends string>({
   value,
   onChange,
   counts,
+  decor,
+  wrap = false,
 }: {
   chips: readonly { value: K; label: string }[];
   value: K;
   onChange: (v: K) => void;
   counts?: Partial<Record<K, number>> | null;
+  /**
+   * V3's glyph and ink per chip. `iconOnly` draws the glyph in place of the
+   * label (the label still reaches a screen reader) — "Owes money" is a ₹ card.
+   */
+  decor?: Partial<Record<K, { icon?: IconName; ink?: string; iconInk?: string; iconOnly?: boolean }>>;
+  /** Wrap onto several lines rather than scroll sideways. */
+  wrap?: boolean;
 }) {
+  const Outer = wrap ? View : ScrollView;
   return (
-    <ScrollView
+    <Outer
       horizontal
       showsHorizontalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-      style={{ marginHorizontal: -16, flexGrow: 0 }}
-      contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 2 }}>
+      {...(wrap
+        ? { style: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 } as const }
+        : {
+            style: { marginHorizontal: -16, flexGrow: 0 },
+            contentContainerStyle: { gap: 8, paddingHorizontal: 16, paddingVertical: 2 },
+          })}>
       {chips.map((c) => {
         const on = c.value === value;
         const n = counts?.[c.value];
         const quiet = n === 0 && !on;
+        const d = decor?.[c.value];
+        const ink = on ? C.surface : quiet ? C.faint : d?.ink ?? C.ink;
         /* The tick is here, once, rather than at each screen that renders a
            row — the same place `Choice` keeps its own. Only a MOVE ticks:
            re-tapping the chip already chosen changes nothing, and a buzz for
@@ -164,24 +191,23 @@ export function ChipRow<K extends string>({
               alignItems: 'center',
               gap: 6,
               minHeight: 36,
-              paddingHorizontal: 12,
-              borderRadius: radius.pill,
-              borderWidth: 1,
-              borderColor: on ? C.ink : C.border,
-              backgroundColor: on ? C.ink : C.surface,
+              paddingHorizontal: on && !d?.icon ? 14 : 12,
+              borderRadius: 18,
+              backgroundColor: on ? C.navy : C.surface,
             }}>
-            <Text style={[{ fontSize: 13, color: on ? C.surface : quiet ? C.faint : C.body }, weight(on ? 600 : 500)]}>
-              {c.label}
-            </Text>
+            {d?.icon ? (
+              <Icon name={d.icon} size={14} color={on ? C.lime : quiet ? C.faint : d.iconInk ?? ink} strokeWidth={2.2} />
+            ) : null}
+            {d?.iconOnly && d.icon ? null : (
+              <Text style={[{ fontSize: 13, color: ink }, weight(700)]}>{c.label}</Text>
+            )}
             {n != null ? (
-              <Text style={[{ fontSize: 12, color: on ? C.surface : C.muted, opacity: on ? 0.8 : 1 }, weight(500)]}>
-                {grouped(n)}
-              </Text>
+              <Text style={[{ fontSize: 13, color: on ? C.lime : ink }, weight(700)]}>{grouped(n)}</Text>
             ) : null}
           </Pressable>
         );
       })}
-    </ScrollView>
+    </Outer>
   );
 }
 
