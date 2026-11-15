@@ -1,19 +1,19 @@
 import React from 'react';
-import { AppState, View } from 'react-native';
+import { AppState, Pressable, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { GLYPH, Glyph } from '../src/components/me/kit';
 import { Icon } from '../src/components/ui/Icon';
 import { Presence, animateLayout } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
-import { SetupStepList, useSetupActions } from '../src/components/setup/SetupSteps';
-import { color as C, radius, weight } from '../src/theme/tokens';
+import { RestartLine, SetupStepList, useSetupActions } from '../src/components/setup/SetupSteps';
+import { color as C, weight } from '../src/theme/tokens';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { readReadiness } from '../src/data/phone-readiness';
 import { readSetupSteps } from '../src/data/setup-walkthrough';
-import { RESTART_ANSWER } from '../src/engines/oem-keepalive';
 import { outstandingChecks, stepsForEntry } from '../src/engines/setup-steps';
 import type { Readiness } from '../src/engines/phone-readiness';
 import type { Step } from '../src/engines/setup-walkthrough';
@@ -118,24 +118,48 @@ export default function PhoneSetupScreen() {
 
   const views = steps ? stepsForEntry('gate', steps, readiness) : null;
 
+  const needed = views ? views.filter((v) => v.blocksDay && v.tone !== 'done').length : 0;
+  const doneN = views ? views.filter((v) => v.tone === 'done').length : 0;
+
   return (
     <AppFrame
       title="Before you start"
       activeTab={null}
       onBack={back.go}
+      showTitle={false}
+      hero={
+        <Text
+          accessibilityRole="header"
+          style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: HERO.lavender.ink, marginTop: 14 }, weight(800)]}>
+          Before you start
+        </Text>
+      }
       contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <Card>
-        <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          Set up your phone to record your day
-        </T>
-        <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          Some phones turn MBOS off in your pocket to save battery. Then the office sees nothing
-          you did all day. Your phone will not warn you. These few settings stop this.
-        </T>
+      <View style={{ backgroundColor: C.navy, borderRadius: 24, padding: 18 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 22,
+              backgroundColor: C.limeOnNavy,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <Glyph shapes={GLYPH.shieldTick} size={22} color={C.lime} />
+          </View>
+          <Text style={[{ flex: 1, fontSize: 17, lineHeight: 22, color: '#FFFFFF' }, weight(800)]}>
+            Set up your phone to record your day
+          </Text>
+        </View>
+        <Text
+          accessibilityLabel="Some phones turn MBOS off in your pocket to save battery. Then the office sees nothing you did all day. Your phone will not warn you. These few settings stop this."
+          style={{ fontSize: 13, lineHeight: 19, color: '#C9D1E0', marginTop: 10 }}>
+          Some phones turn MBOS off in your pocket to save battery — then the office sees nothing all day, and the
+          phone never warns you.
+        </Text>
         {/* THE QUESTION THIS SCREEN MADE PEOPLE RING THE OFFICE WITH.
-            
+
             It walks a man to an autostart switch and said nothing about what to
             do afterwards, so the team worked it out between themselves and
             arrived at rebooting the handset — which is not the step, costs him
@@ -144,47 +168,84 @@ export default function PhoneSetupScreen() {
             `engines/oem-keepalive.ts`, because the Keep tracking on screen asks
             for the same switches and two screens answering this differently is
             how a team ends up trusting neither. */}
-        <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-          {RESTART_ANSWER}
-        </T>
-      </Card>
+        <RestartLine color={C.onNavyMuted} style={{ marginTop: 8 }} />
+        {views ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 14 }}>
+            {needed > 0 ? (
+              <View
+                style={{
+                  height: 30,
+                  paddingHorizontal: 12,
+                  borderRadius: 15,
+                  backgroundColor: C.dangerBg,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 5,
+                }}>
+                <Icon name="lock" size={12} color={C.danger} strokeWidth={2.2} />
+                <Text style={[{ fontSize: 12, color: C.danger }, weight(800)]}>{needed + ' needed before punch-in'}</Text>
+              </View>
+            ) : null}
+            {doneN > 0 ? (
+              <View style={{ height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: C.limeOnNavy, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, color: C.lime }, weight(800)]}>{doneN + ' done'}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
 
       {readiness === null || steps === null ? (
         readFailed ? (
-          <View style={{ marginTop: 16, gap: 10 }}>
-            <T s="caption" style={{ textAlign: 'center', color: C.danger }}>
+          <View style={{ marginTop: 14, backgroundColor: C.dangerBg, borderRadius: 20, padding: 12, alignItems: 'center' }}>
+            <Text style={[{ fontSize: 12, color: C.danger, textAlign: 'center' }, weight(700)]}>
               Could not check your phone. Try again.
-            </T>
-            <SecondaryButton label="Check again" onPress={load} />
+            </Text>
+            <Pressable
+              onPress={load}
+              accessibilityRole="button"
+              style={({ pressed }) => ({
+                marginTop: 8,
+                height: 44,
+                paddingHorizontal: 16,
+                borderRadius: 22,
+                backgroundColor: C.surface,
+                justifyContent: 'center',
+                opacity: pressed ? 0.85 : 1,
+              })}>
+              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Check again</Text>
+            </Pressable>
           </View>
         ) : (
-          <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-            Checking your phone…
-          </T>
+          <View style={{ marginTop: 14, backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
+            <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center' }}>Checking your phone…</Text>
+          </View>
         )
       ) : null}
 
       {readiness?.deadEnd ? (
-        <View
-          style={{
-            marginTop: 12,
-            padding: 16,
-            borderRadius: radius.card,
-            borderWidth: 1,
-            borderColor: C.dangerBg,
-            backgroundColor: C.dangerBg,
-          }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Icon name="lock" size={18} color={C.danger} strokeWidth={1.6} />
-            <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Call the office</T>
+        <View style={{ marginTop: 12, padding: 18, borderRadius: 24, backgroundColor: C.danger }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: 'rgba(255,255,255,0.18)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <Icon name="lock" size={20} color="#FFFFFF" strokeWidth={2} />
+            </View>
+            <Text style={[{ fontSize: 18, color: '#FFFFFF' }, weight(800)]}>Call the office</Text>
           </View>
           {/* NO WAY PAST, and no pretending there is one. Somebody at a desk
               has to walk him through his phone's own settings, and saying that
               plainly is more use than a button that cannot work. */}
-          <T s="small" style={{ color: C.danger, marginTop: 6 }}>
-            Your phone will not ask again for something MBOS needs. MBOS cannot fix this.
-            Call the office before you start the day. They will help you.
-          </T>
+          <Text style={{ fontSize: 13, lineHeight: 19, color: '#FFFFFF', opacity: 0.92, marginTop: 8 }}>
+            Your phone will not ask again for something MBOS needs. MBOS cannot fix this. Call before you start the
+            day — they will help.
+          </Text>
         </View>
       ) : null}
 
@@ -193,17 +254,34 @@ export default function PhoneSetupScreen() {
       {/* Arrives in place rather than appearing, so the way out reads as the
           result of the last row turning green. */}
       <Presence show={!!readiness?.mayCheckIn} distance={8}>
-        <PrimaryButton
-          label="Done. Go and punch in"
+        <Pressable
           onPress={back.go}
-          style={{ marginTop: 16, borderRadius: radius.xl }}
-        />
+          accessibilityRole="button"
+          accessibilityLabel="Done. Go and punch in"
+          style={({ pressed }) => ({
+            marginTop: 14,
+            height: 60,
+            borderRadius: 30,
+            backgroundColor: C.navy,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+            opacity: pressed ? 0.88 : 1,
+          })}>
+          <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Done. Go and punch in</Text>
+          <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, justifyContent: 'center' }}>
+            <Icon name="forward" size={14} color={C.navy} strokeWidth={2.6} />
+          </View>
+        </Pressable>
       </Presence>
 
       {readiness && !readiness.mayCheckIn && !readiness.deadEnd ? (
-        <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          Finish the steps marked “Needed before you punch in”. Then you can start your day.
-        </T>
+        <Text
+          accessibilityLabel="Finish the steps marked “Needed before you punch in”. Then you can start your day."
+          style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 14, textAlign: 'center' }}>
+          Finish the steps marked “Needed before you punch in” to start your day.
+        </Text>
       ) : null}
     </AppFrame>
   );

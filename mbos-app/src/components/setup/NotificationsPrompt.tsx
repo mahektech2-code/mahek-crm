@@ -67,41 +67,45 @@ export function NotificationsPrompt() {
           accessibilityLabel="MBOS tells you when a task is due, your route changes or an order is refused. Without notifications you only see these when you open the app."
           style={{ marginTop: 12 }}>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {['Task due', 'Route changed', 'Order refused'].map((w) => (
-              <View key={w} style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.canvas, justifyContent: 'center' }}>
-                <T style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{w}</T>
-              </View>
-            ))}
+            {['Task due', 'Route changed', 'Order refused'].map((w) => {
+              /* A refusal is the one of the three that costs him a ring-back. */
+              const red = w === 'Order refused';
+              return (
+                <View
+                  key={w}
+                  style={{ height: 30, paddingHorizontal: 10, borderRadius: 15, backgroundColor: red ? C.dangerBg : C.canvas, justifyContent: 'center' }}>
+                  <T style={[{ fontSize: 12, color: red ? C.danger : C.ink }, weight(600)]}>{w}</T>
+                </View>
+              );
+            })}
           </View>
-          <T style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 8 }}>
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 8 }}>
             Without them you only see these when you open the app.
           </T>
         </View>
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Later"
-            onPress={later}
-            style={({ pressed }) => [btn, { flex: 1, backgroundColor: C.canvas, opacity: pressed ? 0.85 : 1 }]}>
-            <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Later</T>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={busy ? 'Asking' : 'Turn on'}
-            accessibilityState={{ busy }}
-            disabled={busy}
-            onPress={() => {
-              setBusy(true);
-              void turnOnNotifications()
-                .then((r) => {
-                  if (r.ok) setOpen(false);
-                })
-                .finally(() => setBusy(false));
-            }}
-            style={({ pressed }) => [btn, { flex: 1.6, backgroundColor: C.navy, opacity: busy ? 0.7 : pressed ? 0.9 : 1 }]}>
-            <T style={[{ fontSize: 16, color: C.onNavy }, weight(700)]}>{busy ? 'Asking…' : 'Turn on'}</T>
-          </Pressable>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={busy ? 'Asking' : 'Turn on'}
+          accessibilityState={{ busy }}
+          disabled={busy}
+          onPress={() => {
+            setBusy(true);
+            void turnOnNotifications()
+              .then((r) => {
+                if (r.ok) setOpen(false);
+              })
+              .finally(() => setBusy(false));
+          }}
+          style={({ pressed }) => [btn, { marginTop: 14, backgroundColor: C.primary, opacity: busy ? 0.7 : pressed ? 0.9 : 1 }]}>
+          <T style={[{ fontSize: 16, color: C.onNavy }, weight(700)]}>{busy ? 'Asking…' : 'Turn on'}</T>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Later"
+          onPress={later}
+          style={({ pressed }) => ({ marginTop: 8, minHeight: 48, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
+          <T style={[{ fontSize: 15, color: C.muted }, weight(600)]}>Later</T>
+        </Pressable>
       </View>
     </BottomSheet>
   );

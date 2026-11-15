@@ -625,7 +625,7 @@ export default function SyncScreen() {
         accessibilityLabel={notice.title + '. ' + notice.detail}
         style={({ pressed }) => ({
           marginTop: 10,
-          paddingVertical: notice.tone === 'danger' ? 14 : 14,
+          paddingVertical: 14,
           paddingHorizontal: 16,
           borderRadius: 22,
           borderWidth: notice.tone === 'danger' ? 2 : 0,
