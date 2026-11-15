@@ -13,8 +13,9 @@ import {
   type LeadFilterOptions,
 } from "@/components/leads/filter-bar";
 import type { PlaceFilterOptions } from "@/lib/place-filters";
-import { LEGACY_SALES_TYPE } from "@/lib/lead-filters";
-import { SALES_TYPES, stageLabel, type LeadStage } from "@/lib/lead-labels";
+import { stageLabel, type LeadStage } from "@/lib/lead-labels";
+import { displayStageOf, stepsOf, type DisplayStage } from "@/lib/engines/lead-ladder";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import type { BoardCard, LeadBoard } from "@/lib/services/lead-board-service";
 import { AdvanceStage } from "../record/advance-stage";
 import { Segmented } from "@/components/leads/segmented";
@@ -34,8 +35,6 @@ import { Button, Empty, Pill, plural } from "@/components/console/parts";
 const FILTER_COLUMNS = LEAD_FILTER_COLUMNS.filter((c) => c !== "salesType");
 type FilterColumn = LeadFilterColumn;
 
-/** The URL's word for the leads that carry no sales type. See `page.tsx`. */
-const LEGACY = "legacy";
 
 /**
  * A move somebody has begun by dragging, waiting on the advance flow.
@@ -55,7 +54,6 @@ type Refusal = { name: string; says: string };
 export function BoardScreen({
   workspace,
   board,
-  typeKey,
   filters,
   options,
   places,
@@ -67,7 +65,6 @@ export function BoardScreen({
   workspace: LeadWorkspace;
   board: LeadBoard;
   /** Which ladder is drawn — a sales type, or `legacy`. */
-  typeKey: string;
   filters: Record<FilterColumn, string[]>;
   options: LeadFilterOptions;
   /** State → city → area, counted over the leads list. See the Where picker. */
@@ -78,6 +75,7 @@ export function BoardScreen({
   overrideAllowed: boolean;
 }) {
   const router = useRouter();
+  const inHub = useInLeadHub();
   const search = useSearchParams();
 
   /* One place a filter is written to the URL, the same helper the list uses:
@@ -142,7 +140,7 @@ export function BoardScreen({
     setDragging(null);
     if (!card) return;
     setRefusal(null);
-    if (card.stage === to) return;
+    if (displayStageOf(card.stage) === to && displayStageOf(card.next.to) !== to) return;
 
     if (card.next.noNextRung) {
       setRefusal({
@@ -151,16 +149,18 @@ export function BoardScreen({
       });
       return;
     }
-    if (card.next.to !== to) {
+    /* Columns are the seven stages; a move is still ONE rung, so a drop is
+       accepted on the column that rung is drawn under. */
+    if (displayStageOf(card.next.to) !== to) {
       setRefusal({
         name: card.name,
-        says: `A board move is one rung. ${stageLabel(card.stage)} goes to ${stageLabel(
+        says: `A board move is one step. ${stageLabel(card.stage)} goes to ${stageLabel(
           card.next.to,
-        )} next — skipping a rung, going back down or marking it lost is done on the lead's own record, where the reason field is.`,
+        )} next — skipping a step, going back or marking it lost is done on the lead's own record, where the reason field is.`,
       });
       return;
     }
-    setPending({ card, from: card.stage, to });
+    setPending({ card, from: card.stage, to: card.next.to });
   }
 
   /* Did the move land? Derived from the board that came back after the refresh
@@ -175,35 +175,17 @@ export function BoardScreen({
   const listHref = (stage?: LeadStage) => {
     const next = new URLSearchParams(search.toString());
     next.delete("type");
-    next.set("salesType", typeKey === LEGACY ? LEGACY_SALES_TYPE : typeKey);
-    if (stage) next.set("stage", stage);
+    /* A column is a stage; the list filters by the rungs drawn under it. */
+    if (stage) next.set("stage", stepsOf(stage as DisplayStage, null).join(","));
     return leadHref(workspace, `leads?${next.toString()}`);
   };
 
-  const ladders = [
-    ...SALES_TYPES.filter((t) => !t.retired || t.code === typeKey).map((t) => ({
-      key: t.code as string,
-      label: SHORT_TYPE[t.code] ?? t.label,
-      title: t.hint,
-    })),
-    { key: LEGACY, label: "Original", title: "Leads raised before the funnel existed." },
-  ];
 
   return (
     <div className="p-6">
       <LeadTabs workspace={workspace} />
 
       <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
-        <Segmented
-          label="Ladder"
-          items={ladders.map((l) => ({
-            key: l.key,
-            label: l.label,
-            title: l.title,
-            on: typeKey === l.key,
-            onPick: () => navigate({ type: l.key }),
-          }))}
-        />
         <LeadFilterBar
           className="min-w-0 flex-[1_1_320px]"
           columns={FILTER_COLUMNS}
@@ -216,7 +198,7 @@ export function BoardScreen({
           }
           total={board.total}
           listTotal={board.listTotal}
-          totalSuffix=" on this ladder"
+          totalSuffix=""
         />
         {offLadder.length ? (
           <span className="text-[13px] text-muted">
@@ -224,7 +206,7 @@ export function BoardScreen({
             {" — not on the board"}
           </span>
         ) : null}
-        <Segmented
+        {inHub ? null : <Segmented
           label="Layout"
           items={[
             {
@@ -235,7 +217,7 @@ export function BoardScreen({
             },
             { key: "board", label: "Board", on: true },
           ]}
-        />
+        />}
       </div>
 
       {pending ? (
@@ -263,8 +245,8 @@ export function BoardScreen({
 
       {board.total === 0 ? (
         <Empty
-          title={anyFilter ? "Nothing matches those filters" : "Nothing on this ladder"}
-          body={anyFilter ? "Clear a filter or pick another ladder." : "Pick another ladder."}
+          title={anyFilter ? "Nothing matches those filters" : "No leads yet"}
+          body={anyFilter ? "Clear a filter to see more." : "Add a lead to start."}
         />
       ) : (
         <div className="overflow-x-auto pb-2">
@@ -302,12 +284,6 @@ export function BoardScreen({
   );
 }
 
-/** The ladder's word on the switch. */
-const SHORT_TYPE: Partial<Record<string, string>> = {
-  direct: "Direct",
-  third_party: "Third-party",
-  distributor: "Distributor",
-};
 
 /* ─────────────────────────────────────────────────────────────── a column */
 

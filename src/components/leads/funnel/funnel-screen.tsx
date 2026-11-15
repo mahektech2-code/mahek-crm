@@ -5,9 +5,8 @@ import { REPORT_PERIOD_LABELS, type ReportPeriod } from "@/lib/business-date";
 import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
 import { LEGACY_SALES_TYPE } from "@/lib/lead-filters";
 import type { Cohort, RungFunnel } from "@/lib/services/lead-funnel-service";
-import type { SharedFunnel, StepLadder } from "@/lib/engines/lead-funnel-shape";
+import type { SharedFunnel } from "@/lib/engines/lead-funnel-shape";
 import { SharedBarFunnel } from "./shared-bar-funnel";
-import { DistributorStepLadder } from "./distributor-step-ladder";
 import { LeadTabs } from "../lead-tabs";
 import { Banner, FilterChips, MetricRow, Pill, ScreenHeader } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
@@ -37,7 +36,6 @@ export function FunnelScreen({
   workspace,
   funnels,
   shared,
-  distributor,
   unpictured,
   cohort,
   period,
@@ -49,8 +47,6 @@ export function FunnelScreen({
   funnels: RungFunnel[];
   /** §8.3a — direct and third-party in one funnel, shaped by the engine. */
   shared: SharedFunnel;
-  /** §8.3b — the appointment track, as steps rather than bars. */
-  distributor: StepLadder;
   /** Ladders neither picture covers. The legacy six, in practice. */
   unpictured: RungFunnel[];
   cohort: Cohort;
@@ -94,28 +90,15 @@ export function FunnelScreen({
             sub: "On hold — off every ladder",
             tone: totals.parked > 0 ? "warn" : undefined,
           },
-          { label: "Arrived", value: String(totals.arrived), sub: "Won, customer, distributor" },
+          { label: "Arrived", value: String(totals.arrived), sub: "Became customers" },
           { label: "Lost", value: String(totals.lost) },
         ]}
       />
 
-      {/*
-        §8.3 ASKS FOR TWO PICTURES AND THEY ARE DRAWN DIFFERENTLY, which is the
-        whole of the section. The two shop tracks are one sale and are measured
-        in one funnel, split by who holds the invoice; the appointment track is
-        a sequence of approvals and is drawn as a ladder, because the gap
-        between two approvals is a queue and a bar chart of it would read as a
-        drop-off rate that does not exist.
-
-        Side by side rather than stacked, and NOT as parallel columns of one
-        table: row four would be "sample_trial" on one and "management_review"
-        on the other, and a row you can read across is an invitation to treat
-        them as the same distance up the same climb.
-      */}
-      <div className="grid gap-4 xl:grid-cols-2">
-        <SharedBarFunnel workspace={workspace} funnel={shared} />
-        <DistributorStepLadder workspace={workspace} ladder={distributor} />
-      </div>
+      {/* ONE FUNNEL, SEVEN STAGES (Nov 2026). Every lead climbs one ladder, so
+          one picture holds the whole book, split by who bills them. The retired
+          distributor ladder has its own screens. */}
+      <SharedBarFunnel workspace={workspace} funnel={shared} />
 
       {/*
         AND THE LADDERS NEITHER PICTURE COVERS, which is the legacy six.

@@ -3,7 +3,6 @@ import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
-import { SALES_TYPES, type LeadSalesType } from "@/lib/lead-labels";
 import { leadBoard } from "@/lib/services/lead-board-service";
 import { canLead } from "@/lib/services/lead-console-service";
 import { leadFilterOptions, leadPlaceOptions } from "@/lib/services/sales-service";
@@ -19,13 +18,6 @@ import { BoardScreen } from "@/components/leads/board/board-screen";
  * empty string: an absent parameter means "the default" and an empty one would
  * be indistinguishable from it on the back button.
  */
-const LEGACY = "legacy";
-
-function salesTypeFrom(asked: string | undefined): LeadSalesType | null | undefined {
-  if (asked === LEGACY) return null;
-  return SALES_TYPES.find((t) => t.code === asked)?.code;
-}
-
 /**
  * Screen 3 — the same book as columns per rung.
  *
@@ -65,13 +57,6 @@ export async function Body({
   const params = await searchParams;
   const user = await requireUser();
 
-  /* Direct is the default because it is the ladder most of this book is on,
-     and an unrecognised value falls back to it rather than to an empty board:
-     a typo in a pasted link should cost a wrong ladder, not a screen that
-     reads as a book with nothing in it. */
-  const asked = salesTypeFrom(params.type);
-  const salesType: LeadSalesType | null = asked === undefined ? "direct" : asked;
-
   /* THE LIST'S FILTERS, and all of them — the place rungs and `priority` were simply
      missing here, so two narrowings that existed on the list did not exist on
      the board with nothing on either screen saying so. Both are read by
@@ -96,7 +81,6 @@ export async function Body({
 
   const [board, options, places] = await Promise.all([
     leadBoard(day, {
-      salesType,
       filters,
       health: {
         atRiskBelow: config["mbos.health.atRiskBelow"],
@@ -115,7 +99,6 @@ export async function Body({
   return (
     <BoardScreen workspace={workspace}
       board={board}
-      typeKey={salesType ?? LEGACY}
       filters={{
         owner: splitFilter(filters.owner),
         source: splitFilter(filters.source),

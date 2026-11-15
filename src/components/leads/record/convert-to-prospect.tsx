@@ -102,6 +102,12 @@ export function ConvertProvider({
   );
 }
 
+/** Whether the Convert dialog can be used here (null) or why not. */
+export function useConvertBlocked(): string | null {
+  const ctx = React.useContext(ConvertCtx);
+  return ctx ? ctx.blocked : "Not available here.";
+}
+
 /** The primary button. Drawn disabled, with the reason on hover, where it cannot be used. */
 export function ConvertButton({ label = "Convert to Prospect", size }: { label?: string; size?: "sm" }) {
   const ctx = React.useContext(ConvertCtx);

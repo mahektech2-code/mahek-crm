@@ -16,7 +16,7 @@ import type { LeadRecord } from "@/lib/services/lead-console-service";
 import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { NextActionModal } from "@/components/leads/actions/due-screen";
 import { AdvanceStage } from "./advance-stage";
-import { AnswerLink, ConvertButton } from "./convert-to-prospect";
+import { AnswerLink, ConvertButton, useConvertBlocked } from "./convert-to-prospect";
 
 /* ---------------------------------------------------------------------------
  * The lead record's frame, drawn the way the Leads frame draws everything
@@ -377,6 +377,7 @@ export function GateCard({
   /** Condition id → where it is answered. */
   fixes: Record<string, { label: string; tab: string }>;
 }) {
+  const convertBlocked = useConvertBlocked();
   if (verdict.noNextRung) {
     return (
       <Card title={parked ? "On hold" : "Top of the ladder"}>
@@ -392,19 +393,35 @@ export function GateCard({
   const listed = checklistFor(record.salesType, record.stage);
   const done = listed.filter((c) => !missingIds.has(c.id));
 
+  /* A Prospect moves to Qualification by the Sales Manager's verification, not
+     by a button here: the call is what opens it. */
+  const awaitingVerification = record.stage === "prospect" && !record.verifiedAt;
+  /* A move inside one of the seven stages is a step, said as one. */
+  const sameStage = displayStageOf(to) === displayStageOf(record.stage);
+  const heading = sameStage
+    ? `Next step: ${stageLabel(to)}`
+    : `To move to ${stageLabel(displayStageOf(to) ?? to)}`;
+
   return (
     <Card
-      label={`To reach ${stageLabel(to)}`}
-      title={`To reach ${stageLabel(to)}`}
+      label={heading}
+      title={heading}
       action={
-        verdict.open ? (
+        verdict.open && !awaitingVerification ? (
           <Pill tone="success">Ready</Pill>
         ) : (
-          <Pill tone="warn">{verdict.missing.length} missing</Pill>
+          <Pill tone="warn">{verdict.missing.length + (awaitingVerification ? 1 : 0)} missing</Pill>
         )
       }
     >
       <ul className="m-0 list-none p-0">
+        {awaitingVerification ? (
+          <li className="flex items-center gap-2.5 border-t border-divider py-2">
+            <span className="h-5 w-5 flex-none rounded-full border border-warn-line bg-warn-soft" />
+            <span className="flex-1 text-sm text-ink">The Sales Manager&rsquo;s verification call</span>
+            <span className="text-xs text-muted">Waiting</span>
+          </li>
+        ) : null}
         {done.map((c) => (
           <li key={c.id} className="flex items-center gap-2.5 border-t border-divider py-2">
             <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-success-soft text-xs text-success">
@@ -432,15 +449,26 @@ export function GateCard({
         })}
       </ul>
       <div className="mt-3 flex flex-wrap gap-2">
-        {to === "prospect" ? <ConvertButton label="Convert to Prospect…" size="sm" /> : null}
-        <AdvanceStage
-          customerId={record.customerId}
-          to={nextRung ?? null}
-          verdict={verdict}
-          canWork={canWork}
-          canOverride={canOverride && Boolean(nextRung) && !verdict.open}
-          overrideAllowed={overrideAllowed}
-        />
+        {/* ONE way to move a Suspect: the Convert dialog, which asks for what
+            is missing and refuses what the gate refuses. A second "Move to
+            Prospect" and a "Move anyway" beside it were three buttons for one
+            move, and the Prospect gate takes no override. */}
+        {awaitingVerification ? (
+          <p className="m-0 text-[13px] text-muted">
+            Qualification opens when the Sales Manager verifies this Prospect on their call.
+          </p>
+        ) : to === "prospect" && convertBlocked === null ? (
+          <ConvertButton label="Convert to Prospect…" size="sm" />
+        ) : (
+          <AdvanceStage
+            customerId={record.customerId}
+            to={nextRung ?? null}
+            verdict={verdict}
+            canWork={canWork}
+            canOverride={canOverride && Boolean(nextRung) && !verdict.open}
+            overrideAllowed={overrideAllowed}
+          />
+        )}
       </div>
     </Card>
   );

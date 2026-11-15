@@ -5,7 +5,8 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, asDate } from "../business-date";
 import { gateForNext, type GateVerdict, type LeadGateInput } from "../engines/lead-gates";
-import { ladderFor } from "../engines/lead-ladder";
+import { DISPLAY_STAGES, displayStageOf } from "../engines/lead-ladder";
+import { ALL_LEAD_STAGES } from "../lead-labels";
 import { getConfig } from "../config/store";
 import { figuresAreStale } from "./lead-service";
 import type { LeadFilters } from "../lead-filters";
@@ -47,6 +48,15 @@ const IST_DAY = sql.raw(`at time zone '${APP_TIMEZONE}'`);
  * carrying four hundred with nothing on the screen saying so.
  */
 export const BOARD_COLUMN_CAP = 50;
+
+/** The stage a stored rung is drawn under, in SQL — built from the engine's map,
+ *  never typed, so the board and every other screen cannot disagree. */
+const DISPLAY_SQL = sql.raw(
+  `case c.lead_stage::text ${ALL_LEAD_STAGES.map((st) => {
+    const d = displayStageOf(st) ?? st;
+    return `when '${st}' then '${d}'`;
+  }).join(" ")} else c.lead_stage::text end`,
+);
 
 export type BoardCard = {
   id: string;
@@ -118,27 +128,25 @@ export type LeadBoard = {
 export async function leadBoard(
   day: string,
   options: {
-    /** Null is the legacy ladder — the six rungs this product shipped with. */
-    salesType: LeadSalesType | null;
+    /** Kept for callers; the board now draws every lead that is not on the
+     *  retired distributor ladder, whatever its sales type. */
+    salesType?: LeadSalesType | null;
     filters?: LeadFilters;
     health: { atRiskBelow: number; strongAtOrAbove: number };
   },
 ): Promise<LeadBoard> {
   const scope = await managerScope();
   const filters = options.filters ?? {};
-  const ladder = ladderFor(options.salesType);
+  /* ONE BOARD, SEVEN COLUMNS (Nov 2026): every lead climbs one ladder, so the
+     columns are the seven stages people see and a lead sits under the stage
+     its rung belongs to. */
+  const ladder: readonly LeadStage[] = DISPLAY_STAGES;
   /* Read ONCE for the whole board rather than per row: whether sixty days have
      passed is a fact about the calendar, not about a lead. */
   const freshDays = (await getConfig())["leads.figuresFreshDays"];
 
-  /* A sales type is a column that can be null, so "this board" is two different
-     predicates and neither may be written as the other: `= null` matches
-     nothing, and an `is not distinct from` over an enum reads as cleverness
-     rather than as an answer. The legacy ladder IS the null case — see
-     LEGACY_LADDER, which exists precisely because nothing backfills one. */
-  const ofType = options.salesType
-    ? sql`and c.lead_sales_type::text = ${options.salesType}`
-    : sql`and c.lead_sales_type is null`;
+  /* The retired distributor ladder has its own screens; every other lead is here. */
+  const ofType = sql`and coalesce(c.lead_sales_type::text, '') <> 'distributor'`;
 
   const where = sql`
      where c.lead_stage is not null
@@ -157,7 +165,7 @@ export async function leadBoard(
   const [counted, book] = await Promise.all([
     db.execute<{ stage: string; total: number }>(sql`
       /* The older sample_received is read as Sample received & review: see lead-funnel-service. */
-      select case when c.lead_stage::text = 'sample_received' then 'sample_review' else c.lead_stage::text end as stage, count(*)::int as total
+      select ${DISPLAY_SQL} as stage, count(*)::int as total
         from customers c
         ${where}
         ${narrowed}
@@ -189,7 +197,7 @@ export async function leadBoard(
     with ranked as (
       select c.id,
              row_number() over (
-               partition by case when c.lead_stage::text = 'sample_received' then 'sample_review' else c.lead_stage::text end
+               partition by ${DISPLAY_SQL}
                    order by c.lead_next_follow_up_date asc nulls last,
                             c.lead_last_activity_date asc nulls last,
                             c.id desc
@@ -388,9 +396,10 @@ export async function leadBoard(
 
   const byStage = new Map<string, BoardCard[]>();
   for (const card of cards) {
-    const list = byStage.get(card.stage) ?? [];
+    const column = displayStageOf(card.stage) ?? card.stage;
+    const list = byStage.get(column) ?? [];
     list.push(card);
-    byStage.set(card.stage, list);
+    byStage.set(column, list);
   }
 
   const columns: BoardColumn[] = ladder.map((stage) => ({
@@ -409,7 +418,7 @@ export async function leadBoard(
   for (const n of totalByStage.values()) total += n;
 
   return {
-    salesType: options.salesType,
+    salesType: options.salesType ?? null,
     columns,
     offLadder,
     total,
