@@ -1,4 +1,5 @@
 import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
+import { SalesmanLink } from "@/components/leads/salesman-link";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import Link from "next/link";
 import { shortDate, stamp } from "@/lib/format";
@@ -260,12 +261,7 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
 
               <Cell truncate={160}>
                 {r.salesmanId ? (
-                  <Link
-                    href={leadHref(workspace, `people/${r.salesmanId}`)}
-                    className="no-underline"
-                  >
-                    {r.salesmanName}
-                  </Link>
+                  <SalesmanLink workspace={workspace} id={r.salesmanId} name={r.salesmanName} />
                 ) : (
                   <span className="text-warn-ink">Nobody</span>
                 )}

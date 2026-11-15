@@ -234,7 +234,7 @@ export function VerificationQueueScreen({
                     </span>
                   ) : null}
                   <a
-                    href={leadHref(workspace, `${r.customerId}/review`)}
+                    href={leadHref(workspace, `leads/${r.customerId}/review`)}
                     className="mr-2 inline-flex h-7 items-center rounded-[6px] bg-brand px-2.5 text-[12px] font-medium text-white hover:opacity-90"
                   >
                     Review answers
