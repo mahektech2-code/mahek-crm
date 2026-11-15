@@ -8,7 +8,7 @@ import type { ScanVerdict } from "@/lib/erp/engines/trace";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpDispatchDecideOverride, erpDispatchRequestOverride, erpDispatchScan, erpDispatchUnscan, erpDispatchVerify } from "@/lib/actions/erp-trace";
 import { Button, Card, cx, Input, Textarea } from "@/components/ui/primitives";
-import { fd } from "@/lib/erp/ui";
+import { fd, nf } from "@/lib/erp/ui";
 import { useErpUi } from "../_ui/erp-ui";
 import { Badge } from "../_ui/badge";
 import { LinkButton, linkClass, SubTitle } from "../_ui/look";
@@ -53,7 +53,8 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(today);
   const [vehicle, setVehicle] = useState("");
-  const [driver, setDriver] = useState("");
+  /* The order already names who carries it; start from that rather than a blank. */
+  const [driver, setDriver] = useState(board.transporter ?? "");
   const [remark, setRemark] = useState("");
   const [note, setNote] = useState<Record<string, string>>({});
   const [flash, setFlash] = useState<string | null>(null);
@@ -98,13 +99,25 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
     });
   };
 
-  const act = (fn: () => Promise<{ ok: boolean; error?: string; message?: string }>) =>
+  /* Every other button: the last message goes first, so an old red panel never
+     sits beside a new green one; a result that went through also takes the scan
+     answer off the screen; and the cursor goes back to the scan box, or the
+     next box a hand scanner reads is typed into nothing. */
+  const act = (fn: () => Promise<{ ok: boolean; error?: string; message?: string }>, after?: () => void) => {
+    setError(null);
+    setFlash(null);
     start(async () => {
       const res = await fn();
       if (!res.ok) setError({ title: "Not done", text: res.error ?? "That did not work." });
-      else setFlash(res.message ?? "Done");
+      else {
+        setFlash(res.message ?? "Done");
+        setLast(null);
+        after?.();
+      }
       router.refresh();
+      input.current?.focus();
     });
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -125,10 +138,16 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
               </div>
               <div className="flex-none text-right">
                 <div className="text-3xl leading-8 font-bold tracking-tight tabular-nums">
-                  <span className="text-ink">{totalScanned}</span>
-                  <span className="text-line-strong">/{totalTarget}</span>
+                  {totalTarget > 0 ? (
+                    <>
+                      <span className="text-ink">{nf(totalScanned)}</span>
+                      <span className="text-line-strong">/{nf(totalTarget)}</span>
+                    </>
+                  ) : (
+                    <span className="text-line-strong">—</span>
+                  )}
                 </div>
-                <div className="text-xs text-muted">scanned</div>
+                <div className="text-xs text-muted">{totalTarget > 0 ? "scanned" : "nothing to scan"}</div>
               </div>
             </div>
             <div className="px-5 py-4">
@@ -163,14 +182,16 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                 />
               ) : null}
             </form>
-            <div className="mt-3.5 flex items-center gap-3">
-              <span className="h-2 flex-1 overflow-hidden rounded-full bg-divider">
-                <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${totalTarget ? Math.round((100 * totalScanned) / totalTarget) : 0}%` }} />
-              </span>
-              <span className="flex-none text-meta text-body tabular-nums">
-                {totalScanned} of {totalTarget} scanned
-              </span>
-            </div>
+            {totalTarget > 0 ? (
+              <div className="mt-3.5 flex items-center gap-3">
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-divider">
+                  <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round((100 * totalScanned) / totalTarget)}%` }} />
+                </span>
+                <span className="flex-none text-meta text-body tabular-nums">
+                  {nf(totalScanned)} of {nf(totalTarget)} scanned
+                </span>
+              </div>
+            ) : null}
             </div>
             {lines.map((l) => (
               <div key={l.id} className={cx("flex items-center gap-4 border-t border-divider px-5 py-3", l.cancelled && "opacity-60")}>
@@ -194,7 +215,9 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                   ) : null}
                 </span>
                 <span className="flex-none text-sm text-ink tabular-nums">
-                  {l.scanned} / {l.target} <span className="text-muted">{l.boxed ? "boxes" : "units"}</span>
+                  {/* Counted the way the total above counts: never more scanned than the line takes. */}
+                  {nf(Math.min(l.scanned, l.target))} / {nf(l.target)} <span className="text-muted">{l.boxed ? "boxes" : "units"}</span>
+                  {l.scanned > l.target ? <span className="block text-right text-meta text-warn-ink">{nf(l.scanned - l.target)} extra</span> : null}
                 </span>
                 <span className="flex-none">
                   {l.dispatched ? (
@@ -249,6 +272,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                         rows={2}
                         placeholder="Why must this box go: who agreed, what the customer was told"
                       />
+                      {reason.trim().length < 10 ? <div className="mt-1 text-meta text-muted">Write at least 10 characters ({reason.trim().length} so far).</div> : null}
                       <div className="mt-2 flex gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setLast(null)}>
                           Cancel
@@ -265,9 +289,10 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
           ) : null}
 
           <Card className="overflow-hidden">
-            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Boxes on this order ({board.units.length})</SubTitle>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Boxes on this order ({nf(board.units.length)})</SubTitle>
             {board.units.length ? (
-              board.units.map((u) => (
+              <div className="max-h-96 overflow-y-auto">
+                {board.units.map((u) => (
                 <div key={u.id} className="flex items-center gap-3 border-b border-divider px-4 py-1.5 text-meta last:border-0">
                   <NavLink href={erpTraceHref(u.id)} className={linkClass("brand", "font-mono")}>
                     {u.id}
@@ -284,7 +309,8 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                     </LinkButton>
                   )}
                 </div>
-              ))
+                ))}
+              </div>
             ) : (
               <div className="px-4 py-3 text-meta text-muted">Nothing scanned yet.</div>
             )}
@@ -317,7 +343,15 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                   size="sm"
                   variant="primary"
                   disabled={pending || !billedWaiting.length || invoiceWaiting.length > 0 || gated.length > 0}
-                  onClick={() => act(() => erpDispatchVerify(board.orderNo, { date, vehicle, driver, remark }))}
+                  onClick={() =>
+                    act(
+                      () => erpDispatchVerify(board.orderNo, { date, vehicle, driver, remark }),
+                      () => {
+                        setVehicle("");
+                        setRemark("");
+                      },
+                    )
+                  }
                 >
                   Confirm dispatch
                 </Button>
@@ -377,7 +411,8 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
           <Card className="overflow-hidden">
             <SubTitle className="mb-0 border-b border-divider px-4 py-3">Scan log</SubTitle>
             {board.scans.length ? (
-              board.scans.map((s, i) => (
+              <div className="max-h-96 overflow-y-auto">
+                {board.scans.map((s, i) => (
                 <div key={i} className="border-b border-divider px-4 py-1.5 last:border-0">
                   <div className="flex items-center gap-2 text-meta">
                     <Badge label={s.result} tone={s.result === "ok" ? "success" : s.result === "mismatch" || s.result === "duplicate" ? "danger" : "warn"} />
@@ -388,7 +423,9 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                     {s.by ? ` · ${s.by}` : ""}
                   </div>
                 </div>
-              ))
+                ))}
+                {board.scans.length >= board.scanLimit ? <div className="px-4 py-2 text-meta text-muted">Showing the newest {board.scanLimit} scans. Older ones are kept but not listed here.</div> : null}
+              </div>
             ) : (
               <div className="px-4 py-3 text-meta text-muted">No scans yet.</div>
             )}

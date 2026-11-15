@@ -214,9 +214,13 @@ export type DispatchBoard = {
   invoiceNo: string | null;
   units: { id: string; lineId: string; sku: string; lotCode: string; status: string; scannedAt: string | null; by: string | null }[];
   scans: { at: string; code: string; result: string; message: string; by: string | null }[];
+  /** The most scans the board reads, newest first — the log says so when it reaches it. */
+  scanLimit: number;
   overrides: { id: string; unitId: string; lineId: string; ordered: string; scanned: string; mismatch: string; reason: string; status: string; requestedBy: string | null; requestedById: string | null; at: string; decidedBy: string | null; note: string | null }[];
   requireScan: boolean;
 };
+
+const SCAN_LOG_ROWS = 40;
 
 export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | null> {
   const lines = await scanLines(db, orderNo);
@@ -237,7 +241,7 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
     `),
     q<Row>(db, sql`
       select s.at, s.code, s.result, s.message, u.name as by from erp_dispatch_scans s left join users u on u.id = s.by_id
-       where s.order_no = ${orderNo} order by s.at desc limit 40
+       where s.order_no = ${orderNo} order by s.at desc limit ${SCAN_LOG_ROWS}
     `),
     q<Row>(db, sql`
       select x.id, x.unit_id as "unitId", x.order_id as "lineId", po.name as ordered, ps.name as scanned, x.mismatch, x.reason, x.status,
@@ -266,6 +270,7 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
       return { ...l, status: String(meta.get(l.id)?.status ?? ""), billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, lotAllocated: l.alloc.length > 0, target: l.target, scanned: l.scanned }) };
     }),
     units: units.map((u) => ({ id: String(u.id), lineId: String(u.lineId), sku: String(u.sku), lotCode: String(u.lotCode), status: String(u.status), scannedAt: u.scannedAt == null ? null : new Date(u.scannedAt as string).toISOString(), by: u.by == null ? null : String(u.by) })),
+    scanLimit: SCAN_LOG_ROWS,
     scans: scans.map((s) => ({ at: new Date(s.at as string).toISOString(), code: String(s.code), result: String(s.result), message: String(s.message), by: s.by == null ? null : String(s.by) })),
     overrides: overrides.map((o) => ({
       id: String(o.id),
