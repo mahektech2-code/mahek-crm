@@ -923,7 +923,7 @@ export function RequestDialog({
       return;
     }
     if (needsSalesType && !salesType) {
-      setError("Choose how this lead will be sold — Direct customer or Third Party Customer.");
+      setError("Choose how this lead will be sold — Direct customer or Third-party customer.");
       return;
     }
     if (needsType && !customerType) {
@@ -1004,9 +1004,9 @@ export function RequestDialog({
       {needsSalesType ? (
         <FieldLabel label="Sales type" className="mb-3">
           <Select value={salesType} onChange={(e) => setSalesType(e.target.value)} className="w-full">
-            <option value="">Not Decided — pick one…</option>
+            <option value="">Pick one…</option>
             <option value="direct">Direct customer</option>
-            <option value="third_party">Third Party Customer</option>
+            <option value="third_party">Third-party customer</option>
           </Select>
           <span className="mt-1 block text-[12px] text-muted">
             How Mahek will sell to this lead. It decides which steps the Sales Manager takes it through.
@@ -1116,7 +1116,7 @@ export function ConvertDialog({
       return;
     }
     if (needsSalesType && !salesType) {
-      setError("Choose how this lead will be sold — Direct customer or Third Party Customer.");
+      setError("Choose how this lead will be sold — Direct customer or Third-party customer.");
       return;
     }
     if (needsType && !customerType) {
@@ -1202,9 +1202,9 @@ export function ConvertDialog({
       {needsSalesType ? (
         <FieldLabel label="Sales type" className="mb-3">
           <Select value={salesType} onChange={(e) => setSalesType(e.target.value)} className="w-full">
-            <option value="">Not Decided — pick one…</option>
+            <option value="">Pick one…</option>
             <option value="direct">Direct customer</option>
-            <option value="third_party">Third Party Customer</option>
+            <option value="third_party">Third-party customer</option>
             <option value={PRIVATE_LIMITED_USER}>Private Limited(User)</option>
           </Select>
           <span className="mt-1 block text-[12px] text-muted">

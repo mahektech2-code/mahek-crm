@@ -196,7 +196,7 @@ test('a source nobody recognises is shown as itself, never hidden', () => {
 test('every rung anything can stand on answers to exactly one chip', () => {
   for (const rung of ALL_RUNGS) {
     const view = viewOfRung(rung);
-    const matches = ['new', 'contacted', 'qualified', 'negotiation', 'on_hold', 'converted', 'lost']
+    const matches = ['suspect', 'prospect', 'qualification', 'sample_trial', 'negotiation', 'first_order', 'on_hold', 'converted', 'lost']
       .filter((v) => viewMatch(v as never)!.rungs.includes(rung));
     assert.deepEqual(matches, [view], rung + ' answered to ' + matches.join(', '));
   }
@@ -217,28 +217,27 @@ test('the chips cover the whole funnel vocabulary', () => {
  */
 test('the six-word column still answers to a chip, every value of it', () => {
   for (const word of LEAD_STAGES) {
-    const views = ['new', 'contacted', 'qualified', 'negotiation', 'on_hold', 'converted', 'lost']
+    const views = ['suspect', 'prospect', 'qualification', 'sample_trial', 'negotiation', 'first_order', 'on_hold', 'converted', 'lost']
       .filter((v) => viewMatch(v as never)!.legacy.includes(word));
     assert.equal(views.length, 1, word + ' answered to ' + views.join(', '));
   }
 });
 
 test('a lead reads its chip off whichever column it is carrying', () => {
-  /* The funnel's rung wins where there is one. Sample review is Qualified —
-     the band the console's funnel bar and the owner's cohort both draw. */
+  /* The funnel's rung wins where there is one. Sample review is a step of
+     Sample / trial — the seven stages every screen draws. */
   assert.equal(
     viewOfLead({ funnelStage: 'sample_review', stage: 'New', salesType: 'direct' }),
-    'qualified',
+    'sample_trial',
   );
   /* And the six-word column answers where there is not. */
   assert.equal(viewOfLead({ funnelStage: null, stage: 'Negotiation', salesType: null }), 'negotiation');
-  /* On the book is Converted rather than the Negotiation band it sits in —
-     the same reading `legacyStageFor` takes, so the badge and the chip that
-     caught the row cannot disagree. */
+  /* The second order is a step of First order; Customer is its own chip. */
   assert.equal(
     viewOfLead({ funnelStage: 'second_order', stage: 'New', salesType: 'direct' }),
-    'converted',
+    'first_order',
   );
+  assert.equal(viewOfLead({ funnelStage: 'customer', stage: 'Converted', salesType: 'direct' }), 'converted');
   /* A park is neither lost nor in a band. It has a chip of its own because
      `bandOf` refuses to guess which rung it was parked from. */
   assert.equal(viewOfLead({ funnelStage: 'on_hold', stage: 'On hold', salesType: 'direct' }), 'on_hold');

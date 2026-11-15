@@ -200,7 +200,7 @@ function Ladder({
       <header className="flex items-baseline justify-between gap-3 border-b border-line px-5 py-3.5">
         <div>
           <h3 className="text-sm font-semibold text-ink">
-            {funnel.salesType ? salesTypeLabel(funnel.salesType) : "No sales type"}
+            {salesTypeLabel(funnel.salesType)}
           </h3>
           <p className="mt-0.5 text-xs text-muted">
             {funnel.salesType

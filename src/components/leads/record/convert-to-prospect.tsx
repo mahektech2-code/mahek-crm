@@ -368,7 +368,7 @@ function ConvertDialog({
           <Select value={salesType} onChange={(e) => setSalesType(e.target.value)} className="w-full" aria-label="Sales type">
             <option value="">Pick one…</option>
             <option value="direct">Direct customer</option>
-            <option value="third_party">Third Party Customer</option>
+            <option value="third_party">Third-party customer</option>
             <option value={PRIVATE_LIMITED_USER}>Private Limited(User)</option>
           </Select>
           {shown("salesType") ? <p role="alert" className="mt-1 mb-0 text-xs text-danger">{shown("salesType")}</p> : null}

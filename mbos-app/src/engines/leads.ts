@@ -19,9 +19,8 @@ import {
   DISTRIBUTOR_LADDER,
   THIRD_PARTY_LADDER,
   TERMINAL_STAGES,
-  bandOf,
+  displayStageOf,
   foldStage,
-  isOnTheBookAt,
   isParked,
   isUndecidedSuspect,
   ladderFor,
@@ -503,35 +502,23 @@ export const ALL_RUNGS: readonly FunnelRung[] = Array.from(
  * had been won was findable on nothing but All.
  */
 export const LEAD_VIEWS = [
+  /* ONE LADDER, SEVEN STAGES (Nov 2026): the chips are the seven stages every
+     MahekOne screen draws, plus the three places a lead stands off them. */
   { value: 'all', label: 'All' },
-  { value: 'new', label: 'New' },
-  { value: 'contacted', label: 'Contacted' },
-  { value: 'qualified', label: 'Qualified' },
+  { value: 'suspect', label: 'Suspect' },
+  { value: 'prospect', label: 'Prospect' },
+  { value: 'qualification', label: 'Qualification' },
+  { value: 'sample_trial', label: 'Sample / trial' },
   { value: 'negotiation', label: 'Negotiation' },
+  { value: 'first_order', label: 'First order' },
+  { value: 'converted', label: 'Customer' },
   { value: 'on_hold', label: 'On hold' },
-  { value: 'converted', label: 'Converted' },
   { value: 'lost', label: 'Lost' },
   { value: 'archived', label: 'Archived' },
 ] as const;
 
 export type LeadView = (typeof LEAD_VIEWS)[number]['value'];
 
-/**
- * The sales type whose ladder actually carries this rung.
- *
- * `isOnTheBookAt` needs one, and asking it about a rung that is not on the
- * ladder it was handed answers false — so `distributor_approval` judged as a
- * direct lead reads as still being sold to, which is the opposite of what it
- * means. Every rung below the terminals appears on exactly one ladder or on
- * ladders that agree about it, so there is a right answer here rather than a
- * guess: this finds it.
- */
-function typeCarrying(stage: FunnelRung): LeadSalesType | null {
-  for (const t of ['direct', 'third_party', 'distributor'] as const) {
-    if (ladderFor(t).includes(stage)) return t;
-  }
-  return null;
-}
 
 /**
  * Which chip a rung answers to.
@@ -547,28 +534,16 @@ function typeCarrying(stage: FunnelRung): LeadSalesType | null {
  */
 export function viewOfRung(
   stage: FunnelRung,
-  salesType: LeadSalesType | null | undefined = undefined,
+  _salesType: LeadSalesType | null | undefined = undefined,
 ): LeadView {
   if (stage === 'lost') return 'lost';
   if (isParked(stage)) return 'on_hold';
-  const t = salesType === undefined ? typeCarrying(stage) : salesType;
-  if (isOnTheBookAt(stage, t)) return 'converted';
-  switch (bandOf(stage)) {
-    case 'new':
-      return 'new';
-    case 'contacted':
-      return 'contacted';
-    case 'qualified':
-      return 'qualified';
-    case 'negotiation':
-      return 'negotiation';
-    default:
-      /* A rung in no band that is neither parked, lost nor on the book is a
-         rung this build has never heard of — a server one release ahead. New
-         is where a lead nobody has moved sits, and it is the one answer that
-         keeps the row findable rather than filing it under a verdict. */
-      return 'new';
-  }
+  /* The seven stages, read off the one map every screen uses. An unknown rung
+     — a server one release ahead — is filed under Suspect, where a lead nobody
+     has moved sits, so it stays findable. */
+  const d = displayStageOf(stage);
+  if (d === 'customer') return 'converted';
+  return d ?? 'suspect';
 }
 
 /**

@@ -12,17 +12,34 @@
 --    customer we deliver to, not a lead, and is left alone.
 --
 -- `lead_stage_transitions` is not touched: history keeps the words it used.
-UPDATE "customers"
-   SET "lead_stage" = CASE "lead_stage"::text
-         WHEN 'new' THEN 'suspect'::mbos_lead_stage
-         WHEN 'contacted' THEN 'suspect'::mbos_lead_stage
-         WHEN 'qualified' THEN 'qualification'::mbos_lead_stage
-       END
- WHERE "lead_stage"::text IN ('new', 'contacted', 'qualified');
---> statement-breakpoint
-UPDATE "customers"
-   SET "lead_stage" = 'suspect'::mbos_lead_stage,
-       "lead_stage_since" = coalesce("lead_stage_since", (now() at time zone 'Asia/Kolkata')::date)
- WHERE "kind" = 'lead'
-   AND "lead_stage" IS NULL
-   AND coalesce("third_party", false) = false;
+--
+-- The writes are EXECUTEd, and only where a row needs one: drizzle-kit applies
+-- every pending migration in one transaction, and on a fresh database the enum
+-- values named here were added in that same transaction, where Postgres refuses
+-- to use them. A fresh database has no leads, so nothing is executed there.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "customers" WHERE "lead_stage"::text IN ('new', 'contacted', 'qualified')) THEN
+    EXECUTE $q$
+      UPDATE "customers"
+         SET "lead_stage" = (CASE "lead_stage"::text
+               WHEN 'qualified' THEN 'qualification'
+               ELSE 'suspect'
+             END)::mbos_lead_stage
+       WHERE "lead_stage"::text IN ('new', 'contacted', 'qualified')
+    $q$;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM "customers"
+     WHERE "kind" = 'lead' AND "lead_stage" IS NULL AND coalesce("third_party", false) = false
+  ) THEN
+    EXECUTE $q$
+      UPDATE "customers"
+         SET "lead_stage" = 'suspect'::mbos_lead_stage,
+             "lead_stage_since" = coalesce("lead_stage_since", (now() at time zone 'Asia/Kolkata')::date)
+       WHERE "kind" = 'lead'
+         AND "lead_stage" IS NULL
+         AND coalesce("third_party", false) = false
+    $q$;
+  END IF;
+END $$;

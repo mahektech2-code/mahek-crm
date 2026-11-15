@@ -2,7 +2,6 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
-  OPERATIONAL_STAGES,
   SHARED_TRACKS,
   sharedFunnel,
   unpicturedLadders,
