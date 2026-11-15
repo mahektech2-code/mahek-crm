@@ -30,7 +30,6 @@ import { getConfig } from "../config/store";
 import { CRM_EVENT, MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import { QUAL_NEXT } from "../qualification-next";
 import { addDays } from "../format";
-import { notifyUser } from "../notify";
 import { canAny, hatsFor, type Hat } from "../access-control";
 import {
   gateTo,
@@ -1565,6 +1564,7 @@ export async function applyLeadStageMove(
         });
       }
       if (routed && routed.managerId !== actor.userId) {
+        const { notifyUser } = await import("../notify");
         await notifyUser({
           userId: routed.managerId,
           title: `${lead.name} is ready to verify`,
