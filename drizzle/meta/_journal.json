@@ -2348,13 +2348,6 @@
       "breakpoints": true
     },
     {
-      "idx": 335,
-      "version": "7",
-      "when": 1793800800000,
-      "tag": "0340_leads_resync_and_tombstones",
-      "breakpoints": true
-    },
-    {
       "idx": 336,
       "version": "7",
       "when": 1793800900000,
@@ -2366,6 +2359,13 @@
       "version": "7",
       "when": 1793801000000,
       "tag": "0342_accounts_deadline",
+      "breakpoints": true
+    },
+    {
+      "idx": 338,
+      "version": "7",
+      "when": 1793801100000,
+      "tag": "0343_leads_resync_and_tombstones",
       "breakpoints": true
     }
   ]
