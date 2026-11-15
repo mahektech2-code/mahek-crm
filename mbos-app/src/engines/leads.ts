@@ -575,7 +575,7 @@ export function viewOfLead(lead: {
   salesType: string | null;
 }): LeadView {
   const rung = (lead.funnelStage as FunnelRung | null) ?? rungOfLegacyWord(lead.stage);
-  if (!rung) return 'new';
+  if (!rung) return 'suspect';
   return viewOfRung(rung, lead.funnelStage ? (lead.salesType as LeadSalesType | null) : null);
 }
 

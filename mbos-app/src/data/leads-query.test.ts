@@ -79,10 +79,10 @@ test('a chip catches the funnel rung AND the six-word column under it', () => {
     { id: 'elsewhere', funnelStage: 'negotiation', salesType: 'direct', stage: 'Negotiation' },
   ]);
 
-  assert.deepEqual(ids(db, leadBookQuery({ view: 'qualified', today: TODAY })).sort(), [
-    'legacy',
-    'reviewing',
-  ]);
+  /* One ladder: the legacy "Qualified" is Qualification, and Sample received
+     & review is a step of Sample / trial. Both still reach a chip. */
+  assert.deepEqual(ids(db, leadBookQuery({ view: 'qualification', today: TODAY })), ['legacy']);
+  assert.deepEqual(ids(db, leadBookQuery({ view: 'sample_trial', today: TODAY })), ['reviewing']);
 });
 
 test('All is the archive flag and nothing else, so nothing can hide from it', () => {
@@ -95,14 +95,19 @@ test('All is the archive flag and nothing else, so nothing can hide from it', ()
   assert.deepEqual(ids(db, leadBookQuery({ view: 'archived', today: TODAY })), ['filed']);
 });
 
-test('on the book is Converted, not the Negotiation band it sits in', () => {
+test('the second order is a step of First order, and Customer is Converted', () => {
   const db = handset();
   seed(db, [
     { id: 'second', funnelStage: 'second_order', salesType: 'direct' },
     { id: 'first', funnelStage: 'first_order', salesType: 'direct' },
+    { id: 'won', funnelStage: 'customer', salesType: 'direct' },
   ]);
-  assert.deepEqual(ids(db, leadBookQuery({ view: 'converted', today: TODAY })), ['second']);
-  assert.deepEqual(ids(db, leadBookQuery({ view: 'negotiation', today: TODAY })), ['first']);
+  assert.deepEqual(ids(db, leadBookQuery({ view: 'converted', today: TODAY })), ['won']);
+  assert.deepEqual(ids(db, leadBookQuery({ view: 'first_order', today: TODAY })).sort(), [
+    'first',
+    'second',
+  ]);
+  assert.deepEqual(ids(db, leadBookQuery({ view: 'negotiation', today: TODAY })), []);
 });
 
 test('a rung narrows the band it was picked under', () => {
@@ -115,15 +120,15 @@ test('a rung narrows the band it was picked under', () => {
     { id: 'old-received', funnelStage: 'sample_received', salesType: 'direct' },
   ]);
   assert.deepEqual(
-    ids(db, leadBookQuery({ view: 'qualified', rung: 'sample_trial', today: TODAY })),
+    ids(db, leadBookQuery({ view: 'sample_trial', rung: 'sample_trial', today: TODAY })),
     ['trial'],
   );
   assert.deepEqual(
-    ids(db, leadBookQuery({ view: 'qualified', rung: 'sample_review', today: TODAY })).sort(),
+    ids(db, leadBookQuery({ view: 'sample_trial', rung: 'sample_review', today: TODAY })).sort(),
     ['old-received', 'review'],
   );
   assert.deepEqual(
-    ids(db, leadBookQuery({ view: 'qualified', rung: 'qualification', today: TODAY })),
+    ids(db, leadBookQuery({ view: 'qualification', rung: 'qualification', today: TODAY })),
     ['qual'],
   );
 });
@@ -137,7 +142,7 @@ test('the rung chips count the whole band, never the rung already picked', () =>
     /* A lead with no rung contributes nothing: its rung IS the chip above. */
     { id: 'legacy', funnelStage: null, stage: 'Qualified' },
   ]);
-  const q = rungCountsQuery({ view: 'qualified', rung: 'sample_trial', today: TODAY })!;
+  const q = rungCountsQuery({ view: 'sample_trial', rung: 'sample_trial', today: TODAY })!;
   const counts = (db.prepare(q.sql).all(...q.params) as { rung: string; count: number }[]).map(
     (r) => ({ rung: r.rung, count: r.count }),
   );
