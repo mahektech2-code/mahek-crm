@@ -14,34 +14,13 @@
  * no sales type is drawn on the legacy ladder it actually climbs.
  */
 import { ladderFor as engineLadderFor } from "@/lib/engines/lead-ladder";
-import { COMMUNICATION_ACTIONS } from "@/lib/lead-labels";
+import { ALL_LEAD_STAGES, COMMUNICATION_ACTIONS, stageLabel } from "@/lib/lead-labels";
 import type { SalesType, Stage } from "./types";
 
-export const STAGE_LABEL: Record<Stage, string> = {
-  suspect: "Suspect",
-  prospect: "Prospect",
-  qualification: "Qualification",
-  sample_trial: "Sample / Trial",
-  sample_received: "Sample Received",
-  sample_review: "Sample Review",
-  negotiation: "Negotiation",
-  first_order: "1st Order",
-  delivery: "Delivery",
-  payment: "Payment",
-  second_order: "2nd Order",
-  customer: "Customer",
-  management_review: "Management Review",
-  commercial_discussion: "Commercial Discussion",
-  distributor_approval: "Distributor Approval",
-  distributor_agreement: "Distributor Agreement",
-  initial_stock_order: "Initial Stock Order",
-  active_distributor: "Active Distributor",
-  new: "New",
-  contacted: "Contacted",
-  qualified: "Qualified",
-  won: "Won",
-  on_hold: "On hold",
-};
+/** One set of words for every screen: the funnel's own labels, never a second copy. */
+export const STAGE_LABEL = Object.fromEntries(
+  ALL_LEAD_STAGES.map((s) => [s, stageLabel(s)]),
+) as Record<Stage, string>;
 
 /** The three real ladders' rungs, from the engine — and the legacy one for a lead with no sales type. */
 export function ladderFor(salesType: SalesType | null): Stage[] {

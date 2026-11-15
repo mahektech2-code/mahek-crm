@@ -1228,6 +1228,8 @@ function suspectDecisionRung(
   if (decision === "still_suspect") return current;
   /* Both terminals mean the same thing on every ladder. */
   if (decision === "on_hold" || decision === "lost") return decision;
+  /* "Keep trying" decides nothing: the lead stays where it is. */
+  if (decision === "contacted") return foldStage(current);
   if ((ladder as readonly string[]).includes(decision)) return decision;
   return nextStage(current, customer.leadSalesType) ?? current;
 }
@@ -4604,23 +4606,15 @@ async function handleLeadUpdate(
     };
   }
 
-  /*
-   * WHICH LADDER THIS LEAD IS ON DECIDES WHICH PATH IT TAKES, and that is what
-   * lets the funnel land without touching a single lead raised before it.
-   *
-   * A lead carrying a sales type — one raised on a build that asks the §2
-   * question, or one an office screen has since set — goes through the gates.
-   * A lead carrying none is on `LEGACY_LADDER`, predates every rule in §28, and
-   * takes exactly the path it has always taken: the stage is written, nothing
-   * is asked. Demanding a next action to move a four-year-old lead would freeze
-   * the book the rule was meant to unstick, which is the same reasoning
-   * `gateTo` itself uses when it skips §24 for a lead with no sales type.
-   */
-  const salesType = (p.salesType ?? existing.leadSalesType) as LeadSalesType | null;
-  const onTheFunnel = Boolean(salesType);
+  /* ONE LADDER (Nov 2026): every lead goes through the gates, whatever its
+     sales type. An older handset still sends the retired words (`contacted`,
+     `qualified`, `won`); they are read as the rung that means the same thing
+     on the ladder before anything is compared or asked. */
+  const onTheFunnel = true;
+  const wantedStage = p.stage != null ? foldStage(p.stage as LeadStage) : null;
   const movingStage =
-    p.stage != null &&
-    p.stage !== existing.leadStage &&
+    wantedStage != null &&
+    wantedStage !== foldStage((existing.leadStage ?? "suspect") as LeadStage) &&
     /* `on_hold` stands aside from the gate: it is on the wire and on no
        ladder, so asking a rung engine about it can only ever answer "off
        ladder" and refuse a park the salesman is entitled to. */
@@ -4740,11 +4734,6 @@ async function handleLeadUpdate(
      `applyLeadStageMove` below, after the gate has been asked, and only if it
      said yes. Writing it here as well would move the rung whatever the gate
      answered, which is §28 defeated by an assignment. */
-  if (p.stage != null && !onTheFunnel) {
-    changed.leadStage = p.stage;
-    /* Dated only where the rung actually changed: a re-send of the stage it is already on is not a move. */
-    if (p.stage !== existing.leadStage) changed.leadStageSince = await today();
-  }
   if (p.nextFollowUpDate != null) changed.leadNextFollowUpDate = p.nextFollowUpDate;
   if (p.notes != null) changed.leadNotes = p.notes;
   if (p.estimatedPotentialPaise != null) {
@@ -5136,35 +5125,8 @@ async function handleLeadUpdate(
    * cannot help.
    */
   if (onTheFunnel && movingStage) {
-    const moved = await moveLeadFromHandset(principal, item, p.stage as LeadStage);
+    const moved = await moveLeadFromHandset(principal, item, wantedStage as LeadStage);
     if (moved) return moved;
-  }
-
-  /*
-   * QUALIFYING IS WHAT STARTS §D AND §E: the Lead Manager seat is filled from
-   * the org chart, they are told, and a validation call lands on their list for
-   * the next working day.
-   *
-   * After the write and unable to fail it. `qualifyLead` is idempotent — a
-   * handset that never saw the response sends the same qualification again, and
-   * the seat itself is the guard — so a retry costs nothing and produces no
-   * second task.
-   *
-   * It runs AFTER the gate rather than instead of it, and only for the legacy
-   * rung: a funnel lead refused above has already returned, so nothing fills a
-   * seat for a move that did not happen. `qualified` is the old ladder's rung
-   * and `qualification` is the funnel's — the seat is filled at whichever of
-   * them this lead's ladder actually uses.
-   */
-  /* THE LEGACY `qualified` RUNG ONLY. `qualifyLead` fills the lead manager seat
-     from the org chart and raises a validation call for it — the old ladder's
-     "a Prospect was confirmed". On the funnel ladders that call IS the Sales
-     Manager's verification and it has already been made by the time a lead is at
-     `qualification`, so firing it there put a second validation call on a
-     manager's list for a call they had just made. The funnel's seat is filled at
-     conversion and its verification is asked for by the next action. */
-  if (p.stage === "qualified") {
-    await qualifyLead(item.entityId, principal.user.id, existing.name).catch(() => {});
   }
 
   return { kind: "accepted", value: { serverId: item.entityId } };

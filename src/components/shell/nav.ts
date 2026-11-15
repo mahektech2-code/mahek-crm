@@ -1,5 +1,5 @@
 import { APP_MODULES } from "@/lib/modules";
-import { HUB_PREFIXES, hubLanding } from "@/lib/lead-hub";
+import { deskHref, deskNavMatch, hubNav } from "@/lib/lead-hub";
 export type NavItem = {
   href: string;
   label: string;
@@ -114,22 +114,18 @@ function leadsRow(set: ReadonlySet<string>): NavGroup {
   const keys = new Set(
     APP_MODULES.filter((m) => m.app === "crm" && set.has(m.href)).map((m) => m.key),
   );
-  const landing = hubLanding(keys);
+  /* An ordinary group, like Customer records: one row per desk this person
+     holds, each lit on every screen of its desk (`deskNavMatch`). */
   return {
     label: "Leads",
     icon: "target",
-    flat: true,
-    items: landing
-      ? [
-          {
-            href: landing,
-            label: "Leads",
-            icon: "target",
-            badge: "leadsAttention",
-            match: HUB_PREFIXES,
-          },
-        ]
-      : [],
+    items: hubNav(keys).map((d) => ({
+      href: deskHref(d),
+      label: d.label,
+      icon: d.icon,
+      match: deskNavMatch(d),
+      ...(d.key === "my-day" ? { badge: "leadsAttention" as const } : {}),
+    })),
   };
 }
 

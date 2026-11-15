@@ -228,6 +228,9 @@ function bandedStage(raw: string | null): string | null {
   if (raw === null) return null;
   const stage = raw as LeadStage;
   if (stage === "lost") return "lost";
+  /* Parked is still open and its rung is not on the row: it counts as a lead
+     created and nothing more, never as won (which also counted it qualified). */
+  if (stage === "on_hold") return "on_hold";
   const band = bandOf(stage);
   if (band) return band;
   /* Out of the funnel and not lost: the ladder finished. */

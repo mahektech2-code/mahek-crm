@@ -77,20 +77,22 @@ describe("what left, and that it is one list", () => {
   });
 });
 
-describe("the CRM draws one Leads row", () => {
+describe("the CRM draws Leads as a group of desks", () => {
   const all = crmItems().map((i) => i.href);
   const leadsRows = (allowed: string[]) =>
     navForModules(allowed)
       .filter((g) => g.label === "Leads")
       .flatMap((g) => g.items);
 
-  it("whoever holds All Leads gets one row, landing on My day", () => {
+  it("whoever holds the whole CRM gets a row per desk, My day first", () => {
     const rows = leadsRows(all);
-    assert.equal(rows.length, 1);
+    assert.deepEqual(rows.map((r) => r.label), [
+      "My day", "All leads", "Calling desk", "Sales Manager desk", "Verify & qualify",
+      "Samples & trials", "Negotiation", "Handovers", "Lead reports",
+    ]);
     assert.equal(rows[0].href, "/crm/leads/dashboard");
-    const labels = navForModules(all).flatMap((g) => g.items.map((i) => i.label));
-    for (const gone of ["All Leads", "Add a lead", "Qualification", "Samples & trials", "Oversight"]) {
-      assert.ok(!labels.includes(gone), `${gone} is not in the sidebar`);
+    for (const gone of ["Add a lead", "Oversight", "Lead control", "Distributors", "Follow-ups"]) {
+      assert.ok(!rows.some((r) => r.label === gone), `${gone} is not in the sidebar`);
     }
   });
 
@@ -104,9 +106,10 @@ describe("the CRM draws one Leads row", () => {
     assert.equal(leadsRows(["/crm/customers"]).length, 0);
   });
 
-  it("the row lights on every lead and sample screen", () => {
-    const row = leadsRows(all)[0];
-    assert.deepEqual([...(row.match ?? [])].sort(), ["/crm/leads", "/crm/samples"]);
+  it("a desk's row lights on every screen of the desk", () => {
+    const reports = leadsRows(all).find((r) => r.label === "Lead reports")!;
+    assert.ok(reports.match?.includes("/crm/samples/feedback"));
+    assert.ok(reports.match?.includes("/crm/leads/qualify/validation"));
   });
 });
 

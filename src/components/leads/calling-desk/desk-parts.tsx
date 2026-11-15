@@ -8,7 +8,7 @@ import {
   type DeskView,
 } from "@/lib/engines/lead-calling-desk";
 import type { LeadPriority } from "@/lib/lead-priority";
-import type { LeadSalesType } from "@/lib/lead-labels";
+import { salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 
 /* ---------------------------------------------------------------------------
  * The small pieces of the Telecaller screens, drawn once.
@@ -60,12 +60,13 @@ export function PriorityBadge({ priority }: { priority: LeadPriority | null }) {
   return <Badge tone={tone}>{priority === "high" ? "High" : priority === "medium" ? "Medium" : "Low"}</Badge>;
 }
 
-/** An online lead has no sales type until somebody decides one — the CRM's own "Not Decided". */
+/** The sales type in the same words every lead screen uses (`salesTypeLabel`). */
 export function SalesTypeBadge({ salesType }: { salesType: LeadSalesType | null }) {
-  if (salesType === "direct") return <Badge tone="neutral">Direct</Badge>;
-  if (salesType === "third_party") return <Badge tone="brand">Third Party Customer</Badge>;
-  if (salesType === "distributor") return <Badge tone="neutral">Distributor</Badge>;
-  return <Badge tone="muted">Not Decided</Badge>;
+  return (
+    <Badge tone={salesType === "third_party" ? "brand" : salesType ? "neutral" : "muted"}>
+      {salesTypeLabel(salesType)}
+    </Badge>
+  );
 }
 
 export function LeadStatusBadges({

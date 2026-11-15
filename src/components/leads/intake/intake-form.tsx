@@ -62,7 +62,7 @@ const CUSTOMER_TYPES: Array<{
   { code: "retailer", label: "Retailer", hint: "Sells to the public." },
 ];
 
-type Answer = LeadSalesType | "undecided";
+type Answer = LeadSalesType;
 
 export function IntakeForm({
   workspace,
@@ -148,7 +148,7 @@ export function IntakeForm({
       const litres = f.monthlyLitres.replace(/[\s,]/g, "");
       const result = await captureLead({
         workspace,
-        salesType: answer === "undecided" || answer === null ? null : answer,
+        salesType: answer,
         name: f.name,
         companyName: f.companyName || undefined,
         /* Asked only of a Direct customer (the block below), so a number typed and then
@@ -204,7 +204,7 @@ export function IntakeForm({
   }
 
   const inHub = useInLeadHub();
-  const typeLabel = answer === null ? null : answer === "undecided" ? "Not decided" : salesTypeLabel(answer);
+  const typeLabel = answer === null ? null : salesTypeLabel(answer);
 
   if (done) {
     return (
@@ -285,24 +285,21 @@ export function IntakeForm({
 
           {/*
             THE SALES TYPE IS ASKED FIRST, and the rest of the form waits for
-            it — it decides which ladder the lead climbs. OFFERED rather than
-            all of them: Distributor is retired for new leads (see
-            `lead-labels.ts`). "Not decided" is the fourth, real answer: a
-            lead with no sales type climbs the original six rungs.
+            it — it decides who bills them. Every lead climbs the same stages
+            whichever is picked. OFFERED rather than all of them: Distributor is
+            retired for new leads (see `lead-labels.ts`). There is no "Not
+            decided": it used to start a lead on a ladder of its own.
           */}
           <div
             role="radiogroup"
             aria-label="How we sell to them"
-            className="grid grid-cols-1 gap-2.5 sm:grid-cols-3"
+            className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
           >
-            {[
-              ...offeredSalesTypes().map((t) => ({
+            {offeredSalesTypes().map((t) => ({
                 code: t.code as Answer,
                 label: t.label,
                 hint: TYPE_HINT[t.code] ?? t.hint,
-              })),
-              { code: "undecided" as Answer, label: "Not decided", hint: "Set it later" },
-            ].map((t) => {
+              })).map((t) => {
               const on = answer === t.code;
               return (
                 <button
@@ -626,10 +623,8 @@ export function IntakeForm({
 
         <div className="flex flex-wrap items-center gap-2.5 border-t border-divider bg-canvas px-[22px] py-4">
           <span className="flex-1 text-[13px] text-muted">
-            {/* A lead with no sales type starts on the original ladder's first
-                rung; the two offered ladders start at Suspect. */}
-            {answer === null ? null : answer === "undecided" ? "Starts at New" : "Starts at Suspect"}
-            {typeLabel && answer !== "undecided" ? ` · ${typeLabel}` : null}
+            {answer === null ? null : "Starts at Suspect"}
+            {typeLabel ? ` · ${typeLabel}` : null}
           </span>
           <Link href={leadHref(workspace, "leads")} className={SECONDARY}>
             Cancel

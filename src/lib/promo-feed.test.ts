@@ -495,7 +495,7 @@ describe("stage labels", () => {
       assert.ok(label && label !== code, code);
     }
     assert.equal(stageLabel("sample_trial"), "Sample / trial");
-    assert.equal(stageLabel("first_order"), "1st order");
+    assert.equal(stageLabel("first_order"), "First order");
     assert.match(source("services", "promo-feed-service.ts"), /label: stageLabel\(r\.value as LeadStage\)/);
   });
 });

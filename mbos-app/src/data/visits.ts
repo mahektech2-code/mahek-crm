@@ -5,6 +5,8 @@ import { notify } from './notifications';
 import type { Fix } from '../native/location';
 import { isoDate } from '../lib/format';
 import { wireOutcome } from '../lib/wire';
+import { foldStage, nextStage } from '../engines/funnel/lead-ladder';
+import type { LeadStage } from '../engines/funnel/lead-labels';
 import { FOLLOW_UP_MODES, type FollowUpMode } from './fixtures';
 
 function followUpVerb(mode: FollowUpMode | undefined): string {
@@ -256,10 +258,8 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
          * decision had been taken at all.
          *
          * The four decisions are four rungs MahekOne already holds, which is
-         * why there is no mapping to invent: `handleVisit` writes
-         * `leadStage: p.suspectDecision` verbatim into `customers.lead_stage`,
-         * and that column is the same twenty-three-rung enum `funnelStage`
-         * mirrors. `wireFunnelStage` is asked rather than trusted, so a word
+         * why the rung is worked out below exactly as `suspectDecisionRung`
+         * works it out in the office, on the same ladder engine. `wireFunnelStage` is asked rather than trusted, so a word
          * this build does not recognise leaves the rung where it was rather
          * than writing a stage no screen has a branch for.
          *
@@ -267,16 +267,31 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
          * not a move — it records why the lead is staying where it is, which
          * is the reason written below.
          */
-        const funnel = wireFunnelStage(args.suspectDecision);
+        const decided = wireFunnelStage(args.suspectDecision);
+        const lead = decided
+          ? await one<{ salesType: string | null; funnelStage: string | null }>(
+              'SELECT salesType, funnelStage FROM leads WHERE id = ?',
+              [args.customerId],
+            )
+          : null;
+        const salesType =
+          lead?.salesType === 'direct' || lead?.salesType === 'distributor' || lead?.salesType === 'third_party'
+            ? lead.salesType
+            : null;
+        /* The rung the office will write (`suspectDecisionRung` on the server):
+           "A prospect" moves the lead one rung up its ladder, "Keep trying"
+           leaves it where it is, a park or a loss is itself. Writing the
+           decision's own word put a funnel lead on a stage its ladder does not
+           have until the next pull. */
+        const current = foldStage(((lead?.funnelStage as LeadStage | null) ?? 'suspect') as LeadStage);
+        const funnel: LeadStage | null = !decided
+          ? null
+          : decided === 'on_hold' || decided === 'lost'
+            ? decided
+            : decided === 'contacted'
+              ? null
+              : (nextStage(current, salesType) ?? current);
         if (funnel) {
-          const lead = await one<{ salesType: string | null }>(
-            'SELECT salesType FROM leads WHERE id = ?',
-            [args.customerId],
-          );
-          const salesType =
-            lead?.salesType === 'direct' || lead?.salesType === 'distributor' || lead?.salesType === 'third_party'
-              ? lead.salesType
-              : null;
           /*
            * `legacyStageFor` alone, which it has not always been.
            *

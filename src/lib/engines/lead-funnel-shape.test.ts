@@ -2,18 +2,17 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
-  OPERATIONAL_STAGES,
   SHARED_TRACKS,
-  distributorLadder,
   sharedFunnel,
-  sharedRungOrder,
   unpicturedLadders,
   type LadderTally,
 } from "./lead-funnel-shape";
 import {
   DIRECT_LADDER,
+  DISPLAY_STAGES,
   DISTRIBUTOR_LADDER,
   THIRD_PARTY_LADDER,
+  displayStageOf,
 } from "./lead-ladder";
 import { SALES_TYPES, type LeadSalesType, type LeadStage } from "../lead-labels";
 import { LEGACY_SALES_TYPE, SALES_TYPE_BUCKETS } from "../lead-filters";
@@ -55,20 +54,14 @@ function tally(
   };
 }
 
-test("the shared funnel is nine rungs: Sample / Trial, then Sample received & review, and the two it leaves out are named", () => {
-  const order = sharedRungOrder();
-  assert.equal(order.length, 9);
-  for (const s of OPERATIONAL_STAGES) assert.ok(!order.includes(s));
-  assert.equal(order.filter((s) => s === "sample_trial").length, 1);
-  assert.equal(order.filter((s) => s === "sample_review").length, 1);
-  /* The older spelling is folded into Sample received & review, not drawn twice. */
-  assert.ok(!order.includes("sample_received"));
+test("the shared funnel is the seven stages people see", () => {
+  const f = sharedFunnel([tally("direct", DIRECT_LADDER, {})]);
+  assert.deepEqual(f.rungs.map((r) => r.stage), [...DISPLAY_STAGES]);
 });
 
-test("every rung of both shop ladders is drawn somewhere", () => {
-  const drawn = new Set<LeadStage>([...sharedRungOrder(), ...OPERATIONAL_STAGES]);
+test("every rung of both shop ladders is drawn under one of the seven", () => {
   for (const s of [...DIRECT_LADDER, ...THIRD_PARTY_LADDER]) {
-    assert.ok(drawn.has(s), `${s} is on a shop ladder and on no part of the funnel view`);
+    assert.ok(displayStageOf(s), `${s} is on a shop ladder and on no part of the funnel view`);
   }
 });
 
@@ -115,18 +108,14 @@ test("won is never counted onto a rung it was not on", () => {
   assert.equal(f.rungs.find((r) => r.stage === "customer")!.total, 0);
 });
 
-test("delivery and payment are counted, not filtered away", () => {
+test("delivery, payment and the second order are counted under First order", () => {
   const f = sharedFunnel([
     tally("direct", DIRECT_LADDER, { delivery: 2, payment: 5, negotiation: 1 }),
     tally("third_party", THIRD_PARTY_LADDER, { payment: 3 }),
   ]);
-  assert.deepEqual(
-    f.operational.map((r) => [r.stage, r.total]),
-    [["delivery", 2], ["payment", 8]],
-  );
-  /* And they are nowhere in the bars, or the funnel would report a lorry's
-     position as a stage of the sale. */
-  assert.ok(!f.rungs.some((r) => OPERATIONAL_STAGES.includes(r.stage)));
+  assert.equal(f.operational.length, 0);
+  assert.equal(f.rungs.find((r) => r.stage === "first_order")!.total, 10);
+  assert.equal(f.rungs.find((r) => r.stage === "negotiation")!.total, 1);
 });
 
 test("every counted lead lands in exactly one place", () => {
@@ -153,47 +142,15 @@ test("the widest rung is what the bars are measured against", () => {
   assert.equal(f.widest, 45);
 });
 
-test("the distributor ladder draws all nine of its rungs, in order", () => {
-  const l = distributorLadder([tally("distributor", DISTRIBUTOR_LADDER, { qualification: 2 })]);
-  assert.deepEqual(l.steps.map((s) => s.stage), [...DISTRIBUTOR_LADDER]);
-  assert.equal(l.climbing, 2);
-});
-
-test("the distributor ladder is drawn even where nobody is on it", () => {
-  /* The track is retired for NEW leads and the screen must not read as dead —
-     nor as being fed. An empty ladder is nine steps at zero, not an absence. */
-  const l = distributorLadder([]);
-  assert.equal(l.steps.length, DISTRIBUTOR_LADDER.length);
-  assert.equal(l.climbing, 0);
-});
-
-test("§12's two approvals are marked and the conversations are not", () => {
-  const l = distributorLadder([]);
-  const approvals = l.steps.filter((s) => s.approval).map((s) => s.stage);
-  assert.deepEqual(approvals, ["management_review", "distributor_approval"]);
-});
-
-test("the distributor top rung carries its arrivals too", () => {
-  const l = distributorLadder([
-    tally(
-      "distributor",
-      DISTRIBUTOR_LADDER,
-      {},
-      { arrived: 2, arrivedByStage: { active_distributor: rung("active_distributor", 2, 5) } },
-    ),
-  ]);
-  assert.equal(l.steps.find((s) => s.stage === "active_distributor")!.count, 2);
-});
-
-test("the legacy ladder is neither picture, and is reported rather than dropped", () => {
-  const legacy = tally(null, ["new", "contacted"], { new: 4 });
+test("a lead with no sales type is part of the one funnel, so nothing is left unpictured", () => {
+  const legacy = tally(null, DIRECT_LADDER, { suspect: 4 });
   const left = unpicturedLadders([
     tally("direct", DIRECT_LADDER, {}),
     tally("distributor", DISTRIBUTOR_LADDER, {}),
     tally("third_party", THIRD_PARTY_LADDER, {}),
     legacy,
   ]);
-  assert.deepEqual(left.map((l) => l.salesType), [null]);
+  assert.deepEqual(left.map((l) => l.salesType), []);
 });
 
 test("an arrived rung carries its median, not just its count", () => {

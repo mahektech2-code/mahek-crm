@@ -16,12 +16,14 @@ import assert from "node:assert/strict";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import {
   DIRECT_LADDER,
+  DISPLAY_STAGES,
   DISTRIBUTOR_LADDER,
-  LEGACY_LADDER,
   TERMINAL_STAGES,
   THIRD_PARTY_LADDER,
   bandOf,
   directionOf,
+  displayIndexOf,
+  displayStageOf,
   foldStage,
   isOnTheBookAt,
   isParked,
@@ -33,6 +35,7 @@ import {
   qualifiedForSample,
   rungOf,
   sampleReadyStage,
+  stepsOf,
 } from "./lead-ladder";
 import { gateForNext } from "./lead-gates";
 import { buildQueue, type QueueCandidate } from "./queue";
@@ -87,16 +90,6 @@ describe("the ladders", () => {
     assert.equal(EVERY_STAGE_IS_LISTED, true);
     assert.equal(ALL_STAGES.length, 24);
     assert.equal(new Set(ALL_STAGES).size, 24);
-  });
-
-  test("the legacy ladder is the six this product shipped with", () => {
-    assert.deepEqual(LEGACY_LADDER, [
-      "new",
-      "contacted",
-      "qualified",
-      "negotiation",
-      "won",
-    ]);
   });
 
   test("§3A — the direct ladder, in order: Sample / Trial, then Sample received & review", () => {
@@ -183,31 +176,33 @@ describe("the ladders", () => {
     assert.equal(ladderFor("distributor"), DISTRIBUTOR_LADDER);
   });
 
-  /* THE REGRESSION THAT MATTERS MOST. Nothing backfills a sales type, so every
-     lead in the book on the day the funnel landed is this one. */
-  test("a lead with NO sales type climbs the original six and nothing else", () => {
+  /* ONE LADDER (Nov 2026). A lead with no sales type climbs the same rungs as
+     a direct one, and the retired legacy words fold onto the rung they meant. */
+  test("a lead with NO sales type climbs the direct ladder", () => {
     for (const salesType of [null, undefined] as const) {
-      assert.equal(ladderFor(salesType), LEGACY_LADDER);
-      const ladder = ladderFor(salesType);
-      for (const stage of ALL_STAGES) {
-        const isOriginal = (LEGACY_LADDER as readonly string[]).includes(stage);
-        assert.equal(
-          ladder.includes(stage),
-          isOriginal,
-          `${stage} on the legacy ladder`,
-        );
-      }
-      assert.equal(nextStage("new", salesType), "contacted");
-      assert.equal(nextStage("negotiation", salesType), "won");
-      assert.equal(nextStage("won", salesType), null);
+      assert.equal(ladderFor(salesType), DIRECT_LADDER);
+      assert.equal(nextStage("suspect", salesType), "prospect");
+      assert.equal(nextStage("customer", salesType), null);
     }
+  });
+
+  test("the legacy words fold onto the rung they meant", () => {
+    assert.equal(foldStage("new"), "suspect");
+    assert.equal(foldStage("contacted"), "suspect");
+    assert.equal(foldStage("qualified"), "qualification");
+    assert.equal(foldStage("won"), "customer");
+    assert.equal(foldStage("sample_received"), "sample_review");
+    assert.equal(rungOf("new", null), 0);
+    assert.equal(nextStage("contacted", null), "prospect");
+    assert.equal(nextStage("qualified", "direct"), "sample_trial");
   });
 
   test("rungOf answers -1 off the ladder", () => {
     assert.equal(rungOf("suspect", "direct"), 0);
     assert.equal(rungOf("customer", "direct"), DIRECT_LADDER.length - 1);
     assert.equal(rungOf("sample_trial", "distributor"), -1);
-    assert.equal(rungOf("suspect", null), -1);
+    assert.equal(rungOf("suspect", null), 0);
+    assert.equal(rungOf("lost", "direct"), -1);
   });
 });
 
@@ -231,7 +226,7 @@ describe("nextStage and previousStage", () => {
   test("off the ladder answers the FOOT of the new ladder, never null", () => {
     assert.equal(nextStage("sample_received", "distributor"), "suspect");
     assert.equal(nextStage("management_review", "direct"), "suspect");
-    assert.equal(nextStage("suspect", null), "new");
+    assert.equal(nextStage("suspect", null), "prospect");
     assert.equal(nextStage("lost", "direct"), "suspect");
   });
 
@@ -260,9 +255,9 @@ describe("directionOf", () => {
     }
   });
 
-  test("a rung on neither ladder is off_ladder rather than a guess", () => {
+  test("a rung on neither ladder is off_ladder rather than a guess; a legacy word is read on the ladder", () => {
     assert.equal(directionOf("sample_trial", "prospect", "distributor"), "off_ladder");
-    assert.equal(directionOf("new", "qualification", null), "off_ladder");
+    assert.equal(directionOf("new", "qualification", null), "up");
   });
 });
 
@@ -612,8 +607,8 @@ describe("whether a lead has climbed far enough for a sample", () => {
     assert.equal(qualifiedForSample("negotiation", "direct"), true);
   });
 
-  test("the legacy ladder is judged at `qualified`, since it has no Prospect", () => {
-    assert.equal(sampleReadyStage(null), "qualified");
+  test("a lead with no sales type is judged at Prospect, and the legacy words fold", () => {
+    assert.equal(sampleReadyStage(null), "prospect");
     assert.equal(qualifiedForSample("new", null), false);
     assert.equal(qualifiedForSample("contacted", null), false);
     assert.equal(qualifiedForSample("qualified", null), true);
@@ -630,5 +625,29 @@ describe("whether a lead has climbed far enough for a sample", () => {
        guess printed as a warning to the person deciding is worse than none. */
     assert.equal(qualifiedForSample("on_hold", "direct"), true);
     assert.equal(qualifiedForSample("won", "direct"), true);
+  });
+});
+
+describe("the seven stages people see", () => {
+  test("seven, in order", () => {
+    assert.deepEqual(DISPLAY_STAGES, [
+      "suspect", "prospect", "qualification", "sample_trial", "negotiation", "first_order", "customer",
+    ]);
+  });
+
+  test("every rung but On hold and Lost is drawn under one of them", () => {
+    for (const stage of ALL_STAGES) {
+      const d = displayStageOf(stage);
+      if (stage === "on_hold" || stage === "lost") assert.equal(d, null, stage);
+      else assert.ok(d && DISPLAY_STAGES.includes(d), stage);
+    }
+  });
+
+  test("the steps inside a stage are its rungs, in ladder order", () => {
+    assert.deepEqual(stepsOf("sample_trial", "direct"), ["sample_trial", "sample_review"]);
+    assert.deepEqual(stepsOf("first_order", null), ["first_order", "delivery", "payment", "second_order"]);
+    assert.deepEqual(stepsOf("suspect", "third_party"), ["suspect"]);
+    assert.equal(displayIndexOf("delivery"), 5);
+    assert.equal(displayIndexOf("lost"), -1);
   });
 });

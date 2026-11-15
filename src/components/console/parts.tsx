@@ -5,7 +5,7 @@ import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { SalesIcon } from "@/components/console/icons";
-import { useInLeadHub } from "@/components/leads/hub/hub-context";
+import { HubActions, useInLeadHub } from "@/components/leads/hub/hub-context";
 import { HintTip } from "@/components/ui/hint-tip";
 import { CardGrid } from "@/components/ui/card-grid";
 
@@ -46,11 +46,7 @@ export function ScreenHeader({
   /* The v4 look puts an explanation behind an ⓘ by the title (`ui-hint`). */
   const tip = typeof subtitle === "string" && !subtitleShown && !entity ? subtitle : null;
   if (inHub && !entity) {
-    return actions ? (
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-2 print:hidden">
-        {actions}
-      </div>
-    ) : null;
+    return actions ? <HubActions>{actions}</HubActions> : null;
   }
   return (
     <div className="mb-4 flex items-start justify-between gap-4">

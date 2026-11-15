@@ -1,6 +1,5 @@
 "use client";
 
-import { Segmented } from "@/components/leads/segmented";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
@@ -638,23 +637,7 @@ export function LeadsScreen({
      frame they ride on the view row; elsewhere they are the header's. */
   const listActions = (
     <div className="flex items-center gap-2">
-      {inHub && !showArchived ? (
-        <Segmented
-          label="Layout"
-          items={[
-            { key: "list", label: "List", on: true },
-            {
-              key: "board",
-              label: "Board",
-              on: false,
-              href: leadHref(
-                workspace,
-                `leads/board${search.toString() ? `?${search.toString()}` : ""}`,
-              ),
-            },
-          ]}
-        />
-      ) : null}
+      {/* List and Board are the frame's tabs; no second switch here. */}
       {/* The whole filtered list, fetched on the click — the table
           holds one page now, and a ten-row file from a list of 3,776
           is the version of this bug that looks like it worked. */}
@@ -1751,14 +1734,12 @@ function PotentialCell({ lead }: { lead: LeadRow }) {
  * `salesTypeLabel` is the only vocabulary — a second set of words for the same
  * three codes typed into a screen is how one shop comes to read two ways — and
  * the hints come off `SALES_TYPES` for the same reason. The fourth answer gets
- * the one sentence that is genuinely about this screen rather than about the
- * code: a lead raised before the funnel existed climbs the six rungs this
- * product shipped with, and nothing backfills a ladder onto it, because
- * guessing which of three somebody was on decides which GATES apply.
+ * one sentence: a lead with no sales type climbs the same stages as every
+ * other (one ladder, Nov 2026), so all it is missing is who bills them.
  */
 function salesTypeSentence(type: LeadSalesType | null): string {
   if (!type) {
-    return "Raised before the funnel, so it is on no ladder — it climbs the six original rungs. Nothing guesses one for it, because the ladder decides which gates apply.";
+    return "Not set yet — the lead climbs the same stages as every other. Set it to say who bills them.";
   }
   const hint = SALES_TYPES.find((s) => s.code === type)?.hint;
   return hint ? `${salesTypeLabel(type)} — ${hint}` : salesTypeLabel(type);

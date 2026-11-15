@@ -134,11 +134,31 @@ export function isRowActive(item: NavRowItem, pathname: string): boolean {
  * lights All Leads without the list having to be marked exact.
  */
 export function activeHrefFor(items: NavRowItem[], pathname: string): string | null {
+  /* Ranked by the longest address that MATCHED, not the row's own href: Lead
+     reports carries `/crm/leads/qualify/validation` in its `match`, and must
+     win there over Verify & qualify's shorter `/crm/leads/qualify`. */
   let best: string | null = null;
+  let bestLen = -1;
   for (const i of items) {
-    if (isRowActive(i, pathname) && (best === null || i.href.length > best.length)) best = i.href;
+    const len = matchedLength(i, pathname);
+    if (len > bestLen) {
+      best = i.href;
+      bestLen = len;
+    }
   }
   return best;
+}
+
+function matchedLength(item: NavRowItem, pathname: string): number {
+  let len = -1;
+  for (const p of item.match ?? []) {
+    if ((pathname === p || pathname.startsWith(p + "/")) && p.length > len) len = p.length;
+  }
+  const own = item.exact
+    ? pathname === item.href
+    : pathname === item.href || pathname.startsWith(item.href + "/");
+  if (own && item.href.length > len) len = item.href.length;
+  return len;
 }
 
 export function CollapsibleNav({

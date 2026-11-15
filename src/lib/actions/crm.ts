@@ -750,6 +750,9 @@ export async function createCustomer(
       // Adding from this screen creates a LEAD. Nobody is a customer until
       // they order — that is what the conversion in saveInteraction is for.
       kind: "lead",
+      /* A lead with no stage is on no Lead Management screen. */
+      leadStage: "suspect",
+      leadStageSince: await today(),
       leadSource: parsed.data.leadSource || null,
       ownerId: parsed.data.ownerId || ctx.user.id,
       // No sales account manager yet: that is assigned when the lead converts,

@@ -4,7 +4,6 @@ import { today } from "@/lib/recompute";
 import { isReportPeriod, reportRange, type ReportPeriod } from "@/lib/business-date";
 import { funnelByRung, leadCohort } from "@/lib/services/lead-funnel-service";
 import {
-  distributorLadder,
   sharedFunnel,
   unpicturedLadders,
 } from "@/lib/engines/lead-funnel-shape";
@@ -73,7 +72,6 @@ export async function Body({
       workspace={workspace}
       funnels={funnels}
       shared={sharedFunnel(funnels)}
-      distributor={distributorLadder(funnels)}
       unpictured={unpicturedLadders(funnels)}
       cohort={cohort}
       period={period}

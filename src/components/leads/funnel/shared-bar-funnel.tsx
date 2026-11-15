@@ -2,10 +2,11 @@ import Link from "next/link";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { moneyShort } from "@/lib/format";
 import { salesTypeLabel, stageLabel, type LeadSalesType, type LeadStage } from "@/lib/lead-labels";
+import { LEGACY_SALES_TYPE } from "@/lib/lead-filters";
+import { stepsOf, type DisplayStage } from "@/lib/engines/lead-ladder";
 import {
   OPERATIONAL_STAGES,
   SHARED_TRACKS,
-  sharedRungOrder,
   type SharedFunnel,
   type SharedRung,
   type TrackSegment,
@@ -68,11 +69,18 @@ import { plural } from "@/components/console/words";
  */
 function segmentHref(
   workspace: LeadWorkspace,
-  salesType: LeadSalesType,
+  salesType: LeadSalesType | null,
   stage: LeadStage,
 ): string {
-  return leadHref(workspace, `leads?salesType=${salesType}&stage=${stage}`);
+  /* A row is a stage; the list filters by every rung drawn under it. */
+  const rungs = stepsOf(stage as DisplayStage, salesType).join(",");
+  return leadHref(
+    workspace,
+    `leads?salesType=${salesType ?? LEGACY_SALES_TYPE}&stage=${encodeURIComponent(rungs)}`,
+  );
 }
+
+const toneKey = (t: LeadSalesType | null) => t ?? "none";
 
 const TRACK_TONE: Record<string, string> = {
   direct: "bg-brand",
@@ -81,6 +89,8 @@ const TRACK_TONE: Record<string, string> = {
      series on one chart, which is the opposite of what putting them in one
      funnel says. */
   third_party: "bg-brand/45",
+  /* No sales type set yet: the lightest weight of the same hue. */
+  none: "bg-brand/20",
 };
 
 export function SharedBarFunnel({
@@ -101,7 +111,7 @@ export function SharedBarFunnel({
     <section className="rounded-[6px] border border-line bg-surface">
       <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-line px-5 py-3.5">
         <div>
-          <h3 className="text-sm font-semibold text-ink">Direct &amp; third-party</h3>
+          <h3 className="text-sm font-semibold text-ink">Every lead, by stage</h3>
           <p className="mt-0.5 max-w-[620px] text-xs text-muted">
             {compact ? (
               <>
@@ -109,9 +119,7 @@ export function SharedBarFunnel({
               </>
             ) : (
               <>
-                How many leads are at each of the {sharedRungOrder().length} stages.{" "}
-                {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ")} are counted
-                separately below. Click a bar to see them.
+                How many leads are at each of the {funnel.rungs.length} stages. Click a bar to see them.
               </>
             )}
           </p>
@@ -188,8 +196,8 @@ function Legend() {
           of sales types written into a screen is the usual way a legend comes
           to name a track the funnel is not drawing. */}
       {SHARED_TRACKS.map((t) => (
-        <span key={t} className="flex items-center gap-1.5">
-          <span className={`inline-block h-2 w-2 rounded-[2px] ${TRACK_TONE[t]}`} />
+        <span key={t ?? "none"} className="flex items-center gap-1.5">
+          <span className={`inline-block h-2 w-2 rounded-[2px] ${TRACK_TONE[toneKey(t)]}`} />
           {salesTypeLabel(t)}
         </span>
       ))}
@@ -284,7 +292,7 @@ function Segment({
         stage,
       )} as a ${salesTypeLabel(segment.salesType).toLowerCase()}`}
       style={{ width: `${width}%` }}
-      className={`h-full ${TRACK_TONE[segment.salesType]} hover:opacity-80`}
+      className={`h-full ${TRACK_TONE[toneKey(segment.salesType)]} hover:opacity-80`}
     />
   );
 }

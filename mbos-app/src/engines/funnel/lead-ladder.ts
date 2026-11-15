@@ -19,22 +19,8 @@
 
 import type { LeadSalesType, LeadStage } from "./lead-labels";
 
-/**
- * The ladder a lead raised before any of this existed is on.
- *
- * It is the six rungs this product shipped with, kept whole and kept first, and
- * it is what `leadSalesType === null` means. Nothing backfills a sales type, so
- * every lead in the book on the day the funnel landed carried on climbing
- * exactly what it was climbing — which is the only reason this could ship
- * without a migration that moves rows.
- */
-export const LEGACY_LADDER: readonly LeadStage[] = [
-  "new",
-  "contacted",
-  "qualified",
-  "negotiation",
-  "won",
-] as const;
+/* The legacy ladder (new, contacted, qualified, negotiation, won) is retired:
+   every lead climbs one ladder, and `foldStage` reads its words onto it. */
 
 /**
  * §3A — Mahek to the shop.
@@ -118,13 +104,26 @@ export const TERMINAL_STAGES: readonly LeadStage[] = [
 /**
  * A stored stage as the ladder reads it.
  *
- * `sample_received` is no longer a rung of its own: Sample received & review is
- * the rung stored as `sample_review`. A lead or a transition row an older build
- * left on `sample_received` is standing in the same place, so it reads as that.
- * Nothing is rewritten, and no transition row is touched.
+ * ONE LADDER (Nov 2026). Every lead climbs the same rungs whatever its sales
+ * type, so the words the retired legacy ladder used are read as the rung that
+ * means the same thing on it: `new` and `contacted` are a Suspect, `qualified`
+ * is Qualification, `won` is Customer. `sample_received` is the older name of
+ * Sample received & review. Migration `0338_one_lead_ladder` moved the stored
+ * values that a person can still act on; `won` is kept as written because it is
+ * what a conversion records, and a transition row keeps whatever it said on the
+ * day. This fold is what keeps an old handset, an old row or an old history line
+ * on the ladder.
  */
+const LEGACY_FOLD: Partial<Record<LeadStage, LeadStage>> = {
+  new: "suspect",
+  contacted: "suspect",
+  qualified: "qualification",
+  won: "customer",
+  sample_received: "sample_review",
+};
+
 export function foldStage(stage: LeadStage): LeadStage {
-  return stage === "sample_received" ? "sample_review" : stage;
+  return LEGACY_FOLD[stage] ?? stage;
 }
 
 /** The rungs a lead climbs, given what kind of sale it is. */
@@ -137,7 +136,9 @@ export function ladderFor(salesType: LeadSalesType | null | undefined): readonly
     case "distributor":
       return DISTRIBUTOR_LADDER;
     default:
-      return LEGACY_LADDER;
+      /* No sales type is no longer a ladder of its own: a lead whose kind of
+         sale nobody has decided climbs the same rungs as a direct one. */
+      return DIRECT_LADDER;
   }
 }
 
@@ -405,7 +406,7 @@ export function isOnTheBookAt(
   if (stage === "won" || stage === "customer" || stage === "active_distributor") return true;
   const ladder = ladderFor(salesType);
   const at = ladder.indexOf(promotesToCustomerAt(salesType));
-  const here = ladder.indexOf(stage);
+  const here = ladder.indexOf(foldStage(stage));
   if (at === -1 || here === -1) return false;
   return here >= at;
 }
@@ -466,8 +467,84 @@ export function qualifiedForSample(
 ): boolean {
   if (!stage) return true;
   const ladder = ladderFor(salesType);
-  const here = ladder.indexOf(stage);
+  const here = ladder.indexOf(foldStage(stage));
   const wanted = ladder.indexOf(sampleReadyStage(salesType));
   if (here === -1 || wanted === -1) return true;
   return here >= wanted;
+}
+
+/* ---------------------------------------------------------------------------
+ * THE SEVEN STAGES PEOPLE SEE.
+ *
+ * The ladder above has eleven rungs because each is somewhere a gate is asked.
+ * Nobody needs eleven words to say where a lead is: Sample received & review is
+ * a step of Sample / trial, and Delivery, Payment and the second order are steps
+ * of First order. So every screen and the handset draw these seven, and the
+ * rungs inside one are drawn as its steps. `displayStageOf` is the one map; a
+ * stage it does not place (On hold, Lost) is off the bar, never forced onto it.
+ * ------------------------------------------------------------------------- */
+export type DisplayStage =
+  | "suspect"
+  | "prospect"
+  | "qualification"
+  | "sample_trial"
+  | "negotiation"
+  | "first_order"
+  | "customer";
+
+export const DISPLAY_STAGES: readonly DisplayStage[] = [
+  "suspect",
+  "prospect",
+  "qualification",
+  "sample_trial",
+  "negotiation",
+  "first_order",
+  "customer",
+] as const;
+
+const DISPLAY_OF: Partial<Record<LeadStage, DisplayStage>> = {
+  new: "suspect",
+  contacted: "suspect",
+  suspect: "suspect",
+  prospect: "prospect",
+  qualified: "qualification",
+  qualification: "qualification",
+  management_review: "qualification",
+  sample_trial: "sample_trial",
+  sample_received: "sample_trial",
+  sample_review: "sample_trial",
+  negotiation: "negotiation",
+  commercial_discussion: "negotiation",
+  distributor_approval: "negotiation",
+  distributor_agreement: "negotiation",
+  first_order: "first_order",
+  delivery: "first_order",
+  payment: "first_order",
+  second_order: "first_order",
+  initial_stock_order: "first_order",
+  won: "customer",
+  customer: "customer",
+  active_distributor: "customer",
+};
+
+/** The stage a stored rung is drawn under, or null for On hold and Lost. */
+export function displayStageOf(stage: LeadStage | null | undefined): DisplayStage | null {
+  return stage ? (DISPLAY_OF[stage] ?? null) : null;
+}
+
+/** 0–6 on the bar, or -1 off it. */
+export function displayIndexOf(stage: LeadStage | null | undefined): number {
+  const d = displayStageOf(stage);
+  return d ? DISPLAY_STAGES.indexOf(d) : -1;
+}
+
+/**
+ * The rungs drawn as steps inside one stage, on this lead's ladder, in order.
+ * A stage with one rung has no steps worth naming and answers that one rung.
+ */
+export function stepsOf(
+  display: DisplayStage,
+  salesType: LeadSalesType | null | undefined,
+): LeadStage[] {
+  return ladderFor(salesType).filter((r) => DISPLAY_OF[r] === display);
 }

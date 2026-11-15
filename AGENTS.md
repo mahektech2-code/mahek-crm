@@ -3784,6 +3784,26 @@ three ladders somebody was on is a decision dressed up as a migration, and the
 ladder decides which GATES apply, so a wrong guess would not merely mislabel a
 record: it would block the salesman working it.
 
+**ONE LADDER, SEVEN STAGES (Nov 2026) — a reversal of the paragraph above.**
+Two leads added on one form the same day showed different stage bars (five for
+"Not decided", eleven for Direct), the Calling desk drew a legacy lead on the
+direct ladder while its record drew five rungs, and `contacted` was a Suspect on
+some screens and a Prospect on others. So every lead now climbs one ladder:
+`ladderFor(null)` is the direct ladder, and `foldStage` reads the retired words
+onto it (`new`/`contacted` → Suspect, `qualified` → Qualification, `won` →
+Customer, `sample_received` → Sample received & review). `0338_one_lead_ladder`
+moved the stored values a person can still act on and gave a Suspect stage to
+every lead (not a third-party shop) that had none — Lead Management reads
+`lead_stage is not null`, so those were on no screen at all. `won` is kept as
+written; history is never rewritten. Sales type now only says who bills, the
+Add lead form has no "Not decided", and every handset stage move goes through
+the gates. People see SEVEN stages, `DISPLAY_STAGES` in `lead-ladder.ts`:
+Suspect, Prospect, Qualification, Sample / trial, Negotiation, First order,
+Customer. `displayStageOf` is the one map; Sample received & review is a step of
+Sample / trial and Delivery, Payment and the second order are steps of First
+order (`stepsOf`). The record's bar, the board's columns and the funnel's rows
+all draw the seven. The gates still ask per rung — nothing about §28 moved.
+
 **`bandOf` is why seventeen new rungs moved no figure.** The console funnel
 draws four bands and the owner's cohort conversion counts by them, both reading
 `lead_stage`. Adding rungs without mapping them would have dropped every lead on
@@ -8985,20 +9005,33 @@ narrower than the number beside it says and truncates early. Ten tables were
 over by 20 to 200 pixels. `table-widths.test.ts` reads both spellings, the
 `width` prop and the third argument of the local `head()` helper.
 
-**THE CRM'S LEAD MANAGEMENT IS ONE SIDEBAR ROW, "Leads", AND A FRAME OF FOUR
-AREAS.** Today (My day, Calling desk, Sales Manager, Follow-ups), Leads (List,
-Board, Lost, New lead), Pipeline (Qualify, Samples, Commercial, Handovers,
-Distributors) and Insights (conversion, activity, control). `lib/lead-hub.ts`
-is the map, pure: every link names the module that guards its route, and
+**THE CRM'S LEAD MANAGEMENT IS A SIDEBAR GROUP OF DESKS (Nov 2026), and that
+replaced a frame of four areas.** The old frame drew a second header (its own
+title, a second search box, "+ New lead"), four area tabs, a strip of desk pills
+or cards, and a row of sub-tabs — up to six layers before the first lead. Now
+"Leads" is an ordinary sidebar group like Customer records, one row per desk:
+My day, All leads, Calling desk, Sales Manager desk, Verify & qualify, Samples &
+trials, Negotiation, Handovers, Lead reports. `lib/lead-hub.ts` (`HUB_DESKS`) is
+the map, pure: every link names the module that guards its route, and
 `lead-hub.test.ts` fails on a link to no module or a lead module with no link.
-`components/leads/hub` draws it from `crm/leads/layout.tsx` and
-`crm/samples/layout.tsx`; it decides no access — every module folder keeps its
-own guard. Inside it, `useInLeadHub()` makes `ScreenHeader` keep only its
-actions (unless `entity` — a record keeps its name), a banner drop a long
-explanatory body (unless `fact`), `Empty` drop its paragraph, `LeadTabs` draw
-nothing, and `OutsideLeadHub` hides a screen's own "← back to a desk" link.
-The Sales Dashboard mounts the same screens outside the frame and sees no
-change. The routes are unchanged; `Dashboard` is now "My day".
+Desks with `nav: false` have no row — New lead (a button), Follow-ups (filters
+of All leads now: `?view=today|overdue|unworked|parked`), Distributors (closed
+to new leads) and Lead control (administrators') — and their tabs are still
+drawn when somebody is on one; somebody holding only such desks gets them as
+rows (`hubNav`). The frame (`components/leads/hub`) draws the desk's title, the
+screen's buttons beside it (`HubActions` portals them), "+ New lead" on My day
+and All leads, and ONE row of underlined tabs; a record draws nothing from the
+frame. The sidebar lights the row whose matched address is longest
+(`activeHrefFor`), so Lead reports lights on `samples/feedback`. It decides no
+access — every module folder keeps its own guard. Inside it `useInLeadHub()`
+still drops a banner's long body and `Empty`'s paragraph, and `LeadTabs` draw
+nothing. The Sales Dashboard mounts the same screens outside the frame.
+
+**The lead record has five tabs**: Overview, Qualification (with the
+verification), Samples, Orders & money, Activity (messages, follow-ups, stage
+history, timeline). Old `?tab=` addresses open under their group (`TAB_GROUP`).
+A Suspect moves by one button, Convert; a Prospect's card says it waits for the
+Sales Manager's verification instead of offering a move.
 
 **A LEAD'S RECORD IS ONE PAGE OF CARDS, AND ITS ACTIONS ARE ONE MENU.** The
 header names the lead, its sales type, its rung and how long it has stood

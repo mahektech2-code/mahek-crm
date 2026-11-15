@@ -65,12 +65,7 @@ import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-mana
 import { ReassignLead, type Assignee } from "./reassign-lead";
 import { WhosUp } from "./where-it-stands";
 import { CardGrid } from "@/components/ui/card-grid";
-import {
-  DIRECT_LADDER,
-  DISTRIBUTOR_LADDER,
-  LEGACY_LADDER,
-  THIRD_PARTY_LADDER,
-} from "@/lib/engines/lead-ladder";
+import { DISPLAY_STAGES } from "@/lib/engines/lead-ladder";
 import {
   Card,
   GateCard,
@@ -98,7 +93,7 @@ import { EditDetails } from "./edit-details";
 import { ReopenLead } from "./reopen-lead";
 import { SelectStage } from "./select-stage";
 import type { StageSelection } from "@/lib/engines/lead-stage-select";
-import { ConvertButton, ConvertProvider } from "./convert-to-prospect";
+import { ConvertButton, ConvertProvider, useConvertBlocked } from "./convert-to-prospect";
 import type { VantageViewer } from "@/lib/lead-vantage";
 
 /**
@@ -163,7 +158,8 @@ export type RecordTab =
   | "communication"
   | "nurture"
   | "transitions"
-  | "timeline";
+  | "timeline"
+  | "activity";
 
 export const RECORD_TABS: ReadonlyArray<{
   id: RecordTab;
@@ -249,8 +245,36 @@ export const RECORD_TABS: ReadonlyArray<{
     shop: true,
     distributor: true,
     hint: "Everything that has happened to this account, from every app.",
+  },  {
+    id: "activity",
+    label: "Activity",
+    shop: true,
+    distributor: true,
+    hint: "Messages, follow-ups, stage changes and the full timeline.",
   },
 ];
+
+/**
+ * FIVE TABS ON SCREEN (Nov 2026), not nine. Verification is part of
+ * Qualification; Messages, Follow-ups, Stage history and Timeline are one
+ * Activity tab. The old `?tab=` addresses still open, under their group.
+ */
+const TAB_GROUP: Partial<Record<RecordTab, RecordTab>> = {
+  verification: "qualification",
+  communication: "activity",
+  nurture: "activity",
+  transitions: "activity",
+  timeline: "activity",
+};
+const SHOWN_TABS = new Set<RecordTab>([
+  "overview",
+  "qualification",
+  "samples",
+  "commercial",
+  "profile",
+  "approval",
+  "activity",
+]);
 
 /**
  * The rungs on which "Mark lost" is not a sentence anybody could mean.
@@ -263,18 +287,9 @@ export const RECORD_TABS: ReadonlyArray<{
  */
 const CLOSED_STAGES = new Set<LeadStage>(["lost", "won", "customer", "active_distributor"]);
 
-/** Which of the four ladders this is, said in words rather than implied. */
+/** The stage bar's name for screen readers: every lead has the same seven stages. */
 function ladderName(salesType: LeadRecord["salesType"]): string {
-  switch (salesType) {
-    case "direct":
-      return `Direct customer — ${DIRECT_LADDER.length} stages`;
-    case "third_party":
-      return `Third-party customer — ${THIRD_PARTY_LADDER.length} stages`;
-    case "distributor":
-      return `Distributor — ${DISTRIBUTOR_LADDER.length} stages`;
-    default:
-      return `Older lead — ${LEGACY_LADDER.length} stages`;
-  }
+  return `${salesTypeLabel(salesType)} — ${DISPLAY_STAGES.length} stages`;
 }
 
 export function LeadRecordScreen({
@@ -552,8 +567,11 @@ export function LeadRecordScreen({
 
   const distributor = record.salesType === "distributor";
   const base = leadHref(workspace, `leads/${record.customerId}`);
-  const tabs = RECORD_TABS.filter((t) => (distributor ? t.distributor : t.shop));
-  const here: RecordTab = tabs.find((t) => t.id === tab)?.id ?? "overview";
+  const allowed = RECORD_TABS.filter((t) => (distributor ? t.distributor : t.shop));
+  const tabs = allowed.filter((t) => SHOWN_TABS.has(t.id));
+  const asked: RecordTab = allowed.find((t) => t.id === tab)?.id ?? "overview";
+  /* `here` is the tab lit; `asked` keeps an old address pointed at its part. */
+  const here: RecordTab = TAB_GROUP[asked] ?? asked;
   const closed = CLOSED_STAGES.has(record.stage);
 
   const detail =
@@ -936,7 +954,7 @@ export function LeadRecordScreen({
             </>
           ) : null}
 
-          {here === "verification" ? (
+          {here === "qualification" ? (
             <VerificationPanel
               record={record}
               calls={calls}
@@ -988,7 +1006,7 @@ export function LeadRecordScreen({
             />
           ) : null}
 
-          {here === "communication" ? (
+          {here === "activity" ? (
             <CommunicationPanel
               customerId={record.customerId}
               documents={documents}
@@ -998,18 +1016,18 @@ export function LeadRecordScreen({
             />
           ) : null}
 
-          {here === "nurture" ? (
+          {here === "activity" ? (
             <>
               <UpcomingFollowUpCard followUps={followUps} day={day} />
               <NurturePanel workspace={workspace} nurture={nurture} total={counts.tasks} />
             </>
           ) : null}
 
-          {here === "transitions" ? (
+          {here === "activity" ? (
             <HistoryPanel transitions={transitions} total={counts.transitions} base={base} />
           ) : null}
 
-          {here === "timeline" ? (
+          {here === "activity" ? (
             <TimelinePanel page={timeline} kind={timelineKind} base={base} callHistory={callHistory} />
           ) : null}
         </div>
@@ -1312,6 +1330,7 @@ function GateRail({
   canOverride: boolean;
   overrideAllowed: boolean;
 }) {
+  const convertBlocked = useConvertBlocked();
   /* `noNextRung` is the engine saying the question has no answer rather than a
      negative one — a lead at the top of its ladder, a terminal one, or a parked
      one. Three different sentences, because they send somebody to three
@@ -1397,15 +1416,18 @@ function GateRail({
       )}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-divider pt-3">
-        {nextRung === "prospect" ? <ConvertButton label="Convert to Prospect…" size="sm" /> : null}
-        <AdvanceStage
-          customerId={record.customerId}
-          to={nextRung ?? null}
-          verdict={verdict}
-          canWork={canWork}
-          canOverride={canOverride && Boolean(nextRung) && !verdict.open}
-          overrideAllowed={overrideAllowed}
-        />
+        {nextRung === "prospect" && convertBlocked === null ? (
+          <ConvertButton label="Convert to Prospect…" size="sm" />
+        ) : (
+          <AdvanceStage
+            customerId={record.customerId}
+            to={nextRung ?? null}
+            verdict={verdict}
+            canWork={canWork}
+            canOverride={canOverride && Boolean(nextRung) && !verdict.open}
+            overrideAllowed={overrideAllowed}
+          />
+        )}
       </div>
     </Panel>
   );
@@ -1474,7 +1496,7 @@ function QualificationPanel({
     return (
       <Panel
         title="Qualification"
-        hint="Nothing to qualify on the original ladder — these leads predate the funnel and climb the six rungs they were raised on. Nothing backfills a sales type, because guessing which of three ladders somebody was on is a decision dressed up as a migration."
+        hint="This lead has no checklist at its stage."
       >
         <p className="text-[13px] text-muted">No checklist applies.</p>
       </Panel>

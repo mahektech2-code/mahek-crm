@@ -90,10 +90,12 @@ import { PressableScale, Presence, Stagger, animateLayoutFor, useShake } from '.
  */
 const VIEW_TONE: Record<LeadView, BadgeTone> = {
   all: 'neutral',
-  new: 'info',
-  contacted: 'teal',
-  qualified: 'amber',
+  suspect: 'info',
+  prospect: 'teal',
+  qualification: 'amber',
+  sample_trial: 'amber',
   negotiation: 'amber',
+  first_order: 'amber',
   on_hold: 'neutral',
   converted: 'success',
   lost: 'danger',

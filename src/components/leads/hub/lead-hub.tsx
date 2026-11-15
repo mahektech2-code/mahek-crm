@@ -21,7 +21,7 @@ export async function LeadHub({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
   const [day, modules] = await Promise.all([today(), listUserModules(user.id, "crm")]);
   const held = new Set(modules.map((m) => m.key));
-  const areas = hubFor(held);
+  const desks = hubFor(held);
 
   const has = (k: string) => held.has(k);
   const none = Promise.resolve(null);
@@ -47,13 +47,7 @@ export async function LeadHub({ children }: { children: React.ReactNode }) {
   if (slipped) counts.slipped = slipped.counts.slipped;
 
   return (
-    <LeadHubFrame
-      areas={areas}
-      counts={counts}
-      overdue={sidebar?.overdue ?? 0}
-      canSearch={held.has("crm.leads")}
-      canAdd={held.has("crm.lead-intake")}
-    >
+    <LeadHubFrame desks={desks} counts={counts} canAdd={held.has("crm.lead-intake")}>
       {children}
     </LeadHubFrame>
   );

@@ -13,6 +13,7 @@ import type { DeskPhase, LadderKey } from "./engines/lead-calling-desk";
 import { nextCallNumber } from "./engines/lead-calling-desk";
 import { calendarDate } from "./business-date";
 import { shortDate, stamp } from "./format";
+import { stageLabel } from "./lead-labels";
 
 /**
  * Whether a lead was created on today's business day — "Created today", never
@@ -41,17 +42,17 @@ export const PHASE_LABEL: Record<DeskPhase, string> = {
   requested: "Awaiting verification",
   followup: "Manager follow-up",
   returned: "Returned by Manager",
-  prospect: "Prospect",
-  qualification: "Qualification",
-  sample_trial: "Sample / Trial",
-  sample_received: "Sample received & review",
-  sample_review: "Sample received & review",
-  negotiation: "Negotiation",
-  first_order: "1st Order",
-  delivery: "Delivery",
-  payment: "Payment",
-  second_order: "2nd Order",
-  customer: "Customer",
+  prospect: stageLabel("prospect"),
+  qualification: stageLabel("qualification"),
+  sample_trial: stageLabel("sample_trial"),
+  sample_received: stageLabel("sample_received"),
+  sample_review: stageLabel("sample_review"),
+  negotiation: stageLabel("negotiation"),
+  first_order: stageLabel("first_order"),
+  delivery: stageLabel("delivery"),
+  payment: stageLabel("payment"),
+  second_order: stageLabel("second_order"),
+  customer: stageLabel("customer"),
   parked: "On hold",
   lost: "Lost",
   beyond: "Further on",
@@ -84,18 +85,18 @@ export const PHASE_TONE: Record<DeskPhase, Tone> = {
 
 /** The ladder's rung names, exactly as the sales manager's screens draw them. */
 export const LADDER_LABEL: Record<LadderKey, string> = {
-  suspect: "Suspect",
-  prospect: "Prospect",
-  qualification: "Qualification",
-  sample_trial: "Sample / Trial",
-  sample_received: "Sample received & review",
-  sample_review: "Sample received & review",
-  negotiation: "Negotiation",
-  first_order: "1st Order",
-  delivery: "Delivery",
-  payment: "Payment",
-  second_order: "2nd Order",
-  customer: "Customer",
+  suspect: stageLabel("suspect"),
+  prospect: stageLabel("prospect"),
+  qualification: stageLabel("qualification"),
+  sample_trial: stageLabel("sample_trial"),
+  sample_received: stageLabel("sample_received"),
+  sample_review: stageLabel("sample_review"),
+  negotiation: stageLabel("negotiation"),
+  first_order: stageLabel("first_order"),
+  delivery: stageLabel("delivery"),
+  payment: stageLabel("payment"),
+  second_order: stageLabel("second_order"),
+  customer: stageLabel("customer"),
 };
 
 /**
