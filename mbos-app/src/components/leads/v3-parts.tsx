@@ -230,3 +230,135 @@ export function TickDisc({ on }: { on: boolean }) {
     </View>
   );
 }
+
+/* ------------------------------------------------------------ V3 sheets */
+
+/** The sheet's 20/800 title, with its one line under it. */
+export function SheetTitle({ title, sub, subTone, lead }: { title: string; sub?: string; subTone?: 'danger'; lead?: React.ReactNode }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      {lead}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
+          {title}
+        </Text>
+        {sub ? (
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: subTone === 'danger' ? C.danger : C.muted, marginTop: 2 }, weight(subTone ? 600 : 400)]}>
+            {sub}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+/** The wash-filled 52 box the V3 sheets type into. */
+export function WashInput({
+  icon,
+  style,
+  ...input
+}: { icon?: IconName; style?: StyleProp<ViewStyle> } & Omit<TextInputProps, 'style'>) {
+  return (
+    <View
+      style={[
+        { minHeight: 52, borderRadius: 18, backgroundColor: C.canvas, flexDirection: 'row', alignItems: input.multiline ? 'flex-start' : 'center', gap: 8, paddingHorizontal: 14 },
+        style,
+      ]}>
+      {icon ? (
+        <View style={{ paddingTop: input.multiline ? 15 : 0 }}>
+          <Icon name={icon} size={18} color={C.muted} strokeWidth={2} />
+        </View>
+      ) : null}
+      <TextInput
+        placeholderTextColor={C.faint}
+        accessibilityLabel={typeof input.placeholder === 'string' ? input.placeholder : undefined}
+        {...input}
+        style={[
+          { flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink, paddingVertical: 14, paddingHorizontal: 0 },
+          input.multiline ? { textAlignVertical: 'top' } : null,
+          weight(400),
+        ]}
+      />
+    </View>
+  );
+}
+
+/** A 40 choice pill in a sheet — navy when picked. */
+export function SheetChip({ label, a11y, on, onPress, icon }: { label: string; a11y?: string; on: boolean; onPress: () => void; icon?: IconName }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel={a11y ?? label}
+      hitSlop={{ top: 4, bottom: 4 }}
+      style={({ pressed }) => ({
+        minHeight: 44,
+        paddingHorizontal: 16,
+        borderRadius: 22,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: on ? C.navy : pressed ? C.hairline : C.canvas,
+      })}>
+      {icon ? <Icon name={icon} size={15} color={on ? C.lime : C.muted} strokeWidth={2.2} /> : null}
+      <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** The refusal line inside a sheet — red pill, short sentence. */
+export function SheetError({ text }: { text: string }) {
+  return (
+    <View style={{ minHeight: 36, borderRadius: 18, backgroundColor: C.dangerBg, paddingHorizontal: 12, paddingVertical: 8, justifyContent: 'center' }}>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(600)]}>{text}</Text>
+    </View>
+  );
+}
+
+/** Cancel (110, wash) and the navy action — every V3 sheet ends on it. */
+export function SheetFooter({
+  onCancel,
+  cancelLabel = 'Cancel',
+  label,
+  onPress,
+  disabled = false,
+  a11y,
+}: {
+  onCancel: () => void;
+  cancelLabel?: string;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  a11y?: string;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+      <Pressable
+        onPress={onCancel}
+        accessibilityRole="button"
+        accessibilityLabel={cancelLabel}
+        style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+        <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{cancelLabel}</Text>
+      </Pressable>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={a11y ?? label}
+        accessibilityState={{ disabled }}
+        style={({ pressed }) => ({
+          flex: 1,
+          height: 56,
+          borderRadius: 28,
+          backgroundColor: disabled ? C.primaryEdge : pressed ? C.navySoft : C.navy,
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 12,
+        })}>
+        <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
+          {label}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}

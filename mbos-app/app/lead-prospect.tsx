@@ -1,8 +1,11 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { Icon, type IconName } from '../src/components/ui/Icon';
+import { BoxInput, CardHead, LeadCard, LeadGlyph } from '../src/components/leads/v3-parts';
+import { PrimaryButton } from '../src/components/ui/primitives';
 import { skuText, useSkus } from '../src/components/ui/sku';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
@@ -15,7 +18,7 @@ import {
   VerifyFieldRow,
   type VerifyAnswer,
 } from '../src/components/leads/verify-field-row';
-import { color as C, radius, weight } from '../src/theme/tokens';
+import { color as C, weight } from '../src/theme/tokens';
 import {
   leadFunnelView,
   saveProspectFields,
@@ -247,13 +250,16 @@ export default function ProspectForm() {
 
   if (!view) {
     return (
-      <AppFrame title="Prospect details" activeTab={null} onBack={goBack} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={goBack} />
-        <Card style={{ paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+      <AppFrame title="Prospect details" tone="lavender" activeTab={null} onBack={goBack} contentStyle={{ padding: 14 }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 26, alignItems: 'center' }}>
+          <Icon name="person" size={28} color={C.faint} strokeWidth={2} />
+          <Text style={[{ fontSize: 16, lineHeight: 21, color: C.ink, textAlign: 'center', marginTop: 8 }, weight(800)]}>
             This lead is not on this phone
-          </T>
-        </Card>
+          </Text>
+          <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, textAlign: 'center', marginTop: 4 }, weight(400)]}>
+            Go back and open it from the list
+          </Text>
+        </View>
       </AppFrame>
     );
   }
@@ -403,31 +409,36 @@ export default function ProspectForm() {
   );
   const productFieldState = () =>
     product ? (
-      <Choice
+      <ProductHit
         label={product.name}
         sub={skuText(productSku.get(product.id)) ?? undefined}
-        selected
+        picked
+        a11y={'Picked: ' + product.name + '. Tap to unpick'}
         onPress={() => pickProduct(null)}
-        style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
       />
     ) : (
       <>
-        <Input value={productQuery} onChangeText={setProductQuery} placeholder="Thinner, Nano, M5x4" />
-        <View style={{ gap: 8, marginTop: 8 }}>
+        <TextInput
+          value={productQuery}
+          onChangeText={setProductQuery}
+          placeholder="Thinner, Nano, M5x4"
+          placeholderTextColor={C.faint}
+          accessibilityLabel="Which of our products they need"
+          style={[{ minHeight: 44, borderRadius: 22, backgroundColor: C.canvas, paddingHorizontal: 14, fontSize: 15, color: C.ink }, weight(400)]}
+        />
+        <View style={{ gap: 6, marginTop: 8 }}>
           {hits.map((p) => (
-            <Choice
+            <ProductHit
               key={p.id}
               /* The SKU's own name leads and the formulation sits under
                  it — the rule the order form runs, in `src/lib/sku-lines.ts`. */
               label={skuLines({ name: p.name, formulation: p.formulation }).lead}
               sub={[skuText(p.sku), skuLines({ name: p.name, formulation: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
-              selected={false}
               onPress={() => pickProduct({ id: p.id, name: p.name })}
-              style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
             />
           ))}
           {productQuery.trim() && hits.length === 0 ? (
-            <T s="caption">No product matches that.</T>
+            <Text style={[{ fontSize: 12, color: C.faint }, weight(400)]}>No product matches that.</Text>
           ) : null}
         </View>
       </>
@@ -454,258 +465,261 @@ export default function ProspectForm() {
     }
   });
 
+  /* Each answer sits in one card, as V3 draws it: a plain answer is a row
+     with its label, and an answer the record already holds is the verify
+     box — confirm, correct, or could not check — under the same label. */
+  const verifyOr = (
+    field: keyof typeof CHECKED_LABELS,
+    reported: string,
+    plain: React.ReactNode,
+    extra?: Partial<React.ComponentProps<typeof VerifyFieldRow>>,
+  ) =>
+    originals[field] ? (
+      <VerifyFieldRow
+        field={field}
+        label={CHECKED_LABELS[field]}
+        reported={reported}
+        answer={checks[field] ?? BLANK_VERIFY}
+        onChange={(patch) => patchCheck(field, patch)}
+        {...extra}
+      />
+    ) : (
+      plain
+    );
+
   return (
     <AppFrame
       title="Prospect details"
+      tone="lavender"
+      hero={
+        <Text style={[{ fontSize: 13, lineHeight: 18, color: HERO.lavender.muted, marginTop: 4 }, weight(400)]}>
+          {(lead.company?.trim() || lead.name) + ' · ' + stageLabel(input.stage) + ' · fill everything on this page'}
+        </Text>
+      }
       activeTab={null}
       onBack={goBack}
-      contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={goBack} />
-
-      <Card>
-        <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink }, weight(600)]}>
-          {lead.company?.trim() || lead.name}
-        </T>
-        <T s="caption" style={{ marginTop: 2 }}>
-          {stageLabel(input.stage) + ' · fill everything on this page'}
-        </T>
-      </Card>
-
-      <View style={{ marginTop: 16 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What kind of business</SectionLabel>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {CUSTOMER_TYPES.map((t) => (
-            <Choice
-              key={t.value}
-              label={t.label}
-              sub={t.hint}
-              selected={customerType === t.value}
-              onPress={() => setCustomerType(t.value)}
-              style={{ paddingHorizontal: 14 }}
-            />
-          ))}
-        </View>
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Litres a month</SectionLabel>
-        {originals.monthly_litres ? (
-          <VerifyFieldRow
-            field="monthly_litres"
-            label={CHECKED_LABELS.monthly_litres}
-            reported={originals.monthly_litres + ' litres a month'}
-            answer={checks.monthly_litres ?? BLANK_VERIFY}
-            onChange={(patch) => patchCheck('monthly_litres', patch)}
-            placeholder="200"
-            keyboardType="decimal-pad"
-          />
-        ) : (
-          <Input value={litres} onChangeText={(v) => setLitres(cleanDecimal(v, 2))} placeholder="200" keyboardType="decimal-pad" />
-        )}
-        <T s="caption" style={{ marginTop: 6 }}>How much they use in total. Not only ours.</T>
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
-        {originals.potential ? (
-          <VerifyFieldRow
-            field="potential"
-            label={CHECKED_LABELS.potential}
-            reported={'₹' + originals.potential + ' a month'}
-            answer={checks.potential ?? BLANK_VERIFY}
-            onChange={(patch) => patchCheck('potential', patch)}
-            placeholder="40000"
-            keyboardType="decimal-pad"
-          />
-        ) : (
-          <Input value={potential} onChangeText={(v) => setPotential(cleanAmount(v))} placeholder="40000" keyboardType="decimal-pad" />
-        )}
-        <T s="caption" style={{ marginTop: 6 }}>In rupees, about.</T>
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Which brand they use now</SectionLabel>
-        {originals.competitor ? (
-          <VerifyFieldRow
-            field="competitor"
-            label={CHECKED_LABELS.competitor}
-            reported={originals.competitor}
-            answer={checks.competitor ?? BLANK_VERIFY}
-            onChange={(patch) => patchCheck('competitor', patch)}
-            placeholder="Asian, Berger, a local brand"
-          />
-        ) : (
-          <Input value={competitor} onChangeText={setCompetitor} placeholder="Asian, Berger, a local brand" />
-        )}
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Which of our products they need</SectionLabel>
-        {originals.required_product ? (
-          <VerifyFieldRow
-            field="required_product"
-            label={CHECKED_LABELS.required_product}
-            reported={originals.required_product}
-            answer={checks.required_product ?? BLANK_VERIFY}
-            /* A SKU is picked, not typed, so the row hands the catalogue
-               search back to this screen rather than owning one. Choosing
-               "Correct" empties the pick — a corrected product with the old
-               one still selected is the overwrite this pattern exists to
-               stop, arriving through the one field that has no text box — and
-               the two verdicts that leave the value alone put it back. */
-            onChange={(patch) => {
-              patchCheck('required_product', patch);
-              if (patch.verdict === 'corrected') {
-                setProduct(null);
-                setProductQuery('');
-              } else if (patch.verdict) {
-                setProduct(originalProduct);
-                setProductQuery('');
-              }
-            }}
-            renderCorrected={() => (
-              <View>
-                <T s="caption" style={{ marginBottom: 6 }}>Which of our products they need</T>
-                {productField()}
+      contentStyle={{ padding: 14, paddingBottom: 24, gap: 12 }}>
+      {/* What the gate is still waiting on, in the gate's own words — at the
+          top now, so the page opens on what it owes. The last answer swaps
+          the list for the all-answered line in place. No buzz: nothing is
+          saved yet, and Save confirms with its own toast. Every condition is
+          read off the same values the save sends, so somebody working down
+          this list cannot reach the bottom and still be refused. */}
+      <Swap id={outstanding.length ? 'open' : 'done'}>
+        <View style={{ backgroundColor: C.navy, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 14 }}>
+          {outstanding.length ? (
+            <>
+              <View
+                accessible
+                accessibilityLabel={'Answer these to make it a Prospect: ' + outstanding.map((c) => c.says).join('. ')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={[{ fontSize: 22, color: C.lime }, weight(800)]}>{String(outstanding.length)}</Text>
+                <Text style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>to answer before Prospect</Text>
               </View>
-            )}
+              <View style={{ marginTop: 6, gap: 2 }}>
+                {outstanding.map((c) => (
+                  <Text key={c.id} style={[{ fontSize: 13, lineHeight: 19, color: C.onNavyMuted }, weight(400)]}>{'• ' + c.says}</Text>
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Icon name="tick" size={18} color={C.lime} strokeWidth={2.4} />
+              <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(700)]}>
+                All answered. Save, then move it up on the lead page.
+              </Text>
+            </View>
+          )}
+        </View>
+      </Swap>
+
+      <LeadCard style={{ borderRadius: 22 }}>
+        <CardHead>Kind of business</CardHead>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          {CUSTOMER_TYPES.map((t) => {
+            const on = customerType === t.value;
+            return (
+              <Pressable
+                key={t.value}
+                onPress={() => setCustomerType(t.value)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={t.label + (t.hint ? '. ' + t.hint : '')}
+                style={({ pressed }) => ({
+                  flexGrow: 1,
+                  flexBasis: '45%',
+                  minHeight: 56,
+                  borderRadius: 16,
+                  borderWidth: on ? 2 : 1,
+                  borderColor: on ? C.primary : C.border,
+                  backgroundColor: on ? C.primaryTint : pressed ? C.wash : C.surface,
+                  paddingHorizontal: on ? 11 : 12,
+                  paddingVertical: on ? 9 : 10,
+                })}>
+                <Text style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>{t.label}</Text>
+                {t.hint ? <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>{t.hint}</Text> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      </LeadCard>
+
+      <LeadCard style={{ borderRadius: 22 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <LeadGlyph name="drop" size={18} color={C.muted} strokeWidth={2} />
+          <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>Litres a month</Text>
+          <Text style={[{ fontSize: 11, color: C.faint }, weight(400)]}>total, not only ours</Text>
+        </View>
+        <View style={{ marginTop: 10 }}>
+          {verifyOr(
+            'monthly_litres',
+            originals.monthly_litres + ' L',
+            <BoxInput
+              value={litres}
+              onChangeText={(v) => setLitres(cleanDecimal(v, 2))}
+              placeholder="200"
+              keyboardType="decimal-pad"
+              suffix="L"
+              accessibilityLabel="Litres a month. How much they use in total. Not only ours."
+            />,
+            { placeholder: '200', keyboardType: 'decimal-pad' },
+          )}
+        </View>
+      </LeadCard>
+
+      <LeadCard padded={false} style={{ borderRadius: 22 }}>
+        <QBlock icon="money" label="Can buy a month, ₹ about">
+          {verifyOr(
+            'potential',
+            '₹' + originals.potential + ' a month',
+            <BareInput value={potential} onChangeText={(v) => setPotential(cleanAmount(v))} placeholder="40,000" keyboardType="decimal-pad" a11y="How much they can buy a month, in rupees, about" />,
+            { placeholder: '40000', keyboardType: 'decimal-pad' },
+          )}
+        </QBlock>
+        <QBlock icon="shop" label="Brand they use now">
+          {verifyOr(
+            'competitor',
+            originals.competitor,
+            <BareInput value={competitor} onChangeText={setCompetitor} placeholder="Asian, Berger, a local brand" a11y="Which brand they use now" />,
+            { placeholder: 'Asian, Berger, a local brand' },
+          )}
+        </QBlock>
+        <QBlock icon="sample" label="Which of our products they need">
+          {originals.required_product ? (
+            <VerifyFieldRow
+              field="required_product"
+              label={CHECKED_LABELS.required_product}
+              reported={originals.required_product}
+              answer={checks.required_product ?? BLANK_VERIFY}
+              /* The product is a PICK, not a box, so a correction hands the
+                 search back to this screen rather than owning one. Choosing
+                 "Correct" empties the pick — a corrected product with the old
+                 one still selected is the overwrite this pattern exists to
+                 stop, arriving through the one field that has no text box —
+                 and the two verdicts that leave the value alone put it back. */
+              onChange={(patch) => {
+                patchCheck('required_product', patch);
+                if (patch.verdict === 'corrected') {
+                  setProduct(null);
+                  setProductQuery('');
+                } else if (patch.verdict) {
+                  setProduct(originalProduct);
+                  setProductQuery('');
+                }
+              }}
+              renderCorrected={() => <View>{productField()}</View>}
+            />
+          ) : (
+            productField()
+          )}
+        </QBlock>
+        <QBlock icon="person" label="Who to ask for when we call">
+          {verifyOr(
+            'contact_person',
+            originals.contact_person,
+            <BareInput value={contact} onChangeText={setContact} placeholder="Suresh, on the counter" a11y="Who to ask for when we call" />,
+            { placeholder: 'Suresh, on the counter' },
+          )}
+        </QBlock>
+        {/* Not one of the eight — the specification says "if known", and a
+            gate that refused on an optional field would be one nobody could
+            pass. It IS one of the twelve at qualification, so it is asked
+            here where the salesman is already standing in front of the man. */}
+        <QBlock icon="people2" label="Who decides to buy · optional">
+          {verifyOr(
+            'decision_maker',
+            originals.decision_maker,
+            <BareInput value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The owner, his son" a11y="Who decides to buy. Optional." />,
+            { placeholder: 'The owner, his son' },
+          )}
+        </QBlock>
+        <QBlock icon="cal" label="Credit they want, days · optional">
+          <BareInput
+            value={creditDays}
+            onChangeText={(v) => setCreditDays(cleanWhole(v))}
+            placeholder="30"
+            keyboardType="number-pad"
+            a11y="Credit they want, in days. Optional. Whole days only."
           />
-        ) : (
-          productField()
-        )}
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who to ask for when we call</SectionLabel>
-        {originals.contact_person ? (
-          <VerifyFieldRow
-            field="contact_person"
-            label={CHECKED_LABELS.contact_person}
-            reported={originals.contact_person}
-            answer={checks.contact_person ?? BLANK_VERIFY}
-            onChange={(patch) => patchCheck('contact_person', patch)}
-            placeholder="Suresh, on the counter"
-          />
-        ) : (
-          <Input value={contact} onChangeText={setContact} placeholder="Suresh, on the counter" />
-        )}
-      </View>
-
-      {/* Not one of the eight — the specification says "if known", and a gate
-          that refused on an optional field would be one nobody could pass. It
-          IS one of the twelve at qualification, so it is asked here where the
-          salesman is already standing in front of the man. */}
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who decides to buy</SectionLabel>
-        {originals.decision_maker ? (
-          <VerifyFieldRow
-            field="decision_maker"
-            label={CHECKED_LABELS.decision_maker}
-            reported={originals.decision_maker}
-            answer={checks.decision_maker ?? BLANK_VERIFY}
-            onChange={(patch) => patchCheck('decision_maker', patch)}
-            placeholder="The owner, his son"
-          />
-        ) : (
-          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional. The owner, his son" />
-        )}
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Credit they want, in days</SectionLabel>
-        <Input
-          value={creditDays}
-          onChangeText={(v) => setCreditDays(cleanWhole(v))}
-          placeholder="Optional. Example: 30"
-          keyboardType="number-pad"
-          wholeHint="Whole days only."
-        />
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What they will use it on</SectionLabel>
-        <Input value={application} onChangeText={setApplication} placeholder="Optional. Furniture polish, spray booth" />
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>GST number</SectionLabel>
-        <Input value={gstin} onChangeText={setGstin} placeholder="Optional now. Needed before a sample" autoCapitalize="characters" />
-      </View>
+        </QBlock>
+        <QBlock icon="note" label="What they will use it on · optional">
+          <BareInput value={application} onChangeText={setApplication} placeholder="Furniture polish, spray booth" a11y="What they will use it on. Optional." />
+        </QBlock>
+        <QBlock tag="GST" label="GST · needed before a sample" last>
+          <BareInput value={gstin} onChangeText={setGstin} placeholder="27AAPFU0939F1ZV" autoCapitalize="characters" a11y="GST number. Optional now. Needed before a sample." />
+        </QBlock>
+      </LeadCard>
 
       {/* -------------------------------------------------- §24 and §5 */}
-      <View style={{ marginTop: 18, gap: 10 }}>
-        <SecondaryButton
-          label={lead.nextAction ? 'Next: ' + lead.nextAction : 'Set next action'}
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <SideTile
+          glyph="arrow"
+          ink={C.primaryDeep}
+          title="Next"
+          body={lead.nextAction ? lead.nextAction + (lead.nextActionDate ? ' · ' + pretty(lead.nextActionDate) : '') : 'Set next action'}
+          a11y={lead.nextAction ? 'Next: ' + lead.nextAction + (lead.nextActionDate ? ', ' + pretty(lead.nextActionDate) : '') : 'Set next action'}
           onPress={() => setNextOpen(true)}
         />
-        {lead.nextActionDate ? <T s="caption">{pretty(lead.nextActionDate)}</T> : null}
-
-        <SecondaryButton
-          label={
-            lead.prospectReasonCode
-              ? 'Why: ' + labelOf(config.prospectReasons, lead.prospectReasonCode)
-              : 'Say why to follow up'
-          }
+        <SideTile
+          icon="warn"
+          ink={lead.prospectReasonCode ? C.primaryDeep : C.warnInk}
+          title="Why follow up"
+          body={lead.prospectReasonCode ? labelOf(config.prospectReasons, lead.prospectReasonCode) : 'Not said yet'}
+          bodyInk={lead.prospectReasonCode ? C.ink : C.warnInk}
+          a11y={lead.prospectReasonCode ? 'Why: ' + labelOf(config.prospectReasons, lead.prospectReasonCode) : 'Say why to follow up'}
           onPress={() => setReasonOpen(true)}
         />
       </View>
 
-      {/* What the gate is still waiting on, in the gate's own words. The last
-          answer swaps the list for the all-answered line in place — the one
-          moment on this page that changes what the page is telling him. No
-          buzz: nothing is saved yet, and Save confirms with its own toast. */}
-      <Swap id={outstanding.length ? 'open' : 'done'}>
-      {outstanding.length ? (
-        <View
-          style={{
-            marginTop: 16,
-            borderWidth: 1,
-            borderColor: C.border,
-            borderRadius: radius.lg,
-            backgroundColor: C.surface,
-            padding: 12,
-            gap: 6,
-          }}>
-          <T s="caption">Answer these to make it a Prospect</T>
-          {outstanding.map((c) => (
-            <T key={c.id} style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>{'· ' + c.says}</T>
-          ))}
-        </View>
-      ) : (
-        <View style={{ marginTop: 16 }}>
-          <T style={[{ fontSize: 15, lineHeight: 21, color: C.success }, weight(500)]}>
-            All answered. Save, then move it up on the lead page.
-          </T>
-        </View>
-      )}
-      </Swap>
-
       {/*
         SAID PLAINLY, because he has just typed a sentence for somebody to
         read. The corrected ANSWER goes up with everything else; the pair and
-        the reason behind it have nowhere on the wire to land yet, and a
-        salesman who believes his manager is reading that sentence this evening
-        has been misled by a screen rather than by anybody. Drawn only where
-        there is a correction to be honest about.
+        the reason behind it have nowhere on the wire to land yet. Drawn only
+        where there is a correction to be honest about.
       */}
       {Object.values(checks).some((a) => a.verdict === 'corrected') ? (
-        <T s="caption" style={{ marginTop: 14 }}>
-          The office gets the corrected answer. The reason stays on this phone for now.
-        </T>
+        <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center' }, weight(400)]}>
+          Corrected answers go to the office · reasons stay on this phone for now
+        </Text>
       ) : null}
 
-      <PrimaryButton
-        label="Save details"
-        onPress={() => save()}
-        disabled={Boolean(refusal)}
-        whyDisabled={refusal ?? undefined}
-        style={{ marginTop: 16 }}
-      />
-      <SecondaryButton
-        label="Back to the lead"
-        onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
-        style={{ marginTop: 10 }}
-      />
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <Pressable
+          onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
+          accessibilityRole="button"
+          accessibilityLabel="Back to the lead"
+          style={({ pressed }) => ({ width: 140, height: 60, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Back to lead</Text>
+        </Pressable>
+        <PrimaryButton
+          label="Save details"
+          tone="navy"
+          onPress={() => save()}
+          disabled={Boolean(refusal)}
+          whyDisabled={refusal ?? undefined}
+          style={{ flex: 1, height: 60, minHeight: 60, borderRadius: 30 }}
+        />
+      </View>
 
       <ReasonSheet
         key={reasonOpen ? 'why-open' : 'why-shut'}
@@ -738,5 +752,102 @@ export default function ProspectForm() {
         }}
       />
     </AppFrame>
+  );
+}
+
+/* ------------------------------------------------------- V3 form pieces */
+
+/** One question of the answers card: icon, 11-point label, the answer under it. */
+function QBlock({ icon, tag, label, last = false, children }: { icon?: IconName; tag?: string; label: string; last?: boolean; children: React.ReactNode }) {
+  return (
+    <View style={{ flexDirection: 'row', gap: 12, paddingVertical: 10, minHeight: 56, borderBottomWidth: last ? 0 : 1, borderBottomColor: C.hairline }}>
+      <View style={{ width: 20, paddingTop: 2, alignItems: 'center' }}>
+        {tag ? (
+          <Text style={[{ fontSize: 11, color: C.muted }, weight(800)]}>{tag}</Text>
+        ) : icon ? (
+          <Icon name={icon} size={20} color={C.muted} strokeWidth={2} />
+        ) : null}
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+        <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint }, weight(400)]}>{label}</Text>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+/** The borderless box inside a question row. */
+function BareInput({ a11y, ...input }: { a11y: string } & TextInputProps) {
+  return (
+    <TextInput
+      placeholderTextColor={C.faint}
+      accessibilityLabel={a11y}
+      {...input}
+      style={[{ fontSize: 16, lineHeight: 21, color: C.ink, paddingVertical: 2, paddingHorizontal: 0, minHeight: 28 }, weight(400)]}
+    />
+  );
+}
+
+/** A product search hit, or the one picked. */
+function ProductHit({ label, sub, picked = false, a11y, onPress }: { label: string; sub?: string; picked?: boolean; a11y?: string; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y ?? label + (sub ? '. ' + sub : '')}
+      style={({ pressed }) => ({
+        borderRadius: 14,
+        borderWidth: picked ? 2 : 0,
+        borderColor: C.primary,
+        backgroundColor: picked ? C.primaryTint : pressed ? C.hairline : C.canvas,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+      })}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>{label}</Text>
+        {sub ? <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>{sub}</Text> : null}
+      </View>
+      {picked ? <Icon name="close" size={14} color={C.primaryDeep} strokeWidth={2.4} /> : null}
+    </Pressable>
+  );
+}
+
+/** One of the two tiles at the foot: the next action, the reason. */
+function SideTile({
+  icon,
+  glyph,
+  ink,
+  title,
+  body,
+  bodyInk = C.ink,
+  a11y,
+  onPress,
+}: {
+  icon?: IconName;
+  glyph?: 'arrow';
+  ink: string;
+  title: string;
+  body: string;
+  bodyInk?: string;
+  a11y: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      style={({ pressed }) => ({ flex: 1, minHeight: 76, borderRadius: 20, backgroundColor: pressed ? C.wash : C.surface, paddingHorizontal: 12, paddingVertical: 10 })}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        {glyph ? <LeadGlyph name={glyph} size={15} color={ink} /> : icon ? <Icon name={icon} size={15} color={ink} strokeWidth={2.2} /> : null}
+        <Text style={[{ fontSize: 12, color: ink }, weight(700)]}>{title}</Text>
+      </View>
+      <Text numberOfLines={2} style={[{ fontSize: 13, lineHeight: 18, color: bodyInk, marginTop: 4 }, weight(400)]}>
+        {body}
+      </Text>
+    </Pressable>
   );
 }

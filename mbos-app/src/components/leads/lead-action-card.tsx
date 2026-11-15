@@ -1,7 +1,9 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { Badge, Card, SecondaryButton, T } from '../ui/primitives';
+import { Icon } from '../ui/Icon';
+import { PillButton } from '../ui/v3';
+import { LeadGlyph, StagePill } from './v3-parts';
 import { NavigateButton } from '../ui/navigate';
 import { color as C, weight, type BadgeTone } from '../../theme/tokens';
 import {
@@ -143,70 +145,107 @@ export function LeadActionCard({
         ? (lead.leadManagerName ?? 'Your lead manager') + ' will do this'
         : 'The office will do this';
 
+  const stageTone: BadgeTone = rung
+    ? action?.tone === 'danger'
+      ? 'danger'
+      : action?.tone === 'warn'
+        ? 'amber'
+        : 'neutral'
+    : LEGACY_TONE[lead.stage] ?? 'neutral';
+
   return (
-    <Card>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-            {shop}
-          </T>
-          <T s="caption" style={{ marginTop: 2 }} numberOfLines={1}>
-            {[lead.company?.trim() ? lead.name : null, lead.city].filter(Boolean).join(' · ') ||
-              'No town saved'}
-          </T>
-        </View>
-        {rung ? (
-          <Badge tone={action?.tone === 'danger' ? 'danger' : action?.tone === 'warn' ? 'amber' : 'neutral'}>
-            {stageLabel(rung)}
-          </Badge>
-        ) : (
-          <Badge tone={LEGACY_TONE[lead.stage] ?? 'neutral'}>{lead.stage}</Badge>
-        )}
+    <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 16, lineHeight: 21, color: C.ink }, weight(700)]}>
+          {shop}
+        </Text>
+        <StagePill tone={stageTone} text={rung ? stageLabel(rung) : lead.stage} />
       </View>
+      <Text numberOfLines={1} style={[{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }, weight(400)]}>
+        {[lead.company?.trim() ? lead.name : null, lead.city].filter(Boolean).join(' · ') || 'No town saved'}
+      </Text>
 
       {/* The instruction, at the weight of an instruction. A muted one is a
           real answer — "awaiting manager verification" is worth knowing and is
           not a thing to go and do — so it is drawn as the engine tones it. */}
       {action ? (
-        <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: TONE[action.tone] }, weight(600)]}>
-          {action.label}
-        </T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}>
+          {action.tone === 'muted' ? null : <LeadGlyph name="arrow" size={15} color={TONE[action.tone]} />}
+          <Text style={[{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 19, color: TONE[action.tone] }, weight(action.tone === 'muted' ? 600 : 700)]}>
+            {action.label}
+          </Text>
+        </View>
       ) : null}
 
       {headline ? (
-        <T style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.body }}>{headline}</T>
+        <Text style={[{ fontSize: 13, lineHeight: 18, marginTop: 2, color: C.body }, weight(400)]}>{headline}</Text>
       ) : null}
 
       {/*
-        §24's four answers, drawn as four answers.
-        The action and the day on one line because that is how somebody reads
-        a diary; the person on the next, because "who is holding this" is the
-        question the rule was written for and it is routinely not the salesman.
+        §24's four answers, drawn as four answers: the action and the day
+        together, because that is how somebody reads a diary; who holds it,
+        because "who is holding this" is the question the rule was written for
+        and it is routinely not the salesman; and the result expected.
       */}
       {lead.nextAction?.trim() ? (
-        <T style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.ink }} numberOfLines={2}>
-          {lead.nextAction.trim() + (day ? ' · ' + dmy(day) : '')}
-        </T>
-      ) : null}
-      {ownerLine ? (
-        <T s="caption" style={{ marginTop: 2 }}>{ownerLine}</T>
-      ) : null}
-      {lead.nextActionOutcome?.trim() ? (
-        <T s="caption" style={{ marginTop: 2 }} numberOfLines={2}>
-          {'Expected result: ' + lead.nextActionOutcome.trim()}
-        </T>
+        <View style={{ marginTop: 10, borderRadius: 16, backgroundColor: C.canvas, paddingHorizontal: 12, paddingVertical: 10 }}>
+          <Text numberOfLines={2} style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(600)]}>
+            {lead.nextAction.trim()}
+          </Text>
+          {day || ownerLine ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              {day ? (
+                <Text accessibilityLabel={'On ' + dmy(day)} style={[{ fontSize: 12, color: C.muted }, weight(600)]}>
+                  {dmy(day)}
+                </Text>
+              ) : null}
+              {ownerLine ? (
+                <View
+                  style={{
+                    minHeight: 24,
+                    paddingHorizontal: 10,
+                    borderRadius: 12,
+                    backgroundColor: ownerLine === 'Yours to do' ? C.successBg : C.surface,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}>
+                  <Icon name="person" size={12} color={ownerLine === 'Yours to do' ? C.success : C.muted} strokeWidth={2.2} />
+                  <Text style={[{ fontSize: 12, color: ownerLine === 'Yours to do' ? C.success : C.muted }, weight(700)]}>{ownerLine}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+          {lead.nextActionOutcome?.trim() ? (
+            <View
+              accessible
+              accessibilityLabel={'Expected result: ' + lead.nextActionOutcome.trim()}
+              style={{ alignSelf: 'flex-start', marginTop: 6, minHeight: 24, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12, backgroundColor: C.primaryTint }}>
+              <Text numberOfLines={2} style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(600)]}>
+                {'Expected result: ' + lead.nextActionOutcome.trim()}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : day || ownerLine ? (
+        <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }, weight(400)]}>
+          {[day ? dmy(day) : null, ownerLine].filter(Boolean).join(' · ')}
+        </Text>
       ) : null}
 
       {/* What is absent, NAMED. A lead owed something today with nobody
           against it is the most urgent shape on this screen, and a blank where
           a name should be says nothing at all. */}
       {missing.length ? (
-        <T style={[{ fontSize: 13, lineHeight: 19, marginTop: 6, color: C.warnInk }, weight(500)]}>
-          {'Not set yet: ' + missing.join(', ') + '.'}
-        </T>
+        <View
+          accessible
+          accessibilityLabel={'Not set yet: ' + missing.join(', ') + '.'}
+          style={{ alignSelf: 'flex-start', marginTop: 8, minHeight: 32, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: C.warnBg, justifyContent: 'center' }}>
+          <Text style={[{ fontSize: 12, lineHeight: 16, color: C.warnInk }, weight(700)]}>{'Not set: ' + missing.join(', ')}</Text>
+        </View>
       ) : null}
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
         {/* THE DEEP LINK, and the one control that does it. A shop with no pin
             still gets the button — `openMaps` searches the name and the town,
             which lands him near a name rather than on a doorway and is a
@@ -217,15 +256,19 @@ export function LeadActionCard({
           lng={lead.gpsLng}
           name={shop}
           city={lead.city}
-          variant="button"
-          style={{ flex: 1 }}
+          variant="icon"
+          look="round"
+          size={48}
         />
-        <SecondaryButton
+        <PillButton
           label="Open"
+          a11y={'Open ' + shop}
+          variant="navy"
+          height={48}
           onPress={() => router.push(`/lead?id=${lead.id}&from=${from}`)}
           style={{ flex: 1 }}
         />
       </View>
-    </Card>
+    </View>
   );
 }
