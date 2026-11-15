@@ -423,7 +423,7 @@
   color: #1e1446;
 }
 
-:root:has([data-v4]) [data-v4-header] :is(button, a) {
+:root:has([data-v4]) [data-v4-header] :is(button, a):where(:not([role="dialog"] *)) {
   color: #5a4e8c;
   border-radius: 7px;
 }
@@ -436,9 +436,20 @@
   background: transparent;
 }
 
-:root:has([data-v4]) [data-v4-header] :is(button, a):hover {
+:root:has([data-v4]) [data-v4-header] :is(button, a):where(:not([role="dialog"] *)):hover {
   background: #e4dbff;
   color: #1e1446;
+}
+
+/* A filled brand button in the header (the "Punch in" chip) keeps its white
+   text and its fill, on hover too. The quiet lavender look above is for the
+   outlined and bare controls; applied here it drew dark text on purple.
+   The popovers that open from the header (role="dialog") are left out of the
+   header look altogether, so their buttons draw as they do everywhere else. */
+:root:has([data-v4]) [data-v4-header] :is(button, a).bg-brand,
+:root:has([data-v4]) [data-v4-header] :is(button, a).bg-brand:hover {
+  background: var(--color-brand);
+  color: #ffffff;
 }
 
 /* Feedback, the shortcut key and the bell carry no box in v4 — only Ask and
