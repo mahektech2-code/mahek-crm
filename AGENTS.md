@@ -6639,12 +6639,16 @@ it shipped off and Mahek asked for it on). Every app is covered — header and s
 break and after punching out, and `requireUser` REFUSES SERVER ACTIONS for
 that person — every one that signs in through it, which is every app's
 context and capability check (it asks `serverLocked` when the request carries
-`next-action`; pages still render, behind the lock). That is why punching in,
+`next-action`), and REFUSES PAGES too: a locked page request is redirected to
+`/apps?next=<address>`, where the lock screen is drawn, and punching in carries
+on to that address (`lib/workday-lock-paths.ts`; `x-mahek-path` from the proxy
+says which page). Only the launcher, sign-in and `/api/*` are left open. That is why punching in,
 resuming and punching out go through `/api/workday`, a route: the way out of
 the lock is never behind it. Never locked: no HRMS grant, no employee link, a
 `field` app holder (the handset holds their day), a day off, a day already on
-the handset, and — while `exemptPlatformAdmins` is on — a platform
-administrator, so nobody is locked out of the console that turns it off.
+the handset. Platform administrators are locked like everybody else since
+`0341` (Mahek: "literally no one"); `exemptPlatformAdmins` is off by default,
+and the lock screen always offers Punch in, so nobody is locked out for good.
 `serverLocked` caches its answer ten seconds per person and guards its own
 re-entry (`hrmsContext` calls `requireUser`).
 

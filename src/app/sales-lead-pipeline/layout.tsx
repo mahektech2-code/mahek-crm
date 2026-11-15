@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, requireModule } from "@/lib/access";
 import { ToastProvider } from "@/components/ui/toast";
+import { WorkdayProvider } from "@/components/workday/workday-context";
 
 /**
  * Sales Manager — Lead Pipeline.
@@ -37,9 +38,12 @@ export default async function SalesLeadPipelineLayout({ children }: { children: 
 
   return (
     <ToastProvider>
-      <div className="min-h-screen bg-canvas">
-        <div className="mx-auto w-full max-w-[1600px]">{children}</div>
-      </div>
+      {/* No AppFrame here, so the workday lock is mounted by hand. */}
+      <WorkdayProvider>
+        <div className="min-h-screen bg-canvas">
+          <div className="mx-auto w-full max-w-[1600px]">{children}</div>
+        </div>
+      </WorkdayProvider>
     </ToastProvider>
   );
 }
