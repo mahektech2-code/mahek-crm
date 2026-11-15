@@ -13,12 +13,14 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, employeeReporting, employees, hrmsAttendance, hrmsHolidays, hrmsOffices, hrmsWorkdayClaims, users } from "@/db/schema";
+import { appAccess, employeeReporting, employees, hrmsAttendance, hrmsHolidays, hrmsOffices, hrmsStaffTimings, hrmsWorkdayClaims, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { hrmsContext } from "@/lib/hrms/access";
 import { hrmsCheckIn, hrmsCheckOut } from "@/lib/actions/hrms-checkin";
-import { resumeWork, startBreak, decideClaim, beat } from "@/lib/hrms/workday-ops";
+import { resumeWork, startBreak, decideClaim, beat, previewLocation } from "@/lib/hrms/workday-ops";
 import { lockApplies, sessionsOf, settledToday, workdayState } from "@/lib/hrms/services/workday";
+import { timingMap } from "@/lib/hrms/services/people";
+import { saveOfficeWeek } from "@/lib/actions/hrms-attendance";
 import { attendanceRows } from "@/lib/hrms/services/attendance";
 import { phaseOf } from "@/lib/hrms/engines/workday";
 import { today } from "@/lib/hrms/server";
@@ -51,10 +53,10 @@ async function person(name: string, office: string) {
   return e;
 }
 
-async function account(name: string, emp: { id: string }, level: "associate" | "manager" = "associate") {
+async function account(name: string, emp: { id: string }, level: "associate" | "manager" | "admin" = "associate") {
   const [u] = await db
     .insert(users)
-    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}.${randomUUID().slice(0, 6)}@wd.test`, phone: testPhone(), passwordHash: "x", role: level, initials: name.slice(0, 2).toUpperCase(), employeeId: emp.id })
+    .values({ id: id("usr"), name, email: `${name.toLowerCase().replace(/\s/g, ".")}.${randomUUID().slice(0, 6)}@wd.test`, phone: testPhone(), passwordHash: "x", role: level === "admin" ? "manager" : level, initials: name.slice(0, 2).toUpperCase(), employeeId: emp.id })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "hrms", role: level });
   return u;
@@ -102,6 +104,59 @@ describe("the workday clock", () => {
     row = (await settledToday(e.id))!;
     assert.equal(sessionsOf(row).length, 2);
     assert.equal(phaseOf(sessionsOf(row)), "working");
+  });
+
+  test("a break note rides on the reason, and the gate previews the distance to the office", async () => {
+    const e = await person("Nita Note", office);
+    const ctx = await as(await account("Nita Note", e));
+    const here = await previewLocation(ctx, { lat: PIN.lat + 0.0003, lng: PIN.lng });
+    assert.equal(here.office, office);
+    assert.equal(here.inside, true);
+    assert.ok(here.distanceM! > 20 && here.distanceM! < 50, String(here.distanceM));
+    const far = await previewLocation(ctx, { lat: PIN.lat + 0.05, lng: PIN.lng });
+    assert.equal(far.inside, false);
+    assert.equal((await previewLocation(ctx, { lat: null, lng: null })).inside, null, "no fix, no verdict");
+
+    assert.ok((await hrmsCheckIn({ ...PIN, photoId: null, code: null })).ok);
+    assert.ok((await startBreak(ctx, "Personal", "Bank visit for the cheque")).ok);
+    const s = sessionsOf((await settledToday(e.id))!);
+    assert.equal(s[0].reason, "Personal · Bank visit for the cheque");
+    const state = await workdayState(ctx);
+    assert.equal(state.breaks[0].reason, "Personal · Bank visit for the cheque");
+    assert.equal(state.role, "Telecaller");
+  });
+
+  test("an office's week is everybody's there, unless they have timings of their own", async () => {
+    const [o] = await db.select().from(hrmsOffices).where(eq(hrmsOffices.name, office));
+    const hr = await person("Hema HR", office);
+    const plain = await person("Om Office", office);
+    const own = await person("Ira Own", office);
+    await db.insert(hrmsStaffTimings).values({ id: id("htim"), employeeId: own.id, weekday: "Monday", inTime: "08:00", outTime: "17:00" });
+    await as(await account("Hema HR", hr, "admin"));
+    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d) => ({
+      weekday: d,
+      working: d !== "Sunday",
+      inTime: "09:30",
+      outTime: d === "Saturday" ? "15:30" : "18:30",
+      presentMin: d === "Saturday" ? 300 : null,
+      halfMin: d === "Saturday" ? 150 : null,
+    }));
+    const r = await saveOfficeWeek(o.id, days);
+    assert.ok(r.ok, JSON.stringify(r));
+    const map = await timingMap();
+    assert.equal(map.get(`${plain.id}|Saturday`)?.outTime, "15:30");
+    assert.equal(map.get(`${plain.id}|Saturday`)?.presentMin, 300);
+    assert.equal(map.has(`${plain.id}|Sunday`), false, "Sunday is the office's week off");
+    assert.equal(map.get(`${own.id}|Monday`)?.inTime, "08:00", "own timings win");
+    assert.equal(map.has(`${own.id}|Tuesday`), false, "and replace the office's week whole");
+
+    const bad = await saveOfficeWeek(o.id, [{ weekday: "Monday", working: true, inTime: "18:00", outTime: "09:00", presentMin: null, halfMin: null }]);
+    assert.equal(bad.ok, false, "closing before opening is refused");
+
+    await as(await account("Om Office", plain));
+    const refused = await saveOfficeWeek(o.id, days);
+    assert.equal(refused.ok, false, "an associate does not change office timings");
+    await db.execute(sql`truncate hrms_office_timings`);
   });
 
   test("an idle half hour is a break from the last activity; claimed as work, the manager decides", async () => {

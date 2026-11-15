@@ -54,12 +54,21 @@ const teamToday: HrmsScreenModule = {
       const last = row?.lastActivityAt?.getTime() ?? null;
       const idleMin = phase === "working" && last ? Math.floor((now - last) / 60_000) : 0;
       const nowWord = field ? "On the field app" : phase === "working" && idleMin >= cfg.warnMinutes ? `Idle ${idleMin} min` : NOW_WORDS[phase] ?? "";
+      const reg = rows.find((r) => r.employeeId === p.id);
+      const brk = phase === "break" || phase === "auto_break" ? s[s.length - 1] : null;
+      /* What the design's Team today needs beyond the columns: the state as a
+         kind, how long the break has run, the job title and whether late. */
+      const kind = field || phase === "working" ? (idleMin >= cfg.warnMinutes ? "i" : "w") : brk ? "b" : phase === "none" ? "o" : "d";
+      const brkWord = brk ? `${brk.end === "idle" ? "Auto-break" : (brk.reason?.split(" · ")[0] ?? "Break")} · ${hm(Math.floor((now - (brk.out ?? now)) / 60_000)).replace(/h /, ":").replace("m", "")}` : null;
       out.push({
         id: p.id,
         v: {
           emp: p.name,
           office: p.office ?? "",
-          now: nowWord,
+          now: brkWord ?? nowWord,
+          kind,
+          role: p.position ?? "",
+          late: reg?.fig.lateBeyondGrace ? "1" : "",
           in: row?.checkIn ?? field?.checkIn ?? "",
           worked: row ? hm(Math.floor(worked / 60_000)) : "",
           breaks: row && breaks ? hm(Math.floor(breaks / 60_000)) : "",

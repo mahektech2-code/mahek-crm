@@ -2,9 +2,8 @@
 
 import * as React from "react";
 import { useWorkday } from "@/components/workday/workday-context";
-import { DayPanel } from "@/components/workday/workday-chip";
 import { VerdictPill, withLocation } from "@/components/workday/workday-overlays";
-import { Modal } from "@/components/ui/modal";
+import { BreakDialog, PunchOutDialog } from "@/components/workday/day-parts";
 import { cx } from "@/components/ui/primitives";
 import { Icon } from "@/components/shell/icons";
 import { at, hmOf, OFF_DAY_WORDS, VERDICT_WORDS } from "@/components/workday/format";
@@ -14,8 +13,10 @@ import type { OpResult } from "@/components/workday/workday-context";
  * THE DAY CARD on the launcher and on HRMS Home, drawn as the Workday Clock
  * design's "Launcher with the day card": the state and where, the three
  * figures (worked, breaks, present at), the buttons, and the day as a bar.
- * Starting a break and punching out open the same `DayPanel` the header's
- * timer opens, so the card, the timer and the lock cannot disagree.
+ * Starting a break and punching out open the same dialogs the header's timer
+ * opens, so the card, the timer and the lock cannot disagree. On a day off it
+ * is the design's "3b" card instead: MahekOne is open, and punching in records
+ * extra work.
  *
  * And it says WHY the lock does not apply, wherever it does not: a person
  * with the HRMS who is not linked to an employee record, or a platform
@@ -76,6 +77,48 @@ export function LauncherCheckIn() {
     const r = await withLocation((fix) => w.act({ op: "punchIn", ...fix }));
     setRes(r);
   };
+
+  if (state.offDay && state.phase === "none") {
+    const what = state.holidayName ? `Today is ${state.holidayName}` : state.offDay === "leave" ? "You are on leave today" : state.offDay === "holiday" ? "Today is a holiday" : "Today is your week off";
+    return (
+      <section aria-labelledby="wd-off-t" className="overflow-hidden rounded-[14px] border border-line bg-surface">
+        <div className="h-1 bg-brand" />
+        <div className="flex flex-wrap items-center gap-5 px-[22px] py-5">
+          <div className="flex flex-[1_1_360px] items-center gap-3.5">
+            <span className="flex size-12 flex-none items-center justify-center rounded-[12px] bg-brand-soft text-brand-deep">
+              <Icon name="calendar" size={22} />
+            </span>
+            <div>
+              <h2 id="wd-off-t" className="text-[16px] font-bold text-ink">
+                {what}
+              </h2>
+              <div className="text-[13.5px] text-muted">MahekOne is open. Punch in only if you are working today, and it is recorded as extra work.</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={w.busy}
+            onClick={punchIn}
+            className="flex h-[42px] items-center gap-2 rounded-[10px] border border-brand-softer bg-brand-soft px-[18px] text-[14px] font-bold text-brand-deep disabled:opacity-60"
+          >
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Punch in for extra work
+          </button>
+        </div>
+        {res && !res.ok ? (
+          <div className="border-t border-divider bg-danger-soft px-[22px] py-2.5 text-[13px] text-danger">
+            {res.error}
+            {res.detail ? ` — ${res.detail}` : ""}
+          </div>
+        ) : null}
+        <div className="border-t border-divider bg-canvas px-[22px] py-3 text-[12.5px] text-muted">
+          The same goes for holidays and days you are on approved leave. Extra work never changes the day to Present or Absent.
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-label="Your day" className="overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
@@ -139,9 +182,8 @@ export function LauncherCheckIn() {
       ) : null}
       {exemptLine ? <div className="border-t border-divider bg-canvas px-[22px] py-2.5 text-[12.5px] text-muted">{exemptLine}</div> : null}
 
-      <Modal open={sheet !== null} onClose={() => setSheet(null)} title="Your day" width={420}>
-        {sheet ? <DayPanel key={sheet} initial={sheet} onDone={() => setSheet(null)} /> : null}
-      </Modal>
+      {sheet === "break" ? <BreakDialog onClose={() => setSheet(null)} /> : null}
+      {sheet === "out" ? <PunchOutDialog withLocation={withLocation} onClose={() => setSheet(null)} /> : null}
     </section>
   );
 }

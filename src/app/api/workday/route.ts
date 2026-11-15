@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { hrmsContext } from "@/lib/hrms/access";
 import { workdayState } from "@/lib/hrms/services/workday";
-import { beat, claimAutoOut, decideClaim, resumeWork, startBreak } from "@/lib/hrms/workday-ops";
+import { beat, claimAutoOut, decideClaim, previewLocation, resumeWork, startBreak } from "@/lib/hrms/workday-ops";
 import { hrmsCheckIn, hrmsCheckOut, hrmsRaiseLateHelp } from "@/lib/actions/hrms-checkin";
 
 /* ---------------------------------------------------------------------------
@@ -30,10 +30,11 @@ type Body =
   | { op: "beat" }
   | { op: "punchIn"; lat?: number | null; lng?: number | null; accuracy?: number | null }
   | { op: "punchOut"; lat?: number | null; lng?: number | null; accuracy?: number | null }
-  | { op: "break"; reason?: string | null }
+  | { op: "break"; reason?: string | null; note?: string | null }
+  | { op: "where"; lat?: number | null; lng?: number | null }
   | { op: "resume"; claim?: { category: string; note: string } | null }
   | { op: "claimOut"; category: string; note: string }
-  | { op: "lateHelp"; text: string }
+  | { op: "lateHelp"; text: string; kind?: "late" | "away" }
   | { op: "decide"; id: string; approve: boolean; note?: string };
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -59,7 +60,7 @@ export async function POST(req: Request) {
       result = await hrmsCheckOut({ lat: num(body.lat), lng: num(body.lng), accuracy: num(body.accuracy), photoId: null });
       break;
     case "break":
-      result = await startBreak(ctx, typeof body.reason === "string" ? body.reason : null);
+      result = await startBreak(ctx, typeof body.reason === "string" ? body.reason : null, typeof body.note === "string" ? body.note : null);
       break;
     case "resume":
       result = await resumeWork(ctx, body.claim && typeof body.claim.note === "string" ? { category: String(body.claim.category ?? "Other"), note: body.claim.note } : null);
@@ -68,8 +69,11 @@ export async function POST(req: Request) {
       result = await claimAutoOut(ctx, { category: String(body.category ?? "Other"), note: String(body.note ?? "") });
       break;
     case "lateHelp":
-      result = await hrmsRaiseLateHelp(String(body.text ?? ""));
+      result = await hrmsRaiseLateHelp(String(body.text ?? ""), body.kind === "away" ? "away" : "late");
       break;
+    case "where":
+      /* Read-only: the gate's "you are at Andheri head office · 42 m". */
+      return NextResponse.json({ where: await previewLocation(ctx, { lat: num(body.lat), lng: num(body.lng) }) });
     case "decide":
       result = await decideClaim(ctx, String(body.id), !!body.approve, String(body.note ?? ""));
       break;
