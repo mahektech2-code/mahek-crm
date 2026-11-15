@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { OPEN_LEAD } from "../lead-action-window";
 import { leadsPage, leadsVisible, managerScope, type LeadRow } from "./sales-service";
 import { qualificationDesk } from "./lead-qualify-service";
 import { verificationQueue } from "./lead-console-service";
@@ -422,8 +423,8 @@ async function verificationFollowUps(): Promise<number> {
   const rows = await db.execute<{ n: number }>(sql`
     select count(*)::int as n
       from customers c
-     where c.lead_stage = 'prospect'
-       and c.lead_archived = false
+     where ${OPEN_LEAD}
+       and c.lead_stage = 'prospect'
        and c.lead_verified_at is null
        and exists (
          select 1 from mbos_lead_validations k where k.customer_id = c.id
@@ -558,9 +559,7 @@ export async function unownedLeadCount(): Promise<number> {
   const rows = await db.execute<{ n: number }>(sql`
     select count(*)::int as n
       from customers c
-     where c.lead_stage is not null
-       and c.lead_archived = false
-       and c.lead_stage not in ('lost', 'won', 'customer', 'active_distributor')
+     where ${OPEN_LEAD}
        and c.owner_id is null
        ${leadsVisible(scope)}
   `);

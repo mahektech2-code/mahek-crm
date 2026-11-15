@@ -88,7 +88,11 @@ describe("stage date stays in step with the stage", () => {
   const conversion = text("src/lib/services/lead-conversion-service.ts");
 
   test("the suspect decision dates the move it makes", () => {
-    assert.match(mbos, /leadStage: suspectDecisionRung\(p\.suspectDecision, customer\),\s+[^\n]*\n\s+leadStageSince: day,/);
+    /* The visit's answer is a real stage move now: it goes through the gate and
+       `applyLeadStageMove`, which writes the stage and its date together. */
+    const body = mbos.match(/async function applyVisitSuspectDecision[\s\S]*?\n}\n/)?.[0] ?? "";
+    assert.match(body, /applyLeadStageMove\(/);
+    assert.doesNotMatch(mbos, /leadStage: suspectDecisionRung\(/);
   });
 
   test("an approved sample dates negotiation", () => {

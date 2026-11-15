@@ -5,8 +5,10 @@ import { getConfig } from "@/lib/config/store";
 import { leadsCreatedIn } from "@/lib/services/owner-dashboard-service";
 import { conversionFor, type Conversion } from "@/lib/engines/owner-kpis";
 import type { LeadRow } from "@/lib/engines/owner-kpis";
-import { bandOf } from "@/lib/engines/lead-ladder";
-import { salesTypeLabel, sampleStateLabel, stageLabel, stageSentence, type LeadStage } from "@/lib/lead-labels";
+import { bandOf, displayStageOf, foldStage, TERMINAL_STAGES } from "@/lib/engines/lead-ladder";
+import { OPEN_LEAD } from "@/lib/lead-action-window";
+import { displayStageLabel, rawStagesOf } from "@/lib/lead-display";
+import { salesTypeLabel, sampleStateLabel, stageSentence, type LeadStage } from "@/lib/lead-labels";
 import { reassignLead } from "@/lib/actions/sales";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
 import { setLeadNextAction } from "@/lib/actions/leads";
@@ -44,10 +46,12 @@ import { customerStory } from "./customers";
  * ------------------------------------------------------------------------- */
 
 const TZ = "Asia/Kolkata";
-const CLOSED_STAGES = ["lost", "won", "customer", "active_distributor"];
-const CLOSED_SQL = sql.raw(`('${CLOSED_STAGES.join("','")}')`);
-const OPEN_WHERE = sql`c.kind = 'lead' and not coalesce(c.lead_archived, false) and c.deleted_at is null
-  and (c.lead_stage is null or c.lead_stage::text not in ${CLOSED_SQL})`;
+/* AN OPEN LEAD is the ONE predicate Lead Management's lists read (`openLead`
+   in lib/lead-action-window.ts): on the funnel and not converted. This used to
+   be `kind = 'lead'` and not on a closed rung, which counted every third-party
+   shop — kind lead, no stage, billed by its distributor — as an open lead the
+   CRM's own lists do not show. */
+const OPEN_WHERE = OPEN_LEAD;
 const LAST_TOUCHED = sql.raw(
   `greatest(c.lead_last_activity_date, c.last_contact_date, c.last_visit_date, (c.created_at at time zone '${TZ}')::date)`,
 );
@@ -60,8 +64,10 @@ type Config = Awaited<ReturnType<typeof getConfig>>;
 const n = (v: unknown) => Number(v ?? 0);
 
 function stuckWhere(cap: number): SQL {
-  return sql`c.lead_stage = 'suspect' and c.lead_suspect_decided_at is null
-    and not coalesce(c.lead_archived, false) and c.deleted_at is null and ${VISITS} >= ${cap}`;
+  return sql`${OPEN_LEAD} and c.lead_stage::text in (${sql.join(
+    rawStagesOf("suspect").map((st) => sql`${st}`),
+    sql`, `,
+  )}) and c.lead_suspect_decided_at is null and ${VISITS} >= ${cap}`;
 }
 
 function sourceLabel(config: Config, code: string | null): string {
@@ -74,7 +80,8 @@ function stageTone(stage: string | null, stuck: boolean): Tone {
   if (!stage) return "muted";
   if (stuck) return "warn";
   if (stage === "on_hold") return "warn";
-  const band = bandOf(stage as LeadStage);
+  /* Through the ONE fold, so a legacy `contacted` is toned as the Suspect it is. */
+  const band = bandOf(foldStage(stage as LeadStage));
   if (band === "contacted") return "info";
   if (band === "qualified" || band === "negotiation") return "good";
   return "muted";
@@ -168,9 +175,9 @@ async function openPage(query: TableQuery, config: Config, today: string): Promi
   const thisYear = today.slice(0, 4);
   return {
     rows: rows.map((r): Row => {
-      const stuck = r.stage === "suspect" && !r.decided && n(r.visits) >= cap;
+      const stuck = displayStageOf(r.stage as LeadStage) === "suspect" && !r.decided && n(r.visits) >= cap;
       const stage: Cell = r.stage
-        ? { t: stageLabel(r.stage as LeadStage), pill: stageTone(r.stage, stuck), sub: stuck ? "must be decided" : undefined }
+        ? { t: displayStageLabel(r.stage as LeadStage), pill: stageTone(r.stage, stuck), sub: stuck ? "must be decided" : undefined }
         : { t: "Not on a ladder", pill: "muted" };
       return {
         id: r.id,
@@ -352,7 +359,8 @@ async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordV
   const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const [r] = await db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.company_name, c.contact_person, c.phone, c.email, c.city, c.region, c.address,
-           c.kind::text as kind, c.lead_stage::text as stage, to_char(c.lead_stage_since, 'YYYY-MM-DD') as stage_since,
+           c.kind::text as kind, c.third_party, c.lead_converted_at, c.deleted_at,
+           c.lead_stage::text as stage, to_char(c.lead_stage_since, 'YYYY-MM-DD') as stage_since,
            c.lead_sales_type::text as sales_type, c.lead_source, c.lead_source_detail,
            c.lead_requirement, c.lead_monthly_volume_litres, c.lead_estimated_potential_paise,
            c.lead_competitor, c.lead_next_action, to_char(c.lead_next_action_date, 'YYYY-MM-DD') as next_date,
@@ -371,8 +379,16 @@ async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordV
   if (!r) throw new Error("That lead is no longer on MahekOne.");
   const s = (k: string) => (r[k] === null || r[k] === undefined || r[k] === "" ? null : String(r[k]));
   const stage = s("stage") as LeadStage | null;
-  const stuck = stage === "suspect" && !r.lead_suspect_decided_at && n(r.visits) >= cap;
-  const open = s("kind") === "lead" && !r.lead_archived && !(stage && CLOSED_STAGES.includes(stage));
+  const stuck = displayStageOf(stage) === "suspect" && !r.lead_suspect_decided_at && n(r.visits) >= cap;
+  /* The same answer `openLead` gives in SQL, read off this one row. */
+  const open =
+    s("kind") === "lead" &&
+    !r.lead_archived &&
+    !r.third_party &&
+    !r.lead_converted_at &&
+    !r.deleted_at &&
+    !!stage &&
+    !TERMINAL_STAGES.includes(stage);
 
   const fields = [
     { label: "Lead", value: s("name")! },
@@ -382,7 +398,7 @@ async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordV
     {
       label: "Stage",
       value: stage
-        ? `${stageLabel(stage)}${s("stage_since") ? ` since ${fmtDate(s("stage_since"))}` : ""} — ${stageSentence(stage)}`
+        ? `${displayStageLabel(stage)}${s("stage_since") ? ` since ${fmtDate(s("stage_since"))}` : ""} — ${stageSentence(displayStageOf(stage) ?? stage)}`
         : "Not on a ladder — raised in the CRM and never put on one",
     },
     { label: "Sold as", value: salesTypeLabel((s("sales_type") ?? null) as never) },
@@ -422,7 +438,7 @@ async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordV
   return {
     kind: "Lead · Leads",
     title: s("name")!,
-    sub: [s("city"), stage ? stageLabel(stage) : "Not on a ladder", s("owner") ?? "No owner"].filter(Boolean).join(" · "),
+    sub: [s("city"), stage ? displayStageLabel(stage) : "Not on a ladder", s("owner") ?? "No owner"].filter(Boolean).join(" · "),
     fields,
     timeline: [...notes, ...story],
     audit,

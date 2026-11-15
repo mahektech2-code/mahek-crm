@@ -9,7 +9,8 @@ import {
   type FilterOption,
   type LeadFilters,
 } from "../lead-filters";
-import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import type { LeadSalesType } from "../lead-labels";
+import { foldStageOptions, stagesForFilterKey } from "../lead-display";
 import type { LeadView } from "../lead-views";
 import { orderCountsSql } from "../order-status";
 import { confirmedCommitmentSql } from "../lead-commitment";
@@ -2334,10 +2335,19 @@ export function leadFilterClause(
     parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
   }
 
-  const stages = splitFilter(filters.stage);
-  if (stages.length) {
+  /* A pick is a DISPLAY stage (or a rung off the bar — On hold, Lost) and it
+     stands for every stored rung drawn under it, so "Customer" finds `won` and
+     "First order" finds Delivery and Payment. A raw rung in the URL — the
+     tiles, an old bookmark — still means itself and whatever it displays
+     under. A filter naming nothing known matches nothing rather than being
+     dropped, which would read as the filter being ignored. */
+  const picked = splitFilter(filters.stage);
+  if (picked.length) {
+    const stages = [...new Set(picked.flatMap(stagesForFilterKey))];
     parts.push(
-      sql`and c.lead_stage::text in (${sql.join(stages.map((v) => sql`${v}`), sql`, `)})`,
+      stages.length
+        ? sql`and c.lead_stage::text in (${sql.join(stages.map((v) => sql`${v}`), sql`, `)})`
+        : sql`and false`,
     );
   }
 
@@ -2791,12 +2801,11 @@ export async function leadFilterOptions(
       label: r.value.replace(/_/g, " "),
       count: Number(r.count),
     })),
-    // Labelled by `stageLabel`, the one vocabulary the ladders are named in.
-    stages: stages.map((r) => ({
-      value: r.value,
-      label: stageLabel(r.value as LeadStage),
-      count: Number(r.count),
-    })),
+    // ONE option per stage people see: the raw rungs are folded by
+    // `displayStageOf`, so "Won" and "Customer" are not two options for one
+    // stage. The value is the display key, which the filter expands back to
+    // every rung under it (`stagesForFilterKey`).
+    stages: foldStageOptions(stages),
   };
 }
 

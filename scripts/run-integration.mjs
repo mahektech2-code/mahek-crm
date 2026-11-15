@@ -41,6 +41,8 @@ const files = [
      it with "column … does not exist", and eleven journey failures is a worse
      place to start reading than one sentence naming the table. */
   "src/lib/mbos-columns.test.ts",
+  "src/lib/mbos-lead-handlers.test.ts",
+  "src/lib/lead-handset-tombstones.test.ts",
   "src/lib/journeys.test.ts",
   // The Tasks app: closing with proof, transfers with consent, a manager's move.
   "src/lib/tasks/tasks.integration.test.ts",

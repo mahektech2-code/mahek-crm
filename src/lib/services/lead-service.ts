@@ -28,6 +28,7 @@ import {
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
 import { getConfig } from "../config/store";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
+import { liftLeadTombstones, tombstoneLeadFor } from "./lead-tombstone";
 import { canAny, hatsFor, type Hat } from "../access-control";
 import {
   gateTo,
@@ -1406,6 +1407,22 @@ export async function applyLeadStageMove(
     }
 
     await tx.update(customers).set(set).where(eq(customers.id, lead.id));
+
+    /*
+     * A LOST LEAD LEAVES THE HANDSETS, and a reopened one comes back.
+     *
+     * `openLeads` stops sending a lead the moment it is `lost`, and a pull
+     * only says what exists — so without a tombstone it sat under Leads on
+     * every phone that held it, at the rung it was lost from, for ever.
+     * Everybody (`null`): it is a fact about the lead, and a phone that never
+     * held it archives nothing. Leaving `lost` withdraws it, and the moved
+     * `updated_at` above sends the lead again (`upsertLeads` un-archives).
+     */
+    if (to === "lost" && from !== "lost") {
+      await tombstoneLeadFor(tx, lead.id, null, "lead_lost");
+    } else if (from === "lost" && to !== "lost") {
+      await liftLeadTombstones(tx, lead.id, null, ["lead_lost"]);
+    }
 
     /*
      * §13's NURTURE SEQUENCE STOPS CHASING A LEAD THAT IS CLOSED.

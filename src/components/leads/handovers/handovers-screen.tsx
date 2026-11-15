@@ -5,7 +5,8 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { stamp } from "@/lib/format";
-import { stageLabel, salesTypeLabel } from "@/lib/lead-labels";
+import { salesTypeLabel } from "@/lib/lead-labels";
+import { displayStageLabel } from "@/lib/lead-display";
 import type { HandoverCandidate } from "@/lib/services/lead-console-service";
 import type { OutstandingHandover } from "@/lib/services/lead-oversight-service";
 import { HandoverPanel } from "../record/handover-panel";
@@ -167,7 +168,7 @@ export function HandoversScreen({
               <Cell truncate={120}>{r.city ?? <span className="text-muted">—</span>}</Cell>
               <Cell>
                 {r.stage ? (
-                  <Pill tone="success">{stageLabel(r.stage)}</Pill>
+                  <Pill tone="success">{displayStageLabel(r.stage)}</Pill>
                 ) : (
                   /* Conversion writes the rung and the instant together, so
                      this should not happen. Said in words rather than filled

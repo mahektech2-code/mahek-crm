@@ -14,6 +14,7 @@ import { notifyUser } from "@/lib/notify";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { leadRow } from "@/lib/services/lead-service";
+import { leadSeatHolders, syncLeadHolders } from "@/lib/services/lead-tombstone";
 import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
 import {
   DESK_MODULE,
@@ -132,6 +133,7 @@ async function assignOne(
   let realigned: Awaited<ReturnType<typeof realignVerifierSeats>>;
   try {
     realigned = await db.transaction(async (tx) => {
+    const holdersBefore = await leadSeatHolders(tx, lead.id);
     await tx
       .update(customers)
       .set({
@@ -153,6 +155,8 @@ async function assignOne(
       { app: ctx.authorisedIn, role: ctx.authorisedBy },
       { tx },
     );
+    /* Off the old holder's handset, back onto the new one's (lead-tombstone.ts). */
+    await syncLeadHolders(tx, lead.id, holdersBefore);
     await writeTimelineEvent(tx, {
       customerId: lead.id,
       eventType: MBOS_EVENT.ownerChange,

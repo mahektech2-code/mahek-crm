@@ -1,5 +1,6 @@
 "use client";
 
+import { accountTypeLabel } from "@/lib/account-types";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -324,8 +325,8 @@ function Side({
             <div className="text-[13px] text-muted">{side.companyName}</div>
           ) : null}
         </div>
-        <Pill tone={side.kind === "lead" ? "brand" : "success"}>
-          {side.kind === "lead" ? "Lead" : "Customer"}
+        <Pill tone={side.kind === "lead" && !side.thirdParty ? "brand" : "success"}>
+          {accountTypeLabel(side)}
         </Pill>
       </div>
 

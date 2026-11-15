@@ -6,6 +6,12 @@ import { z } from "zod";
 import { and, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  leadSeatHolders,
+  liftLeadTombstones,
+  syncLeadHolders,
+  tombstoneLeadFor,
+} from "@/lib/services/lead-tombstone";
+import {
   appAccess,
   attachments,
   auditLog,
@@ -2567,6 +2573,7 @@ export async function reassignLead(input: {
         }
       : {};
     const realigned = await db.transaction(async (tx) => {
+      const holdersBefore = await leadSeatHolders(tx, input.leadId);
       await tx
         .update(customers)
         .set({
@@ -2577,6 +2584,9 @@ export async function reassignLead(input: {
         .where(eq(customers.id, input.leadId));
 
       const out = await realignVerifierSeats([input.leadId], user.id, null, { tx });
+      /* Off the old holder's handset, back onto the new one's — see
+         `lead-tombstone.ts`. After the realignment, which can move seats too. */
+      await syncLeadHolders(tx, input.leadId, holdersBefore);
 
       await tx.insert(auditLog).values({
         id: gen("aud"),
@@ -2821,10 +2831,15 @@ export async function archiveLead(
     const refusal = await confirmImpact("lead-archive", impactBatch([input.leadId]), confirmation);
     if (refusal) return refusal;
 
-    await db
-      .update(customers)
-      .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
-      .where(eq(customers.id, input.leadId));
+    /* With its tombstone: `openLeads` stops sending an archived lead, so
+       without one it stayed on every phone that held it (lead-tombstone.ts). */
+    await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
+        .where(eq(customers.id, input.leadId));
+      await tombstoneLeadFor(tx, input.leadId, null, "lead_archived");
+    });
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -2868,10 +2883,13 @@ export async function restoreLead(input: { leadId: string }): Promise<Result> {
     }
     if (!lead.leadArchived) return ok(undefined, "Not archived.");
 
-    await db
-      .update(customers)
-      .set({ leadArchived: false, leadArchivedAt: null, updatedAt: new Date() })
-      .where(eq(customers.id, input.leadId));
+    await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({ leadArchived: false, leadArchivedAt: null, updatedAt: new Date() })
+        .where(eq(customers.id, input.leadId));
+      await liftLeadTombstones(tx, input.leadId, null, ["lead_archived"]);
+    });
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -3071,6 +3089,7 @@ export async function bulkReassignLeads(input: {
     for (const l of moving) {
       try {
         const realigned = await db.transaction(async (tx) => {
+          const holdersBefore = await leadSeatHolders(tx, l.id);
           await tx
             .update(customers)
             .set({
@@ -3080,6 +3099,7 @@ export async function bulkReassignLeads(input: {
             })
             .where(eq(customers.id, l.id));
           const out = await realignVerifierSeats([l.id], user.id, null, { tx });
+          await syncLeadHolders(tx, l.id, holdersBefore);
           await tx.insert(auditLog).values({
             id: gen("aud"),
             actorId: user.id,
@@ -3172,10 +3192,13 @@ export async function bulkArchiveLeads(
       /* The same report the modal showed, for the same selection. */
       const refusal = await confirmImpact("lead-archive", impactBatch(input.leadIds), confirmation);
       if (refusal) return refusal;
-      await db
-        .update(customers)
-        .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
-        .where(inArray(customers.id, filing.map((l) => l.id)));
+      await db.transaction(async (tx) => {
+        await tx
+          .update(customers)
+          .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
+          .where(inArray(customers.id, filing.map((l) => l.id)));
+        await tombstoneLeadFor(tx, filing.map((l) => l.id), null, "lead_archived");
+      });
 
       await db.insert(auditLog).values(
         filing.map((l) => ({
@@ -3235,10 +3258,13 @@ export async function bulkRestoreLeads(input: {
     });
 
     if (restoring.length) {
-      await db
-        .update(customers)
-        .set({ leadArchived: false, leadArchivedAt: null, updatedAt: new Date() })
-        .where(inArray(customers.id, restoring.map((l) => l.id)));
+      await db.transaction(async (tx) => {
+        await tx
+          .update(customers)
+          .set({ leadArchived: false, leadArchivedAt: null, updatedAt: new Date() })
+          .where(inArray(customers.id, restoring.map((l) => l.id)));
+        await liftLeadTombstones(tx, restoring.map((l) => l.id), null, ["lead_archived"]);
+      });
 
       await db.insert(auditLog).values(
         restoring.map((l) => ({

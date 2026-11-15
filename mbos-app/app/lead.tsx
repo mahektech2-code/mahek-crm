@@ -294,7 +294,9 @@ export default function LeadRecord() {
   }
 
   const { lead, salesType, stage, next, gate, mustDecide, visits, config, input } = view;
-  const settled = stage === 'lost' || stage === 'won';
+  /* `stageOf` folds the retired `won` onto `customer`, so the top of the ladder
+     is where a won lead stands now — settled, with nothing left to climb. */
+  const settled = stage === 'lost' || stage === 'won' || stage === 'customer' || stage === 'active_distributor';
   /* PARKED IS NEITHER, which is the whole reason `on_hold` exists: a stalled
      prospect folded into Lost is a live shop the staleness sweep archives. It
      is not on any ladder either, so there is no rung above it to offer — the

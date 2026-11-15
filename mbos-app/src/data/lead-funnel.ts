@@ -537,7 +537,8 @@ export async function setSalesType(
 
   const today = isoDate(new Date());
   const was = stageOf(lead);
-  const settled = was === 'lost' || was === 'won';
+  /* `stageOf` folds `won` onto `customer`; both ends of the ladder stay put. */
+  const settled = was === 'lost' || was === 'won' || was === 'customer' || was === 'active_distributor';
   const stage: LeadStage = settled ? was : 'suspect';
 
   await updateAndQueue({

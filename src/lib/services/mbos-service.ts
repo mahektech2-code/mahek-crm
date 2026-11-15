@@ -70,6 +70,7 @@ import {
    that drifts. */
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
 import { nextPullCursorAt } from "../mbos/pull-cursor";
+import { withoutResentLeads } from "./lead-tombstone-rules";
 /* §3.4 — a commitment is a day AND a size, in one place. */
 import { confirmedCommitmentSql } from "../lead-commitment";
 
@@ -1222,7 +1223,7 @@ export async function buildBootstrap(
     schemeRows(null),
     openTasks(principal.user.id),
     openSamples(principal.user.id, ids),
-    openLeads(principal.user.id),
+    openLeads(principal.user.id, null, ids),
     /* §8 and §5.2 — the office's own call, and every check anybody has made
        on a finding. Null `since`, like every other bootstrap channel: a phone
        signing in fresh has to start with the whole window rather than wait for
@@ -1852,7 +1853,53 @@ async function openSamples(userId: string, customerIds: string[], since?: string
  * customer's own id, and `convertedCustomerId` is that same id once it has
  * been won rather than a pointer to a second row that no longer exists.
  */
-async function openLeads(userId: string, since?: string | null) {
+async function openLeads(
+  userId: string,
+  since?: string | null,
+  /**
+   * HIS CUSTOMER BOOK — `customerIdsInScope`, the ids the customers channel
+   * sends. A shop that is still a lead and reaches him through any seat (the
+   * back office, the sales manager, a relationship owner, the party sheet's
+   * name, his territory) arrives as a customer row; without its lead row the
+   * phone draws "Lead" with no rung and opens the customer page. So the two
+   * channels agree: every open lead in his book is sent as a lead too.
+   */
+  bookIds: string[] = [],
+  /** Only these ids — the `missingIds` path, a shop newly his sent whole. */
+  onlyIds?: string[],
+) {
+  /*
+   * WHOSE LEADS, built before the select so the wire test can still read the
+   * select list ahead of every fragment. The two seats the
+   * channel always read are kept — a lead he owns is his even where his
+   * territory leaves the shop out of the customers book.
+   */
+  const book = bookIds.length
+    ? sql` or c.id in (${sql.join(bookIds.map((i) => sql`${i}`), sql`, `)})`
+    : sql``;
+  const whose = onlyIds
+    ? sql`c.id in (${sql.join((onlyIds.length ? onlyIds : [""]).map((i) => sql`${i}`), sql`, `)})`
+    : sql`(c.owner_id = ${userId} or c.lead_manager_id = ${userId}${book})`;
+  /*
+   * WHAT MOVED, and the lead row is not the only thing that moves a lead.
+   * Two of the §12 gate facts are derived from OTHER tables — the distributor
+   * appointment's approvals and the agreement on file — and the distributor
+   * profile is a third; a decision on any of them changes no `customers` row,
+   * so the phone kept the rung locked after the office had opened it.
+   */
+  const moved = since
+    ? sql`and (c.updated_at > ${since}
+           or dp.updated_at > ${since}
+           or exists (select 1 from mbos_approvals au
+                       where au.type = 'distributor_appointment'
+                         and au.subject_type = 'customers'
+                         and au.subject_id = c.id
+                         and au.updated_at > ${since})
+           or exists (select 1 from mbos_documents mu
+                       where mu.customer_id = c.id
+                         and mu.category = 'agreement'
+                         and mu.updated_at > ${since}))`
+    : sql``;
   return db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
            c.city, c.area,
@@ -2189,7 +2236,7 @@ async function openLeads(userId: string, since?: string | null) {
       -- The lead manager reads it too, not only the salesman who raised it.
       -- The commercial half of a lead is his to answer, and a screen that
       -- listed only what a person OWNS would hide every lead he was named on.
-     where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+     where ${whose}
        and c.lead_stage is not null
        and c.lead_archived = false
        -- Not in the lead trash. A trashed lead's tombstone takes it off the
@@ -2213,7 +2260,7 @@ async function openLeads(userId: string, since?: string | null) {
        -- asked to be qualified as Suspects. They reach the handset through the
        -- customers channel, like every other shop in his book.
        and not c.third_party
-       ${since ? sql`and c.updated_at > ${since}` : sql``}
+       ${moved}
      order by c.lead_next_follow_up_date asc nulls last
   `);
 }
@@ -3808,7 +3855,7 @@ export async function buildPull(
        * were sent at sign-in and nowhere else, and applied nowhere at all.
        * Narrowed by the same functions the bootstrap uses, so nothing can
        * reach a handset through the delta that sign-in would have withheld. */
-      openLeads(principal.user.id, sinceIso),
+      openLeads(principal.user.id, sinceIso, ids),
 
       /* THE SAME FUNCTIONS THE BOOTSTRAP CALLS, which is the only way to be
          sure a delta sends what the bootstrap sends. A second spelling of a
@@ -3844,15 +3891,28 @@ export async function buildPull(
   /* The newly-his shops, whole — see the top of this function. The same
      functions the bootstrap calls, so a shop arriving this way looks exactly
      like one that came at sign-in. */
-  const [missingCustomers, missingTimeline, missingOrders, missingPayments, missingBills] = missing.length
+  const [missingCustomers, missingTimeline, missingOrders, missingPayments, missingBills, missingLeads] = missing.length
     ? await Promise.all([
         customersForDevice(missing),
         recentTimeline(missing, TIMELINE_PER_CUSTOMER),
         recentOrders(missing, HISTORY_PER_CUSTOMER),
         recentPayments(missing, { from: statementStart }),
         customerBills(principal, missing, { from: statementStart }),
+        /* AND ITS LEAD ROW, where the shop is still an open lead. A newly-his
+           lead that has not moved is in no delta, so sending only its customer
+           row put "Lead" on his list with no rung and nothing to open. */
+        openLeads(principal.user.id, null, [], missing),
       ])
-    : [[], [], [], [], []];
+    : [[], [], [], [], [], []];
+
+  /* A PULL NEVER TOMBSTONES A LEAD IT IS ALSO SENDING. The handset applies
+     upserts before tombstones, so a lead lost and reopened — or taken off him
+     and given back — between two of his syncs would arrive and be archived in
+     the same pull. See `lead-tombstone.ts`. */
+  const sentLeads = [...leadChanges, ...missingLeads] as unknown as { id: string }[];
+  const leadsById = new Map<string, unknown>();
+  for (const r of sentLeads) leadsById.set(r.id, r);
+  const deletionGroups = withoutResentLeads(deletionRows.groups, leadsById.keys());
 
   const notificationLastAt =
     freshNotifications.length === NOTIFICATIONS_PER_PULL
@@ -3893,7 +3953,7 @@ export async function buildPull(
     schemes: schemeChanges as unknown[],
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
-    deletions: deletionRows.groups,
+    deletions: deletionGroups,
     myOrders: await myOrderStates(principal.user.id, sinceIso),
     orderChanges: await myOrderChanges(principal.user.id, sinceIso),
     territoryRequests: await myTerritoryRequests(principal.user.id, sinceIso),
@@ -3912,7 +3972,9 @@ export async function buildPull(
        one: a phone quietly holding a superseded rate and telling a salesman a
        number the office will not pay. */
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
-    leads: leadChanges as unknown[],
+    /* One row per lead even where the delta and the missing path both
+       carried it. */
+    leads: [...leadsById.values()],
     leadValidations: validationChanges as unknown[],
     leadFieldChecks: fieldCheckChanges as unknown[],
     samples: sampleChanges as unknown[],

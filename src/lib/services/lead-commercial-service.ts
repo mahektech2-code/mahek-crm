@@ -6,6 +6,16 @@ import { orderCountsSql } from "../order-status";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { leadsVisible, managerScope } from "./sales-service";
 import { commitmentRecordedSql, confirmedCommitmentSql } from "../lead-commitment";
+import { notConverted, openLead } from "../lead-action-window";
+import { rawStagesOf } from "../lead-display";
+
+/* Every stored rung the record draws as Negotiation — derived from the
+   ladder's display map, never typed, so `commercial_discussion` and the
+   distributor rungs are on the desk the record says they are on. */
+const NEGOTIATION_STAGES = sql.join(
+  rawStagesOf("negotiation").map((s) => sql`${s}`),
+  sql`, `,
+);
 
 /* ---------------------------------------------------------------------------
  * Group 5 — the COMMERCIAL end of the funnel, and the three questions it asks.
@@ -140,8 +150,8 @@ export async function negotiationDesk(
   const scope = await managerScope();
 
   const where = sql`
-     where customers.lead_stage = 'negotiation'
-       and customers.lead_archived = false
+     where customers.lead_stage::text in (${NEGOTIATION_STAGES})
+       and ${openLead("customers")}
        ${leadsVisible(scope, "customers.owner_id")}
   `;
 
@@ -336,6 +346,7 @@ export async function commitments(
       and customers.lead_archived = false
       and customers.lead_stage is not null
       and customers.lead_stage <> 'lost'
+      and customers.deleted_at is null
       ${leadsVisible(scope, "customers.owner_id")}
   `;
 
@@ -361,17 +372,22 @@ export async function commitments(
               BACKTICKS in here - this sits inside a sql template literal and
               one backtick ends the literal. */
            ${sql.raw(confirmedCommitmentSql("customers"))} as confirmed,
-           (${COUNTING_ORDERS}) > 0 as ordered
+           (${COUNTING_ORDERS}) > 0 as ordered,
+           /* Still a lead, by the ONE predicate Lead Management reads. Only the
+              Converted view may hold an account that has stopped being one: a
+              third-party shop or an invoiced account is not an open, due or
+              slipped forecast on a leads desk. */
+           ${notConverted("customers")} as still_lead
       from customers
      where ${population}
   `;
 
   const viewClause: Record<CommitmentView, SQL> = {
-    open: sql`not b.ordered and b.expected >= ${day}::date`,
-    due: sql`not b.ordered
+    open: sql`b.still_lead and not b.ordered and b.expected >= ${day}::date`,
+    due: sql`b.still_lead and not b.ordered
              and b.expected >= ${day}::date
              and b.expected < ${day}::date + 7`,
-    slipped: sql`not b.ordered and b.expected < ${day}::date`,
+    slipped: sql`b.still_lead and not b.ordered and b.expected < ${day}::date`,
     converted: sql`b.ordered`,
   };
 
@@ -477,9 +493,10 @@ export type FirstOrderRow = {
   /**
    * THE SENTENCE PEOPLE GET WRONG, as a column.
    *
-   * `kind` flips at the FIRST order — `promotesToCustomerAt()` is the one
-   * place that is decided — so an account on this screen is already a customer
-   * in the ledger while it is still climbing the funnel's last three rungs.
+   * `kind` flips at the SECOND order — `promotesToCustomerAt()` is the one
+   * place that is decided — so an account on this screen is still a lead in
+   * the ledger with its first order behind it (one converted at the first
+   * order before the rule moved is a customer, and is off this desk).
    * It is selected rather than inferred from the rung because the two really
    * can disagree: an order declined by accounts leaves a lead on
    * `first_order` with `kind` still `lead`, and a screen that guessed would
@@ -529,14 +546,11 @@ export type FirstOrderRow = {
  * counts below are that list and its complement rather than statuses typed out
  * here.
  *
- * **`kind` flipped at the first order, not the second.** §22 asks for the
- * second; this codebase promotes at the first, because about thirty readers of
- * `customers.kind` mean "has never ordered" by it and an account with an
- * order, a bill and a confirmed receipt sitting at `kind = 'lead'` would get
- * every one of them wrong. So the funnel keeps its own `second_order` and
- * `customer` rungs, which say something about the RELATIONSHIP, and the ledger
- * has already moved on. `kind` rides on every row so the screen can say it in
- * words.
+ * **`kind` flips at the SECOND order**, as §22 asks (`promotesToCustomerAt`).
+ * An account here may carry an order, a bill and a confirmed receipt and still
+ * be `kind = 'lead'`; once it converts it leaves this desk with every other
+ * Lead Management list (`openLead`). `kind` rides on every row so the screen
+ * can say it in words.
  */
 export async function firstOrderDesk(
   day: string,
@@ -559,7 +573,7 @@ export async function firstOrderDesk(
 
   const where = sql`
      where customers.lead_stage::text in (${stages})
-       and customers.lead_archived = false
+       and ${openLead("customers")}
        ${leadsVisible(scope, "customers.owner_id")}
   `;
 

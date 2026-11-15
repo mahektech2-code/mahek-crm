@@ -1,5 +1,6 @@
 "use client";
 
+import { accountTypeLabel } from "@/lib/account-types";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -153,7 +154,7 @@ export function CustomerRecord({
     <div className="flex flex-col gap-4">
       <ScreenHeader
         title={row.name}
-        subtitle={[r.statusLabel, row.kind === "lead" ? "Lead" : row.thirdParty ? "Third-party customer" : "Direct customer", row.city].filter(Boolean).join(" · ")}
+        subtitle={[r.statusLabel, accountTypeLabel(row), row.city].filter(Boolean).join(" · ")}
         actions={
           <>
             <Link href={`/accounts/ledger?customer=${row.id}`} className="inline-flex h-8 items-center rounded-[4px] border border-line px-3 text-[13px] text-ink hover:bg-canvas">
