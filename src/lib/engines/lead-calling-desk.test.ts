@@ -51,14 +51,8 @@ const call1Answers: DeskValues = {
   monthlyLitres: 200,
   competitor: "Local thinner",
 };
-/** Everything a Prospect needs from the desk — the same answers the Prospect gate
- *  asks for (one ladder, Nov 2026). No decision maker — it is not needed. */
-const prospectReady: DeskValues = {
-  ...call1Answers,
-  requiredProductId: "prd_1",
-  customerType: "dealer",
-  gstin: "27ABCDE1234F1Z5",
-};
+/** Everything a Prospect needs from the desk. No decision maker — it is not needed. */
+const prospectReady: DeskValues = { ...call1Answers, requiredProductId: "prd_1" };
 
 describe("the eleven answers — only the competitor is compulsory on the calls", () => {
   test("only the competitor is compulsory; Decision Maker, Product and Monthly requirement are optional", () => {
@@ -68,10 +62,10 @@ describe("the eleven answers — only the competitor is compulsory on the calls"
     }
   });
 
-  test("a Prospect needs what the Prospect gate asks — never the decision maker", () => {
+  test("a Prospect needs the competitor, Product and the monthly requirement — never the decision maker", () => {
     assert.deepEqual(
       DESK_FIELDS.filter((f) => f.prospect).map((f) => f.key).sort(),
-      ["competitor", "customerType", "gstin", "monthlyLitres", "requiredProductId"],
+      ["competitor", "monthlyLitres", "requiredProductId"],
     );
     assert.equal(DESK_FIELDS.find((f) => f.key === "decisionMaker")!.prospect, false);
     /* Every compulsory answer is also one a Prospect needs. */
@@ -104,9 +98,9 @@ describe("the eleven answers — only the competitor is compulsory on the calls"
   test("Prospect progress counts what is on the record and names what is not yet captured", () => {
     const p = prospectProgress(call1Answers);
     assert.equal(p.done, 2);
-    assert.equal(p.total, 5);
+    assert.equal(p.total, 3);
     assert.equal(p.complete, false);
-    assert.deepEqual(p.missing.map((f) => f.key).sort(), ["customerType", "gstin", "requiredProductId"]);
+    assert.deepEqual(p.missing.map((f) => f.key), ["requiredProductId"]);
     assert.equal(prospectProgress(prospectReady).complete, true);
   });
 
@@ -296,10 +290,7 @@ describe("Test D — no question is asked twice", () => {
     const q = questionsForCall({ ...call1Answers, decisionMaker: "Owner" }, 3);
     const offered = [...q.askNow, ...q.later].map((f) => f.key);
     assert.ok(!offered.includes("decisionMaker"));
-    assert.deepEqual(
-      q.askNow.filter((f) => f.prospect).map((f) => f.key).sort(),
-      ["customerType", "gstin", "requiredProductId"],
-    );
+    assert.deepEqual(q.askNow.filter((f) => f.prospect).map((f) => f.key), ["requiredProductId"]);
   });
 
   test("a question is either asked, deferred or answered — never two of them", () => {
