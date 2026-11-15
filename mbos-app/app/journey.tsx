@@ -48,7 +48,7 @@ import {
   SheetActions,
   SquareButton,
   SwitchTabs,
-} from '../src/components/journey/v3';
+} from '../src/components/ui/v3';
 import { Pop, PressableScale, Stagger, Swap, animateLayout } from '../src/components/ui/motion';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';

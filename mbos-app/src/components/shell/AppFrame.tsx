@@ -216,9 +216,12 @@ export function AppFrame({
   heroActions,
   showTitle = true,
   overlap = false,
+  heroTop,
   children,
 }: {
   title: string;
+  /** The row the artboard draws first in the hero — see `Header`'s `top`. */
+  heroTop?: React.ReactNode;
   /** The hero block's colour. Navy on the day screens, lavender elsewhere. */
   tone?: HeroTone;
   /** What the screen puts inside its hero block, under the title. */
@@ -450,6 +453,7 @@ export function AppFrame({
       onBell={here === 'notifications' ? undefined : () => router.push(`/notifications${fromHere}`)}
       chips={strip}
       actions={heroActions}
+      top={heroTop}
       overlap={overlap}>
       {hero}
     </Header>
@@ -631,6 +635,11 @@ export function AppFrame({
         body={confirm?.body ?? ''}
         reasonLabel={confirm?.reasonLabel}
         confirmLabel={confirm?.confirmLabel ?? ''}
+        cancelLabel={confirm?.cancelLabel}
+        tone={confirm?.tone}
+        placeholder={confirm?.placeholder}
+        subtitle={confirm?.subtitle}
+        lead={confirm?.lead}
         reason={confirmReason}
         onReason={(v) => set({ confirmReason: v, confirmErr: false })}
         error={confirmErr}

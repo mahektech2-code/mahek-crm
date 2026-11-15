@@ -41,7 +41,7 @@ import {
   PillButton,
   SheetActions,
   SwitchTabs,
-} from '../src/components/journey/v3';
+} from '../src/components/ui/v3';
 
 /**
  * YOUR JOURNEYS — every day the office has planned with you, past and coming,

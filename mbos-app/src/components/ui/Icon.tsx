@@ -163,6 +163,10 @@ const ICONS = {
      reorder is due, the shield that means within the credit limit, and the
      triangle that means a problem. */
   map: [{ p: 'M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z' }, { p: 'M9 4v14M15 6v14' }],
+  bike: [{ c: [6, 17, 3.2] }, { c: [18, 17, 3.2] }, { p: 'M6 17l4-7h5l3 7M10 10 8.5 6.5H6M15 10l-1.5-3.5H16' }],
+  list: [{ p: 'M9 6h11M9 12h11M9 18h11' }, { c: [4.5, 6, 1] }, { c: [4.5, 12, 1] }, { c: [4.5, 18, 1] }],
+  sendBack: [{ p: 'M9 14 4 9l5-5' }, { p: 'M4 9h10a6 6 0 0 1 0 12h-3' }],
+  gauge: [{ p: 'M4 17a8 8 0 1 1 16 0' }, { p: 'm12 17 4-5' }],
   synced: [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'm9.5 13.5 2 2 3.5-3.5' }],
   upload: [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'M12 11v5M10 13l2-2 2 2' }],
   wallet: [{ r: [3, 6, 18, 13, 2] }, { p: 'M3 10h18M16 14h2' }],

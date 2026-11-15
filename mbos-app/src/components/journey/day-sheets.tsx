@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { BottomSheet } from '../ui/overlays';
 import { Badge, T } from '../ui/primitives';
-import { PillButton } from './v3';
+import { PillButton } from '../ui/v3';
 import { Icon } from '../ui/Icon';
 import { color as C, radius, weight, tabular } from '../../theme/tokens';
 import { dayLabelRelative, hhmm, inrFromPaise, plural } from '../../lib/format';

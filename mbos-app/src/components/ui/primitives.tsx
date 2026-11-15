@@ -247,13 +247,23 @@ export function PrimaryButton({
   label: string;
   onPress?: () => void;
   disabled?: boolean;
-  tone?: 'primary' | 'warn';
+  tone?: 'primary' | 'warn' | 'navy' | 'danger' | 'lime';
   fullWidth?: boolean;
   whyDisabled?: string;
   style?: StyleProp<ViewStyle>;
 }) {
-  const bg = disabled ? C.hairline : tone === 'warn' ? C.warn : C.primary;
-  const fg = disabled ? C.faint : '#FFFFFF';
+  const bg = disabled
+    ? C.hairline
+    : tone === 'warn'
+      ? C.warn
+      : tone === 'navy'
+        ? C.navy
+        : tone === 'danger'
+          ? C.danger
+          : tone === 'lime'
+            ? C.lime
+            : C.primary;
+  const fg = disabled ? C.faint : tone === 'lime' ? C.navy : '#FFFFFF';
   const press = usePressScale();
   /* A disabled button that still answers (it has a `whyDisabled`) shakes and
      buzzes as it answers: the reason arrives as a toast at the bottom of the
@@ -293,7 +303,7 @@ export function PrimaryButton({
           s.primaryBtn,
           !fullWidth && s.autoWidthBtn,
           { backgroundColor: bg },
-          !disabled && { boxShadow: shadow.primary },
+          !disabled && tone === 'primary' && { boxShadow: shadow.primary },
           inner,
         ]}>
         <Text style={[{ fontSize: 16, lineHeight: 21, color: fg, textAlign: 'center' }, weight(700)]}>{label}</Text>

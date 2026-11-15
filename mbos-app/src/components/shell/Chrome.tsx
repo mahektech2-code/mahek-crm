@@ -122,9 +122,16 @@ export function Header({
   chips,
   actions,
   overlap = false,
+  top,
   children,
 }: {
   title: string;
+  /**
+   * The identity or title row the artboard draws FIRST (Home's avatar and
+   * greeting). Given, it takes the top row beside refresh and the bell, and the
+   * status chips drop to a row of their own under it.
+   */
+  top?: React.ReactNode;
   tone?: HeroTone;
   /** Off where the screen's own hero content names the screen. */
   showTitle?: boolean;
@@ -143,6 +150,7 @@ export function Header({
   children?: React.ReactNode;
 }) {
   const h = HERO[tone];
+  const chipRow = chips.map((c) => <Chip key={c.key} chip={c} tone={tone} />);
   return (
     <View style={[s.hero, { backgroundColor: h.bg, paddingBottom: overlap ? 46 : 20 }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -156,10 +164,8 @@ export function Header({
             <Icon name="back" size={20} color={h.buttonInk} strokeWidth={2} />
           </Pressable>
         ) : null}
-        {chips.map((c) => (
-          <Chip key={c.key} chip={c} tone={tone} />
-        ))}
-        <View style={{ flex: 1 }} />
+        {top ? <View style={{ flex: 1, minWidth: 0 }}>{top}</View> : chipRow}
+        {top ? null : <View style={{ flex: 1 }} />}
         {onRefresh ? (
           <Pressable
             onPress={refreshing ? undefined : onRefresh}
@@ -182,6 +188,7 @@ export function Header({
         {onBell ? <Bell onPress={onBell} unread={unread} loaded={unreadLoaded} tone={tone} /> : null}
         {actions}
       </View>
+      {top ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>{chipRow}</View> : null}
       {showTitle ? (
         <Text
           numberOfLines={2}

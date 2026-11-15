@@ -3,7 +3,9 @@ import { View } from 'react-native';
 import { router } from 'expo-router';
 
 import { BottomSheet } from '../ui/overlays';
-import { SecondaryButton, T } from '../ui/primitives';
+import { T } from '../ui/primitives';
+import { Icon } from '../ui/Icon';
+import { PillButton } from '../ui/v3';
 import { feedback } from '../ui/feedback';
 import { color as C, weight } from '../../theme/tokens';
 import { useStore } from '../../state/store';
@@ -118,21 +120,36 @@ export function TravelGate() {
     const same = outstanding.customerId === to.customerId;
     return (
       <BottomSheet open onClose={close}>
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
-            {same ? 'You are already there' : `You have not checked in at ${outstanding.customerName}`}
-          </T>
-          <T s="small" style={{ marginTop: 6 }}>
+        <View style={{ paddingBottom: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: C.warnBg,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <Icon name="visit" size={20} color={C.warnInk} strokeWidth={2} />
+            </View>
+            <T style={[{ flex: 1, fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>
+              {same ? 'You are already there' : `Not checked in at ${outstanding.customerName}`}
+            </T>
+          </View>
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 8 }}>
             {same
               ? 'You have reached. Check in when you go inside.'
               : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
           </T>
-          <View style={{ marginTop: 14 }}>
-            <SecondaryButton label={`Check in at ${outstanding.customerName}`} onPress={goCheckIn} />
-          </View>
-          <View style={{ marginTop: 10 }}>
-            <SecondaryButton label="Not now" onPress={close} />
-          </View>
+          <PillButton
+            label={`Check in at ${outstanding.customerName}`}
+            variant="navyLime"
+            height={56}
+            onPress={goCheckIn}
+            style={{ marginTop: 14 }}
+          />
+          <PillButton label="Not now" variant="outline" onPress={close} style={{ marginTop: 10 }} />
         </View>
       </BottomSheet>
     );

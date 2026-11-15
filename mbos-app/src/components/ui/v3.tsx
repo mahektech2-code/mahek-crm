@@ -1,18 +1,16 @@
 import React from 'react';
 import { Animated, Pressable, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { Icon, type IconName } from '../ui/Icon';
-import { feedback } from '../ui/feedback';
-import { usePressScale } from '../ui/motion';
+import { Icon, type IconName } from './Icon';
+import { feedback } from './feedback';
+import { usePressScale } from './motion';
 import { color as C, weight } from '../../theme/tokens';
 
 /**
- * The Version 3 pieces the day-planning screens share — Journey, Your
- * journeys, Pick your shops, Today's travel and Near me — and nothing else.
- *
- * They are here rather than in `ui/` because only these screens draw them, and
- * a shape five screens agree on is one place to keep them agreeing. Every
- * value is lifted from the V3 artboards.
+ * The Version 3 kit: the pill tags, pill buttons, switch tabs, round discs,
+ * progress ring, group cards, dashed add button, field box and sheet footer
+ * that the V3 artboards draw on screen after screen. One place, so every
+ * screen draws them the same. Every value is lifted from the V3 artboards.
  */
 
 /** The state colours the week strip, the calendar and the day lists share. */

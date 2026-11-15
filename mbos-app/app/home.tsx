@@ -1,10 +1,12 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { color as C, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
+import { color as C, radius, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { CountUp, PressableScale, Stagger, Swap } from '../src/components/ui/motion';
-import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Card, T } from '../src/components/ui/primitives';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
+import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
@@ -98,7 +100,9 @@ function DayAction({
   disabled?: boolean;
   onPress: () => void;
 }) {
-  const fg = filled ? '#FFFFFF' : tint ? C.primaryDeep : C.body;
+  /* Version 3 draws the pair inside the navy hero: the filled one lime, the
+     other an outline on the navy, and a closed day's offer a soft lilac. */
+  const fg = filled ? C.navy : tint ? C.primaryEdge : C.onNavy;
   return (
     <Pressable
       onPress={onPress}
@@ -107,29 +111,20 @@ function DayAction({
       accessibilityLabel={label}
       style={({ pressed }) => ({
         flex: 1,
-        minHeight: 52,
+        minHeight: 56,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
         paddingHorizontal: 12,
-        borderRadius: radius.lg,
-        borderWidth: filled ? 0 : 1,
-        borderColor: tint ? C.primaryEdge : C.border,
-        backgroundColor: filled
-          ? pressed
-            ? C.primaryDeep
-            : C.primary
-          : pressed
-            ? C.wash
-            : tint
-              ? C.primaryTint
-              : C.surface,
-        boxShadow: filled ? shadow.primaryLift : undefined,
-        opacity: disabled ? 0.6 : 1,
+        borderRadius: 28,
+        borderWidth: filled || tint ? 0 : 1,
+        borderColor: 'rgba(255,255,255,0.22)',
+        backgroundColor: filled ? C.lime : tint ? 'rgba(220,209,252,0.18)' : 'transparent',
+        opacity: disabled ? 0.6 : pressed ? 0.85 : 1,
       })}>
-      <Icon name={icon} size={18} color={fg} />
-      <Text numberOfLines={1} style={[{ fontSize: 15, color: fg }, weight(600)]}>
+      <Icon name={icon} size={18} color={fg} strokeWidth={2} />
+      <Text numberOfLines={1} style={[{ fontSize: 15, color: fg }, weight(filled ? 800 : 700)]}>
         {label}
       </Text>
     </Pressable>
@@ -492,7 +487,7 @@ export default function Home() {
     !!day && punchOutHour != null && punchOutDue({ running: day.running, nowMs: now, promptHour: punchOutHour });
 
   const today = new Date(now);
-  const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
+  const dateLine = `${WEEKDAYS[today.getDay()].slice(0, 3)} ${today.getDate()} ${MONTHS[today.getMonth()].slice(0, 3)}`;
 
   /* See the chip below for why the designation wins over the role. */
   const roleChip = boot.session?.user.designation?.trim() || boot.session?.user.role?.trim() || null;
@@ -768,7 +763,7 @@ export default function Home() {
     if (geo && !geo.inside) {
       askConfirm({
         title: 'You are not at base',
-        body: 'Your day has started. Your manager will see your reason.',
+        body: 'Day started · your manager sees the reason',
         reasonLabel: 'Why · needed',
         confirmLabel: 'Send reason',
         run: (reason) => {
@@ -1115,21 +1110,22 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- endDay is recreated every render; the ref is the guard
   }, [params.punchOut, day]);
 
-  return (
-    <AppFrame title="Home" activeTab="home" contentStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 92 }}>
+  /* ---- the hero: who and when, and the day itself ---- */
+  const hero = (
+    <View>
       {/* ---- who and when ---- */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <View style={{ width: 48, height: 48, borderRadius: radius.xl, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
+        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={[{ fontSize: 14, color: C.onNavy }, weight(700)]}>
             {boot.session?.user.initials ?? '··'}
           </Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={type.h2}>
+          <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.onNavy }, weight(700)]}>
             {greetingFor(today.getHours()) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
           </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 1 }}>
-            <Text style={{ fontSize: 13, color: C.muted }}>{dateLine}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(400)]}>{dateLine}</Text>
             {/*
               WHAT HE IS HERE AS — §12.1's role chip.
 
@@ -1146,12 +1142,14 @@ export default function Home() {
             {roleChip ? (
               <View
                 style={{
-                  backgroundColor: C.primaryTint,
-                  borderRadius: radius.md,
+                  flexShrink: 1,
+                  height: 20,
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.10)',
+                  borderRadius: 10,
                   paddingHorizontal: 8,
-                  paddingVertical: 2,
                 }}>
-                <Text numberOfLines={1} style={[{ fontSize: 12, color: C.primaryDeep }, weight(600)]}>
+                <Text numberOfLines={1} style={[{ fontSize: 12, color: C.primaryEdge }, weight(700)]}>
                   {roleChip}
                 </Text>
               </View>
@@ -1175,102 +1173,130 @@ export default function Home() {
           ends in a toast that carries one. */}
       <Swap id={!day ? 'loading' : !checkedIn ? 'out' : day.running ? 'running' : 'closed'}>
       {!day ? (
-        <Card style={{ marginTop: 14, padding: 14 }}>
-          <Text style={type.label}>Your day</Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
+        <View style={{ marginTop: 18, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', padding: 14 }}>
+          <Text style={[{ fontSize: 13, color: C.onNavyMuted }, weight(700)]}>Your day</Text>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.onNavyMuted, marginTop: 4 }, weight(400)]}>
             {readErr ?? 'Loading…'}
           </Text>
-        </Card>
+        </View>
       ) : !checkedIn ? (
-        <View style={{ marginTop: 14 }}>
+        <View style={{ marginTop: 18 }}>
           <PressableScale
             onPress={startDay}
             disabled={starting}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: C.primary, borderRadius: radius.card, boxShadow: shadow.primaryDeep, opacity: starting ? 0.7 : 1 }}>
-            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="play" size={22} color="#FFFFFF" strokeWidth={2} />
-            </View>
+            accessibilityRole="button"
+            accessibilityLabel={starting ? 'Punching in' : 'Punch in'}
+            accessibilityHint="Takes your photo, marks attendance, starts timer"
+            accessibilityState={{ busy: starting }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 72, paddingHorizontal: 16, backgroundColor: C.lime, borderRadius: 24, opacity: starting ? 0.6 : 1 }}>
+            {starting ? null : (
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.navy, alignItems: 'center', justifyContent: 'center' }}>
+                <Glyph shapes={PLAY} size={20} color={C.lime} fill={C.lime} />
+              </View>
+            )}
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[{ fontSize: 18, color: '#FFFFFF' }, weight(600)]}>
+              <Text style={[{ fontSize: 19, lineHeight: 24, color: C.navy }, weight(800)]}>
                 {starting ? 'Punching in…' : 'Punch in'}
               </Text>
-              <Text style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.82)', marginTop: 2 }}>
-                Takes your photo, marks attendance, starts timer
-              </Text>
+              {/* What pressing it does, as three marks: the photograph, the
+                  attendance, the timer. Read out whole as the hint. */}
+              {starting ? null : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 3 }}>
+                  {([
+                    [CAMERA, 'Photo'],
+                    [TICK, 'Attendance'],
+                    [CLOCK, 'Timer'],
+                  ] as const).map(([g, w]) => (
+                    <View key={w} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Glyph shapes={g} size={13} color={C.navy} strokeWidth={2.2} />
+                      <Text style={[{ fontSize: 12, color: C.navy }, weight(600)]}>{w}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
-            <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.6)' }}>›</Text>
+            {starting ? null : <Glyph shapes={CHEV} size={18} color={C.navy} strokeWidth={2.4} />}
           </PressableScale>
 
-          <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderWidth: 1, borderColor: C.hairline, borderRadius: radius.xl, marginTop: 10, overflow: 'hidden' }}>
-            {DAY_AHEAD.map((d, i) => (
-              <View key={d.l} style={{ flex: 1, paddingVertical: 12, paddingHorizontal: 8, alignItems: 'center', borderLeftWidth: i ? 1 : 0, borderLeftColor: C.hairline }}>
-                <Text style={[{ fontSize: 19, lineHeight: 24, color: C.ink }, weight(600), tabular]}>
-                  {dayAheadValues[i]}
-                </Text>
-                <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{d.l}</Text>
-              </View>
-            ))}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            {DAY_AHEAD.map((d, i) => {
+              const pendingAhead = dayAheadValues[i] === '—';
+              return (
+                <View
+                  key={d.l}
+                  accessible
+                  accessibilityLabel={dayAheadValues[i] + ' ' + d.l}
+                  style={{ flex: 1, minWidth: 0, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)', paddingVertical: 10, paddingHorizontal: 12 }}>
+                  {pendingAhead ? null : (
+                    <Glyph shapes={AHEAD_GLYPH[i]} size={16} color={i === 1 ? '#FF8A80' : C.onNavyMuted} />
+                  )}
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      { fontSize: 20, lineHeight: 25, letterSpacing: -0.4, color: pendingAhead ? C.onNavyMuted : C.onNavy, marginTop: pendingAhead ? 0 : 4 },
+                      weight(800),
+                      tabular,
+                    ]}>
+                    {dayAheadValues[i]}
+                  </Text>
+                  <Text numberOfLines={1} style={[{ fontSize: 11, color: C.onNavyMuted }, weight(400)]}>{d.l}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
       ) : (
-        <Card style={{ marginTop: 14, padding: 16 }}>
+        <View style={{ marginTop: 18 }}>
           {/* ---- where the day stands ----
 
               The worked time is the number this card exists for, so it is the
               large one; the status, the punch-in time and a second stretch of
-              work sit above it as a line rather than competing with it. Two
+              work sit beside it rather than competing with it. Two
               stretches of work is a fact about the day, and this is the only
               place it is visible before payroll asks about it. */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: day.running ? C.success : C.faint,
-              }}
-            />
-            <Text style={[{ fontSize: 13, color: day.running ? C.success : C.muted }, weight(600)]}>
-              {day.running ? 'On the road' : 'Day closed'}
-            </Text>
-            {day.running && day.checkedInAt ? (
-              <Text style={type.caption}>{'since ' + hhmm(day.checkedInAt)}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+            {/* Shops, and only when there are some. "0 of 0 done" was printed
+                on every unplanned day — a fraction of nothing, read as a
+                failure. While the day runs the shops are the ring. */}
+            {day.running && day.stops > 0 ? (
+              <ShopsRing done={day.stopsDone} of={day.stops} />
             ) : null}
-            <View style={{ flex: 1 }} />
-            {day.sessionCount > 1 ? <Text style={type.caption}>{plural(day.sessionCount, 'punch-in')}</Text> : null}
-          </View>
-
-          <Text
-            style={[
-              { fontSize: 32, lineHeight: 38, letterSpacing: -0.6, color: C.ink, marginTop: 6 },
-              weight(600),
-              tabular,
-            ]}>
-            {workedLabel(workedSoFarMs, day.running)}
-          </Text>
-          <Text style={type.caption}>worked today</Text>
-
-          {/* Shops, and only when there are some. "0 of 0 done" was printed on
-              every unplanned day — a fraction of nothing, read as a failure. */}
-          {day.stops > 0 ? (
-            <View style={{ marginTop: 12 }}>
-              <View style={{ height: 6, borderRadius: 3, backgroundColor: C.hairline, overflow: 'hidden' }}>
-                <View
-                  style={{
-                    width: `${Math.min(100, Math.round((day.stopsDone / day.stops) * 100))}%`,
-                    height: 6,
-                    borderRadius: 3,
-                    backgroundColor: C.primary,
-                  }}
-                />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: day.running ? C.lime : C.onNavyMuted }} />
+                <Text style={[{ fontSize: 13, color: day.running ? C.lime : C.onNavyMuted }, weight(700)]}>
+                  {(day.running ? 'On the road' : 'Day closed') +
+                    (day.running && day.checkedInAt ? ' · since ' + hhmm(day.checkedInAt) : '')}
+                </Text>
+                {!day.running && day.sessionCount > 1 ? <PunchIns n={day.sessionCount} /> : null}
               </View>
-              <Text style={[type.caption, { marginTop: 6 }]}>
+              <Text
+                style={[
+                  { fontSize: 32, lineHeight: 38, letterSpacing: -1, color: C.onNavy, marginTop: 4 },
+                  weight(800),
+                  tabular,
+                ]}>
+                {workedLabel(workedSoFarMs, day.running)}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2, flexWrap: 'wrap' }}>
+                <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(400)]}>
+                  {day.running
+                    ? 'worked today'
+                    : 'worked · ' + (day.stops > 0 ? day.stopsDone + ' of ' + plural(day.stops, 'shop') + ' done' : 'no shops planned today')}
+                </Text>
+                {day.running && day.sessionCount > 1 ? <PunchIns n={day.sessionCount} /> : null}
+              </View>
+            </View>
+          </View>
+          {day.running ? (
+            day.stops > 0 ? (
+              <Text style={[{ fontSize: 12, color: C.onNavyMuted, marginTop: 8 }, weight(400)]}>
                 {day.stopsDone + ' of ' + plural(day.stops, 'shop') + ' done'}
               </Text>
-            </View>
-          ) : (
-            <Text style={[type.caption, { marginTop: 10 }]}>No shops planned today.</Text>
-          )}
+            ) : (
+              <Text style={[{ fontSize: 12, color: C.onNavyMuted, marginTop: 8 }, weight(400)]}>No shops planned today.</Text>
+            )
+          ) : null}
 
           {/*
             TWO ACTIONS, ONE SHAPE, ONE OF THEM FILLED.
@@ -1307,14 +1333,24 @@ export default function Home() {
             />
           </View>
           {punchOutLoud ? (
-            <Text style={[type.caption, { marginTop: 10, textAlign: 'center' }]}>
-              Done for the day? Punch out so your hours count. It takes your photo.
+            <Text style={[{ fontSize: 12, color: C.onNavyMuted, marginTop: 10, textAlign: 'center' }, weight(400)]}>
+              Done for the day? Punch out so your hours count. Takes your photo.
             </Text>
           ) : null}
-        </Card>
+        </View>
       )}
       </Swap>
+    </View>
+  );
 
+  return (
+    <AppFrame
+      title="Home"
+      activeTab="home"
+      tone="navy"
+      showTitle={false}
+      hero={hero}
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 92, gap: 12 }}>
       {/* ---- whether this phone will record the day at all ----
 
           THE SWITCHES NOBODY WAS EVER SHOWN. Autostart and the OEM battery
@@ -1331,160 +1367,116 @@ export default function Home() {
           the same reason — the danger colour belongs to the tracker having
           actually stopped, which is the Sync card's sentence, not this one's. */}
       {unpaidMeter ? (
-        <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.warnBg }}>
-          <T s="small" style={[{ color: C.ink }, weight(600)]}>
-            {`${dmy(unpaidMeter.day)}: your vehicle km were not counted`}
-          </T>
-          <T s="caption" style={{ color: C.ink, marginTop: 4 }}>
-            You did not punch out, so the app closed the day at its opening reading. If the vehicle has not moved since, photograph the meter now and that day’s km are counted. Your manager will see it was added this morning.
-          </T>
-          <PrimaryButton
-            label={savingLateMeter ? 'Saving…' : 'Add the closing reading'}
-            disabled={savingLateMeter}
-            style={{ marginTop: 10 }}
-            onPress={() => {
-              /* The ride today starts where yesterday ended, so a reading
-                 taken after setting off is not yesterday's. Today's opening
-                 reading, where there is one, is the ceiling. */
-              void (async () => {
-                if (!userId) return;
-                setSavingLateMeter(true);
-                try {
-                  const startOfToday = new Date();
-                  startOfToday.setHours(0, 0, 0, 0);
-                  const ceiling = await todayOpeningKm(userId, startOfToday.getTime());
-                  const shot = await askMeter(
-                    {
-                      title: `Meter for ${dmy(unpaidMeter.day)}`,
-                      subtitle: 'Before you ride today. This becomes that day’s closing reading.',
-                      cancelLabel: 'Not now',
-                    },
-                    unpaidMeter.startKm,
-                  );
-                  if (!shot) return;
-                  const photoId = await queueOdometerPhoto(shot.uri, unpaidMeter.legId);
-                  const saved = await addLateClosingReading({
-                    legId: unpaidMeter.legId,
-                    km: shot.km,
-                    photoId,
-                    todayOpeningKm: ceiling,
-                  });
-                  if (!saved.ok) {
-                    notify(saved.reason, 'error');
-                    return;
+        <View style={{ backgroundColor: C.warnBg, borderRadius: 22, padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
+              <Glyph shapes={GAUGE} size={18} color={C.warnInk} />
+            </View>
+            <Text
+              accessibilityLabel={`${dmy(unpaidMeter.day)}: your vehicle km were not counted`}
+              style={[{ flex: 1, fontSize: 15, lineHeight: 20, color: C.ink }, weight(800)]}>
+              {`${dmy(unpaidMeter.day)} · vehicle km not counted`}
+            </Text>
+          </View>
+          <Text style={[{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 8 }, weight(400)]}>
+            No punch-out, so the day closed at its opening reading. If the vehicle has not moved, photograph the meter now and those km count. Your manager sees it was added this morning.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={savingLateMeter ? 'Saving' : 'Add the closing reading'}
+              accessibilityState={{ busy: savingLateMeter }}
+              disabled={savingLateMeter}
+              style={({ pressed }) => [pill48, { flex: 1.4, backgroundColor: pressed ? C.primaryDeep : C.primary, opacity: savingLateMeter ? 0.7 : 1 }]}
+              onPress={() => {
+                /* The ride today starts where yesterday ended, so a reading
+                   taken after setting off is not yesterday's. Today's opening
+                   reading, where there is one, is the ceiling. */
+                void (async () => {
+                  if (!userId) return;
+                  setSavingLateMeter(true);
+                  try {
+                    const startOfToday = new Date();
+                    startOfToday.setHours(0, 0, 0, 0);
+                    const ceiling = await todayOpeningKm(userId, startOfToday.getTime());
+                    const shot = await askMeter(
+                      {
+                        title: `Meter for ${dmy(unpaidMeter.day)}`,
+                        subtitle: 'Before you ride today. This becomes that day’s closing reading.',
+                        cancelLabel: 'Not now',
+                      },
+                      unpaidMeter.startKm,
+                    );
+                    if (!shot) return;
+                    const photoId = await queueOdometerPhoto(shot.uri, unpaidMeter.legId);
+                    const saved = await addLateClosingReading({
+                      legId: unpaidMeter.legId,
+                      km: shot.km,
+                      photoId,
+                      todayOpeningKm: ceiling,
+                    });
+                    if (!saved.ok) {
+                      notify(saved.reason, 'error');
+                      return;
+                    }
+                    setUnpaidMeter(null);
+                    notify(`Reading saved. ${dmy(unpaidMeter.day)} will be paid on it.`);
+                  } catch {
+                    notify('The reading was not saved. Try again.', 'error');
+                  } finally {
+                    setSavingLateMeter(false);
                   }
-                  setUnpaidMeter(null);
-                  notify(`Reading saved. ${dmy(unpaidMeter.day)} will be paid on it.`);
-                } catch {
-                  notify('The reading was not saved. Try again.', 'error');
-                } finally {
-                  setSavingLateMeter(false);
-                }
-              })();
-            }}
-          />
-          <SecondaryButton
-            label="Leave it at 0 km"
-            style={{ marginTop: 8 }}
-            onPress={() => {
-              setUnpaidMeter(null);
-              void dismissUnpaidMeterDay().catch(() => {});
-            }}
-          />
-        </Card>
+                })();
+              }}>
+              {savingLateMeter ? null : <Glyph shapes={CAMERA} size={16} color={C.onNavy} />}
+              <Text numberOfLines={1} style={[{ fontSize: 14, color: C.onNavy }, weight(700)]}>
+                {savingLateMeter ? 'Saving…' : 'Add closing reading'}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Leave it at 0 km"
+              style={({ pressed }) => [pill48, { flex: 1, backgroundColor: C.surface, opacity: pressed ? 0.85 : 1 }]}
+              onPress={() => {
+                setUnpaidMeter(null);
+                void dismissUnpaidMeterDay().catch(() => {});
+              }}>
+              <Text numberOfLines={1} style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Leave at 0 km</Text>
+            </Pressable>
+          </View>
+        </View>
       ) : null}
 
       {offerSetup ? (
         <PressableScale
           onPress={() => router.push('/tracking-setup?from=home')}
           accessibilityRole="button"
-          outerStyle={{ marginTop: 12 }}
+          accessibilityLabel="Keep tracking on. Two phone settings decide if your route is saved. Takes a minute."
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
-            minHeight: 56,
+            minHeight: 60,
             paddingHorizontal: 16,
-            borderWidth: 1,
-            borderColor: C.border,
+            paddingVertical: 10,
             backgroundColor: C.surface,
             borderRadius: radius.card,
           }}>
           {/* `pin` and not `location`: `Icon` takes `IconName | string` and
               falls back silently on a name it does not have, so a typo here is
               a blank square rather than a compile error. */}
-          <Icon name="pin" size={20} color={C.primaryDeep} strokeWidth={1.5} />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Keep tracking on</Text>
-            <T s="caption" style={{ color: C.muted }}>
-              Two phone settings decide if your route is saved. Takes a minute.
-            </T>
+          <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="pin" size={18} color={C.primaryDeep} strokeWidth={2} />
           </View>
-          <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Keep tracking on</Text>
+            <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>
+              2 phone settings save your route · 1 min
+            </Text>
+          </View>
+          <Icon name="forward" size={18} color={C.faint} strokeWidth={2} />
         </PressableScale>
       ) : null}
-
-
-      {/* ---- the six numbers ---- */}
-      <Card padded={false} style={{ marginTop: 22, overflow: 'hidden' }}>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {DASH_CARDS.map((d, i) => {
-            const figureStyle = [
-                  /* The line height does not move with the size, so a tile
-                     saying a sentence is exactly as tall as one saying a
-                     number and the grid cannot jump. */
-                  /* A tile's tone belongs to its FIGURE. Left on, the em-dash
-                     standing in for a figure nobody has yet read drew in red
-                     under "Outstanding" — an alarm about a number that does
-                     not exist. */
-                  {
-                    fontSize: dashValues[i].small ? 15 : 20,
-                    lineHeight: 26,
-                    marginVertical: 2,
-                    color: figuresPending
-                      ? C.muted
-                      : d.tone === 'danger'
-                        ? C.danger
-                        : d.tone === 'amber'
-                          ? C.warnInk
-                          : C.ink,
-                  },
-                  weight(600),
-                  tabular,
-                ];
-            const figure = dashValues[i];
-            return (
-            <PressableScale
-              key={d.l}
-              disabled={!d.route}
-              onPress={() => d.route && router.push(`/${d.route}${d.route.includes('?') ? '&' : '?'}from=home`)}
-              outerStyle={{ width: '50%' }}
-              style={{
-                padding: 14,
-                minHeight: 84,
-                borderTopWidth: i > 1 ? 1 : 0,
-                borderTopColor: C.wash,
-                borderLeftWidth: i % 2 ? 1 : 0,
-                borderLeftColor: C.wash,
-              }}>
-              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
-              {/* A real figure counts to its new value when it MOVES — an order
-                  taken, a collection made — and simply stands there the first
-                  time it is drawn: `CountUp` mounts with the read, not before
-                  it, and a figure that is not news should not perform. */}
-              {figure.n != null && figure.fmt ? (
-                <CountUp value={figure.n} format={figure.fmt} numberOfLines={1} style={figureStyle} />
-              ) : (
-                <Text numberOfLines={1} style={figureStyle}>
-                  {figure.v}
-                </Text>
-              )}
-              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{figure.s}</Text>
-            </PressableScale>
-            );
-          })}
-        </View>
-      </Card>
 
       {/*
         NOTHING HAS COME DOWN FROM THE OFFICE YET, SAID IN WORDS.
@@ -1495,17 +1487,95 @@ export default function Home() {
         "All sent" over the top of them — because that pip counts the outbox and
         has nothing to say about the inbox. A salesman reads that as a day with
         no work in it and gets on with something else.
+
+        Version 3 draws it ABOVE the tiles it explains.
       */}
       {day && neverPulled ? (
-        <Card style={{ marginTop: 12, padding: 14 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your customers have not come yet</Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-            Nothing has come from the office to this phone yet. That is why these boxes are empty.
-            Go where there is signal. Keep MBOS open for a minute. Your customers,
-            today&rsquo;s plan and your tasks will all come together.
-          </Text>
+        <Card style={{ borderRadius: 22, flexDirection: 'row', gap: 12 }}>
+          <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.warnBg, alignItems: 'center', justifyContent: 'center' }}>
+            <Glyph shapes={CLOUD_ALERT} size={20} color={C.warnInk} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(800)]}>Your customers have not come yet</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }, weight(400)]}>
+              Nothing has come from the office to this phone yet. That is why these boxes are empty.
+              Go where there is signal. Keep MBOS open for a minute. Your customers,
+              today&rsquo;s plan and your tasks will all come together.
+            </Text>
+          </View>
         </Card>
       ) : null}
+
+      {/* ---- the six numbers ---- */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        {DASH_CARDS.map((d, i) => {
+          const figureTone = figuresPending
+            ? C.faint
+            : d.tone === 'danger'
+              ? C.danger
+              : d.tone === 'amber'
+                ? C.warnInk
+                : C.ink;
+          const figureStyle = [
+                /* The line height does not move with the size, so a tile
+                   saying a sentence is exactly as tall as one saying a
+                   number and the grid cannot jump. */
+                /* A tile's tone belongs to its FIGURE. Left on, the em-dash
+                   standing in for a figure nobody has yet read drew in red
+                   under "Outstanding" — an alarm about a number that does
+                   not exist. */
+                {
+                  fontSize: dashValues[i].small ? 15 : 22,
+                  lineHeight: 28,
+                  letterSpacing: dashValues[i].small ? 0 : -0.4,
+                  marginTop: 6,
+                  color: figureTone,
+                },
+                weight(800),
+                tabular,
+              ];
+          const figure = dashValues[i];
+          /* The sub-line is red where it is a count of something late —
+             overdue tasks, missed follow-ups — and quiet otherwise. */
+          const subLate = !figuresPending && /overdue|missed/.test(figure.s) && !/^None/.test(figure.s);
+          return (
+          <PressableScale
+            key={d.l}
+            disabled={!d.route}
+            accessibilityRole={d.route ? 'button' : undefined}
+            accessibilityLabel={`${d.l}: ${figure.v}, ${figure.s}`}
+            onPress={() => d.route && router.push(`/${d.route}${d.route.includes('?') ? '&' : '?'}from=home`)}
+            outerStyle={{ width: '48%', flexGrow: 1 }}
+            style={{
+              padding: 14,
+              minHeight: 96,
+              borderRadius: radius.card,
+              backgroundColor: C.surface,
+            }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {figuresPending ? null : <Glyph shapes={TILE_GLYPH[i]} size={16} color={TILE_INK[i]} />}
+              <Text numberOfLines={1} style={[{ flex: 1, fontSize: 12, color: C.muted }, weight(600)]}>{d.l}</Text>
+            </View>
+            {/* A real figure counts to its new value when it MOVES — an order
+                taken, a collection made — and simply stands there the first
+                time it is drawn: `CountUp` mounts with the read, not before
+                it, and a figure that is not news should not perform. */}
+            {figure.n != null && figure.fmt ? (
+              <CountUp value={figure.n} format={figure.fmt} numberOfLines={1} style={figureStyle} />
+            ) : (
+              <Text numberOfLines={1} style={figureStyle}>
+                {figure.v}
+              </Text>
+            )}
+            <Text
+              numberOfLines={1}
+              style={[{ fontSize: 12, color: figuresPending ? C.faint : subLate ? C.danger : C.muted }, weight(subLate ? 600 : 400)]}>
+              {figure.s}
+            </Text>
+          </PressableScale>
+          );
+        })}
+      </View>
 
       {/* ---- the leads half of the morning ----
 
@@ -1532,9 +1602,11 @@ export default function Home() {
           salesman would have to work out which was which. What is drawn is
           what the route cannot answer: the leads that are owed something
           today. */}
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 22 }}>
-        <Text style={[type.label, { flex: 1 }]}>Your leads</Text>
-        <Pressable onPress={() => router.push('/lead-actions?from=home')} accessibilityRole="button">
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 8, paddingHorizontal: 6 }}>
+        <Text accessibilityRole="header" accessibilityLabel="Your leads" style={[{ flex: 1, fontSize: 17, lineHeight: 22, color: C.ink }, weight(800)]}>
+          Leads
+        </Text>
+        <Pressable onPress={() => router.push('/lead-actions?from=home')} accessibilityRole="button" hitSlop={12}>
           <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>Pending actions ›</Text>
         </Pressable>
       </View>
@@ -1552,53 +1624,53 @@ export default function Home() {
         the colour. The dash rule is the one the six figures above already
         follow: a figure nobody has read yet is a dash, never a nought.
       */}
-      <View
-        style={{
-          flexDirection: 'row',
-          backgroundColor: C.surface,
-          borderWidth: 1,
-          borderColor: C.hairline,
-          borderRadius: radius.xl,
-          marginTop: 8,
-          overflow: 'hidden',
-        }}>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
         {([
           /* My leads is the BOOK and not a cut of it, so it opens the book —
              the same list the Customers tab and the More screen already show.
              Pointing it at a view of the worklist would have been tidier and
              would answer a different question to the one its own label asks. */
-          { l: 'My leads', v: leads?.counts.working, href: '/leads?from=home', tone: C.ink },
-          { l: 'Overdue', v: leads?.counts.overdue, href: '/lead-actions?view=overdue&from=home', tone: C.danger },
-          { l: 'Due today', v: leads?.counts.today, href: '/lead-actions?view=today&from=home', tone: C.ink },
-        ] as const).map((stat, i) => (
-          <PressableScale
-            key={stat.l}
-            onPress={() => router.push(stat.href)}
-            accessibilityRole="button"
-            outerStyle={{ flex: 1 }}
-            style={{
-              paddingVertical: 12,
-              paddingHorizontal: 8,
-              alignItems: 'center',
-              borderLeftWidth: i ? 1 : 0,
-              borderLeftColor: C.hairline,
-            }}>
-            {leadsPending || stat.v === undefined ? (
-              <Text style={[{ fontSize: 19, lineHeight: 24, color: C.muted }, weight(600), tabular]}>—</Text>
-            ) : (
-              <CountUp
-                value={stat.v}
-                format={whole}
-                style={[
-                  { fontSize: 19, lineHeight: 24, color: stat.v > 0 ? stat.tone : C.ink },
-                  weight(600),
-                  tabular,
-                ]}
-              />
-            )}
-            <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{stat.l}</Text>
-          </PressableScale>
-        ))}
+          { l: 'My leads', v: leads?.counts.working, href: '/leads?from=home', tone: C.ink, glyph: PERSON, glyphInk: C.primaryDeep },
+          { l: 'Overdue', v: leads?.counts.overdue, href: '/lead-actions?view=overdue&from=home', tone: C.danger, glyph: WARN, glyphInk: C.danger },
+          { l: 'Due today', v: leads?.counts.today, href: '/lead-actions?view=today&from=home', tone: C.ink, glyph: CAL, glyphInk: C.ink },
+        ] as const).map((stat) => {
+          const known = !leadsPending && stat.v !== undefined;
+          const hot = known && stat.v! > 0 && stat.tone === C.danger;
+          return (
+            <PressableScale
+              key={stat.l}
+              onPress={() => router.push(stat.href)}
+              accessibilityRole="button"
+              accessibilityLabel={`${stat.l}: ${known ? stat.v : 'not known yet'}`}
+              outerStyle={{ flex: 1 }}
+              style={{
+                minHeight: 64,
+                borderRadius: radius.card,
+                backgroundColor: hot ? C.dangerBg : C.surface,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 8,
+              }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {known ? <Glyph shapes={stat.glyph} size={14} color={stat.v! > 0 ? stat.glyphInk : C.faint} strokeWidth={2.2} /> : null}
+                {!known ? (
+                  <Text style={[{ fontSize: 20, lineHeight: 25, color: C.faint }, weight(800), tabular]}>—</Text>
+                ) : (
+                  <CountUp
+                    value={stat.v!}
+                    format={whole}
+                    style={[
+                      { fontSize: 20, lineHeight: 25, color: stat.v! > 0 ? stat.tone : C.ink },
+                      weight(800),
+                      tabular,
+                    ]}
+                  />
+                )}
+              </View>
+              <Text style={[{ fontSize: 12, color: hot ? C.danger : C.muted }, weight(400)]}>{stat.l}</Text>
+            </PressableScale>
+          );
+        })}
       </View>
 
       {/*
@@ -1610,29 +1682,22 @@ export default function Home() {
         nobody debugs, because two of the three look like having no work.
       */}
       {readErr ? (
-        <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Did not load on this phone.</Text>
-        </Card>
+        <EmptyLine text="Did not load on this phone." />
       ) : !leads ? (
-        <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Loading…</Text>
-        </Card>
+        <EmptyLine text="Loading…" />
       ) : neverPulled ? null /* the card above already says it, in full */ : leads.counts.working === 0 ? (
-        <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
-            No open leads. Add a new shop you see as a lead.
-          </Text>
-        </Card>
+        <EmptyLine text="No open leads. Add a new shop you see as a lead." />
       ) : leads.dueToday.length === 0 ? (
-        <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
-            {leads.counts.overdue
+        <EmptyLine
+          good
+          text={
+            leads.counts.overdue
               ? 'Nothing pending today. ' + plural(leads.counts.overdue, 'lead') + ' overdue.'
-              : 'No lead actions pending today.'}
-          </Text>
-        </Card>
+              : 'No lead actions pending today.'
+          }
+        />
       ) : (
-        <View style={{ gap: 10, marginTop: 10 }}>
+        <View style={{ gap: 12 }}>
           {leads.dueToday.map((lead, i) => (
             <Stagger key={lead.id} index={i}>
               <LeadActionCard lead={lead} meId={userId} from="home" />
@@ -1644,9 +1709,11 @@ export default function Home() {
           {leads.counts.today > leads.dueToday.length ? (
             <Pressable
               onPress={() => router.push('/lead-actions?view=today&from=home')}
-              accessibilityRole="button">
-              <Text style={[type.caption, { textAlign: 'center' }]}>
-                {'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + '. Tap to see all.'}
+              accessibilityRole="button"
+              accessibilityLabel={'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + '. Tap to see all.'}
+              style={({ pressed }) => ({ minHeight: 44, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
+              <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>
+                {leads.dueToday.length + ' of ' + leads.counts.today + ' shown · See all ›'}
               </Text>
             </Pressable>
           ) : null}
@@ -1671,73 +1738,86 @@ export default function Home() {
           sees first. It reads the same cache that screen does. */}
       <PressableScale
         onPress={() => router.push('/performance?from=home')}
-        outerStyle={{ marginTop: 12 }}>
-        <Card style={{ padding: 14 }}>
-          <Text style={type.label}>Your target</Text>
-          {readErr ? (
-            /* The read failed, and "the office has not set one" would be a
-               claim about the office rather than about this phone. */
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              Did not load on this phone.
-            </Text>
-          ) : month === undefined ? (
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Loading…</Text>
-          ) : month === null || !month.hasTarget ? (
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              The office has not set a target yet. Today&rsquo;s orders, visits and collections
-              are in the boxes above.
-            </Text>
-          ) : (
-            <>
-              {/* Revenue and volume together, never revenue alone. A price
-                  revision moves the first and cannot move the second, so a
-                  month at target on rupees and short on litres is a month that
-                  sold LESS and billed more — and it is exactly the month
-                  somebody would otherwise be congratulated for. The score is
-                  the office's and is printed, never recomputed here. */}
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
-                {/* The office recomputes this hourly; when it has moved since
-                    the last look it counts there, which is the only way a
-                    64 becoming 72 reads as progress rather than as a number. */}
-                {month.totalScoreBp == null ? (
-                  <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>—</Text>
-                ) : (
-                  <CountUp
-                    value={month.totalScoreBp / 100}
-                    format={(x) => x.toFixed(1)}
-                    style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
-                  />
-                )}
-                <Text style={{ fontSize: 13, color: C.muted }}>out of 100</Text>
-                {month.rating ? (
-                  <Text style={{ fontSize: 13, color: C.muted }}>{'· ' + month.rating}</Text>
-                ) : null}
+        accessibilityRole="button"
+        accessibilityLabel="Your target. Tap to see more.">
+        {readErr ? (
+          /* The read failed, and "the office has not set one" would be a
+             claim about the office rather than about this phone. */
+          <TargetQuiet title="Your target" sub="Did not load on this phone." />
+        ) : month === undefined ? (
+          <TargetQuiet title="Your target" sub="Loading…" />
+        ) : month === null || !month.hasTarget ? (
+          <TargetQuiet
+            title="No target set yet"
+            sub="Today’s orders, visits and collections are above."
+            long="The office has not set a target yet. Today’s orders, visits and collections are in the boxes above."
+          />
+        ) : (
+          <Card style={{ borderRadius: 22 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Glyph shapes={TARGET} size={18} color={C.primaryDeep} />
+              <Text style={[{ flex: 1, fontSize: 13, color: C.muted }, weight(700)]}>Your target</Text>
+              {month.rating ? <Badge tone="teal">{month.rating}</Badge> : null}
+            </View>
+            {/* Revenue and volume together, never revenue alone. A price
+                revision moves the first and cannot move the second, so a
+                month at target on rupees and short on litres is a month that
+                sold LESS and billed more — and it is exactly the month
+                somebody would otherwise be congratulated for. The score is
+                the office's and is printed, never recomputed here. */}
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 8 }}>
+              {/* The office recomputes this hourly; when it has moved since
+                  the last look it counts there, which is the only way a
+                  64 becoming 72 reads as progress rather than as a number. */}
+              {month.totalScoreBp == null ? (
+                <Text style={[{ fontSize: 34, lineHeight: 40, color: C.ink }, weight(800), tabular]}>—</Text>
+              ) : (
+                <CountUp
+                  value={month.totalScoreBp / 100}
+                  format={(x) => x.toFixed(1)}
+                  style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.7, color: C.ink }, weight(800), tabular]}
+                />
+              )}
+              <Text accessibilityLabel="out of 100" style={[{ fontSize: 14, color: C.muted }, weight(400)]}>/ 100</Text>
+            </View>
+            {month.totalScoreBp != null ? (
+              <View style={{ height: 8, borderRadius: 4, backgroundColor: C.hairline, marginTop: 8, overflow: 'hidden' }}>
+                <View
+                  style={{
+                    width: `${Math.max(0, Math.min(100, month.totalScoreBp / 100))}%`,
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: C.primary,
+                  }}
+                />
               </View>
-              <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-                {shortfalls(month)[0] ?? 'You have reached every target set for you.'}
-              </Text>
-              {/*
-                WHICH MONTH, AND WHEN IT WAS WORKED OUT.
+            ) : null}
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 10 }, weight(400)]}>
+              {shortfalls(month)[0] ?? 'You have reached every target set for you.'}
+            </Text>
+            {/*
+              WHICH MONTH, AND WHEN IT WAS WORKED OUT.
 
-                `load` takes the newest row the handset holds, which on the 3rd
-                is still last month's — and this card printed a score at 22
-                points with neither the period nor the as-at on it, so a big
-                number read as this month's live standing. `computedAt` was
-                here all along and was used as a BOOLEAN, to decide whether to
-                append "tap for the rest", and never printed. AGENTS.md states
-                the rule in as many words: the handset is sent the cache with
-                its `computed_at` and prints it, because a screen that implied
-                it was live would be believed. `/performance`, one tap away,
-                has done both since it shipped.
-              */}
-              <Text style={[type.caption, { marginTop: 4 }]}>
-                {monthLabel(month.period) +
-                  (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '') +
-                  ' · tap to see more'}
+              `load` takes the newest row the handset holds, which on the 3rd
+              is still last month's — and this card printed a score at 22
+              points with neither the period nor the as-at on it, so a big
+              number read as this month's live standing. `computedAt` was
+              here all along and was used as a BOOLEAN, to decide whether to
+              append "tap for the rest", and never printed. AGENTS.md states
+              the rule in as many words: the handset is sent the cache with
+              its `computed_at` and prints it, because a screen that implied
+              it was live would be believed. `/performance`, one tap away,
+              has done both since it shipped.
+            */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+              <Glyph shapes={CLOCK} size={13} color={C.muted} />
+              <Text numberOfLines={1} style={[{ flex: 1, fontSize: 12, color: C.muted }, weight(400)]}>
+                {monthLabel(month.period) + (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '')}
               </Text>
-            </>
-          )}
-        </Card>
+              <Text style={[{ fontSize: 12, color: C.muted }, weight(400)]}>More ›</Text>
+            </View>
+          </Card>
+        )}
       </PressableScale>
 
       <SelfieCamera
@@ -1771,12 +1851,15 @@ export default function Home() {
           answerMode.current = null;
         }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+          <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
             How are you travelling today?
           </T>
-          <T s="small" style={{ marginTop: 4 }}>
-            Asked once for this check-in. Not asked again at each shop.
-          </T>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <Glyph shapes={TICK} size={14} color={C.muted} />
+            <T style={{ flex: 1, fontSize: 13, lineHeight: 18, color: C.muted }}>
+              Asked once for this punch-in, not at each shop
+            </T>
+          </View>
 
           <TravelModeList
             modes={dayModes}
@@ -1788,43 +1871,63 @@ export default function Home() {
             }}
           />
 
-          <View style={{ marginTop: 12 }}>
-            <SecondaryButton
-              label="Not punching in yet"
-              onPress={() => {
-                setModeOpen(false);
-                answerMode.current?.(null);
-                answerMode.current = null;
-              }}
-            />
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Not punching in yet"
+            onPress={() => {
+              setModeOpen(false);
+              answerMode.current?.(null);
+              answerMode.current = null;
+            }}
+            style={({ pressed }) => [pill56, { marginTop: 14, backgroundColor: C.canvas, opacity: pressed ? 0.85 : 1 }]}>
+            <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Not punching in yet</T>
+          </Pressable>
         </View>
       </BottomSheet>
 
       {/* ─────────────────────────── after the punch-out: raise the day's costs */}
       <BottomSheet open={!!claimPrompt} onClose={() => setClaimPrompt(null)}>
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+          <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
             Add today&apos;s expenses
           </T>
-          <T s="small" style={{ marginTop: 6 }}>
-            {(claimPrompt?.modeLabel
-              ? `You travelled by ${claimPrompt.modeLabel.toLowerCase()} today. `
-              : '') +
-              'Your meal and kilometre allowances are worked out for you. Fares, hotel, food bills and other costs are paid only if you add them, with a photo or PDF of each bill.'}
-          </T>
-          <View style={{ marginTop: 14 }}>
-            <PrimaryButton
-              label="Add expenses"
-              onPress={() => {
-                setClaimPrompt(null);
-                router.push({ pathname: '/expenses', params: { add: '1' } });
-              }}
-            />
+          <View
+            accessible
+            accessibilityLabel={
+              (claimPrompt?.modeLabel ? `You travelled by ${claimPrompt.modeLabel.toLowerCase()} today. ` : '') +
+              'Your meal and kilometre allowances are worked out for you. Fares, hotel, food bills and other costs are paid only if you add them, with a photo or PDF of each bill.'
+            }
+            style={{ gap: 10, marginTop: 14 }}>
+            {claimPrompt?.modeLabel ? (
+              <ClaimLine glyph={BUS} bg={C.canvas} ink={C.ink}>
+                {`You travelled by ${claimPrompt.modeLabel.toLowerCase()} today`}
+              </ClaimLine>
+            ) : null}
+            <ClaimLine glyph={TICK} bg={C.successBg} ink={C.success}>
+              Meal and km allowances are worked out for you
+            </ClaimLine>
+            <ClaimLine glyph={RECEIPT} bg={C.warnBg} ink={C.warnInk}>
+              Fares, hotel, food bills and other costs: paid only if you add them, with a photo or PDF of each bill
+            </ClaimLine>
           </View>
-          <View style={{ marginTop: 10 }}>
-            <SecondaryButton label="Later" onPress={() => setClaimPrompt(null)} />
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add expenses"
+            onPress={() => {
+              setClaimPrompt(null);
+              router.push({ pathname: '/expenses', params: { add: '1' } });
+            }}
+            style={({ pressed }) => [pill56, { marginTop: 18, minHeight: 60, borderRadius: 30, backgroundColor: C.navy, flexDirection: 'row', gap: 8, opacity: pressed ? 0.9 : 1 }]}>
+            <Glyph shapes={PLUS} size={18} color={C.lime} strokeWidth={2.4} />
+            <T style={[{ fontSize: 17, color: C.onNavy }, weight(700)]}>Add expenses</T>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Later"
+            onPress={() => setClaimPrompt(null)}
+            style={({ pressed }) => [pill56, { marginTop: 10, minHeight: 52, borderRadius: 26, backgroundColor: C.canvas, opacity: pressed ? 0.85 : 1 }]}>
+            <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Later</T>
+          </Pressable>
         </View>
       </BottomSheet>
 
@@ -1844,5 +1947,131 @@ export default function Home() {
         }}
       />
     </AppFrame>
+  );
+}
+
+/* ------------------------------------------------------------ the pieces */
+
+const PLAY: GlyphShape[] = [{ p: 'M8 5l11 7-11 7z' }];
+const CAMERA: GlyphShape[] = [{ p: 'M4 8h3l2-3h6l2 3h3v11H4z' }, { c: [12, 13, 3.5] }];
+const TICK: GlyphShape[] = [{ p: 'M5 12l5 5 9-10' }];
+const CLOCK: GlyphShape[] = [{ c: [12, 12, 8] }, { p: 'M12 8v4l3 2' }];
+const CHEV: GlyphShape[] = [{ p: 'M9 5l7 7-7 7' }];
+const PLUS: GlyphShape[] = [{ p: 'M12 5v14M5 12h14' }];
+const GAUGE: GlyphShape[] = [{ p: 'M4 16a8 8 0 1 1 16 0' }, { p: 'M12 16l4-5' }];
+const CLOUD_ALERT: GlyphShape[] = [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'M12 10v5M12 17h.01' }];
+const PERSON: GlyphShape[] = [{ c: [12, 8, 4] }, { p: 'M4 21c0-4 4-6 8-6s8 2 8 6' }];
+const WARN: GlyphShape[] = [{ p: 'M12 4l9 16H3z' }, { p: 'M12 10v4M12 17h.01' }];
+const CAL: GlyphShape[] = [{ r: [4, 5, 16, 15, 2] }, { p: 'M4 10h16M9 3v4M15 3v4' }];
+const TARGET: GlyphShape[] = [{ c: [12, 12, 8] }, { c: [12, 12, 3] }];
+const BUS: GlyphShape[] = [{ r: [5, 3, 14, 15, 2] }, { p: 'M5 11h14M8 21l1-3M16 21l-1-3' }];
+const RECEIPT: GlyphShape[] = [{ p: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6' }];
+const ROUTE: GlyphShape[] = [{ c: [6, 18, 2] }, { c: [18, 6, 2] }, { p: 'M8 18h6a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8h6' }];
+const WALLET: GlyphShape[] = [{ r: [3, 6, 18, 13, 2] }, { p: 'M3 10h18M16 14h2' }];
+
+/** The day-ahead strip's marks, in `DAY_AHEAD` order: stops, outstanding, follow-ups. */
+const AHEAD_GLYPH: GlyphShape[][] = [ROUTE, WALLET, CAL];
+
+/** The six tiles' marks and their colours, in `DASH_CARDS` order. */
+const TILE_GLYPH: GlyphShape[][] = [
+  [{ p: 'M4 5h2l2 11h10l2-8H7' }, { c: [10, 20, 1] }, { c: [17, 20, 1] }],
+  [{ p: 'M4 10l2-5h12l2 5M4 10v10h16V10M4 10h16M10 20v-5h4v5' }],
+  WALLET,
+  [{ r: [3, 7, 18, 11, 2] }, { c: [12, 12.5, 2.5] }],
+  [{ r: [4, 4, 16, 17, 2] }, { p: 'M8 10l2 2 4-4M8 16h8' }],
+  [{ p: 'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2' }],
+];
+const TILE_INK = [C.ink, C.ink, C.danger, C.warnInk, C.warnInk, C.ink];
+
+const pill48 = {
+  minHeight: 48,
+  borderRadius: 24,
+  flexDirection: 'row' as const,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+  gap: 6,
+  paddingHorizontal: 10,
+};
+
+const pill56 = {
+  minHeight: 56,
+  borderRadius: 28,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+  paddingHorizontal: 12,
+};
+
+/** The planned shops as a ring in the hero — done over planned, in lime. */
+function ShopsRing({ done, of }: { done: number; of: number }) {
+  const r = 38;
+  const length = 2 * Math.PI * r;
+  const share = of > 0 ? Math.min(1, done / of) : 0;
+  return (
+    <View accessible accessibilityLabel={`${done} of ${plural(of, 'shop')} done`} style={{ width: 84, height: 84 }}>
+      <Svg width={84} height={84} viewBox="0 0 92 92">
+        <SvgCircle cx={46} cy={46} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth={9} />
+        <SvgCircle
+          cx={46}
+          cy={46}
+          r={r}
+          fill="none"
+          stroke={C.lime}
+          strokeWidth={9}
+          strokeLinecap="round"
+          strokeDasharray={`${share * length} ${length}`}
+          transform="rotate(-90 46 46)"
+        />
+      </Svg>
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={[{ fontSize: 22, color: C.onNavy }, weight(800), tabular]}>{`${done}/${of}`}</Text>
+      </View>
+    </View>
+  );
+}
+
+function PunchIns({ n }: { n: number }) {
+  return (
+    <View style={{ height: 22, paddingHorizontal: 8, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
+      <Text style={[{ fontSize: 12, color: C.onNavy }, weight(700)]}>{plural(n, 'punch-in')}</Text>
+    </View>
+  );
+}
+
+/** A one-line empty state under the lead figures. `good` is a morning with nothing owed. */
+function EmptyLine({ text, good = false }: { text: string; good?: boolean }) {
+  return (
+    <View style={{ backgroundColor: C.surface, borderRadius: radius.card, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      {good ? <Glyph shapes={TICK} size={16} color={C.success} strokeWidth={2.2} /> : null}
+      <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.muted }, weight(400)]}>{text}</Text>
+    </View>
+  );
+}
+
+/** The target card where there is no score to draw. */
+function TargetQuiet({ title, sub, long }: { title: string; sub: string; long?: string }) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={long ?? `${title}. ${sub}`}
+      style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.hairline, alignItems: 'center', justifyContent: 'center' }}>
+        <Glyph shapes={TARGET} size={18} color={C.faint} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{title}</Text>
+        <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>{sub}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ClaimLine({ glyph, bg, ink, children }: { glyph: GlyphShape[]; bg: string; ink: string; children: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+        <Glyph shapes={glyph} size={18} color={ink} />
+      </View>
+      <T style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.body }}>{children}</T>
+    </View>
   );
 }

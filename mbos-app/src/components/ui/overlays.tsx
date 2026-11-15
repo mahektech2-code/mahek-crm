@@ -1,7 +1,7 @@
 import React from 'react';
 import { Animated, Easing, View, Text, Pressable, Modal, PanResponder, ScrollView, StyleSheet, useWindowDimensions, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../theme/tokens';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
 import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -680,12 +680,22 @@ export function ConfirmSheet({
   error,
   onCancel,
   onConfirm,
+  cancelLabel = 'Cancel',
+  tone = 'warn',
+  placeholder = 'Tell your manager what happened',
+  subtitle,
+  lead,
 }: {
   open: boolean;
   title: string;
   body: string;
   reasonLabel?: string;
   confirmLabel: string;
+  cancelLabel?: string;
+  tone?: 'warn' | 'navy' | 'danger';
+  placeholder?: string;
+  subtitle?: string;
+  lead?: { top?: string; bottom?: string; icon?: IconName; tint?: string; bg?: string };
   reason: string;
   onReason: (v: string) => void;
   error: boolean;
@@ -694,8 +704,37 @@ export function ConfirmSheet({
 }) {
   return (
     <BottomSheet open={open} onClose={onCancel}>
-      <Text style={[type.h2, { letterSpacing: -0.285 }]}>{title}</Text>
-      <Text style={[type.body, { marginTop: 6 }]}>{body}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {lead ? (
+          <View
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 16,
+              backgroundColor: lead.bg ?? (lead.icon ? C.primaryTint : C.navy),
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            {lead.icon ? (
+              <Icon name={lead.icon} size={24} color={lead.tint ?? C.primaryDeep} strokeWidth={2} />
+            ) : (
+              <>
+                {lead.top ? (
+                  <Text style={[{ fontSize: 18, lineHeight: 20, color: lead.tint ?? C.lime }, weight(800)]}>{lead.top}</Text>
+                ) : null}
+                {lead.bottom ? (
+                  <Text style={[{ fontSize: 11, lineHeight: 13, color: C.onNavyMuted }, weight(600)]}>{lead.bottom}</Text>
+                ) : null}
+              </>
+            )}
+          </View>
+        ) : null}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink, letterSpacing: -0.4 }, weight(800)]}>{title}</Text>
+          {subtitle ? <Text style={[type.caption, { marginTop: 2 }]}>{subtitle}</Text> : null}
+        </View>
+      </View>
+      <Text style={[type.body, { marginTop: 10 }]}>{body}</Text>
       {reasonLabel ? (
         <View style={{ marginTop: 14 }}>
           <Text style={[type.label, { marginBottom: 6 }]}>{reasonLabel}</Text>
@@ -704,15 +743,15 @@ export function ConfirmSheet({
             onChangeText={onReason}
             multiline
             invalid={error}
-            placeholder="Tell your manager what happened"
-            style={{ minHeight: 80, borderRadius: radius.md, fontSize: 15 }}
+            placeholder={placeholder}
+            style={{ minHeight: 88, fontSize: 15 }}
           />
           {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Please write a reason.</Text> : null}
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-        <SecondaryButton label="Cancel" onPress={onCancel} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label={confirmLabel} onPress={onConfirm} tone="warn" style={{ flex: 1, borderRadius: radius.xl }} />
+        <SecondaryButton label={cancelLabel} onPress={onCancel} style={{ flex: 1, minHeight: 60, borderRadius: 30 }} />
+        <PrimaryButton label={confirmLabel} onPress={onConfirm} tone={tone} style={{ flex: 1, minHeight: 60, borderRadius: 30 }} />
       </View>
     </BottomSheet>
   );
@@ -795,13 +834,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Pressable onPress={() => page(-1)} accessibilityRole="button" accessibilityLabel="Previous month" style={st.calNav}>
-          <Text style={{ fontSize: 20, color: C.body }}>‹</Text>
+          <Icon name="back" size={18} color={C.ink} strokeWidth={2} />
         </Pressable>
-        <Text style={[{ flex: 1, textAlign: 'center', fontSize: 16, color: C.ink }, weight(600)]}>
+        <Text style={[{ flex: 1, textAlign: 'center', fontSize: 17, color: C.ink }, weight(800)]}>
           {monthName(shown.getMonth()) + ' ' + shown.getFullYear()}
         </Text>
         <Pressable onPress={() => page(1)} accessibilityRole="button" accessibilityLabel="Next month" style={st.calNav}>
-          <Text style={{ fontSize: 20, color: C.body }}>›</Text>
+          <Icon name="forward" size={18} color={C.ink} strokeWidth={2} />
         </Pressable>
       </View>
 
@@ -856,20 +895,20 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
                 style={{
                   width: 40,
                   height: 40,
-                  borderRadius: between && !picked ? 0 : radius.md,
+                  borderRadius: between && !picked ? 0 : 20,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: picked ? C.primary : between ? C.primaryTint : 'transparent',
-                  borderWidth: isToday && !picked ? 1 : 0,
-                  borderColor: C.primaryEdge,
+                  backgroundColor: picked ? C.navy : between ? C.primaryTint : 'transparent',
+                  borderWidth: isToday && !picked ? 1.5 : 0,
+                  borderColor: C.primary,
                 }}>
                 <Text
                   style={[
                     {
                       fontSize: 15,
-                      color: picked ? '#FFFFFF' : off || !inMonth ? C.faint : isToday ? C.primaryDeep : C.ink,
+                      color: picked ? C.lime : off || !inMonth ? C.faint : isToday ? C.primary : C.ink,
                     },
-                    weight(picked || isToday ? 600 : 400),
+                    weight(picked || isToday ? 800 : 500),
                     tabular,
                   ]}>
                   {d.getDate()}
@@ -948,7 +987,7 @@ const st = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  calNav: { width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
+  calNav: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: C.canvas },
   toast: {
     position: 'absolute',
     left: 16,

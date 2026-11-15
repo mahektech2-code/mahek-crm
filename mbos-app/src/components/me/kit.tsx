@@ -24,16 +24,19 @@ export function Glyph({
   size = 20,
   color = C.body,
   strokeWidth = 2,
+  fill = 'none',
 }: {
   shapes: GlyphShape[];
   size?: number;
   color?: string;
   strokeWidth?: number;
+  /** A solid glyph — the play triangle — is filled as well as stroked. */
+  fill?: string;
 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       {shapes.map((s, i) => {
-        const stroke = { stroke: color, strokeWidth, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' as const };
+        const stroke = { stroke: color, strokeWidth, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill };
         if ('p' in s) return <Path key={i} d={s.p} {...stroke} />;
         if ('c' in s) return <Circle key={i} cx={s.c[0]} cy={s.c[1]} r={s.c[2]} {...stroke} />;
         return <Rect key={i} x={s.r[0]} y={s.r[1]} width={s.r[2]} height={s.r[3]} rx={s.r[4]} {...stroke} />;
