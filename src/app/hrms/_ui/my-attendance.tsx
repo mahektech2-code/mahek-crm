@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
+import { CardGrid } from "@/components/ui/card-grid";
 import { nowMs } from "@/lib/format";
 import type { HrmsContext } from "@/lib/hrms/access";
 import { today } from "@/lib/hrms/server";
@@ -130,7 +131,7 @@ export async function MyAttendanceView({ ctx, sp }: { ctx: HrmsContext; sp: Reco
         </Link>
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+      <CardGrid min={150} gap="gap-3">
         {cards.map((c) => (
           <div key={c.k} className="rounded-[12px] border border-line bg-surface px-4 py-3">
             <div className="text-[12px] text-muted">{c.k}</div>
@@ -138,7 +139,7 @@ export async function MyAttendanceView({ ctx, sp }: { ctx: HrmsContext; sp: Reco
             <div className="truncate text-[12px] text-muted">{c.s}</div>
           </div>
         ))}
-      </div>
+      </CardGrid>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <section aria-label="Calendar" className="rounded-[14px] border border-line bg-surface p-4">

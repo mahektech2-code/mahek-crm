@@ -2,6 +2,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { hrmsHelp, hrmsWorkdayClaims } from "@/db/schema";
 import { cx } from "@/components/ui/primitives";
+import { CardGrid } from "@/components/ui/card-grid";
 import { has, managesFor, resolvesHelpFor, type HrmsContext } from "@/lib/hrms/access";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
 import { allPeople, byId } from "@/lib/hrms/services/people";
@@ -71,13 +72,13 @@ export async function TeamTodayView({ ctx, sp }: { ctx: HrmsContext; sp: Record<
   return (
     <div className="grid gap-4">
       <div className="text-[12.5px] text-muted">Live · updated {clock(new Date())}</div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+      <CardGrid min={150} gap="gap-3">
         <Figure l="Working" v={count("w")} tone="text-success" />
         <Figure l="On a break" v={count("b")} tone="text-warn-ink" />
         <Figure l="Idle now" v={count("i")} tone="text-danger" />
         <Figure l="Not punched in" v={count("o")} />
         <Figure l="Late today" v={people.filter((p) => p.late).length} />
-      </div>
+      </CardGrid>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="overflow-x-auto rounded-[12px] border border-line bg-surface">
