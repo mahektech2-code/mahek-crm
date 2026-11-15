@@ -6,7 +6,6 @@ import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
 import { HERO } from '../src/components/shell/Chrome';
 import { T } from '../src/components/ui/primitives';
 import { SearchBox } from '../src/components/ui/book-controls';
-import { Icon } from '../src/components/ui/Icon';
 import { color as C, weight } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
@@ -278,7 +277,11 @@ function Line({
         gap: 8,
       }}>
       {spin ? <ActivityIndicator size="small" color={C.primary} /> : null}
-      {cloud ? <Icon name="upload" size={16} color={C.muted} strokeWidth={2} /> : null}
+      {cloud ? (
+        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+          <Path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9z" stroke={C.muted} strokeWidth={2} strokeLinejoin="round" />
+        </Svg>
+      ) : null}
       <T style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: danger ? C.danger : C.muted }, weight(600)]}>{children}</T>
     </View>
   );

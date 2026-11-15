@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Pressable, ActivityIndicator } from 'react-native';
-import { Card, Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { View, Pressable, ActivityIndicator, Text, TextInput } from 'react-native';
+import { PillButton } from '../ui/v3';
+import { TickDisc } from './v3-parts';
 import { Icon } from '../ui/Icon';
 import { VoiceField, useDictation, useOnline } from '../ui/dictate';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { getConfig } from '../../data/config';
 import { leadVoice } from '../../sync/api';
 import { dmy } from '../../lib/format';
@@ -155,22 +156,35 @@ export function LeadVoicePanel({
   };
 
   return (
-    <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.primaryTint, borderColor: C.primaryEdge }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="mic" size={18} color={C.primaryDeep} />
-        <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(600)]}>Speak about the shop</T>
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" hitSlop={10}>
-          <Icon name="close" size={18} color={C.muted} />
+    <View style={{ borderRadius: 24, padding: 16, backgroundColor: C.surface }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Icon name="mic" size={20} color={C.primary} strokeWidth={2} />
+        <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 16, lineHeight: 21, color: C.ink }, weight(800)]}>
+          Speak about the shop
+        </Text>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          style={({ pressed }) => ({
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: pressed ? C.hairline : C.canvas,
+          })}>
+          <Icon name="close" size={16} color={C.ink} strokeWidth={2.2} />
         </Pressable>
       </View>
 
       {phase !== 'review' ? (
         <>
-          <T s="caption" style={{ marginTop: 4 }}>
-            Press the mic and say everything you know, in any language: who you met, the shop, their mobile, the
-            town, what they want and how much a month, who they buy from now, when you will come back. Up to{' '}
-            {minutes} {minutes === 1 ? 'minute' : 'minutes'} at a time. Press the mic again to add more.
-          </T>
+          <Text
+            accessibilityLabel={`Press the mic and say everything you know, in any language: who you met, the shop, their mobile, the town, what they want and how much a month, who they buy from now, when you will come back. Up to ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} at a time. Press the mic again to add more.`}
+            style={[{ marginTop: 6, fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>
+            {`Any language · who, shop, mobile, town, need, litres, brand now, when back · ${minutes} min a go · press mic again to add`}
+          </Text>
           <View style={{ marginTop: 10 }}>
             <VoiceField
               value={text}
@@ -181,21 +195,21 @@ export function LeadVoicePanel({
               onHeard={(h) => setTakes((t) => [...t, { spoken: h.spoken, english: h.english }])}
               placeholder="Met Ramesh Patil at Shree Ganesh Furniture, Hingna MIDC, Nagpur. Mobile 98220 11001…"
               editable={phase === 'speak'}
-              style={{ minHeight: 120, textAlignVertical: 'top' }}
+              style={{ minHeight: 110, textAlignVertical: 'top', borderRadius: 18, backgroundColor: C.canvas, borderWidth: 0 }}
             />
           </View>
 
           {phase === 'reading' ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 }}>
               <ActivityIndicator color={C.primaryDeep} />
-              <T s="small" style={{ color: C.body }}>
-                Filling the form from what you said…
-              </T>
+              <Text style={[{ fontSize: 14, color: C.body }, weight(600)]}>Filling the form from what you said…</Text>
             </View>
           ) : (
             <>
-              <PrimaryButton
+              <PillButton
                 label="Fill the form from this"
+                variant="navy"
+                height={52}
                 onPress={() => void read()}
                 disabled={!online || !text.trim()}
                 whyDisabled={
@@ -206,71 +220,67 @@ export function LeadVoicePanel({
                 style={{ marginTop: 12 }}
               />
               {!online ? (
-                <T s="caption" style={{ marginTop: 8, color: C.warnInk }}>
+                <Text style={[{ marginTop: 8, fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(400)]}>
                   No internet. This needs signal. Type into the form instead.
-                </T>
+                </Text>
               ) : null}
             </>
           )}
         </>
       ) : values && found ? (
         <>
-          <T s="caption" style={{ marginTop: 4 }}>
-            Check each answer. Untick anything wrong. Only ticked answers go into the form.
-          </T>
+          <Text
+            accessibilityLabel="Check each answer. Untick anything wrong. Only ticked answers go into the form."
+            style={[{ marginTop: 6, fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>
+            Review · untick anything wrong
+          </Text>
           {found.questions.map((q) => (
-            <T key={q} s="small" style={{ marginTop: 6, color: C.warnInk }}>
-              {'• ' + q}
-            </T>
+            <View
+              key={q}
+              style={{ marginTop: 6, minHeight: 36, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: C.warnBg, justifyContent: 'center' }}>
+              <Text style={[{ fontSize: 12, lineHeight: 16, color: C.warnInk }, weight(600)]}>{'? ' + q}</Text>
+            </View>
           ))}
 
-          {heard.map((f) => (
+          {heard.map((f, i) => (
             <ReviewRow
               key={f}
               field={f}
+              last={i === heard.length - 1}
               ticked={ticked[f]}
               onTick={() => setTicked((t) => ({ ...t, [f]: !t[f] && !!values[f].trim() }))}
               hint={hintFor(f, found, values, areas) ?? replaces(f, ticked[f], values[f], current[f])}
             >
               {f === 'followUp' ? (
                 values.followUp ? (
-                  <T style={[{ fontSize: 16, color: C.ink }, weight(500)]}>{dmy(values.followUp)}</T>
+                  <Text style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(600)]}>{dmy(values.followUp)}</Text>
                 ) : null
               ) : CHOICE_FIELDS.has(f) ? (
-                <T style={[{ fontSize: 16, color: C.ink }, weight(500)]}>{choiceWord(f, values[f], lists)}</T>
+                <Text style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(600)]}>{choiceWord(f, values[f], lists)}</Text>
               ) : (
-                <Input
+                <TextInput
                   value={values[f]}
                   onChangeText={(v) => set(f, v)}
                   placeholder="Not heard"
+                  placeholderTextColor={C.faint}
+                  accessibilityLabel={VOICE_FIELD_LABEL[f]}
+                  style={[{ fontSize: 15, lineHeight: 20, color: C.ink, paddingVertical: 2, paddingHorizontal: 0 }, weight(400)]}
                   keyboardType={f === 'mobile' ? 'phone-pad' : f === 'potential' || f === 'litres' ? 'number-pad' : 'default'}
                   autoCapitalize={f === 'gstin' ? 'characters' : 'sentences'}
                   multiline={f === 'address' || f === 'requirement'}
                 />
               )}
               {f === 'followUp' && found.followUp?.choices.length ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                   {found.followUp.choices.map((c) => (
-                    <Choice
-                      key={c.date}
-                      label={c.label}
-                      selected={values.followUp === c.date}
-                      onPress={() => set('followUp', c.date)}
-                      style={{ paddingHorizontal: 10, minHeight: 36 }}
-                    />
+                    <SmallChip key={c.date} label={c.label} on={values.followUp === c.date} onPress={() => set('followUp', c.date)} />
                   ))}
                 </View>
               ) : null}
               {f === 'mobile' && found.otherNumbers.length ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                   {found.otherNumbers.map((n) => (
-                    <Choice
-                      key={n}
-                      label={n}
-                      selected={values.mobile === n}
-                      onPress={() => set('mobile', n)}
-                      style={{ paddingHorizontal: 10, minHeight: 36 }}
-                    />
+                    <SmallChip key={n} label={n} on={values.mobile === n} onPress={() => set('mobile', n)} />
                   ))}
                 </View>
               ) : null}
@@ -280,38 +290,48 @@ export function LeadVoicePanel({
           {/* WHAT WAS NOT HEARD, named — a gap he can see is one he can fill,
               and one he cannot see is one he assumes was taken care of. */}
           {missed.length ? (
-            <T s="caption" style={{ marginTop: 14 }}>
+            <Text style={[{ marginTop: 8, fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>
               {'Not heard, fill in the form if you know: ' + missed.map((f) => VOICE_FIELD_LABEL[f]).join(', ') + '.'}
-            </T>
+            </Text>
           ) : null}
 
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-            <SecondaryButton
-              label="Change what I said"
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <Pressable
               onPress={() => {
                 setPhase('speak');
                 setFound(null);
                 setValues(null);
               }}
-              style={{ flex: 1, borderRadius: radius.xl }}
-            />
-            <PrimaryButton
+              accessibilityRole="button"
+              style={({ pressed }) => ({
+                width: 150,
+                height: 52,
+                borderRadius: 26,
+                backgroundColor: pressed ? C.hairline : C.canvas,
+                alignItems: 'center',
+                justifyContent: 'center',
+              })}>
+              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Change what I said</Text>
+            </Pressable>
+            <PillButton
               label="Fill the form"
+              variant="navy"
+              height={52}
               onPress={() => onFill(voiceFill({ values, ticked, found, areas }))}
               disabled={!anyTicked}
               whyDisabled="Tick at least one answer to fill."
-              style={{ flex: 1, borderRadius: radius.xl }}
+              style={{ flex: 1 }}
             />
           </View>
         </>
       ) : null}
 
       {error ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 10 }}>
-          <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{error}</T>
+        <View style={{ marginTop: 10, backgroundColor: C.dangerBg, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10 }}>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(600)]}>{error}</Text>
         </View>
       ) : null}
-    </Card>
+    </View>
   );
 }
 
@@ -320,45 +340,53 @@ function ReviewRow({
   ticked,
   onTick,
   hint,
+  last,
   children,
 }: {
   field: LeadVoiceField;
   ticked: boolean;
   onTick: () => void;
   hint: { text: string; warn: boolean } | null;
+  last: boolean;
   children?: React.ReactNode;
 }) {
   return (
-    <View style={{ marginTop: 12 }}>
-      <Pressable
-        onPress={onTick}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: ticked }}
-        accessibilityLabel={`Use ${VOICE_FIELD_LABEL[field]}`}
-        hitSlop={6}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <View
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: 5,
-            borderWidth: 1.5,
-            borderColor: ticked ? C.primary : C.border,
-            backgroundColor: ticked ? C.primary : C.surface,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-          {ticked ? <Icon name="tick" size={14} color={C.surface} strokeWidth={2.4} /> : null}
+    <View style={{ paddingVertical: 8, minHeight: 52, borderBottomWidth: last ? 0 : 1, borderBottomColor: C.hairline }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Pressable
+          onPress={onTick}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: ticked }}
+          accessibilityLabel={`Use ${VOICE_FIELD_LABEL[field]}`}
+          hitSlop={10}>
+          <TickDisc on={ticked} />
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint }, weight(400)]}>{VOICE_FIELD_LABEL[field]}</Text>
+          {children}
+          {hint ? (
+            <Text style={[{ fontSize: 11, lineHeight: 15, color: hint.warn ? C.warnInk : C.success }, weight(400)]}>
+              {hint.text}
+            </Text>
+          ) : null}
         </View>
-        <SectionLabel>{VOICE_FIELD_LABEL[field]}</SectionLabel>
-      </Pressable>
-      {children}
-      {hint ? (
-        <T s="caption" style={{ marginTop: 4, color: hint.warn ? C.warnInk : C.muted }}>
-          {hint.text}
-        </T>
-      ) : null}
+      </View>
     </View>
+  );
+}
+
+/** A 32 pill to pick one of what was heard — a day, a number. */
+function SmallChip({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel={label}
+      hitSlop={{ top: 6, bottom: 6 }}
+      style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: on ? C.navy : C.canvas }}>
+      <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{label}</Text>
+    </Pressable>
   );
 }
 
