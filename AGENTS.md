@@ -1623,9 +1623,11 @@ a fresh one forward, so the clock measures time AWAY. It is enforced again in
 administrator's settings writes, because an action is a URL with no layout in
 front of it. The rest of MahekOne never asks.
 
-**Impersonation tells the person.** The audit row is under the administrator's
-id, where the account holder will never look; a warn notification on their own
-bell is what makes a link used by the wrong person something somebody notices.
+**Impersonation does NOT tell the person, and that is a reversal (Nov 2026).**
+It used to put a warn notification on the account holder's bell. Mahek's
+decision: what an administrator does in somebody's account is the
+administrator's doing, so nothing reaches the account holder. The record is
+the `impersonate.enter` audit row under the administrator's id.
 
 **There is no HTTP door that grants access any more.** `/api/admin/provision`
 granted anything to anybody behind `CRON_SECRET` — the secret the Apps Script
@@ -2886,6 +2888,32 @@ recorded going in and out of each account — and on a bank account each row
 says **✓ Bank** once a bank line is matched to it. Its "Bank statement" tab is
 gone from the registry (the `bankLines` module stays, unreached); the bank's own
 record lives in Accounts.
+
+## The accounts deadline
+
+**ANYTHING WAITING ON THE LEDGER DESK PAST `accountsSla.hours` WORKING HOURS IS
+REPORTED, AND STAYS THE DESK'S.** Orders to approve, payments to confirm
+(holds only with `accountsSla.includeHeldPayments`), credit notes and order
+changes. `lib/engines/accounts-sla.ts` is the clock, pure: `working_days`
+counts every hour of a working day (Saturday 4 pm is due Monday 4 pm),
+`office_hours` only the shift; days off and company holidays count nothing.
+`sweepAccountsSla` (hourly as `accounts-sla`, and at most once a minute from
+the Accounts layout) writes one `accounts_sla_breaches` row per item (0342),
+resolves it the moment the record leaves its queue, and tells — each claimed
+by a conditional update so nobody is told twice — every platform and Founder
+administrator plus the desk at the deadline, then the admins again every
+`accountsSla.escalateEveryHours` with the desk's latest reason. Nothing is
+reassigned: admins are informed, accounts decide.
+
+**THE DESK OWES A REASON.** `app/accounts/deadline-gate.tsx` opens on every
+Accounts screen a dialog that closes only on a reason (10+ characters) per
+item and a reminder (1 hour, tomorrow, 2 days, or a time within 7 days);
+it asks again when the reminder comes round. It does not open on the four
+work screens — a bar offers it there — so "Open and decide" is never blocked.
+A reason is shared by the desk; `accounts_sla_remarks` is append-only and
+`remarkProblem` is checked in the dialog and in `explainAccountsDelays`.
+Command Centre → Accounts deadlines (`founder.accounts-deadlines`) is the
+founder's view, also on Needs you; Mark seen and Nudge accounts never move it.
 
 ## Bank statement management (Accounts)
 
@@ -6638,12 +6666,16 @@ it shipped off and Mahek asked for it on). Every app is covered — header and s
 break and after punching out, and `requireUser` REFUSES SERVER ACTIONS for
 that person — every one that signs in through it, which is every app's
 context and capability check (it asks `serverLocked` when the request carries
-`next-action`; pages still render, behind the lock). That is why punching in,
+`next-action`), and REFUSES PAGES too: a locked page request is redirected to
+`/apps?next=<address>`, where the lock screen is drawn, and punching in carries
+on to that address (`lib/workday-lock-paths.ts`; `x-mahek-path` from the proxy
+says which page). Only the launcher, sign-in and `/api/*` are left open. That is why punching in,
 resuming and punching out go through `/api/workday`, a route: the way out of
 the lock is never behind it. Never locked: no HRMS grant, no employee link, a
 `field` app holder (the handset holds their day), a day off, a day already on
-the handset, and — while `exemptPlatformAdmins` is on — a platform
-administrator, so nobody is locked out of the console that turns it off.
+the handset. Platform administrators are locked like everybody else since
+`0341` (Mahek: "literally no one"); `exemptPlatformAdmins` is off by default,
+and the lock screen always offers Punch in, so nobody is locked out for good.
 `serverLocked` caches its answer ten seconds per person and guards its own
 re-entry (`hrmsContext` calls `requireUser`).
 
@@ -9226,8 +9258,15 @@ verifies it — never whoever owns the lead. `orgChartVerifierFor` in
 `services/org-verifier-resolver.ts` is the one resolver; the routing of the
 request (`preparePromotion`), the act of verifying (`orgDesignatedGate`, which
 the console, the Sales Manager pipeline and the handset all pass through) and the
-Qualification review (`requireQualificationApprover`, from whoever completed it)
-all ask it, so a screen cannot offer a call the permission check then refuses.
+Qualification review all ask it, so a screen cannot offer a call the permission
+check then refuses. **The review has ONE reviewer**, `designatedQualificationApprover`
+(`services/qualification-approver.ts`): the Org Chart above whoever collected the
+answers, then the self-raised setting, the Sales Manager seat and the lead-manager
+seat. The hand-off (`settleQualificationState`, first submit and resubmit), the
+action (`requireQualificationApprover`, which lets that person in without
+`lead.verify`), the verdict, GST validation and the screens all read it. They used
+to read the chart in one place and the seats in another, and where the two named
+different people each was refused and the lead could not be reviewed at all.
 The walk is `engines/org-verifier-chain` and is unchanged: it skips a leaver,
 someone with no account, an inactive one, one who cannot verify, and never names
 the requester.

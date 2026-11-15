@@ -444,6 +444,33 @@ async function rules(): Promise<Rule[]> {
     });
   }
 
+  /* The accounts deadline: anything past its working-hours deadline on the
+     ledger desk. Read from the table the desk's own dialog reads. */
+  const deadlines = await one(
+    db.execute<{ n: number; silent: number; oldest: string | null }>(sql`
+      select count(*)::int as n,
+             count(*) filter (where not exists (
+               select 1 from accounts_sla_remarks r
+                where r.breach_id = b.id and r.side = 'accounts' and r.remind_at > now()))::int as silent,
+             min(b.due_at)::text as oldest
+        from accounts_sla_breaches b where b.resolved_at is null
+    `),
+  );
+  if (deadlines && deadlines.n > 0) {
+    out.push({
+      id: `accounts-deadlines-${day}`,
+      sev: "Urgent",
+      area: "Accounts",
+      since: deadlines.oldest ? `Overdue ${waited((Date.now() - Date.parse(deadlines.oldest)) / 3_600_000)}` : "Waiting",
+      title: `${plural(deadlines.n, "accounts item")} past the ${config["accountsSla.hours"]}-hour deadline`,
+      why: deadlines.silent
+        ? `${plural(deadlines.silent, "item has", "items have")} no current reason from the accounts desk.`
+        : "Every one carries a reason from the accounts desk. They stay with accounts until decided.",
+      action: "Open Accounts deadlines",
+      go: "deadlines",
+    });
+  }
+
   const order: Record<InboxSeverity, number> = { Urgent: 0, Soon: 1, Watch: 2 };
   return out.sort((a, b) => order[a.sev] - order[b.sev]);
 }

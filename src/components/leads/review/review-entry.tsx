@@ -12,7 +12,7 @@ export function ReviewEntry({ workspace, customerId }: { workspace: LeadWorkspac
         See every Suspect, Prospect and Qualification answer together, with the reviewer&apos;s decision.
       </p>
       <Link
-        href={leadHref(workspace, `${customerId}/review`)}
+        href={leadHref(workspace, `leads/${customerId}/review`)}
         className="text-[13px] font-medium text-brand hover:underline"
       >
         Open the qualification review

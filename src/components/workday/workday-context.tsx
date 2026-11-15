@@ -3,6 +3,7 @@
 import * as React from "react";
 import type { WorkdayState } from "@/lib/hrms/services/workday";
 import { WorkdayOverlays } from "./workday-overlays";
+import { lockGuardsPage } from "@/lib/workday-lock-paths";
 
 /* ---------------------------------------------------------------------------
  * THE WORKDAY CLOCK IN THE BROWSER. One provider, mounted by `AppFrame` (so
@@ -193,6 +194,21 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     }, 1_000);
     return () => window.clearInterval(id);
   }, [state, refresh, sendBeat, touch]);
+
+  /* A TAB LEFT OPEN is taken to the lock screen, not just covered by it.
+     The day is re-read every minute and whenever the tab comes back into view,
+     so a tab kept open overnight sees the new day (not punched in) the next
+     morning, and a tab still open after punching out sees that too. Either
+     way it goes to the launcher's lock screen — the same place the server
+     sends a fresh page — and punching in brings it back here. A break is NOT
+     moved: the overlay covers it, and leaving would lose anything typed. */
+  React.useEffect(() => {
+    if (!state?.locked) return;
+    if (state.phase === "break" || state.phase === "auto_break") return;
+    const here = window.location.pathname + window.location.search;
+    if (!lockGuardsPage(here)) return;
+    window.location.assign(`/apps?next=${encodeURIComponent(here)}`);
+  }, [state?.locked, state?.phase]);
 
   /* Every other tab re-reads the day when this one changes it. */
   const actAndTell = React.useCallback(

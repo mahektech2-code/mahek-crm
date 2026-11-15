@@ -226,10 +226,20 @@ export type GstClear = {
  * and then type another under the same tick.
  */
 export function gstinChangeClear(
-  lead: { gstin?: string | null; gstVerified?: boolean | null },
+  lead: {
+    gstin?: string | null;
+    gstVerified?: boolean | null;
+    /* Required as a key, so every writer passes it: false WITH a date is a
+       refusal, and without the date a refusal looks like "never checked". */
+    gstVerifiedAt: Date | string | null | undefined;
+  },
   next: string | null | undefined,
 ): GstClear | null {
   if (sameAnswer(lead.gstin ?? null, next ?? null)) return null;
-  if (!lead.gstVerified) return null;
+  /* A REFUSAL IS TAKEN AWAY TOO. False with a date is the Sales Manager saying
+     this number is wrong; once the Salesman types another, that verdict is about
+     a number nobody holds any more. Left standing, the corrected lead read
+     "GST refused" for ever and was never handed back for review. */
+  if (!lead.gstVerified && lead.gstVerifiedAt == null) return null;
   return { gstVerified: false, gstVerifiedAt: null, gstVerifiedById: null };
 }
