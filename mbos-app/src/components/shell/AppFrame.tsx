@@ -217,8 +217,18 @@ export function AppFrame({
   showTitle = true,
   overlap = false,
   heroTop,
+  footerBg,
+  footerInsetBg,
   children,
 }: {
+  /**
+   * What shows round the pinned footer's corners. A Version 3 dock is often a
+   * navy or canvas panel with rounded top corners, and a white wrapper behind
+   * it drew white wedges at those corners. Defaults to white, as before.
+   */
+  footerBg?: string;
+  /** What fills the gesture-bar inset under the footer; defaults to `footerBg`. */
+  footerInsetBg?: string;
   title: string;
   /** The row the artboard draws first in the hero — see `Header`'s `top`. */
   heroTop?: React.ReactNode;
@@ -583,8 +593,11 @@ export function AppFrame({
            itself — on the same white as the bars it sits on. */
         <View
           onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}
-          style={{ backgroundColor: C.surface, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }}>
+          style={{ backgroundColor: footerBg ?? C.surface }}>
           {footer}
+          {keyboardHeight === 0 && insets.bottom > 0 ? (
+            <View style={{ height: insets.bottom, backgroundColor: footerInsetBg ?? footerBg ?? C.surface }} />
+          ) : null}
         </View>
       ) : null}
 

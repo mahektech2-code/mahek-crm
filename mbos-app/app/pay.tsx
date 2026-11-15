@@ -576,6 +576,8 @@ export default function PayScreen() {
       hero={
         !custId ? <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }}>Step 1 · Shop</T> : undefined
       }
+      footerBg={C.canvas}
+      footerInsetBg={C.canvas}
       footer={
         billsAnswered ? (
           <View style={{ backgroundColor: C.canvas, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 12 }}>

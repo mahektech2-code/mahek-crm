@@ -738,6 +738,8 @@ export default function OrderScreen() {
       onBack={back.go}
       showTitle={false}
       heroTop={<HeadTitle title={title} sub={sub} warn={!!changingId} />}
+      footerBg={C.canvas}
+      footerInsetBg={C.navy}
       footer={blocked ? undefined : dock}
       contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />

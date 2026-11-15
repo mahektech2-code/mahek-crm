@@ -1768,6 +1768,8 @@ export default function Visit() {
         ) : null
       }
       contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}
+      footerBg={C.canvas}
+      footerInsetBg={C.navy}
       footer={
         <View style={{ backgroundColor: C.navy, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 18 }}>
           {/* `warning` rather than `firstFailure`: a visit whose check-in was

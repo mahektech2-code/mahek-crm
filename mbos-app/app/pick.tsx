@@ -423,6 +423,8 @@ export default function PickScreen() {
        * book meant thousands of rows below the fold. `footer` is the frame's
        * own pinned bar.
        */
+      footerBg={C.canvas}
+      footerInsetBg={C.navy}
       footer={
         <View
           style={{

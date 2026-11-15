@@ -151,6 +151,8 @@ export default function Saved() {
       title="Visit saved"
       activeTab="customers"
       showTitle={false}
+      footerBg={C.canvas}
+      footerInsetBg={C.canvas}
       footer={
         <View style={{ backgroundColor: C.canvas, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 }}>
           {/*
