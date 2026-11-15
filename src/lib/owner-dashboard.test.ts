@@ -170,15 +170,23 @@ after(async () => {
 
 /* ================================================== KPI 1: what is a lead */
 
+/** Where a lead was RAISED is read off the record of the raising: the handset
+ *  audits `lead.captured` under the field app. */
+async function raisedOnHandset(id: string) {
+  await db.execute(sql`
+    insert into audit_log (id, action, entity_type, entity_id, actor_app)
+    values (${"aud_" + id}, 'lead.captured', 'customer', ${id}, 'field')
+  `);
+}
+
 describe("new leads", () => {
   test("counts a lead whether or not anybody put it on the ladder", async () => {
     // ONE LEAD. These were two tables and the origin was which one it sat in;
-    // it is one row now and the origin is whether a salesman ever staged it.
+    // it is one row now and the origin is whether the handset raised it.
     await makeCustomer({ kind: "lead", leadSource: "website" });
     const met = await makeCustomer({ kind: "lead", leadSource: "exhibition" });
-    await db.execute(
-      sql`update customers set lead_stage = 'new' where id = ${met.id}`,
-    );
+    // Raised on a handset: the capture is audited under the field app.
+    await raisedOnHandset(met.id);
 
     const leads = await leadsCreatedIn(thisMonth(), {});
     assert.equal(leads.length, 2);
@@ -195,6 +203,7 @@ describe("new leads", () => {
     // deduplicated. One row now, so winning a lead cannot inflate the KPI that
     // measures whether leads are being generated — there is nothing to add up.
     const converted = await makeCustomer({ kind: "lead" });
+    await raisedOnHandset(converted.id);
     await db.execute(sql`
       update customers
          set kind = 'customer', lead_stage = 'won', lead_converted_at = now()
