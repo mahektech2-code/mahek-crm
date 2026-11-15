@@ -127,16 +127,18 @@ export async function liftLeadTombstones(
 
 /**
  * EVERY SEAT THAT PUTS A LEAD ON SOMEBODY'S HANDSET, read after a write.
- * The same seats `openLeads` and `customerIdsInScope` read, so a former holder
- * who still sits in one of them is not told to let it go.
+ * The seats `scopedToUsers` reads for a lead (its owner — `ASSIGNED_TO_SQL`
+ * for a lead — the back office, the lead manager, the relationship owner),
+ * which are the seats `openLeads` sends a lead through. A former holder who
+ * still sits in one is not told to let it go. Reach through a manager's team,
+ * the party sheet's name or a territory is not checked here; `buildPull`
+ * drops a tombstone for any lead it is also sending, which covers those.
  */
 async function seatHolders(tx: Executor, leadId: string): Promise<Set<string>> {
   const [row] = await tx
     .select({
       ownerId: customers.ownerId,
       leadManagerId: customers.leadManagerId,
-      salesManagerId: customers.salesManagerId,
-      salesAmId: customers.salesAmId,
       backOfficeAmId: customers.backOfficeAmId,
       relationshipOwnerId: customers.relationshipOwnerId,
     })

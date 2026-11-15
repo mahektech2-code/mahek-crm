@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, customerDistributors, customers } from "@/db/schema";
+import { auditLog, customerDistributors, customers, leadStageTransitions } from "@/db/schema";
 import {
   requireCapability,
   scopedToUsers,
@@ -270,27 +270,73 @@ export async function revertThirdParty(
     const unreachable = await checkReachable(ctx.scope, customerIds);
     if (unreachable) return err(unreachable, "not_permitted");
 
-    const changed = await db
-      .update(customers)
-      .set({ thirdParty: false, updatedAt: new Date(), updatedById: ctx.user.id })
-      .where(
-        and(inArray(customers.id, customerIds), eq(customers.thirdParty, true)),
-      )
-      .returning({ id: customers.id });
+    /*
+     * BACK ON THE LADDER, or it is on no list at all. A shop marked third-party
+     * straight from the book usually never had a lead stage, and the leads
+     * lists read `lead_stage is not null` — so lifting the mark alone left a
+     * `kind = 'lead'` row on no Lead Management list, no Customers list (it is
+     * a lead) and no calling list, while the toast said it was back. A lead
+     * with no stage goes back as a Suspect, the foot of the one ladder, with a
+     * transition row saying so; one that kept its stage resumes from it.
+     */
+    const now = new Date();
+    const { changed } = await db.transaction(async (tx) => {
+      const changed = await tx
+        .update(customers)
+        .set({ thirdParty: false, updatedAt: now, updatedById: ctx.user.id })
+        .where(
+          and(inArray(customers.id, customerIds), eq(customers.thirdParty, true)),
+        )
+        .returning({ id: customers.id, kind: customers.kind, stage: customers.leadStage, salesType: customers.leadSalesType });
 
-    if (changed.length) {
-      await db.insert(auditLog).values({
-        id: id("aud"),
-        actorId: ctx.user.id,
-      // Which hat allowed it — see `audit_log.actor_role`.
-      actorRole: ctx.authorisedBy,
-        actorApp: ctx.authorisedIn,
-        action: "customer.revertThirdParty",
-        entityType: "customer",
-        entityId: changed.length === 1 ? changed[0].id : "bulk",
-        afterState: { thirdParty: false, customerIds: changed.map((c) => c.id) },
-      });
-    }
+      const restage = changed.filter((c) => c.kind === "lead" && c.stage === null).map((c) => c.id);
+      if (restage.length) {
+        await tx
+          .update(customers)
+          .set({
+            leadStage: "suspect",
+            leadStageSince: sql`(now() at time zone 'Asia/Kolkata')::date`,
+            updatedAt: now,
+          })
+          .where(and(inArray(customers.id, restage), sql`${customers.leadStage} is null`));
+        await tx.insert(leadStageTransitions).values(
+          changed
+            .filter((c) => restage.includes(c.id))
+            .map((c) => ({
+              id: id("lst"),
+              customerId: c.id,
+              fromStage: null,
+              toStage: "suspect" as const,
+              salesType: c.salesType ?? null,
+              kind: "passed" as const,
+              note: "No longer a third-party customer — back on the ladder as a Suspect.",
+              actorId: ctx.user.id,
+              actorRole: ctx.authorisedBy ?? null,
+              actorApp: ctx.authorisedIn ?? null,
+              at: now,
+            })),
+        );
+      }
+
+      if (changed.length) {
+        await tx.insert(auditLog).values({
+          id: id("aud"),
+          actorId: ctx.user.id,
+          // Which hat allowed it — see `audit_log.actor_role`.
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          action: "customer.revertThirdParty",
+          entityType: "customer",
+          entityId: changed.length === 1 ? changed[0].id : "bulk",
+          afterState: {
+            thirdParty: false,
+            customerIds: changed.map((c) => c.id),
+            restagedAsSuspect: restage,
+          },
+        });
+      }
+      return { changed };
+    });
 
     refresh();
     return ok(

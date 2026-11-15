@@ -38,7 +38,11 @@ export function rawStagesOf(display: DisplayStage): LeadStage[] {
  * pick stands for, so a filter can match all of them.
  */
 export function displayStageOptions(): { key: string; label: string; stages: LeadStage[] }[] {
-  const out = DISPLAY_STAGES.map((d) => ({ key: d, label: stageLabel(d), stages: rawStagesOf(d) }));
+  const out: { key: string; label: string; stages: LeadStage[] }[] = DISPLAY_STAGES.map((d) => ({
+    key: d,
+    label: stageLabel(d),
+    stages: rawStagesOf(d),
+  }));
   for (const s of ALL_LEAD_STAGES) {
     if (displayStageOf(s) === null) out.push({ key: s, label: stageLabel(s), stages: [s] });
   }

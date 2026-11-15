@@ -5,8 +5,10 @@ import { getConfig } from "@/lib/config/store";
 import { leadsCreatedIn } from "@/lib/services/owner-dashboard-service";
 import { conversionFor, type Conversion } from "@/lib/engines/owner-kpis";
 import type { LeadRow } from "@/lib/engines/owner-kpis";
-import { bandOf } from "@/lib/engines/lead-ladder";
-import { salesTypeLabel, sampleStateLabel, stageLabel, stageSentence, type LeadStage } from "@/lib/lead-labels";
+import { bandOf, displayStageOf, foldStage, TERMINAL_STAGES } from "@/lib/engines/lead-ladder";
+import { OPEN_LEAD } from "@/lib/lead-action-window";
+import { displayStageLabel, rawStagesOf } from "@/lib/lead-display";
+import { salesTypeLabel, sampleStateLabel, stageSentence, type LeadStage } from "@/lib/lead-labels";
 import { reassignLead } from "@/lib/actions/sales";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
 import { setLeadNextAction } from "@/lib/actions/leads";
@@ -78,7 +80,8 @@ function stageTone(stage: string | null, stuck: boolean): Tone {
   if (!stage) return "muted";
   if (stuck) return "warn";
   if (stage === "on_hold") return "warn";
-  const band = bandOf(stage as LeadStage);
+  /* Through the ONE fold, so a legacy `contacted` is toned as the Suspect it is. */
+  const band = bandOf(foldStage(stage as LeadStage));
   if (band === "contacted") return "info";
   if (band === "qualified" || band === "negotiation") return "good";
   return "muted";
@@ -395,7 +398,7 @@ async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordV
     {
       label: "Stage",
       value: stage
-        ? `${displayStageLabel(stage)}${s("stage_since") ? ` since ${fmtDate(s("stage_since"))}` : ""} — ${stageSentence(stage)}`
+        ? `${displayStageLabel(stage)}${s("stage_since") ? ` since ${fmtDate(s("stage_since"))}` : ""} — ${stageSentence(displayStageOf(stage) ?? stage)}`
         : "Not on a ladder — raised in the CRM and never put on one",
     },
     { label: "Sold as", value: salesTypeLabel((s("sales_type") ?? null) as never) },
