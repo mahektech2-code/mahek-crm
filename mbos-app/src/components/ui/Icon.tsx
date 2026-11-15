@@ -158,6 +158,18 @@ const ICONS = {
      site means, exactly as `pin` already repeats `visit`'s. */
   zoomIn: [{ p: 'M12 5v14M5 12h14' }],
   zoomOut: [{ p: 'M5 12h14' }],
+  /* Version 3's vocabulary: the Book tab, the cloud on the status chips, the
+     wallet that stands for money owed or collected, the arrows that mean a
+     reorder is due, the shield that means within the credit limit, and the
+     triangle that means a problem. */
+  map: [{ p: 'M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z' }, { p: 'M9 4v14M15 6v14' }],
+  synced: [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'm9.5 13.5 2 2 3.5-3.5' }],
+  upload: [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'M12 11v5M10 13l2-2 2 2' }],
+  wallet: [{ r: [3, 6, 18, 13, 2] }, { p: 'M3 10h18M16 14h2' }],
+  reorder: [{ p: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6' }],
+  shield: [{ p: 'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z' }, { p: 'm9 12 2 2 4-4' }],
+  warn: [{ p: 'M12 4l9 16H3z' }, { p: 'M12 10v4M12 17h.01' }],
+  people2: [{ c: [9, 8, 3] }, { p: 'M3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 0 1 0 6M21 20c0-2-1.5-4-4-4.5' }],
   locate: [
     { c: [12, 12, 6.6] },
     { c: [12, 12, 2.2] },

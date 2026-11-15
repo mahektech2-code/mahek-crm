@@ -9,36 +9,49 @@
 export const color = {
   /* brand */
   primary: '#6835FB',
-  primaryDeep: '#5223E0',
+  primaryDeep: '#4419C4',
   primaryDark: '#3D14A8',
   primaryTint: '#F1ECFF',
-  primaryEdge: '#DDD2FF',
+  primaryEdge: '#DCD1FC',
   lime: '#C6FF34',
 
+  /* VERSION 3 — the MahekOne v4 language the ERP and Tele CRM already wear,
+     carried to the handset. Navy is the hero block on the day screens and the
+     floating tab bar; lavender is the hero block everywhere else. */
+  navy: '#0F1B33',
+  navySoft: 'rgba(255,255,255,0.08)',
+  onNavy: '#FFFFFF',
+  onNavyMuted: '#9AA5BA',
+  limeOnNavy: 'rgba(198,255,52,0.14)',
+  lavender: '#EFEAFD',
+  lavenderInk: '#1E1446',
+  lavenderMuted: '#5A4E8C',
+  line: '#D3DBE7',
+
   /* ink */
-  ink: '#161616',
-  body: '#3D4453',
-  muted: '#6B7385',
-  faint: '#C2C8D2',
+  ink: '#0F1B33',
+  body: '#33415C',
+  muted: '#5E6B85',
+  faint: '#9AA5BA',
 
   /* structure */
-  border: '#DDE1E8',
-  hairline: '#EDEFF3',
-  wash: '#F7F8FA',
+  border: '#DCE3EE',
+  hairline: '#E8EDF4',
+  wash: '#EDF1F7',
   surface: '#FFFFFF',
-  canvas: '#F7F8FA',
+  canvas: '#EDF1F7',
   /** A read notification. Barely off white on purpose — unread has to win. */
   surfaceRead: '#FCFCFD',
 
   /* status */
   success: '#1D7A45',
-  successBg: '#E9F5EE',
-  warn: '#B77B08',
+  successBg: '#E7F4EC',
+  warn: '#D9930D',
   warnInk: '#8A5C05',
-  warnBg: '#FDF6E7',
-  warnEdge: '#F9E9C4',
+  warnBg: '#FDF3DC',
+  warnEdge: '#F3DFA8',
   danger: '#B3261E',
-  dangerBg: '#FCECEC',
+  dangerBg: '#FCEBEA',
   info: '#2B5CBF',
   infoBg: '#EDF2FC',
 
@@ -73,9 +86,11 @@ export const shadow = {
 } as const;
 
 export const font = {
-  regular: 'Inter_400Regular',
-  medium: 'Inter_500Medium',
-  semibold: 'Inter_600SemiBold',
+  regular: 'Geist_400Regular',
+  medium: 'Geist_500Medium',
+  semibold: 'Geist_600SemiBold',
+  bold: 'Geist_700Bold',
+  extrabold: 'Geist_800ExtraBold',
 } as const;
 
 /**
@@ -84,8 +99,11 @@ export const font = {
  * place that translation happens, so a screen writes the weight it means and
  * never has to remember which file carries it.
  */
-export function weight(w: 400 | 500 | 600): { fontFamily: string } {
-  return { fontFamily: w === 600 ? font.semibold : w === 500 ? font.medium : font.regular };
+export function weight(w: 400 | 500 | 600 | 700 | 800): { fontFamily: string } {
+  return {
+    fontFamily:
+      w === 800 ? font.extrabold : w === 700 ? font.bold : w === 600 ? font.semibold : w === 500 ? font.medium : font.regular,
+  };
 }
 
 /** Figures line up in columns only if they are tabular. The design sets this globally. */
@@ -96,9 +114,11 @@ export const radius = {
   md: 10,
   lg: 12,
   xl: 14,
-  card: 16,
-  sheet: 20,
-  sheetTall: 22,
+  card: 20,
+  sheet: 24,
+  sheetTall: 28,
+  /** The hero block's bottom corners and the floating bar. */
+  hero: 28,
   pill: 24,
   phone: 20,
 } as const;
@@ -108,23 +128,23 @@ export const HIT = 48;
 
 export const type = {
   /* screen titles */
-  display: { fontSize: 28, lineHeight: 34, ...weight(600), letterSpacing: -0.56, color: color.ink },
-  h1: { fontSize: 22, lineHeight: 28, ...weight(600), letterSpacing: -0.44, color: color.ink },
-  h2: { fontSize: 19, lineHeight: 25, ...weight(600), color: color.ink },
-  h3: { fontSize: 17, lineHeight: 23, ...weight(600), color: color.ink },
+  display: { fontSize: 28, lineHeight: 34, ...weight(800), letterSpacing: -0.56, color: color.ink },
+  h1: { fontSize: 22, lineHeight: 28, ...weight(800), letterSpacing: -0.44, color: color.ink },
+  h2: { fontSize: 19, lineHeight: 25, ...weight(700), letterSpacing: -0.38, color: color.ink },
+  h3: { fontSize: 17, lineHeight: 23, ...weight(700), color: color.ink },
   /* body */
   body: { fontSize: 15, lineHeight: 22, ...weight(400), color: color.body },
   bodyInk: { fontSize: 15, lineHeight: 22, ...weight(400), color: color.ink },
   small: { fontSize: 14, lineHeight: 20, ...weight(400), color: color.body },
   caption: { fontSize: 13, lineHeight: 19, ...weight(400), color: color.muted },
   micro: { fontSize: 12, lineHeight: 16, ...weight(400), color: color.muted },
-  /* the uppercase section label used above almost every card */
+  /* The section label above almost every card. Version 3 writes it in
+     sentence case, as the ERP and Tele CRM do — capitals shout on a phone. */
   label: {
-    fontSize: 12,
-    lineHeight: 16,
-    ...weight(600),
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.48,
+    fontSize: 13,
+    lineHeight: 18,
+    ...weight(700),
+    letterSpacing: 0,
     color: color.muted,
   },
 } as const;
@@ -133,10 +153,10 @@ export type BadgeTone = 'teal' | 'info' | 'success' | 'danger' | 'amber' | 'neut
 
 /** The badge palette, exactly as `badge()` defines it in the design. */
 export const BADGE: Record<BadgeTone, { bg: string; fg: string }> = {
-  teal: { bg: color.primaryEdge, fg: color.primaryDeep },
+  teal: { bg: color.primaryTint, fg: color.primaryDeep },
   info: { bg: color.infoBg, fg: color.info },
   success: { bg: color.successBg, fg: color.success },
   danger: { bg: color.dangerBg, fg: color.danger },
-  amber: { bg: color.warnEdge, fg: color.warnInk },
+  amber: { bg: color.warnBg, fg: color.warnInk },
   neutral: { bg: color.hairline, fg: color.muted },
 };

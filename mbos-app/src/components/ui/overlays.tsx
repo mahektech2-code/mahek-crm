@@ -5,7 +5,7 @@ import { Icon } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
 import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TAB_BAR_HEIGHT } from '../shell/Chrome';
+import { TAB_BAR_GAP, TAB_BAR_HEIGHT } from '../shell/Chrome';
 import { useKeyboardHeight, useRevealFocusedField } from './keyboard';
 import { useReduceMotion, EASE, Presence } from './motion';
 import { feedback } from './feedback';
@@ -395,8 +395,8 @@ export function Toast({
           : keyboardHeight > 0
             ? /* The tab bar hides while typing, so the keyboard is the floor. */
               { bottom: keyboardHeight + 12 }
-            : /* 28 clears the raised + button, which sits 20 above the bar. */
-              { bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift },
+            : /* Clears the floating bar and the round + beside it. */
+              { bottom: TAB_BAR_HEIGHT + TAB_BAR_GAP + insets.bottom + 12 + lift },
         {
           opacity: progress,
           transform: [
@@ -545,6 +545,7 @@ export function ActionSheet({
   title,
   items,
   onClose,
+  layout = 'list',
 }: {
   open: boolean;
   title: string;
@@ -556,8 +557,14 @@ export function ActionSheet({
      `shell/AppFrame.tsx:306`, whose own `sheetItems` prop is typed `string`;
      annotate that as `IconName` and this line can follow, and then so can
      `Icon`'s own `name`. See the note on it. */
-  items: { glyph: string; label: string; sub: string; run: () => void }[];
+  items: { glyph: string; label: string; sub: string; run: () => void; tint?: string }[];
   onClose: () => void;
+  /**
+   * `quick` is the + sheet as Version 3 draws it: the first action as a navy
+   * bar with a lime disc, the rest as two-column tiles. Every other sheet is
+   * the plain list.
+   */
+  layout?: 'list' | 'quick';
 }) {
   const keyboardHeight = useKeyboardHeight();
   /* Clear of the navigation bar — see `BottomSheet`. */
@@ -565,14 +572,66 @@ export function ActionSheet({
   const bottomInset = keyboardHeight > 0 ? 0 : insets.bottom;
   return (
     <SheetModal open={open} onClose={onClose}>
-      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24 + bottomInset, boxShadow: shadow.sheet }]}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { paddingTop: 8, paddingBottom: 24 + bottomInset, boxShadow: shadow.sheet }]}>
         <View style={st.grabber} />
         <Text
           accessibilityRole="header"
-          style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
+          style={[
+            layout === 'quick'
+              ? { fontSize: 20, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6 }
+              : { fontSize: 17, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+            weight(800),
+          ]}>
           {title}
         </Text>
-        {items.map((i) => (
+        {layout === 'quick' && items.length > 0 ? (
+          <View style={{ paddingHorizontal: 16, gap: 10, paddingTop: 8 }}>
+            <Pressable
+              onPress={() => {
+                onClose();
+                items[0].run();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={items[0].label + '. ' + items[0].sub}
+              style={({ pressed }) => [st.quickHero, pressed && { opacity: 0.9 }]}>
+              <View style={st.quickHeroDisc}>
+                <Icon name={items[0].glyph} size={22} color={C.navy} strokeWidth={2} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 16, color: '#FFFFFF' }, weight(800)]}>
+                  {items[0].label}
+                </Text>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>
+                  {items[0].sub}
+                </Text>
+              </View>
+            </Pressable>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              {items.slice(1).map((i) => (
+                <Pressable
+                  key={i.label}
+                  onPress={() => {
+                    onClose();
+                    i.run();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={i.label + '. ' + i.sub}
+                  style={({ pressed }) => [st.quickTile, pressed && { backgroundColor: C.primaryTint }]}>
+                  <Icon name={i.glyph} size={24} color={i.tint ?? C.primary} strokeWidth={2} />
+                  <View>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+                      {i.label}
+                    </Text>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>
+                      {i.sub}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+        {layout === 'quick' ? null : items.map((i) => (
           <Pressable
             key={i.label}
             onPress={() => {
@@ -838,11 +897,38 @@ const st = StyleSheet.create({
   },
   grabber: {
     width: 40,
-    height: 4,
-    borderRadius: 2,
+    height: 5,
+    borderRadius: 3,
     backgroundColor: C.border,
     alignSelf: 'center',
     marginVertical: 6,
+  },
+  quickHero: {
+    minHeight: 72,
+    borderRadius: 22,
+    backgroundColor: C.navy,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  quickHeroDisc: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: C.lime,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickTile: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    minHeight: 100,
+    borderRadius: 20,
+    backgroundColor: C.canvas,
+    padding: 12,
+    justifyContent: 'space-between',
   },
   sheetRow: {
     flexDirection: 'row',
@@ -857,7 +943,7 @@ const st = StyleSheet.create({
   sheetGlyph: {
     width: HIT,
     height: HIT,
-    borderRadius: radius.sm,
+    borderRadius: HIT / 2,
     backgroundColor: C.primaryTint,
     alignItems: 'center',
     justifyContent: 'center',
@@ -873,9 +959,7 @@ const st = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: C.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: C.hairline,
+    borderRadius: 20,
     paddingLeft: 18,
     paddingRight: 8,
     paddingVertical: 10,

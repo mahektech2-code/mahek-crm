@@ -296,7 +296,7 @@ export function PrimaryButton({
           !disabled && { boxShadow: shadow.primary },
           inner,
         ]}>
-        <Text style={[{ fontSize: 16, lineHeight: 21, color: fg, textAlign: 'center' }, weight(600)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 21, color: fg, textAlign: 'center' }, weight(700)]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -326,10 +326,10 @@ export function SecondaryButton({
         style={({ pressed }) => [
           s.secondaryBtn,
           !fullWidth && s.autoWidthBtn,
-          pressed && { backgroundColor: C.wash },
+          pressed && { backgroundColor: '#F1F4F9' },
           inner,
         ]}>
-        <Text style={[{ fontSize: 16, lineHeight: 21, color: C.body, textAlign: 'center' }, weight(500)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 21, color: C.ink, textAlign: 'center' }, weight(600)]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -355,11 +355,11 @@ export function DashedButton({
         {
           width: '100%',
           minHeight: 52,
-          borderRadius: radius.xl,
-          borderWidth: 1,
+          borderRadius: 18,
+          borderWidth: 1.5,
           borderStyle: 'dashed',
-          borderColor: C.faint,
-          backgroundColor: tone === 'primary' ? C.surface : 'transparent',
+          borderColor: tone === 'primary' ? '#B9A6FF' : '#B8C2D3',
+          backgroundColor: tone === 'primary' ? '#F7F4FF' : 'transparent',
           alignItems: 'center',
           justifyContent: 'center',
           paddingHorizontal: 14,
@@ -371,7 +371,7 @@ export function DashedButton({
       <Text
         style={[
           { fontSize: tone === 'primary' ? 15 : 14, lineHeight: 19, textAlign: 'center', color: tone === 'primary' ? C.primaryDeep : C.muted },
-          weight(tone === 'primary' ? 500 : 400),
+          weight(tone === 'primary' ? 700 : 600),
         ]}>
         {label}
       </Text>
@@ -416,10 +416,10 @@ export function Choice({
       style={[
         {
           minHeight: sub ? 56 : 48,
-          borderRadius: radius.md,
-          borderWidth: 1,
-          borderColor: selected ? C.primary : C.border,
-          backgroundColor: selected ? C.primaryTint : C.surface,
+          borderRadius: sub ? 18 : 24,
+          borderWidth: selected ? 2 : 0,
+          borderColor: C.primary,
+          backgroundColor: selected ? '#F7F4FF' : C.surface,
           alignItems: 'center',
           justifyContent: 'center',
           paddingHorizontal: 12,
@@ -427,7 +427,7 @@ export function Choice({
         },
         style,
       ]}>
-      <Text style={[{ fontSize: 14, color: selected ? C.primaryDeep : C.body }, weight(selected ? 600 : 500)]}>
+      <Text style={[{ fontSize: 14, color: selected ? C.primaryDeep : C.ink }, weight(selected ? 700 : 600)]}>
         {label}
       </Text>
       {sub ? (
@@ -513,9 +513,9 @@ export function Input({
         {
           width: '100%',
           minHeight: multiline ? 88 : 52,
-          borderWidth: 1,
+          borderWidth: invalid || focused ? 1.5 : 1,
           borderColor: invalid ? C.danger : focused ? C.primary : C.border,
-          borderRadius: radius.lg,
+          borderRadius: multiline ? 18 : 16,
           paddingHorizontal: 14,
           paddingVertical: multiline ? 12 : 0,
           fontSize: 16,
@@ -601,7 +601,7 @@ export function Toggle({
           width: w,
           height: h,
           borderRadius: h / 2,
-          backgroundColor: tint.interpolate({ inputRange: [0, 1], outputRange: [C.border, C.primary] }),
+          backgroundColor: tint.interpolate({ inputRange: [0, 1], outputRange: [C.line, C.primary] }),
         }}>
         <Animated.View
           style={{
@@ -655,7 +655,7 @@ export function Row({
           paddingHorizontal: 16,
           paddingVertical: 14,
           borderTopWidth: first ? 0 : 1,
-          borderTopColor: C.wash,
+          borderTopColor: C.hairline,
         },
         style,
       ]}>
@@ -667,31 +667,34 @@ export function Row({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={({ pressed }) => (pressed ? { backgroundColor: C.wash } : null)}>
+      style={({ pressed }) => (pressed ? { backgroundColor: '#F7F4FF' } : null)}>
       {body}
     </Pressable>
   );
 }
 
 const s = StyleSheet.create({
+  /* Version 3: a white card on the slate canvas, no outline, 20 corners and
+     a shadow soft enough that the cards read as resting on the page. */
   card: {
     backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.hairline,
     borderRadius: radius.card,
-    boxShadow: shadow.card,
+    boxShadow: '0 1px 2px rgba(15,27,51,0.04), 0 8px 24px -14px rgba(15,27,51,0.16)',
   },
+  /* A pill tag, sentence case, the way Version 3 writes "Prospect" and
+     "Approved". */
   badge: {
     alignSelf: 'flex-start',
-    borderRadius: 10,
-    paddingHorizontal: 8,
+    minHeight: 26,
+    justifyContent: 'center',
+    borderRadius: 13,
+    paddingHorizontal: 10,
     paddingVertical: 3,
   },
   badgeText: {
     fontSize: 12,
-    letterSpacing: 0.36,
-    textTransform: 'uppercase',
-    ...weight(500),
+    letterSpacing: 0,
+    ...weight(700),
   },
   primaryBtn: {
     width: '100%',
@@ -700,10 +703,10 @@ const s = StyleSheet.create({
        phone: at a fixed 52 it wrapped onto two left-aligned lines that ran
        out through the border. The label is centred and the button grows to
        hold it; 52 is still the floor for the touch target. */
-    minHeight: 52,
-    paddingHorizontal: 12,
+    minHeight: 56,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: radius.lg,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -721,12 +724,12 @@ const s = StyleSheet.create({
        phone: at a fixed 52 it wrapped onto two left-aligned lines that ran
        out through the border. The label is centred and the button grows to
        hold it; 52 is still the floor for the touch target. */
-    minHeight: 52,
-    paddingHorizontal: 12,
+    minHeight: 56,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: radius.lg,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: C.border,
+    borderColor: C.line,
     backgroundColor: C.surface,
     alignItems: 'center',
     justifyContent: 'center',
