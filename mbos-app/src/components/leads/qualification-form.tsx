@@ -373,6 +373,9 @@ export function QualificationForm({
                           style={[{ fontSize: 14, lineHeight: 19, color: C.ink, paddingVertical: 4, paddingHorizontal: 0, textAlignVertical: f.kind === 'long' ? 'top' : 'center' }, weight(400)]}
                         />
                       </View>
+                      {f.kind === 'int' && (draft[f.key] ?? '').includes('.') ? (
+                        <Text style={[{ fontSize: 12, lineHeight: 16, color: C.danger, marginTop: 3 }, weight(400)]}>Whole days only.</Text>
+                      ) : null}
                       {f.hint && section.id !== 'gst_verified' ? (
                         <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint, marginTop: 3 }, weight(400)]}>{f.hint}</Text>
                       ) : null}

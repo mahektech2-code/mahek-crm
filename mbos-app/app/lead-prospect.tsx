@@ -661,6 +661,9 @@ export default function ProspectForm() {
             keyboardType="number-pad"
             a11y="Credit they want, in days. Optional. Whole days only."
           />
+          {creditDays.includes('.') ? (
+            <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger, marginTop: 4 }}>Whole days only.</Text>
+          ) : null}
         </QBlock>
         <QBlock icon="note" label="What they will use it on · optional">
           <BareInput value={application} onChangeText={setApplication} placeholder="Furniture polish, spray booth" a11y="What they will use it on. Optional." />

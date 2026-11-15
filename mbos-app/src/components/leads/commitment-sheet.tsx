@@ -112,6 +112,9 @@ export function CommitmentSheet({
             accessibilityLabel="How many cans. Whole cans only."
             style={[{ fontSize: 16, lineHeight: 22, color: C.ink, padding: 0 }, weight(800)]}
           />
+          {cans.includes('.') ? (
+            <Text style={[{ fontSize: 11, lineHeight: 15, color: C.danger }, weight(400)]}>Whole cans only.</Text>
+          ) : null}
         </View>
         <View style={box}>
           <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>₹ if known</Text>

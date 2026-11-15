@@ -116,6 +116,7 @@ export default function Rejections() {
     <AppFrame
       tone="canvas"
       title="Not accepted"
+      onBack={back.go}
       activeTab="more"
       showTitle={false}
       heroTop={
