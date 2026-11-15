@@ -420,22 +420,35 @@ export type ApproverCheck =
  * refusals come back as sentences.
  */
 export async function requireQualificationApprover(customerId: string): Promise<ApproverCheck> {
-  const ctx = await requireLeadVerifier(customerId);
   const seats = await seatsOf(customerId);
-  if (!seats) return { ok: true, ctx };
-  /* ORG CHART FIRST FOR THE REVIEW TOO: whoever collected the answers (the owner) is
-     the starting point and the nearest eligible manager above them reviews. Where
-     the chart cannot answer, the rules below apply exactly as before. */
-  if (seats.ownerId) {
-    const { orgChartVerifierFor } = await import("./org-verifier-resolver");
-    const org = await orgChartVerifierFor(seats.ownerId);
-    if (org.ok && org.id !== ctx.user.id && ctx.user.role !== "admin") {
+  /* THE DESIGNATED REVIEWER IS LET IN FIRST, whatever else they hold. Who that
+     is — the Org Chart above whoever collected the answers, then the seats — is
+     `designatedQualificationApprover`, the one answer the hand-off tells and the
+     verdict checks. Asking the chart here and the seats there is what used to
+     leave a lead nobody could review: the chart's pick was refused for not
+     holding the seat, and the seat holder for not being the chart's pick. */
+  if (seats) {
+    const me = await resolveScope();
+    const { designatedQualificationApprover } = await import("./qualification-approver");
+    const reviewer = await designatedQualificationApprover(customerId);
+    if (reviewer && reviewer.id === me.user.id && seats.ownerId !== me.user.id) {
+      if (await canFor(me.user, "lead.verify")) return { ok: true, ctx: await requireCapability("lead.verify") };
+      const level = (await levelInApp(me.user, "crm")) ?? "associate";
+      return { ok: true, ctx: { ...me, authorisedBy: level, authorisedIn: "crm" as const } };
+    }
+    /* Somebody else is named: say who, rather than letting the capability
+       through to a verdict the designated check will refuse anyway. An
+       administrator keeps the wide net the screens draw from. */
+    if (reviewer && reviewer.id !== me.user.id && me.user.role !== "admin" && seats.ownerId !== me.user.id) {
+      const other = (await isOtherSalesManager(me.user, seats)) ? "This lead is under a different Sales Manager. " : "";
       return {
         ok: false,
-        message: `Qualification on this lead is reviewed by ${org.name || "the manager above the person who collected it"}, who is above them on the Org Chart.`,
+        message: `${other}This lead's Qualification is reviewed by ${reviewer.name}. Only ${reviewer.name} can confirm or reject it.`,
       };
     }
   }
+  const ctx = await requireLeadVerifier(customerId);
+  if (!seats) return { ok: true, ctx };
   const designated = await approverFor(seats);
   if (designated && designated.id === ctx.user.id) return { ok: true, ctx };
   if (seats.ownerId && seats.ownerId === ctx.user.id) {
@@ -465,6 +478,13 @@ export async function gstValidatorRefusal(
   user: { id: string; role: string },
   lead: LeadSeats,
 ): Promise<string | null> {
+  /* The designated Qualification reviewer validates GST as part of the review,
+     whoever the Org Chart or the seats name — never the owner who entered it. */
+  if (lead.id && lead.ownerId !== user.id) {
+    const { designatedQualificationApprover } = await import("./qualification-approver");
+    const reviewer = await designatedQualificationApprover(lead.id);
+    if (reviewer?.id === user.id) return null;
+  }
   const designated = await approverFor(lead);
   if (designated) {
     if (designated.id === user.id || user.role === "admin") return null;
