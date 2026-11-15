@@ -204,7 +204,7 @@ const transfers: ScreenModule = {
         download: true,
         ...(await newFormIn(s, () => transferForm(ctx))),
         newLabel: "New transfer",
-        noDataLine: "No transfers yet.",
+        noDataLine: "No transfers in this period.",
       },
       tooWide: wide,
       rows: rows.map((x): ListRow => {

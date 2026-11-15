@@ -4,6 +4,7 @@ import { getConfig } from "@/lib/config/store";
 import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { adjustStockRow, stockRowActions } from "../stock-adjust";
 import { erpStockInquiryHref } from "../stock-links";
+import { erpTraceHref } from "../trace-links";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
@@ -2375,7 +2376,7 @@ const rmStock: ScreenModule = {
     const all: Col[] = [
       { k: "item", l: "Item", t: "b" },
       { k: "type", l: "Type", t: "t" },
-      { k: "stock", l: "Current stock", t: "n" },
+      { k: "stock", l: "Stock", t: "n" },
       { k: "unit", l: "Unit", t: "t" },
       { k: "lot", l: "Lot no", t: "mono" },
       { k: "godown", l: "Godown", t: "t" },
@@ -2405,7 +2406,10 @@ const rmStock: ScreenModule = {
         ? `About ${nf(l.stock)} ${l.unit} of this lot at ${l.godown} · received ${fd(l.firstDate)}. Filling and packing do not say which lot they used, so lots are drawn down oldest first: the item's total is exact, this lot's share is an estimate.`
         : `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
       ...(sub ? { subLine: `Lot ${l.lotNo} · received ${fd(l.firstDate)}` } : {}),
-      actions: stockRowActions(ctx, { stage: "rm", itemId: l.rawMaterialId, item: l.item, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit }),
+      actions: [
+        ...stockRowActions(ctx, { stage: "rm", itemId: l.rawMaterialId, item: l.item, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit }),
+        { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotNo) },
+      ],
     });
     return {
       spec: {
@@ -2420,7 +2424,7 @@ const rmStock: ScreenModule = {
         /* Stock itself is not summed: items mix kg, litres and pieces. */
         stats: [
           { l: "Items", kind: "distinct", k: "item" },
-          { l: "Rows" },
+          { l: "Lots" },
           { l: "Value", kind: "sum", k: "value", missing: "without a rate" },
         ],
         filters: ["item", "unit", "value"],
@@ -2499,16 +2503,17 @@ const rmLog: ScreenModule = {
           { l: "Entries" },
           { l: "Items", kind: "distinct", k: "item" },
           { l: "Lots", kind: "distinct", k: "lot" },
-          { l: "No purchase behind it", where: { flag: "orphan" }, tone: "danger" },
+          { l: "Adjusted by hand", where: { k: "type", in: ["Adjusted by hand"] }, tone: "warn" },
+          { l: "Source deleted", where: { flag: "orphan" }, tone: "danger" },
         ],
         filters: ["type", "item"],
         sortDefault: ["date", -1],
-        noDataLine: "No entries yet. They appear as purchases and transfers post.",
+        noDataLine: "Nothing in this period. Entries appear on their own as purchases and transfers post.",
       },
       tooWide: wide,
       rows: rows.map((r) => ({
         id: r.id,
-        v: { date: r.date, type: r.sourceType === "purchase" ? "Purchase" : r.sourceType === "adjustment" ? "Stock adjustment" : "Transfer", item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.sourceId },
+        v: { date: r.date, type: r.sourceType === "purchase" ? "Purchase" : r.sourceType === "adjustment" ? "Adjusted by hand" : "Transfer", item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.sourceId },
         flags: r.orphan ? ["orphan"] : [],
         title: `${r.item} · ${r.lot}`,
         by: `Posted ${stampLine(null, r.postedAt).replace(/^Created /, "")}`,

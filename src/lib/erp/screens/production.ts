@@ -1600,10 +1600,10 @@ const packStock: ScreenModule = {
       { k: "date", l: "Date", t: "d" },
       { k: "batch", l: "Batch no", t: "mono" },
       { k: "sku", l: "Description of goods", t: "b", w: 260 },
-      { k: "stock", l: "Current stock (boxes)", t: "n" },
+      { k: "stock", l: "Stock (boxes)", t: "n" },
       { k: "rate", l: "Rate per can", t: "m", pw: "viewCost" },
       { k: "godown", l: "Godown", t: "t" },
-      { k: "amount", l: "Stock value", t: "m", pw: "viewCost" },
+      { k: "amount", l: "Value", t: "m", pw: "viewCost" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
@@ -1704,7 +1704,7 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
             { l: "Adjusted by hand", where: { k: "type", in: ["Adjusted by hand"] }, tone: "warn" },
             { l: "Source deleted", where: { flag: "orphan" }, tone: "danger" },
           ],
-          godownKey: "godown", readOnly: true, sortDefault: ["date", -1], noDataLine: "Nothing here yet. Entries appear on their own as documents post." },
+          godownKey: "godown", readOnly: true, sortDefault: ["date", -1], noDataLine: "Nothing in this period. Entries appear on their own as documents post." },
         tooWide: wide,
         rows: rows.map((r) => ({
           id: r.id,
