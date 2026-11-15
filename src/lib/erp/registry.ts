@@ -184,7 +184,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("verifyOrders", "To verify"),
         v("readyOrders", "Production"),
         v("toBill", "Ready to bill"),
-        v("invoiceCheck", "Invoice print"),
+        v("invoiceCheck", "Invoice check"),
         v("labels", "Dispatch stickers"),
         v("orderDetails", "Billing & dispatch"),
         v("pendingOrders", "On hold"),

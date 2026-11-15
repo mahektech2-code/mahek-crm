@@ -74,8 +74,9 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
   /* "Mark not verified" is an administrator's, and the line cannot be dispatched after it — so it is not waiting, and the panel says why. */
   const markedNot = board.lines.filter((l) => l.billed && !l.dispatched && l.verification === "Not Verify");
   const billedWaiting = board.lines.filter((l) => l.billed && !l.dispatched && l.verification !== "Not Verify");
-  /* The invoice check is optional: a pending check holds nothing, a rejected invoice holds the order. */
-  const invoiceWaiting = billedWaiting.filter((l) => l.invoiceCheck === "Rejected");
+  /* The invoice is checked before dispatch: a pending check holds the order, as a rejected invoice does. */
+  const invoiceWaiting = billedWaiting.filter((l) => l.invoiceCheck !== "Approved");
+  const invoiceRejected = invoiceWaiting.some((l) => l.invoiceCheck === "Rejected");
   const pendingOverrides = board.overrides.filter((o) => o.status === "Pending");
 
   const scan = (raw: string) => {
@@ -324,10 +325,12 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
               <div className="mt-1 text-meta text-warn-ink">An administrator marked this order not verified on Orders → Billing &amp; dispatch, so it cannot be confirmed here. Ask an ERP administrator.</div>
             ) : !billedWaiting.length ? (
               <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the order on Orders → Ready to bill.</div>
-            ) : invoiceWaiting.length ? (
+            ) : invoiceRejected ? (
               <div className="mt-1 text-meta text-warn-ink">
-                Invoice {board.invoiceNo ?? ""} was rejected by the checker — it is corrected on Orders → Invoice print.
+                Invoice {board.invoiceNo ?? ""} was rejected by the checker — it is corrected on Orders → Invoice check.
               </div>
+            ) : invoiceWaiting.length ? (
+              <div className="mt-1 text-meta text-warn-ink">Waiting for the invoice check on Orders → Invoice check.</div>
             ) : gated.length ? (
               <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Dispatch waits for every box.</div>
             ) : (
@@ -343,6 +346,7 @@ export function DispatchDesk({ board, boxes, me, canDecide, administrator, canVe
                   size="sm"
                   variant="primary"
                   disabled={pending || !billedWaiting.length || invoiceWaiting.length > 0 || gated.length > 0}
+                  title={invoiceRejected ? "The invoice was rejected; correct it first." : invoiceWaiting.length ? "Waiting for the invoice check on Orders → Invoice check." : undefined}
                   onClick={() =>
                     act(
                       () => erpDispatchVerify(board.orderNo, { date, vehicle, driver, remark }),

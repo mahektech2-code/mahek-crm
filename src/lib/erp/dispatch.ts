@@ -37,7 +37,7 @@ type LineRow = {
   id: string;
   orderNo: number;
   status: string;
-  /** The independent invoice check on the billed line — optional; only Rejected holds dispatch. */
+  /** The independent invoice check on the billed line — required before dispatch; only Approved lets it leave. */
   invoiceCheck: string | null;
   qty: number;
   skuId: string;
