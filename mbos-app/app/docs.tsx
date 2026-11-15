@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, RefreshControl, SectionList, View } from 'react-native';
+import { Pressable, RefreshControl, SectionList, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import { ChipRow, SearchBox } from '../src/components/ui/book-controls';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, weight } from '../src/theme/tokens';
@@ -106,40 +107,71 @@ export default function DocsScreen() {
     router.push(`/doc-view?id=${encodeURIComponent(d.id)}&from=docs`);
   }, []);
 
-  return (
-    <AppFrame title="Documents" activeTab={null} onBack={back.go} scroll={false}>
-      <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, gap: 10, backgroundColor: C.canvas }}>
-        <View>
-          <BackLink label={back.label} onPress={back.go} />
-          <T s="h1">Documents</T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {docs === null
-              ? 'Looking…'
-              : all.length === 0
-                ? 'Nothing published yet'
-                : `${plural(all.length, 'document')} · ${onPhone} on this phone`}
-          </T>
-        </View>
-        {all.length > 0 ? (
-          <>
-            <View style={{ flexDirection: 'row' }}>
-              <SearchBox
-                value={query}
-                onChange={setQuery}
-                onClear={() => setQuery('')}
-                placeholder="Search price lists, catalogues…"
-              />
-            </View>
-            <ChipRow chips={chips} value={activeFilter} onChange={setFilter} counts={counts} />
-          </>
-        ) : null}
-      </View>
+  const h = HERO.lavender;
+  /* V3 calls the third chip "On phone"; the filter is the same one, and the
+     screen reader still hears what it means. */
+  const shownChips = React.useMemo(
+    () => chips.map((c) => (c.value === 'offline' ? { ...c, label: 'On phone' } : c)),
+    [chips],
+  );
 
+  return (
+    <AppFrame
+      title="Documents"
+      activeTab={null}
+      onBack={back.go}
+      scroll={false}
+      hero={
+        <View style={{ marginTop: 6, gap: 14 }}>
+          {docs === null || all.length === 0 ? (
+            <Text style={[{ fontSize: 14, color: h.muted }, weight(600)]}>
+              {docs === null ? 'Looking…' : 'Nothing published yet'}
+            </Text>
+          ) : (
+            <View
+              accessible
+              accessibilityLabel={`${plural(all.length, 'document')} · ${onPhone} on this phone`}
+              style={{ flexDirection: 'row', gap: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <Glyph shapes={DOC_GLYPH} size={16} color={h.muted} />
+                <Text style={[{ fontSize: 14, color: h.muted }, weight(600)]}>{all.length}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <Glyph shapes={PHONE_TICK} size={16} color={C.success} />
+                <Text style={[{ fontSize: 14, color: C.success }, weight(600)]}>{onPhone} on this phone</Text>
+              </View>
+            </View>
+          )}
+          {all.length > 0 ? (
+            <>
+              <View style={{ flexDirection: 'row' }}>
+                <SearchBox
+                  value={query}
+                  onChange={setQuery}
+                  onClear={() => setQuery('')}
+                  placeholder="Search price lists, catalogues…"
+                />
+              </View>
+              <ChipRow
+                chips={shownChips}
+                value={activeFilter}
+                onChange={setFilter}
+                counts={counts}
+                decor={{
+                  new: { ink: C.primaryDeep },
+                  offline: { icon: 'tick', ink: C.success, iconInk: C.success },
+                }}
+              />
+            </>
+          ) : null}
+        </View>
+      }>
       {docs === null ? null : all.length === 0 ? (
-        <View style={{ paddingHorizontal: 16 }}>
-          <Empty
+        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+          <EmptyRow
+            glyph={DOC_GLYPH}
             title="Nothing published yet"
-            body="Price lists, catalogues and policies will show here when the office publishes them."
+            body="Price lists, catalogues and policies show here when the office publishes them."
           />
         </View>
       ) : (
@@ -153,23 +185,28 @@ export default function DocsScreen() {
             <DocRow d={item} now={now} first={index === 0} last={index === section.data.length - 1} onPress={open} />
           )}
           SectionSeparatorComponent={SectionGap}
-          contentContainerStyle={{ paddingBottom: 32 }}
+          contentContainerStyle={{ paddingTop: 4, paddingBottom: 32 }}
           ListEmptyComponent={
-            <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
               {query.trim() ? (
-                <Empty
-                  title={`Nothing matches “${query.trim()}”`}
-                  body="Try one word from the title, or clear the search to see everything."
-                />
+                <NoMatch query={query.trim()} />
               ) : activeFilter === 'offline' ? (
-                <Empty
+                <EmptyRow
+                  glyph={PHONE_TICK}
+                  tint={{ bg: C.successBg, ink: C.success }}
                   title="Nothing on this phone yet"
-                  body="Open a document once while you have signal and it stays here to open without signal."
+                  body="Open one once with signal; it then opens without signal."
+                  a11y="Open a document once while you have signal and it stays here to open without signal."
                 />
               ) : activeFilter === 'new' ? (
-                <Empty title="Nothing new this week" body="Documents published in the last seven days show here." />
+                <EmptyRow
+                  text="New"
+                  tint={{ bg: C.primaryTint, ink: C.primaryDeep }}
+                  title="Nothing new this week"
+                  body="Published in the last seven days shows here."
+                />
               ) : (
-                <Empty title="Nothing here" body="Choose All to see every document." />
+                <EmptyRow glyph={FOLDER_GLYPH} title="Nothing here" body="Choose All to see every document." />
               )}
             </View>
           }
@@ -186,24 +223,29 @@ export default function DocsScreen() {
   );
 }
 
+const DOC_GLYPH: GlyphShape[] = [{ p: 'M7 3h7l5 5v13H7z' }, { p: 'M14 3v5h5' }];
+const PHONE_TICK: GlyphShape[] = [{ r: [7, 3, 10, 18, 2] }, { p: 'M10 12l2 2 3-4' }];
+const FOLDER_GLYPH: GlyphShape[] = [{ p: 'M3 7h7l2 2h9v10H3z' }];
+
 /* ----------------------------------------------------------------- parts */
 
 function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
     <View
+      accessibilityRole="header"
+      accessible
+      accessibilityLabel={`${title}, ${count}`}
       style={{
         flexDirection: 'row',
         alignItems: 'baseline',
         justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingTop: 10,
-        paddingBottom: 6,
+        paddingHorizontal: 20,
+        paddingTop: 14,
+        paddingBottom: 8,
         backgroundColor: C.canvas,
       }}>
-      <T style={[{ fontSize: 12, letterSpacing: 0.6, color: C.muted, textTransform: 'uppercase' }, weight(600)]}>
-        {title}
-      </T>
-      <T style={[{ fontSize: 12, color: C.muted }, weight(500)]}>{count}</T>
+      <Text style={[{ fontSize: 13, color: C.ink }, weight(800)]}>{title}</Text>
+      <Text style={[{ fontSize: 13, color: C.faint }, weight(800)]}>{count}</Text>
     </View>
   );
 }
@@ -215,12 +257,13 @@ function SectionGap() {
 const TILE = {
   pdf: { bg: C.dangerBg, ink: C.danger },
   image: { bg: C.infoBg, ink: C.info },
-  other: { bg: C.wash, ink: C.muted },
+  other: { bg: C.canvas, ink: C.muted },
 } as const;
 
 /**
  * One document. The rows of a section are drawn as one card — rounded at the
- * first and the last — so a group reads as a group and the list stays dense.
+ * first and the last, a hairline between — so a group reads as a group and
+ * the list stays dense.
  */
 const DocRow = React.memo(function DocRow({
   d,
@@ -243,21 +286,11 @@ const DocRow = React.memo(function DocRow({
     <Pressable
       onPress={() => onPress(d)}
       accessibilityRole="button"
-      accessibilityLabel={`${d.title}${fresh ? ', new' : ''}${d.onPhone ? ', on this phone' : ''}`}
+      accessibilityLabel={`${d.title}${fresh ? ', new' : ''}${d.onPhone ? ', on this phone' : ', download, needs signal'}`}
       style={({ pressed }) => ({
         marginHorizontal: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
         paddingHorizontal: 14,
-        paddingVertical: 12,
         backgroundColor: pressed ? C.wash : C.surface,
-        borderColor: C.border,
-        borderLeftWidth: 1,
-        borderRightWidth: 1,
-        borderTopWidth: first ? 1 : 0,
-        borderBottomWidth: 1,
-        borderBottomColor: last ? C.border : C.hairline,
         borderTopLeftRadius: first ? radius.card : 0,
         borderTopRightRadius: first ? radius.card : 0,
         borderBottomLeftRadius: last ? radius.card : 0,
@@ -265,66 +298,136 @@ const DocRow = React.memo(function DocRow({
       })}>
       <View
         style={{
-          width: 40,
-          height: 48,
-          borderRadius: 6,
-          backgroundColor: tile.bg,
+          flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'center',
-          gap: 2,
+          gap: 12,
+          minHeight: 72,
+          paddingVertical: 10,
+          borderTopWidth: first ? 0 : 1,
+          borderTopColor: C.hairline,
         }}>
-        <Icon name={kind === 'image' ? 'image' : 'doc'} size={18} color={tile.ink} strokeWidth={1.5} />
-        <T style={[{ fontSize: 9, color: tile.ink, letterSpacing: 0.4 }, weight(600)]}>{fileBadge(d.kind)}</T>
-      </View>
+        <View
+          style={{
+            width: 40,
+            height: 48,
+            borderRadius: 10,
+            backgroundColor: tile.bg,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <Text style={[{ fontSize: 10, color: tile.ink }, weight(800)]}>{fileBadge(d.kind)}</Text>
+        </View>
 
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]} numberOfLines={2}>
-          {d.title}
-        </T>
-        {d.description ? (
-          <T s="small" style={{ color: C.muted, marginTop: 1 }} numberOfLines={1}>
-            {d.description}
-          </T>
-        ) : null}
-        {fresh || meta ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-            {fresh ? (
-              <View
-                style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill, backgroundColor: C.primaryTint }}>
-                <T style={[{ fontSize: 11, color: C.primaryDeep }, weight(600)]}>New</T>
-              </View>
-            ) : null}
-            {meta ? <T s="caption">{meta}</T> : null}
-          </View>
-        ) : null}
-      </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(600)]} numberOfLines={2}>
+            {d.title}
+          </Text>
+          {d.description ? (
+            <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }} numberOfLines={1}>
+              {d.description}
+            </Text>
+          ) : null}
+          {fresh || meta ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              {fresh ? (
+                <View
+                  style={{
+                    height: 22,
+                    paddingHorizontal: 8,
+                    borderRadius: 11,
+                    backgroundColor: C.primaryTint,
+                    justifyContent: 'center',
+                  }}>
+                  <Text style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>New</Text>
+                </View>
+              ) : null}
+              {meta ? <Text style={{ fontSize: 12, color: C.muted }}>{meta}</Text> : null}
+            </View>
+          ) : null}
+        </View>
 
-      {/* Whether a tap needs signal: a tick means it opens anywhere. */}
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={{ alignItems: 'center', width: 40 }}>
-        <Icon
-          name={d.onPhone ? 'tick' : 'download'}
-          size={18}
-          color={d.onPhone ? C.success : C.muted}
-          strokeWidth={d.onPhone ? 2 : 1.6}
-        />
-        <T style={{ fontSize: 10, color: d.onPhone ? C.success : C.muted, marginTop: 2 }}>
-          {d.onPhone ? 'Saved' : 'Get'}
-        </T>
+        {/* Whether a tap needs signal: a tick means it opens anywhere. */}
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: d.onPhone ? C.successBg : C.canvas,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <Icon
+            name={d.onPhone ? 'tick' : 'download'}
+            size={18}
+            color={d.onPhone ? C.success : C.muted}
+            strokeWidth={d.onPhone ? 2.4 : 2}
+          />
+        </View>
       </View>
     </Pressable>
   );
 });
 
-function Empty({ title, body }: { title: string; body: string }) {
+/** No document matches what he typed — the one empty answer drawn large. */
+function NoMatch({ query }: { query: string }) {
   return (
-    <Card style={{ paddingHorizontal: 16, paddingVertical: 28 }} padded={false}>
-      <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>{title}</T>
-      <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-        {body}
-      </T>
-    </Card>
+    <View
+      accessible
+      accessibilityLabel={`Nothing matches “${query}”. Try one word from the title, or clear the search to see everything.`}
+      style={{ backgroundColor: C.surface, borderRadius: 24, paddingVertical: 26, paddingHorizontal: 18, alignItems: 'center' }}>
+      <Icon name="search" size={30} color={C.faint} strokeWidth={2} />
+      <Text style={[{ fontSize: 17, color: C.ink, textAlign: 'center', marginTop: 8 }, weight(800)]}>
+        {`Nothing matches “${query}”`}
+      </Text>
+      <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center', marginTop: 4 }}>
+        Try one word from the title, or clear the search.
+      </Text>
+    </View>
+  );
+}
+
+/** The quieter empty answers: a disc, a title and one line. */
+function EmptyRow({
+  glyph,
+  text,
+  tint = { bg: C.canvas, ink: C.muted },
+  title,
+  body,
+  a11y,
+}: {
+  glyph?: GlyphShape[];
+  text?: string;
+  tint?: { bg: string; ink: string };
+  title: string;
+  body: string;
+  a11y?: string;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${title}. ${a11y ?? body}`}
+      style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16, flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: tint.bg,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        {text ? (
+          <Text style={[{ fontSize: 12, color: tint.ink }, weight(800)]}>{text}</Text>
+        ) : glyph ? (
+          <Glyph shapes={glyph} size={20} color={tint.ink} />
+        ) : null}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{title}</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{body}</Text>
+      </View>
+    </View>
   );
 }

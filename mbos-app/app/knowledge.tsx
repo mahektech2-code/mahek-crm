@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, ListCard, T } from '../src/components/ui/primitives';
-import { color as C, type, weight, type BadgeTone } from '../src/theme/tokens';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { Icon } from '../src/components/ui/Icon';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
+import { color as C, weight } from '../src/theme/tokens';
 import { listCourses, type CourseRow } from '../src/data/library';
 import { useStore } from '../src/state/store';
 import { Stagger } from '../src/components/ui/motion';
@@ -29,44 +30,64 @@ export default function KnowledgeScreen() {
   );
 
   return (
-    <AppFrame title="Knowledge centre" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <T style={type.h1}>Knowledge centre</T>
-      {/* THE NAG IS GONE, because nothing on this screen can answer it.
-          It read "2 modules are due. Your manager sees who has finished." on a
-          screen where a module can be neither opened nor ticked off — the
-          course's material is not on the wire at all, and `completedAt` is read
-          here and written by nobody, in the office or on the phone. So the
-          count could never fall, and being chased for work with no way to do it
-          and a manager named as watching is worse than not being told. What it
-          says instead is what is true: this is the list, and the doing is not
-          here yet. It comes back the day something writes a completion. */}
-      <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        Training from the office, and when each is due. You cannot open or finish
-        a module on the phone yet.
-      </T>
-
+    <AppFrame
+      title="Knowledge centre"
+      activeTab={null}
+      onBack={back.go}
+      hero={
+        /* THE NAG IS GONE, because nothing on this screen can answer it.
+           It read "2 modules are due. Your manager sees who has finished." on a
+           screen where a module can be neither opened nor ticked off — the
+           course's material is not on the wire at all, and `completedAt` is read
+           here and written by nobody, in the office or on the phone. So the
+           count could never fall, and being chased for work with no way to do it
+           and a manager named as watching is worse than not being told. What it
+           says instead is what is true: this is the list, and the doing is not
+           here yet. It comes back the day something writes a completion. */
+        <View
+          accessible
+          accessibilityLabel="Training from the office, and when each is due. You cannot open or finish a module on the phone yet."
+          style={{
+            marginTop: 8,
+            alignSelf: 'flex-start',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            minHeight: 36,
+            paddingHorizontal: 12,
+            borderRadius: 18,
+            backgroundColor: C.warnBg,
+          }}>
+          <Icon name="lock" size={16} color={C.warnInk} strokeWidth={2} />
+          <Text style={[{ fontSize: 13, color: C.warnInk }, weight(600)]}>List only · cannot open or finish it here yet</Text>
+        </View>
+      }
+      contentStyle={{ padding: 16, paddingBottom: 24 }}>
       {courses === null ? (
-        <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Looking…</T>
-        </Card>
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 22, paddingHorizontal: 12 }}>
+          <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center' }}>Looking…</Text>
+        </View>
       ) : courses.length === 0 ? (
-        <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing published yet</T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Training will show here when the office adds it.
-          </T>
-        </Card>
+        <View
+          accessible
+          accessibilityLabel="Nothing published yet. Training will show here when the office adds it."
+          style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
+          <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(800)]}>Nothing published yet</Text>
+          <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 2 }}>
+            Shows when the office adds it.
+          </Text>
+        </View>
       ) : (
-        <ListCard style={{ marginTop: 12 }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16 }}>
           {courses.map((k, i) => {
             const done = k.completedAt != null;
             /* No amber "Due": a course cannot be opened or finished on the
                phone yet, so a badge demanding one is a demand he has no way to
                meet. Required is said plainly instead. */
             const isDue = !done && k.mandatory === 1;
-            const tone: BadgeTone = done ? 'success' : 'neutral';
+            const badge = done ? 'Done' : isDue ? 'Required' : 'Not started';
+            const facts = [k.kind, k.minutes ? k.minutes + ' min' : null, k.deadline ? 'by ' + k.deadline : null];
+            const lead = done ? LEAD.done : LEAD[kindKey(k.kind)];
             return (
               <Stagger key={k.id} index={i}>
                 <Pressable
@@ -85,30 +106,91 @@ export default function KnowledgeScreen() {
                      confident wrong sentence about somebody's training. */
                   onPress={() => notify(k.title + ' cannot be opened on the phone yet.', 'error')}
                   accessibilityRole="button"
-                  style={{
+                  accessibilityLabel={`${k.title}. ${facts.filter(Boolean).join(', ') || 'Course'}. ${badge}`}
+                  style={({ pressed }) => ({
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 12,
-                    paddingHorizontal: 16,
-                    paddingVertical: 14,
+                    minHeight: 68,
+                    paddingVertical: 10,
                     borderTopWidth: i ? 1 : 0,
-                    borderTopColor: C.wash,
-                  }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{k.title}</T>
-                    <T s="caption">
-                      {[k.kind, k.minutes ? k.minutes + ' min' : null, k.deadline ? 'by ' + k.deadline : null]
-                        .filter(Boolean)
-                        .join(' · ') || 'Course'}
-                    </T>
+                    borderTopColor: C.hairline,
+                    opacity: pressed ? 0.7 : 1,
+                  })}>
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: lead.bg,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Glyph shapes={lead.glyph} size={18} color={lead.ink} strokeWidth={done ? 2.4 : 2} />
                   </View>
-                  <Badge tone={tone}>{done ? 'Done' : isDue ? 'Required' : 'Not started'}</Badge>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(600)]}>{k.title}</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 10, marginTop: 2 }}>
+                      {facts.some(Boolean) ? (
+                        <>
+                          {k.kind ? <Text style={META}>{k.kind}</Text> : null}
+                          {k.minutes ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                              <Icon name="clock" size={12} color={C.muted} strokeWidth={2.2} />
+                              <Text style={META}>{k.minutes + ' min'}</Text>
+                            </View>
+                          ) : null}
+                          {k.deadline ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                              <Icon name="cal" size={12} color={C.muted} strokeWidth={2.2} />
+                              <Text style={META}>{'by ' + k.deadline}</Text>
+                            </View>
+                          ) : null}
+                        </>
+                      ) : (
+                        <Text style={META}>Course</Text>
+                      )}
+                    </View>
+                  </View>
+                  <View
+                    style={{
+                      height: 28,
+                      paddingHorizontal: 10,
+                      borderRadius: 14,
+                      justifyContent: 'center',
+                      backgroundColor: done ? C.successBg : isDue ? C.navy : C.canvas,
+                    }}>
+                    <Text style={[{ fontSize: 12, color: done ? C.success : isDue ? '#FFFFFF' : C.muted }, weight(700)]}>
+                      {badge}
+                    </Text>
+                  </View>
                 </Pressable>
               </Stagger>
             );
           })}
-        </ListCard>
+        </View>
       )}
     </AppFrame>
   );
 }
+
+const META = { fontSize: 12, lineHeight: 16, color: C.muted } as const;
+
+/** Which mark leads a row: what kind of training it is, or that it is done. */
+function kindKey(kind: string | null): 'video' | 'reading' | 'course' {
+  const k = (kind ?? '').toLowerCase();
+  if (k.includes('video')) return 'video';
+  if (k.includes('read') || k.includes('article') || k.includes('pdf')) return 'reading';
+  return 'course';
+}
+
+const LEAD: Record<'video' | 'reading' | 'course' | 'done', { glyph: GlyphShape[]; bg: string; ink: string }> = {
+  video: { glyph: [{ r: [3, 6, 13, 12, 2] }, { p: 'M16 10l5-3v10l-5-3z' }], bg: C.primaryTint, ink: C.primaryDeep },
+  reading: {
+    glyph: [{ p: 'M4 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h6z' }],
+    bg: C.canvas,
+    ink: C.muted,
+  },
+  course: { glyph: [{ p: 'M3 9l9-5 9 5-9 5z' }, { p: 'M7 11v5c3 2 7 2 10 0v-5' }], bg: C.canvas, ink: C.muted },
+  done: { glyph: [{ p: 'M5 12l5 5 9-10' }], bg: C.successBg, ink: C.success },
+};

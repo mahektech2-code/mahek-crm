@@ -1,10 +1,12 @@
 import React from 'react';
-import { ActivityIndicator, FlatList, Image, PixelRatio, Pressable, ScrollView, View, type ViewToken } from 'react-native';
+import { ActivityIndicator, FlatList, Image, PixelRatio, Pressable, ScrollView, Text, View, type ViewToken } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Bar, Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { PillButton } from '../src/components/ui/v3';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import { Icon, type IconName } from '../src/components/ui/Icon';
-import { color as C, radius, weight } from '../src/theme/tokens';
+import { color as C, weight } from '../src/theme/tokens';
 import {
   downloadDocument,
   forgetDocumentFile,
@@ -130,69 +132,152 @@ export default function DocViewScreen() {
         .join(' · ')
     : '';
 
-  return (
-    <AppFrame title="Document" activeTab={null} onBack={back.go} scroll={false}>
-      <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 }}>
-        <BackLink label={back.label} onPress={back.go} />
-        <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]} numberOfLines={2}>
-          {doc?.title ?? (phase.at === 'gone' ? 'Not available' : ' ')}
-        </T>
-        {meta ? (
-          <T s="caption" style={{ marginTop: 2 }} numberOfLines={1}>
-            {meta}
-          </T>
-        ) : null}
-      </View>
+  const kindNow = phase.at === 'ready' ? phase.kind : doc?.kind ?? null;
+  const tile = TILE[fileKind(kindNow)];
+  const title = doc?.title ?? (phase.at === 'gone' ? 'Not available' : ' ');
 
-      <View style={{ flex: 1, backgroundColor: C.hairline, borderTopWidth: 1, borderTopColor: C.border }}>
+  return (
+    <AppFrame
+      title="Document"
+      activeTab={null}
+      onBack={back.go}
+      scroll={false}
+      showTitle={false}
+      hero={
+        <View style={{ marginTop: 14 }}>
+          <Text
+            accessibilityRole="header"
+            numberOfLines={2}
+            style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: HERO.lavender.ink }, weight(800)]}>
+            {title}
+          </Text>
+          {doc ? (
+            <View accessible accessibilityLabel={meta} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {categoryLabel(doc.category) ? <MetaPill text={categoryLabel(doc.category)} ink={C.ink} /> : null}
+              {fileBadge(kindNow) ? <MetaPill text={fileBadge(kindNow)} bg={tile.bg} ink={tile.ink} strong /> : null}
+              {doc.sizeLabel ? <MetaPill text={doc.sizeLabel} /> : null}
+              {doc.publishedAt ? <MetaPill text={dmy(isoDate(new Date(doc.publishedAt)))} cal /> : null}
+            </View>
+          ) : null}
+        </View>
+      }>
+      <View style={{ flex: 1, marginHorizontal: 12, marginTop: 12 }}>
         {phase.at === 'loading' ? (
-          <Centre>
-            <ActivityIndicator color={C.primary} />
-          </Centre>
+          <Desk>
+            <Centre>
+              <ActivityIndicator color={C.primary} accessibilityLabel="Opening" />
+            </Centre>
+          </Desk>
         ) : phase.at === 'gone' ? (
           <Message
-            title="This document is not on your phone any more"
-            body="The office may have withdrawn it, or narrowed who it is for. Go back to Documents for what is there now."
+            glyph="doc"
+            title="Not on your phone any more"
+            body="The office may have withdrawn it or narrowed who it is for. Go back to Documents."
+            a11y="This document is not on your phone any more. The office may have withdrawn it, or narrowed who it is for. Go back to Documents for what is there now."
           />
         ) : phase.at === 'downloading' ? (
-          <Centre>
-            <Card style={{ width: '100%', maxWidth: 360 }}>
-              <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Downloading</T>
-              <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 12 }}>
-                {phase.fraction == null
-                  ? 'Starting…'
-                  : `${Math.round(phase.fraction * 100)}%${doc?.sizeLabel ? ` of ${doc.sizeLabel}` : ''}`}
-                {' · '}once it is here it opens without signal
-              </T>
-              <Bar pct={Math.round((phase.fraction ?? 0) * 100)} fill={C.primary} />
-            </Card>
-          </Centre>
+          <Downloading fraction={phase.fraction} size={doc?.sizeLabel ?? null} />
         ) : phase.at === 'failed' ? (
-          <Message title="Could not download it" body={phase.reason}>
-            <PrimaryButton label="Try again" fullWidth={false} onPress={() => setAttempt((n) => n + 1)} />
-          </Message>
+          <Message
+            glyph="alert"
+            tint={{ bg: C.dangerBg, ink: C.danger }}
+            title="Could not download it"
+            body={phase.reason}
+            action={{ icon: 'refresh', label: 'Try again', onPress: () => setAttempt((n) => n + 1) }}
+          />
         ) : (
           <Viewer uri={phase.uri} kind={phase.kind ?? mediaTypeOf({ kind: null }, phase.uri)} onOpenElsewhere={openElsewhere} />
         )}
       </View>
 
       {phase.at === 'ready' ? (
-        <View
-          style={{
-            flexDirection: 'row',
-            gap: 10,
-            paddingHorizontal: 16,
-            paddingTop: 10,
-            paddingBottom: 12,
-            borderTopWidth: 1,
-            borderTopColor: C.border,
-            backgroundColor: C.surface,
-          }}>
-          {shareAvailable ? <PrimaryButton label="Share" onPress={() => void shareIt()} style={{ flex: 1 }} /> : null}
-          <SecondaryButton label="Open in another app" onPress={() => void openElsewhere()} style={{ flex: 1 }} />
+        <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 12 }}>
+          {shareAvailable ? (
+            <PillButton
+              label="Share"
+              icon="share"
+              variant="primary"
+              height={60}
+              onPress={() => void shareIt()}
+              style={{ flex: 1.3 }}
+            />
+          ) : null}
+          <PillButton
+            label={shareAvailable ? 'Another app' : 'Open in another app'}
+            a11y="Open in another app"
+            icon="external"
+            variant="white"
+            height={60}
+            onPress={() => void openElsewhere()}
+            style={{ flex: 1 }}
+          />
         </View>
       ) : null}
     </AppFrame>
+  );
+}
+
+const TILE = {
+  pdf: { bg: C.dangerBg, ink: C.danger },
+  image: { bg: C.infoBg, ink: C.info },
+  other: { bg: C.surface, ink: C.muted },
+} as const;
+
+/** One fact about the document, as a pill under its title. */
+function MetaPill({ text, bg = C.surface, ink = C.muted, strong = false, cal = false }: { text: string; bg?: string; ink?: string; strong?: boolean; cal?: boolean }) {
+  return (
+    <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+      {cal ? <Icon name="cal" size={13} color={ink} strokeWidth={2.2} /> : null}
+      <Text style={[{ fontSize: 12, color: ink }, weight(strong ? 800 : 600)]}>{text}</Text>
+    </View>
+  );
+}
+
+/** The grey desk the sheets lie on. */
+function Desk({ children }: { children: React.ReactNode }) {
+  return <View style={{ flex: 1, backgroundColor: C.border, borderRadius: 22, overflow: 'hidden' }}>{children}</View>;
+}
+
+/** The file is on its way: how much of it, and that it then opens anywhere. */
+function Downloading({ fraction, size }: { fraction: number | null; size: string | null }) {
+  const pct = Math.round((fraction ?? 0) * 100);
+  return (
+    <View
+      accessible
+      accessibilityLabel={
+        fraction == null
+          ? 'Downloading. Starting. Once it is here it opens without signal.'
+          : `Downloading, ${pct}%${size ? ` of ${size}` : ''}. Once it is here it opens without signal.`
+      }
+      style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16, flexDirection: 'row', gap: 14, alignItems: 'center' }}>
+      <View
+        style={{
+          width: 52,
+          height: 52,
+          borderRadius: 26,
+          backgroundColor: C.primaryTint,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        {fraction == null ? (
+          <ActivityIndicator size="small" color={C.primaryDeep} />
+        ) : (
+          <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(800)]}>{pct}%</Text>
+        )}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Icon name="download" size={16} color={C.ink} strokeWidth={2} />
+          <Text style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]} numberOfLines={1}>
+            {fraction == null ? 'Starting…' : size ? `of ${size}` : 'Downloading'}
+          </Text>
+        </View>
+        <View style={{ height: 8, borderRadius: 4, backgroundColor: C.hairline, marginTop: 8, overflow: 'hidden' }}>
+          <View style={{ width: `${pct}%`, height: 8, borderRadius: 4, backgroundColor: C.primary }} />
+        </View>
+        <Text style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Then opens without signal</Text>
+      </View>
+    </View>
   );
 }
 
@@ -218,35 +303,50 @@ function Viewer({ uri, kind, onOpenElsewhere }: { uri: string; kind: string; onO
 
   if (what === 'other') {
     return (
-      <Message title="This file cannot be shown here" body="Phones can show PDFs and pictures. Open it in another app instead.">
-        <PrimaryButton label="Open in another app" fullWidth={false} onPress={onOpenElsewhere} />
-      </Message>
+      <Message
+        glyph="noFile"
+        title="This file cannot be shown here"
+        body="Phones show PDFs and pictures."
+        a11y="Phones can show PDFs and pictures. Open it in another app instead."
+        action={{ icon: 'external', label: 'Open in another app', onPress: onOpenElsewhere }}
+      />
     );
   }
   if (what === 'pdf' && !pdfPreviewAvailable) {
     return (
       <Message
+        glyph="noFile"
         title="Update the app to read PDFs here"
-        body="This version cannot draw PDFs itself. Open it in another app for now — the next update reads them inside MBOS.">
-        <PrimaryButton label="Open in another app" fullWidth={false} onPress={onOpenElsewhere} />
-      </Message>
+        body="This version cannot draw PDFs; the next update does."
+        a11y="This version cannot draw PDFs itself. Open it in another app for now — the next update reads them inside MBOS."
+        action={{ icon: 'external', label: 'Open in another app', onPress: onOpenElsewhere }}
+      />
     );
   }
   if (problem) {
     return (
-      <Message title="This PDF cannot be shown here" body={problem}>
-        <PrimaryButton label="Open in another app" fullWidth={false} onPress={onOpenElsewhere} />
-      </Message>
+      <Message
+        glyph="noFile"
+        title="This PDF cannot be shown here"
+        body={problem}
+        action={{ icon: 'external', label: 'Open in another app', onPress: onOpenElsewhere }}
+      />
     );
   }
   if (pages == null) {
     return (
-      <Centre>
-        <ActivityIndicator color={C.primary} />
-      </Centre>
+      <Desk>
+        <Centre>
+          <ActivityIndicator color={C.primary} />
+        </Centre>
+      </Desk>
     );
   }
-  return <Pages uri={uri} count={pages} image={what === 'image'} />;
+  return (
+    <Desk>
+      <Pages uri={uri} count={pages} image={what === 'image'} />
+    </Desk>
+  );
 }
 
 /**
@@ -311,6 +411,24 @@ function Pages({ uri, count, image }: { uri: string; count: number; image: boole
         </ScrollView>
       ) : null}
 
+      {/* The gesture nobody would guess, said once in the corner. */}
+      <View
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{
+          position: 'absolute',
+          right: 14,
+          top: 14,
+          height: 26,
+          paddingHorizontal: 10,
+          borderRadius: 13,
+          backgroundColor: 'rgba(15,27,51,0.7)',
+          justifyContent: 'center',
+        }}>
+        <Text style={[{ fontSize: 11, color: '#FFFFFF' }, weight(600)]}>Double tap 1×/2×</Text>
+      </View>
+
       {/* What page, and the zoom — floating over the desk, never over the paper's edge. */}
       <View
         pointerEvents="box-none"
@@ -320,10 +438,9 @@ function Pages({ uri, count, image }: { uri: string; count: number; image: boole
             flexDirection: 'row',
             alignItems: 'center',
             gap: 4,
-            paddingHorizontal: 6,
-            paddingVertical: 4,
-            borderRadius: radius.pill,
-            backgroundColor: 'rgba(22,22,22,0.82)',
+            padding: 4,
+            borderRadius: 26,
+            backgroundColor: C.navy,
           }}>
           <RoundButton
             icon="zoomOut"
@@ -331,9 +448,11 @@ function Pages({ uri, count, image }: { uri: string; count: number; image: boole
             disabled={zoomAt === 0}
             onPress={() => setZoomAt((z) => Math.max(0, z - 1))}
           />
-          <T style={[{ fontSize: 13, color: C.surface, minWidth: 64, textAlign: 'center' }, weight(500)]}>
+          <Text
+            accessibilityLabel={count > 1 ? `Page ${current} of ${count}` : `Zoom ${Math.round(zoom * 100)} percent`}
+            style={[{ fontSize: 14, color: C.lime, minWidth: 64, textAlign: 'center' }, weight(800)]}>
             {count > 1 ? `${current} / ${count}` : `${Math.round(zoom * 100)}%`}
-          </T>
+          </Text>
           <RoundButton
             icon="zoomIn"
             label="Zoom in"
@@ -356,9 +475,9 @@ function RoundButton({ icon, label, onPress, disabled }: { icon: IconName; label
       accessibilityState={{ disabled }}
       hitSlop={6}
       style={({ pressed }) => ({
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: pressed ? 'rgba(255,255,255,0.16)' : 'transparent',
@@ -422,19 +541,15 @@ function Sheet({
         width,
         height,
         backgroundColor: C.surface,
-        borderRadius: 4,
-        borderWidth: 1,
-        borderColor: C.border,
+        borderRadius: 6,
         overflow: 'hidden',
-        boxShadow: '0 1px 2px rgba(22,22,22,0.06), 0 6px 16px -8px rgba(22,22,22,0.18)',
+        boxShadow: '0 6px 16px -8px rgba(15,27,51,0.25)',
       }}>
       {drawn ? (
         <Image source={{ uri: drawn.uri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" fadeDuration={0} />
       ) : failed ? (
         <Centre>
-          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-            {failed}
-          </T>
+          <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center' }}>{failed}</Text>
         </Centre>
       ) : (
         <Centre>
@@ -455,17 +570,63 @@ function Centre({ children }: { children: React.ReactNode }) {
   return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>{children}</View>;
 }
 
-function Message({ title, body, children }: { title: string; body: string; children?: React.ReactNode }) {
+const MESSAGE_GLYPH: Record<'doc' | 'alert' | 'noFile', GlyphShape[]> = {
+  doc: [{ p: 'M7 3h7l5 5v13H7z' }, { p: 'M14 3v5h5' }],
+  alert: [{ p: 'M12 4l9 16H3z' }, { p: 'M12 10v4M12 17h.01' }],
+  noFile: [{ p: 'M7 3h7l5 5v13H7z' }, { p: 'M14 3v5h5M9 13l6 6M15 13l-6 6' }],
+};
+
+/** Why the document is not on the screen, and — where there is one — the way past it. */
+function Message({
+  glyph,
+  tint = { bg: C.canvas, ink: C.muted },
+  title,
+  body,
+  a11y,
+  action,
+}: {
+  glyph: keyof typeof MESSAGE_GLYPH;
+  tint?: { bg: string; ink: string };
+  title: string;
+  body: string;
+  /** The longer sentence, where V3 cut the visible one short. */
+  a11y?: string;
+  action?: { icon: IconName; label: string; onPress: () => void };
+}) {
   return (
-    <Centre>
-      <Card style={{ width: '100%', maxWidth: 380, alignItems: 'center', paddingVertical: 24 }}>
-        <Icon name="doc" size={28} color={C.muted} />
-        <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center', marginTop: 10 }, weight(600)]}>{title}</T>
-        <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4, marginBottom: children ? 14 : 0 }}>
-          {body}
-        </T>
-        {children}
-      </Card>
-    </Centre>
+    <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16, flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: tint.bg,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        <Glyph shapes={MESSAGE_GLYPH[glyph]} size={20} color={tint.ink} />
+      </View>
+      <View accessible accessibilityLabel={`${title}. ${a11y ?? body}`} style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{title}</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{body}</Text>
+      </View>
+      {action ? (
+        <Pressable
+          onPress={action.onPress}
+          accessibilityRole="button"
+          accessibilityLabel={action.label}
+          style={({ pressed }) => ({
+            width: 48,
+            height: 48,
+            borderRadius: 24,
+            backgroundColor: C.primary,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: pressed ? 0.85 : 1,
+          })}>
+          <Icon name={action.icon} size={20} color="#FFFFFF" strokeWidth={2.2} />
+        </Pressable>
+      ) : null}
+    </View>
   );
 }

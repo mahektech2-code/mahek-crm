@@ -1,13 +1,13 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Text, View, Pressable } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Bar, Card, ListCard, SectionLabel, T } from '../src/components/ui/primitives';
+import { T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
-import { Icon } from '../src/components/ui/Icon';
-import { Presence, Pulse, Swap } from '../src/components/ui/motion';
+import { FillBar, Presence, Pulse, Swap } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
-import { color as C, HIT, radius, weight } from '../src/theme/tokens';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
+import { color as C, tabular, weight } from '../src/theme/tokens';
 import { dataSize, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import {
@@ -317,35 +317,39 @@ export default function MapsScreen() {
       title="Offline maps"
       activeTab={null}
       onBack={back.go}
-      contentStyle={{ padding: 16, paddingBottom: 24 }}>
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
 
-      <Card>
-        <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          Save maps before you need them
-        </T>
-        <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          A saved map works with no signal. Save the places you work once, on Wi-Fi.
-          Then the streets show even when there is no signal.
-        </T>
+      <View
+        accessible
+        accessibilityLabel="Save maps before you need them. A saved map works with no signal. Save the places you work once, on Wi-Fi. Then the streets show even when there is no signal."
+        style={{ backgroundColor: C.navy, borderRadius: 24, padding: 18 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.limeOnNavy, alignItems: 'center', justifyContent: 'center' }}>
+            <Glyph shapes={G.map} size={22} color={C.lime} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 17, lineHeight: 22, color: '#FFFFFF' }, weight(800)]}>Save maps before you need them</Text>
+            <Text style={{ fontSize: 12, color: C.onNavyMuted, marginTop: 2 }}>Works with no signal · save once, on Wi-Fi</Text>
+          </View>
+        </View>
         {blocked ? (
           <View
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               gap: 8,
-              marginTop: 12,
-              padding: 12,
-              borderRadius: radius.md,
+              marginTop: 14,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderRadius: 16,
               backgroundColor: C.warnBg,
             }}>
-            <Icon name="clock" size={18} color={C.warnInk} strokeWidth={1.6} />
-            <T s="small" style={{ flex: 1, color: C.warnInk }}>
-              {blocked}
-            </T>
+            <Glyph shapes={G.noWifi} size={18} color={C.warnInk} />
+            <Text style={[{ flex: 1, fontSize: 13, color: C.warnInk }, weight(600)]}>{blocked}</Text>
           </View>
         ) : null}
-      </Card>
+      </View>
 
       {listing === null ? (
         <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
@@ -356,26 +360,34 @@ export default function MapsScreen() {
       ) : null}
 
       {listing && !listing.areas.length ? (
-        <Card style={{ marginTop: 12 }}>
-          <T s="small" style={{ color: C.muted }}>
+        <View style={{ marginTop: 12, backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', gap: 10 }}>
+          <Glyph shapes={listing.unpinned ? G.noPin : G.cloud} size={20} color={C.muted} />
+          <T style={{ flex: 1, fontSize: 13, color: C.body }}>
             {listing.unpinned
-              ? `None of your ${listing.unpinned} shops has a location yet. So there is no map to save. Checking in at a shop saves its pin, and its area will show here.`
-              : 'There are no shops on this phone yet. Connect to the internet. Your places will show here.'}
+              ? `None of your ${listing.unpinned} shops has a pin yet — no map to save. Checking in at a shop saves its pin, and its area will show here.`
+              : 'No shops on this phone yet. Connect to the internet; your places show here.'}
           </T>
-        </Card>
+        </View>
       ) : null}
 
       {listing?.areas.length ? (
         <>
-          <SectionLabel style={{ marginTop: 20, marginBottom: 8 }}>
-            {plural(listing.areas.length, 'place')} you work
-          </SectionLabel>
-          <ListCard>
-            {listing.areas.map((area, i) => (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20, paddingHorizontal: 6 }}>
+            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(700)]}>
+              {plural(listing.areas.length, 'place')} you work
+            </Text>
+            {listing.unpinned ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Glyph shapes={G.noPin} size={14} color={C.muted} />
+                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>{plural(listing.unpinned, 'shop')} unpinned</Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={{ marginTop: 10, gap: 10 }}>
+            {listing.areas.map((area) => (
               <AreaRow
                 key={area.id}
                 area={area}
-                first={i === 0}
                 status={area.saved ? live[area.saved.id] ?? area.saved.status : undefined}
                 failed={!!failed[area.id]}
                 staleAfterDays={settings?.refreshAfterDays ?? 120}
@@ -401,10 +413,10 @@ export default function MapsScreen() {
                 onRemove={() =>
                   area.saved && setConfirm({ id: area.saved.id, label: area.label })
                 }
-                tooBigSentence={tooBigSentence(area, listing)}
+                tooBigSentence={tooBigRowSentence(listing)}
               />
             ))}
-          </ListCard>
+          </View>
         </>
       ) : null}
 
@@ -413,18 +425,18 @@ export default function MapsScreen() {
           about coverage, and a place missing from the list above with no
           explanation reads as a broken list. */}
       {listing?.unpinned ? (
-        <T s="caption" style={{ marginTop: 10 }}>
-          {`No location yet: ${plural(listing.unpinned, 'shop')}. These shops are not in any area above.`}
+        <T style={{ fontSize: 12, color: C.muted, marginTop: 8, paddingHorizontal: 6 }}>
+          {`${plural(listing.unpinned, 'shop')} have no location yet — they are in no area above.`}
         </T>
       ) : null}
 
       {listing?.orphans.length ? (
         <>
-          <SectionLabel style={{ marginTop: 24, marginBottom: 8 }}>
+          <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.muted, marginTop: 22, paddingHorizontal: 6 }, weight(700)]}>
             Saved, but you do not work here now
-          </SectionLabel>
-          <ListCard>
-            {listing.orphans.map((pack, i) => (
+          </Text>
+          <View style={{ marginTop: 8, gap: 8 }}>
+            {listing.orphans.map((pack) => (
               <View
                 key={pack.id}
                 style={{
@@ -433,42 +445,44 @@ export default function MapsScreen() {
                   gap: 12,
                   paddingHorizontal: 16,
                   paddingVertical: 14,
-                  borderTopWidth: i ? 1 : 0,
-                  borderTopColor: C.wash,
+                  borderRadius: 20,
+                  backgroundColor: '#F6F8FB',
                 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={{ fontSize: 15, color: C.ink }}>{pack.label}</T>
-                  <T s="caption">
+                  <Text style={[{ fontSize: 15, color: C.body }, weight(700)]}>{pack.label}</Text>
+                  <Text style={{ fontSize: 12, color: C.muted }}>
                     {[
                       dataSize(pack.status?.completedResourceSize),
                       pack.savedAt ? 'saved ' + pretty(isoDate(new Date(pack.savedAt))) : null,
                     ]
                       .filter(Boolean)
                       .join(' · ')}
-                  </T>
+                  </Text>
                 </View>
-                <RowButton label="Remove" onPress={() => setConfirm({ id: pack.id, label: pack.label })} />
+                <RowButton label="Remove" variant="white" onPress={() => setConfirm({ id: pack.id, label: pack.label })} />
               </View>
             ))}
-          </ListCard>
-          <T s="caption" style={{ marginTop: 8 }}>
-            None of your shops are in these places now. Nothing is deleted.
-            Remove one to free the space.
+          </View>
+          <T style={{ fontSize: 12, color: C.muted, marginTop: 8, paddingHorizontal: 6 }}>
+            None of your shops are here now. Nothing is deleted — remove to free space.
           </T>
         </>
       ) : null}
 
       {settings ? (
-        <T s="caption" style={{ marginTop: 24, textAlign: 'center' }}>
-          {`Maps are saved to zoom ${settings.maxZoom}. You can read lane names. Sizes are about right, not exact.`}
+        <T
+          style={{ fontSize: 12, color: C.faint, marginTop: 20, textAlign: 'center' }}>
+          {`Zoom ${settings.maxZoom} — lane names readable · sizes approximate`}
         </T>
       ) : null}
 
       <ConfirmSheet
         open={confirm !== null}
         title={`Remove ${confirm?.label ?? ''}?`}
-        body="The map of this place will not show without signal. Your shops, visits and orders stay safe. You can save it again on Wi-Fi."
+        body={'Map will not show without signal.\nShops, visits and orders stay safe.\nSave it again any time on Wi-Fi.'}
         confirmLabel="Remove"
+        tone="danger"
+        lead={{ icon: 'map', tint: C.danger, bg: C.dangerBg }}
         reason=""
         onReason={() => {}}
         error={false}
@@ -487,11 +501,24 @@ export default function MapsScreen() {
   );
 }
 
+/* The marks the Version 3 artboard draws on this screen. */
+const G = {
+  map: [{ p: 'M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z' }, { p: 'M9 4v14M15 6v14' }],
+  noWifi: [{ p: 'M2 9a15 15 0 0 1 20 0M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0' }, { p: 'M3 3l18 18' }],
+  noPin: [{ p: 'M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z' }, { p: 'M4 4l16 16' }],
+  cloud: [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }],
+  download: [{ p: 'M12 4v11M7 10l5 5 5-5M5 20h14' }],
+  pause: [{ r: [7, 5, 3.5, 14, 1] }, { r: [13.5, 5, 3.5, 14, 1] }],
+  play: [{ p: 'M8 5l11 7-11 7z' }],
+  retry: [{ p: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6' }],
+  trash: [{ p: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13' }],
+  tick: [{ p: 'M5 12l5 5 9-10' }],
+} satisfies Record<string, GlyphShape[]>;
+
 /* -------------------------------------------------------------------- row */
 
 function AreaRow({
   area,
-  first,
   status,
   failed,
   staleAfterDays,
@@ -504,7 +531,6 @@ function AreaRow({
   tooBigSentence: whyTooBig,
 }: {
   area: OfflineArea;
-  first: boolean;
   status: OfflinePackStatus | null | undefined;
   /** This pack stopped on an error. See `stopped` below. */
   failed: boolean;
@@ -555,32 +581,29 @@ function AreaRow({
     saved?.savedAt != null ? Math.floor((readAt - saved.savedAt) / 86_400_000) : null;
   const stale = ageDays != null && ageDays > staleAfterDays;
 
+  const pct = status ? Math.round(status.percentage) : 0;
+  const line = describe(area, status, ageDays);
+
   return (
-    <View
-      style={{
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderTopWidth: first ? 0 : 1,
-        borderTopColor: C.wash,
-      }}>
+    <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <T style={{ flexShrink: 1, fontSize: 15, color: C.ink }} numberOfLines={1}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+            <Text style={[{ flexShrink: 1, fontSize: 15, color: C.ink }, weight(700)]} numberOfLines={1}>
               {area.label}
-            </T>
-            {complete && area.coverage.state === 'full' ? <Badge tone="success">Saved</Badge> : null}
-            {complete && area.coverage.state === 'partial' ? <Badge tone="amber">Part saved</Badge> : null}
-            {stopped ? <Badge tone="danger">Stopped</Badge> : null}
+            </Text>
+            {complete && area.coverage.state === 'full' ? <StateTag text="Saved" tone="ok" glyph={G.tick} /> : null}
+            {complete && area.coverage.state === 'partial' ? <StateTag text="Part saved" tone="warn" /> : null}
+            {stopped ? <StateTag text="Stopped" tone="danger" /> : null}
             {/* Breathing while bytes are actually arriving, still once paused —
                 the difference between "it is working" and "it is waiting for
                 you" is the one this badge alone cannot say in a word. */}
             {downloading && !stopped ? (
               <Pulse active={running}>
-                <Badge tone="info">Saving</Badge>
+                <StateTag text="Saving" tone="info" dot={running} />
               </Pulse>
             ) : null}
-            {complete && stale ? <Badge tone="amber">Old</Badge> : null}
+            {complete && stale ? <StateTag text="Old" tone="warn" /> : null}
           </View>
           {/* Keyed on the row's STATE, not on the text: the estimate becoming
               "x of about y" becoming "saved, 312 MB" is the row changing what
@@ -588,9 +611,9 @@ function AreaRow({
               changes the text without changing the state, and must not flicker
               on every progress event. */}
           <Swap id={rowState}>
-            <T s="caption">
-              {describe(area, status, ageDays)}
-            </T>
+            <Text accessibilityLabel={line.replace(/≈ /g, 'about ')} style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+              {line}
+            </Text>
           </Swap>
         </View>
 
@@ -600,24 +623,27 @@ function AreaRow({
             a line of its own, beneath, with a sentence saying why it is
             there. */}
         {!saved ? (
-          <RowButton
-            label={area.tooBig ? 'Too big' : 'Save'}
-            tone={area.tooBig ? 'muted' : 'primary'}
-            onPress={onSave}
-          />
+          area.tooBig ? (
+            /* Still pressable: the tap answers with why, rather than doing
+               nothing under a grey label. */
+            <RowButton label="Too big" variant="muted" onPress={onSave} a11yHint={whyTooBig} />
+          ) : (
+            <RowButton label="Save" variant="primary" glyph={G.download} onPress={onSave} />
+          )
         ) : stopped ? (
           /* "Resume" is the wrong word for something that did not pause. It is
              the same call underneath — the pack keeps what it has and carries
              on from there — and what changes is that the row asks for the tap
              rather than looking as though it is already handling it. */
-          <RowButton label="Try again" tone="primary" onPress={onResume} />
+          <RowButton label="Try again" variant="primary" glyph={G.retry} onPress={onResume} />
         ) : downloading ? (
-          <RowButton
-            label={running ? 'Pause' : 'Resume'}
-            onPress={running ? onPause : onResume}
-          />
+          running ? (
+            <RoundButton label="Pause" glyph={G.pause} variant="outline" onPress={onPause} />
+          ) : (
+            <RoundButton label="Resume" glyph={G.play} variant="primary" onPress={onResume} />
+          )
         ) : (
-          <RowButton label="Remove" onPress={onRemove} />
+          <RoundButton label="Remove" glyph={G.trash} variant="grey" onPress={onRemove} />
         )}
       </View>
 
@@ -630,10 +656,10 @@ function AreaRow({
           {/* A bar in the primary colour reads as a download in progress. What
               is left of a stopped one is how far it got, which is a different
               statement. */}
-          <Bar pct={status.percentage} fill={stopped ? C.faint : C.primary} />
-          <T s="caption" style={{ width: 42, textAlign: 'right' }}>
-            {Math.round(status.percentage)}%
-          </T>
+          <FillBar pct={status.percentage} fill={stopped ? C.faint : C.primary} track={C.hairline} height={10} />
+          <Text style={[{ minWidth: 40, textAlign: 'right', fontSize: 13, color: stopped ? C.muted : C.ink }, weight(800), tabular]}>
+            {pct}%
+          </Text>
         </View>
         ) : null}
       </Presence>
@@ -642,9 +668,7 @@ function AreaRow({
           has already looked away from. A disabled control with no reason is
           the thing this app's own button primitive exists to prevent. */}
       {area.tooBig && !saved ? (
-        <T s="caption" style={{ marginTop: 8, color: C.warnInk }}>
-          {whyTooBig}
-        </T>
+        <Text style={{ marginTop: 8, fontSize: 12, color: C.warnInk }}>{whyTooBig}</Text>
       ) : null}
 
       {/* A DOWNLOAD SOMEBODY WANTS TO ABANDON, in either state.
@@ -665,10 +689,10 @@ function AreaRow({
                    a market — the same judgement `start` makes. What is worth
                    saying is that it stopped, that the part already saved is
                    still there, and that trying again costs only what is left. */
-                'The download stopped before it finished. The part already saved is kept. Try again on a better connection.'
+                'Stopped before it finished. The saved part is kept — try on a better connection.'
               : running
-                ? 'Saving now. Remove it to stop the download and free the space.'
-                : 'Paused. It will continue from where it stopped.'
+                ? 'Saving now. Remove stops it and frees the space.'
+                : 'Paused — continues from where it stopped.'
           }
           label="Remove"
           note={stopped ? 'warn' : 'plain'}
@@ -681,7 +705,7 @@ function AreaRow({
           somebody would otherwise discover by finding a blank patch. */}
       {complete && area.coverage.state === 'partial' ? (
         <Secondary
-          sentence={`Not in the saved map: ${plural(area.coverage.outside, 'shop')}. You got new shops after you saved it.`}
+          sentence={`${plural(area.coverage.outside, 'new shop')} ${area.coverage.outside === 1 ? 'is' : 'are'} not in the saved map.`}
           label="Save again"
           tone="primary"
           note="warn"
@@ -695,11 +719,39 @@ function AreaRow({
           worth offering at all. */}
       {complete && stale ? (
         <Secondary
-          sentence="Roads change slowly. Refresh downloads only what changed."
+          sentence="Refresh fetches only what changed."
           label="Refresh"
+          glyph={G.retry}
           onPress={onRefresh}
         />
       ) : null}
+    </View>
+  );
+}
+
+/** The 24-tall state tag beside the place's name. */
+function StateTag({
+  text,
+  tone,
+  glyph,
+  dot = false,
+}: {
+  text: string;
+  tone: 'ok' | 'warn' | 'danger' | 'info';
+  glyph?: GlyphShape[];
+  dot?: boolean;
+}) {
+  const t = {
+    ok: { bg: C.successBg, fg: C.success },
+    warn: { bg: C.warnBg, fg: C.warnInk },
+    danger: { bg: C.dangerBg, fg: C.danger },
+    info: { bg: C.primaryTint, fg: C.primaryDeep },
+  }[tone];
+  return (
+    <View style={{ height: 24, paddingHorizontal: 9, borderRadius: 12, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      {dot ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.primary }} /> : null}
+      {glyph ? <Glyph shapes={glyph} size={12} color={t.fg} strokeWidth={2.4} /> : null}
+      <Text style={[{ fontSize: 11, color: t.fg }, weight(800)]}>{text}</Text>
     </View>
   );
 }
@@ -712,11 +764,11 @@ function describe(
 ): string {
   const shops = plural(area.shops, 'shop');
 
-  if (!area.saved) return `${shops} · about ${dataSize(area.estimatedBytes)} to save`;
+  if (!area.saved) return `${shops} · ≈ ${dataSize(area.estimatedBytes)}`;
 
   const downloading = status ? status.state !== 'complete' && status.percentage < 100 : false;
   if (downloading && status) {
-    return `${shops} · ${dataSize(status.completedResourceSize)} of about ${dataSize(area.estimatedBytes)}`;
+    return `${shops} · ${dataSize(status.completedResourceSize)} of ≈ ${dataSize(area.estimatedBytes)}`;
   }
 
   const size = dataSize(status?.completedResourceSize ?? area.saved.status?.completedResourceSize);
@@ -725,7 +777,7 @@ function describe(
       ? null
       : ageDays < 1
         ? 'saved today'
-        : `saved ${plural(ageDays, 'day')} ago`;
+        : `${plural(ageDays, 'day')} ago`;
 
   return [shops, size, age].filter(Boolean).join(' · ');
 }
@@ -739,6 +791,12 @@ function describe(
 function tooBigSentence(area: OfflineArea, listing: AreaListing | null): string {
   const ceiling = listing ? dataSize(listing.settings.maxPackBytes) : null;
   return `About ${dataSize(area.estimatedBytes)}. This is over the ${ceiling ?? 'limit'} allowed for one map on this phone. Ask the office to make this area smaller.`;
+}
+
+/** The same refusal shortened for the row, where the size is already on the line above. */
+function tooBigRowSentence(listing: AreaListing | null): string {
+  const ceiling = listing ? dataSize(listing.settings.maxPackBytes) : null;
+  return `Over the ${ceiling ?? 'limit'} allowed for one map. Ask the office to make this area smaller.`;
 }
 
 /**
@@ -755,55 +813,113 @@ function Secondary({
   onPress,
   tone = 'muted',
   note = 'plain',
+  glyph,
 }: {
   sentence: string;
   label: string;
   onPress: () => void;
   tone?: 'muted' | 'primary';
   note?: 'plain' | 'warn';
+  glyph?: GlyphShape[];
 }) {
+  const primary = tone === 'primary';
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
-      <T s="caption" style={{ flex: 1, color: note === 'warn' ? C.warnInk : C.muted }}>
-        {sentence}
-      </T>
-      <RowButton label={label} tone={tone} onPress={onPress} />
+      <Text style={{ flex: 1, fontSize: 12, color: note === 'warn' ? C.warnInk : C.muted }}>{sentence}</Text>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        /* 36 drawn, 48 to the thumb. */
+        hitSlop={{ top: 6, bottom: 6 }}
+        style={({ pressed }) => ({
+          height: 36,
+          paddingHorizontal: 12,
+          borderRadius: 18,
+          backgroundColor: primary ? C.primary : C.canvas,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          opacity: pressed ? 0.8 : 1,
+        })}>
+        {glyph ? <Glyph shapes={glyph} size={14} color={primary ? '#FFFFFF' : C.body} /> : null}
+        <Text style={[{ fontSize: 13, color: primary ? '#FFFFFF' : C.body }, weight(700)]}>{label}</Text>
+      </Pressable>
     </View>
   );
 }
 
+/** A 44 pill with a word on it — Save, Try again, Too big, Remove. */
 function RowButton({
   label,
   onPress,
-  tone = 'muted',
+  variant,
+  glyph,
+  a11yHint,
 }: {
   label: string;
   onPress: () => void;
-  tone?: 'muted' | 'primary';
+  variant: 'primary' | 'muted' | 'white';
+  glyph?: GlyphShape[];
+  a11yHint?: string;
 }) {
+  const bg = variant === 'primary' ? C.primary : variant === 'white' ? C.surface : C.canvas;
+  const fg = variant === 'primary' ? '#FFFFFF' : variant === 'white' ? C.body : C.faint;
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={({ pressed }) => [
-        {
-          /* `HIT`, not 44. Every control on this screen is one of these, and
-             four points under the floor is four points on a row somebody taps
-             on a moving bus. */
-          height: HIT,
-          paddingHorizontal: 14,
-          borderWidth: 1,
-          borderColor: tone === 'primary' ? C.primaryEdge : C.border,
-          backgroundColor: tone === 'primary' ? C.primaryTint : C.surface,
-          borderRadius: radius.md,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        pressed && { backgroundColor: C.wash },
-      ]}>
-      <T style={[{ fontSize: 15, color: tone === 'primary' ? C.primaryDeep : C.body }, weight(500)]}>
-        {label}
-      </T>
+      accessibilityLabel={label}
+      accessibilityHint={a11yHint}
+      hitSlop={{ top: 2, bottom: 2 }}
+      style={({ pressed }) => ({
+        height: 44,
+        paddingHorizontal: variant === 'primary' && label === 'Save' ? 16 : 14,
+        borderRadius: 22,
+        backgroundColor: bg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      {glyph ? <Glyph shapes={glyph} size={16} color={fg} strokeWidth={2.2} /> : null}
+      <Text style={[{ fontSize: 14, color: fg }, weight(700)]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** A 44 round button with only a mark — Pause, Resume, Remove. */
+function RoundButton({
+  label,
+  glyph,
+  onPress,
+  variant,
+}: {
+  label: string;
+  glyph: GlyphShape[];
+  onPress: () => void;
+  variant: 'outline' | 'primary' | 'grey';
+}) {
+  const bg = variant === 'primary' ? C.primary : variant === 'grey' ? C.canvas : C.surface;
+  const fg = variant === 'primary' ? '#FFFFFF' : variant === 'grey' ? C.body : C.ink;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={2}
+      style={({ pressed }) => ({
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: bg,
+        borderWidth: variant === 'outline' ? 1 : 0,
+        borderColor: C.border,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      <Glyph shapes={glyph} size={18} color={fg} strokeWidth={2} fill={glyph === G.play ? fg : 'none'} />
     </Pressable>
   );
 }
