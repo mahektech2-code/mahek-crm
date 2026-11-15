@@ -102,10 +102,10 @@ function DayMenu({ onClose }: { onClose: () => void }) {
 }
 
 /** The day and what can be done with it — in the header's menu and on the launcher's card. */
-export function DayPanel({ onDone }: { onDone?: () => void }) {
+export function DayPanel({ onDone, initial = "day" }: { onDone?: () => void; initial?: "day" | "break" | "out" }) {
   const w = useWorkday()!;
   const { state } = w;
-  const [step, setStep] = React.useState<"day" | "break" | "out">("day");
+  const [step, setStep] = React.useState<"day" | "break" | "out">(initial);
   const [reason, setReason] = React.useState<string | null>(null);
   const [res, setRes] = React.useState<OpResult | null>(null);
   const v = state.verdict ? VERDICT_WORDS[state.verdict] : null;
