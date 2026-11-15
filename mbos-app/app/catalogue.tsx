@@ -1,9 +1,13 @@
 import React from 'react';
-import { View, FlatList } from 'react-native';
+import { ActivityIndicator, View, FlatList, Text } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Input, ListCard, T } from '../src/components/ui/primitives';
-import { color as C, type, weight } from '../src/theme/tokens';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { T } from '../src/components/ui/primitives';
+import { SearchBox } from '../src/components/ui/book-controls';
+import { Icon } from '../src/components/ui/Icon';
+import { color as C, weight } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
@@ -39,7 +43,16 @@ const SEARCH_PAUSE_MS = 250;
 
 /** The hairline between two rows, as `ItemSeparatorComponent`. */
 function RowLine() {
-  return <View style={{ height: 1, backgroundColor: C.wash }} />;
+  return <View style={{ height: 1, backgroundColor: C.hairline }} />;
+}
+
+/** The little box glyph V3 draws before "per box". */
+function BoxGlyph() {
+  return (
+    <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" accessibilityLabel="per box">
+      <Path d="M3 7l9-4 9 4v10l-9 4-9-4z" stroke={C.muted} strokeWidth={2} strokeLinejoin="round" />
+    </Svg>
+  );
 }
 
 export default function CatalogueScreen() {
@@ -109,93 +122,115 @@ export default function CatalogueScreen() {
   const renderRow = ({ item, index }: { item: Row; index: number }) =>
     index < STAGGER_CAP ? <Stagger index={index}>{row(item)}</Stagger> : row(item);
 
-  const row = (x: Row) => (
-    /* NOT PRESSABLE. Every row used to be a button whose whole effect was a
-       2.4-second toast at the far end of the screen, `pointerEvents="none"`,
-       restating four things already printed on the row — so it read as a
-       product detail he could open, and what he got vanished before he had
-       read it out. The one fact the toast carried that the row did not was
-       cans per box, which is on the subtitle now. */
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-      }}>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        {/* THE SKU LEADS, the same rule as the order form's rows —
-            `src/lib/sku-lines.ts`. Depot stock is still not in the payload,
-            so what the second line carries is the formulation and the packing
-            rather than a confident "In stock" nothing has checked. */}
-        <SkuChip sku={x.sku} />
-        <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-          {skuLines({ name: x.name, formulation: x.formulation ?? x.brand }).lead}
-        </T>
-        <T style={{ fontSize: 13, color: C.muted }}>
-          {[
-            skuLines({ name: x.name, formulation: x.formulation ?? x.brand }).detail,
-            x.cansPerBox ? x.cansPerBox + ' per box' : null,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </T>
+  const row = (x: Row) => {
+    const lines = skuLines({ name: x.name, formulation: x.formulation ?? x.brand });
+    const price = x.sellingPricePaise != null ? inrFromPaise(x.sellingPricePaise) : null;
+    return (
+      /* NOT PRESSABLE. Every row used to be a button whose whole effect was a
+         2.4-second toast at the far end of the screen, `pointerEvents="none"`,
+         restating four things already printed on the row — so it read as a
+         product detail he could open, and what he got vanished before he had
+         read it out. The one fact the toast carried that the row did not was
+         cans per box, which is on the subtitle now. */
+      <View
+        accessible
+        accessibilityLabel={[
+          lines.lead,
+          lines.detail,
+          x.cansPerBox ? x.cansPerBox + ' per box' : null,
+          (price ? price + ' / ' : '') + (x.packSize ?? ''),
+        ]
+          .filter(Boolean)
+          .join(', ')}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {/* THE SKU LEADS, the same rule as the order form's rows —
+              `src/lib/sku-lines.ts`. Depot stock is still not in the payload,
+              so what the second line carries is the formulation and the packing
+              rather than a confident "In stock" nothing has checked. */}
+          <SkuChip sku={x.sku} style={{ borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 4 }} />
+          <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{lines.lead}</T>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+            {lines.detail ? <T style={{ fontSize: 12, color: C.muted }}>{lines.detail + (x.cansPerBox ? ' ·' : '')}</T> : null}
+            {x.cansPerBox ? (
+              <>
+                <BoxGlyph />
+                <T style={{ fontSize: 12, color: C.muted }}>{String(x.cansPerBox)}</T>
+              </>
+            ) : null}
+          </View>
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          {/* The rate where one exists, the pack size under it; no rate is the
+              pack size alone rather than a confident ₹0. */}
+          {price ? <T style={[{ fontSize: 16, color: C.ink }, weight(800)]}>{price}</T> : null}
+          {x.packSize ? <T style={{ fontSize: 12, color: C.muted }}>{x.packSize}</T> : null}
+        </View>
       </View>
-      <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-        {(x.sellingPricePaise != null ? inrFromPaise(x.sellingPricePaise) + ' / ' : '') + (x.packSize ?? '')}
-      </T>
-    </View>
-  );
+    );
+  };
 
   /* Nothing terminal until the read has answered, and a catalogue that never
      arrived is a different sentence from a word that matched nothing. */
   const blank = !loaded ? (
-    <Line>Loading products…</Line>
+    <Line spin>Loading products…</Line>
   ) : failed ? (
-    <Line>
-      {'Could not load products. Go back and open it again. If this keeps happening, tell the office.'}
+    <Line tone="danger" a11y="Could not load products. Go back and open it again. If this keeps happening, tell the office.">
+      {'Could not load. Open again; tell the office if it repeats.'}
     </Line>
   ) : asked ? (
     <Line>{'No product found. Try a type, like "epoxy".'}</Line>
   ) : (
-    <Line>
-      {'Products have not come to this phone yet. They come with the next office update. Wait until you have signal.'}
+    <Line
+      cloud
+      a11y="Products have not come to this phone yet. They come with the next office update. Wait until you have signal.">
+      {'Not on this phone yet. Comes with the next office update; wait for signal.'}
     </Line>
   );
 
+  const h = HERO.lavender;
   return (
     <AppFrame
       title="Product catalogue"
       activeTab={null}
       onBack={back.go}
       scroll={false}
-      contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <T style={type.h1}>Product catalogue</T>
-
-      <Input
-        value={typed}
-        onChangeText={setTyped}
-        placeholder="Search a product, pack size or SKU code"
-        style={{ marginTop: 12 }}
-      />
-      {/* The count is a count of what came back. Silent until the read has
-          answered, because "0 products" about a query still running is the
-          same false verdict in a shorter sentence. */}
-      <T s="caption" style={{ marginTop: 8 }}>
-        {loaded && !failed
-          ? more
-            ? 'Showing the first ' + CAP + '. Search to find the rest.'
-            : plural(rows.length, 'product')
-          : ' '}
-      </T>
-
+      showTitle={false}
+      hero={
+        <View>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 16 }}>
+            <Text
+              accessibilityRole="header"
+              accessibilityLabel="Product catalogue"
+              style={[{ flex: 1, fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: h.ink }, weight(800)]}>
+              Catalogue
+            </Text>
+            {/* The count is a count of what came back. Silent until the read has
+                answered, because "0 products" about a query still running is the
+                same false verdict in a shorter sentence. */}
+            {loaded && !failed ? (
+              <Text
+                accessibilityLabel={more ? 'Showing the first ' + CAP + '. Search to find the rest.' : undefined}
+                style={[{ fontSize: 13, color: h.muted }, weight(700)]}>
+                {more ? 'First ' + CAP + ' · search for the rest' : plural(rows.length, 'product')}
+              </Text>
+            ) : null}
+          </View>
+          <View style={{ flexDirection: 'row', marginTop: 12 }}>
+            <SearchBox
+              value={typed}
+              onChange={setTyped}
+              onClear={() => setTyped('')}
+              placeholder="Product, pack size or SKU code"
+            />
+          </View>
+        </View>
+      }
+      contentStyle={{ padding: 14, paddingBottom: 24 }}>
       {rows.length === 0 ? (
         blank
       ) : (
-        <ListCard style={{ flex: 1, marginTop: 12 }}>
+        <View style={{ flex: 1, backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, overflow: 'hidden' }}>
           <FlatList
             data={rows}
             keyExtractor={(x) => x.id}
@@ -207,18 +242,44 @@ export default function CatalogueScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingVertical: 4 }}
           />
-        </ListCard>
+        </View>
       )}
     </AppFrame>
   );
 }
 
-/** One centred sentence in a card — the shape all four blank states share. */
-function Line({ children }: { children: React.ReactNode }) {
+/** One sentence in a card — the shape all four blank states share. */
+function Line({
+  children,
+  tone,
+  spin = false,
+  cloud = false,
+  a11y,
+}: {
+  children: React.ReactNode;
+  tone?: 'danger';
+  spin?: boolean;
+  cloud?: boolean;
+  a11y?: string;
+}) {
+  const danger = tone === 'danger';
   return (
-    <Card padded={false} style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }}>
-      <T style={{ fontSize: 15, color: C.muted, textAlign: 'center' }}>{children}</T>
-    </Card>
+    <View
+      accessible
+      accessibilityLabel={a11y}
+      style={{
+        backgroundColor: danger ? C.dangerBg : C.surface,
+        borderRadius: 16,
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+      }}>
+      {spin ? <ActivityIndicator size="small" color={C.primary} /> : null}
+      {cloud ? <Icon name="upload" size={16} color={C.muted} strokeWidth={2} /> : null}
+      <T style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: danger ? C.danger : C.muted }, weight(600)]}>{children}</T>
+    </View>
   );
 }
