@@ -123,6 +123,29 @@ const toDesk = (l: UploadedLr): DeskCopy => ({
 type Ranked = { b: Bill; score: number; reasons: string[] }[];
 type Tab = ProofKind | "pending";
 type PendingBill = { b: Bill; kind: PendingKind; days: number };
+/*
+ * THE PENDING LIST IS ONE ROW PER BILL. A distributor's Tally bill can go to
+ * several shops, and each shop's part is its own LR (`byBill` keys on the
+ * delivery party for exactly that) — but a person chasing paperwork thinks in
+ * bills, and five rows of one bill read as five problems. So the shops are
+ * gathered back under their bill here, named by who is billed, and the bill
+ * opens onto each shop with its own LRs to attach.
+ */
+type PendingGroup = { key: string; c: Consignment; shops: PendingBill[]; kind: PendingKind; days: number; packages: number | null };
+
+function groupPending(items: PendingBill[]): PendingGroup[] {
+  const out = new Map<string, PendingBill[]>();
+  for (const p of items) {
+    const k = p.b.c.billNo?.trim() ? `${p.b.c.partyId}|${p.b.c.billNo.trim().toUpperCase()}` : p.b.key;
+    out.set(k, [...(out.get(k) ?? []), p]);
+  }
+  return [...out]
+    .map(([key, shops]) => {
+      const sorted = [...shops].sort((x, y) => y.days - x.days || shopOf(x.b.c).localeCompare(shopOf(y.b.c)));
+      return { key, c: sorted[0].b.c, shops: sorted, kind: sorted[0].kind, days: sorted[0].days, packages: sumPackages(sorted.flatMap((p) => p.b.rows)) };
+    })
+    .sort((x, y) => y.days - x.days || (x.c.billNo ?? "").localeCompare(y.c.billNo ?? ""));
+}
 
 /** How each kind of pending bill is named, with the configured day counts in it. */
 function pendingLabel(kind: PendingKind, stuckLrDays: number): string {
@@ -206,6 +229,7 @@ export function DocumentsDesk({
       })
       .sort((x, y) => y.days - x.days || (x.b.c.billNo ?? "").localeCompare(y.b.c.billNo ?? ""));
   }, [waiting, onTheWay, ownOnRoad, today, stuckLrDays]);
+  const pendingGroups = useMemo(() => groupPending(pendingBills), [pendingBills]);
 
   const switchTab = (t: Tab) => {
     setTab(t);
@@ -282,7 +306,7 @@ export function DocumentsDesk({
           ))}
           <button type="button" onClick={() => switchTab("pending")} title="Bills still waiting for their LR or signed copy" className={toggleClass(tab === "pending", "flex items-center gap-1.5")}>
             Pending
-            <Badge label={String(pendingBills.length)} tone={tab === "pending" ? "brand" : pendingBills.some((p) => p.kind !== "awaitingLr") ? "danger" : "muted"} />
+            <Badge label={String(pendingGroups.length)} tone={tab === "pending" ? "brand" : pendingGroups.some((p) => p.kind !== "awaitingLr") ? "danger" : "muted"} />
           </button>
         </div>
         <span className="flex-1" />
@@ -296,7 +320,7 @@ export function DocumentsDesk({
       {tab === "pending" ? (
         <PendingDesk
           transporters={transporters}
-          items={pendingBills}
+          items={pendingGroups}
           rows={rows}
           stuckLrDays={stuckLrDays}
           canWrite={canWrite}
@@ -408,7 +432,7 @@ function PendingDesk({
   onOpen,
   transporters,
 }: {
-  items: PendingBill[];
+  items: PendingGroup[];
   rows: Row[];
   stuckLrDays: number;
   canWrite: boolean;
@@ -417,14 +441,15 @@ function PendingDesk({
   transporters: string[];
 }) {
   const listed = useMemo(() => new Set(transporters.map((t) => t.trim().toLowerCase())), [transporters]);
-  const offList = (p: PendingBill) => !p.b.c.ownVehicle && !p.b.c.lrId && !listed.has((p.b.c.transporter ?? "").trim().toLowerCase());
+  const shopOffList = (p: PendingBill) => !p.b.c.ownVehicle && !p.b.c.lrId && !listed.has((p.b.c.transporter ?? "").trim().toLowerCase());
+  const offList = (g: PendingGroup) => g.shops.some(shopOffList);
   const [filter, setFilter] = useState<PendingKind | "all" | "offList">("all");
   const [pick, setPick] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   /* The chips count the whole kind; the search narrows inside whichever chip is on. */
   const ofKind = filter === "all" ? items : filter === "offList" ? items.filter(offList) : items.filter((p) => p.kind === filter);
-  const shown = query.trim() ? ofKind.filter((p) => billMatches(p.b, query)) : ofKind;
-  const sel = shown.find((p) => p.b.key === pick) ?? shown[0] ?? null;
+  const shown = query.trim() ? ofKind.filter((g) => g.shops.some((p) => billMatches(p.b, query))) : ofKind;
+  const sel = shown.find((g) => g.key === pick) ?? shown[0] ?? null;
   const chip = (k: PendingKind | "all" | "offList", label: string, n: number) => (
     <button key={k} type="button" onClick={() => (setFilter(k), setPick(null))} className={toggleClass(filter === k, "flex items-center gap-1 text-meta")}>
       {label} <span className="tabular-nums">{n}</span>
@@ -454,23 +479,27 @@ function PendingDesk({
         </div>
         {shown.length ? (
           <div className="max-h-[72vh] overflow-y-auto">
-            {shown.map((p) => (
-              <button
-                key={p.b.key}
-                type="button"
-                onClick={() => setPick(p.b.key)}
-                className={cx("flex w-full cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-left last:border-0", sel?.b.key === p.b.key ? "bg-brand-soft" : "hover:bg-canvas")}
-              >
-                <span className="min-w-0 flex-1">
-                  {/* One bill to a distributor is a row per shop it goes to, so the shop is what tells the rows apart: it leads, and who is billed sits beneath. */}
-                  <span className="block truncate text-sm font-semibold text-ink">{shopOf(p.b.c)}</span>
-                  <span className="block truncate text-meta text-muted">
-                    {[shopOf(p.b.c) !== p.b.c.party ? `Billed to ${p.b.c.party}` : null, p.b.c.billNo ?? `Order ${p.b.c.orderNo}`, p.b.c.ownVehicle ? (p.b.c.vehicleNo ?? directWho(p.b.c.transporter)) : p.b.c.transporter].filter(Boolean).join(" · ")}
+            {shown.map((g) => {
+              /* One row per bill, named by who is billed; a bill to several shops says how many, and a bill to one other shop names it. */
+              const one = g.shops.length === 1 ? g.shops[0].b.c : null;
+              const where = one ? (shopOf(one) !== one.party ? `→ ${shopOf(one)}` : null) : `${g.shops.length} shops`;
+              return (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => setPick(g.key)}
+                  className={cx("flex w-full cursor-pointer items-center gap-3 border-b border-divider px-3 py-2 text-left last:border-0", sel?.key === g.key ? "bg-brand-soft" : "hover:bg-canvas")}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-ink">{g.c.party}</span>
+                    <span className="block truncate text-meta text-muted">
+                      {[g.c.billNo ?? `Order ${g.c.orderNo}`, where, g.c.ownVehicle ? (g.c.vehicleNo ?? directWho(g.c.transporter)) : g.c.transporter].filter(Boolean).join(" · ")}
+                    </span>
                   </span>
-                </span>
-                <span className={cx("shrink-0 text-meta font-semibold tabular-nums", p.kind === "noLr" ? "text-danger" : p.kind === "awaitingLr" ? "text-muted" : "text-warn-ink")}>{plural(p.days, "day")}</span>
-              </button>
-            ))}
+                  <span className={cx("shrink-0 text-meta font-semibold tabular-nums", g.kind === "noLr" ? "text-danger" : g.kind === "awaitingLr" ? "text-muted" : "text-warn-ink")}>{plural(g.days, "day")}</span>
+                </button>
+              );
+            })}
           </div>
         ) : (
           <Empty>{query.trim() && ofKind.length ? `No pending bill matches “${query.trim()}”.` : items.length ? "Nothing pending of this kind." : "Nothing is pending. Every bill has its LR or signed copy."}</Empty>
@@ -478,7 +507,7 @@ function PendingDesk({
       </Card>
 
       {sel ? (
-        <PendingDetail key={sel.b.key} item={sel} rows={rows} stuckLrDays={stuckLrDays} canWrite={canWrite} onOpen={onOpen} transporters={transporters} offList={offList(sel)} />
+        <PendingBillDetail key={sel.key} group={sel} rows={rows} stuckLrDays={stuckLrDays} canWrite={canWrite} onOpen={onOpen} transporters={transporters} shopOffList={shopOffList} />
       ) : (
         <Card>
           <Empty>Pick a bill on the left.</Empty>
@@ -488,10 +517,79 @@ function PendingDesk({
   );
 }
 
-function PendingDetail({
-  item,
+/*
+ * One bill, opened. Its header names who is billed; below it every shop the
+ * bill goes to is a section of its own, because each shop's goods go on their
+ * own LR — its own matches, its own "Check and attach", its own "Reached
+ * transporter". A bill to one shop has no sections: the shop sits in the header.
+ */
+function PendingBillDetail({
+  group,
   rows,
   stuckLrDays,
+  canWrite,
+  onOpen,
+  transporters,
+  shopOffList,
+}: {
+  group: PendingGroup;
+  rows: Row[];
+  stuckLrDays: number;
+  canWrite: boolean;
+  onOpen: (copyId: string, kind: ProofKind, bill: Bill) => void;
+  transporters: string[];
+  shopOffList: (p: PendingBill) => boolean;
+}) {
+  const c = group.c;
+  const one = group.shops.length === 1 ? group.shops[0] : null;
+  const badge = (p: { kind: PendingKind; days: number }) => (
+    <Badge label={`${pendingLabel(p.kind, stuckLrDays)} · ${plural(p.days, "day")}`} tone={p.kind === "noLr" ? "danger" : p.kind === "awaitingLr" ? "muted" : "warn"} />
+  );
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-start gap-3 border-b border-divider px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-lg font-semibold text-ink">{one ? partyLine(one.b.c) : c.party}</div>
+          <div className="flex flex-wrap items-center gap-2 text-meta text-muted">
+            <BillRef c={c} />
+            {[
+              c.billDate ? shortDay(c.billDate) : null,
+              one ? null : `${group.shops.length} shops`,
+              group.packages != null ? plural(group.packages, "box", "boxes") : null,
+              c.ownVehicle ? [directWho(c.transporter), c.vehicleNo].filter(Boolean).join(" ") : c.transporter,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+        </div>
+        {badge(group)}
+      </div>
+      {one ? (
+        <ShopPending item={one} rows={rows} canWrite={canWrite} onOpen={onOpen} transporters={transporters} offList={shopOffList(one)} />
+      ) : (
+        group.shops.map((p) => (
+          <div key={p.b.key} className="border-b border-divider last:border-0">
+            <div className="flex flex-wrap items-center gap-3 bg-canvas px-4 py-2">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold text-ink">{shopOf(p.b.c)}</span>
+                <span className="block truncate text-meta text-muted">
+                  {[p.b.packages != null ? plural(p.b.packages, "box", "boxes") : null, p.b.c.area ?? p.b.c.partyCity].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              {badge(p)}
+            </div>
+            <ShopPending item={p} rows={rows} canWrite={canWrite} onOpen={onOpen} transporters={transporters} offList={shopOffList(p)} />
+          </div>
+        ))
+      )}
+    </Card>
+  );
+}
+
+/** One shop's part of a pending bill: who to ring, what to fix, and the copies on the desk that may be its LR. */
+function ShopPending({
+  item,
+  rows,
   canWrite,
   onOpen,
   transporters,
@@ -499,7 +597,6 @@ function PendingDetail({
 }: {
   item: PendingBill;
   rows: Row[];
-  stuckLrDays: number;
   canWrite: boolean;
   onOpen: (copyId: string, kind: ProofKind, bill: Bill) => void;
   transporters: string[];
@@ -532,18 +629,7 @@ function PendingDetail({
   const toTransport = b.rows.filter((y) => y.phase === "toTransport");
 
   return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-start gap-3 border-b border-divider px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-lg font-semibold text-ink">{partyLine(c)}</div>
-          <div className="flex flex-wrap items-center gap-2 text-meta text-muted">
-            <BillRef c={c} />
-            {[c.billDate ? shortDay(c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, c.ownVehicle ? [directWho(c.transporter), c.vehicleNo].filter(Boolean).join(" ") : c.transporter].filter(Boolean).join(" · ")}
-          </div>
-        </div>
-        <Badge label={`${pendingLabel(item.kind, stuckLrDays)} · ${plural(item.days, "day")}`} tone={item.kind === "noLr" ? "danger" : item.kind === "awaitingLr" ? "muted" : "warn"} />
-      </div>
-
+    <>
       <div className="flex flex-col gap-4 p-4">
         <div className="flex flex-wrap items-center gap-4">
           {c.ownVehicle ? (
@@ -604,7 +690,7 @@ function PendingDetail({
         </div>
       </div>
       {changing ? <DeliveredByDialog key={b.key} group={b.rows} transporters={transporters} onClose={() => setChanging(false)} /> : null}
-    </Card>
+    </>
   );
 }
 
