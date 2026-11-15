@@ -577,6 +577,7 @@ export const SECTION_TITLE: Record<import("./types").SectionKey, string> = {
   field: "Field force",
   service: "Service",
   money: "Money",
+  deadlines: "Accounts deadlines",
   prices: "Price lists",
   whatsapp: "WhatsApp",
   people: "People & organisation",

@@ -210,6 +210,7 @@ const RULES: Rule[] = [
 
   /* -------------------------------------------------------------- accounts */
   { test: /^payments\./, page: "accounts", tab: "payments", group: "Recording and confirming money" },
+  { test: /^accountsSla\./, page: "accounts", tab: "payments", group: "Approval deadline" },
   { test: /^bankStatements\./, page: "accounts", tab: "payments", group: "Bank statement management" },
   { test: /^pricing\./, page: "accounts", tab: "price-lists" },
 

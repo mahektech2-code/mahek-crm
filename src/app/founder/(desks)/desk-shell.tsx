@@ -29,6 +29,7 @@ function deskOf(pathname: string): SectionKey | null {
   if (pathname.startsWith("/founder/margins")) return "margins";
   if (pathname.startsWith("/founder/my-tasks")) return "tasks";
   if (pathname.startsWith("/founder/feedback")) return "feedback";
+  if (pathname.startsWith("/founder/accounts-deadlines")) return "deadlines";
   return null;
 }
 
@@ -50,7 +51,7 @@ export function DeskFrame({
   if (pathname.endsWith("/print")) return <>{children}</>;
 
   const desk = deskOf(pathname) ?? "whatsapp";
-  const go = (s: SectionKey) => router.push(s === "company" ? "/founder" : s === "margins" ? "/founder/margins" : s === "tasks" ? "/founder/my-tasks" : s === "feedback" ? "/founder/feedback" : `/founder?s=${s}`);
+  const go = (s: SectionKey) => router.push(s === "company" ? "/founder" : s === "margins" ? "/founder/margins" : s === "tasks" ? "/founder/my-tasks" : s === "feedback" ? "/founder/feedback" : s === "deadlines" ? "/founder/accounts-deadlines" : `/founder?s=${s}`);
   const tabs = desk === "whatsapp" ? WHATSAPP_TABS : null;
   const current = tabs?.find((t) => tabIsOn(t, pathname));
 

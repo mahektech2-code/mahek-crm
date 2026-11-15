@@ -2353,6 +2353,13 @@
       "when": 1793800900000,
       "tag": "0341_workday_lock_everyone",
       "breakpoints": true
+    },
+    {
+      "idx": 337,
+      "version": "7",
+      "when": 1793801000000,
+      "tag": "0342_accounts_deadline",
+      "breakpoints": true
     }
   ]
 }

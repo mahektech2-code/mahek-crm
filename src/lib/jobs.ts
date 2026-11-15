@@ -160,6 +160,7 @@ export type JobName =
   | "erp-alerts"
   /** Website review: approvals whose seven days have passed become `expired`, freeing their items. Idempotent. */
   | "website-review-expiry"
+  | "accounts-sla"
   /** Feedback sent to GitHub: the pull request that fixed it, and whether it is in the serving build. Closes what is live. Hourly. */
   | "feedback-fixes"
   /** A price list whose successor has taken over, filed as superseded. Hourly and nightly. */
@@ -786,6 +787,16 @@ async function priceListsSupersedeStep() {
   return { recordsAffected: n, detail: n ? `${n} list${n === 1 ? "" : "s"} superseded` : "no list had ended" };
 }
 
+/** The accounts deadline: what went past it, what was decided, and who to tell. */
+async function accountsSlaStep() {
+  const { sweepAccountsSla } = await import("./services/accounts-sla-service");
+  const r = await sweepAccountsSla();
+  return {
+    recordsAffected: r.opened + r.resolved + r.escalated,
+    detail: `${r.opened} newly past the deadline · ${r.resolved} decided · ${r.notified} first notices · ${r.escalated} further notices`,
+  };
+}
+
 async function websiteReviewExpiryStep() {
   const { sweepExpiredApprovals } = await import("./website-cms/review-service");
   const expired = await sweepExpiredApprovals();
@@ -949,6 +960,7 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
 
   // Website review: approvals past their seven days.
   results.push(await run("website-review-expiry", websiteReviewExpiryStep, triggeredById));
+  results.push(await run("accounts-sla", accountsSlaStep, triggeredById));
   results.push(await run("price-lists-supersede", priceListsSupersedeStep, triggeredById));
 
   // Bank statement PDFs past their days are deleted; the lines stay.
@@ -1395,6 +1407,8 @@ export async function runJob(
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
     case "website-review-expiry":
       return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
+    case "accounts-sla":
+      return [await run("accounts-sla", accountsSlaStep, triggeredById)];
     case "feedback-fixes":
       return [await run("feedback-fixes", feedbackFixesStep, triggeredById)];
     case "price-lists-supersede":
