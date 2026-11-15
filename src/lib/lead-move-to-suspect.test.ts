@@ -144,8 +144,11 @@ describe("everything else off the ladder is still refused", () => {
     await refused({ leadStage: "won" }, "suspect");
   });
 
-  test("a lead with NO sales type is still on the legacy ladder, which has no Suspect", async () => {
-    await refused({ leadStage: "new", leadSalesType: null }, "suspect");
+  test("a lead with NO sales type climbs the one ladder too, so its `new` moves to Suspect (Nov 2026)", async () => {
+    const lead = await makeLead({ leadStage: "new", leadSalesType: null });
+    const r = await advanceLeadStage({ customerId: lead.id, to: "suspect" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await rowOf(lead.id)).leadStage, "suspect");
   });
 
   test("walking a real funnel lead back down is still a manager's, with a reason", async () => {

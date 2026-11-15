@@ -964,11 +964,15 @@ export async function evaluateLeadStageMove(input: {
    * transition row is written like any other move. `lost`, `on_hold`, `won` and
    * the legacy `qualified` all stay off the ladder, as does every other target.
    */
+  /* A lead still stored under a retired word (`new`, `contacted`, `qualified`)
+     moved to the rung that word now means is a real write — it puts the
+     ladder's own word on the row — so it passes rather than reading as a move
+     to where the lead already stands. */
   if (
-    direction === "off_ladder" &&
-    to === "suspect" &&
-    (from === "new" || from === "contacted") &&
-    ladderFor(salesType).includes("suspect")
+    (direction === "off_ladder" || direction === "same") &&
+    from !== to &&
+    foldStage(from) === to &&
+    ladderFor(salesType).includes(to)
   ) {
     return { ok: true, kind: "passed", overriddenConditions: [] };
   }

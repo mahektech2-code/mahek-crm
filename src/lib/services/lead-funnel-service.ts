@@ -158,7 +158,15 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
        rung now; left unfolded it would match no rung of the ladder and drop out of
        the funnel it is still in. Nothing is rewritten: only the reading is. */
     select c.lead_sales_type::text as "salesType",
-           case when c.lead_stage::text = 'sample_received' then 'sample_review' else c.lead_stage::text end as stage,
+           /* And the retired legacy words are read as the rung they mean on the
+              one ladder (Nov 2026); won stays itself, the arrived end. */
+           case c.lead_stage::text
+             when 'sample_received' then 'sample_review'
+             when 'new' then 'suspect'
+             when 'contacted' then 'suspect'
+             when 'qualified' then 'qualification'
+             else c.lead_stage::text
+           end as stage,
            count(*)::int as n,
            coalesce(sum(c.lead_estimated_potential_paise), 0) as potential,
            count(c.lead_stage_since)::int as dated,
