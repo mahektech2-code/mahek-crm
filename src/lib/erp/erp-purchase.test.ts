@@ -920,7 +920,7 @@ describe("the goods receipt starts from the item", () => {
       { po: a.po, poLine: a.lines.Toluene, drums: "1", qty: "5" },
       { po: c.po, poLine: c.lines["1 L Tin Can"], qty: "3" },
     ]);
-    assert.ok(!mixed.ok && mixed.fieldErrors?.[0].field === "l1.poLine" && /one vendor/.test(mixed.fieldErrors[0].message), JSON.stringify(mixed));
+    assert.ok(!mixed.ok && mixed.fieldErrors?.[0].field === "l1.poLine" && /one supplier/.test(mixed.fieldErrors[0].message), JSON.stringify(mixed));
 
     const r = await mod("inward").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", transportMode: NONE }, [
       { po: a.po, poLine: a.lines.Toluene, drums: "1", qty: "5" },
