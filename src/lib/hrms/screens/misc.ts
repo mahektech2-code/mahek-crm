@@ -109,6 +109,8 @@ function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefi
         ],
       },
     });
+  if (resolver && r.status === "Pending")
+    a.push({ id: "decline", l: "Decline", prompt: { title: "Decline help request", sub: r.type, submit: "Decline", fields: [{ k: "remark", l: "Why", t: "area", req: true }] } });
   if (resolver)
     a.push({ id: "remark", l: "Reviewer’s remark", prompt: { title: "Reviewer’s remark", submit: "Save", init: { remark: r.adminRemark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] } });
   if (ATTENDANCE_TYPES.includes(r.type))
@@ -244,6 +246,24 @@ const help: HrmsScreenModule = {
         return okVoid(`Approved · ${await correctDayFromHelp(ctx, { employeeId: r.employeeId, date: r.date, inTime: r.inTime, outTime: r.outTime, type: r.type })}`);
       }
       return okVoid(has(ctx, "editAtt") ? "Approved · attendance was not changed" : "Approved · someone who can edit attendance sets the times on that day");
+    },
+    /** Turn a request down, with the reason they are told. */
+    async decline(ctx, id, v) {
+      const [r] = await db.select().from(hrmsHelp).where(eq(hrmsHelp.id, id));
+      if (!r) return err("That request no longer exists.", "not_found");
+      if (!resolvesHelpFor(ctx, r.employeeId))
+        return err("Declining help requests needs the “Resolve help requests and grievances” power. A manager declines their own team’s, never their own.", "not_permitted");
+      if (r.status !== "Pending") return err("This help request is already decided.");
+      const remark = text(v.remark);
+      if (!remark) return fieldErr("remark", "Say why, so they know what to do instead.");
+      await db
+        .update(hrmsHelp)
+        .set({ status: "Declined", adminRemark: remark, decidedAt: new Date(), decidedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(hrmsHelp.id, id));
+      await hrmsAudit(ctx, "hrms.help.decline", "hrms_help", id, { status: r.status }, { status: "Declined", remark });
+      const to = await userIdsFor([r.employeeId]);
+      await tell(to.map((userId) => ({ userId, title: "Help request declined", body: `${r.type} · ${remark}`, href: hrmsLink("help", { open: id }) })));
+      return okVoid("Declined");
     },
     async remark(ctx, id, v) {
       const [r] = await db.select({ employeeId: hrmsHelp.employeeId }).from(hrmsHelp).where(eq(hrmsHelp.id, id));

@@ -67,5 +67,7 @@ export function greeting(ms: number, name: string): string {
 /** "Sunday, 15 November" — the design's date under the clock. */
 export function dayDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long" }).format(new Date(Date.UTC(y, m - 1, d)));
+  const at = new Date(Date.UTC(y, m - 1, d));
+  const part = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", ...o }).format(at);
+  return `${part({ weekday: "long" })}, ${d} ${part({ month: "long" })}`;
 }

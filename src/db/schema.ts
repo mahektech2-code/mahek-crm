@@ -14789,6 +14789,30 @@ export const hrmsStaffTimings = pgTable(
 );
 
 /**
+ * An office's working week (the Workday Clock design's "Office timings"). A
+ * row per WORKING weekday — no row is a week off. Everybody at the office
+ * works this week unless they have rows of their own in `hrms_staff_timings`,
+ * which replace it whole for that person.
+ */
+export const hrmsOfficeTimings = pgTable(
+  "hrms_office_timings",
+  {
+    id: text("id").primaryKey(),
+    officeId: text("office_id")
+      .notNull()
+      .references(() => hrmsOffices.id, { onDelete: "cascade" }),
+    /** "Monday" … "Sunday". */
+    weekday: text("weekday").notNull(),
+    inTime: text("in_time").notNull(),
+    outTime: text("out_time").notNull(),
+    presentMin: integer("present_min"),
+    halfMin: integer("half_min"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_office_timings_key").on(t.officeId, t.weekday)],
+);
+
+/**
  * One attendance day per employee (spec §6). The official in/out time and
  * the target are STAMPED at check-in from that weekday's timing, the way the
  * source's app formulas were computed when the row was written: changing a
