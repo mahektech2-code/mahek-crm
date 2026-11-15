@@ -1111,53 +1111,56 @@ export default function Home() {
   }, [params.punchOut, day]);
 
   /* ---- the hero: who and when, and the day itself ---- */
-  const hero = (
-    <View>
-      {/* ---- who and when ---- */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
-        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[{ fontSize: 14, color: C.onNavy }, weight(700)]}>
-            {boot.session?.user.initials ?? '··'}
-          </Text>
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.onNavy }, weight(700)]}>
-            {greetingFor(today.getHours()) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-            <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(400)]}>{dateLine}</Text>
-            {/*
-              WHAT HE IS HERE AS — §12.1's role chip.
+  /* ---- who and when ---- drawn FIRST in the hero, beside refresh and the
+     bell, as the artboard has it; the status chips sit under it. */
+  const heroIdentity = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={[{ fontSize: 14, color: C.onNavy }, weight(700)]}>
+          {boot.session?.user.initials ?? '··'}
+        </Text>
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.onNavy }, weight(700)]}>
+          {greetingFor(today.getHours()) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+          <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(400)]}>{dateLine}</Text>
+          {/*
+            WHAT HE IS HERE AS — §12.1's role chip.
 
-              The DESIGNATION and not the role. `role` is a LEVEL — associate,
-              manager, admin — and AGENTS.md is emphatic that a level is not a
-              job: "associate" on a handset says nothing a salesman recognises
-              about himself, and it is the same word for the telecaller on the
-              phones. What HR publishes in the employee master is what he is
-              called at work, so that is what is drawn, and the level is the
-              fallback for an account that has none rather than the answer.
-              Nothing is drawn where there is neither: an empty chip is a
-              rectangle that says less than the space it takes.
-            */}
-            {roleChip ? (
-              <View
-                style={{
-                  flexShrink: 1,
-                  height: 20,
-                  justifyContent: 'center',
-                  backgroundColor: 'rgba(255,255,255,0.10)',
-                  borderRadius: 10,
-                  paddingHorizontal: 8,
-                }}>
-                <Text numberOfLines={1} style={[{ fontSize: 12, color: C.primaryEdge }, weight(700)]}>
-                  {roleChip}
-                </Text>
-              </View>
-            ) : null}
-          </View>
+            The DESIGNATION and not the role. `role` is a LEVEL — associate,
+            manager, admin — and AGENTS.md is emphatic that a level is not a
+            job: "associate" on a handset says nothing a salesman recognises
+            about himself, and it is the same word for the telecaller on the
+            phones. What HR publishes in the employee master is what he is
+            called at work, so that is what is drawn, and the level is the
+            fallback for an account that has none rather than the answer.
+            Nothing is drawn where there is neither: an empty chip is a
+            rectangle that says less than the space it takes.
+          */}
+          {roleChip ? (
+            <View
+              style={{
+                flexShrink: 1,
+                height: 20,
+                justifyContent: 'center',
+                backgroundColor: 'rgba(255,255,255,0.10)',
+                borderRadius: 10,
+                paddingHorizontal: 8,
+              }}>
+              <Text numberOfLines={1} style={[{ fontSize: 12, color: C.primaryEdge }, weight(700)]}>
+                {roleChip}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
+    </View>
+  );
 
+  const hero = (
+    <View>
       {/* ---- start the day, or what is left of it ----
 
           THE MOST CONSEQUENTIAL ZERO WAS THIS ONE. `checkedIn` is
@@ -1349,6 +1352,7 @@ export default function Home() {
       activeTab="home"
       tone="navy"
       showTitle={false}
+      heroTop={heroIdentity}
       hero={hero}
       contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 92, gap: 12 }}>
       {/* ---- whether this phone will record the day at all ----
