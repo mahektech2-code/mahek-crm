@@ -22,6 +22,8 @@
  * asking the machine's zone (which on the server is UTC).
  * ------------------------------------------------------------------------- */
 
+import { calendarDate } from "@/lib/business-date";
+
 export type SlaClock = "working_days" | "office_hours";
 
 export type SlaCalendar = {
@@ -59,7 +61,7 @@ function minutesOf(hhmm: string, fallback: number): number {
 
 /** The local calendar day an instant falls on, "YYYY-MM-DD". */
 export function localDay(ms: number): string {
-  return new Date(ms + IST_MS).toISOString().slice(0, 10);
+  return calendarDate(new Date(ms));
 }
 
 /** Local midnight (as a UTC instant) of the day containing `ms`. */
