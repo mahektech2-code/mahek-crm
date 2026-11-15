@@ -138,6 +138,7 @@ export default function DocViewScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Document"
       activeTab={null}
       onBack={back.go}

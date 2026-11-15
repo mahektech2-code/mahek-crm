@@ -31,6 +31,7 @@ export default function KnowledgeScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Knowledge centre"
       activeTab={null}
       onBack={back.go}

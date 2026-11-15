@@ -114,6 +114,7 @@ export default function Rejections() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Not accepted"
       activeTab="more"
       showTitle={false}

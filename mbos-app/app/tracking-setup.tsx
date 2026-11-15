@@ -203,6 +203,7 @@ export default function TrackingSetupScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Keep tracking on"
       activeTab="more"
       onBack={back.go}

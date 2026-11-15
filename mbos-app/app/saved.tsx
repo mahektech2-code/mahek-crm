@@ -148,6 +148,7 @@ export default function Saved() {
 
   return (
     <AppFrame
+      tone="canvas"
       hideBack
       title="Visit saved"
       activeTab="customers"

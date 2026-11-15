@@ -183,6 +183,7 @@ export default function NotificationsScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Notifications"
       activeTab={null}
       onBack={back.go}

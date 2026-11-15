@@ -250,7 +250,7 @@ export default function ProspectForm() {
 
   if (!view) {
     return (
-      <AppFrame title="Prospect details" tone="lavender" activeTab={null} onBack={goBack} contentStyle={{ padding: 14 }}>
+      <AppFrame title="Prospect details" tone="canvas" activeTab={null} onBack={goBack} contentStyle={{ padding: 14 }}>
         <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 26, alignItems: 'center' }}>
           <Icon name="person" size={28} color={C.faint} strokeWidth={2} />
           <Text style={[{ fontSize: 16, lineHeight: 21, color: C.ink, textAlign: 'center', marginTop: 8 }, weight(800)]}>
@@ -490,7 +490,7 @@ export default function ProspectForm() {
   return (
     <AppFrame
       title="Prospect details"
-      tone="lavender"
+      tone="canvas"
       hero={
         <Text style={[{ fontSize: 13, lineHeight: 18, color: HERO.lavender.muted, marginTop: 4 }, weight(400)]}>
           {(lead.company?.trim() || lead.name) + ' · ' + stageLabel(input.stage) + ' · fill everything on this page'}

@@ -364,6 +364,7 @@ export default function OrderScreen() {
   if (picking || !c) {
     return (
       <AppFrame
+      tone="canvas"
         title="New order"
         activeTab={null}
         onBack={back.go}
@@ -733,6 +734,7 @@ export default function OrderScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title={title}
       activeTab={null}
       onBack={back.go}

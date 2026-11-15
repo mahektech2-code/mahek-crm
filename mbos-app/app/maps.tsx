@@ -314,6 +314,7 @@ export default function MapsScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Offline maps"
       activeTab={null}
       onBack={back.go}

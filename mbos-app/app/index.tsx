@@ -2,7 +2,9 @@ import React from 'react';
 import { Animated, AppState, View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
+import { StatusBar } from 'expo-status-bar';
+import { color as C, tabular, weight } from '../src/theme/tokens';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import { PrimaryButton, Toggle } from '../src/components/ui/primitives';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -11,7 +13,7 @@ import { useKeyboardHeight } from '../src/components/ui/keyboard';
 import * as Clipboard from 'expo-clipboard';
 import { otpAvailable, requestOtp, ApiError } from '../src/sync/api';
 import { otpFromClipboard } from '../src/engines/otp-clipboard';
-import { Appear, Pop, Pulse, useShake } from '../src/components/ui/motion';
+import { Appear, Pop, Pulse, usePressScale, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 import type { FeedbackKind } from '../src/engines/feedback';
 
@@ -294,6 +296,8 @@ export default function Login() {
     router.replace('/home');
   }
 
+  const signInPress = usePressScale();
+
   const steps = ['Checking your sign-in with MahekOne', 'Saving your day on this phone'];
 
   /* The splash stays up until the database has been opened and the stored
@@ -303,6 +307,20 @@ export default function Login() {
      typing into it. */
   if (!boot.ready) return null;
 
+  const typing = keyboardHeight > 0;
+  /* The digit count rides in the box while it is wrong, and only while the
+     sentence under it is the count — a server refusal names its own reason. */
+  const countChip = err === 'mob' && !serverMessage && mob.length > 0;
+  const banner =
+    err === 'payload'
+      ? (serverMessage ?? "Signed in, but today's data was not saved on this phone.") +
+        ' Try again. If it keeps happening, tell your manager.'
+      : err === 'network'
+        ? (serverMessage ?? 'No internet. Could not reach MahekOne.')
+        : err === 'inactive'
+          ? (serverMessage ?? 'This account cannot be used right now. Ask your manager.')
+          : null;
+
   return (
     <KeyboardAvoidingView
       /* Android runs edge-to-edge here, so its window does not resize and
@@ -310,111 +328,141 @@ export default function Login() {
          height below does the lifting on both platforms; this only smooths
          the iOS animation. */
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ flex: 1, backgroundColor: C.surface }}>
+      style={{ flex: 1, backgroundColor: C.canvas }}>
+      <StatusBar style="light" />
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: insets.top,
-          paddingBottom: 40 + (Platform.OS === 'android' ? keyboardHeight : 0),
+          flexGrow: 1,
+          paddingBottom: 26 + insets.bottom + (Platform.OS === 'android' ? keyboardHeight : 0),
         }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
         showsVerticalScrollIndicator={false}>
-        {/* The masthead gives up its space while typing. On a small phone that
-            96px is the difference between seeing the password field and not,
-            and nobody needs the logo while they are entering a password. */}
-        <View style={{ height: keyboardHeight > 0 ? 24 : 96 }} />
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View style={{ width: 28, height: 28, backgroundColor: C.primary, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 10, height: 10, backgroundColor: C.lime, borderRadius: 3 }} />
+        {/* ---- the masthead ----
+            The navy block reaches the top of the glass and gives up most of
+            its height while typing. On a small phone that space is the
+            difference between seeing the password field and not, and nobody
+            needs the logo while they are entering a password. */}
+        <View
+          style={{
+            backgroundColor: C.navy,
+            paddingTop: insets.top + (typing ? 16 : 56),
+            paddingHorizontal: 20,
+            paddingBottom: 64,
+            borderBottomLeftRadius: 28,
+            borderBottomRightRadius: 28,
+          }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ width: 36, height: 36, backgroundColor: C.primary, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 12, height: 12, backgroundColor: C.lime, borderRadius: 4 }} />
+            </View>
+            <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Mahek MBOS</Text>
           </View>
-          <Text style={[{ fontSize: 18, color: C.ink, letterSpacing: -0.18 }, weight(600)]}>Mahek MBOS</Text>
+          <Text
+            accessibilityRole="header"
+            style={[{ fontSize: 32, lineHeight: 38, letterSpacing: -0.64, color: '#FFFFFF', marginTop: typing ? 14 : 28 }, weight(800)]}>
+            Sign in
+          </Text>
+          <View
+            accessible
+            accessibilityLabel="Mahek field sales. Your manager has your account made for you. There is no sign-up."
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <Glyph shapes={[{ p: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z' }]} size={14} color={C.onNavyMuted} />
+            <Text style={{ flex: 1, fontSize: 13, color: C.onNavyMuted }}>
+              Mahek field sales · your manager makes your account · no sign-up
+            </Text>
+          </View>
         </View>
-
-        <Text style={[type.h2, { marginTop: 28 }]}>Sign in</Text>
-        <Text style={[type.body, { color: C.muted, marginTop: 6 }]}>
-          Mahek field sales. Your manager has your account made for you. There is no sign-up.
-        </Text>
 
         {/* One wrapper for both stages: it carries the refusal shake (see
             `refuse`), and the Appear inside it is keyed on the stage, so the
             form settles in on arrival and the ladder settles in over it. */}
-        <Animated.View style={shakeStyle}>
+        <Animated.View style={[shakeStyle, { marginTop: -36, marginHorizontal: 14 }]}>
         <Appear key={stage}>
+        <View
+          style={{
+            backgroundColor: C.surface,
+            borderRadius: 24,
+            padding: 18,
+            paddingTop: stage === 'verifying' ? 20 : 18,
+            paddingBottom: stage === 'verifying' ? 10 : 18,
+            boxShadow: '0 14px 34px -12px rgba(15,27,51,0.28)',
+          }}>
         {/* ---- the check ladder ---- */}
         {stage === 'verifying' ? (
-          <View style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.wash, borderRadius: radius.xl, padding: 16, marginTop: 24 }}>
+          <View>
             {steps.map((label, i) => {
               const done = step > i;
               const now = step === i;
               return (
-                <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 }}>
-                  {/* The step being checked breathes — it is waiting on the
-                      server, and a still dot reads as stuck — and a step
-                      passed pops as it turns green. These are real checks,
-                      so the movement follows the answers, not a timer. */}
-                  <Pop trigger={done}>
-                    <Pulse active={now}>
-                      <View
-                        style={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: 9,
-                          backgroundColor: done ? C.lime : now ? C.primary : C.hairline,
-                        }}
-                      />
-                    </Pulse>
-                  </Pop>
-                  <Text style={{ fontSize: 14, color: done || now ? C.ink : C.muted }}>{label}</Text>
+                <View key={label}>
+                  {i ? <View style={{ marginLeft: 15, width: 2, height: 14, backgroundColor: C.primaryEdge }} /> : null}
+                  <View
+                    accessible
+                    accessibilityLabel={`${label}: ${done ? 'done' : now ? 'checking now' : 'waiting'}`}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 14, height: 52 }}>
+                    {/* The step being checked breathes — it is waiting on the
+                        server, and a still dot reads as stuck — and a step
+                        passed pops as it turns lime. These are real checks,
+                        so the movement follows the answers, not a timer. */}
+                    <Pop trigger={done}>
+                      <Pulse active={now}>
+                        <View
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 16,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: done ? C.lime : now ? C.primary : C.hairline,
+                            boxShadow: now ? '0 0 0 7px #E0D6FD' : undefined,
+                          }}>
+                          {done ? (
+                            <Glyph shapes={[{ p: 'M5 12l5 5 9-10' }]} size={16} color={C.navy} strokeWidth={2.6} />
+                          ) : now ? (
+                            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#FFFFFF' }} />
+                          ) : null}
+                        </View>
+                      </Pulse>
+                    </Pop>
+                    <Glyph shapes={i === 0 ? CLOUD : PHONE} size={16} color={done || now ? C.ink : C.muted} />
+                    <Text style={[{ flex: 1, fontSize: 15, color: done || now ? C.ink : C.muted }, weight(700)]}>{label}</Text>
+                  </View>
                 </View>
               );
             })}
-            <Pressable
-              /* Bumping the attempt is what makes this a cancel rather than a
-                 change of scenery — the request cannot be recalled, but its
-                 answer is now somebody else's and is dropped. */
-              onPress={() => { attemptRef.current += 1; setStage('form'); setStep(0); }}
-              style={{ width: '100%', height: HIT, marginTop: 12, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 15, color: C.muted }}>Cancel</Text>
-            </Pressable>
           </View>
         ) : null}
 
         {/* ---- the form ---- */}
         {stage === 'form' ? (
-          <View style={{ marginTop: 24 }}>
-            {err === 'inactive' || err === 'payload' || err === 'network' ? (
-              <View style={{ backgroundColor: C.dangerBg, borderLeftWidth: 3, borderLeftColor: C.danger, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 16 }}>
-                <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-                  {err === 'payload'
-                    ? (serverMessage ?? "Signed in, but today's data was not saved on this phone.") +
-                      ' Try again. If it keeps happening, tell your manager.'
-                    : err === 'network'
-                      ? (serverMessage ?? 'No internet. Could not reach MahekOne.')
-                      : (serverMessage ?? 'This account cannot be used right now. Ask your manager.')}
-                </Text>
+          <View>
+            {banner ? (
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: C.dangerBg, borderRadius: 16, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 14 }}>
+                <Glyph shapes={err === 'network' ? NO_CLOUD : err === 'payload' ? PHONE : PERSON_X} size={20} color={C.danger} />
+                <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.danger }, weight(600)]}>{banner}</Text>
               </View>
             ) : null}
 
-            <Text style={[type.label, { marginBottom: 6 }]}>Mobile number</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Glyph shapes={PHONE} size={14} color={C.ink} />
+              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Mobile number</Text>
+            </View>
             <View
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                height: 52,
-                borderWidth: 1,
+                height: 56,
+                marginTop: 8,
+                borderWidth: err === 'mob' ? 2 : 1,
                 borderColor: err === 'mob' ? C.danger : C.border,
-                borderRadius: radius.lg,
+                borderRadius: 18,
                 backgroundColor: C.surface,
                 overflow: 'hidden',
               }}>
               {/* Not a control — see `DIAL`. */}
-              <View style={{ height: '100%', paddingLeft: 10, paddingRight: 6, justifyContent: 'center' }}>
-                <Text style={{ fontSize: 16, color: C.muted }}>{DIAL}</Text>
-              </View>
-              <View style={{ width: 1, height: 24, backgroundColor: C.border }} />
+              <Text style={[{ paddingLeft: 16, paddingRight: 10, fontSize: 17, color: C.muted }, weight(600)]}>{DIAL}</Text>
               <TextInput
                 value={groupMobile(mob)}
                 onChangeText={(v) => {
@@ -437,11 +485,17 @@ export default function Login() {
                 placeholder="98250 41172"
                 placeholderTextColor={C.faint}
                 keyboardType="phone-pad"
-                style={{ flex: 1, height: '100%', paddingHorizontal: 12, fontSize: 16, color: C.ink }}
+                accessibilityLabel="Mobile number"
+                style={[{ flex: 1, height: '100%', paddingRight: 12, fontSize: 17, letterSpacing: 0.34, color: C.ink }, weight(600)]}
               />
+              {countChip ? (
+                <View style={{ marginRight: 12, height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.dangerBg, justifyContent: 'center' }}>
+                  <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>{`${mob.length}/${MOBILE_DIGITS}`}</Text>
+                </View>
+              ) : null}
             </View>
             {err === 'mob' ? (
-              <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>
+              <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
                 {/* The server's own sentence wins. It names the reason — no
                     such account, already signed in on another handset, the
                     book would not load — and each sends the person somewhere
@@ -463,28 +517,45 @@ export default function Login() {
                 WhatsApp, and this screen asks it first: no toggle is drawn on
                 a deployment that cannot send one. */}
             {codeOffered ? (
-              <View style={{ flexDirection: 'row', marginTop: 16, borderWidth: 1, borderColor: C.border, borderRadius: radius.md, padding: 3 }}>
-                {(['password', 'code'] as const).map((m) => (
-                  <Pressable
-                    key={m}
-                    onPress={() => { setMethod(m); setErr(null); setServerMessage(null); }}
-                    style={{ flex: 1, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md - 2, backgroundColor: method === m ? C.primaryTint : 'transparent' }}>
-                    <Text style={[{ fontSize: 15, color: method === m ? C.ink : C.muted }, weight(method === m ? 600 : 400)]}>
-                      {m === 'password' ? 'Password' : 'OTP'}
-                    </Text>
-                  </Pressable>
-                ))}
+              <View accessibilityRole="tablist" style={{ flexDirection: 'row', marginTop: 16, height: 48, borderRadius: 24, backgroundColor: C.canvas, padding: 4 }}>
+                {(['password', 'code'] as const).map((m) => {
+                  const on = method === m;
+                  const ink = on ? '#FFFFFF' : C.muted;
+                  return (
+                    <Pressable
+                      key={m}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: on }}
+                      onPress={() => { if (!on) feedback('select'); setMethod(m); setErr(null); setServerMessage(null); }}
+                      style={{ flex: 1, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: on ? C.navy : 'transparent' }}>
+                      <Glyph shapes={m === 'password' ? LOCK : CHAT} size={15} color={ink} />
+                      <Text style={[{ fontSize: 14, color: ink }, weight(700)]}>{m === 'password' ? 'Password' : 'OTP'}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             ) : null}
               <View>
                 {method === 'password' ? (<>
-                <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>Password</Text>
-                <View style={{ position: 'relative' }}>
+                <View
+                  style={{
+                    marginTop: 14,
+                    height: 56,
+                    borderRadius: 18,
+                    borderWidth: err === 'pw' ? 2 : 1,
+                    borderColor: err === 'pw' ? C.danger : C.border,
+                    backgroundColor: C.surface,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingLeft: 14,
+                  }}>
+                  <Glyph shapes={LOCK} size={18} color={C.muted} />
                   <TextInput
                     value={pw}
                     onChangeText={(v) => { set({ pw: v }); setErr(null); setServerMessage(null); }}
-                    placeholder="••••••••"
+                    placeholder="Password"
                     placeholderTextColor={C.faint}
+                    accessibilityLabel="Password"
                     secureTextEntry={!pwShow}
                     /*
                      * PRESSING "SHOW" USED TO CAPITALISE THE FIRST LETTER.
@@ -503,112 +574,220 @@ export default function Login() {
                     autoCorrect={false}
                     spellCheck={false}
                     textContentType="password"
-                    style={{
-                      width: '100%',
-                      height: 52,
-                      borderWidth: 1,
-                      borderColor: err === 'pw' ? C.danger : C.border,
-                      borderRadius: radius.md,
-                      paddingLeft: 12,
-                      paddingRight: 68,
-                      /* 16, like the mobile field above it and the shared
-                         `Input` primitive. At 14 the dots are harder to count
-                         in sunlight, on the one field that cannot be read
-                         back. */
-                      fontSize: 16,
-                      color: C.ink,
-                      backgroundColor: C.surface,
-                    }}
+                    style={[
+                      {
+                        flex: 1,
+                        height: '100%',
+                        paddingHorizontal: 12,
+                        /* 17, like the mobile field above it. Smaller, the dots
+                           are harder to count in sunlight, on the one field
+                           that cannot be read back. */
+                        fontSize: 17,
+                        color: C.ink,
+                      },
+                      weight(600),
+                    ]}
                   />
                   <Pressable
                     onPress={() => setPwShow(!pwShow)}
-                    style={{ position: 'absolute', right: 2, top: 2, height: HIT, minWidth: 64, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 14, color: C.muted }}>{pwShow ? 'Hide' : 'Show'}</Text>
+                    accessibilityRole="button"
+                    accessibilityLabel={pwShow ? 'Hide password' : 'Show password'}
+                    style={{ width: 48, height: 48, marginRight: 4, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}>
+                    <Glyph shapes={pwShow ? EYE_OFF : EYE} size={20} color={C.muted} />
                   </Pressable>
                 </View>
                 {err === 'pw' ? (
-                  <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>
+                  <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
                     {serverMessage ?? 'Password must be at least 8 characters.'}
                   </Text>
                 ) : null}
                 </>) : (
-                  <View>
-                    <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>OTP</Text>
+                  <View style={{ marginTop: 14 }}>
                     {codeSentTo ? (
                       <>
-                        <TextInput
-                          value={code}
-                          onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 8)); setErr(null); setServerMessage(null); }}
-                          placeholder="6-digit OTP"
-                          placeholderTextColor={C.faint}
-                          keyboardType="number-pad"
-                          textContentType="oneTimeCode"
-                          autoComplete="sms-otp"
-                          style={{
-                            width: '100%', height: 52, borderWidth: 1, borderColor: err === 'pw' ? C.danger : C.border,
-                            borderRadius: radius.md, paddingHorizontal: 12, fontSize: 20, letterSpacing: 6, color: C.ink, backgroundColor: C.surface,
-                          }}
-                        />
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-                          <Text style={{ fontSize: 14, color: C.muted }}>OTP sent to {codeSentTo}</Text>
+                        {/* ONE box for the code, drawn as six. A single input
+                            keeps the keyboard's SMS suggestion and the
+                            clipboard fill working; the digit boxes under it are
+                            only how it looks. */}
+                        <View style={{ position: 'relative' }}>
+                          <View style={{ flexDirection: 'row', gap: 8 }} pointerEvents="none">
+                            {Array.from({ length: Math.max(OTP_BOXES, code.length) }, (_, i) => (
+                              <View
+                                key={i}
+                                style={{
+                                  flex: 1,
+                                  height: 56,
+                                  borderRadius: 16,
+                                  borderWidth: err === 'pw' ? 2 : i === code.length ? 2 : 1,
+                                  borderColor: err === 'pw' ? C.danger : i === code.length ? C.primary : C.border,
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}>
+                                <Text style={[{ fontSize: 22, color: C.ink }, weight(800)]}>{code[i] ?? ''}</Text>
+                              </View>
+                            ))}
+                          </View>
+                          <TextInput
+                            value={code}
+                            onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 8)); setErr(null); setServerMessage(null); }}
+                            accessibilityLabel="OTP"
+                            keyboardType="number-pad"
+                            textContentType="oneTimeCode"
+                            autoComplete="sms-otp"
+                            caretHidden
+                            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, color: 'transparent', fontSize: 1, opacity: 0.02 }}
+                          />
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                          <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Glyph shapes={CHAT} size={14} color={C.muted} />
+                            <Text style={{ flexShrink: 1, fontSize: 13, color: C.muted }}>Sent to {codeSentTo}</Text>
+                          </View>
                           <Pressable
                             onPress={() => void sendCode()}
                             disabled={sendingCode || codeWait > 0}
-                            hitSlop={12}
-                            accessibilityRole="button">
-                            <Text style={[{ fontSize: 14, color: codeWait > 0 ? C.muted : C.primary }, weight(500)]}>
-                              {sendingCode ? 'Sending…' : codeWait > 0 ? `Send again in ${codeWait}s` : 'Send again'}
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel={sendingCode ? 'Sending…' : codeWait > 0 ? `Send again in ${codeWait}s` : 'Send again'}
+                            accessibilityState={{ disabled: sendingCode || codeWait > 0 }}
+                            style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.canvas, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Glyph shapes={RETRY} size={14} color={codeWait > 0 || sendingCode ? C.muted : C.primaryDeep} />
+                            <Text style={[{ fontSize: 13, color: codeWait > 0 || sendingCode ? C.muted : C.primaryDeep }, weight(700), tabular]}>
+                              {sendingCode ? 'Sending…' : codeWait > 0 ? `${codeWait}s` : 'Send again'}
                             </Text>
                           </Pressable>
                         </View>
                       </>
                     ) : (
-                      <PrimaryButton
-                        label={
-                          sendingCode
-                            ? 'Sending…'
-                            : codeWait > 0
-                              ? `Wait ${codeWait}s to send another OTP`
-                              : 'Send OTP'
-                        }
-                        disabled={sendingCode || codeWait > 0}
-                        whyDisabled={sendingCode ? 'Sending the OTP now.' : 'MahekOne asked us to wait before sending another OTP.'}
-                        onPress={() => void sendCode()}
-                      />
+                      <>
+                        <PrimaryButton
+                          tone="navy"
+                          label={
+                            sendingCode
+                              ? 'Sending…'
+                              : codeWait > 0
+                                ? `Wait ${codeWait}s to send another OTP`
+                                : 'Send OTP'
+                          }
+                          disabled={sendingCode || codeWait > 0}
+                          whyDisabled={sendingCode ? 'Sending the OTP now.' : 'MahekOne asked us to wait before sending another OTP.'}
+                          onPress={() => void sendCode()}
+                          style={{ height: 56, borderRadius: 28 }}
+                        />
+                        {codeWait > 0 && !sendingCode ? (
+                          <Text style={{ fontSize: 12, color: C.muted, marginTop: 6, textAlign: 'center' }}>
+                            MahekOne asked us to wait before sending another
+                          </Text>
+                        ) : null}
+                      </>
                     )}
                     {err === 'pw' && serverMessage ? (
-                      <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>{serverMessage}</Text>
+                      <View style={{ marginTop: 8, minHeight: 36, borderRadius: 12, backgroundColor: C.dangerBg, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8 }}>
+                        <Glyph shapes={WARN} size={14} color={C.danger} />
+                        <Text style={[{ flex: 1, fontSize: 13, color: C.danger }, weight(600)]}>{serverMessage}</Text>
+                      </View>
                     ) : null}
                   </View>
                 )}
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 20 }}>
-                  <Text style={{ fontSize: 15, color: C.body }}>Remember me</Text>
-                  <Toggle on={remember} onPress={() => set({ remember: !remember })} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10, minHeight: 44 }}>
+                  <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Remember me</Text>
+                  <Toggle on={remember} label="Remember me" onPress={() => set({ remember: !remember })} />
                 </View>
-
-                <PrimaryButton label="Sign in" onPress={() => void submit()} style={{ marginTop: 24 }} />
-
-                <Pressable
-                  onPress={async () => {
-                    const opened = await openPasswordReset();
-                    notify(
-                      opened
-                        ? 'Opening the reset page. Use your work email, or an OTP if it offers one.'
-                        : 'Could not open the browser. Ask your manager to reset your password.',
-                      opened ? 'info' : 'error',
-                    );
-                  }}
-                  style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>Forgot password</Text>
-                </Pressable>
               </View>
           </View>
         ) : null}
+        </View>
         </Appear>
         </Animated.View>
+
+        {/* The actions sit at the foot of the screen, and ride up with the
+            keyboard rather than being covered by it. */}
+        <View style={{ flex: 1, minHeight: 20 }} />
+        <View style={{ marginHorizontal: 14 }}>
+          {stage === 'verifying' ? (
+            <Pressable
+              /* Bumping the attempt is what makes this a cancel rather than a
+                 change of scenery — the request cannot be recalled, but its
+                 answer is now somebody else's and is dropped. */
+              onPress={() => { attemptRef.current += 1; setStage('form'); setStep(0); }}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+              style={({ pressed }) => ({
+                height: 60,
+                borderRadius: 30,
+                borderWidth: 1,
+                borderColor: C.border,
+                backgroundColor: pressed ? C.wash : C.surface,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              })}>
+              <Glyph shapes={[{ p: 'M6 6l12 12M18 6L6 18' }]} size={18} color={C.ink} />
+              <Text style={[{ fontSize: 17, color: C.ink }, weight(700)]}>Cancel</Text>
+            </Pressable>
+          ) : (
+            <>
+              <Animated.View style={signInPress.style}>
+                <Pressable
+                  onPress={() => void submit()}
+                  onPressIn={signInPress.onPressIn}
+                  onPressOut={signInPress.onPressOut}
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign in"
+                  style={({ pressed }) => ({
+                    height: 60,
+                    borderRadius: 30,
+                    backgroundColor: C.navy,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 10,
+                    opacity: pressed ? 0.9 : 1,
+                    boxShadow: '0 12px 30px -10px rgba(15,27,51,0.5)',
+                  })}>
+                  <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Sign in</Text>
+                  <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+                    <Glyph shapes={[{ p: 'M5 12h14M13 6l6 6-6 6' }]} size={16} color={C.navy} strokeWidth={2.4} />
+                  </View>
+                </Pressable>
+              </Animated.View>
+
+              <Pressable
+                onPress={async () => {
+                  const opened = await openPasswordReset();
+                  notify(
+                    opened
+                      ? 'Opening the reset page. Use your work email, or an OTP if it offers one.'
+                      : 'Could not open the browser. Ask your manager to reset your password.',
+                    opened ? 'info' : 'error',
+                  );
+                }}
+                accessibilityRole="button"
+                style={{ width: '100%', height: 48, marginTop: 6, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>Forgot password</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
 
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+/** How many boxes the OTP is drawn in. A longer code grows the row. */
+const OTP_BOXES = 6;
+
+/* The marks the Version 3 artboards draw on this screen. */
+const PHONE: GlyphShape[] = [{ r: [7, 3, 10, 18, 2] }, { p: 'M11 18h2' }];
+const CLOUD: GlyphShape[] = [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }];
+const NO_CLOUD: GlyphShape[] = [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'M4 4l16 16' }];
+const PERSON_X: GlyphShape[] = [{ c: [9, 8, 4] }, { p: 'M2 21c0-4 3-6 7-6M16 14l5 5M21 14l-5 5' }];
+const LOCK: GlyphShape[] = [{ r: [5, 11, 14, 10, 2] }, { p: 'M8 11V8a4 4 0 0 1 8 0v3' }];
+const CHAT: GlyphShape[] = [{ p: 'M4 20l1.5-4A8 8 0 1 1 9 19z' }];
+const EYE: GlyphShape[] = [{ p: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z' }, { c: [12, 12, 3] }];
+const EYE_OFF: GlyphShape[] = [{ p: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z' }, { c: [12, 12, 3] }, { p: 'M4 4l16 16' }];
+const RETRY: GlyphShape[] = [{ p: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6' }];
+const WARN: GlyphShape[] = [{ p: 'M12 4l9 16H3z' }, { p: 'M12 10v4M12 17h.01' }];

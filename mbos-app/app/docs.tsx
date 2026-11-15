@@ -117,6 +117,7 @@ export default function DocsScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Documents"
       activeTab={null}
       onBack={back.go}

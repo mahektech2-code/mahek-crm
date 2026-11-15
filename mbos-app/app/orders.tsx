@@ -107,6 +107,7 @@ export default function OrdersScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Your orders"
       activeTab="more"
       showTitle={false}

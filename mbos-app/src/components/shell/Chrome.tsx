@@ -17,7 +17,7 @@ import { feedback } from '../ui/feedback';
  * whole frame can be rendered and looked at without a navigator around it.
  */
 
-export type HeroTone = 'navy' | 'lavender';
+export type HeroTone = 'navy' | 'lavender' | 'canvas';
 
 /** What each tone paints, so no screen picks a colour the hero did not. */
 export const HERO = {
@@ -34,6 +34,15 @@ export const HERO = {
     muted: C.lavenderMuted,
     button: C.surface,
     buttonInk: C.lavenderInk,
+  },
+  /* No block at all: the stack screens Version 3 draws straight on the page —
+     white round buttons, the title beside the back button. */
+  canvas: {
+    bg: 'transparent',
+    ink: C.ink,
+    muted: C.muted,
+    button: C.surface,
+    buttonInk: C.ink,
   },
 } as const;
 
@@ -123,7 +132,7 @@ export function Header({
   actions,
   overlap = false,
   top,
-  chipsBelowTitle = false,
+  chipsBelowTitle: chipsBelowProp = false,
   children,
 }: {
   title: string;
@@ -153,9 +162,13 @@ export function Header({
   children?: React.ReactNode;
 }) {
   const h = HERO[tone];
+  const flat = tone === 'canvas';
+  /* On the page itself the chips sit under the title row, and the title rides
+     beside the back button at 20/800 rather than below it at 26. */
+  const chipsBelowTitle = flat || chipsBelowProp;
   const chipRow = chips.map((c) => <Chip key={c.key} chip={c} tone={tone} />);
   return (
-    <View style={[s.hero, { backgroundColor: h.bg, paddingBottom: overlap ? 46 : 20 }]}>
+    <View style={[s.hero, { backgroundColor: h.bg, paddingBottom: overlap ? 46 : flat ? 6 : 20 }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         {onBack ? (
           <Pressable
@@ -167,8 +180,17 @@ export function Header({
             <Icon name="back" size={20} color={h.buttonInk} strokeWidth={2} />
           </Pressable>
         ) : null}
+        {flat && showTitle ? (
+          <Text
+            numberOfLines={2}
+            maxFontSizeMultiplier={BAR_FONT_CAP}
+            accessibilityRole="header"
+            style={[{ flex: 1, minWidth: 0, fontSize: 20, lineHeight: 25, letterSpacing: -0.4, color: h.ink }, weight(800)]}>
+            {title}
+          </Text>
+        ) : null}
         {top ? <View style={{ flex: 1, minWidth: 0 }}>{top}</View> : chipsBelowTitle ? null : chipRow}
-        {top ? null : <View style={{ flex: 1 }} />}
+        {top || (flat && showTitle) ? null : <View style={{ flex: 1 }} />}
         {onRefresh ? (
           <Pressable
             onPress={refreshing ? undefined : onRefresh}
@@ -192,7 +214,7 @@ export function Header({
         {actions}
       </View>
       {top ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>{chipRow}</View> : null}
-      {showTitle ? (
+      {showTitle && !flat ? (
         <Text
           numberOfLines={2}
           maxFontSizeMultiplier={BAR_FONT_CAP}

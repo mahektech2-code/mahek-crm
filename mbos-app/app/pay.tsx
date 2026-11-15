@@ -568,6 +568,7 @@ export default function PayScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title={custId ? 'Collect payment' : 'Collect from?'}
       activeTab={null}
       onBack={back.go}

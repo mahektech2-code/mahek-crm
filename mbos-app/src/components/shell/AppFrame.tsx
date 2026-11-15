@@ -529,7 +529,7 @@ export function AppFrame({
       <StatusBar style={heroTone === 'navy' ? 'light' : 'dark'} />
       {/* The status bar area takes the hero's colour, so the block reads as
           reaching the top of the glass. */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: heroTone === 'navy' ? C.navy : C.lavender }} />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: heroTone === 'navy' ? C.navy : heroTone === 'canvas' ? C.canvas : C.lavender }} />
       {body}
 
       {/*

@@ -48,6 +48,7 @@ export default function ReportsScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Reports"
       activeTab={null}
       onBack={back.go}

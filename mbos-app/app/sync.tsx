@@ -285,6 +285,7 @@ export default function SyncScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Waiting to send"
       activeTab={null}
       onBack={back.go}

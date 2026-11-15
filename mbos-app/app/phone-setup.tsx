@@ -123,6 +123,7 @@ export default function PhoneSetupScreen() {
 
   return (
     <AppFrame
+      tone="canvas"
       title="Before you start"
       activeTab={null}
       onBack={back.go}
