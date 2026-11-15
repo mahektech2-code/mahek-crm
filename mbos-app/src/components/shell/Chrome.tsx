@@ -123,9 +123,12 @@ export function Header({
   actions,
   overlap = false,
   top,
+  chipsBelowTitle = false,
   children,
 }: {
   title: string;
+  /** The artboards that put the title between the buttons and the chips. */
+  chipsBelowTitle?: boolean;
   /**
    * The identity or title row the artboard draws FIRST (Home's avatar and
    * greeting). Given, it takes the top row beside refresh and the bell, and the
@@ -164,7 +167,7 @@ export function Header({
             <Icon name="back" size={20} color={h.buttonInk} strokeWidth={2} />
           </Pressable>
         ) : null}
-        {top ? <View style={{ flex: 1, minWidth: 0 }}>{top}</View> : chipRow}
+        {top ? <View style={{ flex: 1, minWidth: 0 }}>{top}</View> : chipsBelowTitle ? null : chipRow}
         {top ? null : <View style={{ flex: 1 }} />}
         {onRefresh ? (
           <Pressable
@@ -197,6 +200,9 @@ export function Header({
           style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: h.ink, marginTop: 16 }, weight(800)]}>
           {title}
         </Text>
+      ) : null}
+      {chipsBelowTitle && !top ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: showTitle ? 12 : 14 }}>{chipRow}</View>
       ) : null}
       {children}
     </View>

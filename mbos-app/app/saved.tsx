@@ -148,6 +148,7 @@ export default function Saved() {
 
   return (
     <AppFrame
+      hideBack
       title="Visit saved"
       activeTab="customers"
       showTitle={false}

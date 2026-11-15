@@ -22,7 +22,7 @@ import { missedPunchOuts } from '../src/engines/punch-out';
 import { getConfig } from '../src/data/config';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { dmy, hhmm } from '../src/lib/format';
+import { dmy, hhmm, monthName } from '../src/lib/format';
 import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 
 /**
@@ -118,6 +118,13 @@ export default function AttendanceScreen() {
         ', what the app saved, and your reason. Nothing changes until they approve it.',
       reasonLabel: 'What happened · needed',
       confirmLabel: 'Send to manager',
+      tone: 'navy',
+      placeholder: 'What happened that day',
+      lead: { top: String(Number(d.day.slice(8, 10))), bottom: monthName(Number(d.day.slice(5, 7)) - 1).slice(0, 3) },
+      subtitle:
+        (d.checkInAt != null ? hhmm(d.checkInAt) : 'No punch-in') +
+        ' – ' +
+        (d.checkOutAt != null ? hhmm(d.checkOutAt) : 'no punch-out'),
       run: async (r) => {
         await requestRegularisation(d.id, r);
         load();

@@ -70,7 +70,7 @@ export function NavigateButton({
    * a round grey one on a list row, white on a highlighted row, and a
    * translucent one on a navy card.
    */
-  look?: 'tint' | 'outline' | 'round' | 'white' | 'onNavy';
+  look?: 'tint' | 'outline' | 'round' | 'white' | 'onNavy' | 'primary';
   size?: number;
 }) {
   const notify = useStore((s) => s.notify);
@@ -106,7 +106,7 @@ export function NavigateButton({
         hitSlop={4}
         style={({ pressed }) => {
           const box = size ?? (look === 'outline' ? 56 : look === 'tint' ? HIT : 44);
-          const round = look === 'round' || look === 'white' || look === 'onNavy';
+          const round = look === 'round' || look === 'white' || look === 'onNavy' || look === 'primary';
           const bg =
             look === 'outline'
               ? pressed ? C.canvas : C.surface
@@ -116,6 +116,8 @@ export function NavigateButton({
                   ? C.surface
                   : look === 'onNavy'
                     ? 'rgba(255,255,255,0.12)'
+                    : look === 'primary'
+                      ? pressed ? C.primaryDeep : C.primary
                     : pressed ? C.primaryEdge : C.primaryTint;
           return [
             {
@@ -135,7 +137,7 @@ export function NavigateButton({
         <Icon
           name={look === 'tint' ? 'route' : 'nav'}
           size={look === 'outline' ? 22 : 20}
-          color={look === 'onNavy' ? '#FFFFFF' : look === 'tint' ? C.primaryDeep : C.ink}
+          color={look === 'onNavy' || look === 'primary' ? '#FFFFFF' : look === 'tint' ? C.primaryDeep : C.ink}
           strokeWidth={2}
         />
       </Pressable>

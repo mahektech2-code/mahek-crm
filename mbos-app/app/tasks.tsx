@@ -307,6 +307,7 @@ export default function TasksScreen() {
 
   return (
     <AppFrame
+      chipsBelowTitle
       title="Tasks"
       activeTab={null}
       onBack={back.go}

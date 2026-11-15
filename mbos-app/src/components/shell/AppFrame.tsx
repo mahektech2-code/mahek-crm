@@ -219,8 +219,14 @@ export function AppFrame({
   heroTop,
   footerBg,
   footerInsetBg,
+  chipsBelowTitle = false,
+  hideBack = false,
   children,
 }: {
+  /** Status chips under the title rather than in the top row. */
+  chipsBelowTitle?: boolean;
+  /** A screen the artboard draws with no way back (Visit saved). */
+  hideBack?: boolean;
   /**
    * What shows round the pinned footer's corners. A Version 3 dock is often a
    * navy or canvas panel with rounded top corners, and a white wrapper behind
@@ -439,7 +445,7 @@ export function AppFrame({
    * to be applied by hand or the field being typed into sits behind the keys.
    */
   const isRoot = activeTab != null && onBack == null && ['home', 'journey', 'customers', 'more'].includes(here);
-  const back = onBack ?? (isRoot ? undefined : cameFrom.go);
+  const back = hideBack ? undefined : onBack ?? (isRoot ? undefined : cameFrom.go);
   const heroTone: HeroTone = tone ?? (here === 'home' || here === 'journey' ? 'navy' : 'lavender');
   const showsTabBar = keyboardHeight === 0 && !footer;
   const header = (
@@ -464,6 +470,7 @@ export function AppFrame({
       chips={strip}
       actions={heroActions}
       top={heroTop}
+      chipsBelowTitle={chipsBelowTitle}
       overlap={overlap}>
       {hero}
     </Header>

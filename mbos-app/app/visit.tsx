@@ -1741,6 +1741,7 @@ export default function Visit() {
   const left = verdict.failed.length;
   return (
     <AppFrame
+      chipsBelowTitle
       title={c?.name ?? 'Visit'}
       activeTab="customers"
       onBack={() => router.back()}

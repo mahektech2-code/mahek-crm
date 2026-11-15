@@ -391,6 +391,7 @@ export default function SamplesScreen() {
 
   return (
     <AppFrame
+      chipsBelowTitle
       title="Samples"
       activeTab={null}
       onBack={goBack}
