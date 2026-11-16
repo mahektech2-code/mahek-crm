@@ -215,6 +215,11 @@ export async function erpFreightBillSave(input: F.FreightBillInput) {
   return run((ctx) => F.saveFreightBill(ctx, { ...input, orderIds: ids(input?.orderIds) }));
 }
 
+/** Several bills at once, each saved on its own; the answer is per row. */
+export async function erpFreightBillsSave(inputs: F.FreightBillInput[]) {
+  return run((ctx) => F.saveFreightBills(ctx, (Array.isArray(inputs) ? inputs : []).map((i) => ({ ...i, orderIds: ids(i?.orderIds) }))));
+}
+
 export async function erpFreightBillResplit(billId: string) {
   return run((ctx) => F.resplitFreightBill(ctx, String(billId ?? "")));
 }
@@ -224,6 +229,11 @@ export async function erpFreightBillPay(billId: string, payment: F.PaymentFields
 }
 
 /** A manager moves a paid bill back to pending, with a reason. */
+/** Several bills paid in one go — one payment per transporter. */
+export async function erpFreightBillsPay(payments: F.BatchPayment[]) {
+  return run((ctx) => F.markFreightBillsPaid(ctx, (Array.isArray(payments) ? payments : []).map((p) => ({ ...p, billIds: ids(p?.billIds) }))));
+}
+
 export async function erpFreightBillUnpay(billId: string, reason: string) {
   return run((ctx) => F.undoFreightBillPayment(ctx, String(billId ?? ""), String(reason ?? "")));
 }

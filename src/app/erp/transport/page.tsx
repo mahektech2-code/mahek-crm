@@ -214,19 +214,26 @@ function erpScreenHref(): string {
  */
 async function freightData(one: (k: string) => string | undefined, today: string) {
   const ft = one("ft");
-  const sub: FreightSub = ft === "paid" || ft === "reports" ? ft : "pending";
+  /* "pending" was the old To pay address, kept for links already sent. */
+  const sub: FreightSub = ft === "paid" || ft === "reports" || ft === "pay" ? ft : ft === "pending" ? "pay" : "enter";
   const monthRaw = one("month");
   const month = monthRaw && /^\d{4}-\d{2}$/.test(monthRaw) ? monthRaw : today.slice(0, 7);
   const monthEnd = addDays(`${addDays(`${month}-28`, 4).slice(0, 7)}-01`, -1);
   const from = one("from") ?? addDays(today, -365);
   const to = one("to") ?? today;
-  const [pendingBills, paidBills, report, vehicles, waiting] = await Promise.all([
+  const [pendingBills, paidBills, report, vehicles, waiting, history] = await Promise.all([
     freightBills({ status: "pending" }),
-    sub === "paid" ? freightBills({ status: "paid", from: `${month}-01`, to: monthEnd }) : Promise.resolve([]),
+    freightBills({ status: "paid", from: `${month}-01`, to: monthEnd }),
     sub === "reports" ? freightReport(from, to) : Promise.resolve(null),
     recentVehicles(FREIGHT_TRIP_DAYS),
     waitingBills(FREIGHT_TRIP_DAYS),
+    /* Each transporter's usual cost per litre, which a typed amount is checked against. */
+    sub === "enter" ? freightReport(addDays(today, -180), today) : Promise.resolve(null),
   ]);
+  const rates: Record<string, number> = {};
+  for (const r of history?.byTransporter ?? []) {
+    if (r.litres > 0) rates[r.label.trim().toLowerCase()] = (r.pendingPaise + r.paidPaise) / r.litres;
+  }
   /* A bill opened from a link may be outside the list on screen — read it on its own. */
   const opened = one("bill");
   const shown = sub === "paid" ? paidBills : pendingBills;
@@ -243,6 +250,10 @@ async function freightData(one: (k: string) => string | undefined, today: string
     waiting,
     pendingCount: pendingBills.length,
     pendingPaise: pendingBills.reduce((a, b) => a + b.amountPaise, 0),
+    staleCount: pendingBills.filter((b) => b.stale.length).length,
+    paidCount: paidBills.length,
+    paidPaise: paidBills.reduce((a, b) => a + b.amountPaise, 0),
+    rates,
     tripDays: FREIGHT_TRIP_DAYS,
   };
 }

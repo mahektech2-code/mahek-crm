@@ -9670,10 +9670,17 @@ litres with `allocateByLitres`, written to `erp_freight_bill_lines` on save —
 one live share per order line (a partial unique index) — and `detailRows`
 reads it (`freightSharesFor`), so it reaches the line's costing, margin and
 the Founder's Margins desk with nobody typing it; a sheet-costed line shows it
-and does not add it again. Pending until **Mark as paid** (date, Bank/UPI/
-Cash, reference); only an ERP manager undoes a payment, with a reason, and the
-split stays. A corrected dispatch makes a pending split stale (`staleShares`)
-and it cannot be paid until split again. Nothing here posts to Petty Cash/Bank.
+and does not add it again. The screen is three stages — Bill to enter, To pay,
+Paid — each grouped by transporter, and work is done on a SELECTION: ticked
+trips are entered together (`saveFreightBills`, each row its own save, so one
+refused row never stops the others) and ticked bills are paid together, one
+payment per transporter (`markFreightBillsPaid`, one transaction — a selection
+is paid whole or not at all). Entering never pays: Mahek asked for the two to
+stay apart, so there is no "save and pay". `ListScreen`'s `onBulk` hands the
+selection to the screen's own dialogs. Only an ERP manager undoes a payment,
+with a reason, and the split stays. A corrected dispatch makes a pending split
+stale (`staleShares`); the row cannot be ticked to pay, and the bill shows the
+old and the new split side by side until the new one is saved. Nothing here posts to Petty Cash/Bank.
 Rules: `engines/freight-bill.ts`; reads and writes: `lib/erp/freight-bills.ts`;
 screen: `app/erp/transport/parts/freight.tsx`. `erp_trips` still groups bills
 by vehicle at dispatch; its payment tables are read by no screen.

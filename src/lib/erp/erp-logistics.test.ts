@@ -414,6 +414,41 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(report.byCustomer[0].label, "Shree Paints");
   });
 
+  test("several bills are entered together, each on its own, and several are paid in one go — all or none", async () => {
+    const ctx = await as(admin);
+    await db.execute(sql`update erp_freight_bill_lines set live = false`);
+    await db.execute(sql`update erp_freight_bills set status = 'deleted'`);
+    const [t] = await db.select().from(erpTransports);
+    await db.update(erpTransports).set({ vehicleNo: "MH04 KL 2231", paymentType: "Paid" }).where(eq(erpTransports.id, t.id));
+    const day = String(t.billDate);
+    const [vl] = await F.vehicleLines("MH04 KL 2231", day);
+    const row = { lrNo: "77001", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 12000, orderIds: [vl.orderId] };
+    /* One row saves; the second names the same line and is refused on its own, with the reason — the first is not undone. */
+    const saved = await F.saveFreightBills(ctx, [row, { ...row, lrNo: "77002" }]);
+    assert.ok(saved.ok, msg(saved));
+    const answers = saved.ok ? saved.data : [];
+    assert.equal(answers[0].ok, true);
+    assert.equal(answers[1].ok, false);
+    assert.match(answers[1].ok ? "" : answers[1].error, /Already on TB-/);
+    const id = answers[0].ok ? answers[0].id : "";
+    /* Nothing to save is refused outright. */
+    assert.equal((await F.saveFreightBills(ctx, [])).ok, false);
+    /* A bill in two payments, or one whose split is stale, pays nothing. */
+    assert.match(msg(await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank" }, { billIds: [id], paidOn: day, mode: "upi" }])), /two payments/);
+    await db.update(erpTransports).set({ paymentType: "To Pay" }).where(eq(erpTransports.id, t.id));
+    assert.match(msg(await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank" }])), /TB-\d+ · LR 77001: .*Split it again/);
+    assert.equal((await F.freightBills({ status: "pending", ids: [id] }))[0].status, "pending");
+    await db.update(erpTransports).set({ paymentType: "Paid" }).where(eq(erpTransports.id, t.id));
+    /* One payment for the selection: the bill moves to Paid with the payment's date, mode and reference. */
+    const paid = await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank", reference: "UTR 4492" }]);
+    assert.ok(paid.ok, msg(paid));
+    const [bill] = await F.freightBills({ status: "paid", ids: [id] });
+    assert.equal(bill.status, "paid");
+    assert.equal(bill.paymentMode, "bank");
+    assert.equal(bill.paymentRef, "UTR 4492");
+    assert.match(msg(await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank" }])), /already paid/);
+  });
+
   test("an extra expense entered on Orders → Billing & dispatch reaches the transport record too", async () => {
     /* Orders had its own copy of the writer, and it skipped the transport record. */
     const ctx = await as(admin);
