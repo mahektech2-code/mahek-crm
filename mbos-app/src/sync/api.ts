@@ -599,6 +599,8 @@ export type PullPayload = {
   cursor?: string;
   territory?: TerritoryState;
   config?: Record<string, unknown>;
+  /** Switches, sentences and banners — `data/remote.ts`. Never folded into `config`. */
+  remote?: unknown;
   customers?: unknown[];
   products?: unknown[];
   priceList?: unknown[];
