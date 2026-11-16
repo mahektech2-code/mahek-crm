@@ -29,6 +29,7 @@ const NAMED = { card: 216, panel: 260, broad: 380 } as const;
 export function CardGrid({
   min = "card",
   gap = "gap-4",
+  fill = false,
   className,
   children,
 }: {
@@ -43,6 +44,12 @@ export function CardGrid({
    * component, which is how the second spelling comes back.
    */
   gap?: string;
+  /**
+   * Keep empty tracks rather than stretching the cards to fill the row
+   * (`auto-fill`). For a shelf of tiles where one or two must not read as
+   * banners across the whole screen.
+   */
+  fill?: boolean;
   className?: string;
   children: React.ReactNode;
 }) {
@@ -50,7 +57,7 @@ export function CardGrid({
   return (
     <div
       className={cx("grid", gap, className)}
-      style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${floor}px, 1fr))` }}
+      style={{ gridTemplateColumns: `repeat(${fill ? "auto-fill" : "auto-fit"}, minmax(${floor}px, 1fr))` }}
     >
       {children}
     </div>
