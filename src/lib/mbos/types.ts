@@ -345,6 +345,12 @@ export type PullDelta = {
   products: unknown[];
   timeline: unknown[];
   config: Record<string, unknown>;
+  /**
+   * Switches, sentences and banners the office set — `engines/mbos-remote.ts`.
+   * Its own field, never folded into `config`, so it cannot touch the
+   * settings the trail reads. Null when it could not be read this pass.
+   */
+  remote?: import("../engines/mbos-remote").RemotePayload | null;
   notifications: unknown[];
   /**
    * `{ mediaId, transcript, visitId }` per voice note that has been written

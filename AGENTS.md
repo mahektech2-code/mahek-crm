@@ -9805,7 +9805,7 @@ writes it) and `production_check` (the Production Head clears it at Sales ›
 MRP check, `engines/mrp.ts` reading stock as it stands; capacity is his tick,
 because MahekOne does not know it). `lineCleared` is both; Under Process, the
 day's plan, Ready and billing all ask it (`gateRefusal`). Both columns DEFAULT to
-the cleared value, so every line from before `0346` carried on. Customer
+the cleared value, so every line from before `0347` carried on. Customer
 tracking's "confirmed" now needs Accounts' approval.
 
 **COUNTED ONCE.** A TeleCRM or handset order already has its `orders` row; the

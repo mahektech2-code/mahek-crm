@@ -6431,6 +6431,24 @@ export const mbosPushReceipts = pgTable(
   ],
 );
 
+/**
+ * Switches, sentences and banners the office changes on salesmen's phones
+ * without a release — `lib/engines/mbos-remote.ts`. Keys are fenced to
+ * `feature.`/`menu.`/`text.`/`banner.` by a CHECK, so nothing here can shadow a
+ * configuration key, and none can name location or tracking (`0346_mbos_remote`).
+ */
+export const mbosRemoteItems = pgTable("mbos_remote_items", {
+  key: text("key").primaryKey(),
+  kind: text("kind").notNull(),
+  value: jsonb("value").notNull(),
+  audience: jsonb("audience").notNull().default({}),
+  enabled: boolean("enabled").notNull().default(true),
+  note: text("note").notNull().default(""),
+  version: integer("version").notNull().default(1),
+  updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const mbosDevices = pgTable(
   "mbos_devices",
   {
@@ -12801,7 +12819,7 @@ export const erpOrders = pgTable(
     rateSetById: text("rate_set_by_id").references(() => users.id),
     rateSetAt: timestamp("rate_set_at", { withTimezone: true }),
     discountAuthorisedById: text("discount_authorised_by_id").references(() => users.id),
-    /* ---- 0346: the Order Hub. See "The Order Hub" in AGENTS.md. ---- */
+    /* ---- 0347: the Order Hub. See "The Order Hub" in AGENTS.md. ---- */
     /** The TO this line was made from; null on every line from before the hub. */
     intakeId: text("intake_id").references((): AnyPgColumn => erpOrderIntakes.id),
     /** Pending | Approved | Hold | Declined — Accounts' check of the order. Defaults Approved so older lines move as before. */
@@ -13590,7 +13608,7 @@ export const erpOrderHolds = pgTable(
     transportIds: text("transport_ids").array().notNull().default(sql`'{}'::text[]`),
     /** Line id → its status before the hold, so resolving puts each back. */
     lineStatuses: jsonb("line_statuses").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
-    /** Which desk held it — office | accounts | production — so releasing sends it back there (0346). */
+    /** Which desk held it — office | accounts | production — so releasing sends it back there (0347). */
     department: text("department").notNull().default("office"),
     raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
     raisedById: text("raised_by_id").references(() => users.id),

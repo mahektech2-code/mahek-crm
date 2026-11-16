@@ -2,6 +2,7 @@ import { all, getKv, one, run, setKv, tx } from '../db';
 import { deviceId, type PullPayload, type TerritoryState } from './api';
 import { isoDate } from '../lib/format';
 import { CONVERTED_LEAD } from '../data/lead-query';
+import { storeRemote } from '../data/remote';
 import { noPending, noPendingLead, PENDING_STATES } from './pending';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
@@ -64,6 +65,9 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     await c('journeyStops', () => upsertStops(pull.journeyStops, now));
     await c('planDays', () => upsertPlanDays(pull.planDays, now));
     await c('config', () => upsertConfig(pull.config, now));
+    /* Its own channel and its own kv row, never `config`: nothing the office
+       sets here can reach a setting the trail reads — see `data/remote.ts`. */
+    await c('remote', () => storeRemote(pull.remote));
     await c('territory', () => storeTerritory(pull.territory));
     await c('notifications', () => upsertNotifications(pull.notifications));
     await c('leaveBalances', () => upsertLeaveBalances(pull.leaveBalances, now));
