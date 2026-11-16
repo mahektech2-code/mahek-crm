@@ -43,6 +43,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import * as L from "@/lib/erp/logistics";
+import * as Calls from "@/lib/erp/transporter-calls";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { erpAudit } from "@/lib/erp/server";
 import * as T from "@/lib/erp/trips";
@@ -286,6 +287,35 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.ok((await L.updateConsignment(ctx, [t.id], { destination: "" })).ok);
     [c] = await L.consignments({ ids: [t.id] });
     assert.equal(c.destination, c.lrDestination, "an emptied destination goes back to the LR's own");
+
+    /* 0344 — one call to the transporter covers its LRs, and every call is kept, answered or not. */
+    const carrier = c.transporter!;
+    const dueBefore = c.nextCallOn;
+    assert.equal(msg(await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "no_answer", source: "whatsapp" })), "Say how the call went");
+    assert.equal(msg(await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "call_back", source: "call" })), "Say when they asked you to call back");
+    assert.match(msg(await Calls.logTransporterCall(ctx, { transporter: "Somebody Else", transportIds: [t.id], outcome: "no_answer", source: "call" })), /Nothing of Somebody Else's is on the road/);
+    const unanswered = await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "no_answer", source: "call", spokeTo: "nobody" });
+    assert.ok(unanswered.ok, msg(unanswered));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.nextCallOn, dueBefore, "nobody answered, so the call stays where it was");
+    const told = (await roadMessages()).length;
+    assert.equal(msg(await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "update", source: "call", lrs: [{ transportIds: [t.id], stage: c.stage }] })), "Nothing moved on any LR — pick “Answered — nothing new” instead");
+    const news = await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "update", source: "call", spokeTo: "Suresh", lrs: [{ transportIds: [t.id], stage: c.stage, city: "Vadakara", pickupPoint: c.pickupPoint }] });
+    assert.ok(news.ok, msg(news));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.currentCity, "Vadakara");
+    assert.equal((await roadMessages()).length, told + 1, "the city is news, so the party is told");
+    const quiet = await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "no_change", source: "call" });
+    assert.ok(quiet.ok, msg(quiet));
+    assert.equal((await roadMessages()).length, told + 1, "nothing new tells nobody");
+    const hist = await Calls.transporterCallHistory(`  ${carrier.toUpperCase()} `);
+    assert.deepEqual(
+      hist.rows.map((h) => h.outcome),
+      ["no_change", "update", "no_answer"],
+    );
+    assert.deepEqual(hist.rows[1].changes, [{ lrNo: c.lrNo, what: "Reached Vadakara" }]);
+    assert.equal(hist.rows[1].spokeTo, "Suresh");
+    assert.equal(hist.stats.answeredPct, 67);
 
     /* A problem, solved. */
     assert.equal(msg(await L.raiseIssue(ctx, [t.id], { issue: "Other" })), "Say what the problem is");

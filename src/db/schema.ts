@@ -13261,6 +13261,44 @@ export const erpTransportEvents = pgTable(
 );
 
 /**
+ * 0344 — EVERY CALL TO A TRANSPORTER, one row per call, however many LRs it
+ * covered. `erp_transport_events` says what happened to each LR; this says
+ * that somebody rang, whom, how it went and what came of it — the history the
+ * calling window draws and the answer rate is read from. A no-answer is a row
+ * too: it moves no LR, and it is the fact that the transporter is hard to get.
+ * Append-only; nothing edits a call after it is logged.
+ */
+export const erpTransporterCalls = pgTable(
+  "erp_transporter_calls",
+  {
+    id: text("id").primaryKey(),
+    /** The transporter as the bills name it — the On the road groups key on this. */
+    transporter: text("transporter").notNull(),
+    transporterId: text("transporter_id").references(() => erpTransporters.id, { onDelete: "set null" }),
+    /** update | no_change | no_answer | call_back. */
+    outcome: text("outcome").notNull(),
+    /** call | whatsapp | tracking — how the news came. Only a call can go unanswered. */
+    source: text("source").notNull().default("call"),
+    contactId: text("contact_id").references(() => erpTransporterContacts.id, { onDelete: "set null" }),
+    spokeTo: text("spoke_to"),
+    phone: text("phone"),
+    note: text("note"),
+    nextCallOn: date("next_call_on", { mode: "string" }),
+    transportIds: text("transport_ids").array().notNull().default(sql`'{}'::text[]`),
+    /** What moved, LR by LR: `{ lrNo, what }[]`, written as it was said back on save. */
+    changes: jsonb("changes").$type<{ lrNo: string | null; what: string }[]>().notNull().default(sql`'[]'::jsonb`),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_transporter_calls_transporter_idx").on(sql`lower(${t.transporter})`, t.at),
+    check("erp_transporter_calls_outcome", sql`${t.outcome} in ('update','no_change','no_answer','call_back')`),
+    check("erp_transporter_calls_source", sql`${t.source} in ('call','whatsapp','tracking')`),
+    check("erp_transporter_calls_unanswered_is_a_call", sql`${t.outcome} not in ('no_answer','call_back') or ${t.source} = 'call'`),
+  ],
+);
+
+/**
  * Every WhatsApp the logistics flow sent a customer, or has ready for a person
  * to send. Kept apart from `wa_messages` on purpose: a confirmed message there
  * is CONTACT, and quiets the customer on the Call Log — a note saying the goods

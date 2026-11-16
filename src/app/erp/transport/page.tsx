@@ -21,6 +21,8 @@ import { DocumentsDesk } from "./parts/documents-desk";
 import { nowMs } from "@/lib/format";
 import { Messages } from "./parts/messages";
 import { OnRoad } from "./parts/on-road";
+import type { TransporterContact } from "./parts/call-transporter";
+import { transporterKey } from "@/lib/erp/engines/transporter-calls";
 import { Delivered, Overview } from "./parts/overview";
 import { ToTransport } from "./parts/to-transport";
 import { Transporters } from "./parts/transporters";
@@ -168,6 +170,8 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           initialFilter={filter === "calls" || filter === "late" || filter === "issue" ? filter : undefined}
           signedWaiting={lrs}
           transporters={dir.filter((t) => t.active).map((t) => t.name)}
+          contacts={contactBook(dir)}
+          initialBy={one("by") === "transporter" ? "transporter" : "lr"}
         />
       ) : null}
       {view === "delivered" ? <Delivered rows={rows.filter((c) => c.phase === "delivered")} canWrite={canWrite} /> : null}
@@ -245,4 +249,21 @@ async function freightData(one: (k: string) => string | undefined, today: string
     pendingPaise: pendingBills.reduce((a, b) => a + b.amountPaise, 0),
     tripDays: FREIGHT_TRIP_DAYS,
   };
+}
+
+/**
+ * Who to ring at each transporter, keyed the way the bills spell its name: the
+ * people on its godowns, in the order the Transporters tab lists them. The
+ * numbers stay here — the On the road list shows none until somebody opens the
+ * calling window.
+ */
+function contactBook(dir: Awaited<ReturnType<typeof transporters>>): Record<string, TransporterContact[]> {
+  const out: Record<string, TransporterContact[]> = {};
+  for (const t of dir) {
+    const key = transporterKey(t.name);
+    const people: TransporterContact[] = t.godowns.flatMap((g) => g.contacts.filter((c) => c.phones.length).map((c) => ({ id: c.id, name: c.name, role: c.role, where: g.label, phones: c.phones })));
+    if (!people.length && t.phone) people.push({ id: null, name: t.contactPerson, role: null, where: null, phones: [t.phone, t.altPhone].filter((p): p is string => !!p) });
+    out[key] = people;
+  }
+  return out;
 }

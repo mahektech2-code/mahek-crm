@@ -102,6 +102,14 @@ This is our cost to the transporter. The freight charged to the customer on the 
 
 Every write is a row in the bill's history and an audit row (`erp.freightBill.*`). Bills, reports and the history are read on **Transport expenses**; Trips & freight and Paid freight were retired into it, and the old addresses open it.
 
+## A call covers a transporter, and every call is kept
+
+<Rule title="One call, every LR that company carries">
+On the road can be read **By transporter**, one heading per company, because one call to a transporter answers for all its LRs. The list shows no phone numbers; **Call** opens the calling window with that company's people (from its godowns on the Transporters tab) or the driver of a Mahek Vehicle. A call ends one of four ways: **Gave an update** moves the LRs it names (through the same Update as a single LR, so the customer hears exactly what they always did) and books the next call; **Answered — nothing new** books the next call and tells nobody; **No answer / busy** leaves the calls due; **Asked to call back** moves them to the day given. News read off the transporter's WhatsApp or tracking page is an update or nothing new — only a phone call can go unanswered.
+</Rule>
+
+Every call is one row, kept whatever it achieved, and the window shows that transporter's last sixty days of them: how often our calls were answered, and how often an expected day moved over the last thirty. The next call after an update defaults to <Setting k="erp.logistics.callEveryDays" /> days on.
+
 ## Delivery is confirmed by somebody
 
 <Rule title="Only the Delivered act closes a bill, and it records who">
