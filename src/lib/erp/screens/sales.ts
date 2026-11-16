@@ -2629,8 +2629,8 @@ async function saveAllocation(ctx: ErpContext, h: Record<string, string>, id?: s
   return inTx(async (tx) => {
     await lockLot(tx, l.boxed ? "pack" : "fg", lot, l.o.godownId);
     const src = l.boxed
-      ? (await packLots(tx)).find((x) => x.batchNo === lot && x.godownId === l.o.godownId && x.skuId === l.sku.id)
-      : (await fgLots(tx)).find((x) => x.lotCode === lot && x.godownId === l.o.godownId && x.skuId === l.sku.id);
+      ? (await packLots(tx, { rates: false })).find((x) => x.batchNo === lot && x.godownId === l.o.godownId && x.skuId === l.sku.id)
+      : (await fgLots(tx, { rates: false })).find((x) => x.lotCode === lot && x.godownId === l.o.godownId && x.skuId === l.sku.id);
     if (!src) return refuse(fieldErr("lot", `No ${l.boxed ? "packing batch" : "FG lot"} ${lot} of this SKU has stock at ${l.godown}`));
     const [{ allocated }] = (await tx.execute(sql`select coalesce(sum(quantity), 0)::float8 as allocated from erp_batch_codes where order_id = ${id}`)) as unknown as { allocated: number }[];
     const required = allocationTarget(l.boxed, l.boxes, l.o.qtyCans) - Number(allocated);
@@ -2741,8 +2741,8 @@ const batchCodes: ScreenModule = {
       return inTx(async (tx) => {
         await lockLot(tx, b.lotFrom, b.lotCode, b.godownId);
         const stock = b.lotFrom === "pack"
-          ? ((await packLots(tx)).find((x) => x.batchNo === b.lotCode && x.godownId === b.godownId)?.stock ?? 0)
-          : ((await fgLots(tx)).find((x) => x.lotCode === b.lotCode && x.godownId === b.godownId && x.finishedGoodId === b.finishedGoodId)?.stock ?? 0);
+          ? ((await packLots(tx, { rates: false })).find((x) => x.batchNo === b.lotCode && x.godownId === b.godownId)?.stock ?? 0)
+          : ((await fgLots(tx, { rates: false })).find((x) => x.lotCode === b.lotCode && x.godownId === b.godownId && x.finishedGoodId === b.finishedGoodId)?.stock ?? 0);
         /* A-18: this row's own quantity is not counted against it. */
         const [{ others }] = (await tx.execute(sql`select coalesce(sum(quantity), 0)::float8 as others from erp_batch_codes where order_id = ${b.orderId} and id <> ${id}`)) as unknown as { others: number }[];
         const required = allocationTarget(l.boxed, l.boxes, l.o.qtyCans) - Number(others);
