@@ -180,18 +180,11 @@ function Refusal({ r, onClose }: { r: OpResult; onClose: () => void }) {
   );
 }
 
-/** Location, read once, then the act. A refused location is said in words. */
+/** Location, read once, then the act. It is recorded where the browser gives
+ *  it and never required: a blocked location punches in all the same. */
 export async function withLocation(run: (fix: { lat: number | null; lng: number | null; accuracy: number | null }) => Promise<OpResult>): Promise<OpResult> {
   const fix = await locate();
-  if (fix === "denied") {
-    return {
-      ok: false,
-      refusal: "denied",
-      error: "Location is blocked for MahekOne",
-      detail: "Allow location for this site in your browser’s settings, then press the button again. It is read once, only when you punch in or out.",
-    };
-  }
-  return run(fix);
+  return run(fix === "denied" ? { lat: null, lng: null, accuracy: null } : fix);
 }
 
 type Where = { office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null };

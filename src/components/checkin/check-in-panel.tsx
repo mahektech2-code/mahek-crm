@@ -113,16 +113,8 @@ export function CheckInPanel({ state, canHelp, onDone }: { state: CheckInState; 
     if (!qrCode) {
       setBusy("locating");
       const f = await locate();
-      if (f === "denied") {
-        setBusy("");
-        setRefused({
-          reason: "denied",
-          title: "Location is blocked for MahekOne",
-          line: "Allow location for this site in your browser’s settings, then press the button again. HRMS reads it once, only when you check in or out.",
-        });
-        return;
-      }
-      fix = f;
+      /* Location is recorded when given and never required. */
+      fix = f === "denied" ? { lat: null, lng: null, accuracy: null } : f;
     }
     setBusy("saving");
     const photoId = photo ? await upload(photo) : null;
