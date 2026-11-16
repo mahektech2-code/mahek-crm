@@ -156,3 +156,48 @@ test("a session list survives a JSON round trip", () => {
   const s: WorkdaySession[] = endSession(startSession([], nine)!, nine + H, "break", "Tea")!;
   assert.deepEqual(JSON.parse(JSON.stringify(s)), s);
 });
+
+/* ---------------------------------------------------------- the 6 PM cut-off */
+
+const six = nine + 9 * H; // 18:00 IST
+const late = { ...cfg, idleFrom: six };
+
+test("before the cut-off nobody is idle: no break, no punch-out, no warning", () => {
+  const s = startSession([], nine)!;
+  /* Last touched at 10:00, now 17:59 — eight idle hours, all before 6 PM. */
+  const r = settle(s, nine + H, six - M, late);
+  assert.equal(r.changed, false);
+  assert.equal(phaseOf(r.sessions), "working");
+  assert.equal(idleState(s, nine + H, six - M, late).warn, false);
+});
+
+test("worked at 6:10 PM and nothing since: punched out at 7:10, dated 6:10", () => {
+  const s = startSession([], nine)!;
+  const act = six + 10 * M;
+  assert.equal(settle(s, act, six + 69 * M, late).sessions.at(-1)!.end, "idle", "a break first, at 30 idle minutes");
+  const r = settle(s, act, six + 70 * M, late);
+  assert.equal(phaseOf(r.sessions), "auto_out");
+  assert.equal(r.sessions.at(-1)!.out, act);
+});
+
+test("idle since the afternoon: the clock starts at 6 PM and the punch-out is dated 6 PM", () => {
+  const s = startSession([], nine)!;
+  assert.equal(settle(s, nine + 5 * H, six + 29 * M, late).changed, false);
+  const r = settle(s, nine + 5 * H, six + 60 * M, late);
+  assert.equal(phaseOf(r.sessions), "auto_out");
+  assert.equal(r.sessions.at(-1)!.out, six, "never before the cut-off");
+});
+
+test("an automatic break the clock took after 6 PM still closes the day an hour on", () => {
+  let s = startSession([], nine)!;
+  s = settle(s, six, six + 30 * M, late).sessions;
+  assert.equal(phaseOf(s), "auto_break");
+  const r = settle(s, six, six + 60 * M, late);
+  assert.equal(phaseOf(r.sessions), "auto_out");
+  assert.equal(r.sessions.at(-1)!.out, six);
+});
+
+test("no cut-off keeps the old all-day rule", () => {
+  const s = startSession([], nine)!;
+  assert.equal(phaseOf(settle(s, nine, nine + 60 * M, { ...cfg, idleFrom: null }).sessions), "auto_out");
+});

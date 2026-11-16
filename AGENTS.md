@@ -6650,6 +6650,18 @@ any MahekOne tab (shared through a BroadcastChannel and localStorage) or an
 open call drawer (`data-workday-busy`); the browser sends a heartbeat at most
 once a minute, and only a running stretch takes one.
 
+**NOBODY IS IDLE BEFORE THE OFFICE CLOSES (Nov 2026).** Office staff work in
+the field, in Tally and on the phone, none of which MahekOne can see, so the
+idle rules wait for `hrms.workday.idleFromHour` (18, 6 PM; 0 runs them all
+day). Before it there is no automatic break, no punch-out and no warning on
+any screen. From it the idle clock counts from the cut-off or the last
+activity, whichever is later, and an automatic punch-out is never dated before
+the cut-off: worked at 6:10 and nothing since is punched out at 7:10, dated
+6:10; idle since 4 PM is punched out at 7:00, dated 6:00. `cfg.idleFrom` in
+`engines/workday.ts` is the rule; the browser reads the same value so the
+warning keeps quiet too. A manual break still closes the day after
+`breakOutMinutes` whatever the hour.
+
 **PRESENT, HALF DAY OR ABSENT IS HOURS WORKED, breaks left out.**
 `hrms.attendance.presentHours` (8) and `halfDayHours` (4), overridable per
 weekday on People → Working hours (`hrms_staff_timings.present_min` /

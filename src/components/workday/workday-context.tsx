@@ -189,7 +189,7 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
       polls++;
       /* Every minute, and at once when the idle clock would have crossed a line. */
       const idle = Date.now() - lastAct.current;
-      const crossing = state.phase === "working" && idle >= state.cfg.breakMinutes * 60_000 && idle < state.cfg.breakMinutes * 60_000 + 1_000;
+      const crossing = state.phase === "working" && !(state.cfg.idleFrom != null && Date.now() < state.cfg.idleFrom) && idle >= state.cfg.breakMinutes * 60_000 && idle < state.cfg.breakMinutes * 60_000 + 1_000;
       if (polls % 60 === 0 || crossing) void refresh();
     }, 1_000);
     return () => window.clearInterval(id);
@@ -232,10 +232,14 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     const closed = state.sessions.reduce((n, s) => n + (s.out != null ? Math.max(0, s.out - s.in) : 0), 0);
     /* The server's figure includes approved claims; the local one ticks. */
     const extraApproved = Math.max(0, state.workedMs - closed - (open && open.out == null ? Math.max(0, state.now - open.in) : 0));
+    /* Before the idle cut-off nobody is idle, so nothing warns; from it the
+       idle clock counts from the cut-off at the earliest — the server's rule. */
+    const from = state.cfg.idleFrom ?? null;
+    const seen = Math.max(lastActivity, state.lastActivity ?? 0);
     return {
       state,
       now: t,
-      lastActivity: Math.max(lastActivity, state.lastActivity ?? 0),
+      lastActivity: from != null && t < from ? t : Math.max(seen, from ?? 0),
       workedMs: closed + running + extraApproved,
       act: actAndTell,
       refresh,
