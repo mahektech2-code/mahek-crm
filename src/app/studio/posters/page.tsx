@@ -1,26 +1,35 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Card, EmptyState, PageHeader, Td, Th, buttonClass } from "@/components/ui/primitives";
-import { stamp } from "@/lib/format";
-import { LANGUAGE_NAMES, type Language } from "@/lib/studio/domain/language";
-import { listPosters } from "@/lib/studio/service";
-import { Tabs, plural } from "../_ui/parts";
+import { Card, PageHeader } from "@/components/ui/primitives";
+import { activeFilterCount, parseFilters, parseKey, type RawParams } from "@/lib/studio/domain/history";
+import { historyPage, historyPanel } from "@/lib/studio/history-service";
+import { FilterBar, HistoryEmpty, HistoryNotice, HistoryPanel, HistoryTable, Pager, type QueryState } from "../_ui/history-view";
+import { Tabs } from "../_ui/parts";
 
 export const metadata: Metadata = { title: "My posters" };
 export const dynamic = "force-dynamic";
 
-export default async function PostersPage({ searchParams }: { searchParams: Promise<{ whose?: string; page?: string }> }) {
+/* My posters, with the forwarding history in its table. A made poster is one row; so is each recipient of an uploaded
+   poster in a started list. See lib/studio/history-service.ts for who sees what. */
+export default async function PostersPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const sp = await searchParams;
-  const whose = sp.whose === "team" ? "team" : "mine";
-  const result = await listPosters({ whose, page: Number(sp.page) || 1 });
-  const href = (over: Record<string, string | number>) => {
-    const p = new URLSearchParams({ whose, ...Object.fromEntries(Object.entries(over).map(([k, v]) => [k, String(v)])) });
-    return `/studio/posters?${p.toString()}`;
-  };
+  const requested = (Array.isArray(sp.whose) ? sp.whose[0] : sp.whose) === "team" ? "team" : "mine";
+  const filters = parseFilters(sp);
+  let result = await historyPage(filters, requested);
+  /* Somebody with no team has no My team's tab: asking for it answers as Mine, never with a wider view. */
+  let whose: "mine" | "team" = requested;
+  if (requested === "team" && !result.canTeam) {
+    whose = "mine";
+    result = await historyPage(filters, "mine");
+  }
+  const openRaw = Array.isArray(sp.open) ? sp.open[0] : sp.open;
+  const open = parseKey(openRaw) ? (openRaw as string) : null;
+  const state: QueryState = { whose, filters: { ...filters, page: result.page }, open };
+  const panel = open ? await historyPanel(open, whose) : null;
+  const filtered = activeFilterCount(filters) > 0 || filters.q !== "";
   return (
     <div className="mx-auto max-w-[1180px] px-6 py-6">
-      <PageHeader title={whose === "team" ? "Team's posters" : "My posters"} subtitle="Every poster, newest first. Open one to download it or send it again." />
-      {result.teamView ? (
+      <PageHeader title={whose === "team" ? "Team's posters" : "My posters"} subtitle="Every poster, newest first — and who it was forwarded to. Open a row for the details." />
+      {result.canTeam ? (
         <Tabs
           items={[
             { href: "/studio/posters?whose=mine", label: "Mine", active: whose === "mine" },
@@ -28,53 +37,17 @@ export default async function PostersPage({ searchParams }: { searchParams: Prom
           ]}
         />
       ) : null}
-      <Card>
-        {result.rows.length ? (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <Th>For</Th>
-                <Th>Design</Th>
-                <Th>Made</Th>
-                {whose === "team" ? <Th>By</Th> : null}
-                <Th>Sent</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.map((p) => (
-                <tr key={p.id} className="border-t border-divider">
-                  <Td>
-                    <Link href={`/studio/posters/${p.id}`} className="font-medium">
-                      {p.company}
-                    </Link>
-                    {p.contact ? <div className="text-[12.5px] text-muted">{p.contact}</div> : null}
-                  </Td>
-                  <Td>
-                    {p.templateName}
-                    <div className="text-[12.5px] text-muted">{LANGUAGE_NAMES[p.language as Language] ?? p.language}</div>
-                  </Td>
-                  <Td>{stamp(p.createdAt)}</Td>
-                  {whose === "team" ? <Td>{p.createdByName}</Td> : null}
-                  <Td>{p.shareCount ? `${plural(p.shareCount, "time")} · ${stamp(p.lastSharedAt)}` : <span className="text-faint">Not yet</span>}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <EmptyState title="No posters yet" action={<Link href="/studio/make" className={buttonClass({ variant: "primary" })}>Make a poster</Link>} />
-        )}
-      </Card>
-      {result.pageCount > 1 ? (
-        <div className="mt-3 flex items-center justify-between text-sm text-muted">
-          <span>
-            Page {result.page} of {result.pageCount} · {result.total} in all
-          </span>
-          <span className="flex gap-2">
-            {result.page > 1 ? <Link href={href({ page: result.page - 1 })} className={buttonClass({ size: "sm" })}>Previous</Link> : null}
-            {result.page < result.pageCount ? <Link href={href({ page: result.page + 1 })} className={buttonClass({ size: "sm" })}>Next</Link> : null}
-          </span>
-        </div>
-      ) : null}
+      <HistoryNotice />
+      <FilterBar s={state} page={result} />
+      {result.rows.length ? (
+        <HistoryTable s={state} page={result} />
+      ) : (
+        <Card>
+          <HistoryEmpty filtered={filtered} />
+        </Card>
+      )}
+      <Pager s={state} page={result} />
+      {panel ? <HistoryPanel s={state} data={panel} /> : null}
     </div>
   );
 }

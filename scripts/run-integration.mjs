@@ -49,6 +49,8 @@ const files = [
   // The Studio: posters only for your own book, recipes that redraw, bulk skips
   // said in words, and an upload published only by somebody given approval.
   "src/lib/studio/studio.integration.test.ts",
+  // My posters with the forwarding history in its table: one row per poster or started-list recipient, never twice; scope and removed records.
+  "src/lib/studio/history.integration.test.ts",
   // The Locker: register scope, renewals that supersede, one reminder digest;
   // the vault's dual control, audit-before-plaintext, tamper and break-glass rules.
   "src/lib/locker/register.integration.test.ts",
