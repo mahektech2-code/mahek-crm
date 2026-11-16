@@ -56,6 +56,7 @@ import { fgLevelAvailable, fgLots, fgRates, lockLot, packBatchCosting, packLots 
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
 import { pageMap, readOnceKeyed } from "../read-memo";
+import { later, withLater } from "../lazy-row";
 import { REGISTER_DEFAULT, monthWindow } from "../period";
 import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
@@ -336,6 +337,8 @@ export type LineFilter = {
   orderNos?: number[];
   /** Only lines that have reached order details (billed). */
   billed?: boolean;
+  /** Only lines that are NOT open work — cancelled, or billed and dispatch-verified. `openWork`'s exact complement: the two together are every line. */
+  closedWork?: boolean;
 };
 
 /** Order lines with what the screens derive from them — the one reading every sales list shares. */
@@ -343,13 +346,21 @@ export async function orderLines(f: LineFilter): Promise<OrderLine[]> {
   return readOnceKeyed(`orderLines:${JSON.stringify(f)}`, () => readLines(f));
 }
 
+const openWorkSql = () =>
+  sql`${erpOrders.status} <> 'Cancel' and not (${erpOrders.entryStatus} = 'Done' and ${erpOrderDetails.verification} is not distinct from 'Verified')`;
+
 function lineWhere(f: LineFilter) {
   const where = [];
   if (f.ids) where.push(f.ids.length ? sql`${erpOrders.id} in ${f.ids}` : sql`false`);
   if (f.orderNos) where.push(f.orderNos.length ? sql`${erpOrders.orderNo} in ${f.orderNos}` : sql`false`);
   if (f.billed) where.push(sql`${erpOrderDetails.orderId} is not null`);
-  if (f.openWork)
-    where.push(sql`${erpOrders.status} <> 'Cancel' and not (${erpOrders.entryStatus} = 'Done' and ${erpOrderDetails.verification} is not distinct from 'Verified')`);
+  if (f.openWork) where.push(openWorkSql());
+  /* `is not true`, so a line the open-work test answers NULL about is still read by one of the two. */
+  if (f.closedWork) {
+    /* The closed lines are the whole history: only ever asked of named orders or lines. */
+    if (!f.ids && !f.orderNos && !f.window) throw new Error("closedWork is the history: name the orders, the lines or a window.");
+    where.push(sql`(${openWorkSql()}) is not true`);
+  }
   if (f.window) where.push(windowWhere(f.window.on === "dispatch" ? sql`${erpOrderDetails.dispatchDate}` : sql`${erpOrders.orderDate}`, sql`${erpOrders.id}`, f.window.scope));
   if (!where.length) throw new Error("orderLines needs a filter: openWork, a window, ids or orderNos.");
   return sql.join(where, sql` and `);
@@ -382,11 +393,8 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       vehicleNo: erpOrderDetails.vehicleNo,
       /* The bill's transport record, for the logistics word — one row by primary key. */
       transport: sql<{ stage: string | null; hasLr: boolean; issue: string | null } | null>`(select json_build_object('stage', t.material_stage, 'hasLr', (t.lr_id is not null or coalesce(t.lr_no, '') <> ''), 'issue', t.issue) from erp_transports t where t.id = "erp_order_details"."transport_id")`,
-      /* Whether ANY line of this order has reached order details — the Pending
-         list's rule. Asked in SQL because the other lines may be outside this read. */
-      orderDetailed: sql<boolean>`exists (select 1 from erp_orders o2 join erp_order_details d2 on d2.order_id = o2.id where o2.order_no = "erp_orders"."order_no")`,
-      allocQty: sql<number>`(select coalesce(sum(b.quantity), 0)::float8 from erp_batch_codes b where b.order_id = "erp_orders"."id")`,
-      allocN: sql<number>`(select count(*)::int from erp_batch_codes b where b.order_id = "erp_orders"."id")`,
+      /* What is allocated to the line and in how many batch codes: one probe of the order index, not two. */
+      alloc: sql<[number, number]>`(select json_build_array(coalesce(sum(b.quantity), 0)::float8, count(*)) from erp_batch_codes b where b.order_id = "erp_orders"."id")`,
     })
     .from(erpOrders)
     .innerJoin(erpGodowns, eq(erpGodowns.id, erpOrders.godownId))
@@ -395,7 +403,11 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
     .where(lineWhere(f))
     .orderBy(desc(erpOrders.orderNo), desc(erpOrders.orderDate), asc(erpOrders.createdAt));
   if (!rows.length) return [];
-  const [parties, skus] = await Promise.all([customersById([...new Set(rows.flatMap((r) => [r.o.billingCustomerId, r.o.deliveryCustomerId]))]), skuCatalogue()]);
+  const [parties, skus, detailed] = await Promise.all([
+    customersById([...new Set(rows.flatMap((r) => [r.o.billingCustomerId, r.o.deliveryCustomerId]))]),
+    skuCatalogue(),
+    ordersWithADetail([...new Set(rows.map((r) => r.o.orderNo))]),
+  ]);
   const now = today();
   const out: OrderLine[] = [];
   for (const r of rows) {
@@ -406,7 +418,7 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
     const type = orderType(sku.boxType);
     const boxed = isBoxed(sku);
     const { boxes, valid } = boxQuantity(r.o.qtyCans, sku.cpb, !boxed);
-    const allocated = Number(r.allocQty ?? 0);
+    const allocated = Number(r.alloc?.[0] ?? 0);
     const verified = r.verification === "Verified";
     out.push({
       o: r.o,
@@ -421,10 +433,10 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       weightKg: lineWeightKg(r.o.qtyCans, sku),
       labels: labelCount(type, boxes, r.o.qtyCans),
       allocated,
-      allocations: Number(r.allocN ?? 0),
+      allocations: Number(r.alloc?.[1] ?? 0),
       allocation: allocationState(allocationTarget(boxed, boxes, r.o.qtyCans), allocated),
       inDetails: !!r.detailRow,
-      orderDetailed: !!r.orderDetailed,
+      orderDetailed: detailed.has(r.o.orderNo),
       dispatched: verified,
       invoiceCheck: r.detailRow ? (r.invoiceCheck ?? "Pending") : null,
       invoiceCheckedById: r.invoiceCheckedById ?? null,
@@ -438,6 +450,25 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       si: standingInstructions({ instructions: delivery.p?.standingInstructions ?? null, deliveryType: delivery.deliveryType, paymentType: delivery.freightTerm, weightType: delivery.p?.weightType ?? null }),
       by: r.by,
     });
+  }
+  return out;
+}
+
+/**
+ * Which of these orders have ANY line in order details — the Pending list's
+ * rule, asked of the order rather than the line because its other lines may be
+ * outside the read. It was an EXISTS on every line read, which Postgres
+ * answered by joining the whole order book to the whole of order details on
+ * every read of the open book; asked of the read's own order numbers it is an
+ * index lookup on erp_orders_no_idx.
+ */
+async function ordersWithADetail(orderNos: number[]): Promise<Set<number>> {
+  const out = new Set<number>();
+  for (let i = 0; i < orderNos.length; i += 5000) {
+    const rows = (await db.execute(sql`
+      select distinct o.order_no as n from erp_orders o join erp_order_details d on d.order_id = o.id
+       where o.order_no in ${orderNos.slice(i, i + 5000)}`)) as unknown as { n: number }[];
+    for (const r of rows) out.add(Number(r.n));
   }
   return out;
 }
@@ -1203,12 +1234,34 @@ const ORDERS_WINDOW = { label: "Order date", default: REGISTER_DEFAULT } as cons
  * working list as open work, and "Show the whole order" (ids) as exactly those.
  * Null where the window holds more than one load may build.
  */
-async function listLines(scope: Scope, s: LoadScope | undefined): Promise<{ lines: OrderLine[]; wide: { n: number; cap: number } | null }> {
-  if (s?.ids?.length) return { lines: await orderLines({ ids: s.ids }), wide: null };
-  if (scope !== "orders") return { lines: await orderLines({ openWork: true }), wide: null };
+async function listLines(scope: Scope, s: LoadScope | undefined): Promise<{ lines: OrderLine[]; wide: { n: number; cap: number } | null; openWork: boolean }> {
+  if (s?.ids?.length) return { lines: await orderLines({ ids: s.ids }), wide: null, openWork: false };
+  if (scope !== "orders") return { lines: await orderLines({ openWork: true }), wide: null, openWork: true };
   const f: LineFilter = { window: { scope: s ?? unscoped(), on: "order" } };
   const wide = tooWide(await countLines(f), f.window!.scope);
-  return { lines: wide ? [] : await orderLines(f), wide };
+  return { lines: wide ? [] : await orderLines(f), wide, openWork: false };
+}
+
+/** The order the lines are read in (`readLines`): newest order first, then its date, then the line as it was entered. */
+function byReadOrder(a: OrderLine, b: OrderLine): number {
+  return b.o.orderNo - a.o.orderNo || (a.o.orderDate < b.o.orderDate ? 1 : a.o.orderDate > b.o.orderDate ? -1 : 0) || a.o.createdAt.getTime() - b.o.createdAt.getTime();
+}
+
+/**
+ * EVERY LINE OF THESE ORDERS, without reading the open book twice. An order is
+ * billed, checked and dispatched whole, so a working tab needs its orders'
+ * other lines too — and it used to read them all again by order number: the
+ * whole open book a second time on every load, to learn about the handful of
+ * lines that had already left. Where `read` is the open book, every open line
+ * of these orders is already in hand; only their closed lines (cancelled, or
+ * billed and dispatch-verified) are asked for.
+ */
+async function linesOfOrders(read: OrderLine[], orderNos: number[], readIsOpenWork: boolean): Promise<OrderLine[]> {
+  if (!orderNos.length) return [];
+  if (!readIsOpenWork) return orderLines({ orderNos });
+  const want = new Set(orderNos);
+  const closed = await orderLines({ orderNos, closedWork: true });
+  return [...read.filter((l) => want.has(l.o.orderNo)), ...closed].sort(byReadOrder);
 }
 
 const NO_DATA: Record<Scope, string> = {
@@ -1292,7 +1345,7 @@ function orderList(scope: Scope): ScreenModule {
     key: scope,
     ...(scope === "orders" ? { window: ORDERS_WINDOW } : {}),
     async load(ctx, s) {
-      const { lines, wide } = await listLines(scope, s);
+      const { lines, wide, openWork } = await listLines(scope, s);
       const detailedOrders = detailedOrdersOf(lines);
       const shown = lines.filter((l) => inScope(scope, l, detailedOrders));
       const labels = scope === "labels";
@@ -1371,7 +1424,7 @@ function orderList(scope: Scope): ScreenModule {
       const byNo = new Map<number, OrderLine[]>();
       /* An order is billed, checked and dispatched WHOLE, so its blockers are read off every line of it — not only the ones this tab draws. */
       const orderNos = [...new Set(shown.map((l) => l.o.orderNo))];
-      const whole = orderNos.length ? await orderLines({ orderNos }) : [];
+      const whole = await linesOfOrders(lines, orderNos, openWork);
       whole.forEach((l) => byNo.set(l.o.orderNo, [...(byNo.get(l.o.orderNo) ?? []), l]));
       const continued = new Map<number, number[]>();
       if (orderNos.length) {
@@ -1421,12 +1474,14 @@ function orderList(scope: Scope): ScreenModule {
           const live = order.filter((x) => x.o.status !== "Cancel");
           const billed = live.some((x) => x.inDetails);
           const dispatched = live.some((x) => x.dispatched);
-          const blockers = billBlockersFor(order);
           const d = lineDomains(l, gates.get(l.o.id) ?? null);
-          const ownBill = live.some((x) => x.inDetails && x.billedById === ctx.user.id);
           const hasPdf = invoiceFiles.has(l.o.orderNo);
+          /* The drawer — its actions and fields — is built only for a row something reads (`lazy-row.ts`): the twenty-five sent, never the nine hundred the list counts. */
+          const actions = (): ActionSpec[] => {
+          const blockers = billBlockersFor(order);
+          const ownBill = live.some((x) => x.inDetails && x.billedById === ctx.user.id);
           const printable = isStickerLine(l);
-          const actions: ActionSpec[] = labels
+          return labels
             ? [
                 { id: "labels", l: `Print dispatch stickers · order ${l.o.orderNo}`, primary: true, href: erpLabelsHref({ order: l.o.orderNo }) },
               ]
@@ -1517,9 +1572,8 @@ function orderList(scope: Scope): ScreenModule {
                   impact: { kind: "erp-order-line", id: l.o.id },
                 },
               ];
-          const history = (reviews.get(l.o.orderNo) ?? []).slice(0, 6);
-          const next = continued.get(l.o.orderNo) ?? [];
-          return {
+          };
+          return withLater<ListRow>({
             id: l.o.id,
             v: withoutHidden(
               {
@@ -1559,7 +1613,10 @@ function orderList(scope: Scope): ScreenModule {
             flags: lineFlags(l),
             title: l.delivery.name,
             header: [l.due ? DUE_WORD[l.due] : "", l.si.replace(/( - )+$/, "") || `${l.sku.name} · ${nf(l.o.qtyCans)} cans`].filter(Boolean).join(" · "),
-            fields: [
+            fields: later(() => {
+              const history = (reviews.get(l.o.orderNo) ?? []).slice(0, 6);
+              const next = continued.get(l.o.orderNo) ?? [];
+              return [
               { l: "Order", v: d.order, der: true },
               { l: "Production", v: d.production ?? "—", der: true },
               { l: "Billing", v: d.billing ?? "—", der: true },
@@ -1597,20 +1654,21 @@ function orderList(scope: Scope): ScreenModule {
               { l: "Party status", v: l.o.partyStatus ?? "—" },
               { l: "Remark / customer instructions", v: l.o.remark || "—" },
               ...(history.length ? [{ l: "Check history", v: history.map(reviewLine).join("\n"), der: true }] : []),
-            ],
-            actions,
+              ];
+            }),
+            actions: later(actions),
             /* The customer's view of the whole order — read when the tab opens, not for every row of the list. */
             ...(labels
               ? {}
               : (() => {
                   const tracking = { kind: "orderTracking", data: { orderNo: l.o.orderNo, hold: holdsOpen.get(l.o.orderNo)?.reason ?? null } };
                   if (!billed) return { panel: tracking };
-                  const invoice = { kind: "orderInvoice", data: invoicePanelData(l.o.orderNo, live, ctx, l.o.transporter ?? l.delivery.p?.transporter ?? null) };
+                  const invoice = later(() => ({ kind: "orderInvoice", data: invoicePanelData(l.o.orderNo, live, ctx, l.o.transporter ?? l.delivery.p?.transporter ?? null) }));
                   /* On the checker's tab the invoice is what is opened for; elsewhere it is a tab beside tracking. */
-                  return checking ? { panel: invoice, panels: [tracking] } : { panel: tracking, panels: [invoice] };
+                  return checking ? { panel: invoice, panels: [tracking] } : { panel: tracking, panels: later(() => [invoice.build()]) };
                 })()),
             by: stampLine(l.by, l.o.createdAt),
-          };
+          });
         }),
       };
     },

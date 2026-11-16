@@ -139,18 +139,7 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
   const since = addDays(today(), -(opts.deliveredDays ?? 45));
   const idFilter = opts.ids ? (opts.ids.length ? sql`and t.id in ${opts.ids}` : sql`and false`) : sql``;
   const rows = (await db.execute(sql`
-    with o as (
-      select o.order_no,
-             min(o.delivery_customer_id) as delivery_id,
-             min(g.name) as godown
-        from erp_orders o
-        left join erp_godowns g on g.id = o.godown_id
-       group by o.order_no
-    ), ev as (
-      select distinct on (e.transport_id) e.transport_id, e.at, e.note
-        from erp_transport_events e
-       order by e.transport_id, e.at desc
-    ), msg as (
+    with msg as (
       select unnest(m.transport_ids) as transport_id, count(*)::int as waiting
         from erp_transport_messages m
        where m.status in ('to_send', 'failed')
@@ -185,14 +174,30 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
            coalesce(msg.waiting, 0) as "messagesWaiting", t.updated_at as "updatedAt"
       from erp_transports t
       join customers c on c.id = t.billing_customer_id
-      left join o on o.order_no = t.order_no
+      /* PER CONSIGNMENT, BY INDEX. These two were CTEs over the whole order
+         book and every event ever recorded — grouped and sorted on every load
+         of every Logistics tab to keep the rows of a few hundred open bills.
+         Asked of each consignment they read its own order's lines
+         (erp_orders_no_idx) and its newest event (transport_idx, at). */
+      left join lateral (
+        select min(o.delivery_customer_id) as delivery_id, min(g.name) as godown
+          from erp_orders o
+          left join erp_godowns g on g.id = o.godown_id
+         where o.order_no = t.order_no
+      ) o on true
       left join customers dc on dc.id = o.delivery_id
       left join erp_lrs l on l.id = t.lr_id
       left join erp_lrs sc on sc.id = t.signed_copy_id
       left join users du on du.id = t.delivered_by_id
       left join erp_trips tp on tp.id = t.trip_id
       left join erp_transporters tr on lower(tr.name) = lower(coalesce(t.transporter, l.transporter)) and tr.active
-      left join ev on ev.transport_id = t.id
+      left join lateral (
+        select e.at, e.note
+          from erp_transport_events e
+         where e.transport_id = t.id
+         order by e.at desc
+         limit 1
+      ) ev on true
       left join msg on msg.transport_id = t.id
      where ${opts.ids ? sql`true` : sql`(t.material_stage <> ${CLOSED} or coalesce(t.delivered_on, (t.updated_at at time zone ${APP_TIMEZONE})::date) >= ${since}::date)`}
        ${idFilter}

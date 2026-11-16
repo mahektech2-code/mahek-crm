@@ -294,6 +294,30 @@ describe("a page costs what it draws", () => {
     }
   });
 
+  test("a working Orders tab reads the open book once, never the whole order again, and builds a drawer only when read", async () => {
+    const client = db.$client as unknown as { unsafe: (...a: unknown[]) => unknown };
+    const unsafe = client.unsafe;
+    const seen: string[] = [];
+    client.unsafe = (...a: unknown[]) => {
+      seen.push(String(a[0]));
+      return unsafe.apply(db.$client, a);
+    };
+    try {
+      const res = await page("readyOrders");
+      const lineReads = seen.filter((q) => q.startsWith(`select "erp_orders"."id"`));
+      assert.ok(lineReads.length > 0, "the order lines are being counted");
+      /* The open book, and only the closed lines of its orders: no read of order lines that is neither. */
+      for (const q of lineReads) assert.match(q, /'Cancel'/, "every read of order lines is open work or its complement");
+      assert.ok(res.rows.length > 0);
+      const row = res.rows.find((r) => r.id === OLD_OPEN)!;
+      /* Read, the drawer is all there. */
+      assert.ok(row.actions!.some((a) => a.id === "editOrder"));
+      assert.ok(row.fields!.some((f) => f.l === "Order"));
+    } finally {
+      client.unsafe = unsafe;
+    }
+  });
+
   test("Billing & dispatch reads its orders together, so thirty cost what five do", async () => {
     const lines = (await db.execute(sql`select id from erp_orders where id like 'ord_t%' order by order_no`)) as unknown as { id: string }[];
     const client = db.$client as unknown as { unsafe: (...a: unknown[]) => unknown };
