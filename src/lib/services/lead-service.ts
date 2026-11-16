@@ -27,7 +27,9 @@ import {
 } from "@/db/schema";
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
 import { getConfig } from "../config/store";
-import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
+import { CRM_EVENT, MBOS_EVENT, writeTimelineEvent } from "../timeline";
+import { QUAL_NEXT } from "../qualification-next";
+import { addDays } from "../format";
 import { liftLeadTombstones, tombstoneLeadFor } from "./lead-tombstone";
 import { canAny, hatsFor, type Hat } from "../access-control";
 import {
@@ -1254,6 +1256,40 @@ export async function applyLeadStageMove(
    */
   const promoted = lead.kind === "lead" && isOnTheBookAt(to, salesType);
 
+  /*
+   * A NEW PROSPECT IS HANDED TO ITS VERIFIER, whichever door made it.
+   *
+   * The Calling desk's Convert to Prospect always did this; the stage button,
+   * the board, a bulk move and the handset did not, so their Prospects sat
+   * with the next action still on whoever moved them and nobody told to
+   * verify. The same resolver answers here (`resolveProspectVerifier`), and the
+   * next action becomes the verification call, owed to that person. Skipped
+   * where it is already routed (the caller's next action IS the verification)
+   * or already verified (a verified request being settled). Where nobody can
+   * be named the move still happens — refusing it here would turn a handset's
+   * move into a rejection — and the lead's history says why nobody was told.
+   */
+  let nextAction = o.nextAction ?? null;
+  let routed: { managerId: string; fallbackNote: string | null } | null = null;
+  let unrouted: string | null = null;
+  if (to === "prospect" && from !== "prospect" && !lead.leadVerifiedAt && nextAction?.action !== QUAL_NEXT.verify) {
+    const { resolveProspectVerifier } = await import("./prospect-verifier-route");
+    const r = await resolveProspectVerifier(lead, actor.userId);
+    if (r.ok) {
+      routed = r;
+      const cfg = await getConfig();
+      nextAction = {
+        action: QUAL_NEXT.verify,
+        date: addDays(o.day, cfg["leads.verificationDueDays"]),
+        ownerId: r.managerId,
+        outcome:
+          "Verify the visit and what was collected, then Qualification opens" + (r.fallbackNote ? ` — ${r.fallbackNote}` : ""),
+      };
+    } else {
+      unrouted = r.message;
+    }
+  }
+
   await db.transaction(async (tx) => {
     if (o.expectFrom) {
       const [current] = await tx
@@ -1289,11 +1325,11 @@ export async function applyLeadStageMove(
       updatedAt: new Date(),
     };
 
-    if (o.nextAction) {
-      set.leadNextAction = o.nextAction.action;
-      set.leadNextActionDate = o.nextAction.date;
-      set.leadNextActionOwnerId = o.nextAction.ownerId;
-      set.leadNextActionOutcome = o.nextAction.outcome ?? null;
+    if (nextAction) {
+      set.leadNextAction = nextAction.action;
+      set.leadNextActionDate = nextAction.date;
+      set.leadNextActionOwnerId = nextAction.ownerId;
+      set.leadNextActionOutcome = nextAction.outcome ?? null;
     }
 
     /* The column has held free text since before the funnel existed and now
@@ -1528,6 +1564,36 @@ export async function applyLeadStageMove(
       },
     });
   });
+
+  /* After the commit, and never able to undo it: tell the verifier, and say on
+     the lead's history why the settings were used or why nobody was named. */
+  if (routed || unrouted) {
+    try {
+      if (routed?.fallbackNote || unrouted) {
+        await writeTimelineEvent(db, {
+          customerId: lead.id,
+          eventType: CRM_EVENT.verifierFallback,
+          sourceApp: actor.sourceApp,
+          sourceRecordId: `${transitionId}:verifier`,
+          occurredAt: new Date(),
+          actorUserId: actor.userId,
+          summary: routed?.fallbackNote ?? `Nobody could be named to verify this Prospect: ${unrouted}`,
+        });
+      }
+      if (routed && routed.managerId !== actor.userId) {
+        const { notifyUser } = await import("../notify");
+        await notifyUser({
+          userId: routed.managerId,
+          title: `${lead.name} is ready to verify`,
+          body: `${lead.name} was made a Prospect. Qualification opens when you verify it.`,
+          kind: "info",
+          href: `/crm/leads/${lead.id}/review`,
+        });
+      }
+    } catch {
+      /* a courtesy on top of a completed move */
+    }
+  }
 
   return { transitionId, promoted };
 }
