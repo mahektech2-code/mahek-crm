@@ -39,7 +39,7 @@ export async function lotForRow(stage: AdjustStage, rowId: string, ex?: Ex): Pro
   if (stage === "fg") {
     const [fg, lot, godownId] = parts;
     if (!fg || !lot || !godownId) return null;
-    const l = (await fgLots(ex, { lots: [lot] })).find((x) => x.finishedGoodId === fg && x.lotCode === lot && x.godownId === godownId);
+    const l = (await fgLots(ex, { lots: [lot], rates: false })).find((x) => x.finishedGoodId === fg && x.lotCode === lot && x.godownId === godownId);
     return l ? { stage, itemId: l.finishedGoodId, item: l.product, lot, godownId, godown: l.godown, stock: l.stock, unit: "cans" } : null;
   }
   const [lot, godownId] = parts;
@@ -49,10 +49,10 @@ export async function lotForRow(stage: AdjustStage, rowId: string, ex?: Ex): Pro
     return l ? { stage, itemId: l.rawMaterialId, item: l.item, lot, godownId, godown: l.godown, stock: l.stock, unit: l.unit } : null;
   }
   if (stage === "sfg") {
-    const l = (await sfgLots(ex, { lots: [lot] })).find((x) => x.lotCode === lot && x.godownId === godownId);
+    const l = (await sfgLots(ex, { lots: [lot], rates: false })).find((x) => x.lotCode === lot && x.godownId === godownId);
     return l ? { stage, itemId: l.formulationId, item: l.product, lot, godownId, godown: l.godown, stock: l.stock, unit: "Ltr" } : null;
   }
-  const l = (await packLots(ex, { lots: [lot] })).find((x) => x.batchNo === lot && x.godownId === godownId);
+  const l = (await packLots(ex, { lots: [lot], rates: false })).find((x) => x.batchNo === lot && x.godownId === godownId);
   return l ? { stage, itemId: l.skuId, item: l.sku, lot, godownId, godown: l.godown, stock: l.stock, unit: "boxes" } : null;
 }
 

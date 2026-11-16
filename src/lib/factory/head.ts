@@ -68,7 +68,7 @@ export async function assignTask(fc: FactoryCtx, a: { proc: Proc; item: string; 
   if (a.proc === "filling") {
     const [fg] = await q<{ fid: string }>(sql`select formulation_id as fid from finished_goods where id = ${a.item.split(":")[0]}`);
     const approved = new Set((await q<{ lot: string }>(sql`select lot_code as lot from erp_sfg_qc where status = 'Approved'`)).map((r) => r.lot));
-    const lot = (await sfgLots())
+    const lot = (await sfgLots(db, { rates: false }))
       .filter((l) => l.formulationId === fg?.fid && l.godownId === fc.godown.id && l.stock > 0 && approved.has(l.lotCode))
       .sort((x, y) => y.stock - x.stock)[0];
     sfgLot = lot?.lotCode ?? null;
@@ -126,7 +126,7 @@ export async function startFillFromLot(fc: FactoryCtx, a: { lot: string; item: s
   const qty = Math.floor(Number(a.qty));
   if (!(qty > 0) || qty > FILL_FROM_LOT_MAX) return err(`Enter how many cans, 1 to ${FILL_FROM_LOT_MAX}.`, "validation");
   /* The lot named, whatever it holds, so an empty one is refused as empty rather than as unknown. */
-  const all = await sfgLots(undefined, { lots: [a.lot] });
+  const all = await sfgLots(db, { lots: [a.lot], rates: false });
   const lot = all.find((l) => l.lotCode === a.lot && l.godownId === fc.godown.id);
   if (!lot) {
     const elsewhere = all.find((l) => l.lotCode === a.lot);
@@ -168,7 +168,7 @@ export async function startPackFromLot(fc: FactoryCtx, a: { lot: string; item: s
   if (!worksOn(fc, "packing")) return err("Packing is for the packing team. Tell your supervisor.", "not_permitted");
   const qty = Math.floor(Number(a.qty));
   if (!(qty > 0) || qty > PACK_FROM_LOT_MAX) return err(`Enter how many boxes, 1 to ${PACK_FROM_LOT_MAX}.`, "validation");
-  const all = await fgLots();
+  const all = await fgLots(db, { rates: false });
   const lot = all.find((l) => l.lotCode === a.lot && l.godownId === fc.godown.id);
   if (!lot) {
     const elsewhere = all.find((l) => l.lotCode === a.lot);
