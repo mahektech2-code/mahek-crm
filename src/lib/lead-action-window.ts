@@ -89,6 +89,38 @@ export function notConverted(alias = "c"): SQL {
 }
 
 /**
+ * AN OPEN LEAD — the ONE predicate every lead worklist, count and queue reads.
+ *
+ * Still on the funnel (`STILL_WORKING`: a stage, not archived, not deleted, not
+ * on a terminal rung) AND not converted (`notConverted`: not invoiced, no
+ * conversion stamp, not a third-party shop, not on a winning rung). Before this
+ * existed the console, the qualify desk, the dashboard, the commercial desks,
+ * the Sales Manager pipeline and the founder's command centre each kept their
+ * own copy of the first half and none of the second, so a third-party shop or
+ * an invoiced account at `second_order` was counted as an open lead on six
+ * screens and listed on none of Lead Management's — two answers to "how many
+ * open leads", both believable.
+ *
+ * A function of the alias, like `notConverted`, because some readers select
+ * from `customers` bare. Parenthesised, because it is spliced after a `where`
+ * or an `and`.
+ */
+export function openLead(alias = "c"): SQL {
+  const t = sql.raw(alias);
+  return sql`(${t}.lead_stage is not null
+    and ${t}.lead_archived = false
+    and ${t}.deleted_at is null
+    and ${t}.lead_stage::text not in (${sql.join(
+      TERMINAL_STAGES.map((s) => sql`${s}`),
+      sql`, `,
+    )})
+    and ${notConverted(alias)})`;
+}
+
+/** `openLead()` on the conventional `c` alias. */
+export const OPEN_LEAD: SQL = openLead();
+
+/**
  * The same, for a list read through a VIEW: the one view that exists to show
  * converted leads is Handovers, and it keeps them.
  */

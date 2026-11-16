@@ -27,6 +27,7 @@ import { today } from "@/lib/recompute";
 import { recomputeAttendanceVerdicts } from "@/lib/services/attendance-verdict-service";
 import { recomputeSalesPerformance } from "@/lib/services/performance-service";
 import { notifyUsers } from "./notify";
+import { tombstoneLeadFor } from "./services/lead-tombstone";
 import { collectPushReceipts, prunePushFailures } from "./mbos/push";
 
 /**
@@ -141,7 +142,11 @@ export async function ageLeads(): Promise<Counted> {
      now rather than a null pointer to a second row: a won lead has become the
      customer, and archiving one for going quiet would file away an account
      that is actively buying. */
-  const archived = await db
+  /* In one transaction with the tombstone: `openLeads` stops sending an
+     archived lead, so without one it stayed on every handset that held it.
+     See `lead-tombstone.ts`. */
+  const archived = await db.transaction(async (tx) => {
+  const rows = await tx
     .update(customers)
     .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
     .where(
@@ -154,6 +159,9 @@ export async function ageLeads(): Promise<Counted> {
       ),
     )
     .returning({ id: customers.id });
+  await tombstoneLeadFor(tx, rows.map((r) => r.id), null, "lead_archived");
+  return rows;
+  });
 
   /* Counted rather than written: `stage` is the salesperson's own reading of
      the lead, and overwriting "Negotiation" with a staleness flag would lose

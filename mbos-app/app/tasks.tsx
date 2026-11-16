@@ -1,15 +1,21 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { View, Pressable, Text } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { router, useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { Input } from '../src/components/ui/primitives';
+import { Pill, PillButton, SheetActions } from '../src/components/ui/v3';
+import { Icon } from '../src/components/ui/Icon';
+import { SearchBox } from '../src/components/ui/book-controls';
+import { feedback } from '../src/components/ui/feedback';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { VoiceField } from '../src/components/ui/dictate';
 import { takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { getConfig } from '../src/data/config';
 import { useBoot } from '../src/state/boot';
-import { color as C, radius, shadow, weight } from '../src/theme/tokens';
+import { color as C, weight } from '../src/theme/tokens';
 import {
   bucketOf,
   completeTask,
@@ -297,19 +303,36 @@ export default function TasksScreen() {
     }
   };
 
+  const h = HERO.lavender;
+
   return (
-    <AppFrame title="Tasks" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <DashedButton label="+ New task" tone="primary" onPress={openForm} />
-
+    <AppFrame
+      chipsBelowTitle
+      title="Tasks"
+      activeTab={null}
+      onBack={back.go}
+      showTitle={false}
+      hero={
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
+          <Text
+            accessibilityRole="header"
+            style={[{ flex: 1, fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: h.ink }, weight(800)]}>
+            Tasks
+          </Text>
+          <PillButton label="New task" variant="primary" height={44} icon="add" onPress={openForm} />
+        </View>
+      }
+      contentStyle={{ padding: 14, paddingTop: 16, paddingBottom: 24, gap: 10 }}>
       {tasks.length === 0 ? (
-        <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing pending</T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+        <View
+          accessible
+          style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 28, alignItems: 'center' }}>
+          <Icon name="task" size={32} color={C.faint} strokeWidth={1.8} />
+          <Text style={[{ fontSize: 17, color: C.ink, marginTop: 6, textAlign: 'center' }, weight(800)]}>Nothing pending</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center', marginTop: 4 }}>
             What you promise a customer on a visit shows here.
-          </T>
-        </Card>
+          </Text>
+        </View>
       ) : null}
 
       {BUCKETS.map((g) => {
@@ -319,256 +342,376 @@ export default function TasksScreen() {
           0,
         );
         if (items.length === 0) return null;
+        const headInk = g === 'Overdue' ? C.danger : g === 'Today' ? C.warnInk : C.muted;
         return (
-          <View key={g} style={{ marginTop: 20 }}>
-            <SectionLabel style={{ marginBottom: 10 }}>{g}</SectionLabel>
-            <View style={{ gap: 10 }}>
-              {items.map((t, i) => {
-                const edge =
-                  t.priority === 'High' ? C.danger : g === 'Overdue' ? C.danger : g === 'Today' ? C.warn : C.border;
-                /* Swiping left is a SHORTCUT to the Done button on the row,
-                   and opens the same sheet: a closed task has to say how. */
-                return (
-                  <Stagger key={t.id} index={before + i}>
-                    <SwipeRow
-                      /* The "Done" toast already buzzes. */
-                      buzz={false}
-                      right={{ label: taskFormOf(t).length ? 'Answer' : 'Done', color: C.success, run: () => openDone(t) }}
-                      style={{ borderRadius: radius.xl, overflow: 'hidden' }}>
-                      <View
-                        style={{
-                          backgroundColor: C.surface,
-                          borderWidth: 1,
-                          borderColor: C.hairline,
-                          borderLeftWidth: 3,
-                          borderLeftColor: edge,
-                          borderRadius: radius.xl,
-                          paddingHorizontal: 16,
-                          paddingVertical: 14,
-                          boxShadow: shadow.soft,
-                        }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-                          <T style={[{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                            {t.title}
-                          </T>
-                          {t.priority === 'High' ? (
+          <React.Fragment key={g}>
+            {g === 'Overdue' ? (
+              <View
+                accessible
+                accessibilityRole="header"
+                accessibilityLabel={g + ', ' + items.length}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: before ? 4 : 0 }}>
+                <Text style={[{ fontSize: 13, color: headInk }, weight(800)]}>{g}</Text>
+                <View
+                  style={{
+                    height: 22,
+                    minWidth: 22,
+                    paddingHorizontal: 6,
+                    borderRadius: 11,
+                    backgroundColor: C.dangerBg,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                  <Text style={[{ fontSize: 12, color: C.danger }, weight(800)]}>{String(items.length)}</Text>
+                </View>
+              </View>
+            ) : (
+              <Text accessibilityRole="header" style={[{ fontSize: 13, color: headInk, marginTop: before ? 4 : 0 }, weight(800)]}>
+                {g + ' · ' + items.length}
+              </Text>
+            )}
+            {items.map((t, i) => {
+              const edge = t.priority === 'High' || g === 'Overdue' ? C.danger : g === 'Today' ? C.warn : null;
+              const form = taskFormOf(t);
+              const shop = nameOf(t.customerId) || (t.customerId ? '' : 'No shop');
+              const fromOffice = t.assignerId && me && t.assignerId !== me;
+              /* A heading of "Later" says nothing a man planning a week can
+                 use, so anything past tomorrow prints its own date instead of
+                 repeating the bucket's name. */
+              const due =
+                g === 'Overdue'
+                  ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
+                  : g === 'This week' || g === 'Later'
+                    ? dmy(t.dueDate)
+                    : g;
+              const action =
+                t.sourceType === 'lead_validation' && t.customerId
+                  ? 'call'
+                  : t.sourceType === 'requirement_visit' && t.customerId
+                    ? 'shop'
+                    : null;
+              const roomy = Boolean(t.description || form.length || action || g === 'Overdue');
+              const doneLabel = form.length ? 'Answer' : 'Done';
+              const buttons = (
+                <>
+                  <Pressable
+                    onPress={() => openSnooze(t)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Snooze"
+                    accessibilityHint="Move this task to another day"
+                    style={({ pressed }) => ({
+                      width: 48,
+                      height: 48,
+                      borderRadius: 24,
+                      backgroundColor: pressed ? C.hairline : C.canvas,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    })}>
+                    <Icon name="forward" size={18} color={C.ink} strokeWidth={2} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openDone(t)}
+                    accessibilityRole="button"
+                    accessibilityLabel={doneLabel}
+                    style={({ pressed }) => ({
+                      height: 48,
+                      minWidth: 48,
+                      paddingHorizontal: form.length ? 18 : 0,
+                      borderRadius: 24,
+                      backgroundColor: C.primary,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: pressed ? 0.88 : 1,
+                    })}>
+                    {form.length ? (
+                      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>Answer</Text>
+                    ) : (
+                      <Icon name="tick" size={18} color="#FFFFFF" strokeWidth={2.4} />
+                    )}
+                  </Pressable>
+                </>
+              );
+              const meta = [shop, fromOffice ? 'From the office' : ''].filter(Boolean);
+              /* Swiping left is a SHORTCUT to the Done button on the row,
+                 and opens the same sheet: a closed task has to say how. */
+              return (
+                <Stagger key={t.id} index={before + i}>
+                  <SwipeRow
+                    /* The "Done" toast already buzzes. */
+                    buzz={false}
+                    right={{ label: doneLabel, color: C.success, run: () => openDone(t) }}
+                    style={{ borderRadius: 20, overflow: 'hidden' }}>
+                    <View
+                      accessible={false}
+                      style={{
+                        backgroundColor: C.surface,
+                        borderRadius: 20,
+                        paddingHorizontal: 16,
+                        paddingVertical: 14,
+                        overflow: 'hidden',
+                      }}>
+                      {edge ? (
+                        <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, backgroundColor: edge }} />
+                      ) : null}
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                        <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>
+                          {t.title}
+                        </Text>
+                        {t.priority === 'High' ? (
+                          <View
+                            accessible
+                            accessibilityRole="image"
+                            accessibilityLabel="High priority"
+                            style={{
+                              height: 24,
+                              paddingHorizontal: 8,
+                              borderRadius: 12,
+                              backgroundColor: C.dangerBg,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}>
+                            <Text style={[{ fontSize: 11, color: C.danger }, weight(800)]}>HIGH</Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {roomy ? (
+                        <>
+                          {/* The shop, or — for a task that belongs to none — who
+                              set it, so the caption line is never left blank. */}
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
+                            {shop ? (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                {t.customerId ? <Icon name="shop" size={12} color={C.muted} strokeWidth={2} /> : null}
+                                <Text style={[{ fontSize: 12, color: t.customerId ? C.muted : C.faint }, weight(600)]}>{shop}</Text>
+                              </View>
+                            ) : null}
+                            {fromOffice ? (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <OfficeGlyph />
+                                <Text style={[{ fontSize: 12, color: C.muted }, weight(600)]}>From the office</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          {/* What the office wrote is the half of the task that says
+                              what to do — a refusal's reason, a manager's
+                              instruction. It was stored and never drawn. */}
+                          {t.description ? (
+                            <Text style={{ fontSize: 13, lineHeight: 18, color: C.body, marginTop: 8 }}>{t.description}</Text>
+                          ) : null}
+                          {/* A task with a form says how much it asks before he
+                              opens it, so "two questions" and "fifteen questions
+                              and four photos" are not the same tap. */}
+                          {form.length ? (
                             <View
-                              style={{
-                                backgroundColor: C.dangerBg,
-                                borderRadius: 10,
-                                paddingHorizontal: 8,
-                                paddingVertical: 2,
-                              }}>
-                              <T
-                                style={[
-                                  { fontSize: 11, letterSpacing: 0.33, textTransform: 'uppercase', color: C.danger },
-                                  weight(600),
-                                ]}>
-                                High
-                              </T>
+                              accessible
+                              accessibilityLabel={formLine(form)}
+                              style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                              {formLine(form)
+                                .split(' · ')
+                                .map((part) => (
+                                  <Pill key={part} text={part} bg={C.primaryTint} fg={C.primaryDeep} height={28} />
+                                ))}
                             </View>
                           ) : null}
-                        </View>
-                        {/* The shop, or — for a task that belongs to none — who
-                            set it, so the caption line is never left blank. */}
-                        <T s="caption" style={{ marginTop: 2 }}>
-                          {[
-                            nameOf(t.customerId) || (t.customerId ? '' : 'No shop'),
-                            t.assignerId && me && t.assignerId !== me ? 'From the office' : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </T>
-                        {/* What the office wrote is the half of the task that says
-                            what to do — a refusal's reason, a manager's
-                            instruction. It was stored and never drawn. */}
-                        {t.description ? (
-                          <T s="small" style={{ color: C.body, marginTop: 6 }}>{t.description}</T>
-                        ) : null}
-                        {/* A task with a form says how much it asks before he
-                            opens it, so "two questions" and "fifteen questions
-                            and four photos" are not the same tap. */}
-                        {taskFormOf(t).length ? (
-                          <T s="caption" style={{ marginTop: 6, color: C.primary }}>
-                            {formLine(taskFormOf(t))}
-                          </T>
-                        ) : null}
-
-                        {/* A task that ASKS for something specific opens the screen
-                            that answers it. Without this the office raises a
-                            validation call and the salesman reads a title with
-                            nowhere to go — which is how a workflow becomes a list
-                            of sentences people tick off without doing. */}
-                        {t.sourceType === 'lead_validation' && t.customerId ? (
-                          <SecondaryButton
-                            label="Call now"
-                            onPress={() =>
-                              router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
-                            }
-                            style={{ marginTop: 10 }}
-                          />
-                        ) : null}
-                        {t.sourceType === 'requirement_visit' && t.customerId ? (
-                          <SecondaryButton
-                            label="Open shop"
-                            onPress={() => {
-                              set({ custId: t.customerId ?? undefined, pTab: 0 });
-                              router.push('/customer');
-                            }}
-                            style={{ marginTop: 10 }}
-                          />
-                        ) : null}
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 12,
-                            marginTop: 12,
-                          }}>
-                          <T style={[{ fontSize: 13, color: g === 'Overdue' ? C.danger : C.muted }, weight(500)]}>
-                            {/* A heading of "Later" says nothing a man planning a
-                                week can use, so anything past tomorrow prints its
-                                own date instead of repeating the bucket's name. */}
-                            {g === 'Overdue'
-                              ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
-                              : g === 'This week' || g === 'Later'
-                                ? dmy(t.dueDate)
-                                : g}
-                          </T>
-                          <View style={{ flexDirection: 'row', gap: 8 }}>
-                            <Pressable
-                              onPress={() => openSnooze(t)}
-                              accessibilityRole="button"
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                            {/* A task that ASKS for something specific opens the screen
+                                that answers it. Without this the office raises a
+                                validation call and the salesman reads a title with
+                                nowhere to go — which is how a workflow becomes a list
+                                of sentences people tick off without doing. */}
+                            {action === 'call' ? (
+                              <Pressable
+                                onPress={() => router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)}
+                                accessibilityRole="button"
+                                accessibilityLabel="Call now"
+                                style={({ pressed }) => ({
+                                  height: 48,
+                                  paddingHorizontal: 14,
+                                  borderRadius: 24,
+                                  backgroundColor: C.navy,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  opacity: pressed ? 0.88 : 1,
+                                })}>
+                                <Icon name="call" size={16} color={C.lime} strokeWidth={2.2} />
+                                <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>Call now</Text>
+                              </Pressable>
+                            ) : null}
+                            {action === 'shop' ? (
+                              <Pressable
+                                onPress={() => {
+                                  set({ custId: t.customerId ?? undefined, pTab: 0 });
+                                  router.push('/customer');
+                                }}
+                                accessibilityRole="button"
+                                accessibilityLabel="Open shop"
+                                style={({ pressed }) => ({
+                                  height: 48,
+                                  paddingHorizontal: 14,
+                                  borderRadius: 24,
+                                  backgroundColor: pressed ? C.hairline : C.canvas,
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                })}>
+                                <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Open shop</Text>
+                              </Pressable>
+                            ) : null}
+                            <View
+                              accessible
+                              accessibilityLabel={due}
                               style={{
-                                height: 48,
-                                paddingHorizontal: 12,
-                                borderWidth: 1,
-                                borderColor: C.border,
-                                backgroundColor: C.surface,
-                                borderRadius: radius.md,
+                                flex: 1,
+                                flexDirection: 'row',
                                 alignItems: 'center',
-                                justifyContent: 'center',
+                                justifyContent: action ? 'flex-end' : 'flex-start',
+                                gap: 4,
                               }}>
-                              <T style={{ fontSize: 15, color: C.body }}>Snooze</T>
-                            </Pressable>
-                            <Pressable
-                              onPress={() => openDone(t)}
-                              accessibilityRole="button"
-                              style={{
-                                height: 48,
-                                paddingHorizontal: 14,
-                                backgroundColor: C.primary,
-                                borderRadius: radius.md,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}>
-                              <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>
-                                {taskFormOf(t).length ? 'Answer' : 'Done'}
-                              </T>
-                            </Pressable>
+                              {g === 'Overdue' ? (
+                                <>
+                                  <Icon name="clock" size={14} color={C.danger} strokeWidth={2.2} />
+                                  <Text style={[{ fontSize: 13, color: C.danger }, weight(700)]}>
+                                    {plural(daysSince(t.dueDate, today) ?? 0, 'day') + ' late'}
+                                  </Text>
+                                </>
+                              ) : g === 'This week' || g === 'Later' ? (
+                                <>
+                                  <Icon name="cal" size={13} color={C.muted} strokeWidth={2} />
+                                  <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>{due}</Text>
+                                </>
+                              ) : null}
+                            </View>
+                            {buttons}
                           </View>
+                        </>
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                          <Text
+                            accessibilityLabel={[...meta, due].join(', ')}
+                            style={[{ flex: 1, minWidth: 0, fontSize: 12, color: t.customerId || fromOffice ? C.muted : C.faint }, weight(600)]}>
+                            {[...meta, g === 'Later' || g === 'This week' ? due : ''].filter(Boolean).join(' · ')}
+                          </Text>
+                          {buttons}
                         </View>
-                      </View>
-                    </SwipeRow>
-                  </Stagger>
-                );
-              })}
-            </View>
-          </View>
+                      )}
+                    </View>
+                  </SwipeRow>
+                </Stagger>
+              );
+            })}
+          </React.Fragment>
         );
       })}
 
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} scroll>
-        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New task</T>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
+          New task
+        </Text>
 
-        <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What to do</SectionLabel>
-          <Input
-            value={title}
-            onChangeText={(v) => {
-              setTitle(v);
-              setTitleErr(false);
-            }}
-            placeholder="Take the rate list to Balaji"
-            invalid={titleErr}
-          />
-          {titleErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what needs to be done.</T> : null}
-        </View>
+        <Input
+          value={title}
+          onChangeText={(v) => {
+            setTitle(v);
+            setTitleErr(false);
+          }}
+          accessibilityLabel="What to do"
+          placeholder="What to do: take the rate list to Balaji"
+          invalid={titleErr}
+          style={[WASH, { minHeight: 52, borderRadius: 26, marginTop: 12 }, titleErr ? { borderWidth: 2, borderColor: C.danger } : null]}
+        />
+        {titleErr ? (
+          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>Write what needs to be done.</Text>
+        ) : null}
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Which customer</SectionLabel>
-          <Input
+        <Text style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]} accessibilityLabel="Which customer">
+          Customer
+        </Text>
+        <View style={{ flexDirection: 'row', marginTop: 6 }}>
+          <SearchBox
             value={custQuery}
-            onChangeText={setCustQuery}
-            placeholder="Search your customers by name, area or phone"
+            onChange={setCustQuery}
+            onClear={() => setCustQuery('')}
+            placeholder="Name, area or phone"
+            bg={C.canvas}
           />
-          <View style={{ gap: 8, marginTop: 8 }}>
-            {/* A job that belongs to nobody in particular is a real task —
-                "collect the rate cards from the office" — and a radio list with
-                no such row made it unrecordable. It is first because it is also
-                the only way to undo a pick. */}
-            <Choice
-              label="No customer. General work"
-              selected={picked === null}
-              onPress={() => setPicked(null)}
+        </View>
+        <View style={{ marginTop: 6 }}>
+          {/* A job that belongs to nobody in particular is a real task —
+              "collect the rate cards from the office" — and a radio list with
+              no such row made it unrecordable. It is first because it is also
+              the only way to undo a pick. */}
+          <PickRow
+            label="No customer · general work"
+            a11y="No customer. General work"
+            picked={picked === null}
+            onPress={() => setPicked(null)}
+          />
+          {/* A pick made before the search was typed stays on screen and
+              stays chosen, even once it has fallen out of the results. */}
+          {picked && !customers.some((c) => c.id === picked.id) ? (
+            <PickRow label={picked.name} picked onPress={() => setPicked(null)} />
+          ) : null}
+          {customers.map((x, i) => (
+            <PickRow
+              key={x.id}
+              label={x.name}
+              sub={[x.area, x.city].filter(Boolean).join(' · ') || undefined}
+              picked={picked?.id === x.id}
+              last={i === customers.length - 1}
+              onPress={() => setPicked({ id: x.id, name: x.name })}
             />
-            {/* A pick made before the search was typed stays on screen and
-                stays chosen, even once it has fallen out of the results. */}
-            {picked && !customers.some((c) => c.id === picked.id) ? (
-              <Choice label={picked.name} selected onPress={() => setPicked(null)} />
-            ) : null}
-            {customers.map((x) => (
-              <Choice
-                key={x.id}
-                label={x.name}
-                sub={[x.area, x.city].filter(Boolean).join(' · ') || undefined}
-                selected={picked?.id === x.id}
-                onPress={() => setPicked({ id: x.id, name: x.name })}
-              />
-            ))}
-            {custQuery.trim() && customers.length === 0 ? (
-              <T s="caption">No customer found.</T>
-            ) : null}
-            {bookTotal > customers.length ? (
-              <T s="caption">
-                {'Showing ' + customers.length + ' of ' + bookTotal + '. Search to find more.'}
-              </T>
-            ) : null}
-          </View>
+          ))}
+          {custQuery.trim() && customers.length === 0 ? (
+            <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 6 }}>No customer found.</Text>
+          ) : null}
+          {bookTotal > customers.length ? (
+            <Text
+              accessibilityLabel={'Showing ' + customers.length + ' of ' + bookTotal + '. Search to find more.'}
+              style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 4 }}>
+              {customers.length + ' of ' + bookTotal + ' · search for more'}
+            </Text>
+          ) : null}
         </View>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>When</SectionLabel>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {WHENS.map((w) => (
-              <Choice key={w} label={w} selected={when === w} onPress={() => setWhen(w)} style={{ flex: 1 }} />
-            ))}
-          </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 }}>
+          <Icon name="cal" size={18} color={C.ink} strokeWidth={2} />
+          <Seg options={WHENS} value={when} onChange={setWhen} label="When" />
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+          <FlagGlyph />
+          <Seg options={PRIS} value={pri} onChange={setPri} label="Priority" danger="High" />
         </View>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Priority</SectionLabel>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {PRIS.map((p) => (
-              <Choice key={p} label={p} selected={pri === p} onPress={() => setPri(p)} style={{ flex: 1 }} />
-            ))}
-          </View>
-        </View>
-
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <SecondaryButton label="Cancel" onPress={() => setFormOpen(false)} style={{ flex: 1, borderRadius: radius.xl }} />
-          <PrimaryButton label="Add task" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
-        </View>
+        <SheetActions onCancel={() => setFormOpen(false)} label="Add task" onPress={save} />
       </BottomSheet>
 
       <BottomSheet open={closing !== null} onClose={closeDone} scroll>
-        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-          {closingForm.length ? 'Answer and finish' : 'Mark as done'}
-        </T>
-        {closing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{closing.title}</T> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 22,
+              backgroundColor: closingForm.length ? C.primaryTint : C.successBg,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            {closingForm.length ? (
+              <ClipboardGlyph />
+            ) : (
+              <Icon name="tick" size={22} color={C.success} strokeWidth={2.2} />
+            )}
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
+              {closingForm.length ? 'Answer and finish' : 'Mark as done'}
+            </Text>
+            {closing ? <Text style={{ fontSize: 12, color: C.muted }}>{closing.title}</Text> : null}
+          </View>
+        </View>
         {closing?.description && closingForm.length ? (
-          <T s="small" style={{ color: C.body, marginTop: 6 }}>{closing.description}</T>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.body, marginTop: 8 }}>{closing.description}</Text>
         ) : null}
         {closing && closingForm.length ? (
           <View style={{ marginTop: 14 }}>
@@ -581,60 +724,120 @@ export default function TasksScreen() {
             />
           </View>
         ) : null}
-        <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>
-            {closingForm.length ? 'Anything else (optional)' : noteRequired ? 'What you did · needed' : 'What you did'}
-          </SectionLabel>
-          <VoiceField
-            value={doneNote}
-            onChangeText={(v) => {
-              setDoneNote(v);
-              setDoneErr(null);
-            }}
-            placeholder={closingForm.length ? 'Anything the questions did not ask.' : 'Gave them the new rate list. They will order next week.'}
-            multiline
-            maxLength={2000}
-          />
-        </View>
+        <Text
+          accessibilityLabel={closingForm.length ? 'Anything else (optional)' : noteRequired ? 'What you did · needed' : 'What you did'}
+          style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]}>
+          {closingForm.length ? 'Anything else' : 'What you did'}
+          {closingForm.length ? (
+            <Text style={[{ color: C.faint }, weight(500)]}>{' optional'}</Text>
+          ) : noteRequired ? (
+            <Text style={{ color: C.danger }}>{' *'}</Text>
+          ) : null}
+        </Text>
+        <VoiceField
+          value={doneNote}
+          onChangeText={(v) => {
+            setDoneNote(v);
+            setDoneErr(null);
+          }}
+          placeholder={closingForm.length ? 'Anything the questions did not ask.' : 'Gave them the new rate list. They will order next week.'}
+          multiline
+          maxLength={2000}
+          style={[WASH, { borderRadius: 20, minHeight: closingForm.length ? 64 : 88, marginTop: 6, paddingVertical: 12 }]}
+        />
         {closingForm.length ? null : (
-          <View style={{ marginTop: 12 }}>
-            <SecondaryButton label={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'} onPress={() => void addDonePhoto()} />
-          </View>
+          <Pressable
+            onPress={() => void addDonePhoto()}
+            accessibilityRole="button"
+            accessibilityLabel={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'}
+            style={({ pressed }) => ({
+              marginTop: 10,
+              height: 48,
+              borderRadius: 24,
+              borderWidth: 1.5,
+              borderStyle: 'dashed',
+              borderColor: donePhoto ? C.success : '#B9A6FF',
+              backgroundColor: donePhoto ? C.successBg : pressed ? C.primaryTint : '#F7F4FF',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+            })}>
+            <Icon name={donePhoto ? 'tick' : 'camera'} size={18} color={donePhoto ? C.success : C.primaryDeep} strokeWidth={2} />
+            <Text style={[{ fontSize: 14, color: donePhoto ? C.success : C.primaryDeep }, weight(700)]}>
+              {donePhoto ? 'Photo added · take it again' : 'Photo · optional'}
+            </Text>
+          </Pressable>
         )}
         {closingForm.length ? (
-          <T s="caption" style={{ marginTop: 10 }}>Your answers are kept on the phone if you close this — finish later.</T>
+          <View
+            accessible
+            accessibilityLabel="Your answers are kept on the phone if you close this — finish later."
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+            <SaveGlyph />
+            <Text style={{ flex: 1, fontSize: 12, color: C.muted }}>Answers kept on the phone if you close · finish later</Text>
+          </View>
         ) : null}
-        {doneErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{doneErr}</T> : null}
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <SecondaryButton label="Cancel" onPress={closeDone} style={{ flex: 1, borderRadius: radius.xl }} />
-          <PrimaryButton
-            label={doneBusy ? 'Saving…' : closingForm.length ? 'Submit' : 'Done'}
-            onPress={() => void markDone()}
-            disabled={doneBusy}
-            style={{ flex: 1, borderRadius: radius.xl }}
-          />
-        </View>
+        {doneErr ? <ErrBox text={doneErr} /> : null}
+        <SheetActions
+          onCancel={closeDone}
+          label={doneBusy ? 'Saving…' : closingForm.length ? 'Submit' : 'Done'}
+          busy={doneBusy}
+          onPress={() => void markDone()}
+        />
       </BottomSheet>
 
       <BottomSheet open={snoozing !== null} onClose={() => setSnoozing(null)} scroll>
-        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-          Move to another day
-        </T>
-        {snoozing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{snoozing.title}</T> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.warnBg, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="forward" size={22} color={C.warnInk} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
+              Move to another day
+            </Text>
+            {snoozing ? <Text style={{ fontSize: 12, color: C.muted }}>{snoozing.title}</Text> : null}
+          </View>
+        </View>
         {snoozing ? (
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
-            <Choice
-              label="Next day"
-              selected={snoozeTo === snoozeTarget(snoozing.dueDate, today, 1)}
-              onPress={() => setSnoozeTo(snoozeTarget(snoozing.dueDate, today, 1))}
-              style={{ flex: 1 }}
-            />
-            <Choice
-              label="A week later"
-              selected={snoozeTo === snoozeTarget(snoozing.dueDate, today, 7)}
-              onPress={() => setSnoozeTo(snoozeTarget(snoozing.dueDate, today, 7))}
-              style={{ flex: 1 }}
-            />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 }}>
+            {(
+              [
+                { n: 1, label: '+1 day', a11y: 'Next day' },
+                { n: 7, label: '+1 week', a11y: 'A week later' },
+              ] as const
+            ).map((o) => {
+              const d = snoozeTarget(snoozing.dueDate, today, o.n);
+              const on = snoozeTo === d;
+              return (
+                <Pressable
+                  key={o.n}
+                  onPress={() => {
+                    if (!on) feedback('select');
+                    setSnoozeTo(d);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: on }}
+                  accessibilityLabel={o.a11y}
+                  hitSlop={{ top: 4, bottom: 4 }}
+                  style={{
+                    height: 40,
+                    paddingHorizontal: 16,
+                    borderRadius: 20,
+                    backgroundColor: on ? C.navy : C.canvas,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                  <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{o.label}</Text>
+                </Pressable>
+              );
+            })}
+            <Text
+              accessibilityLabel={snoozeTo ? 'Moves to ' + dmy(snoozeTo) : undefined}
+              style={[{ flex: 1, textAlign: 'right', fontSize: 14, color: C.ink }, weight(700)]}>
+              {snoozeTo ? '→ ' + dmy(snoozeTo) : ''}
+            </Text>
           </View>
         ) : null}
         <View style={{ marginTop: 12 }}>
@@ -651,24 +854,163 @@ export default function TasksScreen() {
             }
           />
         </View>
-        <T s="small" style={{ color: C.body, marginTop: 8 }}>{snoozeTo ? 'Moves to ' + dmy(snoozeTo) : ''}</T>
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Why · needed</SectionLabel>
-          <Input
-            value={snoozeWhy}
-            onChangeText={(v) => {
-              setSnoozeWhy(v);
-              setSnoozeErr(null);
-            }}
-            placeholder="Shop was closed today"
-          />
-        </View>
-        {snoozeErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{snoozeErr}</T> : null}
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <SecondaryButton label="Cancel" onPress={() => setSnoozing(null)} style={{ flex: 1, borderRadius: radius.xl }} />
-          <PrimaryButton label="Move it" onPress={() => void saveSnooze()} style={{ flex: 1, borderRadius: radius.xl }} />
-        </View>
+        <Text accessibilityLabel="Why · needed" style={[{ fontSize: 13, color: C.ink, marginTop: 12 }, weight(700)]}>
+          Why
+          <Text style={{ color: C.danger }}>{' · needed'}</Text>
+        </Text>
+        <Input
+          value={snoozeWhy}
+          onChangeText={(v) => {
+            setSnoozeWhy(v);
+            setSnoozeErr(null);
+          }}
+          accessibilityLabel="Why it is moving"
+          placeholder="Shop was closed today"
+          style={[WASH, { marginTop: 6 }]}
+        />
+        {snoozeErr ? (
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(600)]}>{snoozeErr}</Text>
+        ) : null}
+        <SheetActions onCancel={() => setSnoozing(null)} label="Move it" onPress={() => void saveSnooze()} />
       </BottomSheet>
     </AppFrame>
+  );
+}
+
+/** The wash pill a typed answer goes into on these sheets. */
+const WASH = { backgroundColor: C.canvas, borderWidth: 0, borderRadius: 24, minHeight: 48, fontSize: 15, paddingHorizontal: 16 } as const;
+
+/** The red line a sheet refuses with. */
+function ErrBox({ text }: { text: string }) {
+  return (
+    <View style={{ marginTop: 10, backgroundColor: C.dangerBg, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>{text}</Text>
+    </View>
+  );
+}
+
+/** A pickable row: the name, the line under it, a ring that ticks. */
+function PickRow({
+  label,
+  sub,
+  a11y,
+  picked,
+  last,
+  onPress,
+}: {
+  label: string;
+  sub?: string;
+  a11y?: string;
+  picked: boolean;
+  last?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: picked }}
+      accessibilityLabel={[a11y ?? label, sub].filter(Boolean).join(', ')}
+      style={({ pressed }) => ({
+        minHeight: sub ? 56 : 52,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: C.hairline,
+        opacity: pressed ? 0.7 : 1,
+      })}>
+      <View style={{ flex: 1, minWidth: 0, paddingVertical: 8 }}>
+        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{label}</Text>
+        {sub ? <Text style={{ fontSize: 12, color: C.muted }}>{sub}</Text> : null}
+      </View>
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          borderWidth: picked ? 0 : 2,
+          borderColor: '#DCE3EE',
+          backgroundColor: picked ? C.primary : 'transparent',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        {picked ? <Icon name="tick" size={12} color="#FFFFFF" strokeWidth={3} /> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+/** The wash segmented switch the New task sheet picks When and Priority with. */
+function Seg<K extends string>({
+  options,
+  value,
+  onChange,
+  label,
+  danger,
+}: {
+  options: readonly K[];
+  value: K;
+  onChange: (k: K) => void;
+  label: string;
+  /** The option drawn in red when not picked — High. */
+  danger?: K;
+}) {
+  return (
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={label}
+      style={{ flex: 1, height: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
+      {options.map((o) => {
+        const on = o === value;
+        return (
+          <Pressable
+            key={o}
+            onPress={() => {
+              if (!on) feedback('select');
+              onChange(o);
+            }}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: on }}
+            accessibilityLabel={label + ': ' + o}
+            hitSlop={{ top: 4, bottom: 4 }}
+            style={{ flex: 1, borderRadius: 18, backgroundColor: on ? C.navy : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : o === danger ? C.danger : C.ink }, weight(700)]}>{o}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function OfficeGlyph() {
+  return (
+    <Svg width={12} height={12} viewBox="0 0 24 24" fill="none">
+      <Path d="M4 21V5l8-2 8 2v16M9 21v-4h6v4" stroke={C.muted} strokeWidth={2} strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function FlagGlyph() {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+      <Path d="M5 21V4h11l-2 4 2 4H5" stroke={C.ink} strokeWidth={2} strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function ClipboardGlyph() {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+      <Path d="M9 4h6v3H9zM6 6h12v15H6zM9 12l2 2 4-4" stroke={C.primaryDeep} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function SaveGlyph() {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Path d="M5 5h11l3 3v11H5zM8 5v5h7V5" stroke={C.success} strokeWidth={2} strokeLinejoin="round" />
+    </Svg>
   );
 }

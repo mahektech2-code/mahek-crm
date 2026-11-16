@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { rawStagesOf } from "@/lib/lead-display";
+import type { DisplayStage } from "@/lib/engines/lead-ladder";
 import { Callout, Card, PageHeader, SectionLabel } from "@/components/ui/primitives";
 import type { PipelineFunnelData } from "@/lib/sales-lead-pipeline/types";
 import { pipelineLinks, type PipelineWorkspace } from "@/lib/sales-lead-pipeline/workspace";
@@ -24,8 +26,7 @@ export function PipelineScreen({
 
   /* Where the legacy ladder's rungs are folded into the bars, the link has to
      reach both spellings, or the bar says 40 and the list opened from it 12. */
-  const stageParam = (stage: string) =>
-    stage === "suspect" ? "suspect,new" : stage === "prospect" ? "prospect,contacted" : stage === "qualification" ? "qualification,qualified" : stage === "customer" ? "customer,won" : stage;
+  const stageParam = (stage: string) => rawStagesOf(stage as DisplayStage).join(",") || stage;
 
   return (
     <div className="p-6">

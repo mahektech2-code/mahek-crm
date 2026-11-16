@@ -1,11 +1,15 @@
 import React from 'react';
-import { Animated, View, Image } from 'react-native';
+import { ActivityIndicator, Animated, Image, Pressable, Text, View } from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { Badge, Input, T } from '../src/components/ui/primitives';
+import { Pill, PillButton, SheetActions } from '../src/components/ui/v3';
+import { Icon } from '../src/components/ui/Icon';
 import { skuText } from '../src/components/ui/sku';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
-import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
+import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
 import {
   cancelReasons,
   cancelSample,
@@ -35,7 +39,7 @@ import { ACTIVE_FEEDBACK_FIELDS, FEEDBACK_FIELDS, REASON_CODE_NEEDING_REMARKS, t
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { dmy, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
-import { Pop, Presence, Swap, useShake } from '../src/components/ui/motion';
+import { Pop, Presence, PressableScale, Swap, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 
 /**
@@ -168,17 +172,27 @@ export default function SampleRecord() {
 
   if (!sample) {
     return (
-      <AppFrame title="Sample" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={back.go} />
-        <Card style={{ paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+      <AppFrame title="Sample" activeTab={null} onBack={back.go} contentStyle={{ padding: 14, paddingBottom: 24 }}>
+        <View
+          style={{
+            backgroundColor: C.surface,
+            borderRadius: 20,
+            paddingHorizontal: 16,
+            paddingVertical: 18,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+          }}>
+          {status === 'reading' ? <ActivityIndicator size="small" color={C.primary} /> : null}
+          <T style={[{ fontSize: 14, color: C.ink, textAlign: 'center' }, weight(700)]}>
             {status === 'reading'
               ? 'Loading…'
               : status === 'failed'
                 ? 'Could not open this on the phone'
                 : 'This sample is not on this phone'}
           </T>
-        </Card>
+        </View>
       </AppFrame>
     );
   }
@@ -192,117 +206,214 @@ export default function SampleRecord() {
   const chase = chaseFor(s, chaseDays, today);
   const awaiting = isAwaitingReview(s);
   const finished = s.state === 'Reviewed' || s.state === 'Converted' || s.state === 'Cancelled' || s.state === 'Rejected';
+  const h = HERO.lavender;
+  const day = (ms: number) => pretty(isoDate(new Date(ms)));
+  const productLine = [skuText(s.sku), s.productName, s.cans ? plural(s.cans, 'can') : null].filter(Boolean).join(' · ');
+  /* THE SHOP'S WORD, not the carrier's, and the two are not the same record.
+     `receivedConfirmedAt` is what a confirmation made on this handset writes
+     and `receivedAt` is the name the office writes the same fact under —
+     reading only the first meant a sample the shop had confirmed to the office
+     showed nothing here at all. */
+  const confirmedAt = (s.receivedConfirmedAt ?? s.receivedAt) as number | null | undefined;
+  const modeWord = s.sendingMode ? (s.sendingMode === 'hand_delivery' ? 'Hand Delivery' : 'Courier') : null;
+
+  /* A finished sample is read as its journey: one dot per mark it actually
+     made, left to right. BOTH trial dates are on it, because the gap between
+     them is the point — a can opened three weeks ago and never finished reads
+     here as exactly that instead of looking identical to one nobody touched. */
+  const journey: { key: string; label: string; at: string; red?: boolean }[] = [
+    { key: 'asked', label: 'Asked', at: day(s.requestedAt) },
+    s.dispatchedAt ? { key: 'sent', label: 'Sent', at: day(s.dispatchedAt) } : null,
+    confirmedAt ? { key: 'got', label: 'Got it', at: day(confirmedAt) } : null,
+    s.trialStartedAt ? { key: 'on', label: 'Trial on', at: day(s.trialStartedAt) } : null,
+    s.trialCompletedAt ? { key: 'off', label: 'Trial off', at: day(s.trialCompletedAt) } : null,
+    s.reviewedAt ? { key: 'rev', label: 'Reviewed', at: day(s.reviewedAt), red: s.state === 'Rejected' } : null,
+  ].filter((x): x is { key: string; label: string; at: string; red?: boolean } => !!x);
+  const asJourney = finished && s.state !== 'Cancelled';
+
+  /* The record's facts, as label/value cells. Every line the record has ever
+     drawn is here; the order is the V3 grid's. */
+  type Fact = { label: string; value: string; a11y?: string; icon?: React.ReactNode; good?: boolean };
+  const facts: Fact[] = ([
+    { label: 'Asked for', value: day(s.requestedAt) },
+    s.plannedSendDate ? { label: 'Planned to go', value: pretty(s.plannedSendDate) } : null,
+    modeWord
+      ? {
+          label: 'Mode',
+          a11y: 'Sending mode',
+          value: modeWord,
+          icon: s.sendingMode === 'hand_delivery' ? null : <Truck color={C.ink} size={16} />,
+        }
+      : null,
+    s.dispatchedAt ? { label: 'Sent', value: day(s.dispatchedAt) } : null,
+    s.courierDocket ? { label: 'Docket', value: [s.courierName, s.courierDocket].filter(Boolean).join(' · ') } : null,
+    s.expectedDeliveryDate ? { label: 'Should reach by', value: pretty(s.expectedDeliveryDate) } : null,
+    s.application ? { label: 'Used on', value: s.application } : null,
+    confirmedAt ? { label: 'They confirmed it', value: day(confirmedAt), good: true } : null,
+    s.trialStartedAt ? { label: 'Trial started', value: day(s.trialStartedAt) } : null,
+    s.trialCompletedAt ? { label: 'Trial finished', value: day(s.trialCompletedAt) } : null,
+    s.reviewedAt ? { label: 'Reviewed', value: day(s.reviewedAt) } : null,
+    s.satisfaction ? { label: 'They said', value: s.satisfaction } : null,
+    s.additionalRequirement ? { label: 'Also asked for', value: s.additionalRequirement } : null,
+  ] as (Fact | null)[]).filter((x): x is Fact => !!x);
+
+  /* The count's colour. Red only once the named ladder has been walked to its
+     end with no answer — that is the point at which a manager is meant to stop
+     reading and ring the shop. Not asked yet, and not told, are both quiet. */
+  const countInk =
+    chase.asked == null || chase.asked === 0
+      ? C.onNavyMuted
+      : chase.asked >= chase.rungs.length
+        ? '#FF8A80'
+        : '#FFD27A';
 
   return (
-    <AppFrame title="Sample" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <Card>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+    <AppFrame
+      title="Sample"
+      activeTab={null}
+      onBack={back.go}
+      showTitle={false}
+      hero={
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 16 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>{who || 'Unknown shop'}</T>
-            <T s="caption" style={{ marginTop: 2 }}>
-              {[skuText(s.sku), s.productName, s.cans ? plural(s.cans, 'can') : null].filter(Boolean).join(' · ')}
-            </T>
+            <Text
+              accessibilityRole="header"
+              style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.48, color: h.ink }, weight(800)]}>
+              {who || 'Unknown shop'}
+            </Text>
+            {productLine ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <Flask size={14} color={h.muted} />
+                <Text style={{ flexShrink: 1, fontSize: 13, color: h.muted }}>{productLine}</Text>
+              </View>
+            ) : null}
           </View>
           {/* The mark he just made, answered on the badge: it pops as the
               state moves on. The toast that confirmed the save is the buzz. */}
           <Pop trigger={s.state}>
-            <Badge tone={toneFor(s.state)}>{s.state}</Badge>
+            <Badge tone={toneFor(s.state)} style={{ height: 30, paddingHorizontal: 12, borderRadius: 15 }}>
+              {s.state}
+            </Badge>
           </Pop>
         </View>
+      }
+      contentStyle={{ padding: 14, paddingBottom: 24, gap: 12 }}>
+      {/* WHAT IS OWED, and — where a review is owed — HOW MANY TIMES IT HAS
+          BEEN ASKED, at the top of the record and not buried in the panel
+          below.
 
-        {owed ? (
-          <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: C.ink }, weight(500)]}>{owed}</T>
-        ) : null}
-
-        {/* HOW MANY TIMES IT HAS BEEN ASKED, at the top of the record and not
-            buried in the panel below.
-
-            This is the number the whole mechanism exists to produce. A trial
-            reviewed yesterday and one chased three times with no answer are the
-            same badge and the same sentence otherwise, and they are two
-            different mornings — the first is waiting and the second is picking
-            the phone up yourself. Where the count has not reached this phone it
-            says exactly that, in a differently shaped sentence, because a zero
-            drawn for an absence reassures somebody about work nobody has
-            checked. */}
-        {awaiting ? (
-          <T
-            style={[
-              {
-                fontSize: 15,
-                lineHeight: 21,
-                marginTop: 6,
-                /* Red only once the named ladder has been walked to its end
-                   with no answer — that is the point at which a manager is
-                   meant to stop reading and ring the shop. Not asked yet, and
-                   not told, are both quiet. */
-                color:
-                  chase.asked == null || chase.asked === 0
-                    ? C.muted
-                    : chase.asked >= chase.rungs.length
-                      ? C.danger
-                      : C.warnInk,
-              },
-              weight(600),
-            ]}>
-            {chaseCountSentence(chase.asked)}
-          </T>
-        ) : null}
-
-        <Divider style={{ marginVertical: 12 }} />
-
-        <View style={{ gap: 8 }}>
-          <Line label="Asked for" value={pretty(isoDate(new Date(s.requestedAt)))} />
-          {s.plannedSendDate ? <Line label="Planned to go" value={pretty(s.plannedSendDate)} /> : null}
-          {s.sendingMode ? <Line label="Sending mode" value={s.sendingMode === 'hand_delivery' ? 'Hand Delivery' : 'Courier'} /> : null}
-          {s.application ? <Line label="Used on" value={s.application} /> : null}
-          {s.dispatchedAt ? <Line label="Sent" value={pretty(isoDate(new Date(s.dispatchedAt)))} /> : null}
-          {s.courierDocket ? <Line label="Docket" value={[s.courierName, s.courierDocket].filter(Boolean).join(' · ')} /> : null}
-          {s.expectedDeliveryDate ? <Line label="Should reach by" value={pretty(s.expectedDeliveryDate)} /> : null}
-          {/* THE SHOP'S WORD, not the carrier's, and the two are not the same
-              record. `receivedConfirmedAt` is what a confirmation made on this
-              handset writes and `receivedAt` is the name the office writes the
-              same fact under — reading only the first meant a sample the shop
-              had confirmed to the office showed nothing here at all. */}
-          {s.receivedConfirmedAt || s.receivedAt ? (
-            <Line
-              label="They confirmed it"
-              value={pretty(isoDate(new Date((s.receivedConfirmedAt ?? s.receivedAt) as number)))}
-            />
+          The count is the number the whole mechanism exists to produce. A trial
+          reviewed yesterday and one chased three times with no answer are the
+          same badge and the same sentence otherwise, and they are two different
+          mornings — the first is waiting and the second is picking the phone up
+          yourself. Where the count has not reached this phone it says exactly
+          that, in a differently shaped sentence, because a zero drawn for an
+          absence reassures somebody about work nobody has checked. */}
+      {owed || awaiting ? (
+        <View style={{ backgroundColor: C.navy, borderRadius: 20, padding: 16 }}>
+          {owed ? <Text style={[{ fontSize: 15, lineHeight: 21, color: '#FFFFFF' }, weight(700)]}>{owed}</Text> : null}
+          {awaiting ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: owed ? 8 : 0 }}>
+              <Icon name="call" size={14} color={countInk} strokeWidth={2.2} />
+              <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: countInk }, weight(700)]}>
+                {chaseCountSentence(chase.asked)}
+              </Text>
+            </View>
           ) : null}
-          {/* BOTH trial dates, because the gap between them is the point. A can
-              opened three weeks ago and never finished reads here as exactly
-              that instead of looking identical to one nobody has touched. */}
-          {s.trialStartedAt ? (
-            <Line label="Trial started" value={pretty(isoDate(new Date(s.trialStartedAt)))} />
-          ) : null}
-          {s.trialCompletedAt ? (
-            <Line label="Trial finished" value={pretty(isoDate(new Date(s.trialCompletedAt)))} />
-          ) : null}
-          {s.reviewedAt ? <Line label="Reviewed" value={pretty(isoDate(new Date(s.reviewedAt)))} /> : null}
-          {s.cancelReason ? <Line label="Cancelled" value={s.cancelReason} /> : null}
-          {/* WHY IT WAS REFUSED. §K demands the reason so that the next sample
-              does not go out identical, and the salesman is the person who
-              would change it — and was the one person never shown it. Until
-              this line existed a refused sample was a red badge, no sentence
-              under it (`whatIsOwed` is null for a finished one) and the whole
-              action block hidden: a card with one word on it. */}
-          {s.rejectionReason ? (
-            <Line label="Not accepted because" value={s.rejectionReason} />
-          ) : s.state === 'Rejected' ? (
-            /* A missing reason is said rather than drawn as an empty card. The
-               rule demands one, so its absence is itself worth knowing. */
-            <Line
-              label="Not accepted because"
-              value="The office has not said why. Ask them before the next sample goes."
-            />
-          ) : null}
-          {s.satisfaction ? <Line label="They said" value={s.satisfaction} /> : null}
-          {s.additionalRequirement ? <Line label="Also asked for" value={s.additionalRequirement} /> : null}
         </View>
-      </Card>
+      ) : null}
+
+      {/* WHY IT WAS REFUSED. §K demands the reason so that the next sample
+          does not go out identical, and the salesman is the person who would
+          change it — and was the one person never shown it. Until this line
+          existed a refused sample was a red badge, no sentence under it
+          (`whatIsOwed` is null for a finished one) and the whole action block
+          hidden: a card with one word on it. */}
+      {s.rejectionReason || s.state === 'Rejected' ? (
+        <View style={{ backgroundColor: C.dangerBg, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
+          <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>Not accepted because</Text>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(700)]}>
+            {/* A missing reason is said rather than drawn as an empty card.
+                The rule demands one, so its absence is itself worth knowing. */}
+            {s.rejectionReason || 'The office has not said why. Ask them before the next sample goes.'}
+          </Text>
+        </View>
+      ) : null}
+      {s.cancelReason ? (
+        <View style={{ backgroundColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
+          <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>Cancelled</Text>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(700)]}>{s.cancelReason}</Text>
+        </View>
+      ) : null}
+
+      {asJourney ? (
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            {journey.map((j) => (
+              <View
+                key={j.key}
+                accessible
+                accessibilityLabel={j.label + ', ' + j.at}
+                style={{ flex: 1, alignItems: 'center' }}>
+                <View
+                  style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: j.red ? C.danger : C.primary, marginBottom: 4 }}
+                />
+                <Text style={{ fontSize: 11, color: C.muted, textAlign: 'center' }}>{j.label}</Text>
+                <Text style={[{ fontSize: 11, color: C.ink, textAlign: 'center' }, weight(700)]}>{j.at}</Text>
+              </View>
+            ))}
+          </View>
+          {/* What the journey cannot draw as a date, as tags — nothing the
+              record carries is dropped for being in the wrong shape. */}
+          {(() => {
+            const tags = [
+              modeWord,
+              s.plannedSendDate ? 'Planned to go: ' + pretty(s.plannedSendDate) : null,
+              s.courierDocket ? 'Docket: ' + [s.courierName, s.courierDocket].filter(Boolean).join(' · ') : null,
+              s.expectedDeliveryDate ? 'Should reach by: ' + pretty(s.expectedDeliveryDate) : null,
+              s.application ? 'Used on: ' + s.application : null,
+              s.satisfaction ? 'They said: ' + s.satisfaction : null,
+              s.additionalRequirement ? 'Also asked for: ' + s.additionalRequirement : null,
+            ].filter((x): x is string => !!x);
+            return tags.length ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+                {tags.map((t) => (
+                  <Pill key={t} text={t} bg={C.canvas} fg={C.ink} height={28} />
+                ))}
+              </View>
+            ) : null;
+          })()}
+        </View>
+      ) : (
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 12 }}>
+            {facts.map((f, i) => {
+              const lastRow = i >= facts.length - (facts.length % 2 === 0 ? 2 : 1);
+              return (
+                <View
+                  key={f.label}
+                  accessible
+                  accessibilityLabel={(f.a11y ?? f.label) + ': ' + f.value}
+                  style={{
+                    width: '47%',
+                    flexGrow: 1,
+                    paddingVertical: 10,
+                    borderBottomWidth: lastRow ? 0 : 1,
+                    borderBottomColor: C.hairline,
+                  }}>
+                  <Text style={{ fontSize: 11, color: C.muted }}>{f.label}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {f.icon}
+                    <Text style={[{ flexShrink: 1, fontSize: 15, color: f.good ? C.success : C.ink }, weight(700)]}>
+                      {f.value}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       {/* ------------------------------------------------ §15 the next mark */}
       {/* Keyed on the state, so the next mark REPLACES the one just made in
@@ -310,144 +421,199 @@ export default function SampleRecord() {
           block snapping to a different height under his thumb. */}
       {finished ? null : (
         <Swap id={s.state}>
-        <View style={{ marginTop: 20, gap: 10 }}>
-          <SectionLabel style={{ marginBottom: 0 }}>What happens next</SectionLabel>
+          <View style={{ gap: 10 }}>
+            <Text accessibilityRole="header" accessibilityLabel="What happens next" style={[{ fontSize: 13, color: C.ink, marginTop: 4 }, weight(700)]}>
+              Next
+            </Text>
 
-          {s.state === 'Requested' ? (
-            <Card>
-              <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                The office must approve it first. Nothing for you to do yet.
-              </T>
-            </Card>
-          ) : null}
-
-          {s.state === 'Approved' ? (
-            <PrimaryButton label="Mark as sent" onPress={() => setDispatchOpen(true)} />
-          ) : null}
-
-          {s.state === 'Dispatched' ? (
-            <>
-              <SectionLabel style={{ marginBottom: 0 }}>Sample received &amp; review</SectionLabel>
-              <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>Has the sample been received?</T>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <Choice label="Yes" selected={receivedAnswer === 'yes'} onPress={() => setReceivedAnswer('yes')} style={{ paddingHorizontal: 16 }} />
-                <Choice label="No" selected={receivedAnswer === 'no'} onPress={() => setReceivedAnswer('no')} style={{ paddingHorizontal: 16 }} />
+            {s.state === 'Requested' ? (
+              <View
+                style={{
+                  backgroundColor: C.surface,
+                  borderRadius: 20,
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                }}>
+                <Icon name="shield" size={18} color={C.info} strokeWidth={2} />
+                <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.muted }}>
+                  <Text style={[{ color: C.ink }, weight(700)]}>Requested</Text>
+                  {' · The office must approve it first. Nothing for you to do yet.'}
+                </Text>
               </View>
-              {receivedAnswer === 'no' ? (
-                <Card>
-                  <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                    The review stays locked. Nothing is marked received or reviewed, and the lead cannot go to
-                    Negotiation until the sample has arrived.
-                  </T>
-                </Card>
-              ) : null}
-              {receivedAnswer === 'yes' ? (
+            ) : null}
+
+            {s.state === 'Approved' ? (
+              <BigButton label="Mark as sent" icon={<Truck color="#FFFFFF" />} onPress={() => setDispatchOpen(true)} />
+            ) : null}
+
+            {s.state === 'Dispatched' ? (
+              <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
+                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>Dispatched · Sample received &amp; review</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                  <Text style={[{ flex: 1, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>
+                    Has the sample been received?
+                  </Text>
+                  <YesNo value={receivedAnswer} onChange={setReceivedAnswer} />
+                </View>
+                {receivedAnswer === 'yes' ? (
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                    <Tile
+                      label={busy ? 'Saving…' : 'Got it + photo'}
+                      a11y="They got it. Take photo"
+                      tone="primary"
+                      disabled={busy}
+                      icon={<Icon name="camera" size={18} color="#FFFFFF" strokeWidth={2} />}
+                      onPress={async () => {
+                        /* One press, one mark. Nothing here disabled while the write
+                           was in flight and the sheet only closes once it returns,
+                           so a double tap on a slow phone queued the mark twice. */
+                        if (busy) return;
+                        setBusy(true);
+                        try {
+                          const shot = await takePhoto({ parentType: 'sample', parentId: s.id, kind: 'sample_proof' });
+                          /* A refused camera or a cancelled picker is not a reason to
+                             lose the fact: the delivery is confirmed either way and
+                             only the photograph is poorer for it. Every attachment in
+                             this app follows that rule. */
+                          const r = await confirmReceived(s.id, shot.ok ? shot.mediaId : null);
+                          if (!r.ok) return notify(r.message, 'error');
+                          load();
+                          /* "Delivered" was the carrier's word for a mark that is the
+                             SHOP's. One tap cannot assert both, and the record now
+                             only claims the one it is actually evidence of. */
+                          notify(shot.ok ? 'Saved. They got it. Photo taken.' : 'Saved. They got it. No photo taken.', shot.ok ? 'success' : 'warn');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    />
+                    <Tile
+                      label="Got it, no photo"
+                      a11y="They got it. No photo"
+                      tone="wash"
+                      icon={<Icon name="tick" size={18} color={C.success} strokeWidth={2.2} />}
+                      onPress={async () => {
+                        if (busy) return;
+                        setBusy(true);
+                        try {
+                          const r = await confirmReceived(s.id, null);
+                          if (!r.ok) return notify(r.message, 'error');
+                          load();
+                          notify('Saved. They got it.');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    />
+                  </View>
+                ) : null}
+                {receivedAnswer === 'no' ? (
+                  <Text
+                    accessibilityLabel="The review stays locked. Nothing is marked received or reviewed, and the lead cannot go to Negotiation until the sample has arrived."
+                    style={{
+                      marginTop: 10,
+                      borderRadius: 14,
+                      backgroundColor: C.canvas,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      fontSize: 13,
+                      lineHeight: 18,
+                      color: C.muted,
+                      overflow: 'hidden',
+                    }}>
+                    No: review stays locked; nothing marked received; no Negotiation until it arrives.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {s.state === 'Awaiting feedback' ? (
               <>
-              <PrimaryButton
-                label={busy ? 'Saving…' : 'They got it. Take photo'}
-                disabled={busy}
-                onPress={async () => {
-                  /* One press, one mark. Nothing here disabled while the write
-                     was in flight and the sheet only closes once it returns,
-                     so a double tap on a slow phone queued the mark twice. */
-                  if (busy) return;
-                  setBusy(true);
-                  try {
-                    const shot = await takePhoto({ parentType: 'sample', parentId: s.id, kind: 'sample_proof' });
-                    /* A refused camera or a cancelled picker is not a reason to
-                       lose the fact: the delivery is confirmed either way and
-                       only the photograph is poorer for it. Every attachment in
-                       this app follows that rule. */
-                    const r = await confirmReceived(s.id, shot.ok ? shot.mediaId : null);
-                    if (!r.ok) return notify(r.message, 'error');
-                    load();
-                    /* "Delivered" was the carrier's word for a mark that is the
-                       SHOP's. One tap cannot assert both, and the record now
-                       only claims the one it is actually evidence of. */
-                    notify(shot.ok ? 'Saved. They got it. Photo taken.' : 'Saved. They got it. No photo taken.', shot.ok ? 'success' : 'warn');
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              />
-              <SecondaryButton
-                label="They got it. No photo"
-                onPress={async () => {
-                  if (busy) return;
-                  setBusy(true);
-                  try {
-                    const r = await confirmReceived(s.id, null);
-                    if (!r.ok) return notify(r.message, 'error');
-                    load();
-                    notify('Saved. They got it.');
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              />
+                <BigButton label="Write their feedback" icon={<ChatGlyph />} onPress={() => setReviewOpen(true)} />
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {/* STARTED and FINISHED are two marks. Without the first, a shop
+                      that opened the can three weeks ago and never got to the end
+                      of it looks exactly like one that has not touched it — and
+                      that stall is the commonest way a sample goes quiet. It is
+                      offered once: the date is already on the record afterwards. */}
+                  {s.trialStartedAt ? null : (
+                    <Tile
+                      label="They started using it"
+                      a11y="They have started using it"
+                      tone="white"
+                      icon={<Icon name="play" size={18} color={C.primaryDeep} strokeWidth={2} />}
+                      onPress={async () => {
+                        if (busy) return;
+                        setBusy(true);
+                        try {
+                          const r = await markTrialStarted(s.id);
+                          if (!r.ok) return notify(r.message, 'error');
+                          load();
+                          notify('Trial started. Feedback is still pending.');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    />
+                  )}
+                  <Tile
+                    label="Tried. Ask later"
+                    a11y="They tried it. Ask later"
+                    tone="white"
+                    icon={<Icon name="clock" size={18} color={C.warnInk} strokeWidth={2} />}
+                    onPress={async () => {
+                      if (busy) return;
+                      setBusy(true);
+                      try {
+                        const r = await markTried(s.id);
+                        if (!r.ok) return notify(r.message, 'error');
+                        load();
+                        notify('Tried. Feedback is pending now.');
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  />
+                </View>
               </>
-              ) : null}
-            </>
-          ) : null}
+            ) : null}
 
-          {s.state === 'Awaiting feedback' ? (
-            <>
-              <PrimaryButton label="Write their feedback" onPress={() => setReviewOpen(true)} />
-              {/* STARTED and FINISHED are two marks. Without the first, a shop
-                  that opened the can three weeks ago and never got to the end
-                  of it looks exactly like one that has not touched it — and
-                  that stall is the commonest way a sample goes quiet. It is
-                  offered once: the date is already on the record afterwards. */}
-              {s.trialStartedAt ? null : (
-                <SecondaryButton
-                  label="They have started using it"
-                  onPress={async () => {
-                    if (busy) return;
-                    setBusy(true);
-                    try {
-                      const r = await markTrialStarted(s.id);
-                      if (!r.ok) return notify(r.message, 'error');
-                      load();
-                      notify('Trial started. Feedback is still pending.');
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                />
-              )}
-              <SecondaryButton
-                label="They tried it. Ask later"
-                onPress={async () => {
-                  if (busy) return;
-                  setBusy(true);
-                  try {
-                    const r = await markTried(s.id);
-                    if (!r.ok) return notify(r.message, 'error');
-                    load();
-                    notify('Tried. Feedback is pending now.');
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              />
-            </>
-          ) : null}
+            {/* A Tried sample that already carries answers is a "Not decided"
+                one, and the card below is where it is changed. */}
+            {s.state === 'Tried' && !review ? (
+              <BigButton label="Write their feedback" icon={<ChatGlyph />} onPress={() => setReviewOpen(true)} />
+            ) : null}
 
-          {/* A Tried sample that already carries answers is a "Not decided"
-              one, and the card below is where it is changed. */}
-          {s.state === 'Tried' && !review ? (
-            <PrimaryButton label="Write their feedback" onPress={() => setReviewOpen(true)} />
-          ) : null}
-
-          {/* WHY, AS ONE OF EIGHT AND NOT AS A BOX. This was the generic
-              confirmation sheet, which offers a single multiline field — so
-              every cancellation a salesman made arrived at the office as prose
-              nobody could count, while the office had taken a code since the
-              module shipped. The three problems the eight exist to separate —
-              a product we could not source, a shop that stopped answering, a
-              price objection — all read as "trial cancelled" until then. */}
-          <DashedButton label="Cancel this sample" onPress={() => setCancelOpen(true)} />
-        </View>
+            {/* WHY, AS ONE OF EIGHT AND NOT AS A BOX. This was the generic
+                confirmation sheet, which offers a single multiline field — so
+                every cancellation a salesman made arrived at the office as prose
+                nobody could count, while the office had taken a code since the
+                module shipped. The three problems the eight exist to separate —
+                a product we could not source, a shop that stopped answering, a
+                price objection — all read as "trial cancelled" until then. */}
+            <Pressable
+              onPress={() => setCancelOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel this sample"
+              style={({ pressed }) => ({
+                height: 48,
+                borderRadius: 24,
+                borderWidth: 1.5,
+                borderStyle: 'dashed',
+                borderColor: '#DCE3EE',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                opacity: pressed ? 0.7 : 1,
+              })}>
+              <Icon name="close" size={16} color={C.danger} strokeWidth={2.2} />
+              <Text style={[{ fontSize: 14, color: C.danger }, weight(700)]}>Cancel this sample</Text>
+            </Pressable>
+          </View>
         </Swap>
       )}
 
@@ -458,7 +624,7 @@ export default function SampleRecord() {
           write the review at all, and the Negotiation rung that waits on it
           could not be opened from the phone. */}
       {s.state === 'Reviewed' && !review ? (
-        <PrimaryButton label="Write their feedback" onPress={() => setReviewOpen(true)} style={{ marginTop: 16 }} />
+        <BigButton label="Write their feedback" icon={<ChatGlyph />} onPress={() => setReviewOpen(true)} />
       ) : null}
 
       {/* ------------------------------------------- §16 the chase ladder */}
@@ -466,49 +632,54 @@ export default function SampleRecord() {
 
       {/* ------------------------------------------------- §16 the review */}
       {review ? (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>What they said</SectionLabel>
-          <Card>
-            <View style={{ gap: 10 }}>
-              {FEEDBACK_FIELDS.map((f) => {
-                const said = (review as unknown as Record<string, string | null>)[f.id];
-                if (!said) return null;
-                return (
-                  <View key={f.id}>
-                    <T s="caption">{f.label}</T>
-                    <T style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 2 }}>{said}</T>
-                  </View>
-                );
-              })}
-            </View>
-            <Divider style={{ marginVertical: 12 }} />
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(800)]}>
+              What they said
+            </Text>
+            {review.photoId ? (
+              <View accessible accessibilityLabel="A photo is attached." style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Icon name="camera" size={18} color={C.muted} strokeWidth={2} />
+                <Text style={{ fontSize: 12, color: C.muted }}>A photo is attached</Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={{ gap: 10, marginTop: 10 }}>
+            {FEEDBACK_FIELDS.map((f) => {
+              const said = (review as unknown as Record<string, string | null>)[f.id];
+              if (!said) return null;
+              return (
+                <View key={f.id}>
+                  <Text style={{ fontSize: 11, color: C.muted }}>{f.label}</Text>
+                  <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>{said}</Text>
+                </View>
+              );
+            })}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
             {/* FOUR verdicts. "They want to try it again" drawn as "No verdict
                 yet" filed a trial that really happened as an unanswered one —
                 which is the one reading of it that loses the trial. */}
-            <T
-              style={[
-                {
-                  fontSize: 15,
-                  color:
-                    review.trialOutcome === 'approved'
-                      ? C.success
-                      : review.trialOutcome === 'more_testing'
-                        ? C.warnInk
-                        : C.ink,
-                },
-                weight(600),
-              ]}>
-              {verdictSentence(review.trialOutcome)}
-            </T>
-            {review.photoId ? (
-              <T s="caption" style={{ marginTop: 6 }}>A photo is attached.</T>
-            ) : null}
-            <SecondaryButton label="Change it" onPress={() => setReviewOpen(true)} style={{ marginTop: 12 }} />
-          </Card>
+            <VerdictChip outcome={review.trialOutcome} />
+            <Pressable
+              onPress={() => setReviewOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Change it"
+              style={({ pressed }) => ({
+                height: 44,
+                paddingHorizontal: 16,
+                borderRadius: 22,
+                backgroundColor: pressed ? C.hairline : C.canvas,
+                alignItems: 'center',
+                justifyContent: 'center',
+              })}>
+              <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Change it</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
-      <SecondaryButton label="Back to samples" onPress={() => router.replace('/samples')} style={{ marginTop: 20 }} />
+      <PillButton label="Back to samples" variant="white" height={48} onPress={() => router.replace('/samples')} />
 
       <DispatchSheet
         key={dispatchOpen ? 'd-open' : 'd-shut'}
@@ -609,112 +780,321 @@ function ChasePanel({ chase }: { chase: ChaseSchedule }) {
 
   if (!chase.startedOn) {
     return (
-      <View style={{ marginTop: 20 }}>
-        <SectionLabel style={{ marginBottom: 10 }}>Feedback follow-up</SectionLabel>
-        <Card>
-          <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-            Follow-up has not started. It starts on the day the shop says they got it. It does not start on the day it was sent. Mark it received first.
-          </T>
-        </Card>
+      <View
+        accessible
+        style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', gap: 10 }}>
+        <Icon name="call" size={18} color={C.muted} strokeWidth={2} />
+        <Text style={{ flex: 1, fontSize: 13, lineHeight: 19, color: C.muted }}>
+          <Text style={[{ color: C.ink }, weight(700)]}>Follow-up has not started.</Text>
+          {' It starts on the day the shop says they got it. It does not start on the day it was sent. Mark it received first.'}
+        </Text>
       </View>
     );
   }
 
+  const allAsked = chase.asked != null && chase.asked >= chase.rungs.length && chase.rungs.length > 0;
+  /* The ask that comes next wears the amber edge — the one a salesman is
+     waiting on. */
+  const nextAsk = chase.rungs.find((r) => r.asked !== true)?.ask ?? null;
+
   return (
-    <View style={{ marginTop: 20 }}>
-      <SectionLabel style={{ marginBottom: 10 }}>Feedback follow-up</SectionLabel>
-      <Card>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-          <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>
-            {chaseCountSentence(chase.asked)}
-          </T>
-          {chase.asked != null && chase.asked >= chase.rungs.length && chase.rungs.length ? (
-            <Badge tone="danger">Call them yourself</Badge>
-          ) : null}
-        </View>
-        <T s="caption" style={{ marginTop: 4 }}>
-          {'Counted from ' + pretty(chase.startedOn) + '. They got it that day.'}
-        </T>
+    <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Icon name="call" size={18} color={C.ink} strokeWidth={2} />
+        <Text accessibilityRole="header" style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(800)]}>
+          {'Feedback follow-up · ' + chaseCountSentence(chase.asked)}
+        </Text>
+      </View>
+      {allAsked ? (
+        <Pill
+          text="Call them yourself"
+          icon="call"
+          bg={C.dangerBg}
+          fg={C.danger}
+          height={28}
+          style={{ marginTop: 8 }}
+        />
+      ) : null}
+      <Text
+        accessibilityLabel={'Counted from ' + pretty(chase.startedOn) + '. They got it that day.'}
+        style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>
+        {'From ' + pretty(chase.startedOn) + ', the day they got it'}
+      </Text>
 
-        <Divider style={{ marginVertical: 12 }} />
-
-        <View style={{ gap: 10 }}>
-          {chase.rungs.map((r) => (
-            <View key={r.ask} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {/* A filled mark is the office saying the ask went. A hollow one
-                  means either it has not or nobody has told us, and the word on
-                  the right is what tells the two apart — a tick that had to
-                  guess would be the one thing on this panel worth nothing. */}
-              <View
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 9,
-                  borderWidth: r.asked === true ? 0 : 1.5,
-                  borderColor: r.duePassed ? C.warnInk : C.border,
-                  backgroundColor: r.asked === true ? C.success : 'transparent',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                {r.asked === true ? <T style={{ fontSize: 11, color: '#FFFFFF', lineHeight: 14 }}>✓</T> : null}
-              </View>
-              <T style={{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }}>
-                {'Ask ' + r.ask + ' · ' + pretty(r.dueOn)}
-              </T>
-              <T
-                s="caption"
-                style={{
-                  color: r.asked === true ? C.success : r.duePassed ? C.warnInk : C.muted,
-                }}>
-                {r.asked === true
-                  ? 'asked'
-                  : r.asked === false
-                    ? r.duePassed
-                      ? 'not asked'
-                      : 'to come'
-                    : r.duePassed
-                      ? 'day passed'
-                      : 'to come'}
-              </T>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+        {chase.rungs.map((r) => {
+          /* A filled mark is the office saying the ask went. A hollow one
+             means either it has not or nobody has told us, and the word under
+             it is what tells the two apart — a tick that had to guess would be
+             the one thing on this panel worth nothing. */
+          const word =
+            r.asked === true
+              ? 'asked'
+              : r.asked === false
+                ? r.duePassed
+                  ? 'not asked'
+                  : 'to come'
+                : r.duePassed
+                  ? 'day passed'
+                  : 'to come';
+          const done = r.asked === true;
+          return (
+            <View
+              key={r.ask}
+              accessible
+              accessibilityLabel={'Ask ' + r.ask + ', ' + pretty(r.dueOn) + ', ' + word}
+              style={{
+                flexGrow: 1,
+                flexBasis: '30%',
+                borderRadius: 16,
+                backgroundColor: done ? C.successBg : C.canvas,
+                padding: 10,
+                alignItems: 'center',
+                borderWidth: !done && r.ask === nextAsk ? 1.5 : 0,
+                borderColor: C.warnInk,
+              }}>
+              {done ? (
+                <Icon name="tick" size={18} color={C.success} strokeWidth={2.2} />
+              ) : (
+                <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: r.duePassed ? C.warnInk : C.muted, marginVertical: 1 }} />
+              )}
+              <Text style={[{ fontSize: 13, color: C.ink, marginTop: 2 }, weight(800)]}>{'Ask ' + r.ask}</Text>
+              <Text
+                style={[
+                  { fontSize: 12, textAlign: 'center', color: done ? C.success : r.duePassed ? C.warnInk : C.muted },
+                  weight(600),
+                ]}>
+                {pretty(r.dueOn) + ' · ' + word}
+              </Text>
             </View>
-          ))}
+          );
+        })}
+      </View>
+
+      {/* PAST THE LADDER IS A COUNT, NOT MORE BOXES. Twenty rows for a trial
+          that has gone quiet for six weeks is a list nobody reads, and the
+          one number worth having out of it is how many times we have asked. */}
+      {chase.beyondLadder ? (
+        <Text style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.warnInk }, weight(600)]}>
+          {'…and asked ' + plural(chase.beyondLadder, 'more time') + ' since then.'}
+        </Text>
+      ) : null}
+
+      {next ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}>
+          <Icon name="refresh" size={14} color={C.muted} strokeWidth={2} />
+          <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>{next}</Text>
         </View>
+      ) : null}
 
-        {/* PAST THE LADDER IS A COUNT, NOT MORE BOXES. Twenty rows for a trial
-            that has gone quiet for six weeks is a list nobody reads, and the
-            one number worth having out of it is how many times we have asked. */}
-        {chase.beyondLadder ? (
-          <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: C.warnInk }, weight(500)]}>
-            {'…and asked ' + plural(chase.beyondLadder, 'more time') + ' since then.'}
-          </T>
-        ) : null}
-
-        {next ? (
-          <T s="caption" style={{ marginTop: 10 }}>
-            {next}
-          </T>
-        ) : null}
-
-        {/* Said once, at the bottom, where somebody who has just read a column
-            of hollow circles is asking why none of them is ticked. */}
-        {chase.asked == null ? (
-          <T s="caption" style={{ marginTop: 6, color: C.muted }}>
-            Only the office knows how many times they asked. This phone only knows the days. Ask the office before you call.
-          </T>
-        ) : null}
-      </Card>
+      {/* Said once, at the bottom, where somebody who has just read a row of
+          hollow circles is asking why none of them is ticked. */}
+      {chase.asked == null ? (
+        <Text style={{ fontSize: 12, lineHeight: 17, marginTop: 8, color: C.muted }}>
+          Only the office knows how many times they asked. This phone only knows the days. Ask the office before you call.
+        </Text>
+      ) : null}
     </View>
   );
 }
 
-function Line({ label, value }: { label: string; value: string }) {
+/** The flask, the samples glyph. */
+function Flask({ size = 26, color = C.primaryDeep }: { size?: number; color?: string }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 12 }}>
-      <T s="caption" style={{ width: 110 }}>{label}</T>
-      <T style={{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }}>{value}</T>
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** The courier van V3 draws beside Courier and Mark as sent. */
+function Truck({ color, size = 18 }: { color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M3 7h11v9H3zM14 10h4l3 3v3h-7" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+      <Circle cx={7} cy={18} r={1.6} stroke={color} strokeWidth={2} />
+      <Circle cx={17} cy={18} r={1.6} stroke={color} strokeWidth={2} />
+    </Svg>
+  );
+}
+
+/** The speech bubble on Write their feedback. */
+function ChatGlyph({ color = '#FFFFFF', size = 18 }: { color?: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M4 20l1.5-4A8 8 0 1 1 9 19z" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** The 56 primary pill the record's next mark is drawn as. */
+function BigButton({ label, icon, onPress }: { label: string; icon?: React.ReactNode; onPress: () => void }) {
+  return (
+    <PressableScale onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
+      <View
+        style={{
+          height: 56,
+          borderRadius: 28,
+          backgroundColor: C.primary,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+        }}>
+        {icon}
+        <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>{label}</Text>
+      </View>
+    </PressableScale>
+  );
+}
+
+/** A 64-tall tile: the two smaller marks that sit beside each other. */
+function Tile({
+  label,
+  a11y,
+  icon,
+  tone,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  a11y: string;
+  icon: React.ReactNode;
+  tone: 'primary' | 'white' | 'wash';
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const bg = tone === 'primary' ? C.primary : tone === 'wash' ? C.canvas : C.surface;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => ({
+        flex: 1,
+        minHeight: 64,
+        borderRadius: 20,
+        backgroundColor: bg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 10,
+        opacity: pressed || disabled ? 0.8 : 1,
+      })}>
+      {icon}
+      <Text style={[{ flexShrink: 1, fontSize: 13, color: tone === 'primary' ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** The Yes / No switch, navy on the picked side. */
+function YesNo({ value, onChange }: { value: 'yes' | 'no' | null; onChange: (v: 'yes' | 'no') => void }) {
+  return (
+    <View
+      accessibilityRole="radiogroup"
+      style={{ height: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
+      {(['yes', 'no'] as const).map((k) => {
+        const on = value === k;
+        return (
+          <Pressable
+            key={k}
+            onPress={() => {
+              if (!on) feedback('select');
+              onChange(k);
+            }}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: on }}
+            accessibilityLabel={k === 'yes' ? 'Yes' : 'No'}
+            hitSlop={{ top: 4, bottom: 4 }}
+            style={{
+              width: 56,
+              borderRadius: 18,
+              backgroundColor: on ? C.navy : 'transparent',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>
+              {k === 'yes' ? 'Yes' : 'No'}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
+
+/** The verdict, as the coloured chip the review card ends on. */
+function VerdictChip({ outcome }: { outcome: string | null }) {
+  const look =
+    outcome === 'approved'
+      ? { bg: C.successBg, fg: C.success, icon: 'tick' as const }
+      : outcome === 'rejected'
+        ? { bg: C.dangerBg, fg: C.danger, icon: 'close' as const }
+        : outcome === 'more_testing'
+          ? { bg: C.warnBg, fg: C.warnInk, icon: 'refresh' as const }
+          : { bg: C.canvas, fg: C.ink, icon: null };
+  return (
+    <View
+      style={{
+        flex: 1,
+        minHeight: 36,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 18,
+        backgroundColor: look.bg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+      }}>
+      {look.icon ? <Icon name={look.icon} size={14} color={look.fg} strokeWidth={2.2} /> : null}
+      <Text style={[{ flexShrink: 1, fontSize: 13, color: look.fg }, weight(700)]}>{verdictSentence(outcome)}</Text>
+    </View>
+  );
+}
+
+/** A sheet's header: the tinted disc, the title and the line under it. */
+function SheetHead({ icon, title, sub, a11ySub }: { icon: React.ReactNode; title: string; sub: string; a11ySub?: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View
+        style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>
+        {icon}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
+          {title}
+        </Text>
+        <Text accessibilityLabel={a11ySub} style={{ fontSize: 12, color: C.muted }}>
+          {sub}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+/** The refusal box a sheet ends on, shaking when it speaks. */
+function Refusal({ err, style }: { err: string | null; style: object }) {
+  return (
+    <Presence show={!!err}>
+      <Animated.View
+        style={[{ marginTop: 10, backgroundColor: C.dangerBg, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }, style]}>
+        <T style={[{ fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>{err}</T>
+      </Animated.View>
+    </Presence>
+  );
+}
+
+/** The wash pill an answer is typed into on these sheets. */
+const WASH_BOX = { backgroundColor: C.canvas, borderWidth: 0, borderRadius: 24, minHeight: 48, fontSize: 14, paddingHorizontal: 16 } as const;
 
 /**
  * §15 — the courier and the docket, which are how a sample is traced.
@@ -759,71 +1139,96 @@ function DispatchSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>Mark as sent</T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        {byHand ? 'Hand delivery: only the day it should be there.' : 'Who is taking it, and the docket number.'}
-      </T>
+      <SheetHead
+        icon={<Truck color={C.primaryDeep} size={22} />}
+        title="Mark as sent"
+        sub={byHand ? 'Hand delivery: only the day it should be there' : 'Who is taking it, and the docket number'}
+      />
 
       {byHand ? null : (
-        <>
-          <View style={{ marginTop: 14 }}>
-            <SectionLabel style={{ marginBottom: 6 }}>Courier</SectionLabel>
-            <Input value={courier} onChangeText={(v) => { setCourier(v); setErr(null); }} placeholder="Gati, VRL, our own vehicle" />
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+          <View style={{ flex: 1 }}>
+            <Input
+              value={courier}
+              onChangeText={(v) => {
+                setCourier(v);
+                setErr(null);
+              }}
+              accessibilityLabel="Courier"
+              placeholder="Courier (Gati, VRL…)"
+              style={WASH_BOX}
+            />
           </View>
-
-          <View style={{ marginTop: 12 }}>
-            <SectionLabel style={{ marginBottom: 6 }}>Docket number</SectionLabel>
-            <Input value={docket} onChangeText={(v) => { setDocket(v); setErr(null); }} placeholder="Number on the slip" />
+          <View style={{ flex: 1 }}>
+            <Input
+              value={docket}
+              onChangeText={(v) => {
+                setDocket(v);
+                setErr(null);
+              }}
+              accessibilityLabel="Docket number"
+              placeholder="Docket no."
+              style={WASH_BOX}
+            />
           </View>
-        </>
+        </View>
       )}
 
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Should be there by</SectionLabel>
-        <Choice
-          label={date ? dmy(date) : 'Choose a day'}
-          selected={Boolean(date)}
-          onPress={() => setCal(!cal)}
-          style={{ alignItems: 'flex-start', paddingHorizontal: 14, minHeight: 52 }}
-        />
-        {cal ? (
-          <View style={{ marginTop: 10 }}>
-            <Calendar selected={date ?? ''} onPick={(iso) => { setDate(iso); setCal(false); setErr(null); }} />
-          </View>
-        ) : null}
-      </View>
+      <Pressable
+        onPress={() => setCal(!cal)}
+        accessibilityRole="button"
+        accessibilityLabel={'Should be there by: ' + (date ? dmy(date) : 'choose a day')}
+        style={({ pressed }) => ({
+          marginTop: 8,
+          height: 48,
+          borderRadius: 24,
+          backgroundColor: date ? C.primaryTint : pressed ? C.hairline : C.canvas,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+        })}>
+        <Icon name="cal" size={18} color={date ? C.primaryDeep : C.ink} strokeWidth={2} />
+        <Text style={[{ fontSize: 14, color: date ? C.primaryDeep : C.ink }, weight(date ? 700 : 600)]}>
+          {'Should be there by · ' + (date ? dmy(date) : 'choose a day')}
+        </Text>
+      </Pressable>
+      {cal ? (
+        <View style={{ marginTop: 10 }}>
+          <Calendar
+            selected={date ?? ''}
+            onPick={(iso) => {
+              setDate(iso);
+              setCal(false);
+              setErr(null);
+            }}
+          />
+        </View>
+      ) : null}
 
-      <Presence show={!!err}>
-        <Animated.View
-          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
-          <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </Animated.View>
-      </Presence>
+      <Refusal err={err} style={refusal.style} />
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton
-          label={saving ? 'Saving…' : 'Sent'}
-          disabled={saving}
-          onPress={async () => {
-            if (savingRef.current) return;
-            if (!byHand && !courier.trim()) return refuse('Who is taking it? Write the courier.');
-            if (!byHand && !docket.trim()) return refuse('Write the docket number. It is needed to track it.');
-            if (!date) return refuse('Choose the day it should reach.');
-            /* The sheet closes only after the write returns; a second tap
-               before that queued a second dispatch mark for one parcel. */
-            savingRef.current = true;
-            setSaving(true);
-            try {
-              await onSave({ courierName: courier.trim(), courierDocket: docket.trim(), expectedDeliveryDate: date });
-            } finally {
-              savingRef.current = false;
-              setSaving(false);
-            }
-          }}
-          style={{ flex: 1, borderRadius: radius.xl }}
-        />
-      </View>
+      <SheetActions
+        onCancel={onClose}
+        label={saving ? 'Saving…' : 'Sent'}
+        busy={saving}
+        onPress={async () => {
+          if (savingRef.current) return;
+          if (!byHand && !courier.trim()) return refuse('Who is taking it? Write the courier.');
+          if (!byHand && !docket.trim()) return refuse('Write the docket number. It is needed to track it.');
+          if (!date) return refuse('Choose the day it should reach.');
+          /* The sheet closes only after the write returns; a second tap
+             before that queued a second dispatch mark for one parcel. */
+          savingRef.current = true;
+          setSaving(true);
+          try {
+            await onSave({ courierName: courier.trim(), courierDocket: docket.trim(), expectedDeliveryDate: date });
+          } finally {
+            savingRef.current = false;
+            setSaving(false);
+          }
+        }}
+      />
     </BottomSheet>
   );
 }
@@ -905,82 +1310,124 @@ function ReviewSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        What did they think?
-      </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        Sample received & review · Write what they said, in their words. At least one box, and the verdict.
-      </T>
+      <SheetHead
+        icon={<ChatGlyph color={C.primaryDeep} size={22} />}
+        title="What did they think?"
+        sub="Sample received & review · their words · 1 box + verdict"
+        a11ySub="Sample received & review · Write what they said, in their words. At least one box, and the verdict."
+      />
 
       {/* All seven are prose and all seven get the microphone. Six of them were
           single-line boxes, so a sentence scrolled sideways out of view as it
           was typed — on a sheet whose own instruction is "their words, not a
           summary", read by somebody typing slowly in a language he does not
           write. `VoiceField` is the same `Input` with a mic in it. */}
-      {ACTIVE_FEEDBACK_FIELDS.map((f) => (
-        <View key={f.id} style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>{f.label}</SectionLabel>
-          <VoiceField
-            value={fields[f.id] ?? ''}
-            onChangeText={(v) => { setFields({ ...fields, [f.id]: v }); setErr(null); }}
-            placeholder={f.id === 'otherComments' ? 'Anything else' : 'In their words'}
-          />
-        </View>
-      ))}
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Verdict</SectionLabel>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          <Choice label="Approved" selected={outcome === 'approved'} onPress={() => setOutcome('approved')} style={{ paddingHorizontal: 16 }} />
-          <Choice label="Rejected" selected={outcome === 'rejected'} onPress={() => setOutcome('rejected')} style={{ paddingHorizontal: 16 }} />
-          {/* The third real verdict. Without it a trial that happened and
-              produced "again, on something else" had to be filed as though
-              nobody had answered. */}
-          <Choice
-            label="More Testing Required"
-            selected={outcome === 'more_testing'}
-            onPress={() => setOutcome('more_testing')}
-            style={{ paddingHorizontal: 16 }}
-          />
-        </View>
-        <T s="caption" style={{ marginTop: 6 }}>
-          Negotiation opens only after an Approved verdict. That is the rule.
-        </T>
-        {/* Arrives the moment "No" is picked, in place, so the boxes above
-            are not shoved down a line as his thumb leaves the chip. */}
-        <Presence show={Boolean(owedWhy)}>
-          <T s="caption" style={{ marginTop: 6, color: C.danger }}>{owedWhy}</T>
-        </Presence>
+      <View style={{ gap: 10, marginTop: 14 }}>
+        {ACTIVE_FEEDBACK_FIELDS.map((f) => (
+          <View key={f.id}>
+            <Text style={[{ fontSize: 13, color: C.ink, marginBottom: 6 }, weight(700)]}>{f.label}</Text>
+            <VoiceField
+              value={fields[f.id] ?? ''}
+              onChangeText={(v) => {
+                setFields({ ...fields, [f.id]: v });
+                setErr(null);
+              }}
+              accessibilityLabel={f.label}
+              placeholder={f.id === 'otherComments' ? 'Anything else' : 'In their words'}
+              style={[WASH_BOX, { paddingVertical: 13 }]}
+            />
+          </View>
+        ))}
       </View>
 
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Photo, if you have one</SectionLabel>
+      <Text style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]}>Verdict</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+        {VERDICTS.map((v) => {
+          const on = outcome === v.key;
+          return (
+            <Pressable
+              key={v.key}
+              onPress={() => {
+                if (!on) feedback('select');
+                setOutcome(v.key);
+              }}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: on }}
+              accessibilityLabel={v.a11y}
+              style={{
+                flex: 1,
+                height: 64,
+                borderRadius: 20,
+                backgroundColor: on ? v.strong : v.bg,
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                borderWidth: on ? 0 : 0,
+              }}>
+              <Icon name={v.icon} size={18} color={on ? '#FFFFFF' : v.fg} strokeWidth={2.2} />
+              <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : v.fg }, weight(700)]}>{v.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text
+        accessibilityLabel="Negotiation opens only after an Approved verdict. That is the rule."
+        style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
+        Negotiation opens only after Approved.
+      </Text>
+      {/* Arrives the moment "No" is picked, in place, so the boxes above
+          are not shoved down a line as his thumb leaves the chip. */}
+      <Presence show={Boolean(owedWhy)}>
+        <Text style={[{ fontSize: 12, lineHeight: 17, marginTop: 4, color: C.danger }, weight(600)]}>{owedWhy}</Text>
+      </Presence>
+
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
         {photo ? (
-          <Image source={{ uri: photo.uri }} style={{ width: '100%', height: 160, borderRadius: radius.lg }} resizeMode="cover" />
+          <Image
+            accessibilityLabel="The photo you took"
+            source={{ uri: photo.uri }}
+            style={{ width: 96, height: 72, borderRadius: 16, backgroundColor: '#DCE3EE' }}
+            resizeMode="cover"
+          />
         ) : null}
-        <DashedButton
-          label={photo ? 'Take another' : '+ Photo of the finish or the can'}
+        <Pressable
           onPress={async () => {
             const shot = await onPhoto();
             if (shot) setPhoto(shot);
           }}
-          style={{ marginTop: photo ? 10 : 0 }}
-        />
+          accessibilityRole="button"
+          accessibilityLabel={photo ? 'Take another' : 'Photo of the finish or the can, optional'}
+          style={({ pressed }) => ({
+            flex: 1,
+            height: 72,
+            borderRadius: 16,
+            borderWidth: 1.5,
+            borderStyle: 'dashed',
+            borderColor: '#B9A6FF',
+            backgroundColor: pressed ? C.primaryTint : '#F7F4FF',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+          })}>
+          <Icon name="camera" size={18} color={C.primaryDeep} strokeWidth={2} />
+          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>
+            {photo ? 'Take another' : 'Photo of the finish or the can'}
+          </Text>
+        </Pressable>
       </View>
 
-      <Presence show={!!err}>
-        <Animated.View
-          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
-          <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </Animated.View>
-      </Presence>
+      <Refusal err={err} style={refusal.style} />
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+        <PillButton label="Cancel" variant="outline" height={56} onPress={onClose} style={{ width: 120 }} />
+        <PillButton
           label={saving ? 'Saving…' : 'Save feedback'}
+          variant="navyLime"
+          height={56}
           disabled={saving || Boolean(owedWhy)}
           whyDisabled={owedWhy ?? undefined}
+          onRefused={(why) => refuse(why)}
           onPress={async () => {
             if (savingRef.current) return;
             if (owed) return refuse(owed);
@@ -996,9 +1443,27 @@ function ReviewSheet({
               setSaving(false);
             }
           }}
-          style={{ flex: 1, borderRadius: radius.xl }}
+          style={{ flex: 1 }}
         />
       </View>
     </BottomSheet>
   );
 }
+
+/** The three verdicts the office takes, as the review sheet draws them. */
+const VERDICTS = [
+  { key: 'approved', label: 'Approved', a11y: 'Approved', icon: 'tick', bg: C.successBg, fg: C.success, strong: C.success },
+  { key: 'rejected', label: 'Rejected', a11y: 'Rejected', icon: 'close', bg: C.dangerBg, fg: C.danger, strong: C.danger },
+  /* The third real verdict. Without it a trial that happened and produced
+     "again, on something else" had to be filed as though nobody had
+     answered. */
+  {
+    key: 'more_testing',
+    label: 'More testing',
+    a11y: 'More Testing Required',
+    icon: 'refresh',
+    bg: C.warnBg,
+    fg: C.warnInk,
+    strong: C.warnInk,
+  },
+] as const;

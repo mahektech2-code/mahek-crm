@@ -1,105 +1,280 @@
 import React from 'react';
 import { Animated, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import { color as C, HIT, shadow, weight } from '../../theme/tokens';
+import { color as C, radius, weight } from '../../theme/tokens';
 import { BADGE_FONT_CAP, BAR_FONT_CAP } from '../ui/font-scale';
-import { Icon } from '../ui/Icon';
-import { EASE, Pop, usePressScale, useReduceMotion, useShake } from '../ui/motion';
+import { Icon, type IconName } from '../ui/Icon';
+import { Pop, usePressScale, useShake } from '../ui/motion';
 import { feedback } from '../ui/feedback';
 
 /**
- * The frame every in-app screen sits inside: a 52px title bar, the status
- * strip under it, and the tab bar with its raised action button.
+ * The frame every in-app screen sits inside, as Version 3 draws it: a HERO
+ * BLOCK at the top — navy on the day screens, lavender everywhere else, its
+ * bottom corners rounded — carrying the status chips, refresh, the bell, the
+ * back button and the screen's title; and a FLOATING navy pill at the bottom
+ * with Today · Book · Me and the round + beside it.
  *
  * These take callbacks rather than reaching for the router themselves, so the
  * whole frame can be rendered and looked at without a navigator around it.
  */
 
+export type HeroTone = 'navy' | 'lavender' | 'canvas';
+
+/** What each tone paints, so no screen picks a colour the hero did not. */
+export const HERO = {
+  navy: {
+    bg: C.navy,
+    ink: C.onNavy,
+    muted: C.onNavyMuted,
+    button: C.navySoft,
+    buttonInk: C.onNavy,
+  },
+  lavender: {
+    bg: C.lavender,
+    ink: C.lavenderInk,
+    muted: C.lavenderMuted,
+    button: C.surface,
+    buttonInk: C.lavenderInk,
+  },
+  /* No block at all: the stack screens Version 3 draws straight on the page —
+     white round buttons, the title beside the back button. */
+  canvas: {
+    bg: 'transparent',
+    ink: C.ink,
+    muted: C.muted,
+    button: C.surface,
+    buttonInk: C.ink,
+  },
+} as const;
+
+/* ------------------------------------------------------------ status chips */
+
+export type StripTone = 'ok' | 'warn' | 'idle';
+
+export type StatusChip = {
+  key: string;
+  /** Read out, and shown beside the icon when `text` is given. */
+  label: string;
+  /** Drawn beside the icon. Absent draws the icon alone, as the GPS chip does. */
+  text?: string;
+  icon: IconName;
+  tone: StripTone;
+  onPress: () => void;
+};
+
+/**
+ * The three facts the salesman should never have to go looking for — whether
+ * the day is started, whether the phone knows where it is, and how much work
+ * is still on the handset unsent — as round chips in the hero rather than a
+ * strip of words under it. Each still opens the screen that explains it,
+ * because a light you cannot act on is decoration.
+ */
+function Chip({ chip, tone }: { chip: StatusChip; tone: HeroTone }) {
+  const fg =
+    tone === 'navy'
+      ? chip.tone === 'ok'
+        ? C.lime
+        : chip.tone === 'warn'
+          ? '#FFC44D'
+          : C.onNavyMuted
+      : chip.tone === 'ok'
+        ? C.success
+        : chip.tone === 'warn'
+          ? C.warnInk
+          : C.muted;
+  const bg =
+    tone === 'navy'
+      ? chip.tone === 'ok'
+        ? C.limeOnNavy
+        : chip.tone === 'warn'
+          ? 'rgba(255,196,77,0.16)'
+          : C.navySoft
+      : C.surface;
+  return (
+    <Pressable
+      onPress={chip.onPress}
+      /* 32pt of chip against a 48pt floor. The touch area is bought back
+         vertically rather than with pixels the hero does not have. */
+      hitSlop={{ top: 8, bottom: 8 }}
+      accessibilityRole="button"
+      accessibilityLabel={chip.label}
+      style={[s.chip, { backgroundColor: bg }, chip.text ? { paddingHorizontal: 10 } : { width: 32 }]}>
+      <Pop trigger={chip.tone} from={0.6}>
+        <Icon name={chip.icon} size={chip.text ? 14 : 16} color={fg} strokeWidth={2.2} />
+      </Pop>
+      {chip.text ? (
+        <Text numberOfLines={1} maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 13, color: fg }, weight(700)]}>
+          {chip.text}
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
 /* ----------------------------------------------------------------- header */
 
+/**
+ * The hero block. It sits at the top of the scroll and travels with it, the
+ * way the design draws it, so a long list gets the whole screen once he has
+ * started reading.
+ */
 export function Header({
   title,
+  tone = 'lavender',
+  showTitle = true,
   onBack,
+  backLabel,
   onBell,
   unread,
   onRefresh,
   refreshing = false,
   unreadLoaded = true,
+  chips,
+  actions,
+  overlap = false,
+  top,
+  chipsBelowTitle: chipsBelowProp = false,
+  children,
 }: {
   title: string;
-  onBack?: () => void;
+  /** The artboards that put the title between the buttons and the chips. */
+  chipsBelowTitle?: boolean;
   /**
-   * Send, pull, and look for a new version — see `native/refresh.ts`. On every
-   * screen, because the moment somebody wonders whether his phone has the
-   * office's latest is never on the Sync screen.
+   * The identity or title row the artboard draws FIRST (Home's avatar and
+   * greeting). Given, it takes the top row beside refresh and the bell, and the
+   * status chips drop to a row of their own under it.
    */
+  top?: React.ReactNode;
+  tone?: HeroTone;
+  /** Off where the screen's own hero content names the screen. */
+  showTitle?: boolean;
+  onBack?: () => void;
+  backLabel?: string;
   onRefresh?: () => void;
   refreshing?: boolean;
-  /** Absent on the notifications screen itself — see `AppFrame`. */
   onBell?: () => void;
   unread: number;
-  /** False until the count has been read once — see `Bell`. */
   unreadLoaded?: boolean;
+  chips: StatusChip[];
+  /** Extra round buttons after the bell — a screen's own ⋯ menu. */
+  actions?: React.ReactNode;
+  /** Leaves room under the block for the first card to sit across its edge. */
+  overlap?: boolean;
+  children?: React.ReactNode;
 }) {
+  const h = HERO[tone];
+  const flat = tone === 'canvas';
+  /* On the page itself the chips sit under the title row, and the title rides
+     beside the back button at 20/800 rather than below it at 26. */
+  const chipsBelowTitle = flat || chipsBelowProp;
+  const chipRow = chips.map((c) => <Chip key={c.key} chip={c} tone={tone} />);
   return (
-    <View style={{ height: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 }}>
-      {onBack ? (
-        <Pressable onPress={onBack} accessibilityRole="button" accessibilityLabel="Back" style={[s.iconBtn, { marginLeft: -12 }]}>
-          <Icon name="back" size={24} color={C.body} strokeWidth={1.5} />
-        </Pressable>
+    <View style={[s.hero, { backgroundColor: h.bg, paddingBottom: overlap ? 46 : flat ? 6 : 20 }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {onBack ? (
+          <Pressable
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel={backLabel ? `Back to ${backLabel}` : 'Back'}
+            hitSlop={4}
+            style={[s.round40, { backgroundColor: tone === 'navy' ? C.navySoft : C.surface }]}>
+            <Icon name="back" size={20} color={h.buttonInk} strokeWidth={2} />
+          </Pressable>
+        ) : null}
+        {flat && showTitle ? (
+          <Text
+            numberOfLines={2}
+            maxFontSizeMultiplier={BAR_FONT_CAP}
+            accessibilityRole="header"
+            style={[{ flex: 1, minWidth: 0, fontSize: 20, lineHeight: 25, letterSpacing: -0.4, color: h.ink }, weight(800)]}>
+            {title}
+          </Text>
+        ) : null}
+        {top ? <View style={{ flex: 1, minWidth: 0 }}>{top}</View> : chipsBelowTitle ? null : chipRow}
+        {top || (flat && showTitle) ? null : <View style={{ flex: 1 }} />}
+        {onRefresh ? (
+          <Pressable
+            onPress={refreshing ? undefined : onRefresh}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh"
+            accessibilityHint="Sends your work, gets the latest from the office, and checks for a new version"
+            accessibilityState={{ busy: refreshing }}
+            hitSlop={4}
+            style={[s.round36, { backgroundColor: h.button }]}>
+            {refreshing ? (
+              <ActivityIndicator size="small" color={h.buttonInk} />
+            ) : (
+              <Icon name="refresh" size={18} color={h.buttonInk} strokeWidth={2} />
+            )}
+          </Pressable>
+        ) : null}
+        {/* A bell whose whole job is to bring you to the notifications screen
+            is furniture once you are standing on it — and tapping it pushed a
+            second copy of the page. */}
+        {onBell ? <Bell onPress={onBell} unread={unread} loaded={unreadLoaded} tone={tone} /> : null}
+        {actions}
+      </View>
+      {top ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>{chipRow}</View> : null}
+      {showTitle && !flat ? (
+        <Text
+          numberOfLines={2}
+          maxFontSizeMultiplier={BAR_FONT_CAP}
+          accessibilityRole="header"
+          style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: h.ink, marginTop: 16 }, weight(800)]}>
+          {title}
+        </Text>
       ) : null}
-      <Text
-        numberOfLines={1}
-        maxFontSizeMultiplier={BAR_FONT_CAP}
-        accessibilityRole="header"
-        style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>
-        {title}
-      </Text>
-      {onRefresh ? (
-        <Pressable
-          onPress={refreshing ? undefined : onRefresh}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh"
-          accessibilityHint="Sends your work, gets the latest from the office, and checks for a new version"
-          accessibilityState={{ busy: refreshing }}
-          style={[s.iconBtn, { marginRight: -12 }]}>
-          {refreshing ? (
-            <ActivityIndicator size="small" color={C.body} />
-          ) : (
-            <Icon name="refresh" size={22} color={C.body} strokeWidth={1.5} />
-          )}
-        </Pressable>
+      {chipsBelowTitle && !top ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: showTitle ? 12 : 14 }}>{chipRow}</View>
       ) : null}
-      {/* A bell whose whole job is to bring you to the notifications screen is
-          furniture once you are standing on it — and tapping it pushed a second
-          copy of the page. The space is held rather than collapsed, so the title
-          does not jump sideways as you arrive. */}
-      {onBell ? (
-        <Bell onPress={onBell} unread={unread} loaded={unreadLoaded} />
-      ) : (
-        <View style={s.iconBtn} />
-      )}
+      {children}
     </View>
   );
 }
 
+/** A round button in the hero, for a screen's own action (the ⋯ menu). */
+export function HeroButton({
+  icon,
+  label,
+  onPress,
+  tone = 'lavender',
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  tone?: HeroTone;
+}) {
+  const h = HERO[tone];
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={4}
+      style={[s.round36, { backgroundColor: h.button }]}>
+      <Icon name={icon} size={18} color={h.buttonInk} strokeWidth={2} />
+    </Pressable>
+  );
+}
+
 /**
- * The bell, which says when something NEW has arrived rather than only how
- * many things are waiting.
- *
- * A count that goes from 2 to 3 in place is a digit changing in a corner, and
- * nobody sees it. So a RISE rings the bell — one short shake — and pops the
- * badge; a fall (somebody read one) moves nothing, because reading a message
- * is not news. The shake carries no buzz of its own: the push banner that
- * usually accompanies a rise has already buzzed, and two buzzes for one
- * message is a stutter.
- *
  * "Rose" is measured against this bell's own last count. Every screen draws
  * its own header, so a fresh screen remembers the count from the module, or
  * every navigation would ring the bell for messages already rung for.
  */
 let lastSeenUnread = 0;
 
-function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number; loaded: boolean }) {
+function Bell({
+  onPress,
+  unread,
+  loaded,
+  tone,
+}: {
+  onPress: () => void;
+  unread: number;
+  loaded: boolean;
+  tone: HeroTone;
+}) {
+  const h = HERO[tone];
   const ring = useShake(null);
   const shake = ring.shake;
   /* Each bell keeps its OWN last count, seeded from the last one any bell saw.
@@ -117,7 +292,12 @@ function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number
   const rose = loaded && unread > seenAtMount;
 
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'} style={s.iconBtn}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+      hitSlop={4}
+      style={[s.round36, { backgroundColor: h.button }]}>
       <Animated.View
         style={{
           transform: [
@@ -125,14 +305,14 @@ function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number
             { rotate: ring.style.transform[0].translateX.interpolate({ inputRange: [-4, 4], outputRange: ['-12deg', '12deg'] }) },
           ],
         }}>
-        <Icon name="bell" size={24} color={C.body} strokeWidth={1.5} />
+        <Icon name="bell" size={18} color={h.buttonInk} strokeWidth={2} />
       </Animated.View>
       {unread > 0 ? (
         <Pop trigger={unread} popOnMount={rose} style={s.bellBadge}>
           <Text
             maxFontSizeMultiplier={BADGE_FONT_CAP}
-            style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>
-            {unread}
+            style={[{ color: '#fff', fontSize: 10, lineHeight: 16, textAlign: 'center' }, weight(700)]}>
+            {unread > 99 ? '99+' : unread}
           </Text>
         </Pop>
       ) : null}
@@ -140,92 +320,29 @@ function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number
   );
 }
 
-/* ------------------------------------------------------------ status strip */
-
-export type StripTone = 'ok' | 'warn' | 'idle';
-
-/**
- * Three facts the salesman should never have to go looking for: whether the
- * day is started, whether the phone knows where it is, and how much work is
- * still sitting on the handset unsent. Each one opens the screen that explains
- * it, because a light you cannot act on is decoration.
- */
-export function StatusStrip({
-  items,
-}: {
-  items: { key: string; label: string; tone: StripTone; onPress: () => void }[];
-}) {
-  return (
-    <View style={s.strip}>
-      {items.map((it, i) => (
-        <Pressable
-          key={it.key}
-          onPress={it.onPress}
-          /* 28pt of cell against a 48pt floor, on the one control that is on
-             all forty screens — so the miss was repeated everywhere. The strip
-             cannot be made taller without moving every screen down, so the
-             touch area is bought back rather than the pixels. Vertical only:
-             the three cells are adjacent, and horizontal slop would make each
-             one steal its neighbour's edge. */
-          hitSlop={{ top: 10, bottom: 10 }}
-          accessibilityRole="button"
-          accessibilityLabel={it.label}
-          style={[s.stripCell, i > 0 && { borderLeftWidth: 1, borderLeftColor: C.border }]}>
-          {/* The light pops when it CHANGES — "GPS locked" arriving, the last
-              thing sent — so a state the salesman was waiting on is seen to
-              arrive rather than found later. */}
-          <Pop
-            trigger={it.tone}
-            from={0.2}
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: 3.5,
-              backgroundColor: it.tone === 'ok' ? C.success : it.tone === 'warn' ? C.warn : C.faint,
-            }}>
-            {null}
-          </Pop>
-          <Text numberOfLines={1} maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 12, color: C.body }, weight(500)]}>
-            {it.label}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 /* --------------------------------------------------------------- tab bar */
 
 /**
- * The bar's own height, above the safe-area inset.
- *
- * Exported because the toast has to clear it and was guessing: `bottom: 88`
- * happened to equal `64 + a 24pt gesture bar` on one handset and sat on top of
- * the bar on every other. One number, read by the two things whose job is not
- * to overlap.
+ * The bar's own height. The floating pill sits `TAB_BAR_GAP` above the safe
+ * area, so anything that has to clear it — the toast, a screen's last row —
+ * clears `TAB_BAR_HEIGHT + TAB_BAR_GAP`.
  */
 export const TAB_BAR_HEIGHT = 64;
-const INDICATOR_WIDTH = 28;
-
-export type TabKey = 'home' | 'journey' | 'customers' | 'more';
-
-const TABS: { k: TabKey; label: string; ic: string }[] = [
-  { k: 'home', label: 'Home', ic: 'home' },
-  { k: 'journey', label: 'Journey', ic: 'route' },
-  { k: 'customers', label: 'Customers', ic: 'people' },
-  { k: 'more', label: 'More', ic: 'grid' },
-];
+export const TAB_BAR_GAP = 18;
 
 /**
- * Where the tab indicator last stood, in points from the bar's left edge.
- *
- * Every tab root is its own screen with its own `TabBar`, swapped in by
- * `router.replace` — so there is no ONE bar for an indicator to slide along.
- * The new bar starts its indicator where the old one left it and slides it
- * home, which is the same picture: the line travels from the tab you left to
- * the tab you chose.
+ * The four roots the app has always had. Version 3 draws three places — Today,
+ * Book, Me — and the day's route is part of Today, so `journey` lights Today.
  */
-let lastIndicatorX: number | null = null;
+export type TabKey = 'home' | 'journey' | 'customers' | 'more';
+
+type Place = { k: 'today' | 'book' | 'me'; label: string; ic: IconName; to: TabKey; lights: TabKey[] };
+
+const PLACES: Place[] = [
+  { k: 'today', label: 'Today', ic: 'clock', to: 'home', lights: ['home', 'journey'] },
+  { k: 'book', label: 'Book', ic: 'map', to: 'customers', lights: ['customers'] },
+  { k: 'me', label: 'Me', ic: 'person', to: 'more', lights: ['more'] },
+];
 
 export function TabBar({
   active,
@@ -237,230 +354,148 @@ export function TabBar({
   onTab: (k: TabKey) => void;
   bottomInset: number;
   /**
-   * A count to draw on a tab, by key. Absent or zero draws nothing.
-   *
-   * A tab bar is on every screen of the app, which is what makes it the only
-   * place a question can be put in front of somebody who is not looking for
-   * it. That is also why the bar must stay quiet: a pip that is lit all day is
-   * one nobody sees. Only counts that GO AWAY when they are dealt with belong
-   * here.
+   * A count to draw on a place, by the tab it stands for. Absent or zero draws
+   * nothing. Only counts that GO AWAY when they are dealt with belong here — a
+   * pip that is lit all day is one nobody sees. Journey's count lands on Today.
    */
   badges?: Partial<Record<TabKey, number>>;
+  onAction?: () => void;
 }) {
-  const reduce = useReduceMotion();
-  const x = React.useRef(new Animated.Value(lastIndicatorX ?? -100)).current;
-  const [centres, setCentres] = React.useState<Partial<Record<TabKey, number>>>({});
-  const target = active ? centres[active] : undefined;
-
-  React.useEffect(() => {
-    if (target == null) return;
-    const to = target - INDICATOR_WIDTH / 2;
-    const from = lastIndicatorX;
-    lastIndicatorX = to;
-    if (reduce || from == null || from === to) {
-      x.setValue(to);
-      return;
-    }
-    x.setValue(from);
-    const a = Animated.timing(x, { toValue: to, duration: 260, easing: EASE, useNativeDriver: true });
-    a.start();
-    return () => a.stop();
-  }, [target, reduce, x]);
-
-  const measure = (k: TabKey) => (e: { nativeEvent: { layout: { x: number; width: number } } }) => {
-    const { x: left, width } = e.nativeEvent.layout;
-    const c = left + width / 2;
-    setCentres((prev) => (prev[k] === c ? prev : { ...prev, [k]: c }));
-  };
-
-  const choose = (k: TabKey) => {
-    if (k !== active) feedback('select');
-    onTab(k);
-  };
-
+  const countFor = (p: Place) => p.lights.reduce((n, k) => n + (badges?.[k] ?? 0), 0);
   return (
-    <View style={[s.tabBar, { height: TAB_BAR_HEIGHT + bottomInset, paddingBottom: bottomInset }]}>
-      {/* The line over the tab you are on. Off the bar entirely on screens
-          that are not a tab root, where no tab is "on". */}
-      {active && target != null ? (
-        <Animated.View pointerEvents="none" style={[s.indicator, { transform: [{ translateX: x }] }]} />
-      ) : null}
-      {TABS.slice(0, 2).map((t) => (
-        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => choose(t.k)} onLayout={measure(t.k)} />
-      ))}
-      {/* The gap the raised button sits in — it is drawn BESIDE this bar
-          rather than inside it, see `TabBarAction`. */}
-      <View style={{ flex: 1 }} />
-      {TABS.slice(2).map((t) => (
-        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => choose(t.k)} onLayout={measure(t.k)} />
-      ))}
+    <View pointerEvents="box-none" style={[s.barWrap, { bottom: bottomInset + TAB_BAR_GAP }]}>
+      <View style={s.pill}>
+        {PLACES.map((p) => {
+          const on = active != null && p.lights.includes(active);
+          const count = countFor(p);
+          return (
+            <Pressable
+              key={p.k}
+              onPress={() => {
+                if (!on || active !== p.to) feedback('select');
+                onTab(p.to);
+              }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={count > 0 ? `${p.label}, ${count} waiting` : p.label}
+              style={[s.place, on && s.placeOn]}>
+              <View>
+                <Icon name={p.ic} size={on ? 20 : 22} color={on ? C.lime : C.onNavyMuted} strokeWidth={2} />
+                {count > 0 ? (
+                  <Pop trigger={count} style={s.tabBadge}>
+                    <Text
+                      maxFontSizeMultiplier={BADGE_FONT_CAP}
+                      style={[{ color: '#fff', fontSize: 10, lineHeight: 16, textAlign: 'center' }, weight(700)]}>
+                      {count > 9 ? '9+' : count}
+                    </Text>
+                  </Pop>
+                ) : null}
+              </View>
+              {on ? (
+                <Text
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={BAR_FONT_CAP}
+                  style={[{ fontSize: 13, color: C.lime }, weight(700)]}>
+                  {p.label}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 /**
- * The raised `+`, and why it is not a child of the bar it sits on.
- *
- * `bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20` inside a container of height
- * `TAB_BAR_HEIGHT + bottomInset` puts the 52pt circle's top edge at y = −20
- * relative to that container — the gesture inset cancels out, so the top 20pt
- * of the button hangs outside its own parent on every handset.
- *
- * It is still DRAWN there, and on this renderer it is still touchable: React
- * Native leaves `clipChildren` off, and Fabric measures how far a child
- * overflows its parent and widens the parent's hit test by exactly that much.
- * But that is a lot of machinery holding up the entry point to every quick
- * action in the app — one `overflow: 'hidden'` on the bar, or a build that is
- * not on the new renderer, and the visually obvious top of the button goes
- * inert with nothing to see. A dead button reads as a frozen app, not as a
- * missed target.
- *
- * So it is a SIBLING of the bar, positioned against the frame, which is tall
- * enough to contain it. The arithmetic is deliberately unchanged and lands on
- * the same pixel: an absolutely positioned child is measured from its
- * containing block's border box — padding is not subtracted — and the frame's
- * bottom edge is the bar's bottom edge.
+ * The round + beside the pill: the entry point to every quick action. A
+ * sibling of the bar rather than a child of it, positioned against the frame,
+ * so nothing about the bar's own clipping can make it go dead.
  */
 export function TabBarAction({ onPress, bottomInset }: { onPress: () => void; bottomInset: number }) {
-  /* The most-pressed control in the app, and it gave nothing back. It sinks
-     a little under the thumb like every other button now. */
   const press = usePressScale(0.92);
   return (
-    <Animated.View style={[s.fab, { bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20 }, press.style]}>
+    <Animated.View style={[s.fab, { bottom: bottomInset + TAB_BAR_GAP }, press.style]}>
       <Pressable
         onPress={onPress}
         onPressIn={press.onPressIn}
         onPressOut={press.onPressOut}
         accessibilityRole="button"
-        accessibilityLabel="What are you doing?"
+        accessibilityLabel="Quick actions"
+        accessibilityHint="What are you doing? Start a visit, take an order, collect a payment and more"
         style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
+        <Icon name="add" size={28} color="#FFFFFF" strokeWidth={2.2} />
       </Pressable>
     </Animated.View>
   );
 }
 
-function Tab({
-  tab,
-  on,
-  count,
-  onPress,
-  onLayout,
-}: {
-  tab: { k: TabKey; label: string; ic: string };
-  on: boolean;
-  count: number;
-  onPress: () => void;
-  onLayout?: (e: { nativeEvent: { layout: { x: number; width: number } } }) => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      onLayout={onLayout}
-      accessibilityRole="tab"
-      accessibilityState={{ selected: on }}
-      /* The count is read out as part of the tab rather than left as a
-         decoration a screen reader skips — it is the whole reason to press. */
-      accessibilityLabel={count > 0 ? `${tab.label}, ${count} waiting` : tab.label}
-      style={{ flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
-      <View style={{ height: 22, alignItems: 'center', justifyContent: 'center' }}>
-        <Icon name={tab.ic} size={22} color={on ? C.primary : C.muted} />
-        {count > 0 ? (
-          <Pop trigger={count} style={s.tabBadge}>
-            <Text
-              maxFontSizeMultiplier={BADGE_FONT_CAP}
-              style={[{ color: '#fff', fontSize: 11, lineHeight: 16, textAlign: 'center' }, weight(500)]}>
-              {count > 9 ? '9+' : count}
-            </Text>
-          </Pop>
-        ) : null}
-      </View>
-      <Text
-        numberOfLines={1}
-        maxFontSizeMultiplier={BAR_FONT_CAP}
-        style={[{ fontSize: 12, color: on ? C.primary : C.muted }, weight(on ? 500 : 400)]}>
-        {tab.label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const s = StyleSheet.create({
-  iconBtn: { width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' },
-  /* Hung off the icon's top-right, like the bell's. Smaller, because it sits
-     in a 22pt row rather than a 48pt button and a badge that pushes the label
-     down would move the whole bar. */
-  tabBadge: {
+  hero: {
+    paddingTop: 14,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: radius.hero,
+    borderBottomRightRadius: radius.hero,
+  },
+  chip: {
+    height: 32,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  round36: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  round40: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  bellBadge: {
     position: 'absolute',
-    top: -5,
-    left: 12,
+    top: 2,
+    right: 0,
     minWidth: 16,
     height: 16,
     paddingHorizontal: 4,
     borderRadius: 8,
-    backgroundColor: C.danger,
+    backgroundColor: '#FF6B5E',
   },
-  bellBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 5,
-    borderRadius: 9,
-    backgroundColor: C.danger,
-  },
-  /* `minHeight`, not `height`: at a large font size the line grows past 28
-     and a fixed bar cut it in half. The cap on the Text keeps that rare. */
-  strip: {
-    minHeight: 28,
+  barWrap: { position: 'absolute', left: 16, right: 16 + 64 + 10 },
+  pill: {
+    height: TAB_BAR_HEIGHT,
+    borderRadius: 32,
+    backgroundColor: C.navy,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 4,
-    borderTopWidth: 1,
-    borderTopColor: C.hairline,
-    backgroundColor: C.wash,
+    paddingHorizontal: 6,
+    boxShadow: '0 12px 30px -10px rgba(15,27,51,0.5)',
   },
-  stripCell: {
+  place: {
     flex: 1,
-    minWidth: 0,
-    minHeight: 28,
+    height: 52,
+    borderRadius: 26,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingHorizontal: 8,
   },
-  indicator: {
+  placeOn: { flex: 1.4, backgroundColor: C.limeOnNavy },
+  tabBadge: {
     position: 'absolute',
-    top: -1,
-    left: 0,
-    width: INDICATOR_WIDTH,
-    height: 3,
-    borderBottomLeftRadius: 2,
-    borderBottomRightRadius: 2,
+    top: -6,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
     backgroundColor: C.primary,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderTopWidth: 1,
-    borderTopColor: C.hairline,
-    boxShadow: shadow.tabBar,
   },
   fab: {
     position: 'absolute',
-    left: '50%',
-    marginLeft: -28,
-    width: 56,
-    height: 52,
-    borderRadius: 28,
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
+    right: 16,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: C.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: shadow.fab,
+    boxShadow: '0 12px 28px -8px rgba(104,53,251,0.6)',
   },
 });

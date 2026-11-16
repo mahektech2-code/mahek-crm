@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { View, Pressable, Text } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Choice, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
-import { Icon } from '../src/components/ui/Icon';
-import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { Input, T } from '../src/components/ui/primitives';
+import { Icon, type IconName } from '../src/components/ui/Icon';
+import { color as C, weight } from '../src/theme/tokens';
+import { Pill, PillButton } from '../src/components/ui/v3';
 import {
   pickCandidates,
   pickShops,
@@ -278,343 +279,388 @@ export default function PickScreen() {
 
   if (!day) {
     return (
-      <AppFrame title="Pick your shops" onBack={back.go} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={back.go} />
-        <T s="small" style={{ color: C.muted }}>
-          {dayLoading
-            ? 'Looking…'
-            : dayFailed
-              ? 'The day could not be read off this phone.'
-              : /* "The route screen" is not a thing anybody can find: the tab is
-                   labelled Journey, and a sentence that names a screen by a word
-                   nowhere on the app sends him looking for it. */
-                'That day is not on this phone. Pull down on the Journey tab to get it.'}
-        </T>
+      <AppFrame title="Pick your shops" onBack={back.go} contentStyle={{ paddingHorizontal: 14, paddingTop: 16 }}>
         {dayFailed ? (
-          <SecondaryButton
-            label="Try again"
-            fullWidth={false}
-            onPress={() => setDayAttempt((a) => a + 1)}
-            style={{ marginTop: 12 }}
-          />
-        ) : null}
+          <View style={errorBox}>
+            <Icon name="warn" size={20} color={C.danger} strokeWidth={2} />
+            <T style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>
+              The day could not be read off this phone.
+            </T>
+            <PillButton label="Try again" variant="white" height={44} onPress={() => setDayAttempt((a) => a + 1)} />
+          </View>
+        ) : (
+          <View style={noteBox}>
+            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+              {dayLoading
+                ? 'Looking…'
+                : /* "The route screen" is not a thing anybody can find: the tab is
+                     labelled Journey, and a sentence that names a screen by a word
+                     nowhere on the app sends him looking for it. */
+                  'That day is not on this phone. Pull down on the Journey tab to get it.'}
+            </T>
+          </View>
+        )}
       </AppFrame>
     );
   }
 
   const here = (day.city ?? '').trim().toLowerCase();
+  const capLine = total > rows.length ? rows.length + ' of ' + total + ' · search for the rest' : null;
 
+  const hero = (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 }}>
+        <Icon name="cal" size={14} color={C.lavenderMuted} strokeWidth={2} />
+        <T style={[{ fontSize: 13, color: C.lavenderMuted }, weight(700)]}>{dayLabel(day.planDate) + ' · agreed'}</T>
+      </View>
+      <Text
+        accessibilityRole="header"
+        accessibilityLabel={'Pick shops. ' + (day.city ? day.city + ' · ' : '') + 'you agreed this day'}
+        style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: C.lavenderInk }, weight(800)]}>
+        {'Pick shops' + (day.city ? ' · ' + day.city : '')}
+      </Text>
+      <T style={{ fontSize: 13, lineHeight: 18, color: C.lavenderMuted, marginTop: 2 }}>
+        Tick in walking order. Reorder on the day.
+      </T>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+        {/*
+          THE DESIGN'S OWN BOX. It was a raw `TextInput` with Android's
+          autocapitalise and autocorrect both on — which fights a transliterated
+          shop name character by character. There is a ×, because backspacing a
+          wrong search one key at a time is the friction this screen is capped
+          to avoid.
+        */}
+        <View
+          style={{
+            flex: 1,
+            height: 52,
+            borderRadius: 26,
+            backgroundColor: C.surface,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            paddingLeft: 16,
+            paddingRight: 6,
+          }}>
+          <Icon name="search" size={18} color={C.muted} strokeWidth={2} />
+          <View style={{ flex: 1 }}>
+            <Input
+              value={q}
+              onChangeText={setQ}
+              accessibilityLabel="Search a shop, an area, a city"
+              placeholder="Shop, area, city"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              style={{ borderWidth: 0, minHeight: 48, paddingHorizontal: 0, backgroundColor: 'transparent', fontSize: 15 }}
+            />
+          </View>
+          {q ? (
+            <Pressable
+              onPress={() => setQ('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear the search"
+              hitSlop={4}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.wash, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="close" size={16} color={C.muted} strokeWidth={2} />
+            </Pressable>
+          ) : null}
+        </View>
+        {/* LIST OR MAP. On a day in one city the map is often the faster way to
+            choose: the shops are a walk apart and their arrangement is the
+            plan. A tap PICKS rather than opens. Two 44 round buttons that
+            announce themselves, so a one-handed tap lands and a screen reader
+            hears which view it is. */}
+        <View
+          accessibilityRole="tablist"
+          style={{ flexDirection: 'row', gap: 2, padding: 4, borderRadius: 26, backgroundColor: C.surface }}>
+          {([
+            { key: false, label: 'List', icon: 'grid' },
+            { key: true, label: 'Map', icon: 'map' },
+          ] as const).map((v) => {
+            const on = asMap === v.key;
+            return (
+              <Pressable
+                key={v.label}
+                accessibilityRole="tab"
+                accessibilityLabel={v.label}
+                accessibilityState={{ selected: on }}
+                onPress={() => {
+                  if (!on) feedback('select');
+                  setAsMap(v.key);
+                }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: on ? C.navy : 'transparent',
+                }}>
+                <Icon name={v.icon} size={18} color={on ? C.lime : C.muted} strokeWidth={2} />
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </View>
+  );
 
   return (
     <AppFrame
       title={'Pick your shops'}
       onBack={back.go}
-      contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
+      showTitle={false}
+      hero={hero}
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}
       /*
        * The save bar is the FRAME's, not a floating view of this screen's own.
        *
        * It was `position: absolute, bottom: 20` inside the frame's scroll
        * area — and an absolute child of a ScrollView's content container is
-       * positioned against the CONTENT, not the window. So the button was not
-       * pinned to anything: it sat twenty points above the end of the list,
-       * which on the whole customer book meant thousands of rows below the
-       * fold. The one control that saves the day was the last thing on the
-       * screen you could reach, and the comment above it said it was fixed to
-       * the bottom. `footer` is the frame's own pinned bar — the visit screen
-       * has used it for its save bar since it was written.
+       * positioned against the CONTENT, not the window. So the button sat
+       * twenty points above the end of the list, which on the whole customer
+       * book meant thousands of rows below the fold. `footer` is the frame's
+       * own pinned bar.
        */
+      footerBg={C.canvas}
+      footerInsetBg={C.navy}
       footer={
         <View
           style={{
-            paddingHorizontal: 16,
-            paddingTop: 10,
-            paddingBottom: 10,
-            gap: 8,
-            backgroundColor: C.surface,
-            borderTopWidth: 1,
-            borderTopColor: C.hairline,
+            paddingHorizontal: 20,
+            paddingTop: 16,
+            paddingBottom: 16,
+            backgroundColor: C.navy,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
           }}>
-          <PrimaryButton
+          <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: '#FFFFFF' }, weight(800)]}>
+            {plural(picked.length, 'shop')}
+          </T>
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
+            {picked.length
+              ? 'Your manager sees the day'
+              : hadPicks
+                ? 'Nothing ticked. Saving clears the day'
+                : 'Tick at least one to plan the day'}
+          </T>
+          <PillButton
             label={
               saving
                 ? 'Sending…'
                 : picked.length
-                  ? 'Plan the day · ' + plural(picked.length, 'shop')
+                  ? 'Plan the day'
                   : hadPicks
                     ? 'Clear the day'
                     : 'Pick at least one shop'
             }
-            fullWidth
+            a11y={picked.length && !saving ? 'Plan the day · ' + plural(picked.length, 'shop') : undefined}
+            variant="lime"
+            height={56}
             disabled={saving || (picked.length === 0 && !hadPicks)}
             onPress={() => void save()}
+            style={{ marginTop: 12 }}
           />
         </View>
       }>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <View
-        style={{
-          backgroundColor: C.surface,
-          borderRadius: radius.card,
-          borderLeftWidth: 3,
-          borderLeftColor: C.primary,
-          padding: 14,
-          marginBottom: 12,
-          boxShadow: shadow.card,
-        }}>
-        <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(day.planDate)}</T>
-        <T s="small" style={{ color: C.body, marginTop: 2 }}>
-          {day.city ? day.city + ' · you agreed this day' : 'You agreed this day'}
-        </T>
-        <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-          Tick them in the order you will visit them. You can change the order on the day,
-          from where you are.
-        </T>
-      </View>
-
-      {/*
-        THE DESIGN'S OWN BOX, not a hand-rolled one a few points under it.
-        It was a raw `TextInput` at 48h/15px where `Input` is 52h/16px, with
-        nothing to clear it and Android's autocapitalise and autocorrect both
-        on — which fights a transliterated shop name character by character
-        while a customer waits. There is a × now, because backspacing a wrong
-        search one key at a time is the friction this screen is capped to
-        avoid.
-      */}
-      <View style={{ position: 'relative', marginBottom: 10 }}>
-        <View style={{ position: 'absolute', left: 14, top: 16, zIndex: 1 }}>
-          <Icon name="search" size={20} color={C.muted} strokeWidth={1.5} />
-        </View>
-        <Input
-          value={q}
-          onChangeText={setQ}
-          placeholder="Search a shop, an area, a city"
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-          style={{ paddingLeft: 44, paddingRight: q ? 48 : 14 }}
-        />
-        {q ? (
-          <Pressable
-            onPress={() => setQ('')}
-            accessibilityRole="button"
-            accessibilityLabel="Clear the search"
-            hitSlop={8}
-            style={{
-              position: 'absolute',
-              right: 0,
-              top: 0,
-              bottom: 0,
-              width: HIT,
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 1,
-            }}>
-            <Icon name="close" size={18} color={C.muted} strokeWidth={1.8} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      {/* LIST OR MAP. On a day in one city the map is often the faster way to
-          choose: the shops are a walk apart and their arrangement is the plan.
-          A tap PICKS rather than opens — the number on a picked row is where it
-          sits in the day, and the map shows the same state filled in. */}
-      {/* `Choice`, not a hand-rolled pair of pressables. These were roughly 30dp
-          tall with no hit slop, no `accessibilityRole` and their own font size —
-          a one-handed tap misses the control that changes what the whole screen
-          IS, and a screen reader hears two unlabelled buttons. The chip primitive
-          is 48dp and announces itself, and the nearby screen already uses it for
-          exactly this kind of switch. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-        {([
-          { key: false, label: 'List' },
-          { key: true, label: 'Map' },
-        ] as const).map((chip) => (
-          <Choice
-            key={String(chip.key)}
-            label={chip.label}
-            selected={asMap === chip.key}
-            onPress={() => setAsMap(chip.key)}
-            style={{ paddingHorizontal: 20 }}
-          />
-        ))}
-      </View>
-
       {asMap ? (
-        <ShopMap
-          height={440}
-          pins={rows.map((c) => ({
-            id: c.id,
-            name: c.name,
-            lat: c.gpsLat ?? NaN,
-            lng: c.gpsLng ?? NaN,
-            picked: picked.includes(c.id),
-          }))}
-          onPress={(pin) => toggle(pin.id)}
-        />
+        <View>
+          <ShopMap
+            height={440}
+            pins={rows.map((c) => ({
+              id: c.id,
+              name: c.name,
+              lat: c.gpsLat ?? NaN,
+              lng: c.gpsLng ?? NaN,
+              picked: picked.includes(c.id),
+              /* The visiting order, so a picked pin carries its number. */
+              order: picked.includes(c.id) ? picked.indexOf(c.id) + 1 : null,
+            }))}
+            onPress={(pin) => toggle(pin.id)}
+          />
+          {/*
+            What this screen is a slice OF — in BOTH views. The map is handed the
+            same `rows`, the same capped page, and on the map the ARRANGEMENT of
+            the pins is the plan, so laying out a morning over a town with most
+            of it missing has to be said on the map itself.
+          */}
+          {capLine ? (
+            <View pointerEvents="none" style={{ position: 'absolute', left: 12, top: 12 }}>
+              <Pill text={capLine} bg={C.navy} fg="#FFFFFF" />
+            </View>
+          ) : null}
+          <View pointerEvents="none" style={{ position: 'absolute', left: 12, bottom: 12 }}>
+            <Pill text="Tap a pin to pick · no-pin shops not drawn" bg={C.surface} fg={C.body} />
+          </View>
+        </View>
       ) : (
         /* No inner ScrollView. The frame already scrolls, and a vertical one
-           nested in another has no height of its own to scroll within — it grew
-           to its content and handed the gesture back, which is why the list read
-           as one long page rather than a pane. */
-        <View>
+           nested in another has no height of its own to scroll within. */
+        <View style={{ gap: 8 }}>
           {rows.length === 0 && readFailed ? (
-            /* A READ THAT FAILED IS NOT AN EMPTY BOOK, and this is the fourth
-               answer the three sentences below could not give. Said plainly,
-               with the one thing to press. */
-            <View style={{ paddingVertical: 24, gap: 10, alignItems: 'center' }}>
-              <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
+            /* A READ THAT FAILED IS NOT AN EMPTY BOOK. Said plainly, with the
+               one thing to press. */
+            <View style={errorBox}>
+              <Icon name="warn" size={20} color={C.danger} strokeWidth={2} />
+              <T style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>
                 The shop list could not be read off this phone.
               </T>
-              <SecondaryButton label="Try again" onPress={() => setAttempt((a) => a + 1)} />
+              <PillButton label="Try again" variant="white" height={44} onPress={() => setAttempt((a) => a + 1)} />
             </View>
           ) : rows.length === 0 ? (
-          <T s="small" style={{ color: C.muted, paddingVertical: 24, textAlign: 'center' }}>
-            {/* `search` lags `q` by the debounce, so a keystroke ahead of the
-                read must still read as "looking" — otherwise "No shop matches
-                that" flashes against a query nobody has answered yet. */}
-            {loading || q !== search
-              ? 'Looking…'
-              : q
-                ? 'No shop matches that.'
-                : /* The Journey tab, by the name written on it — see the day
-                     branch above, which named the same non-existent screen. */
-                  day.city
-                  ? 'None of your shops on this phone are in ' + day.city + '. A shop elsewhere can be visited from the Customers tab.'
-                  : 'No shops on this phone yet. Pull down on the Journey tab to get your shops.'}
-          </T>
-        ) : null}
-
-        {rows.map((c, i) => {
-          const at = picked.indexOf(c.id);
-          const on = at >= 0;
-          const gap = daysSince(c.lastVisitDate, today);
-          const elsewhere = !!here && (c.city ?? '').trim().toLowerCase() !== here;
-          /* The city only where it DIFFERS from the day's — repeating
-             "bengaluru" on forty rows of a bengaluru day says nothing, and
-             the right-hand "elsewhere" tag already carries the exception. */
-          const area = [c.area, elsewhere ? c.city : null].filter(Boolean).join(' · ');
-
-          return (
-            <Stagger key={c.id} index={i}>
-            <PressableScale
-              onPress={() => toggle(c.id)}
-              outerStyle={{ marginBottom: 8 }}
-              /* NO HIT SLOP. It was `hitSlop={HIT}` — 48 on all four sides of a
-                 card about 74dp tall with 8 between it and the next one, so each
-                 row's touch area reached 48 into the card above and 48 into the
-                 one below and two rows claimed the same band. React Native
-                 settles that by draw order rather than by what he read, so a tap
-                 on the "Last seen 12 days ago" line of one shop ticked the shop
-                 underneath it — and the number on the badge IS the walking
-                 order, so the day is built around the wrong door with nothing
-                 saying so. The card is already well past the 48dp floor on its
-                 own; the value is for an isolated icon button, which is what the
-                 one other use of it in this app is. */
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 12,
-                backgroundColor: C.surface,
-                borderRadius: radius.card,
-                padding: 14,
-                borderWidth: on ? 1 : 0,
-                borderColor: on ? C.primary : 'transparent',
-                boxShadow: shadow.card,
-              }}>
-              {/* The number, not a tick: where it sits in the day is the thing
-                  that is being decided, and a tick would hide it.
-
-                  Unticked it draws a faint `+` rather than nothing. An empty
-                  grey circle on every row of a fresh book read as a broken
-                  avatar or a control still loading — nothing about it said
-                  "tap this to add the shop", which is the only thing this
-                  screen asks anybody to do.
-
-                  It pops as the shop is ticked, keyed on whether it is picked
-                  and not on its number: unticking the second shop renumbers
-                  every one after it, and five badges popping at once would
-                  announce five changes where one was made. */}
-              <Pop trigger={on}>
-              <View
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 15,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: on ? 0 : 1,
-                  borderColor: C.border,
-                  backgroundColor: on ? C.primary : C.canvas,
-                }}>
-                {on ? (
-                  <T style={[type.small, weight(600), { color: '#fff' }]}>{String(at + 1)}</T>
-                ) : (
-                  <Icon name="add" size={16} color={C.muted} strokeWidth={1.8} />
-                )}
-              </View>
-              </Pop>
-
-              <View style={{ flex: 1 }}>
-                <T style={[type.body, weight(on ? 600 : 500), { color: C.ink }]} numberOfLines={1}>
-                  {c.name}
-                </T>
-                {/* Dropped where there is nothing to say. On this book almost
-                    no shop has an area, so every row carried an identical
-                    third line of "No area recorded" — three lines of which two
-                    were boilerplate, and the shop's own name lost among them.
-                    An absent area is not a fact worth a line each time. */}
-                {area ? (
-                  <T s="small" style={{ color: C.muted, marginTop: 2 }} numberOfLines={1}>
-                    {area}
-                  </T>
-                ) : null}
-                <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                  {gap == null
-                    ? 'Never visited'
-                    : gap === 0
-                      ? 'Visited today'
-                      : 'Last seen ' + plural(gap, 'day') + ' ago'}
-                  {/* `inr` takes RUPEES — see its own note. Handed paise it
-                      reported ₹2,36,000 owing against a bill of ₹2,360, on a
-                      row somebody decides a morning from. */}
-                  {c.outstandingPaise > 0 ? ' · ' + inrFromPaise(c.outstandingPaise) + ' outstanding' : ''}
-                </T>
-              </View>
-
-              {/* The distance, because "nearest first" that does not say the
-                  distances is an order somebody has to take on trust. A shop
-                  with no pin says so rather than showing nothing: it sorts last,
-                  and the reason it does is worth one word. */}
-              <T s="small" style={{ color: C.muted }}>
-                {away(c)}
+            <View style={noteBox}>
+              <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+                {/* `search` lags `q` by the debounce, so a keystroke ahead of the
+                    read must still read as "looking". */}
+                {loading || q !== search
+                  ? 'Looking…'
+                  : q
+                    ? 'No shop matches that.'
+                    : day.city
+                      ? 'None of your shops on this phone are in ' + day.city + '. A shop elsewhere can be visited from the Customers tab.'
+                      : 'No shops on this phone yet. Pull down on the Journey tab to get your shops.'}
               </T>
-            </PressableScale>
-            </Stagger>
-          );
-        })}
+            </View>
+          ) : null}
+
+          {rows.map((c, i) => {
+            const at = picked.indexOf(c.id);
+            const on = at >= 0;
+            const gap = daysSince(c.lastVisitDate, today);
+            const elsewhere = !!here && (c.city ?? '').trim().toLowerCase() !== here;
+            /* The city only where it DIFFERS from the day's — repeating
+               "bengaluru" on forty rows of a bengaluru day says nothing. An
+               elsewhere shop gets the amber tag instead. */
+            const area = [c.area, elsewhere ? c.city : null].filter(Boolean).join(' · ');
+            const seen =
+              gap == null ? 'Never visited' : gap === 0 ? 'Visited today' : 'Last seen ' + plural(gap, 'day') + ' ago';
+            const dist = away(c);
+
+            return (
+              <Stagger key={c.id} index={i}>
+                <PressableScale
+                  onPress={() => toggle(c.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={
+                    (on ? 'Stop ' + (at + 1) + ', ' : 'Add ') +
+                    c.name +
+                    (area ? ', ' + area : '') +
+                    ', ' +
+                    seen +
+                    (c.outstandingPaise > 0 ? ', ' + inrFromPaise(c.outstandingPaise) + ' outstanding' : '') +
+                    (dist ? ', ' + dist : '')
+                  }
+                  /* NO HIT SLOP. It was `hitSlop={HIT}` on a card about 74dp tall
+                     with 8 between rows, so two rows claimed the same band and a
+                     tap on one shop's last line ticked the shop underneath — and
+                     the number on the badge IS the walking order. The card is
+                     past the 48dp floor on its own. */
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    backgroundColor: C.surface,
+                    borderRadius: 20,
+                    paddingVertical: 12,
+                    paddingHorizontal: 14,
+                    borderWidth: 2,
+                    borderColor: on ? C.primary : 'transparent',
+                  }}>
+                  {/* The number, not a tick: where it sits in the day is the thing
+                      being decided. Unticked it draws a `+` — an empty circle read
+                      as a broken avatar. It pops on whether it is picked, not on
+                      its number: unticking renumbers every one after it. */}
+                  <Pop trigger={on}>
+                    <View
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: on ? C.primary : C.primaryTint,
+                      }}>
+                      {on ? (
+                        <T style={[{ fontSize: 15, color: '#FFFFFF' }, weight(800)]}>{String(at + 1)}</T>
+                      ) : (
+                        <Icon name="add" size={18} color={C.primaryDeep} strokeWidth={2.2} />
+                      )}
+                    </View>
+                  </Pop>
+
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(on ? 700 : 600)]}>
+                      {c.name}
+                    </T>
+                    {/* One line of facts. An absent area is not a fact worth
+                        saying on every row of a book where almost none have one. */}
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 2 }}>
+                      {area ? (
+                        elsewhere ? (
+                          <Pill text={area} bg={C.warnBg} fg={C.warnInk} height={20} />
+                        ) : (
+                          <Meta icon="visit" text={area} />
+                        )
+                      ) : null}
+                      {gap === 0 ? (
+                        <T style={[{ fontSize: 12, color: C.success }, weight(600)]}>Visited today</T>
+                      ) : gap == null ? (
+                        <T style={{ fontSize: 12, color: C.muted }}>Never visited</T>
+                      ) : (
+                        <Meta icon="clock" text={gap + ' d'} />
+                      )}
+                      {/* `inr` takes RUPEES. Handed paise it reported ₹2,36,000
+                          owing against a bill of ₹2,360. */}
+                      {c.outstandingPaise > 0 ? (
+                        <Meta icon="wallet" text={inrFromPaise(c.outstandingPaise)} color={C.danger} bold />
+                      ) : null}
+                    </View>
+                  </View>
+
+                  {/* The distance, because "nearest first" that does not say the
+                      distances is an order somebody has to take on trust. A shop
+                      with no pin says so: it sorts last, and why is worth a word. */}
+                  {c.gpsLat == null || c.gpsLng == null ? (
+                    <Meta icon="visit" text="no pin" color={C.faint} bold />
+                  ) : dist ? (
+                    <T style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{dist}</T>
+                  ) : null}
+                </PressableScale>
+              </Stagger>
+            );
+          })}
+
+          {capLine ? (
+            <T style={[{ fontSize: 13, color: C.muted, paddingVertical: 8, textAlign: 'center' }, weight(600)]}>
+              {capLine}
+            </T>
+          ) : null}
         </View>
       )}
-
-      {/*
-        What this screen is a slice OF — in BOTH views, which is where it was
-        wrong. A capped list that counts itself is how a screen reports sixty
-        shops on a book of five thousand and says nothing about the rest, and
-        the way past it is the search box above, so the sentence names it.
-
-        It used to sit inside the list branch on the reasoning, written down
-        just here, that "the map draws every pin it is given and is not capped
-        by the same read". It is: the map is handed the same `rows`, which is
-        the same `LIMIT 60` page. So switching to Map removed the only thing on
-        the screen saying the view was a slice while leaving the slice exactly
-        as it was — and on the map the ARRANGEMENT of the pins is the plan, so
-        he lays out a morning over a town with most of the town missing.
-      */}
-      {total > rows.length ? (
-        <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
-          {rows.length + ' of ' + total + ' shops. Search for one that is not here'}
-        </T>
-      ) : null}
     </AppFrame>
   );
 }
+
+/** A small icon-and-word fact on a row. */
+function Meta({ icon, text, color = C.muted, bold = false }: { icon: IconName; text: string; color?: string; bold?: boolean }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+      <Icon name={icon} size={12} color={color} strokeWidth={2} />
+      <T numberOfLines={1} style={[{ fontSize: 12, color }, weight(bold ? 700 : 400)]}>
+        {text}
+      </T>
+    </View>
+  );
+}
+
+const noteBox = { backgroundColor: C.surface, borderRadius: 20, padding: 14 } as const;
+const errorBox = {
+  backgroundColor: C.dangerBg,
+  borderRadius: 20,
+  padding: 14,
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 10,
+} as const;

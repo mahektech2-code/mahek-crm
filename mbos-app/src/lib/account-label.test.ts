@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { accountLine, accountType, customerStage } from './account-label';
+import {
+  accountLine,
+  accountType,
+  customerStage,
+  isLiveLead,
+  opensLeadRecord,
+  type LeadRowFacts,
+} from './account-label';
 import { customerPageQuery } from '../data/customer-query';
 
 /**
@@ -60,18 +67,57 @@ test('a lead carries its rung, which is the whole point of the line', () => {
   );
 });
 
-test('a lead raised before the funnel falls back to the six-word column', () => {
+test('a lead raised before the funnel is read onto the one ladder', () => {
+  /* The retired words are FOLDED, so the card names the rung the record's
+     ladder highlights rather than a word that is on no ladder. */
   assert.equal(
     accountLine(shop({ isLead: 1, leadFunnelStage: null, leadStage: 'Contacted' })),
-    'Lead · Contacted',
+    'Lead · Suspect',
   );
-  // 'Converted' is the one that is not the same word twice.
   assert.equal(
-    accountLine(shop({ isLead: 1, leadFunnelStage: null, leadStage: 'Converted' })),
-    'Lead · Won',
+    accountLine(shop({ isLead: 1, leadFunnelStage: null, leadStage: 'New' })),
+    'Lead · Suspect',
   );
-  // Nothing stored at all is the foot of the ladder, never a blank.
-  assert.equal(accountLine(shop({ isLead: 1 })), 'Lead · New');
+  assert.equal(
+    accountLine(shop({ isLead: 1, leadFunnelStage: 'qualified', leadStage: 'Qualified' })),
+    'Lead · Qualification',
+  );
+  assert.equal(
+    accountLine(shop({ isLead: 1, leadFunnelStage: 'sample_received', leadStage: 'Qualified' })),
+    accountLine(shop({ isLead: 1, leadFunnelStage: 'sample_review', leadStage: 'Qualified' })),
+  );
+  // No lead row on this phone: a lead, with no rung invented for it.
+  assert.equal(accountLine(shop({ isLead: 1 })), 'Lead');
+});
+
+test('a kind of lead the rule says is not a live lead is not called one', () => {
+  // isLead was asked and said no — an archived or converted lead row.
+  assert.equal(accountType(shop({ isLead: 0, kind: 'lead' })), null);
+});
+
+test('isLiveLead is the SQL rule in JavaScript', () => {
+  const row = (over: Partial<LeadRowFacts> = {}): LeadRowFacts => ({
+    archived: 0, thirdParty: 0, funnelStage: 'prospect', stage: 'Contacted', ...over,
+  });
+  assert.equal(isLiveLead({ kind: 'lead', thirdParty: 0 }, row()), true);
+  assert.equal(isLiveLead({ kind: null, thirdParty: 0 }, row()), true);
+  assert.equal(isLiveLead({ kind: 'customer', thirdParty: 0 }, row()), false);
+  assert.equal(isLiveLead({ kind: 'lead', thirdParty: 1 }, row()), false);
+  assert.equal(isLiveLead({ kind: 'lead', thirdParty: 0 }, row({ archived: 1 })), false);
+  for (const funnelStage of ['won', 'customer', 'active_distributor']) {
+    assert.equal(isLiveLead({ kind: 'lead', thirdParty: 0 }, row({ funnelStage })), false, funnelStage);
+  }
+  assert.equal(isLiveLead({ kind: 'lead', thirdParty: 0 }, row({ funnelStage: null, stage: 'Converted' })), false);
+  assert.equal(isLiveLead({ kind: 'lead', thirdParty: 0 }, row({ thirdParty: 1 })), false);
+  // No lead row: the office's kind answers.
+  assert.equal(isLiveLead({ kind: 'lead', thirdParty: 0 }, null), true);
+  assert.equal(isLiveLead({ kind: null, thirdParty: 0 }, null), false);
+});
+
+test('only a lead whose row is on this phone opens /lead', () => {
+  assert.equal(opensLeadRecord({ isLead: 1, leadStage: 'New' }), true);
+  assert.equal(opensLeadRecord({ isLead: 1, leadStage: null }), false);
+  assert.equal(opensLeadRecord({ isLead: 0, leadStage: 'New' }), false);
 });
 
 test('a customer gets no rung — it has left the funnel', () => {

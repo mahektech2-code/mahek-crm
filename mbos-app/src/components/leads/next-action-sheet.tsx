@@ -1,9 +1,10 @@
 import React from 'react';
-import { Animated, View, Pressable } from 'react-native';
+import { Animated, Text, View, Pressable } from 'react-native';
 import { Presence, useShake } from '../ui/motion';
-import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { Icon } from '../ui/Icon';
+import { SheetChip, SheetError, SheetFooter, SheetTitle, WashInput } from './v3-parts';
 import { BottomSheet, Calendar } from '../ui/overlays';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { dmy, isoDate } from '../../lib/format';
 
 /**
@@ -63,96 +64,83 @@ export function NextActionSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        Next action
-      </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        Every open lead needs one. The stage cannot move without it.
-      </T>
+      <SheetTitle title="Next action" sub="Every open lead needs one. The stage cannot move without it." />
 
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Action</SectionLabel>
-        <Input
-          value={action}
-          onChangeText={(v) => { setAction(v); setErr(null); }}
-          placeholder="Take the sample and show him the finish"
-          multiline
-        />
-      </View>
+      <WashInput
+        value={action}
+        onChangeText={(v) => { setAction(v); setErr(null); }}
+        placeholder="Take the sample and show him the finish"
+        accessibilityLabel="Action"
+        multiline
+        style={{ marginTop: 12 }}
+      />
 
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>On</SectionLabel>
-        <Pressable
-          onPress={() => setCal(true)}
-          accessibilityRole="button"
-          style={{
-            minHeight: 52,
-            borderWidth: 1,
-            borderColor: C.border,
-            borderRadius: radius.lg,
-            backgroundColor: C.surface,
-            justifyContent: 'center',
-            paddingHorizontal: 14,
-          }}>
-          <T style={{ fontSize: 16, color: date ? C.ink : C.faint }}>{date ? dmy(date) : 'Pick a day'}</T>
-        </Pressable>
+      <Pressable
+        onPress={() => setCal(true)}
+        accessibilityRole="button"
+        accessibilityLabel={'On: ' + (date ? dmy(date) : 'pick a day')}
+        style={({ pressed }) => ({
+          marginTop: 8,
+          minHeight: 52,
+          borderRadius: 18,
+          backgroundColor: pressed ? C.hairline : C.canvas,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          paddingHorizontal: 14,
+        })}>
+        <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={2} />
+        <Text style={[{ fontSize: 15, color: date ? C.ink : C.faint }, weight(date ? 700 : 400)]}>{date ? dmy(date) : 'Pick a day'}</Text>
+      </Pressable>
 
-        {/* Opened IN the sheet rather than in a second one on top of it. A
-            modal over a modal is a stack somebody has to dismiss twice, and
-            the one underneath is the form they were half way through. */}
-        <Presence show={cal}>
-          <View style={{ marginTop: 10 }}>
-            <Calendar
-              selected={date ?? ''}
-              disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
-              onPick={(iso) => { setDate(iso); setErr(null); setCal(false); }}
-            />
-          </View>
-        </Presence>
-      </View>
-
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who will do it</SectionLabel>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          <Choice
-            label={meName}
-            sub="You"
-            selected={ownerId === meId}
-            onPress={() => { setOwnerId(meId); setErr(null); }}
-            style={{ paddingHorizontal: 14 }}
+      {/* Opened IN the sheet rather than in a second one on top of it. A
+          modal over a modal is a stack somebody has to dismiss twice, and
+          the one underneath is the form they were half way through. */}
+      <Presence show={cal}>
+        <View style={{ marginTop: 10 }}>
+          <Calendar
+            selected={date ?? ''}
+            disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
+            onPick={(iso) => { setDate(iso); setErr(null); setCal(false); }}
           />
-          {managerId ? (
-            <Choice
-              label={managerName ?? 'Your sales manager'}
-              sub="Lead manager"
-              selected={ownerId === managerId}
-              onPress={() => { setOwnerId(managerId); setErr(null); }}
-              style={{ paddingHorizontal: 14 }}
-            />
-          ) : null}
         </View>
+      </Presence>
+
+      {/* Who will do it — me, or the lead manager where there is one. */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+        <SheetChip
+          label="Me"
+          a11y={meName + ', you'}
+          icon={ownerId === meId ? 'person' : undefined}
+          on={ownerId === meId}
+          onPress={() => { setOwnerId(meId); setErr(null); }}
+        />
+        {managerId ? (
+          <SheetChip
+            label={managerName ?? 'Sales manager'}
+            a11y={(managerName ?? 'Your sales manager') + ', lead manager'}
+            icon={ownerId === managerId ? 'person' : undefined}
+            on={ownerId === managerId}
+            onPress={() => { setOwnerId(managerId); setErr(null); }}
+          />
+        ) : null}
       </View>
 
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What result you expect</SectionLabel>
-        <Input
-          value={outcome}
-          onChangeText={setOutcome}
-          placeholder="Optional. A quantity, a date, a yes or no"
-        />
-      </View>
+      <WashInput
+        value={outcome}
+        onChangeText={setOutcome}
+        placeholder="Result you expect (optional)"
+        accessibilityLabel="What result you expect. Optional. A quantity, a date, a yes or no"
+        style={{ marginTop: 8 }}
+      />
 
       <Presence show={!!err}>
-        <Animated.View
-          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
-          <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
+        <Animated.View style={[{ marginTop: 8 }, refusal.style]}>
+          <SheetError text={err ?? ''} />
         </Animated.View>
       </Presence>
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label="Save" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
-      </View>
+      <SheetFooter onCancel={onClose} label="Save" onPress={save} />
     </BottomSheet>
   );
 }

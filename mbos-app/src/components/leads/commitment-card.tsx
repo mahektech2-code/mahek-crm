@@ -1,9 +1,11 @@
 import React from 'react';
-import { View } from 'react-native';
-import { Badge, Card, PrimaryButton, SecondaryButton, T } from '../ui/primitives';
+import { Pressable, Text, View } from 'react-native';
+import { Icon } from '../ui/Icon';
+import { PillButton } from '../ui/v3';
+import { StagePill } from './v3-parts';
 import { Pop } from '../ui/motion';
 import { color as C, weight } from '../../theme/tokens';
-import { dmy, inrFromPaise, plural } from '../../lib/format';
+import { compactInrFromPaise, dmy, inrFromPaise, plural } from '../../lib/format';
 import { labelOf, ORDER_BLOCKERS, type CodedOption } from '../../engines/funnel';
 
 /**
@@ -71,88 +73,97 @@ export function CommitmentCard({
   const ordered = hasOrder || (countingOrderCount ?? 0) >= 1;
   const blocked = Boolean(blockerCode) && blockerCode !== 'no_blocker';
 
+  const figure = [{ fontSize: 22, lineHeight: 28, letterSpacing: -0.4, color: C.ink }, weight(800)];
   return (
-    <Card>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(600)]}>
-          {date ? 'They promised to order' : 'Order not asked for yet'}
-        </T>
+    <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Icon name="order" size={18} color={C.ink} strokeWidth={2} />
+        <Text
+          accessibilityRole="header"
+          accessibilityLabel={date ? 'They promised to order' : 'Order not asked for yet'}
+          style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(800)]}>
+          {date ? 'Promised order' : 'Order not asked for yet'}
+        </Text>
         {/* Pops when the promise changes what it is — blocked, or overtaken
             by a real order — not when the record merely opens on it. */}
         {date ? (
           <Pop trigger={ordered ? 'ordered' : blocked ? 'blocked' : 'promised'}>
-            <Badge tone={ordered ? 'success' : blocked ? 'amber' : 'teal'}>
-              {ordered ? 'Ordered' : blocked ? 'Blocked' : 'Promised'}
-            </Badge>
+            <StagePill tone={ordered ? 'success' : 'amber'} text={ordered ? 'Ordered' : blocked ? 'Blocked' : 'Promised'} />
           </Pop>
         ) : null}
       </View>
 
       {date ? (
         <>
-          <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 8 }, weight(500)]}>
-            {[
+          <View
+            accessible
+            accessibilityLabel={[
               quantityCans ? plural(quantityCans, 'can') : null,
               'on ' + dmy(date),
               valuePaise ? 'about ' + inrFromPaise(valuePaise) : null,
             ]
               .filter(Boolean)
               .join(' · ')}
-          </T>
+            style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, marginTop: 10 }}>
+            {quantityCans ? <Text style={figure}>{plural(quantityCans, 'can')}</Text> : null}
+            {valuePaise ? <Text style={figure}>{compactInrFromPaise(valuePaise)}</Text> : null}
+            <Text style={figure}>{dmy(date)}</Text>
+          </View>
           {/* The quantity is the handset's own note until the office has a
               column for it. Saying so beats printing nothing where somebody
               typed a number, and beats printing it as though the office had
               agreed it. */}
           {quantityCans ? null : (
-            <T s="caption" style={{ marginTop: 4 }}>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk, marginTop: 4 }, weight(400)]}>
               Number of cans was not saved. Save it again with the cans.
-            </T>
+            </Text>
           )}
 
           {blocked ? (
-            <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk, marginTop: 6 }}>
+            <Text style={[{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginTop: 6 }, weight(600)]}>
               {'Stopped on: ' + labelOf(blockers.length ? blockers : ORDER_BLOCKERS, blockerCode)}
-            </T>
+            </Text>
           ) : null}
 
           {ordered ? (
             /* §9's warning, drawn where it is actually true. The promise has
                been overtaken by a real order, so an old date left standing
                alone reads as something still owed. */
-            <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+            <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 6 }, weight(400)]}>
               An order has now been placed. The real order counts now, not the promise.
-            </T>
+            </Text>
           ) : date < today ? (
-            <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk, marginTop: 6 }}>
-              {'That day has passed and no order came. Visit them again. Save what they say now.'}
-            </T>
+            <Text style={[{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginTop: 6 }, weight(600)]}>
+              That day has passed and no order came. Visit them again. Save what they say now.
+            </Text>
           ) : null}
         </>
       ) : (
-        <T style={{ fontSize: 15, lineHeight: 21, color: C.muted, marginTop: 8 }}>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 8 }, weight(400)]}>
           Ask when they will give the first order, and how much. This is only a promise, not an order. The stage does not change with it.
-        </T>
+        </Text>
       )}
 
       {/* WHO CONFIRMS THE REAL ORDER, said rather than drawn as a control this
           phone must not have. See the header. */}
-      <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 10 }}>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }, weight(400)]}>
         {ordered
           ? 'The office has the order on this account.'
           : countingOrderCount === null
             ? 'Your sales manager confirms the real order after it is placed. This phone does not have the order count yet.'
-            : 'Your sales manager confirms the real order after it is placed, with its value and number. No order yet.'}
-      </T>
+            : 'Sales manager confirms the real order · no order yet'}
+      </Text>
 
       {date ? (
-        <SecondaryButton
-          label="Change the promise"
+        <Pressable
           onPress={onRecord}
-          style={{ marginTop: 12 }}
-        />
+          accessibilityRole="button"
+          style={({ pressed }) => ({ alignSelf: 'flex-start', marginTop: 10, minHeight: 44, paddingHorizontal: 16, borderRadius: 22, justifyContent: 'center', backgroundColor: pressed ? C.hairline : C.canvas })}>
+          <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Change the promise</Text>
+        </Pressable>
       ) : (
-        <PrimaryButton label="Save their promise" onPress={onRecord} style={{ marginTop: 12 }} />
+        <PillButton label="Save their promise" variant="navyLime" height={52} onPress={onRecord} style={{ marginTop: 12 }} />
       )}
-    </Card>
+    </View>
   );
 }

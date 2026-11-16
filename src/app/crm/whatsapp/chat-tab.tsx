@@ -1,5 +1,6 @@
 "use client";
 
+import { accountTypeLabel } from "@/lib/account-types";
 import * as React from "react";
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
@@ -544,7 +545,7 @@ function ChatRow({
 }) {
   const tag = !c.customerId
     ? "Unknown number"
-    : [c.kind === "lead" ? "Lead" : null, c.thirdParty ? "Third party" : null, showAssignee ? (c.assignedToName ?? "Unassigned") : null]
+    : [accountTypeLabel({ kind: c.kind ?? "", thirdParty: Boolean(c.thirdParty) }), showAssignee ? (c.assignedToName ?? "Unassigned") : null]
         .filter(Boolean)
         .join(" · ");
   return (
@@ -683,8 +684,7 @@ function ThreadPane({
   const days = t.events.map((e) => calendarDate(new Date(e.at)));
   const subline = [
     t.number ? phoneDisplay(t.number.replace(/\D/g, "").slice(-10)) : null,
-    !t.customerId ? "Unknown number — not a customer or lead" : t.kind === "lead" ? "Lead" : null,
-    t.thirdParty ? "Third party" : null,
+    !t.customerId ? "Unknown number — not a customer or lead" : accountTypeLabel({ kind: t.kind ?? "", thirdParty: Boolean(t.thirdParty) }),
     showAssignee && t.customerId ? (t.assignedToName ? `${t.assignedToName}'s customer` : "Unassigned") : null,
   ]
     .filter(Boolean)

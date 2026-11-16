@@ -68,10 +68,10 @@ export function DashboardScreen({ data, workspace = "sales" }: { data: Dashboard
           { label: "My leads", value: String(book.mine), sub: "carrying one of your seats", onClick: () => goto(`${BASE}/list?view=mine`) },
           { label: "Today's actions", value: String(book.today), sub: "due today", onClick: () => goto(`${BASE}/list?view=today`) },
           { label: "Overdue", value: String(book.overdue), tone: book.overdue ? "danger" : "ink", sub: "need a next action", onClick: () => goto(`${BASE}/list?view=overdue`) },
-          { label: "New suspects", value: String(book.suspects), onClick: () => goto(`${BASE}/list?stage=suspect,new`) },
-          { label: "Prospects", value: String(book.prospects), onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
+          { label: "New suspects", value: String(book.suspects), onClick: () => goto(`${BASE}/list?stage=new,contacted,suspect`) },
+          { label: "Prospects", value: String(book.prospects), onClick: () => goto(`${BASE}/list?stage=prospect`) },
           { label: "In sample", value: String(book.sample), onClick: () => goto(`${BASE}/list?stage=sample_trial,sample_received,sample_review`) },
-          { label: "Negotiations", value: String(book.negotiation), onClick: () => goto(`${BASE}/list?stage=negotiation`) },
+          { label: "Negotiations", value: String(book.negotiation), onClick: () => goto(`${BASE}/list?stage=negotiation,commercial_discussion,distributor_approval,distributor_agreement`) },
           { label: "Expected orders", value: String(book.expected), tone: "success", sub: "a day and a size", onClick: () => goto(`${BASE}/list?view=expected`) },
           { label: "Lost (30d)", value: String(book.lost30), onClick: () => goto(`${BASE}/list?view=lost30`) },
         ]}
@@ -81,10 +81,10 @@ export function DashboardScreen({ data, workspace = "sales" }: { data: Dashboard
       <MetricStrip
         metrics={[
           { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto(`${BASE}?view=verify`) },
-          { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success", sub: "verified, not yet qualifying", onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
+          { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success", sub: "verified, not yet qualifying", onClick: () => goto(`${BASE}/list?stage=prospect`) },
           { label: "Verification Failed", value: String(mgr.verificationFailed), tone: mgr.verificationFailed ? "danger" : "ink", sub: "closed in the last 30 days" },
           { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending), sub: "shop has it, no verdict", onClick: () => goto(`${BASE}/list?stage=sample_received,sample_review`) },
-          { label: "Negotiations Pending", value: String(mgr.negotiationsPending), onClick: () => goto(`${BASE}/list?stage=negotiation`) },
+          { label: "Negotiations Pending", value: String(mgr.negotiationsPending), onClick: () => goto(`${BASE}/list?stage=negotiation,commercial_discussion,distributor_approval,distributor_agreement`) },
           { label: "Awaiting Actual Order Confirmation", value: String(mgr.awaitingActualOrder), sub: "forecast only, not yet a sale" },
           { label: "Expected Orders This Week", value: String(mgr.expectedThisWeek), tone: "success", sub: "forecast dates due soon" },
         ]}

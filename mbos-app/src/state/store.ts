@@ -1,3 +1,4 @@
+import type { IconName } from '../components/ui/Icon';
 import React from 'react';
 import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
@@ -100,6 +101,16 @@ export type Confirm = {
   body: string;
   reasonLabel?: string;
   confirmLabel: string;
+  /** Version 3 lets a confirm say what staying put means ("Keep going"). */
+  cancelLabel?: string;
+  /** The confirm button's colour: amber (default), navy, or red for a loss. */
+  tone?: 'warn' | 'navy' | 'danger';
+  /** What the reason box suggests typing. */
+  placeholder?: string;
+  /** A short line under the title — the record the confirm is about. */
+  subtitle?: string;
+  /** A tile at the top: a date (`top` big, `bottom` small) or an icon. */
+  lead?: { top?: string; bottom?: string; icon?: IconName; tint?: string; bg?: string };
   run: (reason: string) => void;
 } | null;
 

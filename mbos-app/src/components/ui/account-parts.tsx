@@ -1,9 +1,9 @@
 import React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { T } from './primitives';
 import { feedback } from './feedback';
-import { color as C, radius, tabular, weight } from '../../theme/tokens';
+import { color as C, tabular, weight } from '../../theme/tokens';
 
 /**
  * The small pieces the two Customer accounts screens share — a filter chip, a
@@ -11,9 +11,23 @@ import { color as C, radius, tabular, weight } from '../../theme/tokens';
  * route file, because a route file exports its screen and nothing else.
  */
 
-export function Chip({ label, on, onPress, count }: { label: string; on: boolean; onPress: () => void; count?: number }) {
+export function Chip({
+  label,
+  on,
+  onPress,
+  count,
+  ink,
+}: {
+  label: string;
+  on: boolean;
+  onPress: () => void;
+  count?: number;
+  /** V3 colours a few filters by what they mean — Overdue red, Settled green. */
+  ink?: string;
+}) {
   /* A filter moving ticks, here and not at the callers, so it is felt once.
      Re-tapping the chip already chosen moves nothing and says nothing. */
+  const fg = on ? '#FFFFFF' : count === 0 ? C.faint : ink ?? C.ink;
   return (
     <Pressable
       onPress={() => {
@@ -22,62 +36,68 @@ export function Chip({ label, on, onPress, count }: { label: string; on: boolean
       }}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
-      /* 34 drawn, 48 to the thumb. */
-      hitSlop={{ top: 7, bottom: 7 }}
+      accessibilityLabel={count != null ? `${label}, ${count}` : label}
+      /* 36 drawn, 48 to the thumb. */
+      hitSlop={{ top: 6, bottom: 6 }}
       style={{
-        minHeight: 34,
-        paddingHorizontal: 14,
-        borderRadius: radius.pill,
-        borderWidth: 1,
-        borderColor: on ? C.primary : C.border,
-        backgroundColor: on ? C.primaryTint : C.surface,
+        minHeight: 36,
+        paddingHorizontal: on ? 14 : 12,
+        borderRadius: 18,
+        backgroundColor: on ? C.navy : C.surface,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
       }}>
-      <T style={[{ fontSize: 14, color: on ? C.primaryDeep : C.body }, weight(on ? 500 : 400)]}>{label}</T>
+      <T style={[{ fontSize: 13, color: fg }, weight(700)]}>{label}</T>
       {count != null ? (
-        <T style={[{ fontSize: 12, color: on ? C.primaryDeep : C.muted }, tabular]}>{count}</T>
+        <T style={[{ fontSize: 13, color: on ? C.lime : fg }, weight(700), tabular]}>{count}</T>
       ) : null}
     </Pressable>
   );
 }
 
-/** A row of chips that scrolls sideways past the screen edge. */
+/** A row of chips. V3 wraps them onto a second line rather than scrolling sideways. */
 export function ChipRow({ children }: { children: React.ReactNode }) {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: 8, paddingRight: 16 }}
-      style={{ flexGrow: 0, marginHorizontal: -16, paddingHorizontal: 16 }}>
-      {children}
-    </ScrollView>
-  );
+  return <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{children}</View>;
 }
 
-/** A figure with its label above and an optional line under it. */
+/**
+ * A figure with its label above and an optional line under it.
+ *
+ * `tile` draws it as V3's white figure card (radius 18); without it the
+ * figure sits bare inside whatever card holds it.
+ */
 export function Figure({
   label,
   value,
   sub,
   tone,
+  tile = false,
 }: {
   label: string;
   value: string;
   sub?: string | null;
   tone?: string;
+  tile?: boolean;
 }) {
   return (
-    <View style={{ flex: 1, minWidth: 0 }}>
-      <T s="micro" numberOfLines={1}>
+    <View
+      accessible
+      accessibilityLabel={[label, value, sub].filter(Boolean).join(', ')}
+      style={[
+        { flex: 1, minWidth: 0 },
+        tile && { backgroundColor: C.surface, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 14 },
+      ]}>
+      <T numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
         {label}
       </T>
-      <T style={[{ fontSize: 17, lineHeight: 23, color: tone ?? C.ink, marginTop: 1 }, weight(600), tabular]} numberOfLines={1}>
+      <T
+        style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.3, color: tone ?? C.ink, marginTop: 1 }, weight(800), tabular]}
+        numberOfLines={1}>
         {value}
       </T>
       {sub ? (
-        <T s="micro" numberOfLines={2}>
+        <T numberOfLines={2} style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>
           {sub}
         </T>
       ) : null}
@@ -100,9 +120,9 @@ export function Line({ label, value, tone }: { label: string; value: string; ton
 }
 
 /**
- * The tab strip under the account header. Underlined rather than pilled, so it
- * reads as WHERE you are in the account and the chips under it read as what
- * you are filtering — two controls that looked alike would be read as one.
+ * The tab strip under the account header — V3 draws it as pills, the chosen
+ * one navy, each carrying its count. Kept apart from the filter chips under
+ * it by sitting on its own row above the tab body.
  */
 export function Tabs({
   tabs,
@@ -114,11 +134,7 @@ export function Tabs({
   onPick: (i: number) => void;
 }) {
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={{ flexGrow: 0, marginHorizontal: -16, borderBottomWidth: 1, borderBottomColor: C.hairline }}
-      contentContainerStyle={{ paddingHorizontal: 12 }}>
+    <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {tabs.map((t, i) => {
         const on = i === active;
         return (
@@ -130,20 +146,24 @@ export function Tabs({
             }}
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
+            accessibilityLabel={t.count != null ? `${t.label}, ${t.count}` : t.label}
+            hitSlop={{ top: 6, bottom: 6 }}
             style={{
-              minHeight: 48,
-              paddingHorizontal: 12,
-              justifyContent: 'center',
-              borderBottomWidth: 2,
-              borderBottomColor: on ? C.primary : 'transparent',
+              minHeight: 36,
+              paddingHorizontal: on ? 14 : 12,
+              borderRadius: 18,
+              backgroundColor: on ? C.navy : C.surface,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
             }}>
-            <T style={[{ fontSize: 15, color: on ? C.primaryDeep : C.muted }, weight(on ? 600 : 400)]}>
-              {t.label}
-              {t.count != null ? <T style={[{ fontSize: 13, color: C.muted }, tabular]}>{'  ' + t.count}</T> : null}
-            </T>
+            <T style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{t.label}</T>
+            {t.count != null ? (
+              <T style={[{ fontSize: 13, color: on ? C.lime : C.ink }, weight(700), tabular]}>{t.count}</T>
+            ) : null}
           </Pressable>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }

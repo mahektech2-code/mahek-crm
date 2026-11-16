@@ -13,7 +13,16 @@ import {
   type LeadThresholds,
   type VisitCapThresholds,
 } from '../engines/leads';
-import { LEAD_PAGE, leadBookQuery, leadCountQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
+import {
+  CONVERTED_LEAD,
+  customerRowSettled,
+  LEAD_PAGE,
+  leadRowConverted,
+  leadBookQuery,
+  leadCountQuery,
+  rungCountsQuery,
+  type LeadBookFilter,
+} from './lead-query';
 
 export type { LeadBookFilter };
 export { LEAD_PAGE };
@@ -367,8 +376,14 @@ export async function openLeadCount(): Promise<number> {
   }
 
   const where = clauses.length ? ` AND NOT (${clauses.join(' OR ')})` : '';
+  /* AND NOT CONVERTED BY THE CUSTOMER ROW either — `CONVERTED_LEAD` is the
+     same rule the Customers "Leads" chip negates (`leadCustomerClause`), so a
+     shop the office now invoices, or marked third party, is not counted here
+     as still being worked while that chip has already moved it to Customers.
+     The two can still differ by lost leads (a lead, not being worked) and by a
+     lead row with no customers row (nothing for the chip to draw). */
   const row = await one<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM leads WHERE archived = 0${where}`,
+    `SELECT COUNT(*) AS n FROM leads WHERE archived = 0${where} AND NOT ${CONVERTED_LEAD}`,
     args,
   );
   return row?.n ?? 0;
@@ -475,16 +490,36 @@ export async function findDuplicate(mobile: string, exceptLeadId?: string): Prom
   const wanted = normaliseMobile(mobile);
   if (wanted.length < 10) return null;
 
+  /*
+   * A LEAD IS A CUSTOMERS ROW TOO, so the customers half has to say which it
+   * is. It did not, and every existing lead was reported as "This customer is
+   * already in your list" — the wrong sentence for a shop he should be
+   * opening on the funnel, not serving. `isLead` is the office's kind or a
+   * live lead row, and never where the mark or the ledger settles it.
+   * ARCHIVED lead rows are not asked at all: a lead filed out of the way is
+   * not one he would be told to open.
+   */
   const [customers, leads] = await Promise.all([
-    all<{ id: string; name: string; phone: string | null }>(
-      'SELECT id, name, phone FROM customers WHERE phone IS NOT NULL',
+    all<{ id: string; name: string; phone: string | null; isLead: number }>(
+      `SELECT id, name, phone,
+              (NOT ${customerRowSettled('customers')}
+               AND (COALESCE(customers.kind, '') = 'lead'
+                    OR EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
+                                 AND NOT ${leadRowConverted('l')}))) AS isLead
+         FROM customers WHERE phone IS NOT NULL`,
     ),
     all<{ id: string; name: string; mobile: string | null }>(
-      'SELECT id, name, mobile FROM leads WHERE mobile IS NOT NULL',
+      'SELECT id, name, mobile FROM leads WHERE mobile IS NOT NULL AND archived = 0',
     ),
   ]);
 
-  return matchDuplicate(wanted, customers, leads.filter((l) => l.id !== exceptLeadId));
+  /* The lead being edited is a customers row under the same id, so it is left
+     out of BOTH halves — or it matches itself. */
+  return matchDuplicate(
+    wanted,
+    customers.filter((c) => c.id !== exceptLeadId),
+    leads.filter((l) => l.id !== exceptLeadId),
+  );
 }
 
 /* ----------------------------------------------------------------- writes */

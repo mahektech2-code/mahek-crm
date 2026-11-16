@@ -12,7 +12,7 @@ import {
   type LeadStage,
 } from "../lead-labels";
 import type { LeadPriority } from "../lead-priority";
-import { unworkedWindow } from "../lead-action-window";
+import { OPEN_LEAD, unworkedWindow } from "../lead-action-window";
 import { APP_TIMEZONE, asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { MBOS_EVENT, sourceIdField } from "../timeline";
@@ -51,21 +51,11 @@ import { figuresAreStale } from "./lead-service";
  * a 9am visit on the wrong day the moment the database is not Asia/Kolkata.
  * ------------------------------------------------------------------------- */
 
-/**
- * The rungs that are still the funnel's work.
- *
- * Every list here excludes the terminal ones — a queue is what is waiting, and
- * a lost lead is not waiting on anybody. It is written as a SQL fragment rather
- * than derived from `TERMINAL_STAGES` because the enum values and the engine's
- * list are the same set said twice; the engine is the authority on the ladder,
- * and this is the authority on what a WORKLIST is.
- */
-const STILL_WORKING = sql.raw(
-  `c.lead_stage is not null
-     and c.lead_archived = false
-     and c.deleted_at is null
-     and c.lead_stage not in ('lost', 'won', 'customer', 'active_distributor')`,
-);
+/* The ONE open-lead predicate (`openLead` in `lead-action-window.ts`): still on
+   the funnel AND not converted, so a third-party shop or an invoiced account at
+   `second_order` is in no queue here — exactly as it is on no Lead Management
+   list. */
+const STILL_WORKING = OPEN_LEAD;
 
 /**
  * The four capabilities the funnel adds, named in one place.

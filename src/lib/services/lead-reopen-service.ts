@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customers, leadStageTransitions, notifications, users } from "@/db/schema";
+import { liftLeadTombstones } from "./lead-tombstone";
 import { getConfig } from "../config/store";
 import { REASON_CODE_NEEDING_REMARKS, stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import { reopenNote, reopenTarget } from "../engines/lead-reopen";
@@ -287,6 +288,9 @@ export async function reopenLostLead(
       }
 
       await tx.update(customers).set(set).where(eq(customers.id, input.customerId));
+      /* Back on the handsets: the lost (and, if restored, archived) tombstones
+         are withdrawn, and the moved `updated_at` sends the lead again. */
+      await liftLeadTombstones(tx, input.customerId, null, ["lead_lost", "lead_archived"]);
 
       await writeTimelineEvent(tx, {
         customerId: input.customerId,

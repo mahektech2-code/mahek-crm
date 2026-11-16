@@ -6,6 +6,7 @@ import { getConfig } from "@/lib/config/store";
 import type { BusinessDate, DateRange } from "@/lib/business-date";
 import { monthKey } from "@/lib/business-date";
 import { orderCountsSql } from "@/lib/order-status";
+import { MBOS_EVENT } from "@/lib/timeline";
 import { creditedToSql } from "@/lib/sales-attribution";
 import { resolveScope, scopedUserIds } from "@/lib/access-control";
 import {
@@ -199,9 +200,11 @@ function windowOf(range: DateRange) {
  * figure reported beside it — a denominator restricted to qualified ones would
  * silently drop most of this book and report a flattering number.
  *
- * `origin` is kept in the shape because the screens read it, and it is now
- * derived from whether anybody ever put the lead on a ladder rather than from
- * which table it sat in.
+ * `origin` is kept in the shape because the screens read it. It is FIELD where
+ * the handset raised the lead — its `lead_created` timeline event is written
+ * under the `mbos` app, its `lead.captured` audit row under `field` — and CRM
+ * otherwise (the desk, the website, an import). It used to be "has a stage",
+ * which since 0338 is every lead.
  */
 /**
  * A stored rung, said in the four words the KPI has always counted in.
@@ -293,7 +296,22 @@ export async function leadsCreatedIn(
       having count(*) >= 20
     )
     select c.id as lead_id,
-           case when c.lead_stage is not null then 'field' else 'crm' end as origin,
+           /* WHERE IT WAS RAISED, from the record of the raising. Since 0338
+              every lead carries a stage, so "has a stage" read Field for the
+              whole book. The handset writes its creation event under the
+              mbos app and its capture audit under the field app; the desk,
+              the website and every import write neither. Either is enough. */
+           case when exists (
+                  select 1 from timeline_events t
+                   where t.customer_id = c.id
+                     and t.event_type = ${MBOS_EVENT.leadCreated}
+                     and t.source_app = 'mbos'
+                ) or exists (
+                  select 1 from audit_log a
+                   where a.entity_type = 'customer' and a.entity_id = c.id
+                     and a.action = 'lead.captured' and a.actor_app = 'field'
+                )
+                then 'field' else 'crm' end as origin,
            c.id as customer_id,
            c.lead_source as source,
            c.owner_id as owner_user_id,

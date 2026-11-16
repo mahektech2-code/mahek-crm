@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text } from 'react-native';
-import { color as C, radius, type, weight } from '../theme/tokens';
-import { Icon } from './ui/Icon';
-import { Card, Choice, PrimaryButton, SecondaryButton } from './ui/primitives';
+import { Pressable, View, Text } from 'react-native';
+import { color as C, type, weight } from '../theme/tokens';
+import { Icon, type IconName } from './ui/Icon';
+import { PillButton } from './ui/v3';
 import { useOnline } from './ui/dictate';
 import { PressableScale, Presence, Stagger, Swap } from './ui/motion';
 import { feedback } from './ui/feedback';
@@ -71,31 +71,93 @@ export function useVisitAssistantAvailable(): boolean {
   return on;
 }
 
+/*
+ * The words and colours of a proposal's state. Version 3 draws them as small
+ * tinted pills; the navy card's tiles and the white cards below it share them.
+ */
 const STATE_WORD: Record<string, { text: string; fg: string; bg: string }> = {
-  ready: { text: 'Filled in. Check it', fg: C.success, bg: C.successBg },
+  ready: { text: 'Filled in · check', fg: C.success, bg: C.successBg },
   confirm: { text: 'Needs you', fg: C.warnInk, bg: C.warnBg },
   duplicate: { text: 'Already saved', fg: C.info, bg: C.infoBg },
+};
+
+/** The glyph for each outcome — the visit form's grid and the "Save it as" tile. */
+export const OUTCOME_ICON: Record<string, IconName> = {
+  visited: 'visit',
+  order: 'order',
+  payment: 'money',
+  complaint: 'alert',
+  sample: 'sample',
+  closed_now: 'person',
+  closed: 'lock',
+};
+
+/** The glyph for each kind of follow-on the reading proposes. */
+const ACTION_ICON: Record<VisitAction['kind'], IconName> = {
+  order: 'order',
+  payment: 'money',
+  promise: 'cal',
+  complaint: 'alert',
+  sample: 'sample',
+  opportunity: 'spark',
+  requirement: 'list',
+  lead_decision: 'person',
 };
 
 function StatePill({ state }: { state: string }) {
   const w = STATE_WORD[state] ?? STATE_WORD.confirm;
   return (
-    <View style={{ backgroundColor: w.bg, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 }}>
-      <Text style={[{ fontSize: 12, color: w.fg }, weight(600)]}>{w.text}</Text>
+    <View style={{ backgroundColor: w.bg, borderRadius: 13, height: 26, paddingHorizontal: 10, justifyContent: 'center', alignSelf: 'flex-start' }}>
+      <Text style={[{ fontSize: 12, color: w.fg }, weight(800)]}>{w.text}</Text>
     </View>
   );
 }
 
-function Questions({ items }: { items: string[] }) {
+function Questions({ items, onNavy = false }: { items: string[]; onNavy?: boolean }) {
   if (!items.length) return null;
   return (
     <View style={{ marginTop: 6, gap: 2 }}>
       {items.map((q) => (
-        <Text key={q} style={[type.caption, { color: C.warnInk }]}>
+        <Text key={q} style={{ fontSize: 13, lineHeight: 18, color: onNavy ? '#FFC24A' : C.warnInk }}>
           {'• ' + q}
         </Text>
       ))}
     </View>
+  );
+}
+
+/** A small pill chip — a question's answer, tapped to choose it. */
+function Chip({
+  label,
+  selected,
+  onPress,
+  onNavy = false,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+  onNavy?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={() => {
+        feedback('select');
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={label}
+      hitSlop={4}
+      style={({ pressed }) => ({
+        minHeight: 36,
+        paddingHorizontal: 12,
+        borderRadius: 18,
+        justifyContent: 'center',
+        backgroundColor: selected ? C.navy : onNavy ? C.surface : C.wash,
+        opacity: pressed ? 0.8 : 1,
+      })}>
+      <Text style={[{ fontSize: 13, color: selected ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -168,66 +230,215 @@ export function VisitAssistant({
       ? 'No signal. Fill the visit yourself. Your note is safe.'
       : undefined;
 
+  const waiting = result ? openQuestions(result) : 0;
+
   return (
-    <Card style={{ marginTop: 12, borderWidth: 1, borderColor: C.primaryEdge }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="spark" size={18} color={C.primaryDeep} strokeWidth={1.8} />
-        <Text style={[type.h3, { flex: 1 }]}>Understand this visit</Text>
+    <View style={{ marginTop: 12 }}>
+      {/* THE NAVY CARD. Version 3 sets the assistant apart from the form it
+          fills: what it read sits in the dark card, and what it proposes to
+          do next follows as ordinary white cards underneath. */}
+      <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Icon name="spark" size={18} color={C.lime} strokeWidth={2} />
+          <Text style={[{ fontSize: 15, color: C.lime, flex: 1 }, weight(800)]} accessibilityRole="header">
+            Understand this visit
+          </Text>
+          {result && waiting > 0 ? (
+            <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, justifyContent: 'center' }}>
+              <Text style={[{ fontSize: 12, color: C.warnInk }, weight(800)]}>{waiting + ' to answer'}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <Presence show={!result}>
+          <Text
+            style={{ fontSize: 13, lineHeight: 18, color: '#DCE3EE', marginTop: 6 }}
+            accessibilityHint="Say what happened in the shop, in any language. MahekOne fills the visit and the next steps. You check everything. Nothing saves until you press Save.">
+            Fills the visit and next steps from your note, in any language. You check. Nothing saves until Save.
+          </Text>
+        </Presence>
+
+        {/* The proposal opens in place of the explanation, and a second reading
+            replaces the first in place — keyed on the note it was read from, so
+            "Read it again" visibly lands a new answer rather than a same-looking
+            card that may or may not have changed. */}
+        <Presence show={!!result}>
+          {result ? (
+            <Swap id={readNote}>
+              <Reading result={result} waiting={waiting} handlers={handlers} />
+            </Swap>
+          ) : null}
+        </Presence>
+
+        {!result ? (
+          <View style={{ marginTop: 12 }}>
+            <PillButton
+              label={busy ? 'Reading…' : 'Read my note'}
+              variant="lime"
+              onPress={() => void read()}
+              disabled={busy || !!whyOff}
+              whyDisabled={busy ? 'Reading what you said.' : whyOff}
+            />
+            {whyOff ? (
+              <Text style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted, marginTop: 6 }}>{whyOff}</Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
-      <Presence show={!result}>
-        <Text style={[type.caption, { marginTop: 6 }]}>
-          Say what happened in the shop, in any language. MahekOne fills the visit and the
-          next steps. You check everything. Nothing saves until you press Save.
-        </Text>
-      </Presence>
-
-      {/* The proposal opens in place of the explanation, and a second reading
-          replaces the first in place — keyed on the note it was read from, so
-          "Read it again" visibly lands a new answer rather than a same-looking
-          card that may or may not have changed. */}
-      <Presence show={!!result}>
-        {result ? (
-          <Swap id={readNote}>
-            <Proposal result={result} picked={picked} setPicked={setPicked} handlers={handlers} />
-          </Swap>
-        ) : null}
-      </Presence>
+      {result ? (
+        <Swap id={'next:' + readNote}>
+          <NextSteps result={result} picked={picked} setPicked={setPicked} handlers={handlers} />
+        </Swap>
+      ) : null}
 
       <Presence show={stale}>
-        <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>
+        <Text style={{ fontSize: 12, lineHeight: 17, marginTop: 10, paddingHorizontal: 4, color: C.warnInk }}>
           The note has changed. Read it again to add what you wrote.
         </Text>
       </Presence>
       <Presence show={!!error}>
-        {error ? <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>{error}</Text> : null}
+        {error ? (
+          <Text style={{ fontSize: 12, lineHeight: 17, marginTop: 10, paddingHorizontal: 4, color: C.warnInk }}>{error}</Text>
+        ) : null}
       </Presence>
 
-      <View style={{ marginTop: 12 }}>
-        {result && !stale ? (
-          <PrimaryButton
-            label="Fill the visit"
-            onPress={() => handlers.onFill(result)}
-          />
-        ) : (
-          <PrimaryButton
-            label={busy ? 'Reading…' : result ? 'Read it again' : 'Read my note'}
+      {/* Read again and Fill the visit, side by side once there is a reading.
+          A stale reading offers only the reading again — filling the visit from
+          an older note would put back what he has since corrected. */}
+      {result ? (
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          <Pressable
             onPress={() => void read()}
             disabled={busy || !!whyOff}
-            whyDisabled={busy ? 'Reading what you said.' : whyOff}
-          />
-        )}
-      </View>
-      {result && !stale ? (
-        <View style={{ marginTop: 8 }}>
-          <SecondaryButton label={busy ? 'Reading…' : 'Read it again'} onPress={() => void read()} />
+            accessibilityRole="button"
+            accessibilityLabel={busy ? 'Reading…' : 'Read it again'}
+            accessibilityHint={busy ? 'Reading what you said.' : whyOff}
+            accessibilityState={{ disabled: busy || !!whyOff, busy }}
+            style={({ pressed }) => ({
+              width: stale ? undefined : 60,
+              flex: stale ? 1 : undefined,
+              height: 60,
+              borderRadius: 30,
+              backgroundColor: C.surface,
+              flexDirection: 'row',
+              gap: 8,
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 8px 20px -10px rgba(15,27,51,0.35)',
+              opacity: busy || whyOff ? 0.6 : pressed ? 0.85 : 1,
+            })}>
+            <Icon name="refresh" size={20} color={C.ink} strokeWidth={2} />
+            {stale ? (
+              <Text style={[{ fontSize: 16, color: C.ink }, weight(700)]}>{busy ? 'Reading…' : 'Read it again'}</Text>
+            ) : null}
+          </Pressable>
+          {!stale ? (
+            <PillButton
+              label="Fill the visit"
+              icon="tick"
+              variant="navy"
+              height={60}
+              onPress={() => handlers.onFill(result)}
+              style={{ flex: 1 }}
+            />
+          ) : null}
         </View>
       ) : null}
-    </Card>
+    </View>
   );
 }
 
-function Proposal({
+/** What the reading made of the visit: the summary and its two tiles. */
+function Reading({
+  result,
+  waiting,
+  handlers,
+}: {
+  result: VisitAnalysis;
+  waiting: number;
+  handlers: VisitAssistantHandlers;
+}) {
+  return (
+    <View style={{ marginTop: 10 }}>
+      {result.summary ? <Text style={{ fontSize: 15, lineHeight: 21, color: '#FFFFFF' }}>{result.summary}</Text> : null}
+      <Text style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted, marginTop: 6 }}>
+        {waiting === 0 ? 'Nothing to answer. Check it and fill the visit.' : `${waiting} thing${waiting === 1 ? '' : 's'} to answer below.`}
+      </Text>
+      {result.notes.map((n) => (
+        <Text key={n} style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted, marginTop: 4 }}>
+          {n}
+        </Text>
+      ))}
+
+      {result.outcome || result.comeBack ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+          {/* ---- the outcome ---- */}
+          {result.outcome ? (
+            <Tile title="Save it as">
+              {result.outcome.state === 'ready' ? (
+                <View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                    <Icon name={OUTCOME_ICON[result.outcome.key] ?? 'visit'} size={18} color={C.lime} strokeWidth={2} />
+                    <Text style={[{ fontSize: 17, color: '#FFFFFF', flex: 1 }, weight(800)]}>{result.outcome.label}</Text>
+                  </View>
+                  <View style={{ marginTop: 6 }}>
+                    <StatePill state="ready" />
+                  </View>
+                </View>
+              ) : (
+                <View>
+                  <Text style={[{ fontSize: 13, color: '#FFC24A', marginTop: 6 }, weight(700)]}>Which was it?</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    {result.outcomeChoices.map((o) => (
+                      <Chip key={o.key} label={o.label} selected={false} onNavy onPress={() => handlers.onChooseOutcome(o.key)} />
+                    ))}
+                  </View>
+                </View>
+              )}
+              <Text style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted, marginTop: 6 }}>{result.outcome.why}</Text>
+            </Tile>
+          ) : null}
+
+          {/* ---- come back ---- */}
+          {result.comeBack ? (
+            <Tile title="Come back on" icon="cal">
+              {result.comeBack.date ? (
+                <View style={{ marginTop: 6, height: 32, paddingHorizontal: 10, borderRadius: 16, backgroundColor: C.surface, justifyContent: 'center', alignSelf: 'flex-start' }}>
+                  <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{pretty(result.comeBack.date)}</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 6, marginTop: 6 }}>
+                  {result.comeBack.choices.map((c) => (
+                    <Chip key={c.date} label={c.label} selected={false} onNavy onPress={() => handlers.onChooseDate(c.date)} />
+                  ))}
+                </View>
+              )}
+              {result.comeBack.explanation ? (
+                <Text style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted, marginTop: 6 }}>{result.comeBack.explanation}</Text>
+              ) : null}
+            </Tile>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function Tile({ title, icon, children }: { title: string; icon?: IconName; children: React.ReactNode }) {
+  return (
+    <View style={{ flex: 1, minWidth: 0, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, padding: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        {icon ? <Icon name={icon} size={13} color={C.onNavyMuted} strokeWidth={2} /> : null}
+        <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(700)]}>{title}</Text>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+/** What the reading proposes doing next, as white cards under the navy one. */
+function NextSteps({
   result,
   picked,
   setPicked,
@@ -238,114 +449,89 @@ function Proposal({
   setPicked: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   handlers: VisitAssistantHandlers;
 }) {
-  const waiting = openQuestions(result);
+  const anything = result.actions.length || result.questions.length || result.competitor || result.feedback.length;
+  if (!anything) return null;
   return (
-    <View style={{ marginTop: 8 }}>
-      {result.summary ? <Text style={[type.bodyInk, { marginBottom: 4 }]}>{result.summary}</Text> : null}
-      <Text style={type.caption}>
-        {waiting === 0 ? 'Nothing to answer. Check it and fill the visit.' : `${waiting} thing${waiting === 1 ? '' : 's'} to answer below.`}
-      </Text>
-      {result.notes.map((n) => (
-        <Text key={n} style={[type.caption, { marginTop: 4 }]}>
-          {n}
-        </Text>
-      ))}
-
-      {/* ---- the outcome ---- */}
-      {result.outcome ? (
-        <Section title="Save it as">
-          {result.outcome.state === 'ready' ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={[type.bodyInk, weight(600), { flex: 1 }]}>{result.outcome.label}</Text>
-              <StatePill state="ready" />
-            </View>
-          ) : (
-            <View>
-              <Text style={[type.small, { color: C.warnInk }]}>Which was it?</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                {result.outcomeChoices.map((o) => (
-                  <Choice key={o.key} label={o.label} selected={false} onPress={() => handlers.onChooseOutcome(o.key)} />
-                ))}
-              </View>
-            </View>
-          )}
-          <Text style={[type.caption, { marginTop: 4 }]}>{result.outcome.why}</Text>
-        </Section>
-      ) : null}
-
-      {/* ---- come back ---- */}
-      {result.comeBack ? (
-        <Section title="Come back on">
-          {result.comeBack.date ? (
-            <Text style={[type.bodyInk, weight(600)]}>{pretty(result.comeBack.date)}</Text>
-          ) : (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {result.comeBack.choices.map((c) => (
-                <Choice key={c.date} label={c.label} selected={false} onPress={() => handlers.onChooseDate(c.date)} />
-              ))}
-            </View>
-          )}
-          {result.comeBack.explanation ? (
-            <Text style={[type.caption, { marginTop: 4 }]}>{result.comeBack.explanation}</Text>
-          ) : null}
-        </Section>
-      ) : null}
-
+    <View>
       {/* ---- what comes next ---- */}
       {result.actions.length ? (
-        <Section title="What comes next">
-          <View style={{ gap: 12 }}>
+        <>
+          <Text style={[type.label, { color: C.ink, marginTop: 16, marginBottom: 8, marginHorizontal: 4 }]}>What comes next</Text>
+          <View style={{ gap: 10 }}>
             {result.actions.map((a, i) => (
               <Stagger key={a.kind + i} index={i}>
                 <ActionRow action={a} picked={picked} setPicked={setPicked} handlers={handlers} />
               </Stagger>
             ))}
           </View>
-        </Section>
+        </>
       ) : null}
 
-      <Questions items={result.questions} />
+      {result.questions.length ? (
+        <View style={{ paddingHorizontal: 4, marginTop: 6 }}>
+          <Questions items={result.questions} />
+        </View>
+      ) : null}
 
       {result.competitor || result.feedback.length ? (
-        <Section title="For your manager">
-          {result.competitor ? <Text style={type.small}>{'Other brand named: ' + result.competitor}</Text> : null}
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, marginTop: 10 }}>
+          <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>For your manager</Text>
+          {result.competitor ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <Icon name="shop" size={16} color={C.muted} strokeWidth={2} />
+              <Text style={{ fontSize: 14, color: C.ink, flex: 1 }}>
+                {'Other brand: '}
+                <Text style={weight(700)}>{result.competitor}</Text>
+              </Text>
+            </View>
+          ) : null}
           {result.feedback.map((f) => (
-            <Text key={f.text} style={type.small}>
+            <Text
+              key={f.text}
+              style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: f.tone === 'negative' ? C.danger : f.tone === 'positive' ? C.success : C.ink }}>
               {(f.tone === 'negative' ? '▾ ' : f.tone === 'positive' ? '▴ ' : '• ') + f.text}
             </Text>
           ))}
-          <Text style={[type.caption, { marginTop: 4 }]}>If it matters, keep it in the note. The office reads the note.</Text>
-        </Section>
+          <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 6 }}>
+            If it matters, keep it in the note. The office reads the note.
+          </Text>
+        </View>
       ) : null}
     </View>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>
-      <Text style={[type.label, { marginBottom: 6 }]}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
-function DoorButton({ label, onPress }: { label: string; onPress: () => void }) {
+/**
+ * The button that opens a follow-on's own form, filled. The order is the one
+ * the visit was most likely about, so it is the filled purple; the rest are
+ * the tinted ones, and a lead decision is coloured by which way it goes.
+ */
+function DoorButton({
+  label,
+  onPress,
+  look = 'tint',
+}: {
+  label: string;
+  onPress: () => void;
+  look?: 'primary' | 'tint' | 'good' | 'bad';
+}) {
+  const bg = look === 'primary' ? C.primary : look === 'good' ? C.successBg : look === 'bad' ? C.dangerBg : C.lavender;
+  const fg = look === 'primary' ? '#FFFFFF' : look === 'good' ? C.success : look === 'bad' ? C.danger : C.primaryDeep;
   return (
     <PressableScale
       onPress={onPress}
       accessibilityRole="button"
+      accessibilityLabel={label}
       outerStyle={{ marginTop: 8 }}
       style={{
-        minHeight: 44,
-        borderRadius: radius.md,
-        borderWidth: 1,
-        borderColor: C.primary,
+        minHeight: 48,
+        borderRadius: 24,
+        backgroundColor: bg,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 12,
+        paddingHorizontal: 14,
       }}>
-      <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>{label}</Text>
+      <Text style={[{ fontSize: 14, color: fg, textAlign: 'center' }, weight(700)]}>{label}</Text>
     </PressableScale>
   );
 }
@@ -361,25 +547,31 @@ function ActionRow({
   setPicked: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   handlers: VisitAssistantHandlers;
 }) {
+  const dup = a.state === 'duplicate';
   return (
-    <View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text style={[type.bodyInk, weight(600), { flex: 1 }]}>{a.title}</Text>
+    <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, opacity: dup ? 0.85 : 1 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Icon name={ACTION_ICON[a.kind] ?? 'spark'} size={20} color={C.primaryDeep} strokeWidth={2} />
+        <Text style={[{ fontSize: 16, color: C.ink, flex: 1, minWidth: 0 }, weight(800)]}>{a.title}</Text>
         <StatePill state={a.state} />
       </View>
-      <Text style={[type.caption, { marginTop: 2 }]}>{a.why}</Text>
+      <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }}>{a.why}</Text>
 
       {a.kind === 'order'
         ? a.lines.map((l, i) => (
-            <View key={l.said + i} style={{ marginTop: 6 }}>
-              <Text style={type.small}>
-                {(l.product.state === 'matched' ? l.product.name : `"${l.said}"`) +
-                  (l.quantityCans != null ? ` · ${l.quantityCans} cans` : l.saidAs ? ` · said ${l.saidAs}` : ' · quantity?')}
-              </Text>
+            <View key={l.said + i} style={{ marginTop: i ? 4 : 8 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+                <Text style={{ fontSize: 14, color: C.ink, flex: 1, minWidth: 0 }}>
+                  {l.product.state === 'matched' ? l.product.name : `"${l.said}"`}
+                </Text>
+                <Text style={[{ fontSize: 14, color: l.quantityCans != null ? C.ink : C.warnInk }, weight(700)]}>
+                  {l.quantityCans != null ? `× ${l.quantityCans}` : l.saidAs ? `said ${l.saidAs}` : 'quantity?'}
+                </Text>
+              </View>
               {l.product.state === 'ambiguous' ? (
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                   {l.product.options.map((o) => (
-                    <Choice
+                    <Chip
                       key={o.productId}
                       label={o.name}
                       selected={picked[i] === o.productId}
@@ -392,20 +584,24 @@ function ActionRow({
           ))
         : null}
       {a.kind === 'promise' && a.date?.date ? (
-        <Text style={[type.small, { marginTop: 4 }]}>{'They will pay on ' + pretty(a.date.date)}</Text>
+        <Text style={[{ fontSize: 14, color: C.ink, marginTop: 6 }, weight(600)]}>{'Pays on ' + pretty(a.date.date)}</Text>
       ) : null}
       {a.kind === 'requirement' ? (
-        <Text style={[type.small, { marginTop: 4 }]}>
-          {[a.what, a.monthlyLitres != null ? `${a.monthlyLitres} L a month` : null, a.cans != null ? `${a.cans} cans` : null]
-            .filter(Boolean)
-            .join(' · ')}
-        </Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {[a.what, a.monthlyLitres != null ? `${a.monthlyLitres} L / month` : null, a.cans != null ? `${a.cans} cans` : null]
+            .filter((x): x is string => !!x)
+            .map((t) => (
+              <View key={t} style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.wash, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{t}</Text>
+              </View>
+            ))}
+        </View>
       ) : null}
 
-      <Questions items={a.state === 'duplicate' ? [] : a.questions} />
+      <Questions items={dup ? [] : a.questions} />
 
-      {a.state === 'duplicate' ? null : a.kind === 'order' ? (
-        <DoorButton label="Add to cart, open order" onPress={() => handlers.onOrder(a, picked)} />
+      {dup ? null : a.kind === 'order' ? (
+        <DoorButton label="Add to cart, open order" look="primary" onPress={() => handlers.onOrder(a, picked)} />
       ) : a.kind === 'payment' ? (
         <DoorButton label="Open filled receipt" onPress={() => handlers.onPayment(a)} />
       ) : a.kind === 'complaint' ? (
@@ -417,6 +613,7 @@ function ActionRow({
       ) : a.kind === 'lead_decision' && a.decision ? (
         <DoorButton
           label={a.decision === 'qualified' ? 'Mark it "A prospect"' : 'Mark it "Lost"'}
+          look={a.decision === 'qualified' ? 'good' : 'bad'}
           onPress={() => handlers.onDecision(a.decision as 'qualified' | 'lost')}
         />
       ) : null}

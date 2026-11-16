@@ -1,10 +1,11 @@
 import React from 'react';
-import { Animated, View } from 'react-native';
+import { Animated, Pressable, Text, View } from 'react-native';
 import { Presence, useShake } from '../ui/motion';
 import { feedback } from '../ui/feedback';
-import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { PrimaryButton } from '../ui/primitives';
+import { SheetChip, SheetError, SheetTitle, WashInput } from './v3-parts';
 import { BottomSheet } from '../ui/overlays';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import type { CodedOption } from '../../engines/funnel';
 
 /**
@@ -119,64 +120,68 @@ export function ReasonSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>{title}</T>
-      {body ? <T s="caption" style={{ marginTop: 2 }}>{body}</T> : null}
+      <SheetTitle title={title} sub={body} />
 
       {nothingToPick ? (
-        <View style={{ marginTop: 14, backgroundColor: C.wash, borderRadius: radius.lg, padding: 12 }}>
-          <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
+        <View style={{ marginTop: 12, backgroundColor: C.canvas, borderRadius: 18, padding: 12 }}>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.body }, weight(400)]}>
             The office has not set any reasons yet. Tell them. Write what happened below. It will still save.
-          </T>
+          </Text>
         </View>
       ) : (
-        <View style={{ gap: 8, marginTop: 14 }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
           {options.map((o) => (
-            <Choice
+            <SheetChip
               key={o.code}
               label={o.label}
-              selected={code === o.code}
-              onPress={() => { setCode(o.code); setErr(null); }}
-              style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+              on={code === o.code}
+              onPress={() => {
+                if (code !== o.code) feedback('select');
+                setCode(o.code);
+                setErr(null);
+              }}
             />
           ))}
         </View>
       )}
 
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>
-          {(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ' · needed' : '')}
-        </SectionLabel>
-        <Input
-          value={note}
-          onChangeText={(v) => { setNote(v); setErr(null); }}
-          placeholder={
-            nothingToPick || codeDemandsNote
-              ? 'What happened, in your own words'
-              : notePlaceholder ?? 'Optional. What they said'
-          }
-          multiline
-        />
-      </View>
+      <WashInput
+        value={note}
+        onChangeText={(v) => { setNote(v); setErr(null); }}
+        accessibilityLabel={(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ', needed' : '')}
+        placeholder={
+          nothingToPick || codeDemandsNote
+            ? (noteLabel ?? 'What happened') + ' (needed)'
+            : notePlaceholder ?? (noteLabel ? noteLabel + ' (optional)' : 'Optional. What they said')
+        }
+        multiline
+        style={{ marginTop: 10 }}
+      />
 
       <Presence show={!!err}>
-        <Animated.View
-          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
-          <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
+        <Animated.View style={[{ marginTop: 8 }, refusal.style]}>
+          <SheetError text={err ?? ''} />
         </Animated.View>
       </Presence>
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Cancel</Text>
+        </Pressable>
         {/* Still pressable with a reason on it, which is the house rule for
             every disabled button here: a tap that answers teaches somebody
             what is missing, and one that swallows the press teaches them the
             screen is broken. */}
         <PrimaryButton
           label={confirmLabel}
+          tone="navy"
           onPress={confirm}
           disabled={Boolean(missing)}
           whyDisabled={missing ?? undefined}
-          style={{ flex: 1, borderRadius: radius.xl }}
+          style={{ flex: 1, borderRadius: 28 }}
         />
       </View>
     </BottomSheet>

@@ -2,8 +2,8 @@ import React from 'react';
 import { View, Text, Pressable, Platform, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useGlobalSearchParams, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
-import { color as C, HIT, type, weight } from '../../theme/tokens';
-import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
+import { color as C, type, weight } from '../../theme/tokens';
+import { Header, TabBar, TabBarAction, TAB_BAR_GAP, TAB_BAR_HEIGHT, type HeroTone, type StatusChip, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, StoreToast } from '../ui/overlays';
 import { useTopSheet } from '../ui/sheet-stack';
 import { backTarget, fromQuery, isTabRoot, screenOf } from './routes';
@@ -11,6 +11,7 @@ import { Icon } from '../ui/Icon';
 import { useKeyboardHeight, useRevealFocusedField } from '../ui/keyboard';
 import { useTicker } from '../ui/use-ticker';
 import { Appear, Presence } from '../ui/motion';
+import { StatusBar } from 'expo-status-bar';
 import { feedback } from '../ui/feedback';
 import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCountOrNull } from '../../state/store';
 import { TravelGate } from './TravelGate';
@@ -175,7 +176,14 @@ export function useCameFrom(fallback = 'more') {
 }
 
 /** The inline "‹ More" link the design puts at the top of every sub-screen. */
-export function BackLink({ label, onPress }: { label: string; onPress: () => void }) {
+export function BackLink(_props: { label: string; onPress: () => void }) {
+  /* VERSION 3 draws the way back as the round button in the hero, which
+     AppFrame now puts on every screen that is not a tab root. A second, inline
+     "‹ More" under it would be the same control twice. */
+  return null;
+}
+
+export function LegacyBackLink({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable
       onPress={onPress}
@@ -203,9 +211,43 @@ export function AppFrame({
   footer,
   scroll = true,
   contentStyle,
+  tone,
+  hero,
+  heroActions,
+  showTitle = true,
+  overlap = false,
+  heroTop,
+  footerBg,
+  footerInsetBg,
+  chipsBelowTitle = false,
+  hideBack = false,
   children,
 }: {
+  /** Status chips under the title rather than in the top row. */
+  chipsBelowTitle?: boolean;
+  /** A screen the artboard draws with no way back (Visit saved). */
+  hideBack?: boolean;
+  /**
+   * What shows round the pinned footer's corners. A Version 3 dock is often a
+   * navy or canvas panel with rounded top corners, and a white wrapper behind
+   * it drew white wedges at those corners. Defaults to white, as before.
+   */
+  footerBg?: string;
+  /** What fills the gesture-bar inset under the footer; defaults to `footerBg`. */
+  footerInsetBg?: string;
   title: string;
+  /** The row the artboard draws first in the hero — see `Header`'s `top`. */
+  heroTop?: React.ReactNode;
+  /** The hero block's colour. Navy on the day screens, lavender elsewhere. */
+  tone?: HeroTone;
+  /** What the screen puts inside its hero block, under the title. */
+  hero?: React.ReactNode;
+  /** A screen's own round buttons in the hero, after the bell. */
+  heroActions?: React.ReactNode;
+  /** Off where `hero` names the screen itself. */
+  showTitle?: boolean;
+  /** The first card sits across the hero's bottom edge. */
+  overlap?: boolean;
   activeTab?: TabKey | null;
   /** Draws the header chevron. Omitted screens have no chevron, per the design. */
   onBack?: () => void;
@@ -216,6 +258,9 @@ export function AppFrame({
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  /* Every screen that is not a tab root gets the round back button, whether
+     or not it wired one up — the inline "‹ More" links it used are gone. */
+  const cameFrom = useCameFrom();
 
   /*
    * WHERE THIS SCREEN ACTUALLY IS.
@@ -295,9 +340,11 @@ export function AppFrame({
     }
   }, [notify, offerUpdate]);
 
-  const strip: { key: string; label: string; tone: StripTone; onPress: () => void }[] = [
+  const strip: StatusChip[] = [
     {
       key: 'att',
+      icon: 'clock',
+      text: checkInAt != null ? hhmm(checkInAt) : 'Not in',
       /*
        * SHORT ENOUGH FOR THE CELL IT HAS.
        *
@@ -307,12 +354,13 @@ export function AppFrame({
        * that at 12pt, so the one fact somebody looks for first thing in the
        * morning rendered as "Not checked i…". These fit with room to spare.
        */
-      label: checkInAt != null ? 'In ' + hhmm(checkInAt) : 'Not in',
+      label: checkInAt != null ? 'Punched in ' + hhmm(checkInAt) : 'Not punched in',
       tone: checkedIn ? 'ok' : 'idle',
       onPress: () => router.push(`/attendance${fromHere}`),
     },
     {
       key: 'gps',
+      icon: 'locate',
       label: gps === 'locked' ? 'GPS locked' : gps === 'off' ? 'GPS off' : 'Finding GPS',
       tone: gps === 'locked' ? 'ok' : gps === 'off' ? 'warn' : 'idle',
       /*
@@ -347,7 +395,9 @@ export function AppFrame({
        * screen is what this was: three refusals read "3 things waiting" on the
        * card under a green "All sent" thirty points above it.
        */
-      label: waiting === 0 ? 'All sent' : `${waiting} waiting`,
+      label: waiting === 0 ? 'All sent' : `${waiting} waiting to send`,
+      icon: waiting === 0 ? 'synced' : 'upload',
+      text: waiting === 0 ? undefined : String(waiting),
       tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push(`/sync${fromHere}`),
     },
@@ -377,14 +427,14 @@ export function AppFrame({
         askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
       },
     },
-    { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push(`/order${fromHere}`) },
-    { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push(`/pay${fromHere}`) },
+    { glyph: 'order', tint: C.primary, label: 'Punch order', sub: 'From their usual products', run: () => router.push(`/order${fromHere}`) },
+    { glyph: 'wallet', tint: C.success, label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push(`/pay${fromHere}`) },
     /* The form is asked for here and opened by the Leads screen, so the shop
        he is standing outside is typed in rather than found for a second time. */
-    { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push(`/leads${fromHere}`); } },
-    { glyph: 'camera', label: 'Add expense', sub: 'Take a photo of the bill', run: () => router.push(`/expenses${fromHere}`) },
-    { glyph: 'task', label: 'Create task', sub: 'For you or for someone else', run: () => router.push(`/tasks${fromHere}`) },
-    { glyph: 'sample', label: 'Request sample', sub: 'Sent for approval', run: () => router.push(`/samples${fromHere}`) },
+    { glyph: 'person', tint: C.primaryDeep, label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push(`/leads${fromHere}`); } },
+    { glyph: 'camera', tint: C.warnInk, label: 'Add expense', sub: 'Take a photo of the bill', run: () => router.push(`/expenses${fromHere}`) },
+    { glyph: 'task', tint: C.ink, label: 'Create task', sub: 'For you or for someone else', run: () => router.push(`/tasks${fromHere}`) },
+    { glyph: 'sample', tint: C.primaryDeep, label: 'Request sample', sub: 'Sent for approval', run: () => router.push(`/samples${fromHere}`) },
   ];
 
   /**
@@ -394,13 +444,49 @@ export function AppFrame({
    * runs edge-to-edge here, so its window does not resize and the padding has
    * to be applied by hand or the field being typed into sits behind the keys.
    */
+  const isRoot = activeTab != null && onBack == null && ['home', 'journey', 'customers', 'more'].includes(here);
+  const back = hideBack ? undefined : onBack ?? (isRoot ? undefined : cameFrom.go);
+  const heroTone: HeroTone = tone ?? (here === 'home' || here === 'journey' ? 'navy' : 'lavender');
+  const showsTabBar = keyboardHeight === 0 && !footer;
+  const header = (
+    <Header
+      /* Twelve screens passed "MBOS" as their title, so the bar said the app's
+         name on Profile, Salary, Orders and the rest and never where you were.
+         Those screens get their own name from the one table the back links
+         already read. */
+      title={title === 'MBOS' && FROM_LABEL[here] ? FROM_LABEL[here] : title}
+      tone={heroTone}
+      showTitle={showTitle}
+      onBack={back}
+      backLabel={onBack ? undefined : cameFrom.label}
+      unread={unread}
+      unreadLoaded={unreadOrNull !== null}
+      onRefresh={() => void refresh()}
+      refreshing={refreshing}
+      /* No bell on the notifications screen. A control whose whole job is to
+         bring you here is furniture once you have arrived, and tapping it
+         stacked a second copy of the page. */
+      onBell={here === 'notifications' ? undefined : () => router.push(`/notifications${fromHere}`)}
+      chips={strip}
+      actions={heroActions}
+      top={heroTop}
+      chipsBelowTitle={chipsBelowTitle}
+      overlap={overlap}>
+      {hero}
+    </Header>
+  );
+  /* The floating bar sits over the content, so the last row needs room to
+     scroll clear of it. */
+  const barClearance = showsTabBar ? insets.bottom + TAB_BAR_GAP + TAB_BAR_HEIGHT + 16 : 0;
+  const inner = [contentStyle, overlap ? { marginTop: -28 } : null];
+
   const body = scroll ? (
     <ScrollView
       ref={reveal.ref}
       onScroll={reveal.onScroll}
       scrollEventThrottle={16}
       style={{ flex: 1 }}
-      contentContainerStyle={[contentStyle, keyboardHeight > 0 && { paddingBottom: keyboardHeight + 24 }]}
+      contentContainerStyle={[{ paddingBottom: barClearance }, keyboardHeight > 0 && { paddingBottom: keyboardHeight + 24 }]}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
@@ -424,36 +510,26 @@ export function AppFrame({
       {/* The quieter half of the transition: the screen has arrived, and this
           is it settling. It also covers the frame or two where SQLite has not
           answered yet, so data reads as arriving rather than popping in. */}
-      <Appear>{children}</Appear>
+      {header}
+      <View style={inner}>
+        <Appear>{children}</Appear>
+      </View>
     </ScrollView>
   ) : (
-    <View style={[{ flex: 1 }, contentStyle]}>
-      <Appear style={{ flex: 1 }}>{children}</Appear>
+    <View style={{ flex: 1 }}>
+      {header}
+      <View style={[{ flex: 1 }, ...inner, showsTabBar ? { paddingBottom: barClearance } : null]}>
+        <Appear style={{ flex: 1 }}>{children}</Appear>
+      </View>
     </View>
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: C.canvas, paddingTop: insets.top }}>
-      <View style={s.chrome}>
-        <Header
-          /* Twelve screens passed "MBOS" as their title, so the bar said the
-             app's name on Profile, Salary, Orders and the rest and never where
-             you were. Those screens get their own name from the one table the
-             back links already read. */
-          title={title === 'MBOS' && FROM_LABEL[here] ? FROM_LABEL[here] : title}
-          onBack={onBack}
-          unread={unread}
-          unreadLoaded={unreadOrNull !== null}
-          onRefresh={() => void refresh()}
-          refreshing={refreshing}
-          /* No bell on the notifications screen. A control whose whole job is
-             to bring you here is furniture once you have arrived, and tapping
-             it stacked a second copy of the page. */
-          onBell={here === 'notifications' ? undefined : () => router.push(`/notifications${fromHere}`)}
-        />
-        <StatusStrip items={strip} />
-      </View>
-
+      <StatusBar style={heroTone === 'navy' ? 'light' : 'dark'} />
+      {/* The status bar area takes the hero's colour, so the block reads as
+          reaching the top of the glass. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: heroTone === 'navy' ? C.navy : heroTone === 'canvas' ? C.canvas : C.lavender }} />
       {body}
 
       {/*
@@ -468,6 +544,8 @@ export function AppFrame({
       {/* Each of these three bars rises into place and sinks out of it rather
           than blinking — a bar that appears in one frame over the bottom of a
           list reads as the list being cut off. */}
+      {/* With the floating bar they float too, just above it. */}
+      <View pointerEvents="box-none" style={showsTabBar ? { position: 'absolute', left: 14, right: 14, bottom: barClearance - 8 } : { paddingHorizontal: 14, paddingBottom: 8 }}>
       <Presence show={!!arrival && arrival.checkedInAt == null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt == null && here !== 'visit' ? (
         <ArrivedBar
@@ -503,6 +581,7 @@ export function AppFrame({
         />
       ) : null}
       </Presence>
+      </View>
 
       {/*
         NO PUNCH-OUT BAR ON OTHER SCREENS. One sat above the tab bar on every
@@ -521,8 +600,11 @@ export function AppFrame({
            itself — on the same white as the bars it sits on. */
         <View
           onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}
-          style={{ backgroundColor: C.surface, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }}>
+          style={{ backgroundColor: footerBg ?? C.surface }}>
           {footer}
+          {keyboardHeight === 0 && insets.bottom > 0 ? (
+            <View style={{ height: insets.bottom, backgroundColor: footerInsetBg ?? footerBg ?? C.surface }} />
+          ) : null}
         </View>
       ) : null}
 
@@ -535,7 +617,7 @@ export function AppFrame({
           meant for one landed on the other — and the two bars together left
           room for two and a half shops. Those screens are a task with a way
           back at the top; the tabs return the moment he leaves. */}
-      {keyboardHeight === 0 && !footer ? (
+      {showsTabBar ? (
         <>
           <TabBar
             active={activeTab}
@@ -563,6 +645,7 @@ export function AppFrame({
         open={sheet === 'action'}
         title="What are you doing?"
         items={actionItems}
+        layout="quick"
         onClose={() => set({ sheet: null })}
       />
 
@@ -572,6 +655,11 @@ export function AppFrame({
         body={confirm?.body ?? ''}
         reasonLabel={confirm?.reasonLabel}
         confirmLabel={confirm?.confirmLabel ?? ''}
+        cancelLabel={confirm?.cancelLabel}
+        tone={confirm?.tone}
+        placeholder={confirm?.placeholder}
+        subtitle={confirm?.subtitle}
+        lead={confirm?.lead}
         reason={confirmReason}
         onReason={(v) => set({ confirmReason: v, confirmErr: false })}
         error={confirmErr}
@@ -624,21 +712,26 @@ function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: 
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
-        minHeight: HIT,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
+        minHeight: 60,
+        paddingLeft: 16,
+        paddingRight: 8,
+        paddingVertical: 8,
+        borderRadius: 22,
         backgroundColor: pressed ? C.primaryDeep : C.primary,
+        boxShadow: '0 12px 28px -10px rgba(104,53,251,0.6)',
       })}>
-      <Icon name="shop" size={18} color="#FFFFFF" strokeWidth={1.8} />
+      <Icon name="shop" size={20} color="#FFFFFF" strokeWidth={2} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+        <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
           {'At ' + name}
         </Text>
         <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
           {'Arrived ' + hhmm(at) + ' · not checked in'}
         </Text>
       </View>
-      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check in</Text>
+      <View style={{ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={[{ fontSize: 14, color: C.navy }, weight(700)]}>Check in</Text>
+      </View>
     </Pressable>
   );
 }
@@ -673,14 +766,17 @@ function InVisitBar({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
-        minHeight: HIT,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
+        minHeight: 60,
+        paddingLeft: 16,
+        paddingRight: 8,
+        paddingVertical: 8,
+        borderRadius: 22,
         backgroundColor: pressed ? C.primaryDeep : C.primary,
+        boxShadow: '0 12px 28px -10px rgba(104,53,251,0.6)',
       })}>
-      <Icon name="shop" size={18} color="#FFFFFF" strokeWidth={1.8} />
+      <Icon name="shop" size={20} color="#FFFFFF" strokeWidth={2} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+        <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
           {(leftAt != null ? 'You left ' : 'In ') + name}
         </Text>
         <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
@@ -689,7 +785,9 @@ function InVisitBar({
             : 'Checked in ' + hhmm(since) + ' · ' + spent}
         </Text>
       </View>
-      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check out</Text>
+      <View style={{ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={[{ fontSize: 14, color: C.navy }, weight(700)]}>Check out</Text>
+      </View>
     </Pressable>
   );
 }

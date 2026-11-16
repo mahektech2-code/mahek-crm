@@ -1,8 +1,9 @@
 import React from 'react';
-import { ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, SectionLabel, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { feedback } from '../src/components/ui/feedback';
 import { LeadActionCard } from '../src/components/leads/lead-action-card';
 import {
   LEAD_ACTION_VIEWS,
@@ -200,74 +201,88 @@ export default function LeadActionsScreen() {
               }
             : null;
 
+  const hero = (
+    <View>
+      <Text
+        accessibilityLabel="Pending actions. Every open lead needs an action, a day and a person. Check these four lists."
+        style={[{ fontSize: 13, lineHeight: 18, color: HERO.lavender.muted, marginTop: 2 }, weight(400)]}>
+        Every open lead: an action, a day, a person
+      </Text>
+      {/* The four lists, each with its count. The count is the point: the
+          shape of the morning is legible before anything is tapped. A dash
+          where the read has not landed, never a nought. */}
+      <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
+        {LEAD_ACTION_VIEWS.map((v) => {
+          const on = view === v;
+          const n = counts ? counts[v] : null;
+          return (
+            <Pressable
+              key={v}
+              onPress={() => {
+                /* The rows that stay in this one slide to their places and
+                   the rest fade, rather than the screen being swapped in one
+                   frame. */
+                if (v !== view) {
+                  feedback('select');
+                  animateLayoutFor(rows.length);
+                }
+                setView(v);
+              }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={VIEW_TEXT[v].chip + ', ' + (n == null ? 'not counted yet' : String(n))}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                minHeight: 64,
+                borderRadius: 18,
+                backgroundColor: on ? C.navy : C.surface,
+                paddingHorizontal: 6,
+                paddingVertical: 10,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <Text style={[{ fontSize: 22, lineHeight: 27, color: on ? C.lime : v === 'overdue' && n ? C.danger : C.ink }, weight(800)]}>
+                {n == null ? '—' : String(n)}
+              </Text>
+              <Text numberOfLines={2} style={[{ fontSize: 11, lineHeight: 14, color: on ? '#FFFFFF' : C.ink, textAlign: 'center' }, weight(600)]}>
+                {VIEW_TEXT[v].chip}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+
   return (
     <AppFrame
       title="Lead actions"
+      tone="lavender"
+      hero={hero}
       activeTab={null}
       onBack={back.go}
       scroll={false}
       contentStyle={{ padding: 0 }}>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-        <BackLink label={back.label} onPress={back.go} />
-
-        <SectionLabel>Pending actions</SectionLabel>
-        <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          Every open lead needs an action, a day and a person. Check these four lists.
-        </T>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-          style={{ marginHorizontal: -16, paddingHorizontal: 16, marginTop: 12 }}>
-          {LEAD_ACTION_VIEWS.map((v) => (
-            <Choice
-              key={v}
-              label={
-                /* The count rides ON the chip. A strip of four words says
-                   nothing about which of them has work in it, and the whole
-                   point of this screen is that the shape of the morning is
-                   legible before anything is tapped. A dash where the read has
-                   not landed, never a nought. */
-                VIEW_TEXT[v].chip + ' · ' + (counts ? String(counts[v]) : '—')
-              }
-              selected={view === v}
-              onPress={() => {
-                /* Another view is another worklist: the cards it shares with
-                   this one slide to their places and the rest fade, rather
-                   than the screen being swapped in one frame. */
-                if (v !== view) animateLayoutFor(rows.length);
-                setView(v);
-              }}
-              style={{ paddingHorizontal: 16 }}
-            />
-          ))}
-        </ScrollView>
-
-        <View style={{ marginTop: 16 }}>
-          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>{text.title}</T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {text.sub}
-          </T>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 32 }}>
+        <View style={{ paddingHorizontal: 6 }}>
+          <Text accessibilityRole="header" style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(800)]}>{text.title}</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>{text.sub}</Text>
         </View>
 
         {!leads ? (
-          <Card style={{ marginTop: 12, paddingVertical: 28 }}>
-            <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-              Loading…
-            </T>
-          </Card>
+          <View style={{ marginTop: 12, paddingVertical: 28, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center' }}>
+            <Text style={[{ fontSize: 13, color: C.muted, textAlign: 'center' }, weight(400)]}>Loading…</Text>
+          </View>
         ) : emptiness ? (
-          <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 28 }} padded={false}>
-            <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-              {emptiness.head}
-            </T>
-            <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
+          <View style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 26, borderRadius: 22, backgroundColor: C.surface }}>
+            <Text style={[{ fontSize: 16, lineHeight: 21, color: C.ink, textAlign: 'center' }, weight(800)]}>{emptiness.head}</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, textAlign: 'center', marginTop: 4 }, weight(400)]}>
               {emptiness.body}
-            </T>
-          </Card>
+            </Text>
+          </View>
         ) : (
-          <View style={{ gap: 12, marginTop: 12 }}>
+          <View style={{ gap: 10, marginTop: 12 }}>
             {rows.map((lead, i) => (
               <Stagger key={lead.id} index={i}>
                 <LeadActionCard

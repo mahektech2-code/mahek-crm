@@ -2,10 +2,10 @@ import React from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, ListCard, T } from '../src/components/ui/primitives';
-import { Icon } from '../src/components/ui/Icon';
-import { Chip, ChipRow, Figure, Line, Tabs } from '../src/components/ui/account-parts';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { Badge, Card, T } from '../src/components/ui/primitives';
+import { Icon, type IconName } from '../src/components/ui/Icon';
+import { Chip, ChipRow, Figure, Tabs } from '../src/components/ui/account-parts';
 import { freshAccount, phoneAccount, rememberedAccount } from '../src/data/customer-account';
 import {
   BILL_FILTERS,
@@ -30,7 +30,7 @@ import { PERIODS, periodRange, type PeriodKey } from '../src/engines/statement';
 import { useStore } from '../src/state/store';
 import { inrFromPaise, isoDate, plural, shopName } from '../src/lib/format';
 import { typedFromPaise } from '../src/lib/money-input';
-import { color as C, radius, tabular, weight } from '../src/theme/tokens';
+import { color as C, tabular, weight } from '../src/theme/tokens';
 import { Stagger, Swap, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
@@ -61,6 +61,20 @@ type Origin = 'office' | 'remembered' | 'phone';
 
 const TAB_NAMES = ['Summary', 'Statement', 'Bills', 'Payments', 'Credit notes'] as const;
 const STEP = 40;
+
+/* V3 colours a filter by what it means. Keyed on the words so a filter the
+   engine adds later simply draws in ink. */
+const FILTER_INK: Record<string, string | undefined> = {
+  Overdue: C.danger,
+  Settled: C.success,
+  Confirmed: C.success,
+  'With accounts': C.warnInk,
+  'On hold': C.warnInk,
+  Refused: C.danger,
+  Reversed: C.danger,
+  'Never arrived': C.danger,
+  Disputed: C.danger,
+};
 
 export default function AccountScreen() {
   const back = useCameFrom('accounts');
@@ -109,18 +123,8 @@ export default function AccountScreen() {
 
   if (!view) {
     return (
-      <AppFrame title="Account" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={back.go} />
-        <Card style={{ marginTop: 8, paddingVertical: 28 }}>
-          <T style={{ fontSize: 15, color: C.ink, textAlign: 'center' }}>
-            {missing ? 'This account is not on your phone' : 'Opening the account…'}
-          </T>
-          {missing && problem ? (
-            <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-              {problem}
-            </T>
-          ) : null}
-        </Card>
+      <AppFrame title="Account" activeTab={null} tone="navy" onBack={back.go} contentStyle={{ padding: 14 }}>
+        <Empty head={missing ? 'This account is not on your phone' : 'Opening the account…'} body={missing && problem ? problem : ''} />
       </AppFrame>
     );
   }
@@ -134,42 +138,94 @@ export default function AccountScreen() {
     view.creditNotes ? view.creditNotes.length : null,
   ];
 
+  const use = creditUse(c.outstandingPaise, c.creditLimitPaise);
+  const owes = c.outstandingPaise > 0;
+
   return (
-    <AppFrame title="Account" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 40 }}>
-      <BackLink label={back.label} onPress={back.go} />
+    <AppFrame
+      title="Account"
+      activeTab={null}
+      tone="navy"
+      onBack={back.go}
+      showTitle={false}
+      contentStyle={{ padding: 14, paddingBottom: 40 }}
+      hero={
+        <View style={{ marginTop: 16 }}>
+          {/* ---- who ---- */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <T style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: '#FFFFFF' }, weight(800)]}>{shopName(c.name)}</T>
+              <T style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted, marginTop: 2 }}>
+                {[c.city, c.gstin ? 'GST ' + c.gstin : null].filter(Boolean).join(' · ') || '—'}
+              </T>
+            </View>
+            <Pressable
+              onPress={() => {
+                set({ custId: c.id, pTab: 0 });
+                router.push('/customer');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Open the customer record"
+              hitSlop={6}
+              style={({ pressed }) => ({
+                height: 36,
+                paddingHorizontal: 12,
+                borderRadius: 18,
+                backgroundColor: C.navySoft,
+                opacity: pressed ? 0.85 : 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              })}>
+              <Icon name="doc" size={14} color={C.lime} strokeWidth={2} />
+              <T style={[{ fontSize: 13, color: C.lime }, weight(700)]}>Record</T>
+            </Pressable>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+            <HeroTag text={accountWord(view)} bg={C.navySoft} />
+            {c.creditBlocked ? <HeroTag text="Supply stopped" bg={C.danger} /> : null}
+            {c.slowPayer ? <HeroTag text="Slow payer" bg={C.warnInk} /> : null}
+            {view.followUp && view.followUp.stage > 0 ? (
+              <HeroTag
+                text={'Follow-up ' + view.followUp.stage}
+                a11y={'Follow-up stage ' + view.followUp.stage}
+                bg={view.followUp.stage >= 3 ? C.danger : C.warnInk}
+              />
+            ) : null}
+          </View>
 
-      {/* ---- who ---- */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <T s="h1">{shopName(c.name)}</T>
-          <T s="caption" style={{ marginTop: 2 }}>
-            {[c.city, c.gstin ? 'GST ' + c.gstin : null].filter(Boolean).join(' · ') || '—'}
+          {/* ---- the one number ---- */}
+          <View
+            accessible
+            accessibilityLabel="Outstanding now. The office's figure for the whole account. It counts only money the accounts team has found in the bank."
+            style={{ marginTop: 14 }}>
+            <T style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>Outstanding now · office figure, bank-seen money</T>
+          </View>
+          <T style={[{ fontSize: 40, lineHeight: 46, letterSpacing: -0.8, color: owes ? '#FF8A80' : '#FFFFFF' }, weight(800), tabular]}>
+            {owes ? inrFromPaise(c.outstandingPaise) : 'Nothing owed'}
           </T>
+          {use != null ? (
+            <>
+              <View style={{ height: 8, borderRadius: 4, backgroundColor: C.navySoft, marginTop: 8, overflow: 'hidden' }}>
+                <View
+                  style={{
+                    width: `${Math.min(100, use)}%`,
+                    height: 8,
+                    backgroundColor: use > 100 ? '#FF8A80' : use >= 80 ? '#FFD27A' : C.lime,
+                  }}
+                />
+              </View>
+              <T style={{ fontSize: 12, color: C.onNavyMuted, marginTop: 6 }}>
+                {use}% of {inrFromPaise(c.creditLimitPaise ?? 0)} limit
+              </T>
+            </>
+          ) : null}
+
+          {/* ---- whose answer this is ---- */}
+          <SourceLine origin={origin} view={view} nowMs={nowMs} loading={loading} onRetry={() => void load()} />
         </View>
-        <Pressable
-          onPress={() => {
-            set({ custId: c.id, pTab: 0 });
-            router.push('/customer');
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Open the customer record"
-          style={{ height: 36, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, justifyContent: 'center' }}>
-          <T style={[{ fontSize: 13, color: C.primary }, weight(500)]}>Record</T>
-        </Pressable>
-      </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        <Badge tone="info">{accountWord(view)}</Badge>
-        {c.creditBlocked ? <Badge tone="danger">Supply stopped</Badge> : null}
-        {c.slowPayer ? <Badge tone="amber">Slow payer</Badge> : null}
-        {view.followUp && view.followUp.stage > 0 ? (
-          <Badge tone={view.followUp.stage >= 3 ? 'danger' : 'amber'}>Follow-up stage {view.followUp.stage}</Badge>
-        ) : null}
-      </View>
-
-      {/* ---- whose answer this is ---- */}
-      <SourceLine origin={origin} view={view} nowMs={nowMs} loading={loading} onRetry={() => void load()} />
-
-      <View style={{ marginTop: 12 }}>
+      }>
+      <View>
         <Tabs
           tabs={TAB_NAMES.map((label, i) => ({ label, count: counts[i] }))}
           active={tab}
@@ -237,21 +293,42 @@ function SourceLine({
         marginTop: 12,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: 8,
         paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: radius.md,
-        backgroundColor: live ? C.successBg : C.warnBg,
+        paddingVertical: 8,
+        borderRadius: 16,
+        backgroundColor: C.navySoft,
       }}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: live ? C.success : C.warn }} />
-      <T s="caption" style={{ flex: 1, color: live ? C.success : C.warnInk }}>
-        {text}
-      </T>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: live ? C.lime : '#FFD27A' }} />
+      <T style={{ flex: 1, fontSize: 12, lineHeight: 16, color: '#DCE3EE' }}>{text}</T>
       {!loading && !live ? (
-        <Pressable onPress={onRetry} accessibilityRole="button" hitSlop={10}>
-          <T style={[{ fontSize: 13, color: C.primary }, weight(500)]}>Try again</T>
+        <Pressable
+          onPress={onRetry}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={({ pressed }) => ({
+            height: 32,
+            paddingHorizontal: 12,
+            borderRadius: 16,
+            backgroundColor: C.lime,
+            opacity: pressed ? 0.85 : 1,
+            justifyContent: 'center',
+          })}>
+          <T style={[{ fontSize: 12, color: C.navy }, weight(700)]}>Try again</T>
         </Pressable>
       ) : null}
+    </View>
+  );
+}
+
+/** A tag in the navy hero: account type, supply stopped, slow payer, follow-up. */
+function HeroTag({ text, bg, a11y }: { text: string; bg: string; a11y?: string }) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={a11y ?? text}
+      style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: bg, justifyContent: 'center' }}>
+      <T style={[{ fontSize: 12, color: '#FFFFFF' }, weight(700)]}>{text}</T>
     </View>
   );
 }
@@ -260,7 +337,6 @@ function SourceLine({
 
 function Summary({ view, onTab }: { view: AccountView; onTab: (i: number) => void }) {
   const c = view.customer;
-  const use = creditUse(c.outstandingPaise, c.creditLimitPaise);
   const headroom = c.creditLimitPaise != null && c.creditLimitPaise > 0 ? c.creditLimitPaise - c.outstandingPaise : null;
   const openBills = view.bills.filter((b) => billMatches(b, 'open'));
   const overdueBills = view.bills.filter((b) => billMatches(b, 'overdue'));
@@ -271,83 +347,63 @@ function Summary({ view, onTab }: { view: AccountView; onTab: (i: number) => voi
 
   return (
     <View style={{ gap: 12 }}>
-      {/* ---- the one number ---- */}
-      <Card style={{ borderLeftWidth: 3, borderLeftColor: c.outstandingPaise > 0 ? C.danger : C.success }}>
-        <T s="label">Outstanding now</T>
-        <T style={[{ fontSize: 30, lineHeight: 36, color: c.outstandingPaise > 0 ? C.danger : C.ink, marginTop: 2 }, weight(600), tabular]}>
-          {c.outstandingPaise > 0 ? inrFromPaise(c.outstandingPaise) : 'Nothing owed'}
-        </T>
-        <T s="caption" style={{ marginTop: 2 }}>
-          The office&apos;s figure for the whole account. It counts only money the accounts team has
-          found in the bank.
-        </T>
-
-        {use != null ? (
-          <View style={{ marginTop: 12 }}>
-            <View style={{ height: 6, borderRadius: 3, backgroundColor: C.hairline, overflow: 'hidden' }}>
-              <View
-                style={{
-                  width: `${Math.min(100, use)}%`,
-                  height: 6,
-                  backgroundColor: use > 100 ? C.danger : use >= 80 ? C.warn : C.success,
-                }}
-              />
-            </View>
-            <T s="caption" style={{ marginTop: 6 }}>
-              {use}% of the {inrFromPaise(c.creditLimitPaise ?? 0)} credit limit used
-            </T>
-          </View>
-        ) : null}
-      </Card>
-
-      {/* ---- the rest of the money ---- */}
-      <Card style={{ gap: 14 }}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
+      {/* ---- the money ----
+          The one number and the limit bar are in the hero now; these are the
+          rest of it, two to a row as V3 draws them. */}
+      <View style={{ gap: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
           <Figure
+            tile
             label="Credit limit"
             value={c.creditLimitPaise ? inrFromPaise(c.creditLimitPaise) : 'Not set'}
           />
           <Figure
-            label={headroom != null && headroom < 0 ? 'Over the limit by' : 'Can still take'}
+            tile
+            label={headroom != null && headroom < 0 ? 'Over limit by' : 'Can still take'}
             value={headroom == null ? '—' : inrFromPaise(Math.abs(headroom))}
             tone={headroom != null && headroom < 0 ? C.danger : undefined}
           />
         </View>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
           <Figure
+            tile
             label="Credit term"
-            value={c.creditDays != null ? plural(c.creditDays, 'day') : '—'}
+            value={c.creditDays != null ? c.creditDays + ' d' : '—'}
             sub={c.creditDaysIsDefault ? 'the usual term — none agreed for this shop' : 'agreed for this shop'}
           />
           <Figure
+            tile
             label="Overdue"
             value={overduePaise ? inrFromPaise(overduePaise) : 'Nothing'}
-            sub={overdueBills.length ? `${plural(overdueBills.length, 'bill')} · oldest ${oldest} days` : null}
+            sub={overdueBills.length ? `${plural(overdueBills.length, 'bill')} · oldest ${oldest} d` : null}
             tone={overduePaise ? C.danger : undefined}
           />
         </View>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
           <Figure
+            tile
             label="On account"
             value={view.ledger.onAccountPaise == null ? 'Needs signal' : view.ledger.onAccountPaise ? inrFromPaise(view.ledger.onAccountPaise) : 'Nothing'}
-            sub={view.ledger.onAccountPaise ? 'paid, not yet set against a bill' : null}
+            sub={view.ledger.onAccountPaise ? 'paid, not set to a bill' : null}
           />
           <Figure
+            tile
             label="With accounts"
             value={view.ledger.awaitingCount ? inrFromPaise(view.ledger.awaitingPaise) : 'Nothing'}
-            sub={view.ledger.awaitingCount ? `${plural(view.ledger.awaitingCount, 'payment')} not yet confirmed` : null}
+            sub={view.ledger.awaitingCount ? `${plural(view.ledger.awaitingCount, 'payment')} unconfirmed` : null}
             tone={view.ledger.awaitingCount ? C.warnInk : undefined}
           />
         </View>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <Figure label="Open bills" value={String(openBills.length)} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Figure tile label="Open bills" value={String(openBills.length)} />
           <Figure
+            tile
             label="Not stated"
             value={view.unstated.count ? inrFromPaise(view.unstated.amountPaise) : 'None'}
-            sub={view.unstated.count ? `${plural(view.unstated.count, 'bill')} nobody has said is paid or owed` : null}
+            sub={view.unstated.count ? `${plural(view.unstated.count, 'bill')}, nobody said paid or owed` : null}
           />
         </View>
-      </Card>
+      </View>
 
       {/* ---- warnings, in words ---- */}
       {c.creditBlocked ? (
@@ -377,7 +433,10 @@ function Summary({ view, onTab }: { view: AccountView; onTab: (i: number) => voi
 
       {/* ---- the aging strip ---- */}
       <Card>
-        <T s="label">How old the debt is</T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Icon name="clock" size={16} color={C.ink} strokeWidth={2} />
+          <T style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Age of debt</T>
+        </View>
         {view.aging ? (
           view.aging.totalPaise > 0 ? (
             <AgingStrip buckets={view.aging.buckets} totalPaise={view.aging.totalPaise} />
@@ -394,22 +453,36 @@ function Summary({ view, onTab }: { view: AccountView; onTab: (i: number) => voi
       </Card>
 
       {/* ---- the dates and the people ---- */}
-      <Card>
-        <T s="label">At a glance</T>
-        <View style={{ marginTop: 6 }}>
-          <Line label="Last bill" value={lastBill ? `${lastBill.billNo} · ${longDay(lastBill.billDate)}` : 'None'} />
-          <Line label="Last payment confirmed" value={lastPaid ? `${inrFromPaise(lastPaid.amountPaise)} · ${longDay(lastPaid.receivedAt)}` : 'None'} />
-          <Line label="Last order" value={longDay(c.lastOrderDate)} />
-          {view.followUp && view.followUp.oldestOverdueBillDate ? (
-            <Line label="Oldest overdue bill" value={longDay(view.followUp.oldestOverdueBillDate)} />
-          ) : null}
-          {c.salesPersonName ? <Line label="Salesperson" value={c.salesPersonName} /> : null}
-          {c.backOfficeName ? <Line label="Back office" value={c.backOfficeName} /> : null}
-          {c.phone ? <Line label="Phone" value={c.phone} /> : null}
-        </View>
-      </Card>
+      <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingVertical: 6, paddingHorizontal: 16 }}>
+        <GlanceRow first icon="doc" label="Last bill" value={lastBill ? `${lastBill.billNo} · ${longDay(lastBill.billDate)}` : 'None'} />
+        <GlanceRow
+          icon="wallet"
+          iconInk={C.success}
+          label="Last paid"
+          a11y="Last payment confirmed"
+          value={lastPaid ? `${inrFromPaise(lastPaid.amountPaise)} · ${longDay(lastPaid.receivedAt)}` : 'None'}
+        />
+        <GlanceRow icon="order" label="Last order" value={longDay(c.lastOrderDate)} />
+        {view.followUp && view.followUp.oldestOverdueBillDate ? (
+          <GlanceRow
+            icon="cal"
+            iconInk={C.danger}
+            label="Oldest overdue"
+            a11y="Oldest overdue bill"
+            value={longDay(view.followUp.oldestOverdueBillDate)}
+          />
+        ) : null}
+        {c.salesPersonName || c.backOfficeName ? (
+          <GlanceRow
+            icon="person"
+            label={[c.salesPersonName ? 'Salesperson' : null, c.backOfficeName ? 'Back office' : null].filter(Boolean).join(' · ')}
+            value={[c.salesPersonName, c.backOfficeName].filter(Boolean).join(' · ')}
+          />
+        ) : null}
+        {c.phone ? <GlanceRow icon="call" label="Phone" value={c.phone} /> : null}
+      </View>
 
-      <View style={{ flexDirection: 'row', gap: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
         <JumpButton label="Statement" onPress={() => onTab(1)} />
         <JumpButton label="Open bills" onPress={() => onTab(2)} />
         <JumpButton label="Payments" onPress={() => onTab(3)} />
@@ -420,25 +493,29 @@ function Summary({ view, onTab }: { view: AccountView; onTab: (i: number) => voi
 
 function AgingStrip({ buckets, totalPaise }: { buckets: { label: string; from: number; amountPaise: number }[]; totalPaise: number }) {
   /* Not due is calm, the oldest band is loud, the ones between climb. */
-  const tones = [C.success, C.warn, '#D9822B', C.danger];
+  const tones = [C.success, '#D9A400', '#D9822B', C.danger];
   const toneOf = (i: number) => tones[Math.min(i, tones.length - 1)];
   return (
     <View style={{ marginTop: 10 }}>
-      <View style={{ flexDirection: 'row', height: 10, borderRadius: 5, overflow: 'hidden', backgroundColor: C.hairline }}>
+      <View style={{ flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', backgroundColor: C.hairline }}>
         {buckets.map((b, i) =>
           b.amountPaise > 0 ? (
             <View key={b.label} style={{ flex: b.amountPaise / totalPaise, backgroundColor: toneOf(i) }} />
           ) : null,
         )}
       </View>
-      <View style={{ marginTop: 10, gap: 2 }}>
+      <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', rowGap: 8 }}>
         {buckets.map((b, i) => (
-          <View key={b.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 3 }}>
-            <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: toneOf(i) }} />
-            <T s="small" style={{ flex: 1 }}>
+          <View
+            key={b.label}
+            accessible
+            accessibilityLabel={b.label + ' ' + (b.amountPaise ? inrFromPaise(b.amountPaise) : 'nothing')}
+            style={{ width: '50%', paddingRight: i % 2 === 0 ? 14 : 0, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: toneOf(i) }} />
+            <T style={{ flex: 1, fontSize: 13, color: C.body }} numberOfLines={1}>
               {b.label}
             </T>
-            <T style={[{ fontSize: 14, color: b.amountPaise ? C.ink : C.faint }, weight(500), tabular]}>
+            <T style={[{ fontSize: 13, color: b.amountPaise ? C.ink : C.faint }, weight(700), tabular]}>
               {b.amountPaise ? inrFromPaise(b.amountPaise) : '—'}
             </T>
           </View>
@@ -456,11 +533,12 @@ function Notice({ tone, head, children }: { tone: 'danger' | 'warn' | 'info'; he
         ? { bg: C.warnBg, fg: C.warnInk }
         : { bg: C.infoBg, fg: C.info };
   return (
-    <View style={{ borderRadius: radius.lg, backgroundColor: palette.bg, padding: 14 }}>
-      <T style={[{ fontSize: 14, lineHeight: 20, color: palette.fg }, weight(600)]}>{head}</T>
-      <T s="small" style={{ color: palette.fg, marginTop: 2 }}>
-        {children}
-      </T>
+    <View style={{ borderRadius: 20, backgroundColor: palette.bg, padding: 14, flexDirection: 'row', gap: 10 }}>
+      <Icon name={tone === 'danger' ? 'lock' : tone === 'warn' ? 'clock' : 'route'} size={20} color={palette.fg} strokeWidth={2} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <T style={[{ fontSize: 14, lineHeight: 20, color: palette.fg }, weight(700)]}>{head}</T>
+        <T style={{ fontSize: 13, lineHeight: 18, color: palette.fg, marginTop: 1 }}>{children}</T>
+      </View>
     </View>
   );
 }
@@ -470,9 +548,47 @@ function JumpButton({ label, onPress }: { label: string; onPress: () => void }) 
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={{ flex: 1, height: 44, borderRadius: radius.md, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-      <T style={[{ fontSize: 14, color: C.primary }, weight(500)]}>{label}</T>
+      style={({ pressed }) => ({ flex: 1, height: 52, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+      <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>{label}</T>
     </Pressable>
+  );
+}
+
+/** One "at a glance" line: a glyph, what it is, and the answer. */
+function GlanceRow({
+  icon,
+  iconInk = C.muted,
+  label,
+  value,
+  a11y,
+  first = false,
+}: {
+  icon: IconName;
+  iconInk?: string;
+  label: string;
+  value: string;
+  a11y?: string;
+  first?: boolean;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={(a11y ?? label) + ': ' + value}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: 44,
+        paddingVertical: 6,
+        borderTopWidth: first ? 0 : 1,
+        borderTopColor: C.hairline,
+      }}>
+      <Icon name={icon} size={16} color={iconInk} strokeWidth={2} />
+      <T style={{ fontSize: 14, color: C.muted, flexShrink: 0 }}>{label}</T>
+      <T numberOfLines={2} style={[{ flex: 1, fontSize: 14, color: C.ink, textAlign: 'right' }, weight(700)]}>
+        {value}
+      </T>
+    </View>
   );
 }
 
@@ -503,23 +619,33 @@ function Statement({ view }: { view: AccountView }) {
         ))}
       </ChipRow>
 
-      <Card style={{ gap: 12 }}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <Figure label="Billed" value={inrFromPaise(w.billedPaise)} />
-          <Figure label="Received" value={inrFromPaise(w.receivedPaise)} tone={w.receivedPaise ? C.success : undefined} />
-        </View>
-        <View style={{ flexDirection: 'row', gap: 12, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 10 }}>
-          <Figure label="Owed before these dates" value={range.from ? inrFromPaise(w.openingPaise) : '—'} />
-          <Figure
-            label="Owed at the end"
-            value={w.entries.length ? signed(w.entries[0].balancePaise) : range.from ? signed(w.openingPaise) : '—'}
-          />
-        </View>
-        <T s="caption">
-          Newest first. The balance after each line counts only confirmed money, so the top one is what was owed at
-          that point.
-        </T>
-      </Card>
+      {/* Before + billed − received = owed at the end, as one sum. */}
+      <View
+        accessible
+        accessibilityLabel={
+          'Owed before these dates ' +
+          (range.from ? inrFromPaise(w.openingPaise) : 'not shown') +
+          ', billed ' +
+          inrFromPaise(w.billedPaise) +
+          ', received ' +
+          inrFromPaise(w.receivedPaise) +
+          ', owed at the end ' +
+          (w.entries.length ? signed(w.entries[0].balancePaise) : range.from ? signed(w.openingPaise) : 'not shown') +
+          '. Newest first. The balance after each line counts only confirmed money, so the top one is what was owed at that point.'
+        }
+        style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <SumCell label="Before" value={range.from ? inrFromPaise(w.openingPaise) : '—'} />
+        <T style={{ fontSize: 12, color: C.onNavyMuted }}>+</T>
+        <SumCell label="Billed" value={inrFromPaise(w.billedPaise)} />
+        <T style={{ fontSize: 12, color: C.onNavyMuted }}>−</T>
+        <SumCell label="Received" value={inrFromPaise(w.receivedPaise)} tone={C.lime} />
+        <T style={{ fontSize: 12, color: C.onNavyMuted }}>=</T>
+        <SumCell
+          label="At end"
+          value={w.entries.length ? signed(w.entries[0].balancePaise) : range.from ? signed(w.openingPaise) : '—'}
+          tone="#FF8A80"
+        />
+      </View>
 
       {w.entries.length === 0 ? (
         <Empty
@@ -527,19 +653,19 @@ function Statement({ view }: { view: AccountView }) {
           body={view.ledger.entries.length ? 'No bill or payment falls in these dates. Pick a longer time.' : 'This account has never been billed.'}
         />
       ) : (
-        <ListCard>
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, overflow: 'hidden' }}>
           {w.entries.slice(0, shown).map((e, i) => (
             <Stagger key={`${e.kind}-${e.ref}-${e.at}-${i}`} index={i}>
               <EntryRow e={e} first={i === 0} />
             </Stagger>
           ))}
           {range.from && shown >= w.entries.length ? (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.wash, backgroundColor: C.wash }}>
-              <T s="small">Opening balance · {longDay(range.from)}</T>
-              <T style={[{ fontSize: 14, color: C.body }, weight(500), tabular]}>{signed(w.openingPaise)}</T>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: C.canvas }}>
+              <T style={[{ fontSize: 13, color: C.body }, weight(700)]}>Opening · {longDay(range.from)}</T>
+              <T style={[{ fontSize: 13, color: C.body }, weight(700), tabular]}>{signed(w.openingPaise)}</T>
             </View>
           ) : null}
-        </ListCard>
+        </View>
       )}
       <More shown={shown} total={w.entries.length} onMore={() => setShown(shown + STEP)} />
     </View>
@@ -549,63 +675,72 @@ function Statement({ view }: { view: AccountView }) {
 function EntryRow({ e, first }: { e: AccountEntry; first: boolean }) {
   const st = e.kind === 'receipt' ? receiptStatus(e.status) : null;
   const dead = e.status === 'rejected' || e.status === 'reversed';
+  const amountInk = e.kind === 'bill' ? C.ink : dead ? C.faint : st?.counts ? C.success : C.warnInk;
   return (
-    <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: first ? 0 : 1, borderTopColor: C.wash }}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-        <View
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 14,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: e.kind === 'bill' ? C.infoBg : dead ? C.dangerBg : st?.counts ? C.successBg : C.warnBg,
-          }}>
-          <Icon
-            name={e.kind === 'bill' ? 'doc' : 'money'}
-            size={15}
-            color={e.kind === 'bill' ? C.info : dead ? C.danger : st?.counts ? C.success : C.warnInk}
-            strokeWidth={1.7}
-          />
+    <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: first ? 0 : 1, borderTopColor: C.hairline }}>
+      <View
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: e.kind === 'bill' ? C.infoBg : dead ? C.dangerBg : st?.counts ? C.successBg : C.warnBg,
+        }}>
+        <Icon
+          name={e.kind === 'bill' ? 'doc' : 'wallet'}
+          size={15}
+          color={e.kind === 'bill' ? C.info : dead ? C.danger : st?.counts ? C.success : C.warnInk}
+          strokeWidth={2}
+        />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+          <T style={[{ fontSize: 14, lineHeight: 20, color: dead ? C.muted : C.ink, flexShrink: 1 }, weight(700)]} numberOfLines={1}>
+            {e.kind === 'bill' ? e.ref : e.ref === '—' ? 'Payment' : e.ref}
+          </T>
+          <T
+            style={[
+              { fontSize: 14, lineHeight: 20, color: amountInk, textDecorationLine: dead ? 'line-through' : 'none' },
+              weight(700),
+              tabular,
+            ]}>
+            {e.kind === 'bill' ? '+' + inrFromPaise(e.debitPaise) : '−' + inrFromPaise(e.creditPaise || 0)}
+          </T>
         </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-            <T
-              style={[{ fontSize: 14, lineHeight: 20, color: dead ? C.muted : C.ink, textDecorationLine: dead ? 'line-through' : 'none', flexShrink: 1 }, weight(500)]}
-              numberOfLines={1}>
-              {e.kind === 'bill' ? 'Bill ' + e.ref : e.ref === '—' ? 'Payment' : e.ref}
-            </T>
-            <T
-              style={[
-                { fontSize: 14, lineHeight: 20, color: e.kind === 'bill' ? C.ink : dead ? C.muted : st?.counts ? C.success : C.warnInk, textDecorationLine: dead ? 'line-through' : 'none' },
-                weight(600),
-                tabular,
-              ]}>
-              {e.kind === 'bill' ? '+ ' + inrFromPaise(e.debitPaise) : '− ' + inrFromPaise(e.creditPaise || 0)}
-            </T>
-          </View>
-          <T s="caption" numberOfLines={2}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 }}>
+          <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, flexShrink: 1 }} numberOfLines={2}>
             {longDay(e.at)} · {e.detail}
           </T>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
-            {st && st.label !== 'Confirmed' ? <Badge tone={st.tone}>{st.label}</Badge> : null}
-            {e.kind === 'bill' && e.claimedPaise > 0 ? (
-              <Badge tone="amber">{inrFromPaise(e.claimedPaise)} claimed, on hold</Badge>
-            ) : null}
-            <View style={{ flex: 1 }} />
-            <T s="micro" style={tabular}>
-              Balance {signed(e.balancePaise)}
-            </T>
-          </View>
-          {/* A receipt that has not counted shows what it WOULD have been —
-              the line itself carries nothing, because nothing has arrived. */}
-          {e.kind === 'receipt' && !e.creditPaise && !dead && st && !st.counts ? (
-            <T s="micro" style={{ marginTop: 2 }}>
-              Not in the balance until accounts confirm it.
-            </T>
+          {st && st.label !== 'Confirmed' ? <Badge tone={st.tone}>{st.label}</Badge> : null}
+          {e.kind === 'bill' && e.claimedPaise > 0 ? (
+            <Badge tone="amber">{inrFromPaise(e.claimedPaise) + ' claimed, on hold'}</Badge>
           ) : null}
+          <View style={{ flex: 1 }} />
+          <T style={[{ fontSize: 12, color: C.muted }, tabular]}>= {signed(e.balancePaise)}</T>
         </View>
+        {/* A receipt that has not counted shows what it WOULD have been —
+            the line itself carries nothing, because nothing has arrived. */}
+        {e.kind === 'receipt' && !e.creditPaise && !dead && st && !st.counts ? (
+          <T s="micro" style={{ marginTop: 2 }}>
+            Not in the balance until accounts confirm it.
+          </T>
+        ) : null}
       </View>
+    </View>
+  );
+}
+
+/** One term of the statement's sum on the navy card. */
+function SumCell({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <View style={{ flex: 1, minWidth: 0 }}>
+      <T style={{ fontSize: 12, color: C.onNavyMuted }} numberOfLines={1}>
+        {label}
+      </T>
+      <T style={[{ fontSize: 15, color: tone ?? '#FFFFFF' }, weight(800), tabular]} numberOfLines={1}>
+        {value}
+      </T>
     </View>
   );
 }
@@ -626,12 +761,13 @@ function Bills({ view }: { view: AccountView }) {
 
   return (
     <View style={{ gap: 12 }}>
-      <Search value={q} onChange={setQ} placeholder="Bill number, product or amount" />
+      <Search value={q} onChange={setQ} placeholder="Bill no., product or amount" />
       <ChipRow>
         {BILL_FILTERS.map((f) => (
           <Chip
             key={f.key}
             label={f.label}
+            ink={FILTER_INK[f.label]}
             count={view.bills.filter((b) => billMatches(b, f.key)).length}
             on={filter === f.key}
             onPress={() => {
@@ -641,10 +777,10 @@ function Bills({ view }: { view: AccountView }) {
           />
         ))}
       </ChipRow>
-      <Card style={{ flexDirection: 'row', gap: 12 }}>
-        <Figure label={plural(list.length, 'bill')} value={inrFromPaise(billed)} sub="billed" />
-        <Figure label="Still open on these" value={inrFromPaise(balance)} tone={balance ? C.danger : undefined} sub="stated bills only" />
-      </Card>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Figure tile label={plural(list.length, 'bill') + ' billed'} value={inrFromPaise(billed)} />
+        <Figure tile label="Still open · stated only" value={inrFromPaise(balance)} tone={balance ? C.danger : undefined} />
+      </View>
 
       {list.length === 0 ? (
         <Empty
@@ -684,10 +820,10 @@ function BillCard({ b, open, onToggle }: { b: AccountBill; open: boolean; onTogg
         onPress={onToggle}
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
-        style={({ pressed }) => [{ padding: 14 }, pressed && { backgroundColor: C.wash }]}>
+        style={({ pressed }) => [{ paddingVertical: 14, paddingHorizontal: 16 }, pressed && { backgroundColor: C.wash }]}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]} numberOfLines={1}>
+            <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]} numberOfLines={1}>
               {b.billNo}
             </T>
             <T s="caption">
@@ -696,8 +832,8 @@ function BillCard({ b, open, onToggle }: { b: AccountBill; open: boolean; onTogg
             </T>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600), tabular]}>{inrFromPaise(b.amountPaise)}</T>
-            <T s="micro" style={[tabular, { color: unstated ? C.muted : b.balancePaise > 0 ? C.danger : C.success }]}>
+            <T style={[{ fontSize: 16, lineHeight: 21, color: C.ink }, weight(800), tabular]}>{inrFromPaise(b.amountPaise)}</T>
+            <T style={[{ fontSize: 12, lineHeight: 16 }, weight(700), tabular, { color: unstated ? C.muted : b.balancePaise > 0 ? C.danger : C.success }]}>
               {unstated ? 'not stated' : b.balancePaise > 0 ? inrFromPaise(b.balancePaise) + ' open' : 'paid in full'}
             </T>
           </View>
@@ -708,23 +844,27 @@ function BillCard({ b, open, onToggle }: { b: AccountBill; open: boolean; onTogg
           {b.claimedPaise > 0 ? <Badge tone="amber">{inrFromPaise(b.claimedPaise)} claimed</Badge> : null}
           {b.bucket && b.balancePaise > 0 && !unstated ? <Badge tone="neutral">{b.bucket}</Badge> : null}
           <View style={{ flex: 1 }} />
-          <T s="micro">{b.lines.length ? plural(b.lines.length, 'item') : ''}</T>
-          <Icon name={open ? 'close' : 'forward'} size={14} color={C.faint} strokeWidth={1.6} />
+          <T style={{ fontSize: 12, color: C.faint }}>{b.lines.length ? plural(b.lines.length, 'item') : ''}</T>
+          <T style={{ fontSize: 12, color: C.faint }}>{open ? '▴' : '▾'}</T>
         </View>
       </Pressable>
 
       {open ? (
-        <View style={{ paddingHorizontal: 14, paddingBottom: 14, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 10, gap: 10 }}>
-          <View>
-            <Line label="Billed" value={inrFromPaise(b.amountPaise)} />
-            <Line label="Paid (confirmed)" value={inrFromPaise(b.paidPaise)} tone={b.paidPaise ? C.success : undefined} />
-            <Line
+        <View style={{ paddingHorizontal: 16, paddingBottom: 14, borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 10, gap: 10 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            <MiniTile label="Billed" value={inrFromPaise(b.amountPaise)} />
+            <MiniTile label="Paid ✓" a11y="Paid, confirmed" value={inrFromPaise(b.paidPaise)} tone={b.paidPaise ? C.success : undefined} />
+            <MiniTile
               label="Balance"
               value={unstated ? 'Not stated' : inrFromPaise(Math.max(0, b.balancePaise))}
               tone={!unstated && b.balancePaise > 0 ? C.danger : undefined}
             />
-            {b.overdueDays > 0 && !unstated ? <Line label="Overdue by" value={plural(b.overdueDays, 'day')} tone={C.danger} /> : null}
-            {b.claimedPaise > 0 ? <Line label="Claimed, not yet confirmed" value={inrFromPaise(b.claimedPaise)} tone={C.warnInk} /> : null}
+            {b.overdueDays > 0 && !unstated ? (
+              <MiniTile label="Overdue" a11y="Overdue by" value={b.overdueDays + ' d'} tone={C.danger} />
+            ) : null}
+            {b.claimedPaise > 0 ? (
+              <MiniTile label="Claimed" a11y="Claimed, not yet confirmed" value={inrFromPaise(b.claimedPaise)} tone={C.warnInk} />
+            ) : null}
           </View>
 
           {unstated ? (
@@ -805,12 +945,13 @@ function Payments({ view }: { view: AccountView }) {
 
   return (
     <View style={{ gap: 12 }}>
-      <Search value={q} onChange={setQ} placeholder="Reference, receipt number or amount" />
+      <Search value={q} onChange={setQ} placeholder="Reference, receipt no. or amount" />
       <ChipRow>
         {RECEIPT_FILTERS.map((f) => (
           <Chip
             key={f.key}
             label={f.label}
+            ink={FILTER_INK[f.label]}
             count={view.receipts.filter((r) => receiptMatches(r, f.key)).length}
             on={filter === f.key}
             onPress={() => {
@@ -820,14 +961,16 @@ function Payments({ view }: { view: AccountView }) {
           />
         ))}
       </ChipRow>
-      <Card style={{ flexDirection: 'row', gap: 12 }}>
-        <Figure label={plural(list.length, 'payment')} value={inrFromPaise(confirmed)} sub="confirmed of these" tone={confirmed ? C.success : undefined} />
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Figure tile label={plural(list.length, 'payment') + ' · confirmed'} value={inrFromPaise(confirmed)} tone={confirmed ? C.success : undefined} />
         <Figure
+          tile
           label="With accounts"
           value={inrFromPaise(list.filter((r) => r.status === 'reported' || r.status === 'held').reduce((s, r) => s + r.amountPaise, 0))}
           sub="not yet counted"
+          tone={C.warnInk}
         />
-      </Card>
+      </View>
 
       {list.length === 0 ? (
         <Empty
@@ -865,38 +1008,45 @@ function ReceiptCard({ r, open, onToggle }: { r: AccountReceipt; open: boolean; 
         onPress={onToggle}
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
-        style={({ pressed }) => [{ padding: 14 }, pressed && { backgroundColor: C.wash }]}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+        style={({ pressed }) => [{ paddingVertical: 14, paddingHorizontal: 16 }, pressed && { backgroundColor: C.wash }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: dead ? C.dangerBg : st.counts ? C.successBg : C.warnBg,
+            }}>
+            <Icon name="wallet" size={15} color={dead ? C.danger : st.counts ? C.success : C.warnInk} strokeWidth={2} />
+          </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <T
-              style={[{ fontSize: 16, lineHeight: 22, color: dead ? C.muted : C.ink, textDecorationLine: dead ? 'line-through' : 'none' }, weight(600), tabular]}>
+              style={[{ fontSize: 17, lineHeight: 22, color: dead ? C.muted : C.ink, textDecorationLine: dead ? 'line-through' : 'none' }, weight(800), tabular]}>
               {inrFromPaise(r.amountPaise)}
             </T>
             <T s="caption" numberOfLines={1}>
               {longDay(r.receivedAt)} · {r.mode === 'Not stated' ? 'method not recorded' : r.mode}
               {r.reference ? ' · ' + r.reference : ''}
+              {r.receiptNo ? ' · Receipt ' + r.receiptNo : ''}
             </T>
           </View>
           <Badge tone={st.tone}>{st.label}</Badge>
         </View>
-        {r.receiptNo ? (
-          <T s="micro" style={{ marginTop: 4 }}>
-            Receipt {r.receiptNo}
-          </T>
-        ) : null}
       </Pressable>
 
       {open ? (
-        <View style={{ paddingHorizontal: 14, paddingBottom: 14, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 10, gap: 10 }}>
+        <View style={{ paddingHorizontal: 16, paddingBottom: 14, borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 10, gap: 10 }}>
           <T s="small">{r.sentence}</T>
-          <View>
-            <Line label="Received" value={longDay(r.receivedAt)} />
-            {r.instrumentDate ? <Line label="Date on the cheque" value={longDay(r.instrumentDate)} /> : null}
-            {r.reportedBy ? <Line label="Written down by" value={r.reportedBy} /> : null}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            <MiniTile half label="Received" value={longDay(r.receivedAt)} />
+            {r.instrumentDate ? <MiniTile half label="Cheque date" a11y="Date on the cheque" value={longDay(r.instrumentDate)} /> : null}
+            {r.reportedBy ? <MiniTile half label="Written by" a11y="Written down by" value={r.reportedBy} /> : null}
             {r.confirmedBy ? (
-              <Line label="Confirmed by" value={r.confirmedBy + (r.confirmedAt ? ' · ' + longDay(r.confirmedAt) : '')} />
+              <MiniTile half label="Confirmed by" value={r.confirmedBy + (r.confirmedAt ? ' · ' + longDay(r.confirmedAt) : '')} />
             ) : null}
-            {r.onAccountPaise > 0 ? <Line label="On account" value={inrFromPaise(r.onAccountPaise)} /> : null}
+            {r.onAccountPaise > 0 ? <MiniTile full label="On account" value={inrFromPaise(r.onAccountPaise)} /> : null}
           </View>
           {r.holdReason && r.status === 'held' ? (
             <Notice tone="warn" head="Why it is on hold">
@@ -952,22 +1102,33 @@ function CreditNotes({ view }: { view: AccountView }) {
         const st = creditNoteStatus(n.status);
         return (
           <Card key={n.id} style={{ gap: 6 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
-              <T style={[{ fontSize: 15, color: C.ink, flex: 1 }, weight(600), tabular]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Icon name="doc" size={20} color={C.primaryDeep} strokeWidth={2} />
+              <T style={[{ fontSize: 17, color: C.ink, flex: 1 }, weight(800), tabular]}>
                 {n.amountPaise != null ? inrFromPaise(n.amountPaise) : 'Amount not set yet'}
               </T>
               <Badge tone={st.tone}>{st.label}</Badge>
             </View>
             <T s="caption">
               Asked {longDay(n.at)}
-              {n.raisedBy ? ' by ' + n.raisedBy : ''}
-              {n.billNo ? ' · against bill ' + n.billNo : ' · no bill named'}
+              {n.raisedBy ? ' · ' + n.raisedBy : ''}
+              {n.billNo ? ' · bill ' + n.billNo : ' · no bill named'}
             </T>
             <T s="small">{n.description}</T>
             {n.reference || n.cnDate ? (
-              <View>
-                {n.reference ? <Line label="Credit note" value={n.reference} /> : null}
-                {n.cnDate ? <Line label="Dated" value={longDay(n.cnDate)} /> : null}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 2 }}>
+                {n.reference ? (
+                  <T style={{ fontSize: 12, color: C.muted }}>
+                    {'CN '}
+                    <T style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{n.reference}</T>
+                  </T>
+                ) : null}
+                {n.cnDate ? (
+                  <T style={{ fontSize: 12, color: C.muted }}>
+                    {'Dated '}
+                    <T style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{longDay(n.cnDate)}</T>
+                  </T>
+                ) : null}
               </View>
             ) : null}
           </Card>
@@ -979,6 +1140,42 @@ function CreditNotes({ view }: { view: AccountView }) {
 
 /* ================================================================ shared */
 
+/** A small wash tile inside an opened card: Paid ✓ / Overdue / Received / Written by… */
+function MiniTile({
+  label,
+  value,
+  tone,
+  a11y,
+  half = false,
+  full = false,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  a11y?: string;
+  half?: boolean;
+  full?: boolean;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={(a11y ?? label) + ': ' + value}
+      style={{
+        width: full ? '100%' : half ? '48.9%' : '32.2%',
+        backgroundColor: C.canvas,
+        borderRadius: 12,
+        padding: 8,
+      }}>
+      <T style={{ fontSize: 11, lineHeight: 14, color: C.muted }} numberOfLines={1}>
+        {label}
+      </T>
+      <T style={[{ fontSize: 14, lineHeight: 19, color: tone ?? C.ink }, weight(800), tabular]} numberOfLines={1}>
+        {value}
+      </T>
+    </View>
+  );
+}
+
 function signed(paise: number): string {
   if (paise < 0) return inrFromPaise(-paise) + ' in credit';
   return inrFromPaise(paise);
@@ -986,12 +1183,12 @@ function signed(paise: number): string {
 
 function Empty({ head, body }: { head: string; body: string }) {
   return (
-    <Card style={{ paddingVertical: 24 }}>
-      <T style={{ fontSize: 15, lineHeight: 22, color: C.ink, textAlign: 'center' }}>{head}</T>
-      <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-        {body}
-      </T>
-    </Card>
+    <View style={{ backgroundColor: C.surface, borderRadius: 24, paddingVertical: 24, paddingHorizontal: 18 }}>
+      <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink, textAlign: 'center' }, weight(800)]}>{head}</T>
+      {body ? (
+        <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center', marginTop: 6 }}>{body}</T>
+      ) : null}
+    </View>
   );
 }
 
@@ -1001,8 +1198,8 @@ function More({ shown, total, onMore }: { shown: number; total: number; onMore: 
     <Pressable
       onPress={onMore}
       accessibilityRole="button"
-      style={{ height: 48, borderRadius: radius.lg, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-      <T style={[{ fontSize: 15, color: C.primary }, weight(500)]}>Show more · {total - shown} left</T>
+      style={({ pressed }) => ({ height: 52, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+      <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>Show more · {total - shown} left</T>
     </Pressable>
   );
 }
@@ -1015,13 +1212,11 @@ function Search({ value, onChange, placeholder }: { value: string; onChange: (v:
         alignItems: 'center',
         gap: 8,
         height: 48,
-        paddingHorizontal: 14,
-        borderRadius: radius.lg,
-        borderWidth: 1,
-        borderColor: C.border,
+        paddingHorizontal: 16,
+        borderRadius: 24,
         backgroundColor: C.surface,
       }}>
-      <Icon name="search" size={18} color={C.muted} strokeWidth={1.6} />
+      <Icon name="search" size={18} color={C.muted} strokeWidth={2} />
       <TextInput
         value={value}
         onChangeText={onChange}
@@ -1032,8 +1227,13 @@ function Search({ value, onChange, placeholder }: { value: string; onChange: (v:
         style={{ flex: 1, fontSize: 15, color: C.ink, height: '100%' }}
       />
       {value ? (
-        <Pressable onPress={() => onChange('')} accessibilityRole="button" accessibilityLabel="Clear" hitSlop={12}>
-          <Icon name="close" size={16} color={C.muted} strokeWidth={1.6} />
+        <Pressable
+          onPress={() => onChange('')}
+          accessibilityRole="button"
+          accessibilityLabel="Clear"
+          hitSlop={10}
+          style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.canvas, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="close" size={12} color={C.ink} strokeWidth={2.4} />
         </Pressable>
       ) : null}
     </View>

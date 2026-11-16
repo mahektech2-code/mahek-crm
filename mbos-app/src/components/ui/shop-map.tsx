@@ -92,6 +92,12 @@ export type MapPin = {
   isLead?: boolean;
   /** Ticked on the journey screen. Ignored elsewhere. */
   picked?: boolean;
+  /**
+   * The stop's place in the day, where a screen numbers its picks (V3 draws a
+   * picked or visited stop as a numbered purple pin). Optional: a picked pin
+   * with no number is the plain purple dot it always was.
+   */
+  order?: number | null;
 };
 
 /**
@@ -255,7 +261,14 @@ export function ShopMap({
         ? placed.map((p) => ({
             type: 'Feature',
             id: p.id,
-            properties: { pinId: p.id, kind: p.picked ? 'picked' : p.isLead ? 'lead' : 'shop' },
+            /* A pin that CARRIES `picked` — true or false — is on a screen that
+               picks; there an unpicked shop is drawn hollow (V3), so the ones
+               chosen stand out. The book's own map never sets it and keeps
+               its solid dots. */
+            properties: {
+              pinId: p.id,
+              kind: p.picked ? 'picked' : p.picked === false ? 'open' : p.isLead ? 'lead' : 'shop',
+            },
             geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
           }))
         : [],
@@ -519,10 +532,10 @@ export function ShopMap({
                 id="shop-points"
                 filter={['!', ['has', 'point_count']]}
                 paint={{
-                  'circle-color': ['match', ['get', 'kind'], 'picked', C.primary, 'lead', C.warn, C.ink],
+                  'circle-color': ['match', ['get', 'kind'], 'picked', C.primary, 'lead', C.warn, 'open', '#ffffff', C.ink],
                   'circle-radius': ['match', ['get', 'kind'], 'picked', 11, 8],
-                  'circle-stroke-width': 2,
-                  'circle-stroke-color': '#ffffff',
+                  'circle-stroke-width': ['match', ['get', 'kind'], 'open', 2.5, 2],
+                  'circle-stroke-color': ['match', ['get', 'kind'], 'open', C.ink, '#ffffff'],
                 }}
               />
             </GeoJSONSource>
@@ -547,20 +560,42 @@ export function ShopMap({
               <View style={TARGET}>
                 {/* Drawn here rather than as a symbol layer so a lead and a
                     picked stop are told apart at a glance without a legend. */}
-                <View
-                  style={{
-                    width: p.picked ? 22 : 16,
-                    height: p.picked ? 22 : 16,
-                    borderRadius: 11,
-                    borderWidth: 2,
-                    borderColor: '#fff',
-                    backgroundColor: p.picked
-                      ? C.primary
-                      : p.isLead
-                        ? C.warn
-                        : C.ink,
-                  }}
-                />
+                {p.picked && p.order != null ? (
+                  /* V3: a picked or visited stop is a numbered purple pin. */
+                  <View
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 13,
+                      borderWidth: 2,
+                      borderColor: '#fff',
+                      backgroundColor: C.primary,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: shadow.soft,
+                    }}>
+                    <Text style={[{ fontSize: 12, color: '#fff' }, weight(800)]}>{p.order}</Text>
+                  </View>
+                ) : (
+                  <View
+                    style={{
+                      width: p.picked ? 22 : 16,
+                      height: p.picked ? 22 : 16,
+                      borderRadius: 11,
+                      /* Hollow where the screen picks and this one is not
+                         picked; a solid dot with a white edge everywhere else. */
+                      borderWidth: p.picked === false ? 2.5 : 2,
+                      borderColor: p.picked === false ? C.ink : '#fff',
+                      backgroundColor: p.picked
+                        ? C.primary
+                        : p.picked === false
+                          ? '#fff'
+                          : p.isLead
+                            ? C.warn
+                            : C.ink,
+                    }}
+                  />
+                )}
               </View>
             </Marker>
           ))}

@@ -18,6 +18,7 @@ import {
   type LeadStage,
 } from "../lead-labels";
 import { leadGateInput } from "./lead-service";
+import { OPEN_LEAD } from "../lead-action-window";
 import { leadsVisible, managerScope } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
@@ -50,21 +51,11 @@ import { leadsVisible, managerScope } from "./sales-service";
  * regional manager the whole country.
  * ------------------------------------------------------------------------- */
 
-/**
- * The rungs these three screens treat as live work.
- *
- * The same fragment `lead-console-service.ts` keeps, written again rather than
- * imported because it is not exported there and this file may not edit it.
- * That is a real duplication and it is named here rather than hidden: if the
- * definition of a worklist ever changes, both copies have to move, and the
- * comment is what tells the next reader there is a second one.
- */
-const STILL_WORKING = sql.raw(
-  `c.lead_stage is not null
-     and c.lead_archived = false
-     and c.deleted_at is null
-     and c.lead_stage not in ('lost', 'won', 'customer', 'active_distributor')`,
-);
+/* The rungs these three screens treat as live work: the ONE open-lead predicate (`openLead` in `lead-action-window.ts`): still on
+   the funnel AND not converted, so a third-party shop or an invoiced account at
+   `second_order` is in no queue here — exactly as it is on no Lead Management
+   list. */
+const STILL_WORKING = OPEN_LEAD;
 
 /* ═════════════════════════════════════════════ §4 — the suspect decisions */
 

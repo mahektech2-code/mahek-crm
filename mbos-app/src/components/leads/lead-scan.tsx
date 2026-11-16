@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Image, Pressable, ActivityIndicator } from 'react-native';
+import { View, Image, Pressable, ActivityIndicator, Text, TextInput } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { PillButton } from '../ui/v3';
+import { TickDisc } from './v3-parts';
 import { Icon } from '../ui/Icon';
 import { useOnline } from '../ui/dictate';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { getConfig } from '../../data/config';
 import { scanLead, type LeadScanFound } from '../../sync/api';
 import type { AreaRule } from '../../engines/lead-areas';
@@ -216,109 +217,131 @@ export function LeadScanPanel({
 
   const anyTicked = SCAN_FIELDS.some((f) => ticked[f] && values[f].trim());
 
+  const review = phase === 'review';
+  /* V3 draws picking as a navy card (lime accents) and the review as a white
+     one — two different jobs, two different surfaces. */
+  const ink = review ? C.ink : '#FFFFFF';
+  const sub = review ? C.muted : C.onNavyMuted;
+
   return (
-    <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.primaryTint, borderColor: C.primaryEdge }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="scan" size={18} color={C.primaryDeep} />
-        <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(600)]}>Scan a card or shop board</T>
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close scan" hitSlop={10}>
-          <Icon name="close" size={18} color={C.muted} />
+    <View style={{ borderRadius: 24, padding: 16, backgroundColor: review ? C.surface : C.navy }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Icon name="scan" size={20} color={review ? C.primary : C.lime} strokeWidth={2} />
+        <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 16, lineHeight: 21, color: ink }, weight(800)]}>
+          Scan card or board
+        </Text>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close scan"
+          hitSlop={4}
+          style={({ pressed }) => ({
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: review ? (pressed ? C.hairline : C.canvas) : 'rgba(255,255,255,0.1)',
+          })}>
+          <Icon name="close" size={16} color={ink} strokeWidth={2.2} />
         </Pressable>
       </View>
 
-      {phase !== 'review' ? (
+      {!review ? (
         <>
-          <T s="caption" style={{ marginTop: 4 }}>
-            Up to {maxImages} photos: a visiting card (both sides), the shop board, a bill. We fill the details for you
-            to check. Photos are not saved.
-          </T>
+          <Text
+            accessibilityLabel={`Up to ${maxImages} photos: a visiting card (both sides), the shop board, a bill. We fill the details for you to check. Photos are not saved.`}
+            style={[{ marginTop: 6, fontSize: 12, lineHeight: 17, color: sub }, weight(400)]}>
+            {`Up to ${maxImages}: card both sides, shop board, a bill · photos not saved`}
+          </Text>
 
-          {photos.length ? (
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-              {photos.map((uri, i) => (
-                <View key={uri}>
-                  <Image
-                    source={{ uri }}
-                    style={{ width: 76, height: 76, borderRadius: radius.md, backgroundColor: C.wash }}
-                    accessibilityLabel={`Photo ${i + 1}`}
-                  />
-                  {phase === 'pick' ? (
-                    <Pressable
-                      onPress={() => setPhotos((p) => p.filter((x) => x !== uri))}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remove photo ${i + 1}`}
-                      hitSlop={8}
-                      style={{
-                        position: 'absolute',
-                        top: -6,
-                        right: -6,
-                        width: 24,
-                        height: 24,
-                        borderRadius: 12,
-                        backgroundColor: C.ink,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}>
-                      <Icon name="close" size={13} color={C.surface} strokeWidth={2.2} />
-                    </Pressable>
-                  ) : null}
-                </View>
-              ))}
-            </View>
-          ) : null}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            {photos.map((uri, i) => (
+              <View key={uri}>
+                <Image
+                  source={{ uri }}
+                  style={{ width: 72, height: 72, borderRadius: 16, backgroundColor: C.body }}
+                  accessibilityLabel={`Photo ${i + 1}`}
+                />
+                {phase === 'pick' ? (
+                  <Pressable
+                    onPress={() => setPhotos((p) => p.filter((x) => x !== uri))}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove photo ${i + 1}`}
+                    hitSlop={12}
+                    style={{
+                      position: 'absolute',
+                      top: -6,
+                      right: -6,
+                      width: 24,
+                      height: 24,
+                      borderRadius: 12,
+                      backgroundColor: C.surface,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Icon name="close" size={12} color={C.ink} strokeWidth={2.4} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+            {phase === 'pick' && room > 0 ? (
+              <>
+                <PhotoSlot
+                  icon="camera"
+                  ink={C.lime}
+                  label={photos.length ? 'Take another photo' : 'Take a photo'}
+                  onPress={() => void add('camera')}
+                />
+                <PhotoSlot icon="image" ink="#FFFFFF" label="From gallery" onPress={() => void add('library')} />
+              </>
+            ) : null}
+          </View>
 
           {phase === 'reading' ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 }}>
-              <ActivityIndicator color={C.primaryDeep} />
-              <T s="small" style={{ color: C.body }}>
+              <ActivityIndicator color={C.lime} />
+              <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
                 Reading {photos.length === 1 ? 'the photo' : `${photos.length} photos`}…
-              </T>
+              </Text>
             </View>
           ) : (
             <>
-              {room > 0 ? (
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                  <DashedButton
-                    label={photos.length ? 'Take another' : 'Take a photo'}
-                    tone="primary"
-                    onPress={() => void add('camera')}
-                    style={{ flex: 1 }}
-                  />
-                  <DashedButton label="From gallery" onPress={() => void add('library')} style={{ flex: 1 }} />
-                </View>
-              ) : null}
               {photos.length ? (
-                <PrimaryButton
+                <PillButton
                   label={photos.length === 1 ? 'Read the photo' : `Read ${photos.length} photos`}
+                  variant="lime"
+                  height={56}
                   onPress={() => void read()}
                   disabled={!online}
                   whyDisabled="No internet. Reading photos needs signal. Type the details instead."
-                  style={{ marginTop: 12 }}
+                  style={{ marginTop: 14 }}
                 />
               ) : null}
               {!online ? (
-                <T s="caption" style={{ marginTop: 8, color: C.warnInk }}>
-                  No internet. Reading photos needs signal. Type the details instead.
-                </T>
+                <Text
+                  accessibilityLabel="No internet. Reading photos needs signal. Type the details instead."
+                  style={[{ marginTop: 10, fontSize: 12, lineHeight: 17, color: '#FFD98A' }, weight(400)]}>
+                  Offline: reading needs signal, type instead
+                </Text>
               ) : null}
             </>
           )}
         </>
       ) : (
         <>
-          <T s="caption" style={{ marginTop: 4 }}>
+          <Text style={[{ marginTop: 6, fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>
             Check each one against the card. Untick anything wrong. Only ticked values go into the form.
-          </T>
+          </Text>
           {found?.note ? (
-            <T s="small" style={{ marginTop: 8, color: C.warnInk }}>
-              {found.note}
-            </T>
+            <Text style={[{ marginTop: 6, fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(400)]}>{found.note}</Text>
           ) : null}
 
-          {SCAN_FIELDS.map((f) => (
+          {SCAN_FIELDS.map((f, i) => (
             <ReviewRow
               key={f}
               field={f}
+              last={i === SCAN_FIELDS.length - 1}
               value={values[f]}
               ticked={ticked[f]}
               onTick={() => setTicked((t) => ({ ...t, [f]: !t[f] }))}
@@ -329,50 +352,100 @@ export function LeadScanPanel({
               hint={hintFor(f, found, areas, values.location) ?? replaces(f, ticked[f], values[f], current[f])}
             >
               {f === 'mobile' && found?.otherNumbers.length ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                  {found.otherNumbers.map((n) => (
-                    <Choice
-                      key={n}
-                      label={n}
-                      selected={values.mobile === n}
-                      onPress={() => {
-                        setValues((x) => ({ ...x, mobile: n }));
-                        setTicked((t) => ({ ...t, mobile: true }));
-                      }}
-                      style={{ paddingHorizontal: 10, minHeight: 36 }}
-                    />
-                  ))}
-                </View>
+                <>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8, marginLeft: 40 }}>
+                    {found.otherNumbers.map((n) => {
+                      const on = values.mobile === n;
+                      return (
+                        <Pressable
+                          key={n}
+                          onPress={() => {
+                            setValues((x) => ({ ...x, mobile: n }));
+                            setTicked((t) => ({ ...t, mobile: true }));
+                          }}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: on }}
+                          accessibilityLabel={'Use ' + n}
+                          hitSlop={{ top: 6, bottom: 6 }}
+                          style={{
+                            height: 32,
+                            paddingHorizontal: 12,
+                            borderRadius: 16,
+                            justifyContent: 'center',
+                            backgroundColor: on ? C.navy : C.canvas,
+                          }}>
+                          <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{n}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={[{ fontSize: 11, color: C.muted, marginTop: 4, marginLeft: 40 }, weight(400)]}>
+                    Other numbers · tap to use
+                  </Text>
+                </>
               ) : null}
             </ReviewRow>
           ))}
 
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-            <SecondaryButton
-              label="Scan again"
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+            <Pressable
               onPress={() => {
                 setPhase('pick');
                 setFound(null);
               }}
-              style={{ flex: 1, borderRadius: radius.xl }}
-            />
-            <PrimaryButton
+              accessibilityRole="button"
+              style={({ pressed }) => ({
+                width: 130,
+                height: 52,
+                borderRadius: 26,
+                backgroundColor: pressed ? C.hairline : C.canvas,
+                alignItems: 'center',
+                justifyContent: 'center',
+              })}>
+              <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Scan again</Text>
+            </Pressable>
+            <PillButton
               label="Fill the form"
+              variant="navy"
+              height={52}
               onPress={fill}
               disabled={!anyTicked}
               whyDisabled="Tick at least one value to fill."
-              style={{ flex: 1, borderRadius: radius.xl }}
+              style={{ flex: 1 }}
             />
           </View>
         </>
       )}
 
       {error ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 10 }}>
-          <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{error}</T>
+        <View style={{ marginTop: 10, backgroundColor: C.dangerBg, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10 }}>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(600)]}>{error}</Text>
         </View>
       ) : null}
-    </Card>
+    </View>
+  );
+}
+
+/** A 72 dashed square on the navy card — take a photo, from the gallery. */
+function PhotoSlot({ icon, ink, label, onPress }: { icon: 'camera' | 'image'; ink: string; label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({
+        width: 72,
+        height: 72,
+        borderRadius: 16,
+        borderWidth: 1.5,
+        borderStyle: 'dashed',
+        borderColor: C.faint,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: pressed ? 'rgba(255,255,255,0.08)' : 'transparent',
+      })}>
+      <Icon name={icon} size={22} color={ink} strokeWidth={2} />
+    </Pressable>
   );
 }
 
@@ -383,6 +456,7 @@ function ReviewRow({
   onTick,
   onChange,
   hint,
+  last,
   children,
 }: {
   field: ScanField;
@@ -391,45 +465,40 @@ function ReviewRow({
   onTick: () => void;
   onChange: (v: string) => void;
   hint: { text: string; warn: boolean } | null;
+  last: boolean;
   children?: React.ReactNode;
 }) {
   return (
-    <View style={{ marginTop: 12 }}>
-      <Pressable
-        onPress={onTick}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: ticked }}
-        accessibilityLabel={`Use ${SCAN_FIELD_LABEL[field]}`}
-        hitSlop={6}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <View
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: 5,
-            borderWidth: 1.5,
-            borderColor: ticked ? C.primary : C.border,
-            backgroundColor: ticked ? C.primary : C.surface,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-          {ticked ? <Icon name="tick" size={14} color={C.surface} strokeWidth={2.4} /> : null}
+    <View style={{ paddingVertical: 8, borderBottomWidth: last ? 0 : 1, borderBottomColor: C.hairline }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 40 }}>
+        <Pressable
+          onPress={onTick}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: ticked }}
+          accessibilityLabel={`Use ${SCAN_FIELD_LABEL[field]}`}
+          hitSlop={10}>
+          <TickDisc on={ticked} />
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint }, weight(400)]}>{SCAN_FIELD_LABEL[field]}</Text>
+          <TextInput
+            value={value}
+            onChangeText={onChange}
+            placeholder="Not found"
+            placeholderTextColor={C.faint}
+            accessibilityLabel={SCAN_FIELD_LABEL[field]}
+            keyboardType={field === 'mobile' ? 'phone-pad' : 'default'}
+            autoCapitalize={field === 'gstin' ? 'characters' : 'sentences'}
+            multiline={field === 'address'}
+            style={[{ fontSize: 15, lineHeight: 20, color: C.ink, paddingVertical: 2, paddingHorizontal: 0 }, weight(400)]}
+          />
+          {hint ? (
+            <Text style={[{ fontSize: 11, lineHeight: 15, color: hint.warn ? C.warnInk : C.success }, weight(400)]}>
+              {hint.text}
+            </Text>
+          ) : null}
         </View>
-        <SectionLabel>{SCAN_FIELD_LABEL[field]}</SectionLabel>
-      </Pressable>
-      <Input
-        value={value}
-        onChangeText={onChange}
-        placeholder="Not found"
-        keyboardType={field === 'mobile' ? 'phone-pad' : 'default'}
-        autoCapitalize={field === 'gstin' ? 'characters' : 'sentences'}
-        multiline={field === 'address'}
-      />
-      {hint ? (
-        <T s="caption" style={{ marginTop: 4, color: hint.warn ? C.warnInk : C.muted }}>
-          {hint.text}
-        </T>
-      ) : null}
+      </View>
       {children}
     </View>
   );

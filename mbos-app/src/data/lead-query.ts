@@ -11,6 +11,7 @@
  * ------------------------------------------------------------------------- */
 
 import {
+  ALL_RUNGS,
   normaliseMobile,
   shiftDays,
   viewMatch,
@@ -19,6 +20,22 @@ import {
   type LeadWhen,
 } from '../engines/leads';
 import { isoDate } from '../lib/format';
+import { foldStage } from '../engines/funnel/lead-ladder';
+import type { LeadStage } from '../engines/funnel/lead-labels';
+
+/* The stored words that fold to another rung, read off the mirrored engine's
+   own `foldStage` rather than typed out again here. */
+const FOLDS = ALL_RUNGS.map((w) => [w, foldStage(w as LeadStage)] as const).filter(([w, to]) => w !== to);
+
+/** `funnelStage` read onto the one ladder, as SQL. No parameters. */
+const FOLDED_RUNG = FOLDS.length
+  ? `CASE funnelStage ${FOLDS.map(([w, to]) => `WHEN '${w}' THEN '${to}'`).join(' ')} ELSE funnelStage END`
+  : 'funnelStage';
+
+/** Every stored word that reads as this rung, itself included. */
+function storedWordsFor(rung: string): string[] {
+  return [rung, ...FOLDS.filter(([, to]) => to === rung).map(([w]) => w)];
+}
 
 /**
  * What the book can be cut by.
@@ -99,12 +116,13 @@ function narrowing(filter: LeadBookFilter): { where: string; args: string[] } {
   if (filter.rung && match) {
     /* Sample received & review is stored as `sample_review`; the older
        `sample_received` is the same rung, so the chip answers for both. */
-    if (filter.rung === 'sample_review') {
-      parts.push("funnelStage IN ('sample_review', 'sample_received')");
-    } else {
-      parts.push('funnelStage = ?');
-      args.push(filter.rung);
-    }
+    /* Every stored word that FOLDS to the picked rung — `new` and `contacted`
+       under Suspect, `qualified` under Qualification, the older
+       `sample_received` under Sample received & review — because the chips
+       are counted folded (`FOLDED_RUNG`) and a chip must find what it counts. */
+    const words = storedWordsFor(filter.rung);
+    parts.push(`funnelStage IN (${words.map(() => '?').join(', ')})`);
+    args.push(...words);
   }
 
   /*
@@ -274,9 +292,10 @@ export function rungCountsQuery(
   const search = searching(query);
   return {
     sql:
-      /* The older sample_received is counted as Sample received & review. */
-      `SELECT CASE WHEN funnelStage = 'sample_received'` +
-      ` THEN 'sample_review' ELSE funnelStage END AS rung, COUNT(*) AS count FROM leads` +
+      /* Counted FOLDED, so a lead stored at a retired word (`new`,
+         `qualified`, `sample_received`…) counts under the rung the record's
+         ladder highlights rather than under a chip that names no rung. */
+      `SELECT ${FOLDED_RUNG} AS rung, COUNT(*) AS count FROM leads` +
       ` WHERE ${narrow.where}${search.where} AND funnelStage IS NOT NULL` +
       ` GROUP BY rung ORDER BY count DESC, rung`,
     params: [...narrow.args, ...search.args],
@@ -298,8 +317,55 @@ export function rungCountsQuery(
  * A bare clause over `leads` with no parameters, so it can be spliced into a
  * DELETE and run against a real SQLite in `leads-query.test.ts`.
  */
-export const CONVERTED_LEAD = `(leads.thirdParty = 1
-    OR COALESCE(leads.funnelStage, '') IN ('won', 'customer', 'active_distributor')
-    OR leads.stage = 'Converted'
-    OR EXISTS (SELECT 1 FROM customers c
-                WHERE c.id = leads.id AND (c.thirdParty = 1 OR c.kind = 'customer')))`;
+export const CONVERTED_LEAD = `(${leadRowConverted('leads')}
+    OR EXISTS (SELECT 1 FROM customers c WHERE c.id = leads.id AND ${customerRowSettled('c')}))`;
+
+/**
+ * THE ONE RULE FOR "IS THIS STILL A LEAD", in its two halves.
+ *
+ * It used to be stated twice and the two disagreed: the Customers chips
+ * (`IS_LEAD` in `customer-query.ts`) left out only `won` / `Converted`, while
+ * the reconcile (`CONVERTED_LEAD` above) also read `customer`,
+ * `active_distributor` and the third-party mark — so a shop could be "a lead"
+ * on the chip and "converted" to the sweep that was about to delete its row.
+ * Both now build from these two clauses, and `isLiveLead` in
+ * `lib/account-label.ts` is the same rule in JavaScript for the record screen.
+ *
+ * `leadRowConverted` — what the lead's OWN row says: a winning terminal rung,
+ * the legacy word for one, or the third-party mark.
+ */
+export function leadRowConverted(alias: string): string {
+  return `(COALESCE(${alias}.thirdParty, 0) = 1
+    OR COALESCE(${alias}.funnelStage, '') IN ('won', 'customer', 'active_distributor')
+    OR COALESCE(${alias}.stage, '') = 'Converted')`;
+}
+
+/** What the CUSTOMER row says: the office invoices it, or it is a third party. */
+export function customerRowSettled(alias: string): string {
+  return `(COALESCE(${alias}.thirdParty, 0) = 1 OR COALESCE(${alias}.kind, '') = 'customer')`;
+}
+
+/**
+ * A `customers` row that is a LEAD — the Customers view's Leads chip, the
+ * card's "Lead" word and the tap that opens `/lead` all read this.
+ *
+ * Not third party and not invoiced (the mark and the ledger win, as on the
+ * office's lists), and then EITHER a live, unconverted lead row OR, where the
+ * phone holds no lead row at all, the office's own `kind = 'lead'`. That second
+ * arm is the shop the office calls a lead whose lead row has not reached this
+ * phone (another owner's lead in his territory, or a row the sweep released):
+ * it IS a lead, so it is counted and labelled as one, and it opens `/customer`
+ * because there is no ladder here to open. An ARCHIVED lead row means the lead
+ * was filed away, so its shop is listed under Customers, as before.
+ *
+ * NOTE: a lead row with no customers row at all cannot appear on this list —
+ * there is nothing to draw it from — so the Leads TAB can count a lead the
+ * Customers "Leads" chip does not. That is the one gap left between the two.
+ */
+export function leadCustomerClause(alias = 'customers'): string {
+  return `(NOT ${customerRowSettled(alias)}
+    AND (EXISTS (SELECT 1 FROM leads l WHERE l.id = ${alias}.id AND l.archived = 0
+                   AND NOT ${leadRowConverted('l')})
+         OR (COALESCE(${alias}.kind, '') = 'lead'
+             AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = ${alias}.id))))`;
+}

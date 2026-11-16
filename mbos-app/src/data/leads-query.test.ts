@@ -261,3 +261,27 @@ test('a lead that has become a customer is recognised by every one of the four f
   assert.deepEqual(hits, ['appointed', 'kind-moved', 'legacy', 'marked-here', 'marked-there', 'won']);
 });
 
+
+test('the rung chips count FOLDED stages, and a picked rung finds what it counts', () => {
+  const db = handset();
+  seed(db, [
+    { id: 'old-qualified', funnelStage: 'qualified', stage: 'Qualified' },
+    { id: 'qualification', funnelStage: 'qualification', stage: 'Qualified' },
+    { id: 'review', funnelStage: 'management_review', stage: 'Qualified' },
+  ]);
+  const q = rungCountsQuery({ view: 'qualification', today: TODAY })!;
+  const counts = (db.prepare(q.sql).all(...q.params) as { rung: string; count: number }[]).map((r) => ({
+    rung: r.rung,
+    count: r.count,
+  }));
+  /* `qualified` is a retired word; it counts under the rung it folds to. */
+  assert.deepEqual(counts, [
+    { rung: 'qualification', count: 2 },
+    { rung: 'management_review', count: 1 },
+  ]);
+  assert.deepEqual(
+    ids(db, leadBookQuery({ view: 'qualification', rung: 'qualification', today: TODAY })).sort(),
+    ['old-qualified', 'qualification'],
+  );
+  db.close();
+});

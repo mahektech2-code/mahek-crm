@@ -76,6 +76,7 @@ import {
   evaluateLeadStageMove,
   leadGateInput,
   leadRow,
+  StageAlreadyMoved,
 } from "../services/lead-service";
 import {
   COMMUNICATION_ACTIONS,
@@ -948,7 +949,16 @@ async function dispatchItem(
 type ScopedCustomer = {
   id: string;
   name: string;
-  /** Null on a real customer. Non-null means this record is still a lead. */
+  /**
+   * WHAT THE ROW IS — `lead` or `customer`. The ONLY reliable answer to "is
+   * this still a lead": a converted account keeps `lead_stage = 'won'` for
+   * ever as the record of how it was won, so a non-null stage says nothing.
+   */
+  kind: "lead" | "customer";
+  /**
+   * Where the lead stands on its ladder. NOT a lead/customer test: a converted
+   * account keeps the stage it was won on. Read `kind` for that.
+   */
   leadStage: string | null;
   /**
    * WHICH LADDER, carried because the visit's own suspect decision has to land
@@ -998,6 +1008,7 @@ export async function scopedCustomer(
     .select({
       id: customers.id,
       name: customers.name,
+      kind: customers.kind,
       leadStage: customers.leadStage,
       leadSalesType: customers.leadSalesType,
       thirdParty: customers.thirdParty,
@@ -1067,6 +1078,63 @@ export async function scopedCustomer(
   }
 
   return { ok: true, customer: customer as ScopedCustomer };
+}
+
+/**
+ * WHETHER THIS PRINCIPAL MAY WORK THIS LEAD — asked before a handset writes
+ * anything onto a lead row by its id.
+ *
+ * The lead handlers load the row by `item.entityId` and wrote straight onto it,
+ * so any signed-in handset could rewrite any `customers` row it could name:
+ * another salesman's lead, or a billed customer's name, phone and GSTIN. The
+ * answer is the same book every other handler asks through `scopedCustomer`,
+ * plus the seats a lead carries that `scopedToUsers` does not read — the Sales
+ * Manager seat above all, because she verifies and reviews a lead nobody has
+ * put in her book.
+ *
+ * A row that is not a lead is refused outright: a converted account is a
+ * customer, and a lead update writes lead-only columns (the rung, the
+ * qualification, the hold) that mean nothing on it. A refusal, never a retry —
+ * nothing about the row will change by waiting.
+ */
+async function leadWriteRefusal(
+  principal: MbosPrincipal,
+  lead: {
+    id: string;
+    name: string;
+    kind: "lead" | "customer";
+    ownerId: string | null;
+    leadManagerId: string | null;
+    salesManagerId: string | null;
+    salesAmId: string | null;
+    backOfficeAmId: string | null;
+  },
+): Promise<Rejection | null> {
+  if (lead.kind !== "lead") {
+    return reject(
+      "validation",
+      `${lead.name} is a customer now, not a lead, so this lead change was not applied. Open it from Customers.`,
+    );
+  }
+  const me = principal.user.id;
+  const seats = [lead.ownerId, lead.leadManagerId, lead.salesManagerId, lead.salesAmId, lead.backOfficeAmId];
+  if (seats.includes(me)) return null;
+  /* A manager whose team holds the Sales Manager seat works it too — the one
+     seat `principalBookClause` does not read. */
+  if (
+    principal.scope.kind === "all" ||
+    (lead.salesManagerId != null && principal.scope.userIds.includes(lead.salesManagerId))
+  ) {
+    return null;
+  }
+  const scoped = await scopedCustomer(principal, lead.id);
+  if (scoped.ok) return null;
+  return scoped.value.code === "not_permitted"
+    ? reject(
+        "not_permitted",
+        `${lead.name} is not one of your leads, so this change was not applied. Ask your manager to reassign it if it should be yours.`,
+      )
+    : scoped.value;
 }
 
 /* ------------------------------------------------------- what a phone can say */
@@ -1234,6 +1302,88 @@ function suspectDecisionRung(
   return nextStage(current, customer.leadSalesType) ?? current;
 }
 
+/**
+ * The visit's Suspect answer, moved through the SAME gate and the same
+ * transition row every other door uses.
+ *
+ * After the visit has committed, deliberately: `applyLeadStageMove` is its own
+ * transaction, and a refused move must never cost the visit. Re-reads the lead
+ * and asks again that it is still a lead, unmarked and an undecided Suspect,
+ * and moves it only if it is still on the rung it was read on
+ * (`expectFrom`) — so a decision that drained late cannot overwrite a sale, a
+ * loss or a lead somebody has since moved on. Returns why it did not move,
+ * in a sentence a manager can act on, or null `why` when it moved.
+ */
+async function applyVisitSuspectDecision(
+  principal: MbosPrincipal,
+  customerId: string,
+  to: LeadStage,
+  sentence: string | null,
+): Promise<{ moved: boolean; why: string | null }> {
+  const [lead, gate] = await Promise.all([leadRow(customerId), leadGateInput(customerId)]);
+  if (!lead || !gate) return { moved: false, why: "the lead could not be read." };
+  if (lead.kind !== "lead" || lead.thirdParty || !isUndecidedSuspect(lead.leadStage)) {
+    return { moved: false, why: "it is no longer an undecided Suspect, so the answer was left alone." };
+  }
+  const hats = await hatsFor(principal.user);
+  if (!canAny(hats, "lead.work")) {
+    return { moved: false, why: "his account is not set up to work leads." };
+  }
+
+  const reason = sentence?.trim() || null;
+  /* A loss demands a CODE; the visit form sends the salesman's sentence. Used
+     as the code where it is one, and otherwise the sentence is the reason, as a
+     visit has always recorded it. */
+  const lostCodes = (await getConfig())["leads.lostReasons"].map((r) => r.code);
+  const reasonCode = to === "lost" && reason && lostCodes.includes(reason) ? reason : null;
+
+  let decision = await evaluateLeadStageMove({
+    lead,
+    gate,
+    to,
+    reasonCode,
+    override: null,
+    canOverride: false,
+  });
+  if (!decision.ok && to === "lost" && decision.code === "lost_reason" && reason) {
+    decision = { ok: true, kind: "passed", overriddenConditions: [] };
+  }
+  if (!decision.ok) {
+    const missing = decision.missing.map((c) => c.says).join("; ");
+    return { moved: false, why: missing ? `${decision.message} Still to do: ${missing}.` : decision.message };
+  }
+
+  const day = await today();
+  try {
+    await applyLeadStageMove(
+      { userId: principal.user.id, hat: grantingHat(hats, "lead.work"), sourceApp: "mbos" },
+      lead,
+      to,
+      {
+        decision,
+        reasonCode,
+        note: reason,
+        nextAction: null,
+        day,
+        expectFrom: lead.leadStage as LeadStage,
+      },
+    );
+  } catch (e) {
+    if (e instanceof StageAlreadyMoved) {
+      return { moved: false, why: "it had already been moved by somebody else." };
+    }
+    throw e;
+  }
+  /* The sentence, where no code carried it: why it was lost, or why it is held. */
+  if (reason && (to === "lost" ? !reasonCode : to === "on_hold")) {
+    await db
+      .update(customers)
+      .set(to === "lost" ? { leadLostReason: reason } : { leadHoldReason: reason })
+      .where(eq(customers.id, customerId));
+  }
+  return { moved: true, why: null };
+}
+
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = visitSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -1286,6 +1436,11 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
      went. Read once here rather than inside the transaction. */
   const day = await today();
   let suspectAnswerMissing: string | null = null;
+  /* Whether this visit's Suspect answer may move the lead at all: a lead row,
+     not a shop a distributor bills, and still an undecided Suspect. */
+  const visitDecidable =
+    customer.kind === "lead" && !customer.thirdParty && isUndecidedSuspect(customer.leadStage);
+  let visitMove: LeadStage | null = null;
   if (!customer.thirdParty && isUndecidedSuspect(customer.leadStage)) {
     const [seen] = await db
       .select({ n: sql<number>`count(*)::int` })
@@ -1602,14 +1757,11 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     }
 
     /*
-     * THE DECISION IS PART OF THE VISIT, so it is written in the visit's own
-     * transaction.
-     *
-     * A visit that saved and a decision that failed a moment later would leave
-     * the lead exactly where it was and the salesman believing he had answered
-     * — and the next visit would demand the same answer again. Half-saved
-     * calls are how telecaller data goes wrong; this is the same rule one app
-     * over.
+     * THE DECISION'S REASON IS PART OF THE VISIT, so it is written in the
+     * visit's own transaction; the MOVE it asks for is the gate's, and is made
+     * once the visit has committed (see `applyVisitSuspectDecision` below).
+     * Where the gate refuses, a manager is told — the answer is never lost
+     * silently, and the visit is never lost to it.
      */
     /* §G. Written in the visit's own transaction for the same reason the
        decision below is: a visit that saved and a requirement that did not
@@ -1660,31 +1812,48 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         await latestReopen(customer.id, tx).then((r) => r && r.at.getTime() > item.clientCreatedAt),
       );
 
-    if (p.suspectDecision && !staleLoss) {
-      const stays = p.suspectDecision === "still_suspect";
+    /*
+     * ONLY AN UNDECIDED SUSPECT IS DECIDED BY A VISIT, and the rung is NOT
+     * written here.
+     *
+     * This wrote `lead_stage` straight onto the row: no gate, no transition
+     * row, and no check that the shop was still a lead, still unmarked and
+     * still a Suspect — so a decision queued on Monday and drained on
+     * Thursday could put a lead the office had moved to Negotiation back to
+     * Prospect, or write `lost` over a sale. What lands IN the visit's
+     * transaction now is what cannot be refused: the activity, and the reason
+     * a lead stays a Suspect. The move itself goes through the gate after the
+     * visit has committed (`applyVisitSuspectDecision`), with a transition row
+     * — and where it is refused the visit still stands and a manager is told.
+     */
+    if (p.suspectDecision && !staleLoss && visitDecidable) {
+      const target = suspectDecisionRung(p.suspectDecision, customer);
+      const current = foldStage((customer.leadStage ?? "suspect") as LeadStage);
+      const moves = p.suspectDecision !== "still_suspect" && foldStage(target) !== current;
+      if (moves) visitMove = target;
       await tx
         .update(customers)
         .set({
-          /* Staying a Suspect does not move the stage — it records why not.
-             Everything else is a real move along the ladder. */
-          ...(stays
-            ? {}
-            : {
-                leadStage: suspectDecisionRung(p.suspectDecision, customer),
-                /* A real move, so the stage date moves with it — the console ages every list by it. */
-                leadStageSince: day,
-              }),
-          ...(p.suspectReason?.trim()
-            ? p.suspectDecision === "lost"
-              ? { leadLostReason: p.suspectReason.trim() }
-              : { leadHoldReason: p.suspectReason.trim() }
-            : {}),
+          ...(!moves && p.suspectReason?.trim() ? { leadHoldReason: p.suspectReason.trim() } : {}),
           leadLastActivityDate: day,
           updatedAt: new Date(),
         })
         .where(eq(customers.id, customer.id));
     }
   });
+
+  let visitMoved = false;
+  if (visitMove && p.suspectDecision) {
+    const outcome = await applyVisitSuspectDecision(principal, customer.id, visitMove, p.suspectReason ?? null);
+    visitMoved = outcome.moved;
+    if (outcome.why) {
+      await notifyManagers(
+        principal.user.id,
+        "A Suspect decision was not applied",
+        `${principal.user.name} visited ${customer.name} and answered the Suspect question, but ${customer.name} was not moved: ${outcome.why} The visit itself is saved.`,
+      ).catch(() => {});
+    }
+  }
 
   /*
    * PAST THE CAP, THE MANAGER IS TOLD.
@@ -1703,7 +1872,10 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * visit's own decision must start §D and §E exactly as one qualified from the
    * lead screen does — a workflow that fires on one of two paths is a workflow
    * salesmen learn not to rely on. */
-  if (p.suspectDecision === "qualified") {
+  /* Only where the answer actually moved the lead: a qualification started for
+     a lead the gate kept a Suspect would raise a call about a move that did
+     not happen. */
+  if (p.suspectDecision === "qualified" && visitMoved) {
     await qualifyLead(customer.id, principal.user.id, customer.name).catch(() => {});
   }
 
@@ -2627,12 +2799,16 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         select ((${orderedAtIso}::timestamptz at time zone ${APP_TIMEZONE})::date)::text as d
       `)
     )[0]?.d;
-    if (customer.leadStage !== null && convertedOn) {
+    /* `kind`, never `leadStage`: a converted account keeps `lead_stage =
+       'won'`, and reading the stage re-ran the conversion on every repeat
+       field order — the sales seat rewritten from `owner_id` past a decided
+       reassignment, `customer_since` moved, a second audit row and tombstone. */
+    if (customer.kind === "lead" && convertedOn) {
       await convertLeadOnSecondOrder(
         tx,
         {
           id: customer.id,
-          kind: "lead",
+          kind: customer.kind,
           ownerId: customer.ownerId ?? null,
           salesAmId: customer.salesAmId ?? null,
           leadSource: null,
@@ -4498,6 +4674,11 @@ async function handleLeadUpdate(
     };
   }
 
+  /* WHOSE LEAD IT IS, before a single column is written — see
+     `leadWriteRefusal`. This row is loaded by the id the PAYLOAD names. */
+  const refused = await leadWriteRefusal(principal, existing);
+  if (refused) return { kind: "rejected", value: refused };
+
   /*
    * THE SALES MANAGER A LEAD IS UNDER DOES NOT FILL IN ITS QUALIFICATION.
    *
@@ -4612,13 +4793,15 @@ async function handleLeadUpdate(
      on the ladder before anything is compared or asked. */
   const onTheFunnel = true;
   const wantedStage = p.stage != null ? foldStage(p.stage as LeadStage) : null;
+  /* `on_hold` goes through the same move as every other stage.
+     `evaluateLeadStageMove` answers a park before it asks the ladder anything
+     (it is on no ladder), refusing only a lead that has ENDED — so the park
+     is written by `applyLeadStageMove`, with its transition row, rather than
+     being dropped as it was once every lead went through the gates. */
   const movingStage =
     wantedStage != null &&
-    wantedStage !== foldStage((existing.leadStage ?? "suspect") as LeadStage) &&
-    /* `on_hold` stands aside from the gate: it is on the wire and on no
-       ladder, so asking a rung engine about it can only ever answer "off
-       ladder" and refuse a park the salesman is entitled to. */
-    p.stage !== "on_hold";
+    wantedStage !== foldStage((existing.leadStage ?? "suspect") as LeadStage);
+  const parking = movingStage && wantedStage === "on_hold";
 
   /*
    * ON HOLD IS AN ANSWER, so it has to say something.
@@ -4839,7 +5022,10 @@ async function handleLeadUpdate(
   if (p.monthlyVolumeLitres != null) {
     changed.leadMonthlyVolumeLitres = p.monthlyVolumeLitres;
   }
-  if (p.holdReason != null) changed.leadHoldReason = p.holdReason;
+  /* On a PARK the hold's own columns wait for the move — written below only
+     once the gate has said yes, so a refused park leaves nothing describing a
+     pause that never happened. Re-sent to a lead already on hold, they land. */
+  if (p.holdReason != null && !parking) changed.leadHoldReason = p.holdReason;
   /*
    * THE PARK'S OWN TWO COLUMNS, and both only on the move that parks it.
    *
@@ -4857,9 +5043,12 @@ async function handleLeadUpdate(
    * and every park made in a shop was a park the office's resume worklist
    * never saw.
    */
+  const holdPatch: Partial<typeof customers.$inferInsert> = {};
   if (p.stage === "on_hold") {
-    if (p.reasonCode != null) changed.leadHoldReasonCode = p.reasonCode;
-    if (p.holdResumeDate != null) changed.leadHoldResumeDate = p.holdResumeDate;
+    if (p.holdReason != null) holdPatch.leadHoldReason = p.holdReason;
+    if (p.reasonCode != null) holdPatch.leadHoldReasonCode = p.reasonCode;
+    if (p.holdResumeDate != null) holdPatch.leadHoldResumeDate = p.holdResumeDate;
+    if (!parking) Object.assign(changed, holdPatch);
   }
   if (p.deliveryTerms != null) changed.leadDeliveryTerms = p.deliveryTerms;
   if (p.agreedTerms != null) changed.leadAgreedTerms = p.agreedTerms;
@@ -4876,12 +5065,12 @@ async function handleLeadUpdate(
    * cleared all three on the desk's own path since the columns existed; the
    * sync path cleared one of them, because it was written when a handset could
    * only ever send the sentence.
+   *
+   * ONLY ONCE THE MOVE IS MADE. This cleared them here, before the gate below
+   * was asked, so a refused move off a hold left the lead on hold with its
+   * reason, its code and its resume date wiped. The clearing is now after
+   * `moveLeadFromHandset` says yes — see the end of this handler.
    */
-  if (p.stage != null && p.stage !== "on_hold" && p.stage !== "new") {
-    changed.leadHoldReason = null;
-    changed.leadHoldReasonCode = null;
-    changed.leadHoldResumeDate = null;
-  }
   if (p.gpsLat != null && p.gpsLng != null) {
     changed.gpsLat = p.gpsLat;
     changed.gpsLng = p.gpsLng;
@@ -5127,6 +5316,20 @@ async function handleLeadUpdate(
   if (onTheFunnel && movingStage) {
     const moved = await moveLeadFromHandset(principal, item, wantedStage as LeadStage);
     if (moved) return moved;
+    /* The move was made. A park writes its own reason, code and resume date
+       now; any other move leaves the hold behind and stops explaining one
+       (`applyLeadStageMove` already clears them coming off `on_hold`; this
+       covers the "why is this still a Suspect" sentence on a lead that has
+       since moved). */
+    const after: Partial<typeof customers.$inferInsert> = parking
+      ? holdPatch
+      : { leadHoldReason: null, leadHoldReasonCode: null, leadHoldResumeDate: null };
+    if (Object.keys(after).length) {
+      await db
+        .update(customers)
+        .set({ ...after, updatedAt: new Date() })
+        .where(eq(customers.id, item.entityId));
+    }
   }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -5177,6 +5380,10 @@ async function moveLeadFromHandset(
       message: "That lead has not reached the office yet. It will be tried again once it has.",
     };
   }
+  /* Asked again here, not only by the caller: this is the door that writes the
+     rung, and a stage move on somebody else's lead is the write that matters. */
+  const notHis = await leadWriteRefusal(principal, lead);
+  if (notHis) return { kind: "rejected", value: notHis };
 
   const payload = (item.payload ?? {}) as Record<string, unknown>;
   const reasonCode =
@@ -5457,6 +5664,16 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     leadNextActionOutcome: p.nextAction?.outcome ?? null,
     leadSuspectDecidedAt: p.suspectDecidedAt ? new Date(p.suspectDecidedAt) : null,
   } as const;
+
+  /* A CREATE NAMING A ROW THAT ALREADY EXISTS is an upsert below, and the
+     upsert rewrites the name, the phone, the address and the funnel answers.
+     A resend of his own lead passes; a create naming somebody else's lead, or
+     a billed customer, is refused before anything is written. */
+  const already = await leadRow(item.entityId);
+  if (already) {
+    const notHis = await leadWriteRefusal(principal, already);
+    if (notHis) return { kind: "rejected", value: notHis };
+  }
 
   /* The Sales Manager this lead is under, from the org chart, AT CREATION — the same
      relationship the nightly pass applies, so verification does not wait a night.

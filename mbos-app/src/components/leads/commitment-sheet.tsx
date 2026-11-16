@@ -1,10 +1,12 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { BottomSheet, Calendar } from '../ui/overlays';
 import { Swap } from '../ui/motion';
-import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { PrimaryButton } from '../ui/primitives';
+import { Icon } from '../ui/Icon';
+import { SheetChip, SheetTitle } from './v3-parts';
 import { skuText, useSkus } from '../ui/sku';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { dmy } from '../../lib/format';
 import { cleanWhole, parseWhole } from '../../lib/decimal-input';
 import { cleanAmount, paiseFromTyped, typedFromPaise } from '../../lib/money-input';
@@ -76,90 +78,105 @@ export function CommitmentSheet({
       ? 'Write how many cans. A promise without cans cannot be planned.'
       : undefined;
 
+  const box = { flex: 1, minWidth: 0, minHeight: 64, borderRadius: 18, backgroundColor: C.canvas, paddingHorizontal: 12, paddingVertical: 8 } as const;
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        What did they promise to order?
-      </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        This is only a promise, not an order. The stage moves only when the real order comes.
-      </T>
+      <SheetTitle
+        title="Their promise"
+        sub="Only a promise · the stage moves on a real order"
+        lead={<Icon name="order" size={22} color={C.ink} strokeWidth={2} />}
+      />
 
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>When will they order</SectionLabel>
-        {/* The button opens into the calendar in place, and the calendar
-            folds back into the button once a day is picked. */}
-        <Swap id={picking ? 'calendar' : 'button'}>
-        {picking ? (
-          <Calendar
-            key="commitment-cal"
-            selected={date}
-            /* A day already gone is not a forecast. Today is allowed: a
-               shopkeeper saying "I will send it this evening" is the ordinary
-               best case and refusing it would send somebody to type tomorrow. */
-            disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
-            onPick={(iso) => {
-              setDate(iso);
-              setPicking(false);
-            }}
+      {/* When, how many, what it is worth — three boxes side by side. The
+          date box opens into the calendar in place, and the calendar folds
+          back once a day is picked. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+        <Pressable
+          onPress={() => setPicking((p) => !p)}
+          accessibilityRole="button"
+          accessibilityLabel={'When will they order: ' + (date ? dmy(date) : 'choose a day')}
+          style={box}>
+          <Icon name="cal" size={14} color={C.muted} strokeWidth={2.2} />
+          <Text numberOfLines={1} style={[{ fontSize: 16, lineHeight: 22, color: date ? C.ink : C.faint }, weight(800)]}>
+            {date ? dmy(date) : 'Day'}
+          </Text>
+        </Pressable>
+        <View style={box}>
+          <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>cans</Text>
+          <TextInput
+            value={cans}
+            onChangeText={(v) => setCans(cleanWhole(v))}
+            keyboardType="number-pad"
+            placeholder="40"
+            placeholderTextColor={C.faint}
+            accessibilityLabel="How many cans. Whole cans only."
+            style={[{ fontSize: 16, lineHeight: 22, color: C.ink, padding: 0 }, weight(800)]}
           />
-        ) : (
-          <SecondaryButton
-            label={date ? dmy(date) : 'Choose a day'}
-            onPress={() => setPicking(true)}
-            style={{ borderRadius: radius.lg }}
+          {cans.includes('.') ? (
+            <Text style={[{ fontSize: 11, lineHeight: 15, color: C.danger }, weight(400)]}>Whole cans only.</Text>
+          ) : null}
+        </View>
+        <View style={box}>
+          <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>₹ if known</Text>
+          <TextInput
+            value={rupees}
+            onChangeText={(v) => setRupees(cleanAmount(v))}
+            keyboardType="decimal-pad"
+            placeholder="—"
+            placeholderTextColor={C.faint}
+            accessibilityLabel="Value in rupees, if you know. Leave it empty if you do not know the price. Do not guess a figure."
+            style={[{ fontSize: 16, lineHeight: 22, color: C.ink, padding: 0 }, weight(800)]}
           />
-        )}
-        </Swap>
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>How many cans</SectionLabel>
-        <Input
-          value={cans}
-          onChangeText={(v) => setCans(cleanWhole(v))}
-          keyboardType="number-pad"
-          placeholder="40"
-          wholeHint="Whole cans only."
-        />
-        {/* CANS, and the SKU beside them so the unit is never in doubt. A lead
-            being asked for a first order has been through qualification, which
-            named the product — so there IS a pack size here, which is exactly
-            what there was not at capture, where the answer is in litres. */}
-        <T s="caption" style={{ marginTop: 6 }}>
-          {productName
-            ? 'Cans of ' + productName + (sku ? ' (' + sku + ')' : '') + '. The pack they will buy.'
-            : 'In cans, the way they will order. No product is set on this lead yet.'}
-        </T>
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Value in rupees, if you know</SectionLabel>
-        <Input value={rupees} onChangeText={(v) => setRupees(cleanAmount(v))} keyboardType="decimal-pad" placeholder="Rupees (optional)" />
-        <T s="caption" style={{ marginTop: 6 }}>
-          Leave it empty if you do not know the price. The app has no prices. Do not guess a figure.
-        </T>
-      </View>
-
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What is stopping the order today</SectionLabel>
-        <View style={{ gap: 8 }}>
-          {blockers.map((b) => (
-            <Choice
-              key={b.code}
-              label={b.label}
-              selected={blocker === b.code}
-              onPress={() => setBlocker(b.code)}
-              style={{ alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 10 }}
-            />
-          ))}
         </View>
       </View>
+      <Swap id={picking ? 'calendar' : 'none'}>
+        {picking ? (
+          <View style={{ marginTop: 10 }}>
+            <Calendar
+              key="commitment-cal"
+              selected={date}
+              /* A day already gone is not a forecast. Today is allowed: a
+                 shopkeeper saying "I will send it this evening" is the
+                 ordinary best case and refusing it would send somebody to
+                 type tomorrow. */
+              disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
+              onPick={(iso) => {
+                setDate(iso);
+                setPicking(false);
+              }}
+            />
+          </View>
+        ) : (
+          <View />
+        )}
+      </Swap>
+      {/* CANS, and the SKU beside them so the unit is never in doubt. A lead
+          being asked for a first order has been through qualification, which
+          named the product — so there IS a pack size here, which is exactly
+          what there was not at capture, where the answer is in litres. */}
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }, weight(400)]}>
+        {productName
+          ? 'Cans of ' + productName + (sku ? ' (' + sku + ')' : '') + '. The app has no prices — leave ₹ empty rather than guess.'
+          : 'In cans, the way they will order. No product is set on this lead yet.'}
+      </Text>
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
+      <Text style={[{ fontSize: 13, color: C.ink, marginTop: 10 }, weight(700)]}>What stops it today</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+        {blockers.map((b) => (
+          <SheetChip key={b.code} label={b.label} on={blocker === b.code} onPress={() => setBlocker(b.code)} />
+        ))}
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Cancel</Text>
+        </Pressable>
         <PrimaryButton
           label="Save"
+          tone="navy"
           disabled={Boolean(missing)}
           whyDisabled={missing}
           onPress={() => {
@@ -171,7 +188,7 @@ export function CommitmentSheet({
               blockerCode: blocker,
             });
           }}
-          style={{ flex: 1, borderRadius: radius.xl }}
+          style={{ flex: 1, borderRadius: 28 }}
         />
       </View>
     </BottomSheet>

@@ -47,6 +47,8 @@ export function useSignOut(): () => void {
         title: 'Sign out?',
         body: lines.join('\n\n'),
         confirmLabel: 'Sign out',
+        tone: 'danger',
+        cancelLabel: 'Stay signed in',
         run: () => {
           void signOutReal()
             .catch(() => undefined)

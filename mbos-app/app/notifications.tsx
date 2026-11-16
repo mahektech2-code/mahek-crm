@@ -1,9 +1,12 @@
 import React from 'react';
-import { Animated, View, Pressable } from 'react-native';
+import { Animated, Text, View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
-import { ListCard, SectionLabel, T } from '../src/components/ui/primitives';
-import { color as C, type, weight } from '../src/theme/tokens';
+import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
+import { T } from '../src/components/ui/primitives';
+import { Icon } from '../src/components/ui/Icon';
+import { Pill } from '../src/components/ui/v3';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
+import { color as C, tabular, weight } from '../src/theme/tokens';
 import { dmy, plural } from '../src/lib/format';
 import { listNotifications, markAllRead, markRead, type Notification } from '../src/data/notifications';
 import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/components/ui/motion';
@@ -33,11 +36,12 @@ function phoneRoute(href: string | null): string | null {
   return SCREENS.has(first) ? href : null;
 }
 
-const TONE: Record<Notification['kind'], { bg: string; fg: string }> = {
-  danger: { bg: C.dangerBg, fg: C.danger },
-  amber: { bg: C.warnBg, fg: C.warn },
-  success: { bg: C.successBg, fg: C.success },
-  neutral: { bg: C.primaryTint, fg: C.primaryDeep },
+/* `fg` is the unread pip, `ink` the mark and the chip's words. */
+const TONE: Record<Notification['kind'], { bg: string; fg: string; ink: string }> = {
+  danger: { bg: C.dangerBg, fg: C.danger, ink: C.danger },
+  amber: { bg: C.warnBg, fg: C.warn, ink: C.warnInk },
+  success: { bg: C.successBg, fg: C.success, ink: C.success },
+  neutral: { bg: C.primaryTint, fg: C.primaryDeep, ink: C.primaryDeep },
 };
 
 const WHENS: ('Today' | 'Yesterday' | 'Earlier')[] = ['Today', 'Yesterday', 'Earlier'];
@@ -87,8 +91,8 @@ function stamp(createdAt: number, bucket: string): string {
  *
  * Reading a notification is the one change this screen makes, and the dot is
  * the whole of how it shows: blinking out in a frame reads as a redraw, while
- * shrinking away reads as "that one is dealt with". It keeps its 8px either
- * way, so the row's text never shifts under the thumb that just tapped it.
+ * shrinking away reads as "that one is dealt with". Version 3 draws it as the
+ * pip on the row's round mark, so it never moves the row's text either.
  */
 function UnreadDot({ unread, tint }: { unread: boolean; tint: string }) {
   const reduce = useReduceMotion();
@@ -110,10 +114,14 @@ function UnreadDot({ unread, tint }: { unread: boolean; tint: string }) {
   return (
     <Animated.View
       style={{
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        marginTop: 6,
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
         backgroundColor: tint,
         opacity: v,
         transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] }) }],
@@ -165,74 +173,107 @@ export default function NotificationsScreen() {
 
   const unread = rows.filter((n) => n.readAt == null).length;
 
-  return (
-    <AppFrame title="Notifications" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
+  const subtitle = !loaded
+    ? 'Reading…'
+    : unread
+      ? plural(unread, 'unread notification')
+      : rows.length > 0
+        ? plural(rows.length, 'notification') + ', all read'
+        : 'Nothing yet';
 
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <T style={type.h1}>Notifications</T>
-          {/* "Nothing unread" was shown both to somebody who has never had a
-              notification and to somebody who has read forty, so the two were
-              indistinguishable — and under a heading with nothing beneath it,
-              the first case read as a screen that had failed to load. */}
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {!loaded
-              ? 'Reading…'
-              : unread
-                ? plural(unread, 'unread notification')
-                : rows.length > 0
-                  ? plural(rows.length, 'notification') + ', all read'
-                  : 'Nothing yet'}
-          </T>
-        </View>
-        {unread > 0 ? (
+  return (
+    <AppFrame
+      tone="canvas"
+      title="Notifications"
+      activeTab={null}
+      onBack={back.go}
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 4, paddingBottom: 24 }}
+      heroActions={
+        unread > 0 ? (
           <Pressable
             onPress={async () => {
               await markAllRead();
               load(true);
             }}
             accessibilityRole="button"
-            style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 12, marginRight: -12, justifyContent: 'center' }}>
-            <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Mark all read</T>
+            accessibilityLabel="Mark all read"
+            hitSlop={{ top: 4, bottom: 4 }}
+            style={({ pressed }) => ({
+              height: 40,
+              paddingHorizontal: 14,
+              borderRadius: 20,
+              backgroundColor: C.navy,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              opacity: pressed ? 0.85 : 1,
+            })}>
+            <Glyph shapes={[{ p: 'M3 12l5 5 9-10M12 17l1 1 9-10' }]} size={16} color={C.lime} strokeWidth={2.4} />
+            <Text style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>All read</Text>
           </Pressable>
-        ) : null}
-      </View>
+        ) : null
+      }
+      hero={
+        /* "Nothing unread" was shown both to somebody who has never had a
+           notification and to somebody who has read forty, so the two were
+           indistinguishable — and under a heading with nothing beneath it,
+           the first case read as a screen that had failed to load. */
+        <T style={{ fontSize: 12, color: C.lavenderMuted, marginTop: 4 }}>{subtitle}</T>
+      }>
+      <BackLink label={back.label} onPress={back.go} />
 
       {/* Every group returns null when there is nothing in it, so with no rows
           at all what was left was a back link, a heading and white space — on
           the app's own bell, which is a screen somebody taps again, and again,
           believing it did not load. It says what will arrive here instead. */}
       {loaded && !failed && rows.length === 0 ? (
-        <View style={{ marginTop: 20 }}>
-          <StubCard
-            title="Nothing yet"
-            body="Messages from the office show here. For example, an order not accepted, a day plan to agree, or a new task."
-          />
+        <View
+          accessible
+          accessibilityLabel="Nothing yet. Messages from the office show here. For example, an order not accepted, a day plan to agree, or a new task."
+          style={{ marginTop: 26, backgroundColor: C.surface, borderRadius: 24, paddingVertical: 32, paddingHorizontal: 24, alignItems: 'center' }}>
+          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: C.lavender, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="bell" size={28} color={C.primary} strokeWidth={2} />
+          </View>
+          <Text style={[{ fontSize: 18, color: C.ink, marginTop: 12 }, weight(800)]}>Nothing yet</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 12 }}>
+            <Pill text="Order not accepted" bg={C.dangerBg} fg={C.danger} />
+            <Pill text="Day to agree" bg={C.warnBg} fg={C.warnInk} />
+            <Pill text="New task" bg={C.primaryTint} fg={C.primaryDeep} />
+          </View>
+          <T style={{ fontSize: 13, color: C.muted, marginTop: 10, textAlign: 'center' }}>Messages from the office show here.</T>
         </View>
       ) : null}
 
       {loaded && failed ? (
-        <View style={{ marginTop: 20 }}>
-          <StubCard
-            title="Could not read your notifications"
-            body="Nothing is lost. They are still on this phone. Go back and open this screen again."
-          />
+        <View
+          accessible
+          accessibilityLabel="Could not read your notifications. Nothing is lost. They are still on this phone. Go back and open this screen again."
+          style={{ marginTop: 20, backgroundColor: C.dangerBg, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', gap: 10 }}>
+          <Icon name="warn" size={20} color={C.danger} strokeWidth={2} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 14, color: C.danger }, weight(700)]}>Could not read your notifications</Text>
+            <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Nothing is lost — still on this phone. Go back and open again.</T>
+          </View>
         </View>
       ) : null}
 
       {WHENS.map((g) => {
         const items = rows.filter((n) => bucketOf(n.createdAt, days.today, days.yesterday) === g);
         if (items.length === 0) return null;
+        /* Today is the white card; the settled days sit on the read tint. */
+        const settled = g !== 'Today';
         return (
-          <View key={g} style={{ marginTop: 20 }}>
-            <SectionLabel style={{ marginBottom: 8 }}>{g}</SectionLabel>
-            <ListCard>
+          <View key={g} style={{ marginTop: 18 }}>
+            <Text accessibilityRole="header" style={[{ fontSize: 15, color: settled ? C.muted : C.ink, paddingHorizontal: 6 }, weight(700)]}>
+              {g}
+            </Text>
+            <View style={{ marginTop: 8, backgroundColor: settled ? '#F6F8FB' : C.surface, borderRadius: 20, paddingHorizontal: 14, overflow: 'hidden' }}>
               {items.map((n, i) => {
                 const isUnread = n.readAt == null;
                 const tone = TONE[n.kind] ?? TONE.neutral;
                 const href = phoneRoute(n.href);
-                const cta = href ? CTA[href.split('?')[0]] : undefined;
+                const base = href ? href.split('?')[0] : null;
+                const cta = base ? CTA[base] : undefined;
                 return (
                   <Stagger key={n.id} index={rows.indexOf(n)}>
                     <Pressable
@@ -245,37 +286,30 @@ export default function NotificationsScreen() {
                         if (href) router.push(`${href}${href.includes('?') ? '&' : '?'}from=notifications`);
                       }}
                       accessibilityRole="button"
-                      style={{
+                      accessibilityLabel={`${isUnread ? 'Unread. ' : ''}${n.title}. ${n.body}${cta ? '. ' + cta : ''}`}
+                      style={({ pressed }) => ({
                         flexDirection: 'row',
-                        gap: 10,
-                        paddingHorizontal: 16,
+                        gap: 12,
                         paddingVertical: 14,
                         borderTopWidth: i ? 1 : 0,
-                        borderTopColor: C.wash,
-                        backgroundColor: isUnread ? C.surface : C.surfaceRead,
-                      }}>
-                      <UnreadDot unread={isUnread} tint={tone.fg} />
+                        borderTopColor: C.hairline,
+                        opacity: pressed ? 0.8 : 1,
+                      })}>
+                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: tone.bg, alignItems: 'center', justifyContent: 'center' }}>
+                        <Glyph shapes={glyphFor(base)} size={18} color={tone.ink} />
+                        <UnreadDot unread={isUnread} tint={tone.fg} />
+                      </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-                          <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(isUnread ? 600 : 500)]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: isUnread ? C.ink : C.body }, weight(isUnread ? 800 : 600)]}>
                             {n.title}
-                          </T>
-                          <T s="micro">{stamp(n.createdAt, g)}</T>
+                          </Text>
+                          <Text style={[{ fontSize: 12, color: C.faint }, tabular]}>{stamp(n.createdAt, g)}</Text>
                         </View>
-                        <T s="small" style={{ marginTop: 3 }}>{n.body}</T>
+                        <T style={{ fontSize: 13, color: isUnread ? C.body : C.muted, marginTop: 2 }}>{n.body}</T>
                         {cta ? (
                           <View style={{ marginTop: 8, flexDirection: 'row' }}>
-                            <View
-                              style={{
-                                height: 22,
-                                paddingHorizontal: 8,
-                                borderRadius: 11,
-                                backgroundColor: tone.bg,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}>
-                              <T style={[{ fontSize: 12, color: tone.fg }, weight(600)]}>{cta}</T>
-                            </View>
+                            <Pill text={cta + ' →'} bg={tone.bg} fg={tone.ink} />
                           </View>
                         ) : null}
                       </View>
@@ -283,10 +317,30 @@ export default function NotificationsScreen() {
                   </Stagger>
                 );
               })}
-            </ListCard>
+            </View>
           </View>
         );
       })}
     </AppFrame>
   );
+}
+
+/**
+ * The mark on a row, keyed on where the row goes — a cart for an order not
+ * accepted, a route for a day to agree — and on its tone where it goes
+ * nowhere on this phone. Lifted from the Version 3 artboard.
+ */
+const ROW_GLYPH: Record<string, GlyphShape[]> = {
+  '/rejections': [{ p: 'M4 5h2l2 11h10l2-8H7' }],
+  '/journey': [{ c: [6, 18, 2] }, { c: [18, 6, 2] }, { p: 'M8 18h6a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8h6' }],
+  '/tasks': [{ r: [4, 4, 16, 16, 3] }, { p: 'M8 12l3 3 5-6' }],
+  '/expenses': [{ p: 'M6 3h12v18l-3-2-3 2-3-2-3 2z' }],
+  '/performance': [{ p: 'M3 17l6-6 4 4 8-8' }],
+  '/leave': [{ r: [4, 5, 16, 15, 2] }, { p: 'M4 10h16' }],
+  '/docs': [{ p: 'M6 3h8l4 4v14H6z' }],
+  '/sync': [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }],
+};
+const BELL: GlyphShape[] = [{ p: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0' }];
+function glyphFor(base: string | null): GlyphShape[] {
+  return (base && ROW_GLYPH[base]) || BELL;
 }

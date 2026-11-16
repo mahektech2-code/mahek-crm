@@ -177,14 +177,17 @@ export type DuplicateMatch = { kind: 'customer' | 'lead'; id: string; name: stri
  */
 export function matchDuplicate(
   mobile: string,
-  customers: { id: string; name: string; phone: string | null }[],
+  customers: { id: string; name: string; phone: string | null; isLead?: number | boolean | null }[],
   leads: { id: string; name: string; mobile: string | null }[],
 ): DuplicateMatch | null {
   const wanted = normaliseMobile(mobile);
   if (wanted.length < 10) return null;
 
+  /* A customers row that IS a lead (the office keeps one row for both) is
+     reported as the lead it is — "already a customer" sends him to serve a
+     shop he should still be selling to. */
   const customer = customers.find((c) => normaliseMobile(c.phone) === wanted);
-  if (customer) return { kind: 'customer', id: customer.id, name: customer.name };
+  if (customer) return { kind: customer.isLead ? 'lead' : 'customer', id: customer.id, name: customer.name };
 
   const lead = leads.find((l) => normaliseMobile(l.mobile) === wanted);
   if (lead) return { kind: 'lead', id: lead.id, name: lead.name };

@@ -22,6 +22,7 @@
  * workspace travels on a request header in production; a test has no request,
  * so `setTestWorkspace` stands in for the header `src/proxy.ts` writes.
  */
+import { DISPLAY_STAGES } from "@/lib/engines/lead-ladder";
 import { after, before, beforeEach, afterEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -470,11 +471,11 @@ describe("V — the prototype's views read the same book, narrowed", () => {
     assert.deepEqual(await names({ priority: "low" }), ["Third lead"]);
   });
 
-  test("the pipeline draws nine bars (Sample / Trial and Sample received & review), second order among them, and a lead standing on it is counted", async () => {
+  test("the pipeline draws the seven stages everybody reads, and a lead on a step inside one (second order, under First order) is counted there", async () => {
     await makeLead({ name: "Repeat", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "second_order" });
     const funnel = await pipelineFunnel(DAY);
-    assert.equal(funnel.direct.length, 9);
-    assert.equal(funnel.direct.find((f) => f.stage === "second_order")?.count, 1);
+    assert.deepEqual(funnel.direct.map((f) => f.stage), [...DISPLAY_STAGES]);
+    assert.equal(funnel.direct.find((f) => f.stage === "first_order")?.count, 1);
   });
 
   test("the record carries the customer's email, and names a telecaller's logged call as the telecaller's", async () => {

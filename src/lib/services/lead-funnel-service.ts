@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, type DateRange } from "../business-date";
 import { isOnTheBookAt, ladderFor } from "../engines/lead-ladder";
+import { notConverted } from "../lead-action-window";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { leadsVisible, managerScope } from "./sales-service";
 
@@ -159,12 +160,20 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
        the funnel it is still in. Nothing is rewritten: only the reading is. */
     select c.lead_sales_type::text as "salesType",
            /* And the retired legacy words are read as the rung they mean on the
-              one ladder (Nov 2026); won stays itself, the arrived end. */
-           case c.lead_stage::text
-             when 'sample_received' then 'sample_review'
-             when 'new' then 'suspect'
-             when 'contacted' then 'suspect'
-             when 'qualified' then 'qualification'
+              one ladder (Nov 2026), as foldStage reads them. */
+           case
+             when c.lead_stage::text in ('lost', 'active_distributor') then c.lead_stage::text
+             /* A CONVERTED ACCOUNT HAS ARRIVED, whatever rung it was left on.
+                Invoiced, stamped by an order or marked third-party: the same
+                test Lead Management's lists drop it by (notConverted), so a
+                shop at second_order with kind = customer is a Customer here and
+                never an open First order. Lost stays lost. */
+             when c.lead_stage::text <> 'lost' and not ${notConverted()} then 'customer'
+             when c.lead_stage::text = 'sample_received' then 'sample_review'
+             when c.lead_stage::text in ('new', 'contacted') then 'suspect'
+             when c.lead_stage::text = 'qualified' then 'qualification'
+             /* won is what a conversion writes; it is the Customer end. */
+             when c.lead_stage::text = 'won' then 'customer'
              else c.lead_stage::text
            end as stage,
            count(*)::int as n,
@@ -176,6 +185,7 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = false
+       and c.deleted_at is null
        ${leadsVisible(scope)}
      group by 1, 2
   `);

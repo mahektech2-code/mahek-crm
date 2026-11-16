@@ -1,5 +1,5 @@
 import { isoDate } from './format';
-import { bandOf, isOnTheBookAt, isParked } from '../engines/funnel/lead-ladder';
+import { bandOf, foldStage, isOnTheBookAt, isParked } from '../engines/funnel/lead-ladder';
 import type { LeadSalesType, LeadStage } from '../engines/funnel/lead-labels';
 
 /**
@@ -481,13 +481,27 @@ export function stageOf(lead: {
      not a lead. The `?? 'New'` below was already the whole handling. */
   stage: string | null;
 }): LeadStage {
+  return foldStage(rawStageOf(lead));
+}
+
+/*
+ * FOLDED, and it was not. The retired words (`new`, `contacted`, `qualified`,
+ * `won`, `sample_received`) went straight through, so the card said "New", the
+ * record's badge said "Contacted", and the ladder highlighted no rung at all —
+ * `ladder.map(rung => rung === stage)` can never match a word that is on no
+ * ladder. `foldStage` is the mirrored engine's own reading of those words onto
+ * the one ladder, so every screen that asks `stageOf` now names the rung the
+ * office would. A lead with nothing stored is a Suspect, the foot of it.
+ */
+function rawStageOf(lead: { funnelStage: string | null; stage: string | null }): LeadStage {
   const s = wireFunnelStage(lead.funnelStage);
   if (s) return s as LeadStage;
-  const legacy = (lead.stage ?? 'New').trim().toLowerCase();
+  const legacy = (lead.stage ?? '').trim().toLowerCase();
   if (legacy === 'converted') return 'won';
   if (legacy === 'lost') return 'lost';
+  if (legacy === 'on hold') return 'on_hold';
   if (legacy === 'contacted' || legacy === 'qualified' || legacy === 'negotiation') {
     return legacy as LeadStage;
   }
-  return 'new';
+  return 'suspect';
 }

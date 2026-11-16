@@ -1,7 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import { T } from '../ui/primitives';
-import { color as C } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { isoDate, pretty } from '../../lib/format';
 import type { VerificationCheck } from '../../data/validations';
 
@@ -64,23 +64,17 @@ function headline(check: VerificationCheck): string {
 export function FieldCheckNote({ checks }: { checks: VerificationCheck[] }) {
   if (!checks.length) return null;
   return (
-    <View style={{ gap: 6, marginTop: 4 }}>
+    <View style={{ gap: 4, marginTop: 1 }}>
       {checks.map((c) => (
-        <View key={c.id} style={{ paddingLeft: 132 }}>
-          <T s="caption" style={{ color: toneOf(c.verdict) }}>
+        <View key={c.id}>
+          <T style={[{ fontSize: 11, lineHeight: 15, color: toneOf(c.verdict) }, weight(600)]}>
             {headline(c)}
+            {/* Only under a correction. The other two assert no new value at
+                all, which is the whole difference between them and this one. */}
+            {c.verdict === 'corrected' && c.original?.trim() ? ' · you had ' + c.original.trim() : ''}
           </T>
-          {/* Only under a correction. The other two assert no new value at
-              all, which is the whole difference between them and this one. */}
-          {c.verdict === 'corrected' && c.original?.trim() ? (
-            <T s="caption" style={{ marginTop: 1 }}>
-              {'You had: ' + c.original.trim()}
-            </T>
-          ) : null}
           {c.reason?.trim() ? (
-            <T s="caption" style={{ marginTop: 1, color: C.muted }}>
-              {c.reason.trim()}
-            </T>
+            <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{c.reason.trim()}</T>
           ) : null}
         </View>
       ))}

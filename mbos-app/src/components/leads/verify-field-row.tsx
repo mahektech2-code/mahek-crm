@@ -1,7 +1,8 @@
 import React from 'react';
-import { View } from 'react-native';
-import { Choice, Input, T } from '../ui/primitives';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { Pressable, Text, TextInput, View } from 'react-native';
+import { Icon } from '../ui/Icon';
+import { feedback } from '../ui/feedback';
+import { color as C, weight } from '../../theme/tokens';
 import { getKv, setKv } from '../../db';
 /* The pure half lives in `engines/field-check.ts` and is re-exported here, so
    every caller keeps ONE import site while the rules stay somewhere a test can
@@ -97,84 +98,130 @@ export function VerifyFieldRow({
   keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
   renderCorrected?: () => React.ReactNode;
 }) {
-  const edge = answer.verdict ? EDGE[answer.verdict] : C.hairline;
+  const edge = answer.verdict ? EDGE[answer.verdict] : 'transparent';
 
   return (
     <View
       style={{
-        borderLeftWidth: 3,
+        borderRadius: 16,
+        backgroundColor: C.canvas,
+        borderLeftWidth: answer.verdict ? 3 : 0,
         borderLeftColor: edge,
-        borderRadius: radius.md,
-        backgroundColor: C.surface,
-        paddingLeft: 12,
-        paddingRight: 12,
-        paddingVertical: 12,
-        gap: 10,
+        padding: 12,
+        gap: 8,
       }}>
-      <View>
-        <T s="caption">{'Already saved · ' + (label ?? findingLabel(field))}</T>
-        <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 2 }, weight(600)]}>
-          {reported}
-        </T>
+      <View accessible accessibilityLabel={'Already saved · ' + (label ?? findingLabel(field)) + ': ' + reported}>
+        <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>Already saved</Text>
+        <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>{reported}</Text>
       </View>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {VERDICTS.map((o) => (
-          <Choice
-            key={o.v}
-            label={o.label}
-            sub={o.sub}
-            selected={answer.verdict === o.v}
-            onPress={() => onChange({ verdict: o.v })}
-            style={{ flexGrow: 1, minWidth: 104, paddingHorizontal: 12 }}
-          />
-        ))}
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {VERDICTS.map((o) => {
+          const on = answer.verdict === o.v;
+          const ink = on ? '#FFFFFF' : o.v === 'confirmed' ? C.success : o.v === 'corrected' ? C.ink : C.muted;
+          return (
+            <Pressable
+              key={o.v}
+              onPress={() => {
+                if (!on) feedback('select');
+                onChange({ verdict: o.v });
+              }}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={o.label + '. ' + o.sub}
+              hitSlop={{ top: 4, bottom: 4 }}
+              style={{
+                flex: o.v === 'unverified' ? 1.3 : 1,
+                minHeight: 40,
+                borderRadius: 20,
+                backgroundColor: on ? C.navy : C.surface,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                paddingHorizontal: 6,
+              }}>
+              {o.v === 'confirmed' ? <Icon name="tick" size={13} color={ink} strokeWidth={2.4} /> : null}
+              <Text numberOfLines={1} style={[{ fontSize: 12, color: ink }, weight(700)]}>
+                {o.v === 'unverified' ? 'Couldn’t check' : o.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {answer.verdict === null ? (
-        <T s="caption">Not asked yet. If you skip it, the answer above stays.</T>
+        <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint }, weight(400)]}>
+          Not asked yet. Skip it and the saved answer stays.
+        </Text>
       ) : null}
 
       {answer.verdict === 'corrected' ? (
-        <View style={{ gap: 10 }}>
+        <>
           {renderCorrected ? (
             renderCorrected()
           ) : (
-            <View>
-              <T s="caption" style={{ marginBottom: 6 }}>What it is now</T>
-              <Input
-                value={answer.corrected}
-                onChangeText={(t) => onChange({ corrected: t })}
-                placeholder={placeholder}
-                keyboardType={keyboardType}
-              />
-            </View>
-          )}
-          <View>
-            <T s="caption" style={{ marginBottom: 6 }}>Why it changed (needed)</T>
-            <Input
-              value={answer.reason}
-              onChangeText={(t) => onChange({ reason: t })}
-              placeholder="They changed brand in June. The old figure was a guess."
+            <WhiteBox
+              value={answer.corrected}
+              onChangeText={(t) => onChange({ corrected: t })}
+              placeholder={placeholder ?? 'What it is now'}
+              a11y="What it is now"
+              keyboardType={keyboardType}
+              strong
             />
-          </View>
-        </View>
+          )}
+          <WhiteBox
+            value={answer.reason}
+            onChangeText={(t) => onChange({ reason: t })}
+            placeholder="Why it changed (needed)"
+            a11y="Why it changed, needed. Example: they changed brand in June, the old figure was a guess."
+          />
+        </>
       ) : null}
 
       {answer.verdict === 'unverified' ? (
-        <View>
-          {/* Optional, and stored WITH the answer rather than instead of it.
-              "The proprietor was out" is worth having and is not worth
-              refusing the record over — the answer itself is the fact. */}
-          <T s="caption" style={{ marginBottom: 6 }}>Why not (optional)</T>
-          <Input
-            value={answer.reason}
-            onChangeText={(t) => onChange({ reason: t })}
-            placeholder="The owner was out"
-          />
-        </View>
+        /* Optional, and stored WITH the answer rather than instead of it.
+           "The proprietor was out" is worth having and is not worth refusing
+           the record over — the answer itself is the fact. */
+        <WhiteBox
+          value={answer.reason}
+          onChangeText={(t) => onChange({ reason: t })}
+          placeholder="Why not (optional) — the owner was out"
+          a11y="Why not, optional"
+        />
       ) : null}
     </View>
+  );
+}
+
+function WhiteBox({
+  value,
+  onChangeText,
+  placeholder,
+  a11y,
+  keyboardType,
+  strong = false,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder: string;
+  a11y: string;
+  keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
+  strong?: boolean;
+}) {
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor={C.faint}
+      accessibilityLabel={a11y}
+      keyboardType={keyboardType}
+      style={[
+        { minHeight: 48, borderRadius: 16, backgroundColor: C.surface, paddingHorizontal: 14, fontSize: strong ? 16 : 13, color: C.ink },
+        weight(strong ? 700 : 400),
+      ]}
+    />
   );
 }
 
