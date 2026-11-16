@@ -18,7 +18,7 @@ import {
   erpLogisticsVoidLr,
 } from "@/lib/actions/erp-logistics";
 import { addDays, AT_TRANSPORT_STUCK_DAYS, directWho, pendingOf, PROOF_WORD, rankForLr, shortDay, type PendingKind, type ProofKind } from "@/lib/erp/engines/logistics";
-import { confidentPick, duplicateFlags, missingFor, partyWords, rankForSignedCopy, READY_SCORE, sameParty, wrongKind, type DeskCopy, type DupFlag } from "@/lib/erp/engines/delivery-proof";
+import { billKey, confidentPick, duplicateFlags, missingFor, partyWords, rankForSignedCopy, READY_SCORE, sameParty, wrongKind, type DeskCopy, type DupFlag } from "@/lib/erp/engines/delivery-proof";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
 import { rupeesField } from "@/lib/erp/ui";
 import { clock, stamp } from "@/lib/format";
@@ -98,6 +98,18 @@ function copyMatches(l: UploadedLr, query: string): boolean {
   if (!words.length) return true;
   const hay = [l.transporter, l.partyHint, l.billHint, l.lrNo, l.readLrNo, l.destination, l.uploadedBy].filter(Boolean).join(" ").toLowerCase();
   return words.every((w) => hay.includes(w));
+}
+
+/*
+ * EQUAL SCORES GO BY THE BILL, newest first. The ranking only orders by how
+ * well a bill matches, and most bills tie — so their order was whatever the
+ * bills arrived in. The LR list looked sorted because its one source happens
+ * to come newest-first; a signed copy's list is four sources run together
+ * (Mahek Vehicle, waiting, on the way, at the transporter), and its ties read
+ * as a jumble. Both lists now say it outright: score, then bill number.
+ */
+function byScoreThenBill(x: { b: Bill; score: number }, y: { b: Bill; score: number }): number {
+  return y.score - x.score || Number(billKey(y.b.c.billNo) || 0) - Number(billKey(x.b.c.billNo) || 0) || (y.b.c.billNo ?? "").localeCompare(x.b.c.billNo ?? "");
 }
 
 /** How many bills the Attach-to list draws before "Show more". */
@@ -262,6 +274,7 @@ export function DocumentsDesk({
                   reasons: x.reasons,
                 }))
               : rankForSignedCopy(l, signedBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: b.c.deliveryParty, vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: signedBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
+          ranked.sort(byScoreThenBill);
           /* "Close N ready" stays what it was: a signed copy is closed unasked only against a Mahek Vehicle bill; any other is a person's tick. */
           const sure = confidentPick((l.kind === "lr" ? ranked : ranked.filter((r) => ownKeys.has(r.b.key))).map((r) => ({ id: r.b.key, score: r.score })), READY_SCORE[l.kind]);
           const reading = canRead && !l.readAt && nowMs - Date.parse(l.uploadedAt) < READING_MINUTES * 60_000;
