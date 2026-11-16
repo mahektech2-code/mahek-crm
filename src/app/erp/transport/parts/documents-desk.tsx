@@ -63,7 +63,9 @@ function partyLine(c: Consignment): string {
  * consignee — so grouped by the bill number alone, such a bill was offered as
  * one tick and then refused on Attach for "different parties", with nothing
  * on the screen saying why. Keyed on the delivery party too, each shop's part
- * is its own row, named for that shop, and goes on its own LR.
+ * is its own row, named for that shop. The PENDING tab uses this, chasing
+ * each shop's paper; the Attach-to and Closes lists group back to the whole
+ * bill (`byWholeBill`), and one bill to several shops may share one LR.
  */
 function byBill(cs: Consignment[]): Bill[] {
   const out = new Map<string, Consignment[]>();
@@ -72,6 +74,38 @@ function byBill(cs: Consignment[]): Bill[] {
     out.set(k, [...(out.get(k) ?? []), c]);
   }
   return [...out].map(([key, rows]) => ({ key, c: rows[0], rows, packages: sumPackages(rows) }));
+}
+
+/*
+ * THE ATTACH-TO AND CLOSES LISTS ARE ONE ROW PER BILL. Keyed on the delivery
+ * party as well (`byBill`), a distributor's bill delivered to two shops was two
+ * rows with the same bill number, and the desk reads paper by the bill number
+ * printed on it. So these two lists key on who is billed and the bill number
+ * alone — every order and every shop on the bill is one tick — and a bill with
+ * several shops is named by who is billed, with the shops listed under it. The
+ * Pending tab keeps its shops apart, because it chases each shop's paper.
+ */
+function wholeKey(c: Consignment): string {
+  return c.billNo?.trim() ? `${c.partyId}|${c.billNo.trim().toUpperCase()}` : c.id;
+}
+
+function byWholeBill(cs: Consignment[]): Bill[] {
+  const out = new Map<string, Consignment[]>();
+  for (const c of cs) {
+    const k = wholeKey(c);
+    out.set(k, [...(out.get(k) ?? []), c]);
+  }
+  return [...out].map(([key, rows]) => ({ key, c: rows[0], rows, packages: sumPackages(rows) }));
+}
+
+/** The shops one bill goes to, by name, in the order they first appear. */
+function shopsOf(b: Bill): string[] {
+  return [...new Map(b.rows.map((c) => [c.deliveryPartyId, shopOf(c)])).values()];
+}
+
+/** Who a bill is for, as the LR or copy would name them: its one shop, or who is billed where it goes to several. */
+function consigneeOf(b: Bill): string {
+  return shopsOf(b).length > 1 ? b.c.party : b.c.deliveryParty;
 }
 
 /**
@@ -83,8 +117,7 @@ function byBill(cs: Consignment[]): Bill[] {
 function billMatches(b: Bill, query: string): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const c = b.c;
-  const hay = [c.deliveryParty, c.party, c.billNo, String(c.orderNo), c.transporter, c.area, c.partyCity, c.destination].filter(Boolean).join(" ").toLowerCase();
+  const hay = b.rows.flatMap((c) => [c.deliveryParty, c.party, c.billNo, String(c.orderNo), c.transporter, c.area, c.partyCity, c.destination]).filter(Boolean).join(" ").toLowerCase();
   return words.every((w) => hay.includes(w));
 }
 
@@ -216,10 +249,10 @@ export function DocumentsDesk({
   const [preTick, setPreTick] = useState<string | null>(null);
 
   const flags = useMemo(() => duplicateFlags(copies.map(toDesk)), [copies]);
-  const waitingBills = useMemo(() => byBill(waiting), [waiting]);
-  const allLrBills = useMemo(() => byBill([...waiting, ...onTheWay]), [waiting, onTheWay]);
-  const onTheWayBills = useMemo(() => byBill(onTheWay), [onTheWay]);
-  const ownBills = useMemo(() => byBill(ownOnRoad), [ownOnRoad]);
+  const waitingBills = useMemo(() => byWholeBill(waiting), [waiting]);
+  const allLrBills = useMemo(() => byWholeBill([...waiting, ...onTheWay]), [waiting, onTheWay]);
+  const onTheWayBills = useMemo(() => byWholeBill(onTheWay), [onTheWay]);
+  const ownBills = useMemo(() => byWholeBill(ownOnRoad), [ownOnRoad]);
   /*
    * WHAT A SIGNED COPY MAY CLOSE: every open bill, Mahek Vehicle ones first. It
    * was Mahek Vehicle bills only, and that is a transporter NAME — a bill whose
@@ -228,7 +261,7 @@ export function DocumentsDesk({
    * close. A customer-signed copy is proof of delivery whoever carried it.
    */
   const ownKeys = useMemo(() => new Set(ownBills.map((b) => b.key)), [ownBills]);
-  const signedBills = useMemo(() => byBill([...ownOnRoad, ...waiting, ...onTheWay, ...transporterOnRoad]), [ownOnRoad, waiting, onTheWay, transporterOnRoad]);
+  const signedBills = useMemo(() => byWholeBill([...ownOnRoad, ...waiting, ...onTheWay, ...transporterOnRoad]), [ownOnRoad, waiting, onTheWay, transporterOnRoad]);
 
   /* One bill, one reason: the reason with the most days on any of its records. */
   const pendingBills: PendingBill[] = useMemo(() => {
@@ -254,8 +287,9 @@ export function DocumentsDesk({
     setTab(copyKind);
     setPick(copyId);
     setCopyQuery("");
-    setPreTick(bill.key);
-    if (copyKind === "lr" && !waitingBills.some((b) => b.key === bill.key)) setShowAll(true);
+    const key = wholeKey(bill.c);
+    setPreTick(key);
+    if (copyKind === "lr" && !waitingBills.some((b) => b.key === key)) setShowAll(true);
   };
 
   const rows: Row[] = useMemo(
@@ -268,12 +302,12 @@ export function DocumentsDesk({
           const missing = missingFor(l);
           const ranked: Ranked =
             l.kind === "lr"
-              ? rankForLr(l, (showAll ? allLrBills : waitingBills).map((b) => ({ id: b.key, transporter: b.c.transporter, packages: b.packages, area: b.c.area ?? b.c.partyCity, party: b.c.deliveryParty, billingParty: b.c.party, billNo: b.c.billNo, atTransport: b.rows.every((c) => c.phase === "lrPending") }))).map((x) => ({
+              ? rankForLr(l, (showAll ? allLrBills : waitingBills).map((b) => ({ id: b.key, transporter: b.c.transporter, packages: b.packages, area: b.c.area ?? b.c.partyCity, party: consigneeOf(b), billingParty: b.c.party, billNo: b.c.billNo, atTransport: b.rows.every((c) => c.phase === "lrPending") }))).map((x) => ({
                   b: (showAll ? allLrBills : waitingBills).find((p) => p.key === x.id)!,
                   score: x.score,
                   reasons: x.reasons,
                 }))
-              : rankForSignedCopy(l, signedBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: b.c.deliveryParty, vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: signedBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
+              : rankForSignedCopy(l, signedBills.map((b) => ({ id: b.key, billNo: b.c.billNo, party: consigneeOf(b), vehicleNo: b.c.vehicleNo }))).map((x) => ({ b: signedBills.find((p) => p.key === x.id)!, score: x.score, reasons: x.reasons }));
           ranked.sort(byScoreThenBill);
           /* "Close N ready" stays what it was: a signed copy is closed unasked only against a Mahek Vehicle bill; any other is a person's tick. */
           const sure = confidentPick((l.kind === "lr" ? ranked : ranked.filter((r) => ownKeys.has(r.b.key))).map((r) => ({ id: r.b.key, score: r.score })), READY_SCORE[l.kind]);
@@ -907,7 +941,7 @@ function Detail({
   const parties = new Set(selBills.flatMap((x) => x.b.rows.map((c) => c.deliveryPartyId)));
   const boxes = sumPackages(selBills.flatMap((x) => x.b.rows));
   /* A ticked bill going to a shop the LR does not name — said, never refused: a consignee can be written as a person, or as the buyer. */
-  const otherParty = lr && partyWords(l.partyHint).length ? selBills.find((x) => !sameParty(l.partyHint, x.b.c.deliveryParty) && !sameParty(l.partyHint, x.b.c.party)) : undefined;
+  const otherParty = lr && partyWords(l.partyHint).length ? selBills.find((x) => !sameParty(l.partyHint, x.b.c.party) && !x.b.rows.some((c) => sameParty(l.partyHint, c.deliveryParty))) : undefined;
 
   const save = () =>
     run(() =>
@@ -928,8 +962,9 @@ function Detail({
     ? lr
       ? "Tick the bills this LR carries"
       : "Tick the delivery this copy closes"
-    : parties.size > 1
-      ? "One copy goes to one party"
+    : /* One bill to several shops is one copy; two bills must go to one shop. */
+      parties.size > 1 && selBills.length > 1
+      ? "One copy goes to one party — tick bills of one shop, or one bill"
       : lr && (!l.lrNo || dirty)
         ? "Save the LR number first"
         : !lr && !v.receivedBy.trim()
@@ -1082,10 +1117,10 @@ function Detail({
                       className={checkboxClass}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-ink">{shopOf(b.c)}</span>
+                      <span className="block truncate font-medium text-ink">{shopsOf(b).length > 1 ? b.c.party : shopOf(b.c)}</span>
                       <span className="flex items-center gap-2 text-meta text-muted">
                         <BillRef c={b.c} />
-                        {[shopOf(b.c) !== b.c.party ? `Billed to ${b.c.party}` : null, b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? directWho(b.c.transporter))].filter(Boolean).join(" · ")}
+                        {[shopsOf(b).length > 1 ? `${shopsOf(b).length} shops: ${shopsOf(b).join(", ")}` : shopOf(b.c) !== b.c.party ? `Billed to ${b.c.party}` : null, b.c.billDate ? shortDay(b.c.billDate) : null, b.packages != null ? plural(b.packages, "box", "boxes") : null, lr || !b.c.ownVehicle ? b.c.transporter : (b.c.vehicleNo ?? directWho(b.c.transporter))].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {reasons.slice(0, 2).map((r) => (
