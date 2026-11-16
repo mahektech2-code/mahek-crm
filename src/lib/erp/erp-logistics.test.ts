@@ -24,6 +24,7 @@ import {
   customers,
   erpCustomerProfiles,
   erpFgEntries,
+  erpLrs,
   erpOrders,
   erpProductPacking,
   erpRefValues,
@@ -853,6 +854,11 @@ describe("vehicle trips and the transport payment shared by litres (Order-to-Del
     assert.ok(issue.ok, msg(issue));
     let [c] = await L.consignments({ ids: [t] });
     assert.notEqual(c.phase, "delivered");
+    /* A transporter's bill closes only under its LR. */
+    assert.match(msg(await L.markDelivered(ctx, [t], { date: "2026-09-15", receivedBy: "Ramesh", notify: false })), /Order 9401 has no LR yet/);
+    const lrId = id("elr");
+    await db.insert(erpLrs).values({ id: lrId, lrNo: "LR-9401", status: "assigned" });
+    await db.update(erpTransports).set({ lrId }).where(eq(erpTransports.id, t));
     const done = await L.markDelivered(ctx, [t], { date: "2026-09-15", receivedBy: "Ramesh", proof: "POD 7781", notify: false });
     assert.ok(done.ok, msg(done));
     [c] = await L.consignments({ ids: [t] });
@@ -1133,8 +1139,7 @@ describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Veh
     const [l] = (await db.execute(sql`select status from erp_lrs where id = ${copy}`)) as unknown as { status: string }[];
     assert.equal(l.status, "assigned");
     assert.match(msg(await L.markDelivered(ctx, [other.id], { date: "2026-10-22", signedCopyId: copy, receivedBy: "Someone", notify: false })), /closes another delivery/);
-    const plain = await L.markDelivered(ctx, [other.id], { date: "2026-10-22", notify: false });
-    assert.ok(plain.ok, "a transporter's bill still closes without any copy, as before");
+    assert.match(msg(await L.markDelivered(ctx, [other.id], { date: "2026-10-22", notify: false })), /has no LR yet/, "without a signed copy, a transporter's bill needs its LR to close");
   });
 
   test("a plate typed as the transporter becomes the vehicle number when the bill moves to a Mahek Vehicle, and the old name stays on the timeline", async () => {
