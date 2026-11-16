@@ -198,8 +198,8 @@ export function LegacyBackLink({ label, onPress }: { label: string; onPress: () 
         marginLeft: -8,
         paddingHorizontal: 8,
       }}>
-      <Text style={{ fontSize: 18, lineHeight: 18, color: C.muted }}>‹</Text>
-      <Text style={{ fontSize: 15, color: C.muted }}>{label}</Text>
+      <Text style={{ flexShrink: 1, fontSize: 18, lineHeight: 18, color: C.muted }}>‹</Text>
+      <Text style={{ flexShrink: 1, fontSize: 15, lineHeight: 21, color: C.muted }}>{label}</Text>
     </Pressable>
   );
 }
@@ -725,12 +725,12 @@ function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: 
         <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
           {'At ' + name}
         </Text>
-        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+        <Text numberOfLines={1} style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
           {'Arrived ' + hhmm(at) + ' · not checked in'}
         </Text>
       </View>
-      <View style={{ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={[{ fontSize: 14, color: C.navy }, weight(700)]}>Check in</Text>
+      <View style={{ flexShrink: 0, minHeight: 44, paddingVertical: 6, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.navy }, weight(700)]}>Check in</Text>
       </View>
     </Pressable>
   );
@@ -779,14 +779,14 @@ function InVisitBar({
         <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
           {(leftAt != null ? 'You left ' : 'In ') + name}
         </Text>
-        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+        <Text numberOfLines={1} style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
           {leftAt != null
             ? 'Not checked out · left about ' + hhmm(leftAt)
             : 'Checked in ' + hhmm(since) + ' · ' + spent}
         </Text>
       </View>
-      <View style={{ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={[{ fontSize: 14, color: C.navy }, weight(700)]}>Check out</Text>
+      <View style={{ flexShrink: 0, minHeight: 44, paddingVertical: 6, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.navy }, weight(700)]}>Check out</Text>
       </View>
     </Pressable>
   );
@@ -839,7 +839,7 @@ function useDayClock(): { checkInAt: number | null; sessions: Session[] } {
 export function StubCard({ title, body }: { title: string; body: string }) {
   return (
     <View style={s.stub}>
-      <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(600)]}>{title}</Text>
+      <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, textAlign: 'center' }, weight(600)]}>{title}</Text>
       <Text style={[type.small, { color: C.muted, textAlign: 'center', marginTop: 8 }]}>{body}</Text>
     </View>
   );

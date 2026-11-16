@@ -282,7 +282,14 @@ export function OnRoad({
                     Delivered by…
                   </Button>
                 ) : null}
-                <Button size="sm" className={c.lrId ? "ml-auto" : ""} disabled={pending} onClick={() => setDialog({ kind: "delivered", group: bills })}>
+                {/* A transporter's bill closes only once its LR is attached — the action refuses it too. */}
+                <Button
+                  size="sm"
+                  className={c.lrId ? "ml-auto" : ""}
+                  disabled={pending || (!c.ownVehicle && !c.lrId)}
+                  title={!c.ownVehicle && !c.lrId ? "Attach the LR on the Documents desk first" : undefined}
+                  onClick={() => setDialog({ kind: "delivered", group: bills })}
+                >
                   {c.ownVehicle ? "Signed copy & delivered" : "Delivered ✓"}
                 </Button>
               </div>

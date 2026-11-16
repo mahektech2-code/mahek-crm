@@ -463,7 +463,7 @@ export function ShopMap({
             borderColor: C.border,
             backgroundColor: C.surface,
           }}>
-          <Text style={[{ fontSize: 15, color: C.primary }, weight(600)]}>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primary }, weight(600)]}>
             Save maps for offline
           </Text>
         </Pressable>
@@ -574,7 +574,7 @@ export function ShopMap({
                       justifyContent: 'center',
                       boxShadow: shadow.soft,
                     }}>
-                    <Text style={[{ fontSize: 12, color: '#fff' }, weight(800)]}>{p.order}</Text>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: '#fff' }, weight(800)]}>{p.order}</Text>
                   </View>
                 ) : (
                   <View

@@ -704,9 +704,9 @@ export default function JourneyScreen() {
         paddingVertical: 10,
       }}>
       <Icon name="cal" size={20} color={C.primary} strokeWidth={2} />
-      <View style={{ flex: 1 }}>
-        <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>All journeys & your areas</T>
-        <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>Calendar or list · cities you work</T>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>All journeys & your areas</T>
+        <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>Calendar or list · cities you work</T>
       </View>
       <Icon name="forward" size={16} color={C.faint} strokeWidth={2} />
     </PressableScale>
@@ -763,7 +763,7 @@ export default function JourneyScreen() {
                   accessibilityLabel={'Travelling for ' + travellingFor(leg.startedAt ?? now, now)}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <Icon name="clock" size={14} color={C.ink} strokeWidth={2} />
-                  <T style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{travellingFor(leg.startedAt ?? now, now)}</T>
+                  <T style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>{travellingFor(leg.startedAt ?? now, now)}</T>
                 </View>
               </View>
               <T style={[cardName, { marginTop: 12 }]}>{leg.toLabel ?? legShop?.name ?? 'The shop'}</T>
@@ -885,11 +885,11 @@ export default function JourneyScreen() {
             <View style={[heroCard, { backgroundColor: C.navy }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Disc icon="tick" size={36} bg={C.lime} ink={C.navy} />
-                <View style={{ flex: 1 }}>
-                  <T style={[{ fontSize: 17, color: '#FFFFFF' }, weight(800)]}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <T style={[{ fontSize: 17, lineHeight: 24, color: '#FFFFFF' }, weight(800)]}>
                     {'Day done · ' + doneCount + '/' + stops.length}
                   </T>
-                  <T style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
+                  <T style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
                     Add any fare, food or bill you paid today.
                   </T>
                 </View>
@@ -929,7 +929,7 @@ export default function JourneyScreen() {
               {next.area ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
                   <Icon name="visit" size={14} color={C.muted} strokeWidth={2} />
-                  <T style={{ fontSize: 13, color: C.muted }}>{next.area}</T>
+                  <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{next.area}</T>
                 </View>
               ) : null}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
@@ -991,7 +991,7 @@ export default function JourneyScreen() {
                 bg={asking.length && !pickToday ? C.warnBg : C.primaryTint}
                 ink={asking.length && !pickToday ? C.warnInk : C.primaryDeep}
               />
-              <T style={[{ fontSize: 17, color: C.ink, marginTop: 10, textAlign: 'center' }, weight(800)]}>
+              <T style={[{ fontSize: 17, lineHeight: 24, color: C.ink, marginTop: 10, textAlign: 'center' }, weight(800)]}>
                 {pickToday ? 'Today needs its shops' : asking.length ? 'Waiting for your answer' : 'No route today'}
               </T>
               <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4, textAlign: 'center', maxWidth: 280 }}>
@@ -1198,14 +1198,14 @@ export default function JourneyScreen() {
             <View style={{ backgroundColor: C.warnBg, borderRadius: 20, padding: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Icon name="shop" size={16} color={C.warnInk} strokeWidth={2} />
-                <T style={[{ flex: 1, fontSize: 14, color: C.warnInk }, weight(700)]}>Off-plan reason needs a shop</T>
+                <T style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.warnInk }, weight(700)]}>Off-plan reason needs a shop</T>
                 {offPlanReasonAt ? (
                   <View
                     accessible
                     accessibilityLabel={'Typed at ' + hhmm(offPlanReasonAt)}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <Icon name="clock" size={12} color={C.warnInk} strokeWidth={2.2} />
-                    <T style={[{ fontSize: 12, color: C.warnInk }, weight(600)]}>{hhmm(offPlanReasonAt)}</T>
+                    <T style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(600)]}>{hhmm(offPlanReasonAt)}</T>
                   </View>
                 ) : null}
               </View>
@@ -1254,7 +1254,7 @@ export default function JourneyScreen() {
                   <Stagger key={d.id} index={i}>
                     <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <T style={[{ flex: 1, fontSize: 13, color: C.muted }, weight(700)]}>
+                        <T style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.muted }, weight(700)]}>
                           {dayLabelRelative(d.planDate, today)}
                         </T>
                         {/* HOW LONG IT HAS BEEN SITTING. The office is waiting on
@@ -1398,7 +1398,7 @@ export default function JourneyScreen() {
                     <View key={t.id} style={{ paddingVertical: 12 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Icon name="cal" size={16} color={C.ink} strokeWidth={2} />
-                        <T style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]}>
+                        <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>
                           {dmy(t.startDate) + ' – ' + dmy(t.endDate)}
                         </T>
                         <Badge tone={tone}>{t.syncState === 'queued' ? 'Not sent' : t.state}</Badge>
@@ -1453,7 +1453,7 @@ export default function JourneyScreen() {
               })}
             </GroupCard>
           ) : (
-            <T style={{ fontSize: 13, color: C.muted, paddingHorizontal: 6 }}>No past journeys on this phone yet.</T>
+            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, paddingHorizontal: 6 }}>No past journeys on this phone yet.</T>
           )}
           {allJourneysLink}
         </View>
@@ -1470,8 +1470,8 @@ export default function JourneyScreen() {
 
       {/* ------------------------------------------------- plan your own day */}
       <BottomSheet open={ownOpen} onClose={() => setOwnOpen(false)} scroll>
-        <T style={[{ fontSize: 20, color: C.ink }, weight(800)]}>Plan a day</T>
-        <T style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>Manager is told. Shops next.</T>
+        <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>Plan a day</T>
+        <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 2 }}>Manager is told. Shops next.</T>
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
           <Pressable
@@ -1504,7 +1504,7 @@ export default function JourneyScreen() {
           Shops are offered from this city. Past days are greyed in the calendar.
         </T>
 
-        {ownErr ? <T style={[{ fontSize: 13, color: C.danger, marginTop: 8 }, weight(600)]}>{ownErr}</T> : null}
+        {ownErr ? <T style={[{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 8 }, weight(600)]}>{ownErr}</T> : null}
 
         <SheetActions
           onCancel={() => setOwnOpen(false)}
@@ -1536,7 +1536,7 @@ export default function JourneyScreen() {
           Four tiles and a wide one, as V3 draws it. Each closes the sheet
           first and then runs — the order `ActionSheet` keeps. */}
       <BottomSheet open={moreOpen} onClose={() => setMoreOpen(false)}>
-        <T style={[{ fontSize: 20, color: C.ink }, weight(800)]}>
+        <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
           Route
         </T>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
@@ -1552,7 +1552,7 @@ export default function JourneyScreen() {
               style={({ pressed }) => ({
                 width: '48%',
                 flexGrow: 1,
-                height: 96,
+                minHeight: 96,
                 borderRadius: 20,
                 padding: 12,
                 justifyContent: 'space-between',
@@ -1560,8 +1560,8 @@ export default function JourneyScreen() {
               })}>
               <Icon name={a.glyph} size={22} color={i === 0 ? C.primaryDeep : C.ink} strokeWidth={2} />
               <View>
-                <T style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{a.short}</T>
-                <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{a.shortSub}</T>
+                <T style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>{a.short}</T>
+                <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>{a.shortSub}</T>
               </View>
             </Pressable>
           ))}
@@ -1577,7 +1577,8 @@ export default function JourneyScreen() {
             }}
             style={({ pressed }) => ({
               marginTop: 10,
-              height: 60,
+              minHeight: 60,
+              paddingVertical: 10,
               borderRadius: 20,
               paddingHorizontal: 14,
               flexDirection: 'row',
@@ -1586,9 +1587,9 @@ export default function JourneyScreen() {
               backgroundColor: pressed ? C.primaryEdge : C.wash,
             })}>
             <Icon name={a.glyph} size={22} color={C.ink} strokeWidth={2} />
-            <View style={{ flex: 1 }}>
-              <T style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{a.short}</T>
-              <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{a.shortSub}</T>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <T style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>{a.short}</T>
+              <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>{a.shortSub}</T>
             </View>
           </Pressable>
         ))}
@@ -1596,7 +1597,7 @@ export default function JourneyScreen() {
 
       {/* ---- requesting a tour ---- */}
       <BottomSheet open={tourOpen} onClose={() => setTourOpen(false)} scroll>
-        <T style={[{ fontSize: 20, color: C.ink }, weight(800)]}>Request a tour</T>
+        <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>Request a tour</T>
         <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 2 }}>
           Manager decides. Not the same as agreeing a given day.
         </T>
@@ -1611,7 +1612,7 @@ export default function JourneyScreen() {
               style={{ flex: 1, minWidth: 0 }}>
               <FieldBox focused={tourPick === k}>
                 <T style={{ fontSize: 11, color: C.muted }}>{k === 'from' ? 'From' : 'To'}</T>
-                <T style={[{ fontSize: 15, color: tour[k] ? C.ink : C.faint }, weight(tour[k] ? 700 : 600)]}>
+                <T style={[{ fontSize: 15, lineHeight: 21, color: tour[k] ? C.ink : C.faint }, weight(tour[k] ? 700 : 600)]}>
                   {tour[k] ? dmy(tour[k]) : 'Pick'}
                 </T>
               </FieldBox>
@@ -1641,7 +1642,7 @@ export default function JourneyScreen() {
         <FieldBox style={{ marginTop: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>₹</T>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Input
                 value={tour.cost}
                 accessibilityLabel="About how much it will cost in rupees, if you know"
@@ -1654,7 +1655,7 @@ export default function JourneyScreen() {
           </View>
         </FieldBox>
 
-        {tourErr ? <T style={[{ fontSize: 13, color: C.danger, marginTop: 8 }, weight(600)]}>{tourErr}</T> : null}
+        {tourErr ? <T style={[{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 8 }, weight(600)]}>{tourErr}</T> : null}
 
         <SheetActions
           onCancel={() => setTourOpen(false)}
@@ -1854,7 +1855,7 @@ function WeekStrip({ days, today }: { days: PlanDay[]; today: string }) {
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6 }}>
-        <T style={[{ fontSize: 15, color: C.ink, flex: 1 }, weight(700)]}>
+        <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, flex: 1 }, weight(700)]}>
           Week
         </T>
         <Pressable
@@ -1864,7 +1865,7 @@ function WeekStrip({ days, today }: { days: PlanDay[]; today: string }) {
           onPress={() => router.push('/journeys')}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32 }}>
           <Icon name="cal" size={14} color={C.primaryDeep} strokeWidth={2} />
-          <T style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>Calendar ›</T>
+          <T style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(600)]}>Calendar ›</T>
         </Pressable>
       </View>
       <View style={{ flexDirection: 'row', gap: 5, marginTop: 8 }}>

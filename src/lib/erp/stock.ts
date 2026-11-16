@@ -50,7 +50,21 @@ export type Ex = { execute: (q: ReturnType<typeof sql>) => Promise<unknown> };
  * record of each write-off is the transfer itself — the Transfers register and
  * the Stock inquiry's "Written off" / "Adjusted by hand" lines.
  */
-export type LotPick = { lots?: string[] };
+export type LotPick = {
+  lots?: string[];
+  /**
+   * `false` when the caller reads STOCK and nothing else — a check before a
+   * consuming write, the factory phone's lots. SFG, FG and packing lots come
+   * back with no rate (`ratePaise`, `perCanPaise`, `perBoxPaise`,
+   * `amountPaise` all null) and the whole-book costing behind a rate
+   * (`ledgerDerived`) is never asked for. That costing is worked out again
+   * after EVERY stock write, so a stock check that asked for it paid for a
+   * walk of the whole book to read one figure it then threw away — on the
+   * lorry, once per box scanned. Raw-material lots keep their rate: it is
+   * read off the lot's own purchase, not the book.
+   */
+  rates?: boolean;
+};
 
 async function rows<T>(q: ReturnType<typeof sql>, ex: Ex = db, keep = true): Promise<T[]> {
   /* On the pool, a page asks each ledger once however many doors ask
@@ -405,7 +419,7 @@ export async function sfgLots(ex: Ex = db, pick: LotPick = {}): Promise<SfgLot[]
     `, ex);
   const codes = [...new Set(out.map((r) => String(r.lotCode)))];
   const [rates, sizes] = await Promise.all([
-    sfgRates(codes),
+    pick.rates === false ? new Map<string, number | null>() : sfgRates(codes),
     codes.length
       ? rows<{ lotCode: string; use: number; batches: number }>(
           sql`select lot_code as "lotCode", sum(total_use)::float8 as use, max(batches)::float8 as batches from erp_sfg_lines where lot_code in ${codes} group by lot_code`,
@@ -528,7 +542,7 @@ export async function fgLots(ex: Ex = db, pick: LotPick = {}): Promise<FgLot[]> 
        where ${pick.lots ? (pick.lots.length ? sql`i.lot_code in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
        order by fg.name, i.lot_code, g.name
     `, ex);
-  const rates = await fgRates([...new Set(out.map((r) => String(r.lotCode)))]);
+  const rates = pick.rates === false ? new Map<string, { ratePaise: number | null; perCanPaise: number | null }>() : await fgRates([...new Set(out.map((r) => String(r.lotCode)))]);
   return out.map((r) => {
     const rate = rates.get(fgKey(String(r.finishedGoodId), String(r.lotCode)));
     return {
@@ -633,7 +647,7 @@ export async function packLots(ex: Ex = db, pick: LotPick = {}): Promise<PackLot
        where ${pick.lots ? (pick.lots.length ? sql`i.batch_no in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
        order by p.name, i.batch_no, g.name
     `, ex);
-  const costing = await packBatchCosting([...new Set(out.map((r) => String(r.batchNo)))]);
+  const costing = pick.rates === false ? new Map<string, PackCosting>() : await packBatchCosting([...new Set(out.map((r) => String(r.batchNo)))]);
   return out.map((r) => {
     const c = costing.get(String(r.batchNo));
     const amount = c?.amountPaise ?? null;
@@ -661,12 +675,13 @@ export async function packLots(ex: Ex = db, pick: LotPick = {}): Promise<PackLot
  * lot stock at the godown — already net of cans filled and boxes packed —
  * and drums company-wide (spec §14 A-16).
  */
-export async function rmLevelAvailable(): Promise<(materialType: string, rawMaterialId: string, godownId: string) => number> {
+export async function rmLevelAvailable(read?: RmLot[]): Promise<(materialType: string, rawMaterialId: string, godownId: string) => number> {
   /* Lot stock is already net of the cans filled and boxes packed (see rmLots),
      so a level reads it as it stands — subtracting them here as well would
-     count every can twice. */
+     count every can twice. `read` is `rmLots()` a caller already has: adding
+     the whole raw-material book up again to get the same lots is not free. */
   const [lots, drums, drumsSold] = await Promise.all([
-    rmLots(),
+    read ?? rmLots(),
     rows<{ n: number }>(sql`select coalesce(sum(drums), 0)::float8 as n from erp_purchases`),
     rows<{ n: number }>(sql`
       select coalesce(sum(o.qty_cans), 0)::float8 as n

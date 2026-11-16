@@ -159,7 +159,7 @@ export function CommitmentCard({
           onPress={onRecord}
           accessibilityRole="button"
           style={({ pressed }) => ({ alignSelf: 'flex-start', marginTop: 10, minHeight: 44, paddingHorizontal: 16, borderRadius: 22, justifyContent: 'center', backgroundColor: pressed ? C.hairline : C.canvas })}>
-          <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Change the promise</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>Change the promise</Text>
         </Pressable>
       ) : (
         <PillButton label="Save their promise" variant="navyLime" height={52} onPress={onRecord} style={{ marginTop: 12 }} />

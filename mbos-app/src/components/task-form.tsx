@@ -210,7 +210,7 @@ function FieldInput({
       return (
         <View
           accessibilityRole="radiogroup"
-          style={{ height: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
+          style={{ minHeight: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
           {([true, false] as const).map((b) => {
             const on = value === b;
             return (
@@ -225,7 +225,7 @@ function FieldInput({
                 accessibilityLabel={b ? 'Yes' : 'No'}
                 hitSlop={{ top: 4, bottom: 4 }}
                 style={{ width: 56, borderRadius: 18, backgroundColor: on ? C.navy : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{b ? 'Yes' : 'No'}</Text>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{b ? 'Yes' : 'No'}</Text>
               </Pressable>
             );
           })}
@@ -285,13 +285,13 @@ function FieldInput({
                 style={{
                   flexGrow: 1,
                   minWidth: 44,
-                  height: 44,
+                  minHeight: 44,
                   borderRadius: 22,
                   backgroundColor: on ? C.primary : C.canvas,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                <Text style={[{ fontSize: 15, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{String(n)}</Text>
+                <Text style={[{ fontSize: 15, lineHeight: 21, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{String(n)}</Text>
               </Pressable>
             );
           })}
@@ -352,7 +352,7 @@ function Chip({
         gap: 4,
       }}>
       {on && navy ? <Icon name="tick" size={14} color={C.lime} strokeWidth={2.4} /> : null}
-      <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -385,7 +385,7 @@ function NumberInput({
         }}
       />
       {unit ? (
-        <Text pointerEvents="none" style={{ position: 'absolute', right: 16, fontSize: 15, color: C.muted }}>
+        <Text pointerEvents="none" style={{ position: 'absolute', right: 16, fontSize: 15, lineHeight: 21, color: C.muted }}>
           {unit}
         </Text>
       ) : null}
@@ -402,7 +402,8 @@ function DateInput({ value, onChange }: { value?: string; onChange: (v: TaskAnsw
         accessibilityRole="button"
         accessibilityLabel={value ? dmy(value) + ', change' : 'Pick a date'}
         style={({ pressed }) => ({
-          height: 48,
+          minHeight: 48,
+          paddingVertical: 6,
           borderRadius: 24,
           backgroundColor: value ? C.primaryTint : pressed ? C.hairline : C.canvas,
           flexDirection: 'row',
@@ -411,7 +412,7 @@ function DateInput({ value, onChange }: { value?: string; onChange: (v: TaskAnsw
           gap: 6,
         })}>
         <Icon name="cal" size={16} color={value ? C.primaryDeep : C.ink} strokeWidth={2} />
-        <Text style={[{ fontSize: 14, color: value ? C.primaryDeep : C.ink }, weight(value ? 700 : 600)]}>
+        <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: value ? C.primaryDeep : C.ink }, weight(value ? 700 : 600)]}>
           {value ? dmy(value) + ' · change' : 'Pick a date'}
         </Text>
       </Pressable>
@@ -462,7 +463,7 @@ function BirthdayInput({ value, onChange }: { value?: BirthdayAnswer; onChange: 
         </Grid>
       </View>
       {value && value.day && value.month ? (
-        <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>{`${value.day} ${MONTHS[value.month - 1]}`}</Text>
+        <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(600)]}>{`${value.day} ${MONTHS[value.month - 1]}`}</Text>
       ) : null}
     </View>
   );
@@ -510,13 +511,14 @@ function DayPill({
       accessibilityState={{ selected: on }}
       hitSlop={{ top: 4, bottom: 4 }}
       style={{
-        height: 36,
+        minHeight: 36,
+        paddingVertical: 6,
         borderRadius: 18,
         backgroundColor: on ? C.primary : C.canvas,
         alignItems: 'center',
         justifyContent: 'center',
       }}>
-      <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -632,7 +634,7 @@ function PhotoInput({
         style={{ fontSize: 11, color: C.muted }}>
         {`${(f.min ?? 0) > 1 ? `At least ${f.min} · ` : ''}${value.length ? 'tap ✕ to remove' : `${value.length} of ${max}`}`}
       </Text>
-      {err ? <Text style={[{ fontSize: 12, color: C.danger }, weight(600)]}>{err}</Text> : null}
+      {err ? <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(600)]}>{err}</Text> : null}
     </View>
   );
 }
@@ -663,7 +665,8 @@ function LocationInput({ value, onChange }: { value?: LocationAnswer; onChange: 
           accessibilityLabel={label}
           accessibilityState={{ busy }}
           style={({ pressed }) => ({
-            height: 48,
+            minHeight: 48,
+            paddingVertical: 6,
             paddingHorizontal: 14,
             borderRadius: 24,
             backgroundColor: C.navy,
@@ -673,16 +676,16 @@ function LocationInput({ value, onChange }: { value?: LocationAnswer; onChange: 
             opacity: pressed ? 0.85 : 1,
           })}>
           {busy ? <ActivityIndicator size="small" color={C.lime} /> : <Icon name="locate" size={16} color={C.lime} strokeWidth={2.2} />}
-          <Text style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>{label}</Text>
+          <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: '#FFFFFF' }, weight(700)]}>{label}</Text>
         </Pressable>
         {value ? (
-          <Text style={[{ flexShrink: 1, fontSize: 12, color: C.success }, weight(600)]}>
+          <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.success }, weight(600)]}>
             {taskAnswerText({ id: '', type: 'location', label: '' }, value) +
               (value.accuracyM ? ` · within ${value.accuracyM} m` : '')}
           </Text>
         ) : null}
       </View>
-      {err ? <Text style={[{ fontSize: 12, color: C.danger }, weight(600)]}>{err}</Text> : null}
+      {err ? <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(600)]}>{err}</Text> : null}
     </View>
   );
 }

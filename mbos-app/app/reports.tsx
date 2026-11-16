@@ -112,11 +112,11 @@ function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?
   return (
     <View style={{ backgroundColor: onNavy ? C.navy : C.surface, borderRadius: 24, padding: 18 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text accessibilityRole="header" style={[{ fontSize: 15, color: onNavy ? '#FFFFFF' : C.muted }, weight(700)]}>
+        <Text accessibilityRole="header" style={[{ flexShrink: 1, fontSize: 15, lineHeight: 21, color: onNavy ? '#FFFFFF' : C.muted }, weight(700)]}>
           {title}
         </Text>
         {onNavy ? (
-          <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(198,255,52,0.14)', justifyContent: 'center' }}>
+          <View style={{ minHeight: 24, paddingVertical: 3, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(198,255,52,0.14)', justifyContent: 'center' }}>
             <T style={[{ fontSize: 12, color: C.lime }, weight(700)]}>so far</T>
           </View>
         ) : null}
@@ -200,7 +200,7 @@ function Stat({
           tabular,
         ]}
       />
-      <T style={{ fontSize: 12, color: big ? C.onNavyMuted : C.muted }}>{label}</T>
+      <T style={{ marginTop: 4, fontSize: 12, color: big ? C.onNavyMuted : C.muted }}>{label}</T>
     </View>
   );
 }

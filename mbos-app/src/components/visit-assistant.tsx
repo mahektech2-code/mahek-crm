@@ -107,8 +107,8 @@ const ACTION_ICON: Record<VisitAction['kind'], IconName> = {
 function StatePill({ state }: { state: string }) {
   const w = STATE_WORD[state] ?? STATE_WORD.confirm;
   return (
-    <View style={{ backgroundColor: w.bg, borderRadius: 13, height: 26, paddingHorizontal: 10, justifyContent: 'center', alignSelf: 'flex-start' }}>
-      <Text style={[{ fontSize: 12, color: w.fg }, weight(800)]}>{w.text}</Text>
+    <View style={{ backgroundColor: w.bg, borderRadius: 13, minHeight: 26, paddingVertical: 3, paddingHorizontal: 10, justifyContent: 'center', alignSelf: 'flex-start' }}>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: w.fg }, weight(800)]}>{w.text}</Text>
     </View>
   );
 }
@@ -156,7 +156,7 @@ function Chip({
         backgroundColor: selected ? C.navy : onNavy ? C.surface : C.wash,
         opacity: pressed ? 0.8 : 1,
       })}>
-      <Text style={[{ fontSize: 13, color: selected ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: selected ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -240,12 +240,12 @@ export function VisitAssistant({
       <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Icon name="spark" size={18} color={C.lime} strokeWidth={2} />
-          <Text style={[{ fontSize: 15, color: C.lime, flex: 1 }, weight(800)]} accessibilityRole="header">
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.lime, flex: 1 }, weight(800)]} accessibilityRole="header">
             Understand this visit
           </Text>
           {result && waiting > 0 ? (
-            <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 12, color: C.warnInk }, weight(800)]}>{waiting + ' to answer'}</Text>
+            <View style={{ minHeight: 28, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, justifyContent: 'center' }}>
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(800)]}>{waiting + ' to answer'}</Text>
             </View>
           ) : null}
         </View>
@@ -318,7 +318,7 @@ export function VisitAssistant({
             style={({ pressed }) => ({
               width: stale ? undefined : 60,
               flex: stale ? 1 : undefined,
-              height: 60,
+              minHeight: 60,
               borderRadius: 30,
               backgroundColor: C.surface,
               flexDirection: 'row',
@@ -330,7 +330,7 @@ export function VisitAssistant({
             })}>
             <Icon name="refresh" size={20} color={C.ink} strokeWidth={2} />
             {stale ? (
-              <Text style={[{ fontSize: 16, color: C.ink }, weight(700)]}>{busy ? 'Reading…' : 'Read it again'}</Text>
+              <Text style={[{ flexShrink: 1, fontSize: 16, lineHeight: 22, color: C.ink }, weight(700)]}>{busy ? 'Reading…' : 'Read it again'}</Text>
             ) : null}
           </Pressable>
           {!stale ? (
@@ -380,7 +380,7 @@ function Reading({
                 <View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
                     <Icon name={OUTCOME_ICON[result.outcome.key] ?? 'visit'} size={18} color={C.lime} strokeWidth={2} />
-                    <Text style={[{ fontSize: 17, color: '#FFFFFF', flex: 1 }, weight(800)]}>{result.outcome.label}</Text>
+                    <Text style={[{ fontSize: 17, lineHeight: 24, color: '#FFFFFF', flex: 1 }, weight(800)]}>{result.outcome.label}</Text>
                   </View>
                   <View style={{ marginTop: 6 }}>
                     <StatePill state="ready" />
@@ -388,7 +388,7 @@ function Reading({
                 </View>
               ) : (
                 <View>
-                  <Text style={[{ fontSize: 13, color: '#FFC24A', marginTop: 6 }, weight(700)]}>Which was it?</Text>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: '#FFC24A', marginTop: 6 }, weight(700)]}>Which was it?</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                     {result.outcomeChoices.map((o) => (
                       <Chip key={o.key} label={o.label} selected={false} onNavy onPress={() => handlers.onChooseOutcome(o.key)} />
@@ -404,8 +404,8 @@ function Reading({
           {result.comeBack ? (
             <Tile title="Come back on" icon="cal">
               {result.comeBack.date ? (
-                <View style={{ marginTop: 6, height: 32, paddingHorizontal: 10, borderRadius: 16, backgroundColor: C.surface, justifyContent: 'center', alignSelf: 'flex-start' }}>
-                  <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{pretty(result.comeBack.date)}</Text>
+                <View style={{ marginTop: 6, minHeight: 32, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 16, backgroundColor: C.surface, justifyContent: 'center', alignSelf: 'flex-start' }}>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>{pretty(result.comeBack.date)}</Text>
                 </View>
               ) : (
                 <View style={{ gap: 6, marginTop: 6 }}>
@@ -430,7 +430,7 @@ function Tile({ title, icon, children }: { title: string; icon?: IconName; child
     <View style={{ flex: 1, minWidth: 0, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, padding: 12 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
         {icon ? <Icon name={icon} size={13} color={C.onNavyMuted} strokeWidth={2} /> : null}
-        <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(700)]}>{title}</Text>
+        <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.onNavyMuted }, weight(700)]}>{title}</Text>
       </View>
       {children}
     </View>
@@ -475,11 +475,11 @@ function NextSteps({
 
       {result.competitor || result.feedback.length ? (
         <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, marginTop: 10 }}>
-          <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>For your manager</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>For your manager</Text>
           {result.competitor ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
               <Icon name="shop" size={16} color={C.muted} strokeWidth={2} />
-              <Text style={{ fontSize: 14, color: C.ink, flex: 1 }}>
+              <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, flex: 1 }}>
                 {'Other brand: '}
                 <Text style={weight(700)}>{result.competitor}</Text>
               </Text>
@@ -531,7 +531,7 @@ function DoorButton({
         justifyContent: 'center',
         paddingHorizontal: 14,
       }}>
-      <Text style={[{ fontSize: 14, color: fg, textAlign: 'center' }, weight(700)]}>{label}</Text>
+      <Text style={[{ fontSize: 14, lineHeight: 20, color: fg, textAlign: 'center' }, weight(700)]}>{label}</Text>
     </PressableScale>
   );
 }
@@ -552,7 +552,7 @@ function ActionRow({
     <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, opacity: dup ? 0.85 : 1 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <Icon name={ACTION_ICON[a.kind] ?? 'spark'} size={20} color={C.primaryDeep} strokeWidth={2} />
-        <Text style={[{ fontSize: 16, color: C.ink, flex: 1, minWidth: 0 }, weight(800)]}>{a.title}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 22, color: C.ink, flex: 1, minWidth: 0 }, weight(800)]}>{a.title}</Text>
         <StatePill state={a.state} />
       </View>
       <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }}>{a.why}</Text>
@@ -561,10 +561,10 @@ function ActionRow({
         ? a.lines.map((l, i) => (
             <View key={l.said + i} style={{ marginTop: i ? 4 : 8 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-                <Text style={{ fontSize: 14, color: C.ink, flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, flex: 1, minWidth: 0 }}>
                   {l.product.state === 'matched' ? l.product.name : `"${l.said}"`}
                 </Text>
-                <Text style={[{ fontSize: 14, color: l.quantityCans != null ? C.ink : C.warnInk }, weight(700)]}>
+                <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: l.quantityCans != null ? C.ink : C.warnInk }, weight(700)]}>
                   {l.quantityCans != null ? `× ${l.quantityCans}` : l.saidAs ? `said ${l.saidAs}` : 'quantity?'}
                 </Text>
               </View>
@@ -584,15 +584,15 @@ function ActionRow({
           ))
         : null}
       {a.kind === 'promise' && a.date?.date ? (
-        <Text style={[{ fontSize: 14, color: C.ink, marginTop: 6 }, weight(600)]}>{'Pays on ' + pretty(a.date.date)}</Text>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 6 }, weight(600)]}>{'Pays on ' + pretty(a.date.date)}</Text>
       ) : null}
       {a.kind === 'requirement' ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {[a.what, a.monthlyLitres != null ? `${a.monthlyLitres} L / month` : null, a.cans != null ? `${a.cans} cans` : null]
             .filter((x): x is string => !!x)
             .map((t) => (
-              <View key={t} style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.wash, justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{t}</Text>
+              <View key={t} style={{ minHeight: 28, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.wash, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>{t}</Text>
               </View>
             ))}
         </View>

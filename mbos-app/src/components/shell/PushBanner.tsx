@@ -239,7 +239,7 @@ export function PushBanner() {
         </View>
         {more > 0 ? (
           <View style={st.more}>
-            <Text style={[{ fontSize: 12, color: C.primaryDeep }, weight(600)]}>{'+' + more}</Text>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(600)]}>{'+' + more}</Text>
           </View>
         ) : null}
       </Pressable>
@@ -275,7 +275,7 @@ const st = StyleSheet.create({
   icon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   more: {
     minWidth: 30,
-    height: 24,
+    minHeight: 24,
     paddingHorizontal: 8,
     borderRadius: 12,
     backgroundColor: C.primaryTint,

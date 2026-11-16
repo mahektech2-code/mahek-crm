@@ -56,6 +56,14 @@ export type ScreenKit = {
   place: { one: string; many: string };
   /** "v4": the ERP's v4 list head — chips as figure cards, filters on the page. Absent, the original look. */
   look?: "v4";
+  /**
+   * Every write that succeeds revalidates the screen on the server (`lib/actions/erp.ts`), and a revalidating
+   * server action sends the page back already redrawn in its own answer. So the screens do NOT also call
+   * `router.refresh()` after it: that drew the whole page — the sidebar's badges and the open order book
+   * among it — a second time for every click. Absent, the app's actions are not known to revalidate, and
+   * the screens refresh after a save as they always did.
+   */
+  revalidates?: boolean;
 };
 
 export const ERP_KIT: ScreenKit = {
@@ -74,6 +82,7 @@ export const ERP_KIT: ScreenKit = {
   tones: ST_TONE,
   place: { one: "godown", many: "godowns" },
   look: "v4",
+  revalidates: true,
 };
 
 export const KitContext = createContext<ScreenKit>(ERP_KIT);

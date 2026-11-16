@@ -76,6 +76,11 @@ export function ErpUiProvider({
   // The provider calls its kit directly too, so it gets the throw-safe one.
   const kit = safeKit(rawKit);
   const router = useRouter();
+  /* A save that revalidated came back with the page already redrawn (`ScreenKit.revalidates`): asking
+     again drew the whole page twice per click. Only an app whose actions do not revalidate refreshes. */
+  const redraw = useCallback(() => {
+    if (!kit.revalidates) router.refresh();
+  }, [kit, router]);
   const { push } = useToast();
   const [confirmState, setConfirmState] = useState<Confirm | null>(null);
   const [promptState, setPromptState] = useState<PromptState | null>(null);
@@ -146,7 +151,7 @@ export function ErpUiProvider({
       if (!res) return;
       if (res.ok) {
         toast(res.message ?? "Saved");
-        router.refresh();
+        redraw();
         after?.();
         /* An action may answer like a tool does: "Send to vendor" hands back the PO written out. */
         const dialog = (res.data as ToolResult | undefined)?.dialog;
@@ -158,7 +163,7 @@ export function ErpUiProvider({
         toast(resultError(res), "error");
       }
     },
-    [router, toast],
+    [redraw, router, toast],
   );
 
   const act = useCallback(
@@ -266,7 +271,7 @@ export function ErpUiProvider({
         }
         const data = (res.data ?? {}) as ToolResult;
         if (res.message) toast(res.message);
-        router.refresh();
+        redraw();
         if (data.dialog) setResultDialog({ screen, d: data.dialog });
         if (data.navigate) router.push(data.navigate);
       };
@@ -284,7 +289,7 @@ export function ErpUiProvider({
       if (t.confirm) confirm(t.confirm, go);
       else go();
     },
-    [confirm, kit, prompt, router, toast],
+    [confirm, kit, prompt, redraw, router, toast],
   );
 
   return (
@@ -317,7 +322,7 @@ export function ErpUiProvider({
             onSaved={(msg) => {
               setForm(null);
               toast(msg);
-              router.refresh();
+              redraw();
             }}
           />
         ) : form ? (
@@ -328,7 +333,7 @@ export function ErpUiProvider({
             onSaved={(msg) => {
               setForm(null);
               toast(msg);
-              router.refresh();
+              redraw();
             }}
             confirm={confirm}
           />
@@ -343,7 +348,7 @@ export function ErpUiProvider({
             onClose={() => setShare(null)}
             onDone={(msg) => {
               toast(msg);
-              router.refresh();
+              redraw();
               share.after?.();
             }}
           />
@@ -377,7 +382,7 @@ export function ErpUiProvider({
                     setResultDialog(null);
                     if (res.ok) {
                       toast(res.message ?? "Done");
-                      router.refresh();
+                      redraw();
                     } else toast(res.error, "error");
                   }
                 : undefined

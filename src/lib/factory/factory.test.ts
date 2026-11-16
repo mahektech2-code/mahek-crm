@@ -791,6 +791,7 @@ describe("dispatch", () => {
     assert.deepEqual(r.notJudged, [ids[3]], "the scan behind the refusal is handed back, not judged");
     assert.ok(r.task && /^T-/.test(r.task), "the first box on made the lorry's job");
     assert.ok(r.board, "one board for the whole batch");
+    assert.deepEqual(r.board, await lorryBoard(fc, key), "read after the last scan: the lorry as it stands");
     const statusOf = async () => Object.fromEntries((await q<{ id: string; status: string }>(sql`select id, status from factory_scan_events where id in ${inList(ids)}`)).map((x) => [x.id, x.status]));
     assert.deepEqual(await statusOf(), { [ids[0]]: "accepted", [ids[1]]: "repeat", [ids[2]]: "refused", [ids[3]]: "not_judged" }, "every scan received is on record, judged or not");
     const [u2] = await q<{ status: string }>(sql`select status from erp_units where id = ${box2}`);
@@ -1054,6 +1055,32 @@ describe("the Production Head", () => {
     assert.equal(fill.adj, t.rej + 2);
     const [hist] = await q<{ n: number }>(sql`select count(*)::int as n from audit_log where entity_id = ${t.id} and action = 'factory.review.decide'`);
     assert.equal(hist.n, 1, "the decision and its reason are in the job's history");
+  });
+});
+
+describe("the floor, read once for every phone asking at once", () => {
+  test("phones asking together share one build, and none is answered from a build older than its question", async () => {
+    const anil = (await contextFor(floor.users.anil))!;
+    const kamal = (await contextFor(floor.users.kamalkant))!;
+    /* The first starts a build; the two asking while it runs share the next one. */
+    const [, a, b] = await Promise.all([bootstrap(kamal), bootstrap(anil), bootstrap(kamal)]);
+    assert.equal(a.lots, b.lots, "one build of the godown's lots, shared");
+    assert.notEqual(a.emp, b.emp, "each phone's own copy of the people");
+    assert.equal(a.emp[anil.user.id].ph, "9850220231", "my own number");
+    assert.equal(b.emp[anil.user.id].ph, "", "never somebody else's");
+
+    /* A asks; a job is written while A's build runs; B asks after the write and must see it. */
+    const first = bootstrap(anil);
+    const [{ id: tid }] = await q<{ id: string }>(sql`
+      insert into factory_tasks (id, proc, godown_id, work_date, due, status, item, batches, created_by_id)
+      values ('T-COALESCE', 'mixing', ${anil.godown.id}, ${calendarDate(new Date())}::date, '23:59', 'ready', ${floor.formulations.nc}, 1, null)
+      returning id`);
+    const second = await bootstrap(kamal);
+    await first;
+    assert.ok(second.tasks.some((t) => t.id === tid), "the phone that asked after the write sees it");
+    await db.execute(sql`delete from factory_tasks where id = ${tid}`);
+    const third = await bootstrap(anil);
+    assert.ok(!third.tasks.some((t) => t.id === tid), "and nothing is kept once answered");
   });
 });
 

@@ -168,8 +168,8 @@ export function ReasonSheet({
         <Pressable
           onPress={onClose}
           accessibilityRole="button"
-          style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
-          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Cancel</Text>
+          style={({ pressed }) => ({ width: 110, minHeight: 56, paddingVertical: 8, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Cancel</Text>
         </Pressable>
         {/* Still pressable with a reason on it, which is the house rule for
             every disabled button here: a tap that answers teaches somebody

@@ -52,6 +52,13 @@ const CHANNEL = "mahek-workday";
 const ACT_KEY = "mahek.workday.lastActivity";
 const BEAT_KEY = "mahek.workday.lastBeat";
 const BEAT_EVERY = 60_000;
+/* When any tab last asked the server for the day. Every open tab used to ask
+   once a minute, and again each time it came into view; now one asks and
+   tells the others (CHANNEL), and a tab nobody is looking at asks nothing. */
+const POLL_KEY = "mahek.workday.lastPoll";
+const POLL_EVERY = 60_000;
+/* Coming back into view re-asks only an answer older than this. */
+const FRESH_ON_VIEW = 15_000;
 
 function readNum(key: string): number {
   try {
@@ -86,17 +93,24 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
   const channel = React.useRef<BroadcastChannel | null>(null);
   const lastAct = React.useRef(0);
 
-  const load = React.useCallback((s: WorkdayState) => {
-    setSkew(s.now - Date.now());
+  /* `at` is when, on this browser's clock, the answer was taken — a state
+     another tab fetched a moment ago still sets the skew right. */
+  const load = React.useCallback((s: WorkdayState, at = Date.now()) => {
+    setSkew(s.now - at);
     setState(s);
   }, []);
 
   const refresh = React.useCallback(async () => {
     try {
+      writeNum(POLL_KEY, Date.now());
       const res = await fetch("/api/workday", { cache: "no-store" });
       if (!res.ok) return;
       const j = (await res.json()) as { state?: WorkdayState };
-      if (j.state) load(j.state);
+      if (j.state) {
+        const at = Date.now();
+        load(j.state, at);
+        channel.current?.postMessage({ state: j.state, at });
+      }
     } catch {
       /* offline: keep what we have and try again on the next tick */
     }
@@ -146,7 +160,8 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     void refresh();
     try {
       channel.current = new BroadcastChannel(CHANNEL);
-      channel.current.onmessage = (e: MessageEvent<{ t?: number; refresh?: boolean }>) => {
+      channel.current.onmessage = (e: MessageEvent<{ t?: number; refresh?: boolean; state?: WorkdayState; at?: number }>) => {
+        if (e.data?.state) load(e.data.state, e.data.at ?? Date.now());
         if (e.data?.t && e.data.t > lastAct.current) {
           lastAct.current = e.data.t;
           setLastActivity(e.data.t);
@@ -162,7 +177,7 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     const vis = () => {
       if (document.visibilityState === "visible") {
         touch();
-        void refresh();
+        if (Date.now() - readNum(POLL_KEY) >= FRESH_ON_VIEW) void refresh();
       }
     };
     document.addEventListener("visibilitychange", vis);
@@ -171,11 +186,10 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", vis);
       channel.current?.close();
     };
-  }, [refresh, touch]);
+  }, [refresh, touch, load]);
 
   /* The tick: the timer, the busy markers, the heartbeat and the poll. */
   React.useEffect(() => {
-    let polls = 0;
     const id = window.setInterval(() => {
       setNow(Date.now());
       if (document.querySelector("[data-workday-busy]")) touch();
@@ -186,11 +200,12 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
       }
       if (!state?.subject) return;
       if (state.phase === "working" && lastAct.current > readNum(BEAT_KEY) && Date.now() - readNum(BEAT_KEY) >= BEAT_EVERY) void sendBeat();
-      polls++;
-      /* Every minute, and at once when the idle clock would have crossed a line. */
+      /* Only a tab somebody is looking at asks; the others hear its answer. */
+      if (document.visibilityState !== "visible") return;
+      /* Every minute across all tabs, and at once when the idle clock would have crossed a line. */
       const idle = Date.now() - lastAct.current;
       const crossing = state.phase === "working" && !(state.cfg.idleFrom != null && Date.now() < state.cfg.idleFrom) && idle >= state.cfg.breakMinutes * 60_000 && idle < state.cfg.breakMinutes * 60_000 + 1_000;
-      if (polls % 60 === 0 || crossing) void refresh();
+      if (Date.now() - readNum(POLL_KEY) >= POLL_EVERY || crossing) void refresh();
     }, 1_000);
     return () => window.clearInterval(id);
   }, [state, refresh, sendBeat, touch]);

@@ -160,7 +160,7 @@ export function CommitmentSheet({
           : 'In cans, the way they will order. No product is set on this lead yet.'}
       </Text>
 
-      <Text style={[{ fontSize: 13, color: C.ink, marginTop: 10 }, weight(700)]}>What stops it today</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 10 }, weight(700)]}>What stops it today</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
         {blockers.map((b) => (
           <SheetChip key={b.code} label={b.label} on={blocker === b.code} onPress={() => setBlocker(b.code)} />
@@ -171,8 +171,8 @@ export function CommitmentSheet({
         <Pressable
           onPress={onClose}
           accessibilityRole="button"
-          style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
-          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Cancel</Text>
+          style={({ pressed }) => ({ width: 110, minHeight: 56, paddingVertical: 8, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Cancel</Text>
         </Pressable>
         <PrimaryButton
           label="Save"

@@ -13168,6 +13168,8 @@ export const erpTransports = pgTable(
     index("erp_transports_order_idx").on(t.orderNo),
     uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
     index("erp_transports_lr_idx").on(t.lrId),
+    /* The LR lists count a bill under its LR OR its signed copy (drizzle/0344). */
+    index("erp_transports_signed_copy_idx").on(t.signedCopyId).where(sql`${t.signedCopyId} is not null`),
   ],
 );
 
@@ -13261,7 +13263,7 @@ export const erpTransportEvents = pgTable(
 );
 
 /**
- * 0344 — EVERY CALL TO A TRANSPORTER, one row per call, however many LRs it
+ * 0345 — EVERY CALL TO A TRANSPORTER, one row per call, however many LRs it
  * covered. `erp_transport_events` says what happened to each LR; this says
  * that somebody rang, whom, how it went and what came of it — the history the
  * calling window draws and the answer rate is read from. A no-answer is a row
