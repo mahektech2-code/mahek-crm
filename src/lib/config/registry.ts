@@ -4486,6 +4486,16 @@ export const SETTINGS = [
     max: 1440,
   },
   {
+    key: "hrms.workday.idleFromHour",
+    type: "integer",
+    category: "hrms",
+    label: "Idle rules start at (hour, 24-hour clock)",
+    description: "Before this hour nobody is put on an automatic break or punched out for being idle — they may be in the field. From it, the idle clock counts from this hour or the last activity, whichever is later. 18 is 6 PM; 0 runs the idle rules all day.",
+    default: 18,
+    min: 0,
+    max: 23,
+  },
+  {
     key: "hrms.workday.breakOutMinutes",
     type: "integer",
     category: "hrms",
@@ -7056,6 +7066,7 @@ export type Config = {
   "hrms.workday.idleWarnMinutes": number;
   "hrms.workday.idleBreakMinutes": number;
   "hrms.workday.idleOutMinutes": number;
+  "hrms.workday.idleFromHour": number;
   "hrms.workday.breakOutMinutes": number;
   "hrms.workday.breakReasons": string;
   "hrms.office.maxRangeM": number;

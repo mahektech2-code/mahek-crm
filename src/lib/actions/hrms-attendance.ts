@@ -25,6 +25,7 @@ const ATTENDANCE_KEYS = new Set([
   "hrms.workday.idleWarnMinutes",
   "hrms.workday.idleBreakMinutes",
   "hrms.workday.idleOutMinutes",
+  "hrms.workday.idleFromHour",
   "hrms.workday.breakOutMinutes",
   "hrms.workday.breakReasons",
   "hrms.attendance.presentHours",

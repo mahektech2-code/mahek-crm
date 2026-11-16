@@ -30,7 +30,20 @@ export type WorkdayCfg = {
   outMinutes: number;
   /** A manual break longer than this closes the day at the break's start. */
   breakOutMinutes: number;
+  /**
+   * Epoch ms before which no idle rule runs today (the office's closing
+   * time, `hrms.workday.idleFromHour`). Null runs them all day. Before it,
+   * somebody out in the field or in Tally is never put on a break or punched
+   * out; from it, the idle clock starts at whichever is later, this or the
+   * last activity, and an automatic punch-out is never dated before it.
+   */
+  idleFrom?: number | null;
 };
+
+/** The instant the idle clock counts from: the last activity, never before the stretch or the cut-off. */
+function idleAnchor(lastActivity: number | null, open: WorkdaySession, cfg: WorkdayCfg): number {
+  return Math.max(lastActivity ?? open.in, open.in, cfg.idleFrom ?? -Infinity);
+}
 
 export type WorkdayPhase =
   /** Nothing recorded today. */
@@ -91,9 +104,11 @@ export function settle(
   if (!last) return { sessions: s, changed: false };
 
   if (phase === "working") {
+    /* Before the cut-off nobody is idle: they may be in the field. */
+    if (cfg.idleFrom != null && now < cfg.idleFrom) return { sessions: s, changed: false };
     /* Never before the stretch began: an activity from before a break is not
        evidence about the stretch that followed it. */
-    const act = Math.max(lastActivity ?? last.in, last.in);
+    const act = idleAnchor(lastActivity, last, cfg);
     const idle = now - act;
     if (idle >= cfg.outMinutes * MIN) {
       last.out = act;
@@ -194,7 +209,8 @@ export function breaksOf(s: WorkdaySession[], now: number): { from: number; to: 
 export function idleState(s: WorkdaySession[], lastActivity: number | null, now: number, cfg: WorkdayCfg): { idleMinutes: number; warn: boolean; breakAt: number | null } {
   const open = openSession(s);
   if (!open) return { idleMinutes: 0, warn: false, breakAt: null };
-  const act = Math.max(lastActivity ?? open.in, open.in);
+  if (cfg.idleFrom != null && now < cfg.idleFrom) return { idleMinutes: 0, warn: false, breakAt: null };
+  const act = idleAnchor(lastActivity, open, cfg);
   const idleMinutes = Math.floor((now - act) / MIN);
   return { idleMinutes, warn: idleMinutes >= cfg.warnMinutes, breakAt: act + cfg.breakMinutes * MIN };
 }

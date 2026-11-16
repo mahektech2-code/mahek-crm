@@ -41,6 +41,8 @@ export async function workdayCfg(): Promise<WorkdayCfg & { lockEnabled: boolean;
     warnMinutes: c["hrms.workday.idleWarnMinutes"],
     breakMinutes: c["hrms.workday.idleBreakMinutes"],
     outMinutes: c["hrms.workday.idleOutMinutes"],
+    /* The office closes before the idle rules start: before it, nobody is idle. */
+    idleFrom: c["hrms.workday.idleFromHour"] > 0 ? instantOf(today(), `${String(c["hrms.workday.idleFromHour"]).padStart(2, "0")}:00`) : null,
     breakOutMinutes: c["hrms.workday.breakOutMinutes"],
     lockEnabled: c["hrms.workday.lockEnabled"],
     exemptPlatformAdmins: c["hrms.workday.exemptPlatformAdmins"],
