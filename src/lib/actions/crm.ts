@@ -1,6 +1,7 @@
 "use server";
 
-import { placePickSchema, resolveCustomerPick } from "@/lib/customer-place";
+import { resolveCustomerPick } from "@/lib/customer-place";
+import { placePickSchema } from "@/lib/customer-place-schema";
 import { writeCustomerPlace } from "@/lib/services/customer-form-service";
 import { placeOptions } from "@/lib/services/place-write";
 import { customerEditRefusal } from "@/lib/customer-edit-gate";

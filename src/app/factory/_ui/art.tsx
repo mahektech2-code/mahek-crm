@@ -63,7 +63,7 @@ export function art(kind: ArtKind, col?: string, label?: string, s?: number): Re
   const t = String(label || "").replace(/[<&>]/g, "");
   col = col || "#6835FB";
   const tx = (x: number, y: number, fs: number) =>
-    '<text x="' + x + '" y="' + y + '" font-size="' + fs + '" font-weight="700" fill="#FFFFFF" text-anchor="middle" font-family="Google Sans Flex,system-ui,sans-serif">' + t + "</text>";
+    '<text x="' + x + '" y="' + y + '" font-size="' + fs + '" font-weight="700" fill="#FFFFFF" text-anchor="middle" style="font-family:var(--font-google-sans),system-ui,sans-serif">' + t + "</text>";
   const P: Record<ArtKind, string> = {
       can:'<path d="M30 22h30l8 10v54a4 4 0 0 1-4 4H26a4 4 0 0 1-4-4V32z" fill="#EEF0F4" stroke="#9BA3B2" stroke-width="2"/><rect x="33" y="13" width="15" height="9" rx="2" fill="#9BA3B2"/><path d="M60 26c12 0 14 8 14 18" fill="none" stroke="#9BA3B2" stroke-width="4" stroke-linecap="round"/><rect x="22" y="46" width="46" height="28" fill="' + col + '"/>' + tx(45, 65, 13),
       drum:'<ellipse cx="50" cy="20" rx="28" ry="7" fill="#EEF0F4" stroke="#9BA3B2" stroke-width="2"/><path d="M22 20v60c0 4 12.5 7 28 7s28-3 28-7V20" fill="' + col + '" stroke="#9BA3B2" stroke-width="2"/><path d="M22 40c0 4 12.5 7 28 7s28-3 28-7M22 62c0 4 12.5 7 28 7s28-3 28-7" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="2"/>' + tx(50, 60, 14),

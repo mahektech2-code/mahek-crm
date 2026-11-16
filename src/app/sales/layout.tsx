@@ -63,10 +63,6 @@ export default async function SalesLayout({
 
   return (
     <>
-    {/* The v4 look is set in Geist, as the ERP's and the CRM's are. React
-        hoists a precedence stylesheet into the head once. */}
-    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <ToastProvider>
       <SalesShell
         user={{

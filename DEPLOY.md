@@ -52,7 +52,7 @@ ssh root@<droplet-ip>
 ```bash
 scp deploy/docker-compose.yml Caddyfile \
     deploy/restart.sh deploy/backup.sh deploy/restore.sh deploy/sheet-sync.sh \
-    deploy@<droplet-ip>:/opt/mahekone/
+    deploy/page-speed.sh deploy@<droplet-ip>:/opt/mahekone/
 scp .env.production.example deploy@<droplet-ip>:/opt/mahekone/.env
 ssh deploy@<droplet-ip> 'chmod 600 /opt/mahekone/.env'
 ```
@@ -700,6 +700,77 @@ these appear:
 
 Resize **RAM and CPU only**. Growing the disk is permanent and cannot be
 undone.
+
+### Why more memory did not make the pages faster
+
+Memory stopped the crashes; it was never what made a page slow. **Every page is
+drawn on the server by one Node process, and a Node process draws one thing at
+a time.** With 1 vCPU, Node, Postgres and Caddy also share that one core. So
+when ten people click at once, nine of them wait in a queue behind whichever
+page is being drawn. Measured on 16 Nov 2026 (demo data, the production build,
+Node and Postgres pinned to one core, then given two):
+
+| People opening the CRM dashboard at once | 1 core, 1 Node | 2 cores, 1 Node | 2 cores, 2 Node |
+|---|---|---|---|
+| 1  | 0.25 s | 0.12 s | — |
+| 10 | 1.41 s | 0.72 s | 0.60 s |
+| 20 | 2.29 s | 1.35 s | 0.99 s |
+
+The production book is far larger than the demo one, so the real numbers are
+bigger, but the shape is the same: the wait grows with how many people are
+working, not with which screen they are on. That is the signature of too little
+CPU, and no amount of RAM changes it.
+
+**See it on the real box first.** `bash page-speed.sh` (copied with the other
+files in step 2) reads Caddy's access log and prints every screen's p50 and
+p95 for the last 24 hours, sorted by the total time the team spent waiting on
+it. Run it before and after the resize; it is the only measurement that
+includes everybody else's requests.
+
+### Going to 2 vCPU with two Node processes
+
+1. **Resize** to a 4 GiB / 2 vCPU droplet — **Premium AMD or Premium Intel**
+   (faster cores than Regular, a few dollars more), or **CPU-Optimized** if the
+   budget allows (dedicated cores, nobody else's workload on them). RAM and CPU
+   only, as above. A Regular 2 vCPU droplet still helps; the CPU-Optimized one
+   is the only kind whose CPU time is never shared with other customers.
+2. **Copy the three files** this needs: `deploy/docker-compose.yml`,
+   `Caddyfile`, `deploy/restart.sh` (and `deploy/page-speed.sh`) to
+   `/opt/mahekone/`, as in step 2.
+3. **Add to `/opt/mahekone/.env`:**
+
+   ```bash
+   COMPOSE_PROFILES=scale
+   APP_UPSTREAMS=app:3000 app2:3000
+   APP_HEAP_MB=768
+   DATABASE_POOL_MAX=8
+   PG_MAX_CONNECTIONS=30
+   PG_SHARED_BUFFERS=1GB
+   PG_EFFECTIVE_CACHE=2GB
+   ```
+
+   Two processes × 8 connections is 16, under 30 with room for `psql` and the
+   nightly job. With nothing added, every value stays exactly what it was on
+   the 2 GiB box, so copying the files alone changes nothing.
+4. **`cd /opt/mahekone && bash restart.sh`.** Postgres restarts once for the new
+   memory settings (a few seconds); `app2` starts; Caddy starts sending each
+   request to whichever process is less busy.
+
+From then on every deploy replaces the two **one at a time** (`restart.sh`), so
+the few seconds with no app at each deploy are gone too.
+
+**Do not set `COMPOSE_PROFILES=scale` on a 1 vCPU or 2 GiB box.** Two processes
+on one core take turns on it and are no faster; two 768 MB heaps beside
+Postgres do not fit in 2 GiB.
+
+To undo it: delete those lines from `.env`, then
+
+```bash
+cd /opt/mahekone && docker compose rm -sf app2 && bash restart.sh
+```
+
+(Compose does not stop a service whose profile was switched off; `rm -sf`
+stops and removes it, and `restart.sh` puts Caddy back on `app` alone.)
 
 ## What you gave up
 

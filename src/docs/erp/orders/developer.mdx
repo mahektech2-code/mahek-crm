@@ -10,7 +10,7 @@ The Orders screen is ten tabs, each its own server module: nine built in `screen
 | The order's checks | `src/lib/erp/screens/sales.ts` | `doVerifyOrder`, `doCorrectOrder`, `reopenOrderCheck` (back office); `doBill`, `doUnbill`, `doChangeInvoice`, `invoiceHolders` (the bill; `invoiceShareRefusal` in `engines/order-flow.ts` is the sharing rule); `doApproveInvoice`, `doRejectInvoice`, `invoiceForCheck`, `reopenInvoiceCheck`, `invoiceSnapshot` (the invoice check); `addReview`, `reviewsFor`, `reviewLine`; `holdersOf`, `tell` (notifications); `doStickers`, `doMoveOut` |
 | Order-to-Delivery rules (pure) | `src/lib/erp/engines/order-flow.ts` | `ORDER_SOURCES`, `orderStatusOf`, `productionOf`, `billingOf`, `dispatchOf`, `logisticsOf`, `orderBillBlockers`, `invoiceKey`, `invoiceChanges`, `likelyDuplicate`, `splitForMove` |
 | Batch codes / billing | `src/lib/erp/screens/sales.ts` | `batchCodes`, `orderDetails`, `detailRows`, `allocationCosts`, `verify`, `DISPATCH_PROMPT`, `openTransports`, `extra` |
-| Arithmetic (pure) | `src/lib/erp/engines/sales.ts` | `orderType`, `boxQuantity`, `labelCount`, `allocationState`, `allocationTarget`, `billFigures`, `lotCosting`, `margin`, `standingInstructions`, `targetReached`, `readyStockCheck` |
+| Arithmetic (pure) | `src/lib/erp/engines/sales.ts` (`boxQuantity` lives in `engines/box-quantity.ts`, re-exported) | `orderType`, `boxQuantity`, `labelCount`, `allocationState`, `allocationTarget`, `billFigures`, `lotCosting`, `margin`, `standingInstructions`, `targetReached`, `readyStockCheck` |
 | Form calculators | `src/lib/erp/calcs/sales.ts` | `order.boxes`, `order.listRate`, `alloc.*` — what the browser shows before save; the server recomputes |
 | Dispatch hooks | `src/lib/erp/dispatch.ts` | `scanGateFor`, `markDispatched`, `scannedOnAllocation` |
 | Order book | `src/lib/erp/book.ts` | `syncBookOrders`, `orderNosOf`, `erpOrdersLive` |
@@ -114,7 +114,7 @@ A line added to an existing order (`orderFixed`) is refused when the order is bi
 ## Allocation
 
 <Code file="src/lib/erp/engines/sales.ts" symbol="allocationState" />
-<Code file="src/lib/erp/engines/sales.ts" symbol="boxQuantity" />
+<Code file="src/lib/erp/engines/box-quantity.ts" symbol="boxQuantity" />
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="saveAllocation" collapsed />
 

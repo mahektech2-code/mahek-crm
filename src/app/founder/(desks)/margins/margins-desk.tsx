@@ -277,7 +277,7 @@ type Col = { k: string; l: string; right?: boolean; hide?: boolean; get: (x: Row
 
 const Sub = ({ children, color }: { children: React.ReactNode; color?: string }) => <span style={{ display: "block", fontSize: 12, color: color ?? C.muted, marginTop: 1, whiteSpace: "nowrap" }}>{children}</span>;
 const Mono = ({ children, color, bold }: { children: React.ReactNode; color?: string; bold?: boolean }) => (
-  <span style={{ fontFamily: '"IBM Plex Mono", ui-monospace, monospace', fontSize: 13, color: color ?? C.ink, fontWeight: bold ? 600 : 400 }}>{children}</span>
+  <span style={{ fontFamily: 'var(--font-plex-mono), ui-monospace, monospace', fontSize: 13, color: color ?? C.ink, fontWeight: bold ? 600 : 400 }}>{children}</span>
 );
 
 function BandPill({ pct, band, title }: { pct: number | null; band: Band; title?: string }) {

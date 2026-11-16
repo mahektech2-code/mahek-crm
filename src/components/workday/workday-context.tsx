@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import type { WorkdayState } from "@/lib/hrms/services/workday";
-import { WorkdayOverlays } from "./workday-overlays";
+/* The lock screen and the idle warning, fetched the first time one of them is
+   needed rather than in every page's first download — see `needsOverlay`. */
+const WorkdayOverlays = React.lazy(() => import("./workday-overlays").then((m) => ({ default: m.WorkdayOverlays })));
 import { lockGuardsPage } from "@/lib/workday-lock-paths";
 
 /* ---------------------------------------------------------------------------
@@ -239,34 +241,54 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     void sendBeat();
   }, [touch, sendBeat]);
 
-  const value = React.useMemo<Ctx | null>(() => {
+  /* The moment and the last activity, as every reader of the context sees them. */
+  const clock = React.useMemo(() => {
     if (!state) return null;
     const t = now ? now + skew : state.now;
+    /* Before the idle cut-off nobody is idle, so nothing warns; from it the
+       idle clock counts from the cut-off at the earliest — the server's rule. */
+    const from = state.cfg.idleFrom ?? null;
+    const seen = Math.max(lastActivity, state.lastActivity ?? 0);
+    return { t, lastActivity: from != null && t < from ? t : Math.max(seen, from ?? 0) };
+  }, [state, now, skew, lastActivity]);
+
+  const value = React.useMemo<Ctx | null>(() => {
+    if (!state || !clock) return null;
+    const t = clock.t;
     const open = state.sessions[state.sessions.length - 1];
     const running = open && open.out == null ? Math.max(0, t - open.in) : 0;
     const closed = state.sessions.reduce((n, s) => n + (s.out != null ? Math.max(0, s.out - s.in) : 0), 0);
     /* The server's figure includes approved claims; the local one ticks. */
     const extraApproved = Math.max(0, state.workedMs - closed - (open && open.out == null ? Math.max(0, state.now - open.in) : 0));
-    /* Before the idle cut-off nobody is idle, so nothing warns; from it the
-       idle clock counts from the cut-off at the earliest — the server's rule. */
-    const from = state.cfg.idleFrom ?? null;
-    const seen = Math.max(lastActivity, state.lastActivity ?? 0);
     return {
       state,
       now: t,
-      lastActivity: from != null && t < from ? t : Math.max(seen, from ?? 0),
+      lastActivity: clock.lastActivity,
       workedMs: closed + running + extraApproved,
       act: actAndTell,
       refresh,
       touch: touchAndBeat,
       busy,
     };
-  }, [state, now, skew, lastActivity, actAndTell, refresh, touchAndBeat, busy]);
+  }, [state, clock, actAndTell, refresh, touchAndBeat, busy]);
 
   return (
     <WorkdayContext.Provider value={value}>
       {children}
-      {state?.subject ? <WorkdayOverlays /> : null}
+      {state?.subject && clock && needsOverlay(state, clock.t, clock.lastActivity) ? (
+        <React.Suspense fallback={null}>
+          <WorkdayOverlays />
+        </React.Suspense>
+      ) : null}
     </WorkdayContext.Provider>
   );
+}
+
+/**
+ * Whether `WorkdayOverlays` would draw anything — the same two conditions it
+ * asks itself, asked here so its code is not downloaded until one holds.
+ */
+function needsOverlay(state: WorkdayState, now: number, lastActivity: number): boolean {
+  if (state.locked) return true;
+  return state.phase === "working" && !state.offDay && now - lastActivity >= state.cfg.warnMinutes * 60_000;
 }

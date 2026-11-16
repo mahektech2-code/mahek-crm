@@ -21,7 +21,9 @@ import {
 import { playChime, primeAudio } from "@/lib/notification-sound";
 import { appFor } from "@/lib/app-routes";
 import { shownIn, type AppUnread } from "@/lib/notification-apps";
-import { NotificationModal } from "./notification-modal";
+/* The pop-up stack is fetched the first time there is something to pop up —
+   most page loads have nothing, and it was in every app's first download. */
+const NotificationModal = React.lazy(() => import("./notification-modal").then((m) => ({ default: m.NotificationModal })));
 
 /* ---------------------------------------------------------------------------
  * THE LIVE BELL — one per tab, mounted in the root layout so every app gets
@@ -511,6 +513,7 @@ export function NotificationCenter() {
   };
   if (!showPopups) return null;
   return (
+    <React.Suspense fallback={null}>
     <NotificationModal
       queue={popups}
       onAct={(n) => {
@@ -526,6 +529,7 @@ export function NotificationCenter() {
       onRead={(items) => void answer(items, "read")}
       onLater={(items, snooze) => void answer(items, "later", snooze)}
     />
+    </React.Suspense>
   );
 }
 

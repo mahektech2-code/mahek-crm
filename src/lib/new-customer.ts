@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isKnownState } from "@/lib/india-states";
 import { checkGstin } from "@/lib/engines/lead-scan";
-import { placePickSchema } from "@/lib/customer-place";
+import { placePickSchema } from "@/lib/customer-place-schema";
 
 /* ---------------------------------------------------------------------------
  * ADDING A CUSTOMER DIRECTLY, FROM ACCOUNTS — the rules, PURE and client-safe.

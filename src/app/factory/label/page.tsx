@@ -25,10 +25,10 @@ export default async function FactoryLabel({ searchParams }: { searchParams: Pro
         @page { size: 50mm 30mm; margin: 0 }
         body { margin: 0; background: #E6E8EE }
         .lbl-page { display: flex; align-items: center; justify-content: center; min-height: 100vh }
-        .lbl { width: 50mm; height: 30mm; background: #fff; display: flex; gap: 2mm; padding: 2mm; align-items: center; font-family: 'Google Sans Flex', system-ui, sans-serif; color: #1A1E28 }
+        .lbl { width: 50mm; height: 30mm; background: #fff; display: flex; gap: 2mm; padding: 2mm; align-items: center; font-family: var(--font-google-sans), system-ui, sans-serif; color: #1A1E28 }
         .lbl svg { width: 25mm; height: 25mm; flex: none }
         .lbl .k { font-size: 5pt; font-weight: 700; letter-spacing: .06em; color: #6B7385 }
-        .lbl .c { font-family: 'IBM Plex Mono', monospace; font-size: 8pt; font-weight: 600; margin-top: 1mm; word-break: break-all }
+        .lbl .c { font-family: var(--font-plex-mono), monospace; font-size: 8pt; font-weight: 600; margin-top: 1mm; word-break: break-all }
         .lbl .n { font-size: 6.5pt; margin-top: .6mm; line-height: 1.15 }
         .lbl .m { font-size: 5.5pt; color: #6B7385; margin-top: .6mm }
         @media print { body { background: #fff } .lbl-page { min-height: 0 } }

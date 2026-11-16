@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { fontVariables } from "./fonts";
 import { StaffChrome } from "@/components/shell/staff-chrome";
 
 export const metadata: Metadata = {
@@ -12,24 +13,9 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        {/*
-          App Router: this lives in the root layout, so it loads for every page.
-          The rule below is a Pages Router concern and does not apply here.
-        */}
-        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-        <link
-          href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@9..144,100..1000&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    // The fonts are MahekOne's own files now, not a stylesheet from Google that
+    // held every page until it arrived — see ./fonts.ts.
+    <html lang="en" className={fontVariables}>
       <body>
         {children}
         {/* The bell and the stale-tab guard — never on a customer's or vendor's link. */}

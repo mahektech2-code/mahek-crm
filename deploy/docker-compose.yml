@@ -43,12 +43,30 @@ services:
       DOMAIN: ${DOMAIN:?set DOMAIN in .env}
       # The customer-facing host (Caddyfile). Unset: Caddy uses track.mahekindia.com.
       PUBLIC_LINK_HOST: ${PUBLIC_LINK_HOST:-track.mahekindia.com}
+      # Which app processes Caddy sends requests to. One unless .env says
+      # otherwise; with COMPOSE_PROFILES=scale it is "app:3000 app2:3000".
+      APP_UPSTREAMS: ${APP_UPSTREAMS:-app:3000}
     depends_on:
       - app
     networks: [mahek]
 
   # -------------------------------------------------------------------- app
-  app:
+  # NODE RUNS ON ONE CORE, WHATEVER THE BOX HAS. Every page is rendered on the
+  # server, and a Node process renders one thing at a time: while it spends
+  # 300 ms of CPU drawing one person's customer list, everybody else's request
+  # waits behind it. Measured on a book of demo data, one core, one process: one
+  # dashboard alone took 0.25 s, ten people opening it at once took 1.4 s each,
+  # twenty took 2.3 s. That queue is what "the pages are slow" is.
+  #
+  # So there can be TWO of these, `app` and `app2` (below), and Caddy sends each
+  # request to whichever is less busy. It only helps with a second CPU to run
+  # it on — on 1 vCPU the two would take turns on the same core — which is why
+  # `app2` is off until `.env` says `COMPOSE_PROFILES=scale` (DEPLOY.md, "When to
+  # resize again"). It is the same image and the same settings, so nothing
+  # behaves differently on one than the other: sessions are rows, caches are
+  # rebuildable per process, and the two live streams hear new events through
+  # Postgres LISTEN/NOTIFY, not through memory one process holds.
+  app: &app
     image: ${IMAGE:?set IMAGE in .env}
     restart: unless-stopped
     environment:
@@ -61,8 +79,12 @@ services:
       # under the day's load and the process died — every screen loading at
       # that moment showed "This screen could not be drawn". 704 on 2 GiB
       # leaves Postgres, the website (256M hard limit), Caddy and the OS their
-      # share.
-      NODE_OPTIONS: --max-old-space-size=704
+      # share. On 4 GiB with two processes, APP_HEAP_MB=768 in .env gives each
+      # one 768 MB and still leaves Postgres a gigabyte.
+      NODE_OPTIONS: --max-old-space-size=${APP_HEAP_MB:-704}
+      # Connections per process. Two processes × this must stay under
+      # PG_MAX_CONNECTIONS with room for psql and the nightly job.
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
     env_file:
       - .env
     depends_on:
@@ -75,6 +97,15 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+
+  # The second renderer. Identical to `app` (the YAML anchor copies every key),
+  # started only when COMPOSE_PROFILES=scale is in .env. Caddy is told to use it
+  # by APP_UPSTREAMS in the same file — see the Caddyfile. `restart.sh` replaces
+  # the two one at a time, so with both running a deploy no longer drops the
+  # requests that arrive during the swap.
+  app2:
+    <<: *app
+    profiles: [scale]
 
   # --------------------------------------------------------------- postgres
   postgres:
@@ -123,15 +154,18 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=256MB
+      # On 4 GiB: PG_SHARED_BUFFERS=1GB and PG_EFFECTIVE_CACHE=2GB in .env. The
+      # database is far smaller than that, so the whole of it then lives in
+      # memory and no screen ever waits on the disk.
+      - shared_buffers=${PG_SHARED_BUFFERS:-256MB}
       - -c
-      - effective_cache_size=640MB    # honest: the app holds a 704MB heap beside this
+      - effective_cache_size=${PG_EFFECTIVE_CACHE:-640MB}    # honest: the app holds a 704MB heap beside this
       - -c
       - work_mem=8MB                  # was 4MB; 1,901 sorts spilled 9.4GB to disk
       - -c
       - maintenance_work_mem=64MB
       - -c
-      - max_connections=20            # was 30; the app pool is 10, and this pays for work_mem
+      - max_connections=${PG_MAX_CONNECTIONS:-20}   # was 30; the app pool is 10, and this pays for work_mem. Two processes: 30
       - -c
       # MIGRATING AN EMPTY DATABASE NEEDS MORE LOCKS THAN THE DEFAULT. The lock
       # table holds max_locks_per_transaction × max_connections, and with 20
