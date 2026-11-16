@@ -1511,9 +1511,15 @@ function timelineBranch(
     case "Order":
       return sql`
         select o.id, 'Order', o.ordered_at, coalesce(u.name, 'Order system'),
-               case o.status
-                 when 'pending_approval' then 'Order waiting for approval'
-                 when 'declined' then 'Order declined'
+               case
+                 /* A TeleCRM or handset order is a TO until the Order Hub's two checks give it its order number. */
+                 when o.status = 'pending_approval' and exists (
+                   select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.status <> 'verified')
+                   then (select concat('TO-', i.to_no, ' · ', case i.status when 'correction' then 'sent back for correction'
+                           when 'hold' then 'on hold' when 'cancelled' then 'cancelled' else 'being checked' end)
+                           from erp_order_intakes i where i.origin_order_id = o.id)
+                 when o.status = 'pending_approval' then 'Order waiting for approval'
+                 when o.status = 'declined' then 'Order declined'
                  else concat('Order ', o.status)
                end,
                -- A declined order says why on the timeline. The telecaller has

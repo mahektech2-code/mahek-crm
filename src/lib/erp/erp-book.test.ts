@@ -434,3 +434,56 @@ describe("the arithmetic", () => {
     assert.equal(bookStatusForStage("Close - Received to Party"), "delivered");
   });
 });
+
+describe("the Order Hub's gates after the order number", () => {
+  test("Accounts approve or hold it, the Production Head clears or holds it at the MRP check, and To Hold sends each hold back", async () => {
+    const { pendingOrders, holdOrderForAccounts, releaseOrderForAccounts } = await import("@/lib/services/order-approval-service");
+    const { erpNavCounts } = await import("./counts");
+    const { PRODUCTION_HOLD_REASONS, ACCOUNTS_HOLD_REASONS } = await import("./engines/order-hub");
+    const msg = (x: { ok: boolean; error?: string }) => (x.ok ? "" : (x.error ?? ""));
+    await live(true);
+    const ctx = await as(admin);
+    const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: "17", rate: "300" }], { gates: false });
+    assert.ok(r.ok, JSON.stringify(r));
+    const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = 17`);
+    const b = await book(o.orderNo);
+    assert.equal(b.status, "pending_approval");
+    assert.match(msg(await mod("orders").actions!.ready(ctx, o.id, {})), /accounts have not approved it yet/);
+    assert.ok((await pendingOrders()).some((p) => p.orderId === b.id), "it waits in the Accounts queue");
+
+    /* An Accounts hold takes it off the queue and puts it on To Hold. */
+    setTestUser(ledger);
+    assert.ok((await holdOrderForAccounts(b.id, ACCOUNTS_HOLD_REASONS[0].code, "Ring the owner")).ok);
+    assert.ok(!(await pendingOrders()).some((p) => p.orderId === b.id), "a held order is not in the queue");
+    assert.ok((await mod("toHold").load(await as(admin))).rows.some((x) => String(x.id).startsWith(`accounts:${o.orderNo}`)));
+    setTestUser(ledger);
+    assert.ok((await releaseOrderForAccounts(b.id, "Owner paid the old bill")).ok);
+    assert.ok((await pendingOrders()).some((p) => p.orderId === b.id), "released, it is back with Accounts");
+    setTestUser(ledger);
+    assert.ok((await approveOrder(b.id)).ok);
+
+    /* Approved: it waits at the MRP check, and the badge counts it. */
+    const adminCtx = await as(admin);
+    const mrp = await mod("mrpCheck").load(adminCtx);
+    const row = mrp.rows.find((x) => x.id === o.id);
+    assert.ok(row, "it is on the MRP check");
+    assert.ok(((await erpNavCounts(adminCtx)).mrpCheck ?? 0) >= 1);
+    assert.match(msg(await mod("orders").actions!.ready(adminCtx, o.id, {})), /MRP|Production Head/i);
+
+    /* A production hold, released from To Hold, comes back to the MRP check. */
+    assert.ok((await mod("mrpCheck").actions!.hold(adminCtx, row!.id, { reason: PRODUCTION_HOLD_REASONS[0].label, note: "Xylene short" })).ok);
+    const held = (await mod("toHold").load(adminCtx)).rows.find((x) => String(x.id).startsWith(`production:${o.orderNo}`));
+    assert.ok(held, "the production hold is on To Hold");
+    assert.ok((await mod("toHold").actions!.releaseDesk(adminCtx, held!.id, { resolution: "Xylene arrived" })).ok);
+    assert.ok((await mod("mrpCheck").load(adminCtx)).rows.some((x) => x.id === row!.id), "released, it is back at the MRP check");
+
+    /* Cleared with the capacity tick, the line may go Ready. */
+    assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, row!.id, {})), /capacity|floor|required/i);
+    assert.ok((await mod("mrpCheck").actions!.clear(adminCtx, row!.id, { capacity: "Yes" })).ok);
+    const [cleared] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
+    assert.equal(cleared.accountsCheck, "Approved");
+    assert.equal(cleared.productionCheck, "Cleared");
+    assert.ok((await mod("orders").actions!.ready(adminCtx, o.id, {})).ok);
+    await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
+  });
+});

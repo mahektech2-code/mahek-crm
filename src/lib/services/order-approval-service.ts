@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -98,14 +99,7 @@ export async function pendingOrders(): Promise<PendingOrder[]> {
       from orders o
       join customers c on c.id = o.customer_id
       left join users u on u.id = o.user_id
-     where o.status = 'pending_approval'
-       /* THE ORDER HUB: a call's or a handset's order is a TO until both
-          checks are done — not Accounts' yet — and an order on hold with
-          Accounts sits on its own list until it is released. */
-       and not exists (select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.status <> 'verified')
-       and not (o.source = 'erp' and o.external_ref like 'ERP-%' and exists (
-             select 1 from erp_order_holds h
-              where h.order_no::text = substring(o.external_ref from 5) and h.department = 'accounts' and h.resolved_at is null))
+     where ${awaitingAccountsSql("o")}
      order by o.ordered_at asc
   `);
 

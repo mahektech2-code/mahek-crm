@@ -9823,6 +9823,13 @@ hold back at the MRP check, an office hold where its lines were — never past
 the desk that held it. Accounts hold and release from their own drawer
 (`holdOrderForAccounts`). The customer reads only the customer wording.
 
+**"WAITING ON ACCOUNTS" IS ONE FRAGMENT.** `awaitingAccountsSql` in
+`lib/order-status.ts` leaves out TOs and Accounts-held orders, and the approval
+queue, the Accounts home and queue badges, the accounts deadline, the automatic
+approval task and the Command Centre all read it — so no TO raises a deadline
+or a task the queue does not show. The hub's sidebar badges and dashboard
+tiles are `orderHubCounts`, each the count its own list draws.
+
 **Not built yet:** the TeleCRM "My orders" view and the order thread on the
 customer record; the Salesman App's TO screens (an APK release — today's build
 shows the TO number as the order's number); and rewriting a TeleCRM or handset

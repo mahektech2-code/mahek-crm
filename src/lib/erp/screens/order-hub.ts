@@ -318,7 +318,7 @@ async function waitingForMrp(): Promise<GateLine[]> {
            o.sku_id as "skuId", p.name as sku, o.qty_cans as qty, coalesce(p.millilitres_per_can, fg.millilitres) as ml,
            coalesce(p.cans_per_box, 1) as cpb, coalesce(pk.box_type, '') <> '' as boxed,
            p.finished_good_id as "finishedGoodId", fg.formulation_id as "formulationId", f.name as formulation,
-           pk.can_use_material_id as "canMaterialId", rm.item as "canMaterial",
+           pk.can_use_material_id as "canMaterialId", rm.name as "canMaterial",
            o.production_check as "productionCheck", o.accounts_checked_at as "accountsCheckedAt", o.dispatch_on::text as "dispatchOn",
            i.to_no as "toNo"
       from erp_orders o
@@ -728,6 +728,26 @@ class Stop extends Error {
   constructor(public result: Err) {
     super("stop");
   }
+}
+
+/**
+ * The sidebar's badges for the hub's screens, read by `erpNavCounts`. Each is
+ * the count its own list draws: TOs waiting for a check, TOs sent back,
+ * orders waiting at the MRP check, and everything on To Hold.
+ */
+export async function orderHubCounts(): Promise<{ orderHub: number; hubCorrection: number; mrpCheck: number; toHold: number }> {
+  const [byStatus, mrp, holds] = await Promise.all([
+    db.execute(sql`select status, count(*)::int as n from erp_order_intakes where status in ('open', 'correction') group by status`) as unknown as Promise<{ status: string; n: number }[]>,
+    waitingForMrp(),
+    allHolds(),
+  ]);
+  const n = (k: string) => byStatus.find((r) => r.status === k)?.n ?? 0;
+  return {
+    orderHub: n("open"),
+    hubCorrection: n("correction"),
+    mrpCheck: new Set(mrp.filter((l) => l.productionCheck === "Pending").map((l) => l.orderNo)).size,
+    toHold: holds.length,
+  };
 }
 
 export const ORDER_HUB_SCREENS: ScreenModule[] = [hubModule("orderHub"), hubModule("hubCorrection"), hubModule("hubDone"), mrpCheckScreen, toHoldScreen];
