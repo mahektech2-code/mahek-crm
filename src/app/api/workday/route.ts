@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { hrmsContext } from "@/lib/hrms/access";
+import { hrmsContext, hrmsSelf } from "@/lib/hrms/access";
 import { workdayState } from "@/lib/hrms/services/workday";
 import { beat, claimAutoOut, decideClaim, previewLocation, resumeWork, startBreak } from "@/lib/hrms/workday-ops";
 import { hrmsCheckIn, hrmsCheckOut, hrmsRaiseLateHelp } from "@/lib/actions/hrms-checkin";
@@ -22,7 +22,8 @@ async function signedIn() {
 
 export async function GET() {
   if (!(await signedIn())) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
-  const ctx = await hrmsContext();
+  /* The day is about this person alone: no team, which is the org chart read whole. */
+  const ctx = await hrmsSelf();
   return NextResponse.json({ state: await workdayState(ctx) });
 }
 

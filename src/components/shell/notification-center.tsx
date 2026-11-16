@@ -251,9 +251,50 @@ function claim(id: string): boolean {
 
 /* ----------------------------------------------------------------- polling */
 
-const VISIBLE_EVERY_MS = 15_000;
-const HIDDEN_EVERY_MS = 30_000;
-const SIGNED_OUT_EVERY_MS = 60_000;
+/*
+ * HOW OFTEN, AND WHICH TAB. Every tab used to ask on its own — every fifteen
+ * seconds while looked at, every thirty behind — and on 16 Nov 2026 that was
+ * 7,939 asks in two and a half hours, the largest single load on a one-CPU
+ * server, queued in front of the screens people were actually waiting for.
+ *
+ * - A tab somebody is USING asks every twenty seconds.
+ * - A tab on screen that nobody has touched for a few minutes asks once a
+ *   minute: a desk left open on the CRM over lunch need not ask three times a
+ *   minute.
+ * - A tab in the BACKGROUND asks only when no tab of this browser has asked
+ *   within a minute (`POLL_KEY`, shared). While one is on screen the hidden
+ *   ones are silent; with none on screen, one of them asks a minute apart —
+ *   enough for the chime and the desktop alert, which are claimed once per
+ *   browser anyway.
+ * - Signed out, every five minutes: the sign-in page shares this layout, and
+ *   signing in starts asking at once (the pathname effect below).
+ * - Focus and coming into view ask at once, but not twice within a few seconds.
+ */
+const ACTIVE_EVERY_MS = 20_000;
+const IDLE_EVERY_MS = 60_000;
+const HIDDEN_EVERY_MS = 60_000;
+const SIGNED_OUT_EVERY_MS = 5 * 60_000;
+/* No input for this long and an on-screen tab counts as idle. */
+const IDLE_AFTER_MS = 3 * 60_000;
+/* Focus, a return to view and a timer landing together are one ask. */
+const MIN_GAP_MS = 4_000;
+const POLL_KEY = "mahek.bell.lastPoll";
+
+let lastInput = 0;
+function readStamp(): number {
+  try {
+    return Number(window.localStorage.getItem(POLL_KEY) ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+function writeStamp(t: number) {
+  try {
+    window.localStorage.setItem(POLL_KEY, String(t));
+  } catch {
+    /* private window: this tab decides alone */
+  }
+}
 
 /**
  * How long "Take action now" keeps the rest of the stack off the page it opened.
@@ -333,8 +374,12 @@ export function NotificationCenter() {
     if (chimeTone && sound) playChime(chimeTone);
   }, [router]);
 
-  const poll = React.useCallback(async () => {
+  const lastPoll = React.useRef(0);
+  const poll = React.useCallback(async (force = false) => {
     if (inFlight.current) return;
+    if (!force && Date.now() - lastPoll.current < MIN_GAP_MS) return;
+    lastPoll.current = Date.now();
+    writeStamp(lastPoll.current);
     inFlight.current = true;
     try {
       const asked = appRef.current;
@@ -365,35 +410,52 @@ export function NotificationCenter() {
   React.useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
+      const hidden = document.visibilityState === "hidden";
       const every = signedOut.current
         ? SIGNED_OUT_EVERY_MS
-        : document.visibilityState === "hidden"
+        : hidden
           ? HIDDEN_EVERY_MS
-          : VISIBLE_EVERY_MS;
+          : Date.now() - lastInput > IDLE_AFTER_MS
+            ? IDLE_EVERY_MS
+            : ACTIVE_EVERY_MS;
       timer = setTimeout(async () => {
-        await poll();
+        /* Behind other tabs: leave it to whichever tab asked last, if it was recent. */
+        const skip = !signedOut.current && document.visibilityState === "hidden" && Date.now() - readStamp() < HIDDEN_EVERY_MS;
+        if (!skip) await poll(true);
         schedule();
       }, every);
     };
-    void poll().then(schedule);
-    const now = () => void poll();
+    lastInput = Date.now();
+    void poll(true).then(schedule);
+    const input = () => {
+      lastInput = Date.now();
+    };
+    const inputs = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
+    inputs.forEach((e) => window.addEventListener(e, input, { passive: true, capture: true }));
+    /* Something on the page changed the list: always ask. */
+    const now = () => void poll(true);
+    const onFocus = () => {
+      lastInput = Date.now();
+      void poll();
+    };
     const onVisible = () => {
-      if (document.visibilityState === "visible") void poll();
+      if (document.visibilityState === "visible") onFocus();
     };
     window.addEventListener("mahek:notifications-refresh", now);
-    window.addEventListener("focus", now);
+    window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearTimeout(timer);
+      inputs.forEach((e) => window.removeEventListener(e, input, { capture: true }));
       window.removeEventListener("mahek:notifications-refresh", now);
-      window.removeEventListener("focus", now);
+      window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [poll]);
 
   // A new page after signing in is the moment to stop being "signed out".
   React.useEffect(() => {
-    if (signedOut.current) void poll();
+    if (signedOut.current) void poll(true);
   }, [pathname, poll]);
 
   /* Moving into another app asks for ITS list at once. `known` starts again,
@@ -404,7 +466,7 @@ export function NotificationCenter() {
     if (appRef.current === viewApp) return;
     appRef.current = viewApp;
     known.current = null;
-    void poll();
+    void poll(true);
   }, [viewApp, poll]);
 
   // A browser lets audio start only from a gesture; the first one unlocks it.
