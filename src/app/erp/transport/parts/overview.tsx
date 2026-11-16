@@ -3,7 +3,7 @@
 import { NavLink } from "@/components/shell/nav-link";
 import { erpLink } from "@/lib/erp/registry";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Card, cx, buttonClass } from "@/components/ui/primitives";
+import { Card, cx, buttonClass, Input } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { gridHeadClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsReopen } from "@/lib/actions/erp-logistics";
@@ -149,16 +149,28 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
   const [reopen, setReopen] = useState<Consignment | null>(null);
   /* The reason is asked first, then what reopening touches, with the order number typed. */
   const [reopenImpact, setReopenImpact] = useState<{ c: Consignment; reason: string } | null>(null);
+  /* The same search as On the road, plus who signed and the proof — what somebody asking "did X arrive?" has in hand. */
+  const [q, setQ] = useState("");
+  const needle = q.trim().toLowerCase();
   const sorted = [...rows].sort((a, b) => (b.deliveredOn ?? "").localeCompare(a.deliveredOn ?? ""));
+  const shown = needle
+    ? sorted.filter((c) => [c.lrNo, c.billNo, c.party, c.deliveryParty, c.transporter, String(c.orderNo), c.area, c.destination, c.dispatchedFrom, c.receivedBy, c.deliveryProof, c.deliveredBy].some((x) => x?.toLowerCase().includes(needle)))
+    : sorted;
   const took = sorted.filter((c) => c.deliveredOn && c.billDate).map((c) => daysBetween(c.billDate!, c.deliveredOn!));
   const avg = took.length ? Math.round((took.reduce((a, b) => a + b, 0) / took.length) * 10) / 10 : null;
   return (
     <div className="space-y-3">
-      {sorted.length ? (
-        <div className="text-meta text-muted">
-          {plural(sorted.length, "bill")} delivered in the last 45 days{avg != null ? ` · ${avg} days from dispatch to delivery on average` : ""}.
-        </div>
-      ) : null}
+      <div className="flex flex-wrap items-center gap-3">
+        {sorted.length ? (
+          <div className="text-meta text-muted">
+            {needle ? `${shown.length} of ` : ""}
+            {plural(sorted.length, "bill")} delivered in the last 45 days{avg != null ? ` · ${avg} days from dispatch to delivery on average` : ""}.
+          </div>
+        ) : null}
+        <span className="ml-auto w-[260px]">
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter, city" aria-label="Search LR, bill, party, transporter, city" />
+        </span>
+      </div>
       <Card className="overflow-clip">
         <div className={cx("grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] gap-3 px-4 py-2", gridHeadClass)}>
           <span>Bill</span>
@@ -171,8 +183,8 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
           <span>Received by · proof</span>
           <span />
         </div>
-        {sorted.length ? (
-          sorted.map((c) => (
+        {shown.length ? (
+          shown.map((c) => (
             <div key={c.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0">
               <BillRef c={c} />
               <span className="truncate">{c.party}</span>
@@ -195,7 +207,7 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
             </div>
           ))
         ) : (
-          <Empty>Nothing delivered in the last 45 days.</Empty>
+          <Empty>{sorted.length ? "Nothing matches." : "Nothing delivered in the last 45 days."}</Empty>
         )}
       </Card>
       <ReasonDialog
