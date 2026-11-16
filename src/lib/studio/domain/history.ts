@@ -71,8 +71,10 @@ const text = (v: string | string[] | undefined) => one(v).replace(/[\u0000-\u001
 const day = (v: string | string[] | undefined): string | null => {
   const s = one(v).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const d = new Date(`${s}T00:00:00Z`);
-  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? null : s;
+  /* A real calendar day: build it from its parts and read the same parts back (a plain date, no time zone involved). */
+  const [y, m, dd] = s.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, dd));
+  return d.getUTCFullYear() === y && d.getUTCMonth() === m - 1 && d.getUTCDate() === dd ? s : null;
 };
 
 /** Every filter arrives from a URL, so every one is checked here: unknown values are dropped, never passed on. */
