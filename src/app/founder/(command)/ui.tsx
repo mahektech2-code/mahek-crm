@@ -156,16 +156,9 @@ export function Hov<T extends keyof React.JSX.IntrinsicElements = "button">({
 export function DesignStyles() {
   return (
     <>
-      <link rel="preconnect" href="https://fonts.googleapis.com" />
-      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-      <link
-        rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,300..700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-        precedence="default"
-      />
       <style>{`
 .fcc-root, .fcc-root *{box-sizing:border-box}
-.fcc-root{font-family:"Google Sans Flex",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:20px;color:#3D4453;background:#F7F8FA;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums lining-nums}
+.fcc-root{font-family:var(--font-google-sans),system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:20px;color:#3D4453;background:#F7F8FA;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums lining-nums}
 .fcc-root button,.fcc-root input,.fcc-root select,.fcc-root textarea{font:inherit;color:inherit;font-variant-numeric:inherit}
 .fcc-root a{color:#6835FB;text-decoration:none}
 .fcc-root a:hover{color:#5223E0;text-decoration:underline}

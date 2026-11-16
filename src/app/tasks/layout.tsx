@@ -97,8 +97,6 @@ export default async function TasksLayout({ children }: { children: React.ReactN
 
   return (
     <>
-      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
       <TasksShell
         nav={nav}
         counts={{

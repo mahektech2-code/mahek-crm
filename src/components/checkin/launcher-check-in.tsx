@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useWorkday } from "@/components/workday/workday-context";
-import { VerdictPill, withLocation } from "@/components/workday/workday-overlays";
+import { VerdictPill, withLocation } from "@/components/workday/workday-shared";
 import { BreakDialog, PunchOutDialog } from "@/components/workday/day-parts";
 import { cx } from "@/components/ui/primitives";
 import { Icon } from "@/components/shell/icons";

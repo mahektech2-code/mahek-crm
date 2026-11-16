@@ -1043,7 +1043,7 @@ export async function attachLr(
   if (own) return err(`Order ${own.orderNo} goes in a Mahek Vehicle, which carries no LR. Change who delivers it first.`, "rule_violation");
   const delivery = await deliveryParties(ts.map((t) => t.orderNo));
   const refusal = attachRefusal(
-    ts.map((t) => ({ id: t.id, orderNo: t.orderNo, deliveryPartyId: delivery.get(t.orderNo) ?? t.billingCustomerId, lrId: t.lrId, materialStage: t.materialStage })),
+    ts.map((t) => ({ id: t.id, orderNo: t.orderNo, deliveryPartyId: delivery.get(t.orderNo) ?? t.billingCustomerId, lrId: t.lrId, materialStage: t.materialStage, bill: t.billNo?.trim() ? `${t.billingCustomerId}|${t.billNo.trim().toUpperCase()}` : null })),
     lrId,
   );
   if (refusal) return err(refusal, "rule_violation");

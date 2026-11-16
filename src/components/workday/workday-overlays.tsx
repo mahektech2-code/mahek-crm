@@ -6,6 +6,9 @@ import { cx } from "@/components/ui/primitives";
 import { useWorkday, type OpResult } from "./workday-context";
 import { at, dayDate, greeting, hmOf, locate, msOf, VERDICT_WORDS } from "./format";
 import { ampm, DayTimeline } from "./day-parts";
+import { VerdictPill, withLocation } from "./workday-shared";
+
+export { VerdictPill, withLocation };
 
 /* ---------------------------------------------------------------------------
  * WHAT IS DRAWN OVER EVERY APP: the lock screen while somebody is locked out
@@ -180,12 +183,6 @@ function Refusal({ r, onClose }: { r: OpResult; onClose: () => void }) {
   );
 }
 
-/** Location, read once, then the act. It is recorded where the browser gives
- *  it and never required: a blocked location punches in all the same. */
-export async function withLocation(run: (fix: { lat: number | null; lng: number | null; accuracy: number | null }) => Promise<OpResult>): Promise<OpResult> {
-  const fix = await locate();
-  return run(fix === "denied" ? { lat: null, lng: null, accuracy: null } : fix);
-}
 
 type Where = { office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null };
 
@@ -540,19 +537,6 @@ function DayDoneCard() {
   );
 }
 
-export function VerdictPill({ v }: { v: { label: string; tone: string } }) {
-  const cls =
-    v.tone === "success"
-      ? "bg-success-soft text-success"
-      : v.tone === "warn"
-        ? "bg-warn-soft text-warn-ink"
-        : v.tone === "danger"
-          ? "bg-danger-soft text-danger"
-          : v.tone === "brand"
-            ? "bg-brand-soft text-brand-deep"
-            : "bg-canvas text-muted";
-  return <span className={cx("rounded-full px-3 py-1 text-[12px] font-bold whitespace-nowrap", cls)}>{v.label}</span>;
-}
 
 /* ---------------------------------------------------------------- idle */
 

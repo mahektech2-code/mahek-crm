@@ -62,8 +62,6 @@ export default async function StudioLayout({ children }: { children: React.React
 
   return (
     <>
-      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
       <StudioShell
         nav={nav}
         counts={{

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 import { useWorkday, type OpResult } from "./workday-context";
-import { withLocation } from "./workday-overlays";
+import { withLocation } from "./workday-shared";
 import { BreakDialog, DayTimeline, PunchOutDialog, ampm } from "./day-parts";
 import { at, hmOf, hmsOf, longDur, msOf, OFF_DAY_WORDS } from "./format";
 

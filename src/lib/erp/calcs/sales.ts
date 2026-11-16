@@ -1,5 +1,5 @@
 import { fmt, n, registerCalc } from "../calc";
-import { boxQuantity } from "../engines/sales";
+import { boxQuantity } from "../engines/box-quantity";
 
 /* ---------------------------------------------------------------------------
  * The order and allocation forms' derived fields. The server recomputes each
