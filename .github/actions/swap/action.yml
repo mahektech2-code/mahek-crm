@@ -1,0 +1,32 @@
+# MORE SWAP BEFORE `next build`, SO A MEMORY PEAK SLOWS THE BUILD INSTEAD OF
+# KILLING THE MACHINE.
+#
+# From mid-November 2026 most `build`, `links` and `stack` runs on main ended
+# with "The hosted runner lost communication with the server" or "The operation
+# was canceled" a few minutes into `npm run build` — GitHub's words for a
+# runner starved of memory until its agent stopped answering. Moving the type
+# check out of the build (#1041) bought room for a while; the app grew back
+# into it. A swap file on the runner's scratch disk lets the compile's peak
+# spill instead of taking the runner down. It costs a few seconds to make and
+# nothing when it is not touched.
+name: Swap
+description: Add a swap file to the runner before a memory-hungry step
+inputs:
+  size:
+    description: Size of the swap file, as fallocate takes it
+    default: 10G
+runs:
+  using: composite
+  steps:
+    - name: Add swap
+      shell: bash
+      run: |
+        set -e
+        free -h
+        f=/mnt/ci-swap
+        [ -w /mnt ] || f=/ci-swap
+        sudo fallocate -l "${{ inputs.size }}" "$f" || sudo dd if=/dev/zero of="$f" bs=1M count=10240
+        sudo chmod 600 "$f"
+        sudo mkswap "$f" >/dev/null
+        sudo swapon "$f"
+        free -h
