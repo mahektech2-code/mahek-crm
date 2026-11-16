@@ -130,6 +130,9 @@ jobs:
           username: ${{ secrets.DOCR_USERNAME }}
           password: ${{ secrets.DOCR_TOKEN }}
 
+      # The same memory peak that took CI's build runners down (see the action).
+      - uses: ./.github/actions/swap
+
       - id: node
         uses: ./.github/actions/node-image
 
