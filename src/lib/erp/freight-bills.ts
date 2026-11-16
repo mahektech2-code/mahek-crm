@@ -547,6 +547,28 @@ export async function saveFreightBill(ctx: ErpContext, input: FreightBillInput):
 
 class SplitRefused extends Error {}
 
+/** One row's answer from a batch save: the bill it became, or why it was refused. */
+export type BatchSaveRow = { ok: true; id: string; billNo: number } | { ok: false; error: string; field: string | null };
+
+/**
+ * Enter several transporters' bills at once — the Bill to enter stage's
+ * multi-select. Each row is saved on its own through `saveFreightBill`, with
+ * every rule it has, so one bad row never stops the others; the answer says,
+ * row by row, which were saved and why the rest were not.
+ */
+export async function saveFreightBills(ctx: ErpContext, inputs: FreightBillInput[]): Promise<Result<BatchSaveRow[]>> {
+  const rows = (inputs ?? []).slice(0, 50);
+  if (!rows.length) return err("There is no bill to save.", "rule_violation");
+  const out: BatchSaveRow[] = [];
+  for (const input of rows) {
+    const r = await saveFreightBill(ctx, { ...input, id: null });
+    out.push(r.ok ? { ok: true, id: r.data.id, billNo: r.data.billNo } : { ok: false, error: r.fieldErrors?.[0]?.message ?? r.error, field: r.fieldErrors?.[0]?.field ?? null });
+  }
+  const saved = out.filter((r) => r.ok).length;
+  if (!saved) return err(out.length === 1 && !out[0].ok ? out[0].error : "None of the bills could be saved. Each row says why.", "rule_violation");
+  return ok(out, `${saved} of ${out.length} bill${out.length === 1 ? "" : "s"} saved · they are in To pay`);
+}
+
 /** Split a pending bill again over its lines as they are now — after a dispatch was corrected. Lines that left Paid freight, or were undone, drop out. */
 export async function resplitFreightBill(ctx: ErpContext, billId: string): Promise<Result<unknown>> {
   let words = "";
@@ -580,24 +602,66 @@ export type PaymentFields = { paidOn: string; mode: string; reference?: string |
 
 /** Mark a pending bill paid. It moves to Paid history; the shares on each order stay as they are. */
 export async function markFreightBillPaid(ctx: ErpContext, billId: string, p: PaymentFields): Promise<Result<unknown>> {
-  const paidOn = (p.paidOn ?? "").trim();
-  if (!DAY.test(paidOn)) return fieldErr("paidOn", "Pick the payment date.");
-  if (paidOn > today()) return fieldErr("paidOn", "The payment date cannot be in the future.");
-  const mode = (p.mode ?? "").trim().toLowerCase() as PaymentMode;
-  if (!PAYMENT_MODES.includes(mode)) return fieldErr("mode", "Pick Bank, UPI or Cash.");
-  const [cur] = await freightBills({ status: "pending", ids: [billId] });
-  if (!cur) return err("That bill no longer exists.", "not_found");
-  const no = markPaidRefusal(cur.status, cur.stale.length);
-  if (no) return err(no, "rule_violation");
-  const moved = (await db.execute(sql`
-    update erp_freight_bills set status = 'paid', paid_on = ${paidOn}::date, payment_mode = ${mode}, payment_ref = ${clean(p.reference, 120)},
-           payment_remarks = ${clean(p.remarks, 500)}, paid_by_id = ${ctx.user.id}, paid_at = now(), updated_at = now(), updated_by_id = ${ctx.user.id}
-     where id = ${billId} and status = 'pending' returning id
-  `)) as unknown as { id: string }[];
-  if (!moved.length) return err("Somebody changed this bill just now. Open it again.", "conflict");
-  await event(db, billId, "paid", `${rupees(cur.amountPaise)} paid on ${paidOn} by ${mode.toUpperCase()}${clean(p.reference) ? ` · ${clean(p.reference)}` : ""}`, ctx.user.id);
-  await erpAudit(ctx, "erp.freightBill.pay", "erp_freight_bill", billId, { status: "pending" }, { status: "paid", paidOn, mode, reference: clean(p.reference, 120) });
-  return okVoid(`${cur.name} marked paid · moved to Paid history`);
+  return markFreightBillsPaid(ctx, [{ ...p, billIds: [billId] }]);
+}
+
+/** One payment to one transporter, covering one or more of its bills. */
+export type BatchPayment = PaymentFields & { billIds: string[] };
+
+/**
+ * Mark several pending bills paid in one go — the To pay stage's multi-select.
+ * Each payment is one transfer to one transporter and may cover several of its
+ * bills; every bill named must be pending and its split current, or nothing is
+ * paid. One transaction, so a selection is never half paid.
+ */
+export async function markFreightBillsPaid(ctx: ErpContext, payments: BatchPayment[]): Promise<Result<unknown>> {
+  const today_ = today();
+  const groups: { ids: string[]; paidOn: string; mode: PaymentMode; reference: string | null; remarks: string | null }[] = [];
+  for (const p of payments ?? []) {
+    const ids = [...new Set((p.billIds ?? []).filter((x) => typeof x === "string" && x))];
+    if (!ids.length) continue;
+    const paidOn = (p.paidOn ?? "").trim();
+    if (!DAY.test(paidOn)) return fieldErr("paidOn", "Pick the payment date.");
+    if (paidOn > today_) return fieldErr("paidOn", "The payment date cannot be in the future.");
+    const mode = (p.mode ?? "").trim().toLowerCase() as PaymentMode;
+    if (!PAYMENT_MODES.includes(mode)) return fieldErr("mode", "Pick Bank, UPI or Cash.");
+    groups.push({ ids, paidOn, mode, reference: clean(p.reference, 120), remarks: clean(p.remarks, 500) });
+  }
+  const all = groups.flatMap((g) => g.ids);
+  if (!all.length) return err("Pick at least one bill to pay.", "rule_violation");
+  if (new Set(all).size !== all.length) return err("A bill is in two payments. Take it out of one.", "rule_violation");
+  if (all.length > 200) return err("Pay at most 200 bills at a time.", "rule_violation");
+  const bills = await freightBills({ status: "pending", ids: all });
+  const byId = new Map(bills.map((b) => [b.id, b]));
+  for (const id of all) {
+    const b = byId.get(id);
+    if (!b) return err("One of those bills no longer exists. Open the list again.", "not_found");
+    const no = markPaidRefusal(b.status, b.stale.length);
+    if (no) return err(`${b.name}: ${no}`, "rule_violation");
+  }
+  const refused = await db.transaction(async (tx) => {
+    for (const g of groups) {
+      const moved = (await tx.execute(sql`
+        update erp_freight_bills set status = 'paid', paid_on = ${g.paidOn}::date, payment_mode = ${g.mode}, payment_ref = ${g.reference},
+               payment_remarks = ${g.remarks}, paid_by_id = ${ctx.user.id}, paid_at = now(), updated_at = now(), updated_by_id = ${ctx.user.id}
+         where id in ${g.ids} and status = 'pending' returning id
+      `)) as unknown as { id: string }[];
+      if (moved.length !== g.ids.length) return "Somebody changed one of these bills just now. Open the list again.";
+      const others = g.ids.length > 1 ? ` · one payment for ${g.ids.length} bills` : "";
+      for (const id of g.ids) {
+        const b = byId.get(id)!;
+        await event(tx, id, "paid", `${rupees(b.amountPaise)} paid on ${g.paidOn} by ${g.mode.toUpperCase()}${g.reference ? ` · ${g.reference}` : ""}${others}`, ctx.user.id);
+      }
+    }
+    return null;
+  });
+  if (refused) return err(refused, "conflict");
+  for (const g of groups) {
+    for (const id of g.ids) await erpAudit(ctx, "erp.freightBill.pay", "erp_freight_bill", id, { status: "pending" }, { status: "paid", paidOn: g.paidOn, mode: g.mode, reference: g.reference });
+  }
+  if (all.length === 1) return okVoid(`${byId.get(all[0])!.name} marked paid · moved to Paid history`);
+  const total = all.reduce((a, id) => a + byId.get(id)!.amountPaise, 0);
+  return okVoid(`${all.length} bills marked paid · ${rupees(total)} in ${groups.length} payment${groups.length === 1 ? "" : "s"}`);
 }
 
 /** A manager moves a paid bill back to pending, with a reason. The split stays; the payment is kept in its history. */
