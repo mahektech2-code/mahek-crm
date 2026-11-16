@@ -186,6 +186,14 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      # The database was for the migrations and the catalogue import above;
+      # the build never connects. Its data directory is in memory (see
+      # .github/actions/postgres), so it goes before the build needs the room.
+      - name: Stop Postgres
+        run: docker rm -f $(docker ps -q) >/dev/null 2>&1 || true
+
+      - uses: ./.github/actions/swap
+
       - run: npm run build
         env:
           NEXT_BUILD_SKIP_TYPECHECK: "1"
@@ -306,6 +314,7 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - uses: ./.github/actions/swap
       - uses: docker/setup-buildx-action@v4
       - id: node
         uses: ./.github/actions/node-image
@@ -485,6 +494,8 @@ jobs:
       # `next build` it ran straight after the compile and the runner was shut
       # down part-way through it — the same memory ceiling the `build` job
       # already steps round. This job checks links, not types.
+      - uses: ./.github/actions/swap
+
       - run: npm run build
         env:
           NEXT_BUILD_SKIP_TYPECHECK: "1"
