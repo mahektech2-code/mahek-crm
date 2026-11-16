@@ -165,7 +165,7 @@ export function SelfieCamera({
           }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <T style={[{ fontSize: 17, lineHeight: 22, color: '#FFFFFF' }, weight(600)]}>{title}</T>
-            <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>{subtitle}</T>
+            <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>{subtitle}</T>
           </View>
           {/* The cross ABANDONS the check-in now rather than skipping the
               photograph — it is the same button it always was and it no longer

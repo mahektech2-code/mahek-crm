@@ -357,7 +357,7 @@ function ShopDayView({
     <>
       <Pressable onPress={onBack} accessibilityRole="button" hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', marginBottom: 10 }}>
         <Icon name="back" size={16} color={C.primaryDeep} strokeWidth={1.8} />
-        <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>{dayLabel}</T>
+        <T style={[{ fontSize: 14, lineHeight: 20, color: C.primaryDeep }, weight(600)]}>{dayLabel}</T>
       </Pressable>
       <T style={sheetTitle}>{s.name}</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
@@ -390,7 +390,7 @@ function ShopDayView({
             </View>
             <View style={{ flex: 1, minWidth: 0, paddingBottom: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(600)]}>{e.title}</T>
+                <T style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>{e.title}</T>
                 {e.at != null ? <T s="caption" style={tabular}>{hhmm(e.at)}</T> : null}
               </View>
               {e.detail ? (

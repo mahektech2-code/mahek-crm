@@ -21,6 +21,7 @@ import { shareAvailable, shareFile } from '../src/native/share';
 import { pdfPageCount, pdfPreviewAvailable, renderPdfPage } from '../src/native/pdf-preview';
 import { useStore } from '../src/state/store';
 import { dmy, isoDate } from '../src/lib/format';
+import { BADGE_FONT_CAP } from '../src/components/ui/font-scale';
 
 /**
  * ONE DOCUMENT, READ INSIDE THE APP.
@@ -227,9 +228,9 @@ const TILE = {
 /** One fact about the document, as a pill under its title. */
 function MetaPill({ text, bg = C.surface, ink = C.muted, strong = false, cal = false }: { text: string; bg?: string; ink?: string; strong?: boolean; cal?: boolean }) {
   return (
-    <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+    <View style={{ minHeight: 28, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
       {cal ? <Icon name="cal" size={13} color={ink} strokeWidth={2.2} /> : null}
-      <Text style={[{ fontSize: 12, color: ink }, weight(strong ? 800 : 600)]}>{text}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: ink }, weight(strong ? 800 : 600)]}>{text}</Text>
     </View>
   );
 }
@@ -263,7 +264,7 @@ function Downloading({ fraction, size }: { fraction: number | null; size: string
         {fraction == null ? (
           <ActivityIndicator size="small" color={C.primaryDeep} />
         ) : (
-          <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(800)]}>{pct}%</Text>
+          <Text numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={BADGE_FONT_CAP} style={[{ fontSize: 14, lineHeight: 18, color: C.primaryDeep }, weight(800)]}>{pct}%</Text>
         )}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -276,7 +277,7 @@ function Downloading({ fraction, size }: { fraction: number | null; size: string
         <View style={{ height: 8, borderRadius: 4, backgroundColor: C.hairline, marginTop: 8, overflow: 'hidden' }}>
           <View style={{ width: `${pct}%`, height: 8, borderRadius: 4, backgroundColor: C.primary }} />
         </View>
-        <Text style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Then opens without signal</Text>
+        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }}>Then opens without signal</Text>
       </View>
     </View>
   );
@@ -421,7 +422,8 @@ function Pages({ uri, count, image }: { uri: string; count: number; image: boole
           position: 'absolute',
           right: 14,
           top: 14,
-          height: 26,
+          minHeight: 26,
+          paddingVertical: 3,
           paddingHorizontal: 10,
           borderRadius: 13,
           backgroundColor: 'rgba(15,27,51,0.7)',
@@ -451,7 +453,7 @@ function Pages({ uri, count, image }: { uri: string; count: number; image: boole
           />
           <Text
             accessibilityLabel={count > 1 ? `Page ${current} of ${count}` : `Zoom ${Math.round(zoom * 100)} percent`}
-            style={[{ fontSize: 14, color: C.lime, minWidth: 64, textAlign: 'center' }, weight(800)]}>
+            style={[{ fontSize: 14, lineHeight: 20, color: C.lime, minWidth: 64, textAlign: 'center' }, weight(800)]}>
             {count > 1 ? `${current} / ${count}` : `${Math.round(zoom * 100)}%`}
           </Text>
           <RoundButton
@@ -550,7 +552,7 @@ function Sheet({
         <Image source={{ uri: drawn.uri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" fadeDuration={0} />
       ) : failed ? (
         <Centre>
-          <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center' }}>{failed}</Text>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center' }}>{failed}</Text>
         </Centre>
       ) : (
         <Centre>
@@ -608,7 +610,7 @@ function Message({
         <Glyph shapes={MESSAGE_GLYPH[glyph]} size={20} color={tint.ink} />
       </View>
       <View accessible accessibilityLabel={`${title}. ${a11y ?? body}`} style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{title}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{title}</Text>
         <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{body}</Text>
       </View>
       {action ? (

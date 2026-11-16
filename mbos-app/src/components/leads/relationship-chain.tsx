@@ -68,7 +68,7 @@ export function RelationshipChain({
   const more = (distributorCount ?? 0) > 1 ? (distributorCount ?? 0) - 1 : 0;
   return (
     <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
-      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+      <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
         Who sells to this shop
       </Text>
       <View style={{ gap: 10, marginTop: 12 }}>

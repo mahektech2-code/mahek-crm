@@ -176,7 +176,7 @@ export default function ValidateLead() {
   const shop = lead?.company?.trim() || lead?.name || 'Lead';
   const hero = (
     <View style={{ marginTop: 16 }}>
-      <Text style={[{ fontSize: 13, color: C.lime }, weight(700)]}>Check call</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: C.lime }, weight(700)]}>Check call</Text>
       <Text accessibilityRole="header" style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: '#FFFFFF', marginTop: 4 }, weight(800)]}>
         {shop}
       </Text>
@@ -185,10 +185,10 @@ export default function ValidateLead() {
           purpose is a phone call must not be the one screen he has to retype a
           ten-digit number out of. */}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
-        <Text style={[{ flex: 1, minWidth: 0, fontSize: 13, color: C.onNavyMuted }, weight(400)]}>
+        <Text style={[{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 18, color: C.onNavyMuted }, weight(400)]}>
           {lead?.city ? lead.city + (lead?.mobile ? ' · ' : '') : ''}
           {lead?.mobile ? (
-            <Text selectable style={[{ fontSize: 15, color: '#FFFFFF' }, weight(600)]}>
+            <Text selectable style={[{ fontSize: 15, lineHeight: 21, color: '#FFFFFF' }, weight(600)]}>
               {lead.mobile}
             </Text>
           ) : null}
@@ -225,7 +225,7 @@ export default function ValidateLead() {
         <CallCard key={section.heading}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Icon name={si === 0 ? 'chat' : 'note'} size={16} color={C.primaryDeep} strokeWidth={2} />
-            <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>{section.heading}</Text>
+            <Text accessibilityRole="header" style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>{section.heading}</Text>
           </View>
           {section.lines.map((line, i) => (
             <Text key={i} style={[{ fontSize: 14, lineHeight: 20, marginTop: i ? 4 : 6, color: C.ink }, weight(400)]}>
@@ -240,7 +240,7 @@ export default function ValidateLead() {
           read out exist. */}
       {script.length === 0 ? (
         <CallCard>
-          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>The call script is not on this phone yet</Text>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>The call script is not on this phone yet</Text>
           <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 4 }, weight(400)]}>
             It will come next time the app sends to office. Make the call anyway. Write the answers below.
           </Text>
@@ -248,7 +248,7 @@ export default function ValidateLead() {
       ) : null}
 
       <CallCard row>
-        <Text style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(700)]}>Got through?</Text>
+        <Text style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Got through?</Text>
         <CallChip label="Yes" a11y="Did you get through? Yes" on={reached} onPress={() => setReached(true)} />
         {/* A call nobody answered is still a call that was made. Recording
             only the successful ones makes the follow-up look effortless. */}
@@ -282,7 +282,7 @@ export default function ValidateLead() {
                   color={section.id === 'objections' ? C.danger : section.id === 'readiness' ? C.primaryDeep : C.ink}
                   strokeWidth={2}
                 />
-                <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(800)]}>{section.title}</Text>
+                <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>{section.title}</Text>
               </View>
               <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 4 }, weight(400)]}>{section.says}</Text>
               {section.questions.map((q) => (
@@ -316,7 +316,7 @@ export default function ValidateLead() {
                       accessibilityLabel="Monthly volume, in litres"
                       style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink, paddingVertical: 12 }, weight(400)]}
                     />
-                    <Text style={[{ fontSize: 12, color: C.faint }, weight(400)]}>L/mo</Text>
+                    <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.faint }, weight(400)]}>L/mo</Text>
                   </View>
                   <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint, marginTop: 4 }, weight(400)]}>
                     Only if they said a number · saved beside the salesman&apos;s, never replaces it
@@ -329,7 +329,7 @@ export default function ValidateLead() {
       </Presence>
 
       <CallCard>
-        <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>Your call</Text>
+        <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>Your call</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           {VERDICTS.map((o) => {
             const on = verdict === o.v;
@@ -352,7 +352,7 @@ export default function ValidateLead() {
                 accessibilityLabel={o.label}
                 hitSlop={{ top: 4, bottom: 4 }}
                 style={{ minHeight: 44, paddingHorizontal: 14, borderRadius: 22, justifyContent: 'center', backgroundColor: on ? C.navy : tint.bg }}>
-                <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : tint.fg }, weight(700)]}>{o.label}</Text>
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : tint.fg }, weight(700)]}>{o.label}</Text>
               </Pressable>
             );
           })}
@@ -390,14 +390,14 @@ export default function ValidateLead() {
         <Pressable
           onPress={leave}
           accessibilityRole="button"
-          style={({ pressed }) => ({ width: 120, height: 60, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Cancel</Text>
+          style={({ pressed }) => ({ minWidth: 120, flexShrink: 0, minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Cancel</Text>
         </Pressable>
         <PrimaryButton
           label={saving ? 'Saving…' : 'Save call'}
           tone="navy"
           onPress={save}
-          style={{ flex: 1, height: 60, minHeight: 60, borderRadius: 30 }}
+          style={{ flex: 1, minHeight: 60, borderRadius: 30 }}
         />
       </View>
     </AppFrame>
@@ -437,7 +437,7 @@ function CallChip({ label, a11y, on, onPress }: { label: string; a11y: string; o
       accessibilityState={{ selected: on }}
       accessibilityLabel={a11y}
       style={{ minHeight: 44, paddingHorizontal: 18, borderRadius: 22, justifyContent: 'center', backgroundColor: on ? C.navy : C.canvas }}>
-      <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
+      <Text style={[{ fontSize: 14, lineHeight: 20, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
     </Pressable>
   );
 }

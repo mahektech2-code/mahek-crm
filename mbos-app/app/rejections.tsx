@@ -127,7 +127,7 @@ export default function Rejections() {
           <Text
             numberOfLines={1}
             accessibilityLabel="The office did not accept these. Each one says what to do. Nothing goes until you choose."
-            style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+            style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.muted }}>
             Nothing goes until you choose
           </Text>
         </View>
@@ -161,7 +161,8 @@ export default function Rejections() {
             accessibilityRole="button"
             style={({ pressed }) => ({
               marginTop: 12,
-              height: 44,
+              minHeight: 44,
+              paddingVertical: 6,
               paddingHorizontal: 16,
               borderRadius: 22,
               backgroundColor: C.primaryTint,
@@ -169,7 +170,7 @@ export default function Rejections() {
               justifyContent: 'center',
               opacity: pressed ? 0.85 : 1,
             })}>
-            <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Your orders</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>Your orders</Text>
           </Pressable>
         </View>
       ) : null}
@@ -206,7 +207,7 @@ export default function Rejections() {
                       {payload.customerName ?? kind}
                     </Text>
                     {payload.customerName || valueLine ? (
-                      <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                      <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>
                         {payload.customerName ? kind : ''}
                         {payload.customerName && valueLine ? ' · ' : ''}
                         {valueLine ? (
@@ -373,7 +374,8 @@ function CardAction({
       accessibilityState={{ disabled }}
       style={({ pressed }) => ({
         flex: 1,
-        height: 44,
+        minHeight: 44,
+        paddingVertical: 6,
         borderRadius: 22,
         backgroundColor: tint ? C.primaryTint : C.canvas,
         alignItems: 'center',

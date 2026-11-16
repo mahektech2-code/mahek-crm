@@ -74,8 +74,8 @@ export function useCustomerTargets(period: string | null, visit: number): Custom
 function CardTitle() {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Shop targets</Text>
-      <Text style={{ fontSize: 12, color: C.muted }}>sum of each shop&apos;s monthly target</Text>
+      <Text accessibilityRole="header" style={[{ flexShrink: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Shop targets</Text>
+      <Text style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>sum of each shop&apos;s monthly target</Text>
     </View>
   );
 }
@@ -114,7 +114,7 @@ function Tag({
       accessibilityLabel={a11y}
       style={{ minHeight: 28, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
       {glyph ? <Glyph shapes={glyph} size={12} color={t.fg} strokeWidth={2.2} /> : null}
-      <Text style={[{ fontSize: 12, color: t.fg }, weight(700), tabular]}>{text}</Text>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: t.fg }, weight(700), tabular]}>{text}</Text>
     </View>
   );
 }
@@ -125,8 +125,8 @@ function Note({ glyph, title, children }: { glyph: GlyphShape[]; title?: string;
     <View style={[CARD, { paddingVertical: 14, flexDirection: 'row', gap: 10, alignItems: 'center' }]}>
       <Glyph shapes={glyph} size={20} color={C.muted} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        {title ? <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{title}</Text> : null}
-        <Text style={{ fontSize: title ? 12 : 13, color: title ? C.muted : C.body }}>{children}</Text>
+        {title ? <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>{title}</Text> : null}
+        <Text style={{ fontSize: title ? 12 : 13, lineHeight: title ? 17 : 18, marginTop: title ? 2 : 0, color: title ? C.muted : C.body }}>{children}</Text>
       </View>
     </View>
   );
@@ -164,7 +164,7 @@ export function CustomerTargetsCard({
     return (
       <View style={CARD}>
         <CardTitle />
-        <Text style={{ fontSize: 13, color: C.muted, marginTop: 6 }}>Loading…</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 6 }}>Loading…</Text>
       </View>
     );
   }
@@ -193,7 +193,7 @@ export function CustomerTargetsCard({
             format={(n) => inrFromPaise(Math.round(n))}
             style={[typeScale.body, { fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: C.ink }, weight(800), tabular]}
           />
-          <Text style={{ fontSize: 13, color: C.muted }}>
+          <Text style={{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.muted }}>
             {summary.targetPaise ? `billed of ${inrFromPaise(summary.targetPaise)}` : 'billed · no targets set'}
           </Text>
         </View>
@@ -238,7 +238,7 @@ export function CustomerTargetsCard({
             shop's target is met by what was BILLED to it, his own revenue
             target by orders the office accepted. Said once, plainly, so the
             two rupee figures are never read as one number twice. */}
-        <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 8 }}>
           Measured on bills, not orders — not your own target above.
         </Text>
       </View>
@@ -269,14 +269,15 @@ export function CustomerTargetsCard({
                 setShown(PAGE);
               }}
               style={({ pressed }) => ({
-                height: 36,
+                minHeight: 36,
+                paddingVertical: 6,
                 paddingHorizontal: 12,
                 borderRadius: 18,
                 backgroundColor: on ? C.navy : C.surface,
                 justifyContent: 'center',
                 opacity: pressed ? 0.85 : 1,
               })}>
-              <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>
                 {`${f.label} ${summary.counts[f.key]}`}
               </Text>
             </Pressable>
@@ -299,7 +300,7 @@ export function CustomerTargetsCard({
         </View>
       ) : (
         <View style={[CARD, { paddingVertical: 14 }]}>
-          <Text style={{ fontSize: 13, color: C.body }}>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.body }}>
             {filter === 'met'
               ? 'No shop has reached its target yet.'
               : filter === 'open'
@@ -352,7 +353,7 @@ function TargetRow({
         <Text numberOfLines={1} style={[{ flex: 1, fontSize: 15, lineHeight: 20, color: offPhone ? C.muted : C.ink }, weight(700)]}>
           {row.name}
         </Text>
-        <Text style={[{ fontSize: 13, color: state === 'met' ? C.success : C.ink }, weight(700), tabular]}>
+        <Text style={[{ fontSize: 13, lineHeight: 18, color: state === 'met' ? C.success : C.ink }, weight(700), tabular]}>
           {inrFromPaise(row.achievedPaise)}
           {row.targetPaise ? (
             <Text style={[{ color: state === 'met' ? C.success : C.faint }, weight(state === 'met' ? 700 : 500)]}>
@@ -413,7 +414,7 @@ function TargetRow({
       </View>
 
       {offPhone ? (
-        <Text style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
+        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }}>
           Not on this phone — outside your area. Ask your manager if it should be added.
         </Text>
       ) : null}

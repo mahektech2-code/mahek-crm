@@ -57,26 +57,27 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   }, [error]);
   return (
     <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: color.canvas }}>
-      <Text style={{ fontSize: 20, fontWeight: '600', color: color.ink }}>Something went wrong on this screen</Text>
+      <Text style={{ fontSize: 20, lineHeight: 28, fontWeight: '600', color: color.ink }}>Something went wrong on this screen</Text>
       <Text style={{ fontSize: 15, lineHeight: 21, color: color.body, marginTop: 10 }}>
         Anything you already saved is safe on the phone. Tap below to carry on. The office is
         sent a note of this the next time the phone syncs. If it keeps happening, tell your
         manager.
       </Text>
-      <Text selectable style={{ fontSize: 13, color: color.muted, marginTop: 14 }}>
+      <Text selectable style={{ fontSize: 13, lineHeight: 18, color: color.muted, marginTop: 14 }}>
         {error?.message || String(error)}
       </Text>
       <Pressable
         onPress={() => void retry()}
         style={{
           marginTop: 24,
-          height: 48,
+          minHeight: 48,
+          paddingVertical: 8,
           borderRadius: 12,
           backgroundColor: color.primary,
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-        <Text style={{ fontSize: 16, fontWeight: '600', color: '#FFFFFF' }}>Carry on</Text>
+        <Text style={{ fontSize: 16, lineHeight: 22, fontWeight: '600', color: '#FFFFFF' }}>Carry on</Text>
       </Pressable>
     </View>
   );

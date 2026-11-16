@@ -464,7 +464,7 @@ export default function CustomerRecord() {
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
             <Text
               accessibilityRole="header"
-              style={[{ flex: 1, minWidth: 0, fontSize: 26, lineHeight: 32, letterSpacing: -0.5, color: heroInk }, weight(800)]}>
+              style={[{ flex: 1, minWidth: 0, fontSize: 26, lineHeight: 34, letterSpacing: -0.5, color: heroInk }, weight(800)]}>
               {shopName(c.name)}
             </Text>
             {c.healthScore != null || c.healthBand ? (
@@ -486,7 +486,7 @@ export default function CustomerRecord() {
               {c.contactPerson ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                   <Icon name="person" size={14} color={heroMuted} strokeWidth={2} />
-                  <Text style={{ fontSize: 13, color: heroMuted }}>{c.contactPerson}</Text>
+                  <Text style={{ fontSize: 13, lineHeight: 18, color: heroMuted }}>{c.contactPerson}</Text>
                 </View>
               ) : null}
               {c.city ? (
@@ -497,7 +497,7 @@ export default function CustomerRecord() {
                   </Text>
                 </View>
               ) : null}
-              {c.phone ? <Text style={{ fontSize: 13, color: heroMuted }}>{c.phone}</Text> : null}
+              {c.phone ? <Text style={{ fontSize: 13, lineHeight: 18, color: heroMuted }}>{c.phone}</Text> : null}
             </View>
           ) : null}
 
@@ -523,7 +523,8 @@ export default function CustomerRecord() {
                 alignItems: 'center',
                 gap: 10,
                 marginTop: 12,
-                height: 48,
+                minHeight: 48,
+                paddingVertical: 6,
                 paddingHorizontal: 16,
                 borderRadius: 24,
                 backgroundColor: pressed ? C.primaryTint : C.surface,
@@ -553,17 +554,17 @@ export default function CustomerRecord() {
                 ]}>
                 {dues ? inr(dues) : 'Nothing due'}
               </Text>
-              <Text style={{ fontSize: 12, color: C.muted }}>outstanding</Text>
+              <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>outstanding</Text>
             </View>
             <View
               accessible
               accessibilityLabel={'Credit ' + (c.creditDays != null ? c.creditDays + ' days' : 'not set')}
               style={{ flex: 1, backgroundColor: C.surface, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 14 }}>
               <Icon name="cal" size={18} color={C.ink} strokeWidth={2} />
-              <Text style={[{ fontSize: 20, letterSpacing: -0.4, color: C.ink, marginTop: 4 }, weight(800)]}>
+              <Text style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: C.ink, marginTop: 4 }, weight(800)]}>
                 {c.creditDays != null ? c.creditDays + ' d' : '—'}
               </Text>
-              <Text style={{ fontSize: 12, color: C.muted }}>credit</Text>
+              <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>credit</Text>
             </View>
           </View>
 
@@ -571,7 +572,7 @@ export default function CustomerRecord() {
               uses for exactly this kind of aside. */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
             <Icon name="synced" size={14} color={heroMuted} strokeWidth={2} />
-            <Text style={{ fontSize: 12, color: heroMuted }}>{'From office ' + freshness(c.lastSyncedAt, nowMs)}</Text>
+            <Text style={{ fontSize: 12, lineHeight: 17, color: heroMuted }}>{'From office ' + freshness(c.lastSyncedAt, nowMs)}</Text>
           </View>
 
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
@@ -585,7 +586,8 @@ export default function CustomerRecord() {
               accessibilityLabel="Visit"
               style={({ pressed }) => ({
                 flex: 1,
-                height: 56,
+                minHeight: 56,
+                paddingVertical: 8,
                 borderRadius: 28,
                 backgroundColor: C.navy,
                 opacity: pressed ? 0.88 : 1,
@@ -595,7 +597,7 @@ export default function CustomerRecord() {
                 gap: 8,
               })}>
               <Icon name="shop" size={18} color={C.lime} strokeWidth={2} />
-              <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>Visit</Text>
+              <Text style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF' }, weight(700)]}>Visit</Text>
             </Pressable>
             {(
               [
@@ -664,7 +666,8 @@ export default function CustomerRecord() {
               accessibilityLabel={t}
               hitSlop={{ top: 6, bottom: 6 }}
               style={{
-                height: 36,
+                minHeight: 36,
+                paddingVertical: 6,
                 paddingHorizontal: on ? 14 : 12,
                 borderRadius: 18,
                 backgroundColor: on ? C.navy : C.surface,
@@ -673,7 +676,7 @@ export default function CustomerRecord() {
                 gap: 6,
               }}>
               {icon && !on ? <Icon name={icon} size={14} color={C.ink} strokeWidth={2} /> : null}
-              <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{t}</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{t}</Text>
             </Pressable>
           );
         })}
@@ -724,7 +727,7 @@ export default function CustomerRecord() {
                   <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>
                     {(fixed?.contactPerson ?? c.contactPerson) || '—'}
                   </Text>
-                  <Text style={{ fontSize: 14, color: C.muted }}>{(fixed?.phone ?? c.phone) || 'No phone'}</Text>
+                  <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>{(fixed?.phone ?? c.phone) || 'No phone'}</Text>
                 </InfoRow>
                 <InfoRow icon="pin" a11y="Where">
                   <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>
@@ -742,13 +745,13 @@ export default function CustomerRecord() {
                 <InfoRow word="GST">
                   <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>{c.gstin ?? '—'}</Text>
                   <Text style={[{ fontSize: 11, color: C.muted }, weight(700)]}>Dealer</Text>
-                  <Text style={{ fontSize: 14, color: C.ink }}>{c.dealerCode ?? '—'}</Text>
+                  <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>{c.dealerCode ?? '—'}</Text>
                 </InfoRow>
                 <InfoRow icon="shop" a11y="Last visit">
-                  <Text style={{ flex: 1, fontSize: 14, color: C.ink }}>{pretty(c.lastVisitDate)}</Text>
+                  <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }}>{pretty(c.lastVisitDate)}</Text>
                   <View accessible accessibilityLabel={'Last order ' + pretty(c.lastOrderDate)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Icon name="order" size={16} color={C.muted} strokeWidth={2} />
-                    <Text style={{ fontSize: 14, color: C.ink }}>{pretty(c.lastOrderDate)}</Text>
+                    <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>{pretty(c.lastOrderDate)}</Text>
                   </View>
                 </InfoRow>
               </View>
@@ -781,7 +784,7 @@ export default function CustomerRecord() {
             <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Icon name="lock" size={16} color={C.lime} strokeWidth={2} />
-                <Text style={[{ fontSize: 14, color: C.lime }, weight(700)]}>Private note for the office</Text>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.lime }, weight(700)]}>Private note for the office</Text>
               </View>
               <Text
                 accessibilityLabel="Write something the customer must never see. It goes to the office only. It is not kept on this phone, so you will not see it here later."
@@ -824,13 +827,14 @@ export default function CustomerRecord() {
                 style={({ pressed }) => ({
                   alignItems: 'center',
                   justifyContent: 'center',
-                  height: 48,
+                  minHeight: 48,
+                  paddingVertical: 8,
                   marginTop: 10,
                   borderRadius: 24,
                   backgroundColor: note.trim() ? C.lime : '#2A3858',
                   opacity: noteBusy ? 0.6 : pressed ? 0.88 : 1,
                 })}>
-                <Text style={[{ fontSize: 14, color: note.trim() ? C.navy : C.onNavyMuted }, weight(700)]}>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: note.trim() ? C.navy : C.onNavyMuted }, weight(700)]}>
                   {noteBusy ? 'Sending…' : 'Send to office'}
                 </Text>
               </Pressable>
@@ -907,15 +911,15 @@ export default function CustomerRecord() {
                         </View>
                         <View style={{ flex: 1, minWidth: 0 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <Text style={[{ fontSize: 12, color: look.fg }, weight(700)]}>{kind}</Text>
-                            <Text style={{ fontSize: 12, color: C.muted }}>
+                            <Text style={[{ fontSize: 12, lineHeight: 17, color: look.fg }, weight(700)]}>{kind}</Text>
+                            <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
                               {[pretty(isoDate(new Date(e.occurredAt))), e.actor].filter(Boolean).join(' · ')}
                             </Text>
                             {office ? (
                               <View
                                 accessible
                                 accessibilityLabel="From the office team"
-                                style={{ height: 18, paddingHorizontal: 6, borderRadius: 9, backgroundColor: C.lavender, justifyContent: 'center' }}>
+                                style={{ minHeight: 18, paddingVertical: 2, paddingHorizontal: 6, borderRadius: 9, backgroundColor: C.lavender, justifyContent: 'center' }}>
                                 <Text style={[{ fontSize: 11, color: C.primaryDeep }, weight(700)]}>Office</Text>
                               </View>
                             ) : null}
@@ -934,7 +938,7 @@ export default function CustomerRecord() {
                 not that this is the whole story — and a salesman who reads a
                 hundred entries as everything tells a customer so. */}
             {events.length >= TIMELINE_PAGE ? (
-              <Text style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
+              <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 10 }}>
                 {'Newest ' +
                   TIMELINE_PAGE +
                   (tlFilter === 'All' ? ' shown' : ' under ' + tlFilter + ' shown') +
@@ -977,9 +981,9 @@ export default function CustomerRecord() {
                       <Icon name="order" size={20} color={C.ink} strokeWidth={2} />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         {o.valuePaise != null ? (
-                          <Text style={[{ fontSize: 17, color: C.ink }, weight(800), tabular]}>{inrFromPaise(o.valuePaise)}</Text>
+                          <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink }, weight(800), tabular]}>{inrFromPaise(o.valuePaise)}</Text>
                         ) : (
-                          <Text style={[{ fontSize: 15, color: C.muted }, weight(700)]}>Value not recorded</Text>
+                          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.muted }, weight(700)]}>Value not recorded</Text>
                         )}
                         <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>
                           {[o.orderNo, o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null]
@@ -988,7 +992,7 @@ export default function CustomerRecord() {
                         </Text>
                       </View>
                       <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                        <Text style={{ fontSize: 12, color: C.muted }}>{pretty(o.orderedAt)}</Text>
+                        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{pretty(o.orderedAt)}</Text>
                         {o.status ? <Badge tone={orderTone(o.status)}>{o.status}</Badge> : null}
                       </View>
                     </View>
@@ -1120,7 +1124,7 @@ export default function CustomerRecord() {
                     accessibilityLabel={'This phone has this account from ' + pretty(reach) + '. Older records are with the office.'}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
                     <Icon name="cal" size={14} color={C.muted} strokeWidth={2} />
-                    <Text style={{ flex: 1, fontSize: 12, color: C.muted }}>
+                    <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
                       {'This phone holds from ' + pretty(reach) + ' · older with the office'}
                     </Text>
                   </View>
@@ -1145,7 +1149,7 @@ export default function CustomerRecord() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                       <Icon name="sample" size={20} color={C.primaryDeep} strokeWidth={2} />
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>
+                        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>
                           {sm.productName ?? 'Product not recorded'}
                         </Text>
                         <SkuChip sku={sm.sku} />
@@ -1153,9 +1157,9 @@ export default function CustomerRecord() {
                       <Badge tone={sampleTone(sm.state)}>{sm.state}</Badge>
                     </View>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 8 }}>
-                      {sm.cans ? <Text style={{ fontSize: 12, color: C.muted }}>{sm.cans + (sm.cans === 1 ? ' can' : ' cans')}</Text> : null}
-                      <Text style={{ fontSize: 12, color: C.muted }}>{'asked ' + pretty(isoDate(new Date(sm.requestedAt)))}</Text>
-                      <Text style={{ fontSize: 12, color: C.muted }}>
+                      {sm.cans ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{sm.cans + (sm.cans === 1 ? ' can' : ' cans')}</Text> : null}
+                      <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{'asked ' + pretty(isoDate(new Date(sm.requestedAt)))}</Text>
+                      <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
                         {sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'result: ' + sm.trialOutcome : 'result pending'}
                       </Text>
                       {/* The promise, and only while it is still a promise. A
@@ -1167,11 +1171,11 @@ export default function CustomerRecord() {
                           accessibilityLabel={'Ask again ' + pretty(sm.followUpDate)}
                           style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                           <Icon name="refresh" size={12} color={C.ink} strokeWidth={2.2} />
-                          <Text style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{pretty(sm.followUpDate)}</Text>
+                          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.ink }, weight(700)]}>{pretty(sm.followUpDate)}</Text>
                         </View>
                       ) : null}
                     </View>
-                    {sm.reason ? <Text style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{sm.reason}</Text> : null}
+                    {sm.reason ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 4 }}>{sm.reason}</Text> : null}
                   </View>
                 ))}
               </>
@@ -1208,7 +1212,7 @@ export default function CustomerRecord() {
                           and only translates to MahekOne's enum on the WIRE —
                           see `wireComplaintCategory` — so there is nothing to
                           map back here. */}
-                      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]}>
+                      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>
                         {g.category}
                       </Text>
                       <Badge tone={g.syncState === 'queued' ? 'neutral' : g.status === 'open' ? 'amber' : 'success'}>
@@ -1218,7 +1222,7 @@ export default function CustomerRecord() {
                     <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
                       {g.description}
                     </Text>
-                    <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{pretty(isoDate(new Date(g.clientCreatedAt)))}</Text>
+                    <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 2 }}>{pretty(isoDate(new Date(g.clientCreatedAt)))}</Text>
                   </View>
                 ))}
                 {/* No `Slice` here, unlike Orders. Complaints are only ever
@@ -1236,13 +1240,13 @@ export default function CustomerRecord() {
             {!compForm ? (
               <>
                 <DashedAdd label="+ Add what you heard" onPress={() => setCompForm(true)} />
-                <Text style={{ fontSize: 12, color: C.muted }}>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
                   Fill this in from your talk with the shop. A name and a rate is enough.
                 </Text>
               </>
             ) : (
               <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16, gap: 8 }}>
-                <Text style={[{ fontSize: 17, color: C.ink }, weight(800)]}>What you heard</Text>
+                <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink }, weight(800)]}>What you heard</Text>
                 <WashInput
                   value={comp.name}
                   onChangeText={(v) => setComp((s) => ({ ...s, name: v }))}
@@ -1305,20 +1309,20 @@ export default function CustomerRecord() {
                     style={{ flex: 2 }}
                   />
                 </View>
-                <Text style={{ fontSize: 12, color: C.muted }}>A name and a rate is enough.</Text>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>A name and a rate is enough.</Text>
               </View>
             )}
 
             {competitors.map((k) => (
               <View key={k.id} style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                  <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(700)]}>{k.competitorName}</Text>
-                  <Text style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>
+                  <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, flexShrink: 1 }, weight(700)]}>{k.competitorName}</Text>
+                  <Text style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(800), tabular]}>
                     {k.ratePaise != null ? inrFromPaise(k.ratePaise) : (k.rateNote ?? '')}
                   </Text>
                 </View>
                 {k.creditTerms || k.delivery ? (
-                  <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+                  <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 2 }}>
                     {[k.creditTerms, k.delivery].filter(Boolean).join(' · ')}
                   </Text>
                 ) : null}
@@ -1328,18 +1332,18 @@ export default function CustomerRecord() {
                 {k.strengths || k.weaknesses ? (
                   <View style={{ gap: 4, marginTop: 8 }}>
                     {k.strengths ? (
-                      <Text accessibilityLabel={'Good at: ' + k.strengths} style={{ fontSize: 13, color: C.success }}>
+                      <Text accessibilityLabel={'Good at: ' + k.strengths} style={{ fontSize: 13, lineHeight: 18, color: C.success }}>
                         {'+ ' + k.strengths}
                       </Text>
                     ) : null}
                     {k.weaknesses ? (
-                      <Text accessibilityLabel={'Weak on: ' + k.weaknesses} style={{ fontSize: 13, color: C.danger }}>
+                      <Text accessibilityLabel={'Weak on: ' + k.weaknesses} style={{ fontSize: 13, lineHeight: 18, color: C.danger }}>
                         {'− ' + k.weaknesses}
                       </Text>
                     ) : null}
                   </View>
                 ) : null}
-                <Text style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.faint, marginTop: 6 }}>
                   {'Noted ' + pretty(isoDate(new Date(k.capturedAt)))}
                 </Text>
               </View>
@@ -1430,7 +1434,7 @@ function EditShopSheet(props: {
 
   return (
     <BottomSheet open={props.open} onClose={props.onClose} scroll>
-      <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Correct this shop</Text>
+      <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink, marginTop: 6 }, weight(800)]}>Correct this shop</Text>
       <Text
         accessibilityLabel="What you change here goes to the office."
         style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>
@@ -1470,12 +1474,12 @@ function EditShopSheet(props: {
             onPress={() => void findMe()}
             style={{ marginTop: 10 }}
           />
-          <Text style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }}>
             Only press this while you are standing in the shop.
           </Text>
         </>
       )}
-      {err ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{err}</Text> : null}
+      {err ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>{err}</Text> : null}
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
         <PillButton label="Cancel" variant="outline" height={56} onPress={props.onClose} style={{ flex: 1 }} />
         <PillButton
@@ -1502,7 +1506,7 @@ function EditShopSheet(props: {
 function Empty({ head, body }: { head: string; body: string }) {
   return (
     <View style={{ backgroundColor: C.surface, borderRadius: 24, paddingVertical: 26, paddingHorizontal: 20, alignItems: 'center' }}>
-      <Text style={[{ fontSize: 17, color: C.ink, textAlign: 'center' }, weight(800)]}>{head}</Text>
+      <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink, textAlign: 'center' }, weight(800)]}>{head}</Text>
       <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center', marginTop: 6 }}>{body}</Text>
     </View>
   );
@@ -1519,7 +1523,7 @@ function Empty({ head, body }: { head: string; body: string }) {
 function Slice({ n, noun }: { n: number; noun: string }) {
   if (n < 10) return null;
   return (
-    <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 2 }}>
+    <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center', marginTop: 2 }}>
       {'Last ' + n + ' ' + noun + 's · older ones are with the office.'}
     </Text>
   );
@@ -1550,14 +1554,15 @@ function ChipButton({ label, on, onPress }: { label: string; on: boolean; onPres
       accessibilityLabel={label}
       hitSlop={{ top: 6, bottom: 6 }}
       style={{
-        height: 36,
+        minHeight: 36,
+        paddingVertical: 6,
         paddingHorizontal: on ? 14 : 12,
         borderRadius: 18,
         backgroundColor: on ? C.navy : C.surface,
         alignItems: 'center',
         justifyContent: 'center',
       }}>
-      <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -1737,13 +1742,13 @@ function BillCard({
           <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]} numberOfLines={1}>
             {bill.billNo ?? 'Bill'}
           </Text>
-          <Text style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>
+          <Text style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(800), tabular]}>
             {bill.amountPaise != null ? inrFromPaise(bill.amountPaise) : '—'}
           </Text>
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-          <Text style={{ fontSize: 12, color: C.muted }}>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
             {pretty(bill.billDate) + (bill.dueDate ? ' · due ' + pretty(bill.dueDate) : '')}
           </Text>
           {settled ? (
@@ -1757,7 +1762,7 @@ function BillCard({
           )}
           {bill.disputed ? <Badge tone="danger">Disputed</Badge> : null}
           <View style={{ flex: 1 }} />
-          <Text style={[{ fontSize: 12, color: unstated || settled ? C.muted : C.danger }, weight(unstated || settled ? 500 : 700)]}>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: unstated || settled ? C.muted : C.danger }, weight(unstated || settled ? 500 : 700)]}>
             {unstated
               ? 'No payment info yet'
               : settled
@@ -1771,28 +1776,28 @@ function BillCard({
             <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 8, marginTop: 10, gap: 6 }}>
               {lines.map((l, i) => (
                 <View key={l.product + i} style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
-                  <Text style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.body }}>{l.product}</Text>
-                  <Text style={[{ fontSize: 13, color: C.ink }, weight(700), tabular]}>
+                  <Text style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 18, color: C.body }}>{l.product}</Text>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700), tabular]}>
                     {/* CANS, which is what the customer says and what the office
                         stores. Litres are derived from the pack size and are not
                         on the wire, so naming a unit we were not sent would be
                         the screen inventing one. */}
                     {l.qty}
                   </Text>
-                  <Text style={[{ width: 84, textAlign: 'right', fontSize: 13, color: C.body }, tabular]}>
+                  <Text style={[{ width: 84, textAlign: 'right', fontSize: 13, lineHeight: 18, color: C.body }, tabular]}>
                     {l.amountPaise != null ? inrFromPaise(l.amountPaise) : '—'}
                   </Text>
                 </View>
               ))}
             </View>
           ) : (
-            <Text style={{ fontSize: 12, color: C.muted, borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 8, marginTop: 10 }}>
+            <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 8, marginTop: 10 }}>
               The office has no items listed for this bill.
             </Text>
           )
         ) : null}
 
-        <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 8 }}>
           {'Balance after · ' +
             inrFromPaise(balanceAfterPaise) +
             ' · ' +
@@ -1864,10 +1869,10 @@ function ReceiptCard({
         <Icon name="wallet" size={15} color={counted ? C.success : C.warnInk} strokeWidth={2} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[{ fontSize: 16, color: counted ? C.success : C.muted }, weight(800), tabular]}>
+        <Text style={[{ fontSize: 16, lineHeight: 22, color: counted ? C.success : C.muted }, weight(800), tabular]}>
           {receipt.amountPaise != null ? inrFromPaise(receipt.amountPaise) : '—'}
         </Text>
-        <Text style={{ fontSize: 12, color: C.muted }}>
+        <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>
           {[
             pretty(receipt.receivedAt),
             receipt.mode,

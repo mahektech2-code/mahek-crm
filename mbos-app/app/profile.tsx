@@ -148,19 +148,19 @@ export default function ProfileScreen() {
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-        <T style={[{ fontSize: 22, color: C.onNavy }, weight(800)]}>{me?.initials ?? ''}</T>
+        <T style={[{ fontSize: 22, lineHeight: 28, color: C.onNavy }, weight(800)]}>{me?.initials ?? ''}</T>
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <T style={[{ fontSize: 22, lineHeight: 28, letterSpacing: -0.44, color: C.lavenderInk }, weight(800)]}>{me?.name ?? ''}</T>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
           {me?.designation ?? me?.role ? (
-            <HeroPill ink={C.primaryDeep} style={{ height: 26 }}>{me?.designation ?? me?.role}</HeroPill>
+            <HeroPill ink={C.primaryDeep} style={{ minHeight: 26 }}>{me?.designation ?? me?.role}</HeroPill>
           ) : null}
           {me?.territory ? (
-            <HeroPill ink={C.lavenderMuted} icon={GLYPH.pin} style={{ height: 26 }}>{me.territory}</HeroPill>
+            <HeroPill ink={C.lavenderMuted} icon={GLYPH.pin} style={{ minHeight: 26 }}>{me.territory}</HeroPill>
           ) : null}
           {me?.employeeCode ? (
-            <HeroPill ink={C.lavenderMuted} style={{ height: 26 }}>{me.employeeCode}</HeroPill>
+            <HeroPill ink={C.lavenderMuted} style={{ minHeight: 26 }}>{me.employeeCode}</HeroPill>
           ) : null}
         </View>
       </View>
@@ -212,7 +212,7 @@ export default function ProfileScreen() {
                 style={[{ fontSize: 16, lineHeight: 22, color: f.value ? C.ink : C.faint }, weight(f.value ? 600 : 400)]}>
                 {f.value || 'Not set'}
               </T>
-              <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{f.label}</T>
+              <T style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.muted }}>{f.label}</T>
             </View>
           </View>
         ))}
@@ -269,7 +269,7 @@ export default function ProfileScreen() {
                   })
                   .finally(() => setPushBusy(false));
               }}
-              style={{ height: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: C.primary, justifyContent: 'center', opacity: pushBusy ? 0.7 : 1 }}>
+              style={{ minHeight: 40, paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, backgroundColor: C.primary, justifyContent: 'center', opacity: pushBusy ? 0.7 : 1 }}>
               <T style={[{ fontSize: 13, color: C.onNavy }, weight(700)]}>
                 {pushBusy ? 'Asking…' : 'Turn on'}
               </T>

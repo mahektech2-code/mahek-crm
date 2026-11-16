@@ -301,7 +301,7 @@ export function LeadScanPanel({
           {phase === 'reading' ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 }}>
               <ActivityIndicator color={C.lime} />
-              <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(600)]}>
                 Reading {photos.length === 1 ? 'the photo' : `${photos.length} photos`}…
               </Text>
             </View>
@@ -368,13 +368,14 @@ export function LeadScanPanel({
                           accessibilityLabel={'Use ' + n}
                           hitSlop={{ top: 6, bottom: 6 }}
                           style={{
-                            height: 32,
+                            minHeight: 32,
+                            paddingVertical: 4,
                             paddingHorizontal: 12,
                             borderRadius: 16,
                             justifyContent: 'center',
                             backgroundColor: on ? C.navy : C.canvas,
                           }}>
-                          <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{n}</Text>
+                          <Text style={[{ fontSize: 12, lineHeight: 17, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{n}</Text>
                         </Pressable>
                       );
                     })}
@@ -396,13 +397,14 @@ export function LeadScanPanel({
               accessibilityRole="button"
               style={({ pressed }) => ({
                 width: 130,
-                height: 52,
+                minHeight: 52,
+                paddingVertical: 8,
                 borderRadius: 26,
                 backgroundColor: pressed ? C.hairline : C.canvas,
                 alignItems: 'center',
                 justifyContent: 'center',
               })}>
-              <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Scan again</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Scan again</Text>
             </Pressable>
             <PillButton
               label="Fill the form"

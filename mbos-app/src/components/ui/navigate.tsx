@@ -176,7 +176,7 @@ export function NavigateButton({
       ]}>
       <Icon name="route" size={18} color={C.primaryDeep} strokeWidth={1.8} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(600)]}>
           {busy ? 'Opening maps…' : 'Navigate'}
         </Text>
         {/*

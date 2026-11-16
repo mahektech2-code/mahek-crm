@@ -284,31 +284,31 @@ const CustomerRow = React.memo(function CustomerRow({
           </View>
 
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 4 }}>
-            {away ? <Text style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{away}</Text> : null}
+            {away ? <Text style={[{ fontSize: 12, lineHeight: 17, color: C.ink }, weight(700)]}>{away}</Text> : null}
             {kindWord ? (
-              <View style={{ height: 20, paddingHorizontal: 8, borderRadius: 10, backgroundColor: C.canvas, justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 12, color: C.muted }, weight(600)]}>{kindWord}</Text>
+              <View style={{ minHeight: 20, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, backgroundColor: C.canvas, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(600)]}>{kindWord}</Text>
               </View>
             ) : null}
             {x.contactPerson ? (
-              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted, maxWidth: 150 }}>
+              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted, maxWidth: '45%' }}>
                 {x.contactPerson}
               </Text>
             ) : null}
             {place ? <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{place}</Text> : null}
-            {nothingWhere ? <Text style={{ fontSize: 12, color: C.muted }}>No contact or town on record</Text> : null}
+            {nothingWhere ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>No contact or town on record</Text> : null}
           </View>
 
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 6 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Icon name={owed ? 'wallet' : 'tick'} size={13} color={owedInk} strokeWidth={2.2} />
-              <Text style={[{ fontSize: 13, color: owedInk }, weight(owed ? 700 : 600)]}>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: owedInk }, weight(owed ? 700 : 600)]}>
                 {owed ? inrFromPaise(x.outstandingPaise) : 'Nothing due'}
               </Text>
             </View>
             {x.creditBlocked ? (
-              <View style={{ height: 22, paddingHorizontal: 8, borderRadius: 11, backgroundColor: C.dangerBg, justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>Supply stopped</Text>
+              <View style={{ minHeight: 22, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 11, backgroundColor: C.dangerBg, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>Supply stopped</Text>
               </View>
             ) : null}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -317,7 +317,7 @@ const CustomerRow = React.memo(function CustomerRow({
               ) : due.tone === 'today' ? (
                 <Icon name="tick" size={13} color={dueInk} strokeWidth={2.2} />
               ) : null}
-              <Text style={[{ fontSize: 13, color: dueInk }, weight(due.tone === 'quiet' ? 600 : 700)]}>{due.text}</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: dueInk }, weight(due.tone === 'quiet' ? 600 : 700)]}>{due.text}</Text>
             </View>
           </View>
         </View>
@@ -784,10 +784,10 @@ export default function Customers() {
     emptyShell(
       <>
         <Icon name="alert" size={36} color={C.faint} strokeWidth={1.8} />
-        <Text style={[{ fontSize: 18, color: C.ink, textAlign: 'center', marginTop: 6 }, weight(800)]}>
+        <Text style={[{ fontSize: 18, lineHeight: 25, color: C.ink, textAlign: 'center', marginTop: 6 }, weight(800)]}>
           Could not load your customers
         </Text>
-        <Text style={{ fontSize: 13, color: C.muted, marginTop: 4, textAlign: 'center' }}>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4, textAlign: 'center' }}>
           Nothing is lost. Pull down to try again. If this keeps happening, tell the office.
         </Text>
       </>,
@@ -796,7 +796,7 @@ export default function Customers() {
     emptyShell(
       <>
         <Icon name="shop" size={40} color={C.faint} strokeWidth={1.8} />
-        <Text style={[{ fontSize: 18, color: C.ink, textAlign: 'center', marginTop: 6 }, weight(800)]}>
+        <Text style={[{ fontSize: 18, lineHeight: 25, color: C.ink, textAlign: 'center', marginTop: 6 }, weight(800)]}>
           {asked
             ? 'No shop matches that'
             : filtered
@@ -842,7 +842,8 @@ export default function Customers() {
             style={({ pressed }) => ({
               marginTop: 14,
               alignSelf: 'stretch',
-              height: 48,
+              minHeight: 48,
+              paddingVertical: 8,
               borderRadius: 24,
               backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
               flexDirection: 'row',
@@ -851,7 +852,7 @@ export default function Customers() {
               gap: 8,
             })}>
             <Icon name="person" size={16} color={C.primaryDeep} strokeWidth={2} />
-            <Text style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>
               {leadsMatching === 1 ? '1 lead matches · Open Leads' : `${grouped(leadsMatching)} leads match · Open Leads`}
             </Text>
           </Pressable>
@@ -970,14 +971,16 @@ export default function Customers() {
                   accessibilityLabel={'Order: ' + orderWords + '. Change it'}
                   hitSlop={8}
                   style={({ pressed }) => ({
-                    height: 32,
+                    minHeight: 32,
+                    paddingVertical: 4,
                     paddingHorizontal: 12,
                     borderRadius: 16,
                     backgroundColor: orderFellBack ? C.warnBg : pressed ? C.wash : C.surface,
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 6,
-                    maxWidth: 190,
+                    maxWidth: '55%',
+                    flexShrink: 1,
                   })}>
                   {!orderFellBack && (sortMode === 'me' || sortMode === 'town') ? (
                     <Icon name="nav" size={14} color={C.primaryDeep} strokeWidth={2} />
@@ -1118,7 +1121,7 @@ export default function Customers() {
 
       {/* ------------------------------------------------------------ the order */}
       <BottomSheet open={sorting} onClose={() => setSorting(false)}>
-        <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Order by</Text>
+        <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink, marginTop: 6 }, weight(800)]}>Order by</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
           {(['me', 'town', 'name', 'owed', 'unseen'] as const).map((m) => {
             const on = sortMode === m;
@@ -1194,8 +1197,8 @@ export default function Customers() {
           offered. Searchable, because a book of ten thousand sells into
           hundreds of them. */}
       <BottomSheet open={pickingCity} onClose={() => setPickingCity(false)} scroll>
-        <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Nearest which town?</Text>
-        <Text style={{ fontSize: 13, color: C.muted, marginTop: 2, marginBottom: 12 }}>
+        <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink, marginTop: 6 }, weight(800)]}>Nearest which town?</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 2, marginBottom: 12 }}>
           Shops nearest its middle come first.
         </Text>
         {cities.length > 8 ? (
@@ -1235,8 +1238,8 @@ export default function Customers() {
               <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]}>
                 {c.city}
               </Text>
-              <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.canvas, justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 12, color: C.body }, weight(700)]}>{grouped(c.n)}</Text>
+              <View style={{ minHeight: 26, paddingVertical: 3, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.canvas, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.body }, weight(700)]}>{grouped(c.n)}</Text>
               </View>
             </Pressable>
           ))
@@ -1268,7 +1271,8 @@ export default function Customers() {
               accessibilityLabel={a11y}
               style={({ pressed }) => ({
                 width: '31.6%',
-                height: 92,
+                minHeight: 92,
+                paddingVertical: 8,
                 borderRadius: 20,
                 backgroundColor: tone === 'primary' ? (pressed ? C.primaryDeep : C.primary) : pressed ? C.hairline : C.canvas,
                 alignItems: 'center',
@@ -1277,7 +1281,7 @@ export default function Customers() {
                 paddingHorizontal: 6,
               })}>
               <Icon name={icon} size={24} color={tone === 'primary' ? '#FFFFFF' : iconInk} strokeWidth={2} />
-              <Text style={[{ fontSize: 13, color: tone === 'primary' ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: tone === 'primary' ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
               {sub ? (
                 <Text numberOfLines={1} style={[{ fontSize: 11, color: C.muted, textAlign: 'center' }, weight(500)]}>
                   {sub}
@@ -1316,7 +1320,8 @@ export default function Customers() {
                 accessibilityLabel="Start a visit. Asks how you are getting there first"
                 style={({ pressed }) => ({
                   marginTop: 16,
-                  height: 60,
+                  minHeight: 60,
+                  paddingVertical: 10,
                   borderRadius: 30,
                   backgroundColor: C.navy,
                   opacity: pressed ? 0.88 : 1,
@@ -1326,8 +1331,8 @@ export default function Customers() {
                   gap: 10,
                 })}>
                 <Icon name="shop" size={20} color={C.lime} strokeWidth={2} />
-                <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>Start a visit</Text>
-                <Text style={[{ fontSize: 12, color: C.faint }, weight(500)]}>· asks how you travel</Text>
+                <Text style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF' }, weight(700)]}>Start a visit</Text>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.faint }, weight(500)]}>· asks how you travel</Text>
               </Pressable>
 
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8, marginTop: 10 }}>
@@ -1369,7 +1374,7 @@ export default function Customers() {
                 accessibilityLabel="To log a complaint, start a visit."
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 }}>
                 <Icon name="warn" size={16} color={C.danger} strokeWidth={2} />
-                <Text style={{ fontSize: 13, color: C.muted }}>Complaint? Start a visit.</Text>
+                <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>Complaint? Start a visit.</Text>
               </View>
             </>
           );
@@ -1382,13 +1387,13 @@ export default function Customers() {
           the office's to decide and the record arrives without them rather
           than with a confident zero. */}
       <BottomSheet open={adding} onClose={() => setAdding(false)} scroll>
-        <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Delivery shop</Text>
+        <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink, marginTop: 6 }, weight(800)]}>Delivery shop</Text>
         <View
           accessible
           accessibilityLabel="Add a delivery shop. Goods go to this shop. The bill goes to the one you pick below."
           style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
           <Icon name="route" size={16} color={C.muted} strokeWidth={2} />
-          <Text style={{ fontSize: 13, color: C.muted }}>Goods here · bill to the account below</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>Goods here · bill to the account below</Text>
         </View>
 
         {/* All four are REQUIRED and the marks say so. Every one of them was
@@ -1410,7 +1415,7 @@ export default function Customers() {
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 16, marginBottom: 8 }}>
           <Icon name="doc" size={16} color={C.ink} strokeWidth={2} />
-          <Text accessibilityLabel="Who gets the bill, needed" style={[{ fontSize: 13, color: C.ink }, weight(700)]}>
+          <Text accessibilityLabel="Who gets the bill, needed" style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>
             Bill goes to <Text style={{ color: C.danger }}>*</Text>
           </Text>
         </View>
@@ -1530,7 +1535,7 @@ function Field({
   return (
     <View
       style={{
-        height: 52,
+        minHeight: 52,
         borderRadius: 16,
         backgroundColor: C.canvas,
         flexDirection: 'row',
@@ -1546,7 +1551,7 @@ function Field({
         placeholderTextColor={C.faint}
         keyboardType={keyboard}
         accessibilityLabel={label + (required ? ', needed' : '')}
-        style={{ flex: 1, minWidth: 0, height: 52, fontSize: 15, color: C.ink }}
+        style={{ flex: 1, minWidth: 0, minHeight: 52, fontSize: 15, color: C.ink }}
       />
       {required ? <Text style={[{ color: C.danger, fontSize: 15 }, weight(700)]}>*</Text> : null}
     </View>

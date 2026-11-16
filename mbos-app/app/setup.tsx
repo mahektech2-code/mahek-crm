@@ -164,7 +164,7 @@ export default function SetupScreen() {
                       }}
                     />
                   ))}
-                  <Text style={[{ fontSize: 12, color: C.primaryDeep, marginLeft: 4 }, weight(800)]}>
+                  <Text style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep, marginLeft: 4 }, weight(800)]}>
                     {`${stepNo} / ${steps.length}`}
                   </Text>
                 </View>
@@ -175,7 +175,7 @@ export default function SetupScreen() {
       }
       contentStyle={{ padding: 16, paddingBottom: 24 }}>
       {steps === null ? (
-        <Text style={{ fontSize: 13, color: C.muted, marginTop: 8, textAlign: 'center' }}>Checking your phone…</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 8, textAlign: 'center' }}>Checking your phone…</Text>
       ) : (
         <>
           <SetupStepList steps={steps} openKey={current?.key ?? null} actions={actions} />
@@ -185,7 +185,7 @@ export default function SetupScreen() {
               onPress={leave}
               accessibilityRole="button"
               style={{ alignSelf: 'stretch', marginTop: 14, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 14, color: C.muted }, weight(600)]}>Do this later</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.muted }, weight(600)]}>Do this later</Text>
             </Pressable>
           ) : (
             <Pressable
@@ -194,7 +194,8 @@ export default function SetupScreen() {
               accessibilityLabel="Start using MBOS"
               style={({ pressed }) => ({
                 marginTop: 14,
-                height: 60,
+                minHeight: 60,
+                paddingVertical: 8,
                 borderRadius: 30,
                 backgroundColor: C.navy,
                 flexDirection: 'row',
@@ -203,7 +204,7 @@ export default function SetupScreen() {
                 gap: 10,
                 opacity: pressed ? 0.88 : 1,
               })}>
-              <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Start using MBOS</Text>
+              <Text style={[{ flexShrink: 1, fontSize: 17, lineHeight: 22, color: '#FFFFFF', textAlign: 'center' }, weight(700)]}>Start using MBOS</Text>
               <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, justifyContent: 'center' }}>
                 <Icon name="forward" size={14} color={C.navy} strokeWidth={2.6} />
               </View>

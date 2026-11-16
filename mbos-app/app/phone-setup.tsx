@@ -175,7 +175,8 @@ export default function PhoneSetupScreen() {
             {needed > 0 ? (
               <View
                 style={{
-                  height: 30,
+                  minHeight: 30,
+                  paddingVertical: 4,
                   paddingHorizontal: 12,
                   borderRadius: 15,
                   backgroundColor: C.dangerBg,
@@ -184,12 +185,12 @@ export default function PhoneSetupScreen() {
                   gap: 5,
                 }}>
                 <Icon name="lock" size={12} color={C.danger} strokeWidth={2.2} />
-                <Text style={[{ fontSize: 12, color: C.danger }, weight(800)]}>{needed + ' needed before punch-in'}</Text>
+                <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.danger }, weight(800)]}>{needed + ' needed before punch-in'}</Text>
               </View>
             ) : null}
             {doneN > 0 ? (
-              <View style={{ height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: C.limeOnNavy, justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 12, color: C.lime }, weight(800)]}>{doneN + ' done'}</Text>
+              <View style={{ minHeight: 30, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 15, backgroundColor: C.limeOnNavy, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.lime }, weight(800)]}>{doneN + ' done'}</Text>
               </View>
             ) : null}
           </View>
@@ -199,7 +200,7 @@ export default function PhoneSetupScreen() {
       {readiness === null || steps === null ? (
         readFailed ? (
           <View style={{ marginTop: 14, backgroundColor: C.dangerBg, borderRadius: 20, padding: 12, alignItems: 'center' }}>
-            <Text style={[{ fontSize: 12, color: C.danger, textAlign: 'center' }, weight(700)]}>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, textAlign: 'center' }, weight(700)]}>
               Could not check your phone. Try again.
             </Text>
             <Pressable
@@ -207,19 +208,20 @@ export default function PhoneSetupScreen() {
               accessibilityRole="button"
               style={({ pressed }) => ({
                 marginTop: 8,
-                height: 44,
+                minHeight: 44,
+                paddingVertical: 6,
                 paddingHorizontal: 16,
                 borderRadius: 22,
                 backgroundColor: C.surface,
                 justifyContent: 'center',
                 opacity: pressed ? 0.85 : 1,
               })}>
-              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Check again</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>Check again</Text>
             </Pressable>
           </View>
         ) : (
           <View style={{ marginTop: 14, backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
-            <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center' }}>Checking your phone…</Text>
+            <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }}>Checking your phone…</Text>
           </View>
         )
       ) : null}
@@ -238,7 +240,7 @@ export default function PhoneSetupScreen() {
               }}>
               <Icon name="lock" size={20} color="#FFFFFF" strokeWidth={2} />
             </View>
-            <Text style={[{ fontSize: 18, color: '#FFFFFF' }, weight(800)]}>Call the office</Text>
+            <Text style={[{ flexShrink: 1, fontSize: 18, lineHeight: 25, color: '#FFFFFF' }, weight(800)]}>Call the office</Text>
           </View>
           {/* NO WAY PAST, and no pretending there is one. Somebody at a desk
               has to walk him through his phone's own settings, and saying that
@@ -261,7 +263,8 @@ export default function PhoneSetupScreen() {
           accessibilityLabel="Done. Go and punch in"
           style={({ pressed }) => ({
             marginTop: 14,
-            height: 60,
+            minHeight: 60,
+            paddingVertical: 8,
             borderRadius: 30,
             backgroundColor: C.navy,
             flexDirection: 'row',
@@ -270,7 +273,7 @@ export default function PhoneSetupScreen() {
             gap: 10,
             opacity: pressed ? 0.88 : 1,
           })}>
-          <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Done. Go and punch in</Text>
+          <Text style={[{ flexShrink: 1, fontSize: 17, lineHeight: 22, color: '#FFFFFF', textAlign: 'center' }, weight(700)]}>Done. Go and punch in</Text>
           <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, justifyContent: 'center' }}>
             <Icon name="forward" size={14} color={C.navy} strokeWidth={2.6} />
           </View>

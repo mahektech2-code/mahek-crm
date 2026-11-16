@@ -578,8 +578,8 @@ export function ActionSheet({
           accessibilityRole="header"
           style={[
             layout === 'quick'
-              ? { fontSize: 20, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6 }
-              : { fontSize: 17, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+              ? { fontSize: 20, lineHeight: 26, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6 }
+              : { fontSize: 17, lineHeight: 23, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
             weight(800),
           ]}>
           {title}
@@ -598,10 +598,10 @@ export function ActionSheet({
                 <Icon name={items[0].glyph} size={22} color={C.navy} strokeWidth={2} />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 16, color: '#FFFFFF' }, weight(800)]}>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF' }, weight(800)]}>
                   {items[0].label}
                 </Text>
-                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>
                   {items[0].sub}
                 </Text>
               </View>
@@ -619,10 +619,10 @@ export function ActionSheet({
                   style={({ pressed }) => [st.quickTile, pressed && { backgroundColor: C.primaryTint }]}>
                   <Icon name={i.glyph} size={24} color={i.tint ?? C.primary} strokeWidth={2} />
                   <View>
-                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
                       {i.label}
                     </Text>
-                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ marginTop: 2, fontSize: 11, lineHeight: 15, color: C.muted }}>
                       {i.sub}
                     </Text>
                   </View>
@@ -645,10 +645,10 @@ export function ActionSheet({
               <Icon name={i.glyph} size={18} color={C.body} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>
                 {i.label}
               </Text>
-              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={type.caption}>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[type.caption, { marginTop: 2 }]}>
                 {i.sub}
               </Text>
             </View>
@@ -746,7 +746,7 @@ export function ConfirmSheet({
             placeholder={placeholder}
             style={{ minHeight: 88, fontSize: 15 }}
           />
-          {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Please write a reason.</Text> : null}
+          {error ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>Please write a reason.</Text> : null}
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
@@ -836,7 +836,7 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
         <Pressable onPress={() => page(-1)} accessibilityRole="button" accessibilityLabel="Previous month" style={st.calNav}>
           <Icon name="back" size={18} color={C.ink} strokeWidth={2} />
         </Pressable>
-        <Text style={[{ flex: 1, textAlign: 'center', fontSize: 17, color: C.ink }, weight(800)]}>
+        <Text style={[{ flex: 1, textAlign: 'center', fontSize: 17, lineHeight: 24, color: C.ink }, weight(800)]}>
           {monthName(shown.getMonth()) + ' ' + shown.getFullYear()}
         </Text>
         <Pressable onPress={() => page(1)} accessibilityRole="button" accessibilityLabel="Next month" style={st.calNav}>
@@ -846,7 +846,7 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
 
       <View style={{ flexDirection: 'row', marginTop: 4 }}>
         {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-          <Text key={i} style={[{ flex: 1, height: 28, textAlign: 'center', lineHeight: 28, fontSize: 12, color: C.muted }, weight(600)]}>
+          <Text key={i} maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ flex: 1, height: 28, textAlign: 'center', lineHeight: 28, fontSize: 12, color: C.muted }, weight(600)]}>
             {d}
           </Text>
         ))}
@@ -903,9 +903,10 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
                   borderColor: C.primary,
                 }}>
                 <Text
+                  maxFontSizeMultiplier={BAR_FONT_CAP}
                   style={[
                     {
-                      fontSize: 15,
+                      fontSize: 15, lineHeight: 21,
                       color: picked ? C.lime : off || !inMonth ? C.faint : isToday ? C.primary : C.ink,
                     },
                     weight(picked || isToday ? 800 : 500),

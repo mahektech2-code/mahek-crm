@@ -156,9 +156,9 @@ function Segmented<K extends string>({
               gap: 6,
             }}>
             {o.icon}
-            <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{o.label}</Text>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{o.label}</Text>
             {o.count != null ? (
-              <Text style={[{ fontSize: 14, color: on ? C.lime : C.muted }, weight(700)]}>{String(o.count)}</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: on ? C.lime : C.muted }, weight(700)]}>{String(o.count)}</Text>
             ) : null}
           </Pressable>
         );
@@ -169,7 +169,7 @@ function Segmented<K extends string>({
 
 /** The heading over one question on the request sheet. */
 function Q({ children, style }: { children: React.ReactNode; style?: object }) {
-  return <Text style={[{ fontSize: 13, color: C.ink }, weight(700), style]}>{children}</Text>;
+  return <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700), style]}>{children}</Text>;
 }
 
 /** A pickable row: the name, the line under it, a ring that ticks. */
@@ -203,8 +203,8 @@ function PickRow({
         opacity: pressed ? 0.7 : 1,
       })}>
       <View style={{ flex: 1, minWidth: 0, paddingVertical: 8 }}>
-        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{label}</Text>
-        {sub ? <Text style={{ fontSize: 12, color: C.muted }}>{sub}</Text> : null}
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{label}</Text>
+        {sub ? <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>{sub}</Text> : null}
       </View>
       <View
         style={{
@@ -252,7 +252,7 @@ function StateCard({
           gap: 10,
         }}>
         {danger ? <Icon name="alert" size={22} color={C.danger} strokeWidth={2} /> : <ActivityIndicator size="small" color={C.primary} />}
-        <Text style={[{ fontSize: 15, color: danger ? C.danger : C.ink, flexShrink: 1 }, weight(700)]}>{title}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: danger ? C.danger : C.ink, flexShrink: 1 }, weight(700)]}>{title}</Text>
       </View>
     );
   }
@@ -262,7 +262,7 @@ function StateCard({
       accessibilityLabel={[title, line].filter(Boolean).join('. ')}
       style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 22, alignItems: 'center' }}>
       {icon}
-      <Text style={[{ fontSize: 17, color: C.ink, marginTop: 6, textAlign: 'center' }, weight(800)]}>{title}</Text>
+      <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink, marginTop: 6, textAlign: 'center' }, weight(800)]}>{title}</Text>
       {line ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4, textAlign: 'center' }}>{line}</Text> : null}
     </View>
   );
@@ -511,8 +511,8 @@ export default function SamplesScreen() {
                 ) : null}
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <T style={[{ fontSize: 16, color: C.ink }, weight(700)]}>{name}</T>
-                    <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+                    <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(700)]}>{name}</T>
+                    <T style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 2 }}>
                       {[skuText(x.sku), x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
                     </T>
                   </View>
@@ -560,7 +560,7 @@ export default function SamplesScreen() {
                       accessibilityLabel={ago}
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <Icon name="clock" size={13} color={C.muted} strokeWidth={2.4} />
-                      <T style={[{ fontSize: 12, color: C.muted }, weight(700)]}>{days + ' d'}</T>
+                      <T style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>{days + ' d'}</T>
                     </View>
                   </View>
                 )}
@@ -740,7 +740,7 @@ function RequestSheet({
           <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
             Request a sample
           </Text>
-          <Text style={{ fontSize: 12, color: C.muted }}>Sample / Trial · Sample Request</Text>
+          <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>Sample / Trial · Sample Request</Text>
         </View>
       </View>
       {/* WHOSE TRIAL IT IS, on the sheet, before anything is typed. The sheet
@@ -762,7 +762,7 @@ function RequestSheet({
           gap: 8,
         }}>
         <Glyph d={SHOP_D} size={16} color={shop ? C.primaryDeep : C.warnInk} />
-        <Text style={[{ flex: 1, fontSize: 13, color: shop ? C.primaryDeep : C.warnInk }, weight(700)]}>
+        <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: shop ? C.primaryDeep : C.warnInk }, weight(700)]}>
           {shop ? 'For ' + (shop.name || 'this shop') : 'Choose the shop below'}
         </Text>
       </View>
@@ -771,7 +771,7 @@ function RequestSheet({
         accessibilityLabel="The office approves it, then it is sent. Later you will write their feedback."
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
         <Glyph d={SHIELD_D} size={14} color={C.muted} />
-        <Text style={{ fontSize: 12, color: C.muted }}>Office approves → sent → you write feedback</Text>
+        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>Office approves → sent → you write feedback</Text>
       </View>
 
       {locked ? null : (
@@ -817,7 +817,7 @@ function RequestSheet({
                   />
                 ))}
                 {shopQuery.trim() && book.length === 0 ? (
-                  <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 8 }}>No shop matches that.</Text>
+                  <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center', marginTop: 8 }}>No shop matches that.</Text>
                 ) : null}
                 {bookTotal > book.length ? (
                   <Text
@@ -913,15 +913,15 @@ function RequestSheet({
                           gap: 10,
                         })}>
                         <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{l.lead}</Text>
-                          {sub ? <Text style={{ fontSize: 12, color: C.muted }}>{sub}</Text> : null}
+                          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{l.lead}</Text>
+                          {sub ? <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>{sub}</Text> : null}
                         </View>
                         <Icon name="add" size={20} color={C.primaryDeep} strokeWidth={2.2} />
                       </Pressable>
                     );
                   })}
                   {query.trim() && hits.length === 0 ? (
-                    <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center' }}>No product matches that.</Text>
+                    <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center' }}>No product matches that.</Text>
                   ) : null}
                 </View>
               </>
@@ -929,7 +929,7 @@ function RequestSheet({
           </View>
 
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Q>Send on</Q>
               <Pressable
                 onPress={() => setCalOpen(!calOpen)}
@@ -937,7 +937,8 @@ function RequestSheet({
                 accessibilityLabel={'Sample sending date: ' + (sendingDate ? dmy(sendingDate) : 'choose a day')}
                 style={({ pressed }) => ({
                   marginTop: 8,
-                  height: 48,
+                  minHeight: 48,
+                  paddingVertical: 8,
                   borderRadius: 24,
                   backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
                   flexDirection: 'row',
@@ -946,12 +947,12 @@ function RequestSheet({
                   gap: 8,
                 })}>
                 <CalGlyph color={C.primaryDeep} />
-                <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>
+                <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(700)]}>
                   {sendingDate ? dmy(sendingDate) : 'Choose a day'}
                 </Text>
               </Pressable>
             </View>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Q>How</Q>
               <View style={{ marginTop: 8, flexDirection: 'row', gap: 6 }}>
                 {(
@@ -973,7 +974,8 @@ function RequestSheet({
                       accessibilityLabel={m.a11y}
                       style={{
                         flex: 1,
-                        height: 48,
+                        minHeight: 48,
+                        paddingVertical: 8,
                         borderRadius: 24,
                         backgroundColor: on ? C.navy : C.canvas,
                         flexDirection: 'row',
@@ -987,7 +989,7 @@ function RequestSheet({
                         color={on ? C.lime : C.ink}
                         circles={m.circles ? m.circles.map((c) => [...c] as [number, number, number]) : undefined}
                       />
-                      <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{m.label}</Text>
+                      <Text style={[{ fontSize: 12, lineHeight: 17, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{m.label}</Text>
                     </Pressable>
                   );
                 })}

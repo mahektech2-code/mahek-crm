@@ -204,7 +204,7 @@ export function HealthPill({
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-          <Text style={[{ fontSize: large ? 13 : 12, color: tone!.fg }, weight(600)]}>
+          <Text style={[{ fontSize: large ? 13 : 12, lineHeight: large ? 18 : 16, color: tone!.fg }, weight(600)]}>
             {BAND_WORD[band]}
           </Text>
         </View>
@@ -437,11 +437,11 @@ export function Choice({
         },
         style,
       ]}>
-      <Text style={[{ fontSize: 14, color: selected ? C.primaryDeep : C.ink }, weight(selected ? 700 : 600)]}>
+      <Text style={[{ fontSize: 14, lineHeight: 19, textAlign: 'center', color: selected ? C.primaryDeep : C.ink }, weight(selected ? 700 : 600)]}>
         {label}
       </Text>
       {sub ? (
-        <Text style={[{ fontSize: 12, marginTop: 1, color: selected ? C.primaryDeep : C.muted }]}>{sub}</Text>
+        <Text style={[{ fontSize: 12, lineHeight: 16, marginTop: 2, textAlign: 'center', color: selected ? C.primaryDeep : C.muted }]}>{sub}</Text>
       ) : null}
     </Pressable>
   );
@@ -478,7 +478,7 @@ export function Field({
           line in one frame — which is exactly when the thumb is on its way to
           the button below it. */}
       <Presence show={!!error}>
-        <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{error}</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>{error}</Text>
       </Presence>
       {!error && hint ? <Text style={[type.caption, { marginTop: 6 }]}>{hint}</Text> : null}
     </View>
@@ -545,7 +545,7 @@ export function Input({
   return (
     <>
       {box}
-      {value?.includes('.') ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{wholeHint}</Text> : null}
+      {value?.includes('.') ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>{wholeHint}</Text> : null}
     </>
   );
 }
@@ -703,6 +703,7 @@ const s = StyleSheet.create({
   },
   badgeText: {
     fontSize: 12,
+    lineHeight: 16,
     letterSpacing: 0,
     ...weight(700),
   },

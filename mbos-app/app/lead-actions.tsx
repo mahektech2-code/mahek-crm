@@ -245,7 +245,7 @@ export default function LeadActionsScreen() {
               <Text style={[{ fontSize: 22, lineHeight: 27, color: on ? C.lime : v === 'overdue' && n ? C.danger : C.ink }, weight(800)]}>
                 {n == null ? '—' : String(n)}
               </Text>
-              <Text numberOfLines={2} style={[{ fontSize: 11, lineHeight: 14, color: on ? '#FFFFFF' : C.ink, textAlign: 'center' }, weight(600)]}>
+              <Text numberOfLines={2} style={[{ marginTop: 4, fontSize: 11, lineHeight: 14, color: on ? '#FFFFFF' : C.ink, textAlign: 'center' }, weight(600)]}>
                 {VIEW_TEXT[v].chip}
               </Text>
             </Pressable>
@@ -267,12 +267,12 @@ export default function LeadActionsScreen() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 32 }}>
         <View style={{ paddingHorizontal: 6 }}>
           <Text accessibilityRole="header" style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(800)]}>{text.title}</Text>
-          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>{text.sub}</Text>
+          <Text style={[{ marginTop: 4, fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>{text.sub}</Text>
         </View>
 
         {!leads ? (
           <View style={{ marginTop: 12, paddingVertical: 28, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center' }}>
-            <Text style={[{ fontSize: 13, color: C.muted, textAlign: 'center' }, weight(400)]}>Loading…</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }, weight(400)]}>Loading…</Text>
           </View>
         ) : emptiness ? (
           <View style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 26, borderRadius: 22, backgroundColor: C.surface }}>

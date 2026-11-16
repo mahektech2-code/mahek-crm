@@ -195,7 +195,7 @@ export function LeadActionCard({
           {day || ownerLine ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 6 }}>
               {day ? (
-                <Text accessibilityLabel={'On ' + dmy(day)} style={[{ fontSize: 12, color: C.muted }, weight(600)]}>
+                <Text accessibilityLabel={'On ' + dmy(day)} style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(600)]}>
                   {dmy(day)}
                 </Text>
               ) : null}
@@ -211,7 +211,7 @@ export function LeadActionCard({
                     gap: 4,
                   }}>
                   <Icon name="person" size={12} color={ownerLine === 'Yours to do' ? C.success : C.muted} strokeWidth={2.2} />
-                  <Text style={[{ fontSize: 12, color: ownerLine === 'Yours to do' ? C.success : C.muted }, weight(700)]}>{ownerLine}</Text>
+                  <Text style={[{ fontSize: 12, lineHeight: 17, color: ownerLine === 'Yours to do' ? C.success : C.muted }, weight(700)]}>{ownerLine}</Text>
                 </View>
               ) : null}
             </View>

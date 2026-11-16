@@ -97,20 +97,21 @@ export function AreaField({
         ) : (
           <>
             <T style={{ fontSize: 16, lineHeight: 21, color: C.faint }}>Choose the area</T>
-            <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{`Search your ${grouped(choices.length)} areas`}</T>
+            <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>{`Search your ${grouped(choices.length)} areas`}</T>
           </>
         )}
       </View>
       <View
         style={{
-          height: 32,
+          minHeight: 32,
+          paddingVertical: 4,
           paddingHorizontal: 12,
           borderRadius: 16,
           backgroundColor: C.primaryTint,
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-        <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>{picked ? 'Change' : 'Choose'}</T>
+        <T style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(700)]}>{picked ? 'Change' : 'Choose'}</T>
       </View>
     </Pressable>
   );
@@ -191,11 +192,11 @@ export function AreaPickerPage({
           })}>
           <Icon name="back" size={20} color={C.ink} strokeWidth={2} />
         </Pressable>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <Text accessibilityRole="header" style={[{ fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>
             Which area?
           </Text>
-          <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{plural(choices.length, 'area') + ' are yours'}</T>
+          <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>{plural(choices.length, 'area') + ' are yours'}</T>
         </View>
       </View>
 
@@ -323,7 +324,7 @@ function AreaRow({
         </T>
       </View>
       {nearM != null ? (
-        <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>{nearLabel(nearM)}</T>
+        <T style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(700)]}>{nearLabel(nearM)}</T>
       ) : null}
       {picked ? <Icon name="tick" size={18} color={C.primaryDeep} strokeWidth={2.2} /> : null}
     </Pressable>
@@ -335,7 +336,7 @@ function PickerHead({ icon, label }: { icon?: IconName; label: string }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 2 }}>
       {icon ? <Icon name={icon} size={14} color={icon === 'locate' ? C.primaryDeep : C.muted} strokeWidth={2.2} /> : null}
-      <Text accessibilityRole="header" style={[{ fontSize: 12, color: C.ink }, weight(700)]}>
+      <Text accessibilityRole="header" style={[{ fontSize: 12, lineHeight: 17, color: C.ink }, weight(700)]}>
         {label}
       </Text>
     </View>
