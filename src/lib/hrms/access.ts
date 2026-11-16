@@ -68,7 +68,23 @@ export type HrmsContext = {
 
 export const isHeadPosition = (position: string | null | undefined) => /head\s*$/i.test(String(position ?? "").trim());
 
+/** The context without `team` — everything a check about the person THEMSELVES needs. */
+export type HrmsSelf = Omit<HrmsContext, "team">;
+
+/**
+ * The person, their level, powers and screens — WITHOUT their team. The team
+ * is the org chart read whole, and the workday clock is asked about once a
+ * minute from every tab: it is about this person alone and has no use for it.
+ */
+export const hrmsSelf = cache(async function hrmsSelf(): Promise<HrmsSelf> {
+  return buildContext(false);
+});
+
 export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsContext> {
+  return buildContext(true) as Promise<HrmsContext>;
+});
+
+async function buildContext(withTeam: boolean): Promise<HrmsSelf | HrmsContext> {
   const user = await requireUser();
   const level = (await levelInApp(user, "hrms")) as HrmsContext["level"];
   const administrator = level === "admin" || user.role === "admin";
@@ -103,7 +119,6 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
   }
 
   const isHead = isHeadPosition(employee?.position);
-  const team = employee ? await teamOf(employee) : new Set<string>();
   const powers = new Set<HrmsPower>(
     administrator ? HRMS_POWERS : powerRows.map((r) => r.power).filter((p): p is HrmsPower => (HRMS_POWERS as readonly string[]).includes(p)),
   );
@@ -141,8 +156,11 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
     powers.add("checkoutStaff");
   }
 
-  return { user, level, administrator, powers, granted, screens, employee, isHead, team, platformAdmin, flags };
-});
+  const self: HrmsSelf = { user, level, administrator, powers, granted, screens, employee, isHead, platformAdmin, flags };
+  if (!withTeam) return self;
+  const team = employee ? await teamOf(employee) : new Set<string>();
+  return { ...self, team };
+}
 
 /** Direct reports on the org chart, and — for people the chart has not placed — those whose Report To is my job title. */
 async function teamOf(me: HrmsEmployeeRef): Promise<Set<string>> {
