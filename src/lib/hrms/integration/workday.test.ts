@@ -25,6 +25,7 @@ import { attendanceRows } from "@/lib/hrms/services/attendance";
 import { phaseOf } from "@/lib/hrms/engines/workday";
 import { today } from "@/lib/hrms/server";
 import { testPhone } from "@/lib/test-phone";
+import { invalidateConfig, seedConfig } from "@/lib/config/store";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const PIN = { lat: 19.1197, lng: 72.8468 };
@@ -80,6 +81,15 @@ describe("the workday clock", () => {
     await db.execute(sql`truncate hrms_workday_claims, hrms_attendance, hrms_holidays, employee_reporting, hrms_offices cascade`);
     office = `Andheri ${randomUUID().slice(0, 6)}`;
     await db.insert(hrmsOffices).values({ id: id("hoff"), name: office, lat: PIN.lat, lng: PIN.lng, radiusM: 200 });
+    /* These journeys go idle at whatever hour CI runs; the 6 PM cut-off has
+       its own engine tests, so run the idle rules all day here. */
+    await seedConfig();
+    await db.execute(sql`update app_settings set value = '0'::jsonb where key = 'hrms.workday.idleFromHour'`);
+    invalidateConfig();
+  });
+  after(async () => {
+    await db.execute(sql`update app_settings set value = '18'::jsonb where key = 'hrms.workday.idleFromHour'`);
+    invalidateConfig();
   });
   after(async () => {
     setTestUser(null);
