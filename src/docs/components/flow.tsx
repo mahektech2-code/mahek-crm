@@ -27,7 +27,7 @@ function loadMermaid() {
       startOnLoad: false,
       securityLevel: "strict",
       theme: "base",
-      fontFamily: '"Google Sans Flex", system-ui, sans-serif',
+      fontFamily: "var(--font-google-sans), system-ui, sans-serif",
       themeVariables: {
         fontSize: "13px",
         primaryColor: "#f1ecff",

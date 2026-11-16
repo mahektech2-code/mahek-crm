@@ -50,10 +50,6 @@ export default async function AppLayout({
 
   return (
     <>
-    {/* The v4 look is set in Geist, as the ERP's is. React hoists a precedence
-        stylesheet into the head once, however many pages ask for it. */}
-    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <AppShell
       user={user}
       hat={hat}
