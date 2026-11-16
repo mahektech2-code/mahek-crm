@@ -1294,8 +1294,22 @@ export async function markDelivered(
    * bill is held to the same rule whoever carried the goods: it is on the desk,
    * it closes nothing else, and it says who signed.
    */
-  const own = ts.filter((t) => isMahekVehicle(t.transporter));
   const named = input.signedCopyId?.trim() || null;
+  /*
+   * A TRANSPORTER'S BILL IS NOT DELIVERED BEFORE ITS LR IS ATTACHED. The LR is
+   * the transporter's receipt for the goods; a bill marked delivered without
+   * one closes with nothing to show it was ever handed over, and the LR that
+   * turns up later has no open bill to go on. Our own vehicle and a transporter
+   * that delivers direct carry no LR, and a customer-signed copy chosen on the
+   * Documents desk is proof of delivery in its own right — those three close
+   * as they always have.
+   */
+  if (!named) {
+    const direct = await directNames();
+    const noLr = ts.find((t) => !t.lrId && !deliversDirect(t.transporter, direct));
+    if (noLr) return err(`Order ${noLr.orderNo} has no LR yet. Attach its LR on the Documents desk before marking it delivered.`, "rule_violation");
+  }
+  const own = ts.filter((t) => isMahekVehicle(t.transporter));
   const closedBy = named ? ts : own;
   let copy: typeof erpLrs.$inferSelect | null = null;
   if (closedBy.length) {
