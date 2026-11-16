@@ -65,6 +65,10 @@ test("one LR is one party; a bill under another LR or delivered cannot be attach
   const b = (id: string, party: string, lrId: string | null = null, stage = "At transport") => ({ id, orderNo: Number(id.slice(1)), deliveryPartyId: party, lrId, materialStage: stage });
   assert.equal(attachRefusal([b("o1", "p1"), b("o2", "p1")], "lr1"), null);
   assert.match(attachRefusal([b("o1", "p1"), b("o2", "p2")], "lr1")!, /different parties/);
+  /* One bill delivered to two shops is one LR; two bills to two shops are not. */
+  assert.equal(attachRefusal([{ ...b("o1", "p1"), bill: "d|B/1905" }, { ...b("o2", "p2"), bill: "d|B/1905" }], "lr1"), null);
+  assert.match(attachRefusal([{ ...b("o1", "p1"), bill: "d|B/1905" }, { ...b("o2", "p2"), bill: "d|B/1906" }], "lr1")!, /different parties/);
+  assert.match(attachRefusal([{ ...b("o1", "p1"), bill: "d|B/1905" }, { ...b("o2", "p2"), bill: null }], "lr1")!, /different parties/);
   assert.match(attachRefusal([b("o1", "p1", "lr9")], "lr1")!, /already under another LR/);
   assert.equal(attachRefusal([b("o1", "p1", "lr1")], "lr1"), null, "re-attaching to its own LR is fine");
   assert.match(attachRefusal([b("o1", "p1", null, "Close - Received to Party")], "lr1")!, /reached the party/);

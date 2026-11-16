@@ -348,16 +348,20 @@ export function rankForLr(lr: LrFacts, cands: LrCandidate[]): { id: string; scor
 
 /**
  * Can these bills travel under one LR? One LR is one consignee, so the bills
- * must go to one delivery party; a bill already under another LR, or closed,
- * cannot be moved by attaching.
+ * must go to one delivery party — UNLESS they are all one bill. A distributor's
+ * bill delivered to several shops travels under the one LR the transporter
+ * wrote for it, and the desk offers it as one tick (`bill` is who is billed and
+ * the bill number; null where a record carries no bill number). A bill already
+ * under another LR, or closed, cannot be moved by attaching.
  */
 export function attachRefusal(
-  bills: { id: string; orderNo: number; deliveryPartyId: string; lrId: string | null; materialStage: string }[],
+  bills: { id: string; orderNo: number; deliveryPartyId: string; lrId: string | null; materialStage: string; bill?: string | null }[],
   lrId: string,
 ): string | null {
   if (!bills.length) return "Tick the bills this LR carries.";
   const parties = new Set(bills.map((b) => b.deliveryPartyId));
-  if (parties.size > 1) return "One LR goes to one party. These bills go to different parties — attach them to their own LRs.";
+  const oneBill = bills.every((b) => b.bill) && new Set(bills.map((b) => b.bill)).size === 1;
+  if (parties.size > 1 && !oneBill) return "One LR goes to one party. These bills go to different parties — attach them to their own LRs.";
   const other = bills.find((b) => b.lrId && b.lrId !== lrId);
   if (other) return `Bill of order ${other.orderNo} is already under another LR. Take it off that LR first.`;
   const closed = bills.find((b) => b.materialStage === CLOSED);
