@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { PLACE_KINDS, placeKey, type PlaceKind } from "@/lib/place-parse";
 import { lookup, pickOf, resolvePick, type PlaceOption, type PlacePick, type ResolvedRung } from "@/lib/erp/transporter-godowns";
 
@@ -17,17 +16,6 @@ import { lookup, pickOf, resolvePick, type PlaceOption, type PlacePick, type Res
 
 /** Rungs a customer may leave unpicked. */
 export const CUSTOMER_OPTIONAL_RUNGS: readonly PlaceKind[] = ["area"];
-
-const rungSchema = z
-  .object({ id: z.string().trim().max(60).nullable().optional(), name: z.string().trim().max(80).nullable().optional() })
-  .optional();
-
-export const placePickSchema = z.object({
-  state: rungSchema,
-  district: rungSchema,
-  city: rungSchema,
-  area: rungSchema,
-});
 
 /** A customer's stored place as the four rungs, from the deepest id it carries. */
 export function customerPick(

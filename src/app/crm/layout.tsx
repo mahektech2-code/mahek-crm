@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { navForModules, pinnedForModules } from "@/components/shell/nav";
+import { navForModules, pinnedForModules } from "@/components/shell/nav-modules";
 import { webApps } from "@/lib/apps";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { getScope, managesHere } from "@/lib/scope";

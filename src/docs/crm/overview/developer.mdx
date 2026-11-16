@@ -7,7 +7,7 @@ The CRM is a Next.js App Router subtree at `src/app/crm`. One layout gates the a
 | App gate and shell | `src/app/crm/layout.tsx` | `listUserApps` → redirect to `/apps`; `listUserModules`; scope, notifications, sidebar badges; renders `AppShell` |
 | App root | `src/app/crm/page.tsx` | Redirects to the first module the person holds (Dashboard for nearly everybody) |
 | Module guards | `src/app/crm/<module>/layout.tsx` | `requireModule(user.id, "crm.<module>")` — a typed URL is refused, not just undrawn |
-| Navigation | `src/components/shell/nav.ts` | `NAV`, `PINNED`, `navForModules`, `pinnedForModules` |
+| Navigation | `src/components/shell/nav.ts` (the menu, client-safe) and `src/components/shell/nav-modules.ts` (narrowing it to what somebody holds, on the server) | `NAV`, `PINNED`, `navForModules`, `pinnedForModules` |
 | Shell | `src/components/shell/app-shell.tsx`, `sidebar.tsx`, `header.tsx` | Header, scope switch, notifications, grouped sidebar with badges |
 | Module registry | `src/lib/modules.ts` | `APP_MODULES` — every grantable screen; keys are join keys and never renamed |
 | Access | `src/lib/access.ts` | `listUserApps`, `listUserModules`, `requireModule`, `canOpenModule`, `whatsappLevel` |
@@ -80,7 +80,7 @@ sequenceDiagram
 
 ### Navigation
 
-<Code file="src/components/shell/nav.ts" symbol="navForModules" />
+<Code file="src/components/shell/nav-modules.ts" symbol="navForModules" />
 
 <CapabilityGrid names={["customer.read", "call.log", "order.capture", "reminder.write", "reminder.close", "payment.record", "payment.confirm", "customer.reassign", "customer.assignSalesManager", "customer.export"]} />
 
