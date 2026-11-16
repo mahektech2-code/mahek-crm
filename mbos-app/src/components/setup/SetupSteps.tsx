@@ -186,7 +186,7 @@ function StepMark({ n, done, state }: { n: number; done: boolean; state: 'curren
         ) : (
           <Text
             style={[
-              { fontSize: 13, color: state === 'current' ? '#FFFFFF' : state === 'red' ? C.danger : C.muted },
+              { fontSize: 13, lineHeight: 18, color: state === 'current' ? '#FFFFFF' : state === 'red' ? C.danger : C.muted },
               weight(800),
             ]}>
             {String(n)}
@@ -204,7 +204,7 @@ function DoneChip({ title, withWord = false }: { title: string; withWord?: boole
       accessible
       accessibilityLabel={title + ', done'}
       style={{ minHeight: 30, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 15, backgroundColor: C.successBg, justifyContent: 'center' }}>
-      <Text style={[{ fontSize: 12, color: C.success }, weight(700)]}>{'✓ ' + title + (withWord ? ' · Done' : '')}</Text>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.success }, weight(700)]}>{'✓ ' + title + (withWord ? ' · Done' : '')}</Text>
     </View>
   );
 }
@@ -253,7 +253,7 @@ function StepButton({
         opacity: busy ? 0.7 : pressed ? 0.88 : 1,
       })}>
       {icon ? <Icon name={icon} size={18} color={fg} strokeWidth={2.2} /> : null}
-      <Text numberOfLines={1} style={[{ fontSize: height >= 56 ? 16 : variant === 'navy' ? 15 : 14, color: fg }, weight(700)]}>
+      <Text numberOfLines={1} style={[{ flexShrink: 1, fontSize: height >= 56 ? 16 : variant === 'navy' ? 15 : 14, color: fg }, weight(700)]}>
         {label}
       </Text>
     </Pressable>
@@ -312,7 +312,7 @@ export function SetupStepList(props: {
                 }}>
                 <StepMark n={steps.indexOf(st) + 1} done state="plain" />
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{st.title}</Text>
+                  <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{st.title}</Text>
                   <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{st.detail}</Text>
                 </View>
                 <ToneBadge tone="done" />
@@ -349,7 +349,7 @@ export function SetupStepList(props: {
             {step.blocksDay ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, marginLeft: 44 }}>
                 <Icon name="lock" size={12} color={C.danger} strokeWidth={2.2} />
-                <Text style={[{ fontSize: 12, color: C.danger }, weight(800)]}>Needed before you punch in</Text>
+                <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.danger }, weight(800)]}>Needed before you punch in</Text>
               </View>
             ) : null}
 
@@ -388,7 +388,7 @@ export function SetupStepList(props: {
               </View>
             ) : null}
             {step.key === 'autostart' && !isDone && !actions.sent ? (
-              <Text style={{ fontSize: 12, color: C.faint, marginTop: 6, textAlign: 'center' }}>
+              <Text style={{ fontSize: 12, lineHeight: 17, color: C.faint, marginTop: 6, textAlign: 'center' }}>
                 Open the setting first. Come back here after you turn it on.
               </Text>
             ) : null}
@@ -402,7 +402,7 @@ export function SetupStepList(props: {
 
 function ToneBadge({ tone }: { tone: StepTone }) {
   return (
-    <View style={{ height: 26, paddingHorizontal: 9, borderRadius: 13, backgroundColor: BADGE[tone].bg, justifyContent: 'center' }}>
+    <View style={{ minHeight: 26, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 13, backgroundColor: BADGE[tone].bg, justifyContent: 'center' }}>
       <Text style={[{ fontSize: 11, color: BADGE[tone].ink }, weight(800)]}>{TONE_WORD[tone]}</Text>
     </View>
   );
@@ -481,7 +481,7 @@ function Walkthrough({
                 </View>
               ) : null}
               {step.key === 'autostart' && !actions.sent ? (
-                <Text style={{ fontSize: 12, color: C.faint, marginTop: 8, textAlign: 'center' }}>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.faint, marginTop: 8, textAlign: 'center' }}>
                   Open the setting first. Come back here after you turn it on.
                 </Text>
               ) : null}
@@ -503,7 +503,7 @@ function Walkthrough({
               borderTopColor: C.hairline,
             }}>
             <StepMark n={i + 1} done={done} state="plain" />
-            <Text style={[{ flex: 1, fontSize: 15, color: done ? C.muted : C.ink }, weight(done ? 400 : 600)]}>{step.title}</Text>
+            <Text style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: done ? C.muted : C.ink }, weight(done ? 400 : 600)]}>{step.title}</Text>
           </View>
         );
       })}

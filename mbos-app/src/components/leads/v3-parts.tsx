@@ -42,7 +42,8 @@ export function StagePill({ tone, text, icon }: { tone: BadgeTone; text: string;
   return (
     <View
       style={{
-        height: 26,
+        minHeight: 26,
+        paddingVertical: 3,
         paddingHorizontal: 10,
         borderRadius: 13,
         backgroundColor: t.bg,
@@ -179,7 +180,7 @@ export function BoxInput({
         paddingHorizontal: 12,
       }}>
       {icon ? <Icon name={icon} size={18} color={C.muted} strokeWidth={2} /> : null}
-      {tag ? <Text style={[{ fontSize: 12, color: C.muted, width: 32 }, weight(800)]}>{tag}</Text> : null}
+      {tag ? <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, width: 32 }, weight(800)]}>{tag}</Text> : null}
       <TextInput
         placeholderTextColor={C.faint}
         {...input}
@@ -207,7 +208,7 @@ export function WashChip({ label, on, onPress, a11y }: { label: string; on: bool
         alignItems: 'center',
         justifyContent: 'center',
       })}>
-      <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -302,7 +303,7 @@ export function SheetChip({ label, a11y, on, onPress, icon }: { label: string; a
         backgroundColor: on ? C.navy : pressed ? C.hairline : C.canvas,
       })}>
       {icon ? <Icon name={icon} size={15} color={on ? C.lime : C.muted} strokeWidth={2.2} /> : null}
-      <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
+      <Text style={[{ fontSize: 14, lineHeight: 20, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -338,8 +339,8 @@ export function SheetFooter({
         onPress={onCancel}
         accessibilityRole="button"
         accessibilityLabel={cancelLabel}
-        style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
-        <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{cancelLabel}</Text>
+        style={({ pressed }) => ({ width: 110, minHeight: 56, paddingVertical: 8, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>{cancelLabel}</Text>
       </Pressable>
       <Pressable
         onPress={onPress}
@@ -348,7 +349,8 @@ export function SheetFooter({
         accessibilityState={{ disabled }}
         style={({ pressed }) => ({
           flex: 1,
-          height: 56,
+          minHeight: 56,
+          paddingVertical: 8,
           borderRadius: 28,
           backgroundColor: disabled ? C.primaryEdge : pressed ? C.navySoft : C.navy,
           alignItems: 'center',

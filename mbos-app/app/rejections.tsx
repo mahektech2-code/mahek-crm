@@ -161,7 +161,8 @@ export default function Rejections() {
             accessibilityRole="button"
             style={({ pressed }) => ({
               marginTop: 12,
-              height: 44,
+              minHeight: 44,
+              paddingVertical: 6,
               paddingHorizontal: 16,
               borderRadius: 22,
               backgroundColor: C.primaryTint,
@@ -169,7 +170,7 @@ export default function Rejections() {
               justifyContent: 'center',
               opacity: pressed ? 0.85 : 1,
             })}>
-            <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Your orders</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>Your orders</Text>
           </Pressable>
         </View>
       ) : null}
@@ -373,7 +374,8 @@ function CardAction({
       accessibilityState={{ disabled }}
       style={({ pressed }) => ({
         flex: 1,
-        height: 44,
+        minHeight: 44,
+        paddingVertical: 6,
         borderRadius: 22,
         backgroundColor: tint ? C.primaryTint : C.canvas,
         alignItems: 'center',

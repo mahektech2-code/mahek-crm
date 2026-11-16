@@ -416,7 +416,7 @@ export default function LeadRecord() {
                     </View>
                   ))}
                 </View>
-                <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>{visits + ' of ' + cap + ' visits'}</Text>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(700)]}>{visits + ' of ' + cap + ' visits'}</Text>
               </View>
               <Text style={[{ fontSize: 20, lineHeight: 26, color: '#FFFFFF', marginTop: 18 }, weight(800)]}>
                 Keep visiting?
@@ -434,13 +434,14 @@ export default function LeadRecord() {
                   accessibilityLabel="No, not a Prospect"
                   style={({ pressed }) => ({
                     flex: 1,
-                    height: 56,
+                    minHeight: 56,
+                    paddingVertical: 8,
                     borderRadius: 28,
                     backgroundColor: pressed ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.12)',
                     alignItems: 'center',
                     justifyContent: 'center',
                   })}>
-                  <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>No, not one</Text>
+                  <Text style={[{ fontSize: 15, lineHeight: 21, color: '#FFFFFF' }, weight(700)]}>No, not one</Text>
                 </Pressable>
               </View>
             </View>
@@ -499,7 +500,7 @@ export default function LeadRecord() {
         ) : null}
         <HeroTag tone="white" text={salesTypeLabel(salesType)} a11y={'Kind of sale: ' + salesTypeLabel(salesType)} />
       </View>
-      <Text accessibilityRole="header" style={[{ marginTop: 10, fontSize: 26, lineHeight: 32, letterSpacing: -0.5, color: HERO.lavender.ink }, weight(800)]}>
+      <Text accessibilityRole="header" style={[{ marginTop: 10, fontSize: 26, lineHeight: 34, letterSpacing: -0.5, color: HERO.lavender.ink }, weight(800)]}>
         {title}
       </Text>
       <Text style={[{ marginTop: 4, fontSize: 13, lineHeight: 18, color: HERO.lavender.muted }, weight(400)]}>{stageSentence(stage)}</Text>
@@ -601,7 +602,7 @@ export default function LeadRecord() {
           <Icon name="warn" size={20} color={C.danger} strokeWidth={2.2} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 14, lineHeight: 19, color: C.danger }, weight(700)]}>Office did not accept this lead</Text>
-            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(400)]}>
+            <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.danger }, weight(400)]}>
               Anything you add here will not reach them. See why on Not accepted.
             </Text>
           </View>
@@ -610,8 +611,8 @@ export default function LeadRecord() {
             accessibilityRole="button"
             accessibilityLabel="Open Not accepted"
             hitSlop={6}
-            style={({ pressed }) => ({ height: 36, paddingHorizontal: 12, borderRadius: 18, backgroundColor: pressed ? C.wash : C.surface, justifyContent: 'center' })}>
-            <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>Open</Text>
+            style={({ pressed }) => ({ minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 18, backgroundColor: pressed ? C.wash : C.surface, justifyContent: 'center' })}>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>Open</Text>
           </Pressable>
         </View>
       ) : null}
@@ -646,7 +647,7 @@ export default function LeadRecord() {
         <LeadCard style={{ borderRadius: 22 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Icon name="shop" size={18} color={C.ink} strokeWidth={2} />
-            <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>Found in the shop</Text>
+            <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>Found in the shop</Text>
           </View>
           {lead.shopPhotoId ? (
             <View style={{ marginTop: 12 }}>
@@ -689,7 +690,7 @@ export default function LeadRecord() {
       {/* ------------------------------------------------- §3 the ladder */}
       {settled ? null : next || !parked ? (
         <LeadCard style={{ borderRadius: 22 }}>
-          <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>Stage</Text>
+          <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>Stage</Text>
           {/* How far up the ladder, one bar a rung: the filled ones are the
               rungs climbed, and the bar he reaches pops when he climbs one. */}
           {ladderAt >= 0 ? (
@@ -758,7 +759,7 @@ export default function LeadRecord() {
               <Presence show={!gate.open}>
                 <Pop trigger={refusals} from={0.94}>
                   <View style={{ marginTop: 12, backgroundColor: C.warnBg, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12 }}>
-                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(700)]}>{'Before ' + stageLabel(next)}</Text>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(700)]}>{'Before ' + stageLabel(next)}</Text>
                     {gate.missing.map((c, i) => (
                       <Stagger key={c.id} index={i}>
                         <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: i ? 4 : 6 }, weight(400)]}>
@@ -784,7 +785,7 @@ export default function LeadRecord() {
                   }
                   void move(next);
                 }}
-                style={{ marginTop: 12, height: 52, minHeight: 52, borderRadius: 26 }}
+                style={{ marginTop: 12, minHeight: 52, borderRadius: 26 }}
               />
             </>
           ) : (
@@ -808,8 +809,8 @@ export default function LeadRecord() {
               <LeadGlyph name="pause" size={18} color={C.warnInk} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text accessibilityRole="header" style={[{ fontSize: 16, color: C.ink }, weight(800)]}>On hold</Text>
-              <Text style={[{ fontSize: 12, color: C.muted }, weight(400)]}>Not lost · parked</Text>
+              <Text accessibilityRole="header" style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(800)]}>On hold</Text>
+              <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>Not lost · parked</Text>
             </View>
             <StagePill tone="amber" text="Parked" />
           </View>
@@ -824,7 +825,7 @@ export default function LeadRecord() {
               coded answer is the one that can be counted. Resolved from the
               configured list, never printed raw. */}
           {lead.holdReasonCode && lead.holdReason ? (
-            <Text style={[{ fontSize: 12, color: C.muted }, weight(400)]}>{labelOf(config.holdReasons, lead.holdReasonCode)}</Text>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>{labelOf(config.holdReasons, lead.holdReasonCode)}</Text>
           ) : null}
           {/* WHEN IT COMES BACK, beside the reason it started. The office's
               own resume date wins where it has one; otherwise the follow-up
@@ -849,7 +850,7 @@ export default function LeadRecord() {
 
           {returning ? (
             <>
-              <Text style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]}>Bring back to</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 14 }, weight(700)]}>Bring back to</Text>
               {/* The rungs it can be WORKED at. The end of the ladder is left
                   off: coming back off a hold is picking up where it stopped. */}
               <View style={{ gap: 8, marginTop: 8 }}>
@@ -863,7 +864,7 @@ export default function LeadRecord() {
                     accessibilityRole="button"
                     accessibilityLabel={'Bring it back to ' + stageLabel(rung) + '. ' + stageSentence(rung)}
                     style={({ pressed }) => ({ minHeight: 52, borderRadius: 16, backgroundColor: pressed ? C.hairline : C.canvas, paddingHorizontal: 14, paddingVertical: 8, justifyContent: 'center' })}>
-                    <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{stageLabel(rung)}</Text>
+                    <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>{stageLabel(rung)}</Text>
                     <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>{stageSentence(rung)}</Text>
                   </Pressable>
                 ))}
@@ -881,16 +882,16 @@ export default function LeadRecord() {
         <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <LeadGlyph name="arrow" size={16} color={C.lime} />
-            <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.lime }, weight(700)]}>Next</Text>
+            <Text accessibilityRole="header" style={[{ fontSize: 13, lineHeight: 18, color: C.lime }, weight(700)]}>Next</Text>
           </View>
           {lead.nextAction ? (
             <>
               <Text style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF', marginTop: 8 }, weight(700)]}>{lead.nextAction}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, marginTop: 8 }}>
                 {lead.nextActionDate ? (
-                  <Text style={[{ fontSize: 13, color: C.onNavyMuted }, weight(400)]}>{pretty(lead.nextActionDate)}</Text>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }, weight(400)]}>{pretty(lead.nextActionDate)}</Text>
                 ) : null}
-                <Text style={[{ fontSize: 13, color: C.onNavyMuted }, weight(400)]}>
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }, weight(400)]}>
                   {lead.nextActionOwnerId === me?.id ? 'You' : 'Your lead manager'}
                 </Text>
               </View>
@@ -917,7 +918,7 @@ export default function LeadRecord() {
               justifyContent: 'center',
               backgroundColor: lead.nextAction ? (pressed ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.12)') : C.lime,
             })}>
-            <Text style={[{ fontSize: 13, color: lead.nextAction ? '#FFFFFF' : C.navy }, weight(700)]}>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: lead.nextAction ? '#FFFFFF' : C.navy }, weight(700)]}>
               {lead.nextAction ? 'Change it' : 'Set next action'}
             </Text>
           </Pressable>
@@ -1022,7 +1023,7 @@ export default function LeadRecord() {
               justifyContent: 'center',
               paddingHorizontal: 14,
             })}>
-            <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>{'Kind of sale: ' + salesTypeLabel(salesType) + ' · change'}</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>{'Kind of sale: ' + salesTypeLabel(salesType) + ' · change'}</Text>
           </Pressable>
         </>
       )}
@@ -1081,7 +1082,7 @@ export default function LeadRecord() {
           <LeadCard key={v.id} style={{ borderRadius: 22 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Icon name="call" size={18} color={C.ink} strokeWidth={2} />
-              <Text accessibilityRole="header" style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(800)]}>
+              <Text accessibilityRole="header" style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
                 Office check call
               </Text>
               <StagePill tone={tone} text={verdictWord(v.verdict)} />
@@ -1114,7 +1115,7 @@ export default function LeadRecord() {
             {alsoSaid(v).map((a) => (
               <View key={a.id} style={{ marginTop: 6 }}>
                 <Text style={[{ fontSize: 12, lineHeight: 16, color: C.faint }, weight(400)]}>{a.ask}</Text>
-                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(400)]}>{a.said}</Text>
+                <Text style={[{ marginTop: 2, fontSize: 14, lineHeight: 20, color: C.ink }, weight(400)]}>{a.said}</Text>
               </View>
             ))}
             {v.verdictReason ? (
@@ -1126,7 +1127,7 @@ export default function LeadRecord() {
 
       {/* ------------------------------------------------- §25 the timeline */}
       <LeadCard style={{ borderRadius: 22 }}>
-        <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>History</Text>
+        <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>History</Text>
         {events.length === 0 ? (
           <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 10 }, weight(400)]}>
             Nothing here yet. Add a note. Write what they buy now, and from whom.
@@ -1725,9 +1726,9 @@ function HeroTag({ tone, text, a11y, flag }: { tone: BadgeTone | 'white'; text: 
     <View
       accessible
       accessibilityLabel={a11y ?? text}
-      style={{ height: 28, paddingHorizontal: 12, borderRadius: 14, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      style={{ minHeight: 28, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 14, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
       {flag ? <LeadGlyph name="flag" size={12} color={t.fg} strokeWidth={2.4} /> : null}
-      <Text style={[{ fontSize: 12, color: t.fg }, weight(700)]}>{text}</Text>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: t.fg }, weight(700)]}>{text}</Text>
     </View>
   );
 }
@@ -1799,7 +1800,8 @@ function RungChip({ label, on, locked, onPress }: { label: string; on: boolean; 
       accessibilityLabel={label + (on ? ', you are here' : locked ? ', locked' : '')}
       hitSlop={{ top: 8, bottom: 8 }}
       style={{
-        height: 32,
+        minHeight: 32,
+        paddingVertical: 4,
         paddingHorizontal: 10,
         borderRadius: 16,
         backgroundColor: on ? C.navy : C.canvas,
@@ -1808,7 +1810,7 @@ function RungChip({ label, on, locked, onPress }: { label: string; on: boolean; 
         gap: 4,
       }}>
       {locked ? <Icon name="lock" size={12} color={C.muted} strokeWidth={2.2} /> : null}
-      <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{label}</Text>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -1893,7 +1895,7 @@ function EndTile({
         gap: 6,
       })}>
       {glyph ? <LeadGlyph name={glyph} size={20} color={ink} /> : icon ? <Icon name={icon} size={20} color={ink} strokeWidth={2} /> : null}
-      <Text style={[{ fontSize: 12, color: ink }, weight(700)]}>{label}</Text>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: ink }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }

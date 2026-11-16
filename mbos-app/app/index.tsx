@@ -357,7 +357,7 @@ export default function Login() {
             <View style={{ width: 36, height: 36, backgroundColor: C.primary, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
               <View style={{ width: 12, height: 12, backgroundColor: C.lime, borderRadius: 4 }} />
             </View>
-            <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Mahek MBOS</Text>
+            <Text style={[{ flexShrink: 1, fontSize: 17, lineHeight: 24, color: '#FFFFFF' }, weight(700)]}>Mahek MBOS</Text>
           </View>
           <Text
             accessibilityRole="header"
@@ -369,7 +369,7 @@ export default function Login() {
             accessibilityLabel="Mahek field sales. Your manager has your account made for you. There is no sign-up."
             style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
             <Glyph shapes={[{ p: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z' }]} size={14} color={C.onNavyMuted} />
-            <Text style={{ flex: 1, fontSize: 13, color: C.onNavyMuted }}>
+            <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
               Mahek field sales · your manager makes your account · no sign-up
             </Text>
           </View>
@@ -401,7 +401,7 @@ export default function Login() {
                   <View
                     accessible
                     accessibilityLabel={`${label}: ${done ? 'done' : now ? 'checking now' : 'waiting'}`}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 14, height: 52 }}>
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 52, paddingVertical: 6 }}>
                     {/* The step being checked breathes — it is waiting on the
                         server, and a still dot reads as stuck — and a step
                         passed pops as it turns lime. These are real checks,
@@ -427,7 +427,7 @@ export default function Login() {
                       </Pulse>
                     </Pop>
                     <Glyph shapes={i === 0 ? CLOUD : PHONE} size={16} color={done || now ? C.ink : C.muted} />
-                    <Text style={[{ flex: 1, fontSize: 15, color: done || now ? C.ink : C.muted }, weight(700)]}>{label}</Text>
+                    <Text style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: done || now ? C.ink : C.muted }, weight(700)]}>{label}</Text>
                   </View>
                 </View>
               );
@@ -447,7 +447,7 @@ export default function Login() {
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Glyph shapes={PHONE} size={14} color={C.ink} />
-              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Mobile number</Text>
+              <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>Mobile number</Text>
             </View>
             <View
               style={{
@@ -462,7 +462,7 @@ export default function Login() {
                 overflow: 'hidden',
               }}>
               {/* Not a control — see `DIAL`. */}
-              <Text style={[{ paddingLeft: 16, paddingRight: 10, fontSize: 17, color: C.muted }, weight(600)]}>{DIAL}</Text>
+              <Text style={[{ flexShrink: 1, paddingLeft: 16, paddingRight: 10, fontSize: 17, lineHeight: 24, color: C.muted }, weight(600)]}>{DIAL}</Text>
               <TextInput
                 value={groupMobile(mob)}
                 onChangeText={(v) => {
@@ -489,13 +489,13 @@ export default function Login() {
                 style={[{ flex: 1, height: '100%', paddingRight: 12, fontSize: 17, letterSpacing: 0.34, color: C.ink }, weight(600)]}
               />
               {countChip ? (
-                <View style={{ marginRight: 12, height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.dangerBg, justifyContent: 'center' }}>
-                  <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>{`${mob.length}/${MOBILE_DIGITS}`}</Text>
+                <View style={{ marginRight: 12, minHeight: 28, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.dangerBg, justifyContent: 'center' }}>
+                  <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>{`${mob.length}/${MOBILE_DIGITS}`}</Text>
                 </View>
               ) : null}
             </View>
             {err === 'mob' ? (
-              <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+              <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>
                 {/* The server's own sentence wins. It names the reason — no
                     such account, already signed in on another handset, the
                     book would not load — and each sends the person somewhere
@@ -517,7 +517,7 @@ export default function Login() {
                 WhatsApp, and this screen asks it first: no toggle is drawn on
                 a deployment that cannot send one. */}
             {codeOffered ? (
-              <View accessibilityRole="tablist" style={{ flexDirection: 'row', marginTop: 16, height: 48, borderRadius: 24, backgroundColor: C.canvas, padding: 4 }}>
+              <View accessibilityRole="tablist" style={{ flexDirection: 'row', marginTop: 16, minHeight: 48, borderRadius: 24, backgroundColor: C.canvas, padding: 4 }}>
                 {(['password', 'code'] as const).map((m) => {
                   const on = method === m;
                   const ink = on ? '#FFFFFF' : C.muted;
@@ -529,7 +529,7 @@ export default function Login() {
                       onPress={() => { if (!on) feedback('select'); setMethod(m); setErr(null); setServerMessage(null); }}
                       style={{ flex: 1, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: on ? C.navy : 'transparent' }}>
                       <Glyph shapes={m === 'password' ? LOCK : CHAT} size={15} color={ink} />
-                      <Text style={[{ fontSize: 14, color: ink }, weight(700)]}>{m === 'password' ? 'Password' : 'OTP'}</Text>
+                      <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: ink }, weight(700)]}>{m === 'password' ? 'Password' : 'OTP'}</Text>
                     </Pressable>
                   );
                 })}
@@ -597,7 +597,7 @@ export default function Login() {
                   </Pressable>
                 </View>
                 {err === 'pw' ? (
-                  <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+                  <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>
                     {serverMessage ?? 'Password must be at least 8 characters.'}
                   </Text>
                 ) : null}
@@ -623,7 +623,7 @@ export default function Login() {
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                 }}>
-                                <Text style={[{ fontSize: 22, color: C.ink }, weight(800)]}>{code[i] ?? ''}</Text>
+                                <Text style={[{ fontSize: 22, lineHeight: 31, color: C.ink }, weight(800)]}>{code[i] ?? ''}</Text>
                               </View>
                             ))}
                           </View>
@@ -641,7 +641,7 @@ export default function Login() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
                           <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <Glyph shapes={CHAT} size={14} color={C.muted} />
-                            <Text style={{ flexShrink: 1, fontSize: 13, color: C.muted }}>Sent to {codeSentTo}</Text>
+                            <Text style={{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.muted }}>Sent to {codeSentTo}</Text>
                           </View>
                           <Pressable
                             onPress={() => void sendCode()}
@@ -650,9 +650,9 @@ export default function Login() {
                             accessibilityRole="button"
                             accessibilityLabel={sendingCode ? 'Sending…' : codeWait > 0 ? `Send again in ${codeWait}s` : 'Send again'}
                             accessibilityState={{ disabled: sendingCode || codeWait > 0 }}
-                            style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.canvas, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            style={{ minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.canvas, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <Glyph shapes={RETRY} size={14} color={codeWait > 0 || sendingCode ? C.muted : C.primaryDeep} />
-                            <Text style={[{ fontSize: 13, color: codeWait > 0 || sendingCode ? C.muted : C.primaryDeep }, weight(700), tabular]}>
+                            <Text style={[{ fontSize: 13, lineHeight: 18, color: codeWait > 0 || sendingCode ? C.muted : C.primaryDeep }, weight(700), tabular]}>
                               {sendingCode ? 'Sending…' : codeWait > 0 ? `${codeWait}s` : 'Send again'}
                             </Text>
                           </Pressable>
@@ -672,10 +672,10 @@ export default function Login() {
                           disabled={sendingCode || codeWait > 0}
                           whyDisabled={sendingCode ? 'Sending the OTP now.' : 'MahekOne asked us to wait before sending another OTP.'}
                           onPress={() => void sendCode()}
-                          style={{ height: 56, borderRadius: 28 }}
+                          style={{ minHeight: 56, borderRadius: 28 }}
                         />
                         {codeWait > 0 && !sendingCode ? (
-                          <Text style={{ fontSize: 12, color: C.muted, marginTop: 6, textAlign: 'center' }}>
+                          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6, textAlign: 'center' }}>
                             MahekOne asked us to wait before sending another
                           </Text>
                         ) : null}
@@ -684,14 +684,14 @@ export default function Login() {
                     {err === 'pw' && serverMessage ? (
                       <View style={{ marginTop: 8, minHeight: 36, borderRadius: 12, backgroundColor: C.dangerBg, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8 }}>
                         <Glyph shapes={WARN} size={14} color={C.danger} />
-                        <Text style={[{ flex: 1, fontSize: 13, color: C.danger }, weight(600)]}>{serverMessage}</Text>
+                        <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>{serverMessage}</Text>
                       </View>
                     ) : null}
                   </View>
                 )}
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10, minHeight: 44 }}>
-                  <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Remember me</Text>
+                  <Text style={[{ flexShrink: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>Remember me</Text>
                   <Toggle on={remember} label="Remember me" onPress={() => set({ remember: !remember })} />
                 </View>
               </View>
@@ -714,7 +714,8 @@ export default function Login() {
               accessibilityRole="button"
               accessibilityLabel="Cancel"
               style={({ pressed }) => ({
-                height: 60,
+                minHeight: 60,
+                paddingVertical: 8,
                 borderRadius: 30,
                 borderWidth: 1,
                 borderColor: C.border,
@@ -725,7 +726,7 @@ export default function Login() {
                 gap: 8,
               })}>
               <Glyph shapes={[{ p: 'M6 6l12 12M18 6L6 18' }]} size={18} color={C.ink} />
-              <Text style={[{ fontSize: 17, color: C.ink }, weight(700)]}>Cancel</Text>
+              <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink }, weight(700)]}>Cancel</Text>
             </Pressable>
           ) : (
             <>
@@ -737,7 +738,8 @@ export default function Login() {
                   accessibilityRole="button"
                   accessibilityLabel="Sign in"
                   style={({ pressed }) => ({
-                    height: 60,
+                    minHeight: 60,
+                    paddingVertical: 8,
                     borderRadius: 30,
                     backgroundColor: C.navy,
                     flexDirection: 'row',
@@ -747,7 +749,7 @@ export default function Login() {
                     opacity: pressed ? 0.9 : 1,
                     boxShadow: '0 12px 30px -10px rgba(15,27,51,0.5)',
                   })}>
-                  <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Sign in</Text>
+                  <Text style={[{ fontSize: 17, lineHeight: 24, color: '#FFFFFF' }, weight(700)]}>Sign in</Text>
                   <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
                     <Glyph shapes={[{ p: 'M5 12h14M13 6l6 6-6 6' }]} size={16} color={C.navy} strokeWidth={2.4} />
                   </View>
@@ -765,8 +767,8 @@ export default function Login() {
                   );
                 }}
                 accessibilityRole="button"
-                style={{ width: '100%', height: 48, marginTop: 6, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>Forgot password</Text>
+                style={{ width: '100%', minHeight: 48, paddingVertical: 8, marginTop: 6, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(700)]}>Forgot password</Text>
               </Pressable>
             </>
           )}

@@ -526,10 +526,10 @@ export default function ExpensesScreen() {
               <Text style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.68, color: C.lime }, weight(800), tabular]}>
                 {inrFromPaise(pending)}
               </Text>
-              <Text style={{ fontSize: 13, color: C.onNavyMuted }}>{'with your manager · ' + totals.pendingCount}</Text>
+              <Text style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>{'with your manager · ' + totals.pendingCount}</Text>
             </View>
           ) : (
-            <Text style={{ fontSize: 14, color: C.onNavyMuted, marginTop: 10 }}>Nothing waiting on your manager</Text>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.onNavyMuted, marginTop: 10 }}>Nothing waiting on your manager</Text>
           )}
           {/* THIS MONTH, in the three figures he actually asks about: what is
               still with his manager, what has been allowed, and what the work
@@ -576,7 +576,7 @@ export default function ExpensesScreen() {
         </Text>
       </View>
 
-      <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.ink, marginTop: 4 }, weight(800)]}>
+      <Text accessibilityRole="header" style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 4 }, weight(800)]}>
         Your expenses
       </Text>
       {logged.length ? (
@@ -597,7 +597,7 @@ export default function ExpensesScreen() {
                   accessibilityLabel={kindWord + ' · ' + inrFromPaise(e.amountPaise) + ', ' + word}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{kindWord}</Text>
-                  <Text style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>{inrFromPaise(e.amountPaise)}</Text>
+                  <Text style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(800), tabular]}>{inrFromPaise(e.amountPaise)}</Text>
                   {/* Part approved draws its bar instead of a second badge. */}
                   {part ? null : <Badge tone={tone}>{word}</Badge>}
                 </View>
@@ -626,7 +626,7 @@ export default function ExpensesScreen() {
                         }}
                       />
                     </View>
-                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(700)]}>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(700)]}>
                       {inrFromPaise(e.approvedAmountPaise!) + ' of ' + inrFromPaise(e.amountPaise)}
                     </Text>
                   </View>
@@ -640,7 +640,7 @@ export default function ExpensesScreen() {
                     accessibilityLabel="Saved on this phone. It goes to your manager when there is signal."
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
                     <G d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9zM4 4l16 16" color={C.warnInk} size={13} />
-                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(600)]}>On this phone · goes when there is signal</Text>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(600)]}>On this phone · goes when there is signal</Text>
                   </View>
                 ) : e.billPhotoId ? null : (
                   <View
@@ -648,7 +648,7 @@ export default function ExpensesScreen() {
                     accessibilityLabel="No bill. May not be accepted."
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
                     <Icon name="alert" size={13} color={C.warnInk} strokeWidth={2.2} />
-                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(600)]}>No bill · may not be accepted</Text>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(600)]}>No bill · may not be accepted</Text>
                   </View>
                 )}
                 {e.state === 'Rejected' ? (
@@ -679,7 +679,7 @@ export default function ExpensesScreen() {
         </View>
       ) : (
         <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>No expenses logged yet.</Text>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>No expenses logged yet.</Text>
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>
             Add a fare, a hotel, a food bill or any other cost with a photo of the bill. It goes to your manager straight
             away.
@@ -699,12 +699,13 @@ export default function ExpensesScreen() {
       ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-        <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.ink }, weight(800)]}>
+        <Text accessibilityRole="header" style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(800)]}>
           Allowances
         </Text>
         <View
           style={{
-            height: 24,
+            minHeight: 24,
+            paddingVertical: 3,
             paddingHorizontal: 8,
             borderRadius: 12,
             backgroundColor: C.hairline,
@@ -742,19 +743,19 @@ export default function ExpensesScreen() {
                   style={{ flex: 1, minWidth: 0 }}
                   accessible
                   accessibilityLabel={kindLabel(e) + ' · ' + inrFromPaise(e.amountPaise) + ', automatic'}>
-                  <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{kindLabel(e)}</Text>
+                  <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{kindLabel(e)}</Text>
                   <Text numberOfLines={2} style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
                     {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
                   </Text>
                 </View>
-                <Text style={[{ fontSize: 16, color: C.success }, weight(800), tabular]}>{inrFromPaise(e.amountPaise)}</Text>
+                <Text style={[{ fontSize: 16, lineHeight: 22, color: C.success }, weight(800), tabular]}>{inrFromPaise(e.amountPaise)}</Text>
               </Stagger>
             );
           })}
         </View>
       ) : (
         <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>No allowances yet.</Text>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>No allowances yet.</Text>
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>
             They appear after you punch in and out. It can take a few minutes after the phone syncs.
           </Text>
@@ -786,7 +787,8 @@ export default function ExpensesScreen() {
                 accessibilityLabel={k.label}
                 style={{
                   flex: 1,
-                  height: 72,
+                  minHeight: 72,
+                  paddingVertical: 8,
                   borderRadius: 20,
                   backgroundColor: on ? C.navy : C.canvas,
                   alignItems: 'center',
@@ -805,7 +807,7 @@ export default function ExpensesScreen() {
         <View
           style={{
             marginTop: 14,
-            height: 72,
+            minHeight: 72,
             borderRadius: 24,
             backgroundColor: C.canvas,
             flexDirection: 'row',
@@ -832,7 +834,7 @@ export default function ExpensesScreen() {
           />
         </View>
         {bad('amt') ? (
-          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>{amtWhy ?? 'Enter what you spent.'}</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(600)]}>{amtWhy ?? 'Enter what you spent.'}</Text>
         ) : null}
         {capLine ? (
           <View
@@ -861,11 +863,11 @@ export default function ExpensesScreen() {
         ) : null}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
-          <Text accessibilityLabel="Bill and proof, needed" style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>
+          <Text accessibilityLabel="Bill and proof, needed" style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>
             Bill &amp; proof
             <Text style={{ color: C.danger }}>{' *'}</Text>
           </Text>
-          <Text accessibilityLabel={ex.files.length + ' of ' + maxFiles} style={[{ fontSize: 12, color: C.muted }, weight(700)]}>
+          <Text accessibilityLabel={ex.files.length + ' of ' + maxFiles} style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>
             {ex.files.length + ' / ' + maxFiles}
           </Text>
         </View>
@@ -947,7 +949,7 @@ export default function ExpensesScreen() {
           Every page · payment screenshot if you have it
         </Text>
         {bad('bill') ? (
-          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 4 }, weight(600)]}>Add the bill or payment proof.</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 4 }, weight(600)]}>Add the bill or payment proof.</Text>
         ) : null}
 
         <Pressable
@@ -959,7 +961,8 @@ export default function ExpensesScreen() {
           }}
           style={{
             marginTop: 14,
-            height: 52,
+            minHeight: 52,
+            paddingVertical: 8,
             borderRadius: 26,
             backgroundColor: C.canvas,
             flexDirection: 'row',
@@ -970,11 +973,11 @@ export default function ExpensesScreen() {
             borderColor: C.danger,
           }}>
           <Icon name="cal" size={18} color={C.ink} strokeWidth={2} />
-          <Text style={[{ flex: 1, fontSize: 15, color: ex.when ? C.ink : C.muted }, weight(700)]}>{ex.when || 'Pick the day'}</Text>
+          <Text style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: ex.when ? C.ink : C.muted }, weight(700)]}>{ex.when || 'Pick the day'}</Text>
           <Text style={{ fontSize: 15, color: C.muted }}>▾</Text>
         </Pressable>
         {bad('when') ? (
-          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>Pick the day you spent it.</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(600)]}>Pick the day you spent it.</Text>
         ) : whenWhy ? (
           /* The day is filled in and still will not do — a rejected claim
              reopened weeks later carries the day it was spent on. Say which
@@ -997,7 +1000,7 @@ export default function ExpensesScreen() {
             ]}
           />
           {bad('note') ? (
-            <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(600)]}>
               Say what it was for. Your manager approves based on this.
             </Text>
           ) : null}
@@ -1064,13 +1067,14 @@ export default function ExpensesScreen() {
           accessibilityLabel="Close"
           style={({ pressed }) => ({
             marginTop: 12,
-            height: 52,
+            minHeight: 52,
+            paddingVertical: 8,
             borderRadius: 26,
             backgroundColor: pressed ? C.hairline : C.canvas,
             alignItems: 'center',
             justifyContent: 'center',
           })}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Close</Text>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Close</Text>
         </Pressable>
       </BottomSheet>
     </AppFrame>

@@ -104,11 +104,11 @@ export function HeroPill({
   return (
     <View
       style={[
-        { height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', gap: 5 },
+        { minHeight: 30, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 15, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', gap: 5 },
         style,
       ]}>
       {icon ? <Glyph shapes={icon} size={12} color={fg} strokeWidth={2.2} /> : null}
-      <Text numberOfLines={1} style={[{ fontSize: 12, color: fg }, weight(700)]}>
+      <Text numberOfLines={1} style={[{ flexShrink: 1, fontSize: 12, color: fg }, weight(700)]}>
         {children}
       </Text>
     </View>

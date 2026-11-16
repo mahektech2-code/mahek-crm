@@ -110,7 +110,8 @@ export default function Nearby() {
             style={({ pressed }) => ({
               flex: 1,
               minWidth: 64,
-              height: 44,
+              minHeight: 44,
+              paddingVertical: 6,
               borderRadius: 22,
               alignItems: 'center',
               justifyContent: 'center',
@@ -175,7 +176,7 @@ export default function Nearby() {
                   <Icon name="spark" size={16} color={C.lime} strokeWidth={2} />
                   <T style={[{ flex: 1, fontSize: 13, color: C.lime }, weight(700)]}>Next best visit</T>
                   <Icon name="nav" size={14} color="#FFFFFF" strokeWidth={2} />
-                  <T style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>{metresLabel(answer.best.metres)}</T>
+                  <T style={[{ flexShrink: 1, fontSize: 13, color: '#FFFFFF' }, weight(700)]}>{metresLabel(answer.best.metres)}</T>
                 </View>
                 <T style={[{ fontSize: 22, lineHeight: 28, letterSpacing: -0.44, color: '#FFFFFF', marginTop: 10 }, weight(800)]}>
                   {shopName(answer.best.shop.name)}
@@ -232,7 +233,7 @@ export default function Nearby() {
                   ' has anything pending.' +
                   (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a bigger distance.' : '')}
             </T>
-            {answer.shops.length ? <T style={{ fontSize: 12, color: C.muted }}>best first</T> : null}
+            {answer.shops.length ? <T style={{ flexShrink: 1, fontSize: 12, color: C.muted }}>best first</T> : null}
           </View>
 
           {answer.shops.length ? (
@@ -264,7 +265,7 @@ export default function Nearby() {
                       {r.shop.outstandingPaise > 0 ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                           <Icon name="wallet" size={12} color={C.danger} strokeWidth={2} />
-                          <T style={[{ fontSize: 13, color: C.danger }, weight(700)]}>{inrFromPaise(r.shop.outstandingPaise)}</T>
+                          <T style={[{ flexShrink: 1, fontSize: 13, color: C.danger }, weight(700)]}>{inrFromPaise(r.shop.outstandingPaise)}</T>
                         </View>
                       ) : null}
                     </Pressable>

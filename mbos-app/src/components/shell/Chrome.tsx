@@ -438,7 +438,8 @@ const s = StyleSheet.create({
     borderBottomRightRadius: radius.hero,
   },
   chip: {
-    height: 32,
+    minHeight: 32,
+    paddingVertical: 4,
     borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',

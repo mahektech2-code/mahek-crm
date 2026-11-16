@@ -138,7 +138,7 @@ export default function Saved() {
   const chip = (text: string, icon?: IconName) => (
     <View
       key={text}
-      style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      style={{ minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
       {icon ? <Icon name={icon} size={14} color={C.ink} strokeWidth={2.2} /> : null}
       <Text numberOfLines={1} style={[{ fontSize: 13, color: C.ink, flexShrink: 1 }, weight(700)]}>
         {text}
@@ -172,7 +172,8 @@ export default function Saved() {
             accessibilityRole="button"
             accessibilityLabel={hasRoute ? 'Next stop on your route' : 'Pick the next shop'}
             style={({ pressed }) => ({
-              height: 60,
+              minHeight: 60,
+              paddingVertical: 8,
               borderRadius: 30,
               backgroundColor: C.navy,
               flexDirection: 'row',
@@ -181,7 +182,7 @@ export default function Saved() {
               gap: 10,
               opacity: pressed ? 0.88 : 1,
             })}>
-            <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>
+            <Text style={[{ flexShrink: 1, fontSize: 17, lineHeight: 22, color: '#FFFFFF', textAlign: 'center' }, weight(700)]}>
               {hasRoute ? 'Next stop on your route' : 'Pick the next shop'}
             </Text>
             <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
@@ -191,8 +192,8 @@ export default function Saved() {
           <Pressable
             onPress={() => router.replace('/home')}
             accessibilityRole="button"
-            style={{ width: '100%', height: Math.max(HIT, 48), marginTop: 4, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>Back to home</Text>
+            style={{ width: '100%', minHeight: Math.max(HIT, 48), paddingVertical: 6, marginTop: 4, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(700)]}>Back to home</Text>
           </Pressable>
         </View>
       }
@@ -202,7 +203,7 @@ export default function Saved() {
           buzz — so this tick landing is the moment the visit is felt to
           be done, once. */}
       <DrawnTick size={64} color={C.success} background={C.successBg} />
-      <Text accessibilityRole="header" style={[{ fontSize: 28, lineHeight: 34, letterSpacing: -0.56, color: C.ink, marginTop: 14 }, weight(800)]}>
+      <Text accessibilityRole="header" style={[{ flexShrink: 1, fontSize: 28, lineHeight: 34, letterSpacing: -0.56, color: C.ink, marginTop: 14 }, weight(800)]}>
         Visit saved
       </Text>
 

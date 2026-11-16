@@ -126,7 +126,7 @@ function PayCard({ m }: { m: SalaryMonth }) {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <T style={[{ flex: 1, fontSize: 13, color: C.onNavyMuted }, weight(700)]}>Your salary, as HR holds it</T>
         {m.employeeCode ? (
-          <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
+          <View style={{ flexShrink: 1, minHeight: 26, paddingVertical: 3, paddingHorizontal: 10, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
             <T style={[{ fontSize: 12, color: C.onNavy }, weight(700)]}>
               {m.employeeCode}
               {m.employeeStatus ? ' · ' + m.employeeStatus : ''}

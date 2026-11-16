@@ -125,7 +125,7 @@ export default function DocsScreen() {
       hero={
         <View style={{ marginTop: 6, gap: 14 }}>
           {docs === null || all.length === 0 ? (
-            <Text style={[{ fontSize: 14, color: h.muted }, weight(600)]}>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: h.muted }, weight(600)]}>
               {docs === null ? 'Looking…' : 'Nothing published yet'}
             </Text>
           ) : (
@@ -135,11 +135,11 @@ export default function DocsScreen() {
               style={{ flexDirection: 'row', gap: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                 <Glyph shapes={DOC_GLYPH} size={16} color={h.muted} />
-                <Text style={[{ fontSize: 14, color: h.muted }, weight(600)]}>{all.length}</Text>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: h.muted }, weight(600)]}>{all.length}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                 <Glyph shapes={PHONE_TICK} size={16} color={C.success} />
-                <Text style={[{ fontSize: 14, color: C.success }, weight(600)]}>{onPhone} on this phone</Text>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.success }, weight(600)]}>{onPhone} on this phone</Text>
               </View>
             </View>
           )}
@@ -245,8 +245,8 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
         paddingBottom: 8,
         backgroundColor: C.canvas,
       }}>
-      <Text style={[{ fontSize: 13, color: C.ink }, weight(800)]}>{title}</Text>
-      <Text style={[{ fontSize: 13, color: C.faint }, weight(800)]}>{count}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(800)]}>{title}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.faint }, weight(800)]}>{count}</Text>
     </View>
   );
 }
@@ -333,16 +333,17 @@ const DocRow = React.memo(function DocRow({
               {fresh ? (
                 <View
                   style={{
-                    height: 22,
+                    minHeight: 22,
+                    paddingVertical: 2,
                     paddingHorizontal: 8,
                     borderRadius: 11,
                     backgroundColor: C.primaryTint,
                     justifyContent: 'center',
                   }}>
-                  <Text style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>New</Text>
+                  <Text style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(700)]}>New</Text>
                 </View>
               ) : null}
-              {meta ? <Text style={{ fontSize: 12, color: C.muted }}>{meta}</Text> : null}
+              {meta ? <Text style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>{meta}</Text> : null}
             </View>
           ) : null}
         </View>
@@ -379,10 +380,10 @@ function NoMatch({ query }: { query: string }) {
       accessibilityLabel={`Nothing matches “${query}”. Try one word from the title, or clear the search to see everything.`}
       style={{ backgroundColor: C.surface, borderRadius: 24, paddingVertical: 26, paddingHorizontal: 18, alignItems: 'center' }}>
       <Icon name="search" size={30} color={C.faint} strokeWidth={2} />
-      <Text style={[{ fontSize: 17, color: C.ink, textAlign: 'center', marginTop: 8 }, weight(800)]}>
+      <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink, textAlign: 'center', marginTop: 8 }, weight(800)]}>
         {`Nothing matches “${query}”`}
       </Text>
-      <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center', marginTop: 4 }}>
+      <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center', marginTop: 4 }}>
         Try one word from the title, or clear the search.
       </Text>
     </View>
@@ -420,13 +421,13 @@ function EmptyRow({
           justifyContent: 'center',
         }}>
         {text ? (
-          <Text style={[{ fontSize: 12, color: tint.ink }, weight(800)]}>{text}</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: tint.ink }, weight(800)]}>{text}</Text>
         ) : glyph ? (
           <Glyph shapes={glyph} size={20} color={tint.ink} />
         ) : null}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{title}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{title}</Text>
         <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{body}</Text>
       </View>
     </View>

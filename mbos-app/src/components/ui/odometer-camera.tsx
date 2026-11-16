@@ -217,9 +217,9 @@ export function OdometerCamera({
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   autoFocus
                   accessibilityLabel="Meter reading in km"
-                  style={{ flex: 1, height: 52, fontSize: 22, color: '#FFFFFF', letterSpacing: 0.5 }}
+                  style={{ flex: 1, minHeight: 52, fontSize: 22, color: '#FFFFFF', letterSpacing: 0.5 }}
                 />
-                <T style={[{ fontSize: 15, color: 'rgba(255,255,255,0.6)' }, weight(500)]}>km</T>
+                <T style={[{ flexShrink: 1, fontSize: 15, color: 'rgba(255,255,255,0.6)' }, weight(500)]}>km</T>
               </Animated.View>
 
               {err ? (

@@ -477,7 +477,7 @@ function DictationBody({
           <LevelMeter level={level} live={!paused} />
           <Text
             style={[
-              { fontSize: 15, textAlign: 'center', marginTop: 12, color: paused ? C.muted : C.primaryDeep },
+              { fontSize: 15, lineHeight: 21, textAlign: 'center', marginTop: 12, color: paused ? C.muted : C.primaryDeep },
               weight(500),
             ]}>
             {clock(elapsed)} of {clock(maxSeconds)}
@@ -505,14 +505,16 @@ function DictationBody({
             }}
             style={{
               flex: 1,
-              height: HIT + 4,
+              minHeight: HIT + 4,
+              paddingVertical: 8,
+              paddingHorizontal: 8,
               borderWidth: 1,
               borderColor: C.border,
               borderRadius: radius.xl,
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>
+            <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: C.body }, weight(500)]}>
               {paused ? 'Continue' : 'Pause'}
             </Text>
           </Pressable>
@@ -520,13 +522,15 @@ function DictationBody({
             onPress={() => void stop()}
             style={{
               flex: 2,
-              height: HIT + 4,
+              minHeight: HIT + 4,
+              paddingVertical: 8,
+              paddingHorizontal: 8,
               borderRadius: radius.xl,
               backgroundColor: C.primary,
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>
+            <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: '#FFFFFF' }, weight(600)]}>
               {mode === 'record' ? 'Done, save it' : 'Done, make text'}
             </Text>
           </Pressable>
@@ -565,14 +569,16 @@ function DictationBody({
         <Pressable
           onPress={onClose}
           style={{
-            height: HIT + 4,
+            minHeight: HIT + 4,
+            paddingVertical: 8,
+            paddingHorizontal: 8,
             marginTop: 20,
             borderRadius: radius.xl,
             backgroundColor: C.primary,
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-          <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>Done</Text>
+          <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: '#FFFFFF' }, weight(600)]}>Done</Text>
         </Pressable>
       </View>
     );
@@ -589,26 +595,30 @@ function DictationBody({
             onPress={onClose}
             style={{
               flex: 1,
-              height: HIT + 4,
+              minHeight: HIT + 4,
+              paddingVertical: 8,
+              paddingHorizontal: 8,
               borderWidth: 1,
               borderColor: C.border,
               borderRadius: radius.xl,
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Close</Text>
+            <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: C.body }, weight(500)]}>Close</Text>
           </Pressable>
           <Pressable
             onPress={onAgain}
             style={{
               flex: 1,
-              height: HIT + 4,
+              minHeight: HIT + 4,
+              paddingVertical: 8,
+              paddingHorizontal: 8,
               borderRadius: radius.xl,
               backgroundColor: C.primary,
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>Try again</Text>
+            <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: '#FFFFFF' }, weight(600)]}>Try again</Text>
           </Pressable>
         </View>
       </View>
@@ -646,7 +656,7 @@ function DictationBody({
       {spoken && spoken !== english ? (
         <View style={{ marginTop: 12 }}>
           <Pressable onPress={() => setShowSpoken((v) => !v)} hitSlop={8}>
-            <Text style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.primaryDeep }, weight(500)]}>
               {showSpoken ? 'Hide' : 'Show'} what the app heard{language ? ` (${language})` : ''}
             </Text>
           </Pressable>
@@ -709,7 +719,7 @@ function DictationBody({
             placeholderTextColor={C.faint}
             style={{
               flex: 1,
-              height: 46,
+              minHeight: 46,
               borderWidth: 1,
               borderColor: C.border,
               borderRadius: radius.lg,
@@ -732,27 +742,31 @@ function DictationBody({
           onPress={onClose}
           style={{
             flex: 1,
-            height: HIT + 4,
+            minHeight: HIT + 4,
+            paddingVertical: 8,
+            paddingHorizontal: 8,
             borderWidth: 1,
             borderColor: C.border,
             borderRadius: radius.xl,
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-          <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
+          <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: C.body }, weight(500)]}>Cancel</Text>
         </Pressable>
         <Pressable
           disabled={!english.trim()}
           onPress={() => onImport({ text: english.trim(), replace: false, spoken, language })}
           style={{
             flex: 2,
-            height: HIT + 4,
+            minHeight: HIT + 4,
+            paddingVertical: 8,
+            paddingHorizontal: 8,
             borderRadius: radius.xl,
             backgroundColor: english.trim() ? C.primary : C.faint,
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-          <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>
+          <Text style={[{ fontSize: 16, lineHeight: 21, textAlign: 'center', color: '#FFFFFF' }, weight(600)]}>
             {hasExistingText ? 'Add to note' : 'Add to box'}
           </Text>
         </Pressable>
@@ -766,8 +780,8 @@ function DictationBody({
         <Pressable
           disabled={!english.trim()}
           onPress={() => onImport({ text: english.trim(), replace: true, spoken, language })}
-          style={{ height: HIT, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
-          <Text style={[{ fontSize: 15, color: C.muted }, weight(500)]}>
+          style={{ minHeight: HIT, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.muted }, weight(500)]}>
             Replace the old text instead
           </Text>
         </Pressable>
@@ -790,7 +804,8 @@ function SmallButton({
       disabled={disabled}
       onPress={onPress}
       style={{
-        height: 38,
+        minHeight: 38,
+        paddingVertical: 6,
         paddingHorizontal: 14,
         borderWidth: 1,
         borderColor: C.border,
@@ -800,7 +815,7 @@ function SmallButton({
         opacity: disabled ? 0.45 : 1,
         backgroundColor: C.surface,
       }}>
-      <Text style={[{ fontSize: 14, color: C.body }, weight(500)]}>{label}</Text>
+      <Text style={[{ fontSize: 14, lineHeight: 20, color: C.body }, weight(500)]}>{label}</Text>
     </Pressable>
   );
 }

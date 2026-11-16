@@ -199,10 +199,10 @@ export function ChipRow<K extends string>({
               <Icon name={d.icon} size={14} color={on ? C.lime : quiet ? C.faint : d.iconInk ?? ink} strokeWidth={2.2} />
             ) : null}
             {d?.iconOnly && d.icon ? null : (
-              <Text style={[{ fontSize: 13, color: ink }, weight(700)]}>{c.label}</Text>
+              <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: ink }, weight(700)]}>{c.label}</Text>
             )}
             {n != null ? (
-              <Text style={[{ fontSize: 13, color: on ? C.lime : ink }, weight(700)]}>{grouped(n)}</Text>
+              <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: on ? C.lime : ink }, weight(700)]}>{grouped(n)}</Text>
             ) : null}
           </Pressable>
         );
@@ -261,9 +261,9 @@ export function Segmented<K extends string>({
               backgroundColor: on ? C.surface : 'transparent',
               boxShadow: on ? shadow.soft : undefined,
             }}>
-            <Text style={[{ fontSize: 14, color: on ? C.ink : C.muted }, weight(on ? 600 : 500)]}>{seg.label}</Text>
+            <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: on ? C.ink : C.muted }, weight(on ? 600 : 500)]}>{seg.label}</Text>
             {seg.badge != null ? (
-              <Text style={[{ fontSize: 12, color: on ? C.body : C.muted }, weight(500)]}>{grouped(seg.badge)}</Text>
+              <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: on ? C.body : C.muted }, weight(500)]}>{grouped(seg.badge)}</Text>
             ) : null}
           </Pressable>
         );
@@ -305,7 +305,7 @@ export function PageFooter({
   if (failed) {
     return (
       <Pressable onPress={onRetry} accessibilityRole="button" style={{ paddingVertical: 20, alignItems: 'center' }}>
-        <Text style={[{ fontSize: 14, color: C.ink }, weight(500)]}>Could not load more. Tap to try again.</Text>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>Could not load more. Tap to try again.</Text>
       </Pressable>
     );
   }
@@ -351,7 +351,7 @@ export function SheetAction({
         <Icon name={icon} size={18} color={C.primaryDeep} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{label}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>{label}</Text>
         {sub ? <Text style={type.caption}>{sub}</Text> : null}
       </View>
     </Pressable>

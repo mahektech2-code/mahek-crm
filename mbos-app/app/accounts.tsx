@@ -158,7 +158,8 @@ export default function AccountsScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 10,
-          height: 48,
+          minHeight: 48,
+          paddingVertical: 4,
           paddingHorizontal: 16,
           borderRadius: 24,
           backgroundColor: C.surface,
@@ -222,7 +223,7 @@ export default function AccountsScreen() {
               accessibilityRole="button"
               accessibilityState={{ selected: sort === s.key }}
               hitSlop={8}
-              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: sort === s.key ? C.navy : C.surface }}>
+              style={{ minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: sort === s.key ? C.navy : C.surface }}>
               <T style={[{ fontSize: 12, color: sort === s.key ? '#FFFFFF' : C.ink }, weight(700)]}>
                 {s.label}
               </T>
@@ -259,7 +260,7 @@ export default function AccountsScreen() {
         <Pressable
           onPress={more}
           accessibilityRole="button"
-          style={({ pressed }) => ({ marginTop: 12, height: 52, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          style={({ pressed }) => ({ marginTop: 12, minHeight: 52, paddingVertical: 8, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
           <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
             {loadingMore ? 'Loading…' : `Show more · ${total - (rows?.length ?? 0)} left`}
           </T>
@@ -369,7 +370,8 @@ function Stat({
       accessibilityLabel={label + ', ' + value}
       style={({ pressed }) => ({
         flex: 1,
-        height: 64,
+        minHeight: 64,
+        paddingVertical: 8,
         borderRadius: 18,
         paddingHorizontal: 12,
         justifyContent: 'center',

@@ -195,7 +195,7 @@ export default function PerformanceScreen() {
       )}
 
       {months === null || waiting ? (
-        <View style={{ marginTop: 14, height: 44, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ marginTop: 14, minHeight: 44, paddingVertical: 6, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
           <T style={{ fontSize: 13, color: C.muted }}>Loading…</T>
         </View>
       ) : failed ? (
@@ -205,7 +205,7 @@ export default function PerformanceScreen() {
           style={[note, { backgroundColor: C.dangerBg, alignItems: 'flex-start' }]}>
           <Glyph shapes={NO_CLOUD} size={20} color={C.danger} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 14, color: C.danger }, weight(700)]}>The office could not be reached for this period</Text>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(700)]}>The office could not be reached for this period</Text>
             <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
               {failed}. This and last month open offline — any other period needs a connection.
             </T>
@@ -218,7 +218,7 @@ export default function PerformanceScreen() {
           style={[note, { alignItems: 'flex-start' }]}>
           <Glyph shapes={CLOCK} size={20} color={C.muted} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Nothing to show yet</Text>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Nothing to show yet</Text>
             <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
               The office sets your target; it reaches this phone after that. No percentage until then.
             </T>
@@ -275,7 +275,7 @@ export default function PerformanceScreen() {
                   <Glyph shapes={NO_TARGET} size={18} color={C.muted} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>
+                  <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>
                     No target set {monthKey ? 'this month' : 'in this period'}
                   </Text>
                   <T style={{ fontSize: 12, color: C.muted }}>What you did is below. No score without a target.</T>
@@ -346,7 +346,7 @@ export default function PerformanceScreen() {
               accessibilityLabel={`${inrFromPaise(shops.summary.waitingPaise)} more is waiting for the office to accept. It is not in the revenue above yet.`}
               style={{ marginTop: 8, minHeight: 36, borderRadius: 18, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8 }}>
               <Glyph shapes={CLOCK} size={16} color={C.warnInk} />
-              <Text style={[{ flex: 1, fontSize: 13, color: C.warnInk }, weight(600)]}>
+              <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.warnInk }, weight(600)]}>
                 {inrFromPaise(shops.summary.waitingPaise)} waiting for the office · not in revenue yet
               </Text>
             </View>
@@ -422,9 +422,9 @@ export default function PerformanceScreen() {
           {current.categories.length ? (
             <View style={[card, { marginTop: 10 }]}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-                <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Product mix</Text>
+                <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Product mix</Text>
                 {current.revenueActualPaise === 0 ? null : (
-                  <Text style={{ fontSize: 12, color: C.muted }}>share of sales, by value · | = target</Text>
+                  <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>share of sales, by value · | = target</Text>
                 )}
               </View>
               {current.revenueActualPaise === 0 ? (
@@ -459,8 +459,8 @@ export default function PerformanceScreen() {
                   accessibilityLabel={`${c.name}: ${(c.actualBp / 100).toFixed(1)}% of ${(c.targetBp / 100).toFixed(0)}%${c.actualMl ? ', ' + litres(c.actualMl) : ''}`}
                   style={{ marginTop: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                    <Text style={[{ flexShrink: 1, fontSize: 14, color: C.ink }, weight(600)]}>{c.name}</Text>
-                    <Text style={[{ fontSize: 12, color: C.muted }, tabular]}>
+                    <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>{c.name}</Text>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, tabular]}>
                       {(c.actualBp / 100).toFixed(1) + '% / ' + (c.targetBp / 100).toFixed(0) + '%'}
                       {c.actualMl ? ' · ' + litres(c.actualMl) : ''}
                     </Text>
@@ -517,7 +517,7 @@ export default function PerformanceScreen() {
 
           {shortfalls(current).length || shops?.summary.openPaise ? (
             <View style={[card, { marginTop: 10 }]}>
-              <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Still to reach</Text>
+              <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Still to reach</Text>
               {shortfalls(current).map((line) => (
                 <View key={line} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
                   <Glyph shapes={shortfallGlyph(line)} size={18} color={C.muted} />
@@ -659,7 +659,8 @@ function PeriodChip({
       accessibilityLabel={a11y ?? label}
       hitSlop={{ top: 6, bottom: 6 }}
       style={({ pressed }) => ({
-        height: 36,
+        minHeight: 36,
+        paddingVertical: 6,
         minWidth: 36,
         paddingHorizontal: label ? (glyph ? 12 : 14) : 0,
         borderRadius: 18,
@@ -671,7 +672,7 @@ function PeriodChip({
         opacity: pressed ? 0.85 : 1,
       })}>
       {glyph ? <Glyph shapes={label ? CAL_SMALL : glyph} size={label ? 14 : 16} color={fg} /> : null}
-      {label ? <Text style={[{ fontSize: 13, color: fg }, weight(selected ? 700 : 600)]}>{label}</Text> : null}
+      {label ? <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: fg }, weight(selected ? 700 : 600)]}>{label}</Text> : null}
     </Pressable>
   );
 }
@@ -681,12 +682,12 @@ function RangeLine({ period, current }: { period: Period; current: PerformanceMo
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       <Glyph shapes={CAL_SMALL} size={12} color={C.onNavyMuted} />
-      <Text style={{ fontSize: 12, color: C.onNavyMuted }}>{rangeWords(period)}</Text>
+      <Text style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.onNavyMuted }}>{rangeWords(period)}</Text>
       <View style={{ flex: 1 }} />
       {current.computedAt ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Glyph shapes={SYNCED} size={12} color={C.onNavyMuted} />
-          <Text style={{ fontSize: 12, color: C.onNavyMuted }}>
+          <Text style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.onNavyMuted }}>
             {(current.source === 'live' ? 'worked out ' : 'synced ') + asAt(current.computedAt)}
           </Text>
         </View>
@@ -701,7 +702,8 @@ function NavyTag({ text, glyph }: { text: string; glyph?: GlyphShape[] }) {
     <View
       style={{
         marginTop: 6,
-        height: 28,
+        minHeight: 28,
+        paddingVertical: 4,
         paddingHorizontal: 10,
         borderRadius: 14,
         backgroundColor: 'rgba(255,255,255,0.08)',
@@ -710,7 +712,7 @@ function NavyTag({ text, glyph }: { text: string; glyph?: GlyphShape[] }) {
         gap: 6,
       }}>
       {glyph ? <Glyph shapes={glyph} size={12} color={C.border} /> : null}
-      <Text numberOfLines={1} style={[{ fontSize: 12, color: C.border }, weight(700)]}>{text}</Text>
+      <Text numberOfLines={1} style={[{ flexShrink: 1, fontSize: 12, color: C.border }, weight(700)]}>{text}</Text>
     </View>
   );
 }
@@ -794,7 +796,8 @@ function RangeSheet({
         onPress={() => setEnd(which)}
         style={{
           flex: 1,
-          height: 56,
+          minHeight: 56,
+          paddingVertical: 6,
           justifyContent: 'center',
           paddingHorizontal: 14,
           borderRadius: 18,
@@ -803,7 +806,7 @@ function RangeSheet({
           backgroundColor: on ? C.primaryTint : C.surface,
         }}>
         <Text style={[{ fontSize: 11, color: on ? C.primaryDeep : C.muted }, weight(700)]}>{which === 'from' ? 'From' : 'To'}</Text>
-        <Text style={[{ fontSize: 15, color: value ? C.ink : C.muted }, weight(value ? 700 : 600)]}>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: value ? C.ink : C.muted }, weight(value ? 700 : 600)]}>
           {value ? dmy(value) : 'Pick a date'}
         </Text>
       </Pressable>
@@ -940,22 +943,23 @@ function Figure({
       ) : (
         <Text style={valueStyle}>{value}</Text>
       )}
-      <Text style={{ fontSize: 12, color: target ? C.muted : C.faint }}>
+      <Text style={{ fontSize: 12, lineHeight: 17, color: target ? C.muted : C.faint }}>
         {target ? (bare ? target : `of ${target}`) : 'no target'}
       </Text>
-      {base ? <Text style={{ fontSize: 12, color: C.muted }}>{base}</Text> : null}
+      {base ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{base}</Text> : null}
       {bp === null ? null : (
         <View
           style={{
             marginTop: 8,
             alignSelf: 'flex-start',
-            height: 26,
+            minHeight: 26,
+            paddingVertical: 3,
             paddingHorizontal: 9,
             borderRadius: 13,
             backgroundColor: met ? C.successBg : C.warnBg,
             justifyContent: 'center',
           }}>
-          <Text style={[{ fontSize: 12, color: met ? C.success : C.warnInk }, weight(800), tabular]}>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: met ? C.success : C.warnInk }, weight(800), tabular]}>
             {(bp / 100).toFixed(0)}%
           </Text>
         </View>

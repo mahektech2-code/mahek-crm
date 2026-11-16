@@ -89,7 +89,7 @@ export function AuthLostBanner() {
               });
           }}
           style={{ marginTop: 8, minHeight: 40, justifyContent: 'center' }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: C.danger }}>Sign in again</Text>
+          <Text style={{ fontSize: 15, lineHeight: 21, fontWeight: '600', color: C.danger }}>Sign in again</Text>
         </Pressable>
       ) : null}
     </View>

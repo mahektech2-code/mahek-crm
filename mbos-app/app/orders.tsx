@@ -210,9 +210,9 @@ export default function OrdersScreen() {
                       </T>
                       {o.syncState === 'queued' ? (
                         <>
-                          <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>·</T>
+                          <T style={{ flexShrink: 1, fontSize: 12, lineHeight: 16, color: C.muted }}>·</T>
                           <Icon name="upload" size={13} color={C.warnInk} strokeWidth={2.2} />
-                          <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>not sent yet</T>
+                          <T style={{ flexShrink: 1, fontSize: 12, lineHeight: 16, color: C.muted }}>not sent yet</T>
                         </>
                       ) : null}
                     </View>
@@ -317,7 +317,8 @@ function RowAction({ label, icon, danger = false, onPress }: { label: string; ic
       accessibilityLabel={label}
       style={({ pressed }) => ({
         marginTop: 2,
-        height: 44,
+        minHeight: 44,
+        paddingVertical: 6,
         borderRadius: 22,
         backgroundColor: danger ? C.dangerBg : C.primaryTint,
         flexDirection: 'row',
@@ -327,7 +328,7 @@ function RowAction({ label, icon, danger = false, onPress }: { label: string; ic
         opacity: pressed ? 0.85 : 1,
       })}>
       {icon ? <Icon name={icon} size={16} color={danger ? C.danger : C.primaryDeep} strokeWidth={2} /> : null}
-      <Text style={[{ fontSize: 14, color: danger ? C.danger : C.primaryDeep }, weight(700)]}>{label}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: danger ? C.danger : C.primaryDeep }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }

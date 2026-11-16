@@ -330,12 +330,12 @@ export default function SyncScreen() {
                   <Text style={[{ fontSize: 40, lineHeight: 42, letterSpacing: -0.8, color: '#FFFFFF' }, weight(800)]}>
                     {waiting}
                   </Text>
-                  <Text style={{ fontSize: 13, color: C.onNavyMuted }}>
+                  <Text style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
                     {waiting === 1 ? 'thing waiting to send' : 'things waiting to send'}
                   </Text>
                 </View>
               ) : (
-                <Text style={[{ fontSize: 22, letterSpacing: -0.44, color: '#FFFFFF' }, weight(800)]}>
+                <Text style={[{ flexShrink: 1, fontSize: 22, lineHeight: 31, letterSpacing: -0.44, color: '#FFFFFF' }, weight(800)]}>
                   All sent to the office
                 </Text>
               )}
@@ -355,7 +355,8 @@ export default function SyncScreen() {
           accessibilityState={{ disabled: sending, busy: sending }}
           style={({ pressed }) => ({
             marginTop: 14,
-            height: 56,
+            minHeight: 56,
+            paddingVertical: 8,
             borderRadius: 28,
             backgroundColor: waiting ? C.lime : 'rgba(255,255,255,0.12)',
             flexDirection: 'row',
@@ -365,7 +366,7 @@ export default function SyncScreen() {
             opacity: sending ? 0.55 : pressed ? 0.88 : 1,
           })}>
           {waiting ? <Glyph shapes={PLANE} size={18} color={C.navy} strokeWidth={2.4} /> : null}
-          <Text style={[{ fontSize: 16, color: waiting ? C.navy : '#FFFFFF' }, weight(waiting ? 800 : 700)]}>
+          <Text style={[{ flexShrink: 1, fontSize: 16, lineHeight: 22, color: waiting ? C.navy : '#FFFFFF' }, weight(waiting ? 800 : 700)]}>
             {sending ? 'Sending…' : 'Send now'}
           </Text>
         </Pressable>
@@ -380,7 +381,8 @@ export default function SyncScreen() {
           style={{
             marginTop: 10,
             alignSelf: 'flex-start',
-            height: 32,
+            minHeight: 32,
+            paddingVertical: 4,
             paddingHorizontal: 12,
             borderRadius: 16,
             backgroundColor: C.surface,
@@ -391,7 +393,7 @@ export default function SyncScreen() {
           <Glyph shapes={CAMERA} size={14} color={C.body} />
           {/* The plural form is given rather than derived: appending an `s` to
               the whole phrase reads "2 photo or recordings". */}
-          <Text style={[{ fontSize: 12, color: C.body }, weight(600)]}>
+          <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.body }, weight(600)]}>
             {media.pending + ' sending · entries go first'}
           </Text>
         </View>
@@ -426,7 +428,7 @@ export default function SyncScreen() {
               ' did not send. They are still on this phone.'
             }
             style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.danger }, weight(800)]}>{'Could not be sent · ' + media.failed}</Text>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.danger }, weight(800)]}>{'Could not be sent · ' + media.failed}</Text>
             <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger }}>
               {(media.failed === 1 ? 'Photo or recording' : 'Photos and recordings') + ' — still on this phone.'}
             </Text>
@@ -473,7 +475,7 @@ export default function SyncScreen() {
         <>
           <View
             style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 14, paddingHorizontal: 4 }}>
-            <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.ink }, weight(800)]}>
+            <Text accessibilityRole="header" style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(800)]}>
               Most urgent first
             </Text>
             {depth > rows.length ? (
@@ -483,7 +485,7 @@ export default function SyncScreen() {
                  to disagree with itself three ways in the first place. */
               <Text
                 accessibilityLabel={`Showing the ${rows.length} most urgent of ${plural(depth, 'entry', 'entries')} waiting.`}
-                style={[{ fontSize: 13, color: C.faint }, weight(600)]}>
+                style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.faint }, weight(600)]}>
                 {`${rows.length} of ${plural(depth, 'entry', 'entries')}`}
               </Text>
             ) : null}
@@ -538,7 +540,8 @@ export default function SyncScreen() {
                   </View>
                   <View
                     style={{
-                      height: 26,
+                      minHeight: 26,
+                      paddingVertical: 3,
                       paddingHorizontal: 9,
                       borderRadius: 13,
                       justifyContent: 'center',
@@ -606,7 +609,7 @@ export default function SyncScreen() {
             <Icon name="download" size={20} color="#FFFFFF" strokeWidth={2.2} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(800)]}>{'Update to ' + update.version}</Text>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(800)]}>{'Update to ' + update.version}</Text>
             <Text style={{ fontSize: 12, lineHeight: 16, color: C.body }}>
               Tap to update. Nothing is lost; you stay signed in.
             </Text>
@@ -649,7 +652,7 @@ export default function SyncScreen() {
           <Glyph shapes={TARGET} size={20} color={notice.tone === 'danger' ? C.danger : C.muted} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[{ fontSize: 15, color: notice.tone === 'danger' ? C.danger : C.ink }, weight(800)]}>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: notice.tone === 'danger' ? C.danger : C.ink }, weight(800)]}>
             {notice.title}
           </Text>
           <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{notice.detail}</Text>
@@ -675,9 +678,9 @@ export default function SyncScreen() {
             borderRadius: 22,
             opacity: pressed ? 0.85 : 1,
           })}>
-          <Text style={[{ fontSize: 24, color: C.danger, minWidth: 30, textAlign: 'center' }, weight(800)]}>{rejected}</Text>
+          <Text style={[{ fontSize: 24, lineHeight: 30, color: C.danger, minWidth: 30, textAlign: 'center' }, weight(800)]}>{rejected}</Text>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.danger }, weight(800)]}>Not accepted</Text>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.danger }, weight(800)]}>Not accepted</Text>
             <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger }}>by the office. Nothing is lost.</Text>
           </View>
           <Icon name="forward" size={18} color={C.danger} strokeWidth={2} />
@@ -702,7 +705,7 @@ export default function SyncScreen() {
           }}>
           <Glyph shapes={CLOUD_ALERT} size={22} color={C.warnInk} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.warnInk }, weight(800)]}>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.warnInk }, weight(800)]}>
               {plural(problems.count, 'update', 'updates') + ' from the office could not be saved'}
             </Text>
             <Text style={{ fontSize: 12, lineHeight: 17, color: C.ink }}>
@@ -716,7 +719,7 @@ export default function SyncScreen() {
           exactly the hour that was lost to an APK that had been built and
           never published. `embedded` means it is running the bundle that came
           with the install; anything else is an update it has picked up. */}
-      <Text style={{ fontSize: 12, color: C.faint, textAlign: 'center', marginTop: 16 }}>
+      <Text style={{ fontSize: 12, lineHeight: 17, color: C.faint, textAlign: 'center', marginTop: 16 }}>
         {(() => {
           const b = runningBuild();
           return b.embedded

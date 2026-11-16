@@ -272,7 +272,7 @@ export default function LeadActionsScreen() {
 
         {!leads ? (
           <View style={{ marginTop: 12, paddingVertical: 28, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center' }}>
-            <Text style={[{ fontSize: 13, color: C.muted, textAlign: 'center' }, weight(400)]}>Loading…</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }, weight(400)]}>Loading…</Text>
           </View>
         ) : emptiness ? (
           <View style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 26, borderRadius: 22, backgroundColor: C.surface }}>

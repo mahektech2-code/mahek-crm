@@ -237,7 +237,7 @@ export default function LeaveScreen() {
       {takenByKind.size ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {[...takenByKind].map(([kind, d]) => (
-            <HeroPill key={kind} style={{ height: 28 }}>
+            <HeroPill key={kind} style={{ minHeight: 28 }}>
               {kind + ' · ' + lengthOf(d)}
             </HeroPill>
           ))}
@@ -382,7 +382,7 @@ export default function LeaveScreen() {
                 accessibilityLabel={'Type: ' + k}
                 hitSlop={{ top: 6, bottom: 6 }}
                 onPress={() => patch({ type: k })}
-                style={{ height: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: on ? C.navy : C.canvas, justifyContent: 'center' }}>
+                style={{ minHeight: 36, paddingVertical: 6, paddingHorizontal: 14, borderRadius: 18, backgroundColor: on ? C.navy : C.canvas, justifyContent: 'center' }}>
                 <T style={[{ fontSize: 13, color: on ? C.onNavy : C.ink }, weight(700)]}>{k}</T>
               </Pressable>
             );
@@ -395,7 +395,7 @@ export default function LeaveScreen() {
         <View
           accessibilityRole="radiogroup"
           accessibilityLabel="How long"
-          style={{ flexDirection: 'row', height: 48, borderRadius: 24, backgroundColor: C.canvas, padding: 4, marginTop: 14 }}>
+          style={{ flexDirection: 'row', minHeight: 48, borderRadius: 24, backgroundColor: C.canvas, padding: 4, marginTop: 14 }}>
           {SPANS.map(([k, label]) => {
             const on = lv.span === k;
             return (
@@ -460,7 +460,7 @@ export default function LeaveScreen() {
             <T style={{ fontSize: 11, lineHeight: 14, color: C.muted }}>{lv.span === 'many' ? 'From' : 'Date'}</T>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               {lv.from ? <Glyph shapes={GLYPH.cal} size={14} color={C.primaryDeep} /> : null}
-              <T style={[{ fontSize: 16, color: lv.from ? C.ink : C.faint }, weight(lv.from ? 800 : 700)]}>{lv.from ? dmy(lv.from) : 'Pick a date'}</T>
+              <T style={[{ flexShrink: 1, fontSize: 16, color: lv.from ? C.ink : C.faint }, weight(lv.from ? 800 : 700)]}>{lv.from ? dmy(lv.from) : 'Pick a date'}</T>
             </View>
           </Pressable>
           {lv.span === 'many' ? (
@@ -472,7 +472,7 @@ export default function LeaveScreen() {
               <T style={{ fontSize: 11, lineHeight: 14, color: C.muted }}>To</T>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {lv.to ? <Glyph shapes={GLYPH.cal} size={14} color={C.primaryDeep} /> : null}
-                <T style={[{ fontSize: 16, color: lv.to ? C.ink : C.faint }, weight(lv.to ? 800 : 700)]}>{lv.to ? dmy(lv.to) : 'Pick a date'}</T>
+                <T style={[{ flexShrink: 1, fontSize: 16, color: lv.to ? C.ink : C.faint }, weight(lv.to ? 800 : 700)]}>{lv.to ? dmy(lv.to) : 'Pick a date'}</T>
               </View>
             </Pressable>
           ) : null}
@@ -551,7 +551,7 @@ export default function LeaveScreen() {
               else patch({ from: iso, to: lv.to && iso > lv.to ? iso : lv.to });
               setPick(null);
             }}
-            style={{ height: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: C.primaryTint, justifyContent: 'center' }}>
+            style={{ minHeight: 36, paddingVertical: 6, paddingHorizontal: 14, borderRadius: 18, backgroundColor: C.primaryTint, justifyContent: 'center' }}>
             <T style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Today</T>
           </Pressable>
         </View>
@@ -653,7 +653,7 @@ function RequestCard({ l, onWithdraw }: { l: LeaveRequest; onWithdraw?: () => vo
               accessibilityRole="button"
               accessibilityLabel="Withdraw this request"
               onPress={onWithdraw}
-              style={({ pressed }) => ({ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.dangerBg, justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
+              style={({ pressed }) => ({ minHeight: 44, paddingVertical: 6, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.dangerBg, justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
               <T style={[{ fontSize: 13, color: C.danger }, weight(700)]}>Withdraw</T>
             </Pressable>
           ) : null}

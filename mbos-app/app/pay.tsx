@@ -546,7 +546,7 @@ export default function PayScreen() {
           <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: '#FFFFFF' }, weight(800), tabular]}>
             {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
           </T>
-          <T style={{ fontSize: 13, lineHeight: 18, color: '#FCE3A6' }}>
+          <T style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: '#FCE3A6' }}>
             {cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…')}
           </T>
         </View>
@@ -558,7 +558,7 @@ export default function PayScreen() {
           <T style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800), tabular]}>
             {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
           </T>
-          <T style={{ fontSize: 12, lineHeight: 17, color: C.warnInk }}>
+          <T style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.warnInk }}>
             {'Cash on you · ' +
               (cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…'))}
           </T>
@@ -642,7 +642,8 @@ export default function PayScreen() {
               onPress={() => chooseCustomer(null)}
               hitSlop={6}
               style={({ pressed }) => ({
-                height: 36,
+                minHeight: 36,
+                paddingVertical: 6,
                 paddingHorizontal: 12,
                 borderRadius: 18,
                 backgroundColor: C.primaryTint,
@@ -650,13 +651,13 @@ export default function PayScreen() {
                 justifyContent: 'center',
                 opacity: pressed ? 0.85 : 1,
               })}>
-              <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>Change</T>
+              <T style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(700)]}>Change</T>
             </Pressable>
           )}
         </View>
       ) : (
         <View>
-          <View style={{ height: 48, borderRadius: 24, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }}>
+          <View style={{ minHeight: 48, borderRadius: 24, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }}>
             <Icon name="search" size={18} color={C.muted} strokeWidth={2} />
             <TextInput
               value={typed}
@@ -664,7 +665,7 @@ export default function PayScreen() {
               placeholder="Name, phone or city"
               placeholderTextColor={C.faint}
               accessibilityLabel="Search name, phone or city"
-              style={[{ flex: 1, height: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
+              style={[{ flex: 1, minHeight: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
             />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 8, marginHorizontal: 6 }}>
@@ -700,7 +701,7 @@ export default function PayScreen() {
                     </T>
                   </View>
                   {r.outstandingPaise > 0 ? (
-                    <T style={[{ fontSize: 16, color: C.danger }, weight(800), tabular]}>{inrFromPaise(r.outstandingPaise)}</T>
+                    <T style={[{ fontSize: 16, lineHeight: 22, color: C.danger }, weight(800), tabular]}>{inrFromPaise(r.outstandingPaise)}</T>
                   ) : (
                     <T style={[{ fontSize: 14, color: C.faint }, weight(700)]}>Nil</T>
                   )}
@@ -726,7 +727,7 @@ export default function PayScreen() {
             right={openBills.length > 0 ? plural(openBills.length, 'unpaid bill') + ' · newest first' : undefined}
           />
           {bills === null ? (
-            <T style={{ fontSize: 14, color: C.muted, paddingHorizontal: 6 }}>Reading their bills…</T>
+            <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, paddingHorizontal: 6 }}>Reading their bills…</T>
           ) : openBills.length === 0 ? (
             <T style={{ fontSize: 14, lineHeight: 20, color: C.body, paddingHorizontal: 6 }}>
               No unpaid bills for {current.name} on this phone. What you take goes on their account.
@@ -806,7 +807,7 @@ export default function PayScreen() {
                       No payment info yet
                     </T>
                   ) : (
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(800), tabular]}>{inrFromPaise(b.balancePaise ?? 0)}</T>
+                    <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800), tabular]}>{inrFromPaise(b.balancePaise ?? 0)}</T>
                   )}
                 </Pressable>
               );
@@ -819,8 +820,8 @@ export default function PayScreen() {
                   animateLayoutFor(newestFirst.length);
                   setAllBills(true);
                 }}
-                style={{ height: 44, alignItems: 'center', justifyContent: 'center' }}>
-                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                style={{ minHeight: 44, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' }}>
+                <T style={[{ fontSize: 14, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>
                   {'Show the other ' + (newestFirst.length - BILLS_SHOWN)}
                 </T>
               </Pressable>
@@ -906,7 +907,8 @@ export default function PayScreen() {
                       accessibilityState={{ selected: on }}
                       style={{
                         flex: 1,
-                        height: 76,
+                        minHeight: 76,
+                        paddingVertical: 8,
                         borderRadius: 20,
                         borderWidth: on ? 2 : 0,
                         borderColor: C.primary,
@@ -941,7 +943,7 @@ export default function PayScreen() {
               keyboardType="decimal-pad"
               accessibilityLabel="Amount"
               style={[
-                { marginTop: 6, height: 56, borderRadius: 16, backgroundColor: C.canvas, paddingHorizontal: 14, fontSize: 24, color: C.ink },
+                { marginTop: 6, minHeight: 56, paddingVertical: 6, borderRadius: 16, backgroundColor: C.canvas, paddingHorizontal: 14, fontSize: 24, color: C.ink },
                 weight(800),
                 tabular,
               ]}
@@ -967,7 +969,7 @@ export default function PayScreen() {
             {isTransfer ? (
               <View style={{ marginTop: 14 }}>
                 <FieldTitle>
-                  UTR <T style={[{ fontSize: 12, color: C.faint }, weight(500)]}>· if they have it</T>
+                  UTR <T style={[{ fontSize: 12, lineHeight: 17, color: C.faint }, weight(500)]}>· if they have it</T>
                 </FieldTitle>
                 <TextInput
                   value={utr}
@@ -1075,7 +1077,7 @@ function chunk<X>(xs: X[], n: number): X[][] {
 
 const boxInput = {
   marginTop: 6,
-  height: 48,
+  minHeight: 48,
   borderRadius: 16,
   backgroundColor: C.canvas,
   paddingHorizontal: 14,
@@ -1128,7 +1130,8 @@ function DashedPill({
       accessibilityLabel={a11y}
       style={({ pressed }) => ({
         flex: 1,
-        height: 52,
+        minHeight: 52,
+        paddingVertical: 8,
         borderRadius: 26,
         borderWidth: 1.5,
         borderStyle: done ? 'solid' : 'dashed',
@@ -1176,7 +1179,8 @@ function CollectButton({
       accessibilityState={{ disabled, busy }}
       accessibilityHint={disabled ? whyDisabled : undefined}
       style={({ pressed }) => ({
-        height: 60,
+        minHeight: 60,
+        paddingVertical: 10,
         borderRadius: 30,
         backgroundColor: disabled ? 'rgba(15,27,51,0.45)' : C.navy,
         flexDirection: 'row',
@@ -1190,8 +1194,8 @@ function CollectButton({
         {busy ? 'Recording it…' : 'Collect' + (amount ? ' ' + amount : '')}
       </T>
       {busy ? null : (
-        <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
-          <T style={[{ fontSize: 13, color: C.navy }, weight(700)]}>Receipt</T>
+        <View style={{ minHeight: 28, paddingVertical: 3, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }}>
+          <T style={[{ fontSize: 13, lineHeight: 18, color: C.navy }, weight(700)]}>Receipt</T>
         </View>
       )}
     </Pressable>

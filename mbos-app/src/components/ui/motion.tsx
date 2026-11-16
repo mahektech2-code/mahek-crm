@@ -885,7 +885,7 @@ export function SwipeRow({
             justifyContent: side === 'right' ? 'flex-end' : 'flex-start',
             paddingHorizontal: 20,
           }}>
-          <Text style={[{ color: '#FFFFFF', fontSize: 14 }, weight(600)]}>{shown.label}</Text>
+          <Text style={[{ flexShrink: 1, color: '#FFFFFF', fontSize: 14, lineHeight: 20 }, weight(600)]}>{shown.label}</Text>
         </View>
       ) : null}
       <Animated.View style={{ transform: [{ translateX: x }] }} {...pan.panHandlers}>

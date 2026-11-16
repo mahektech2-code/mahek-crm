@@ -150,11 +150,11 @@ export default function CatalogueScreen() {
           <SkuChip sku={x.sku} style={{ borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 4 }} />
           <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{lines.lead}</T>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-            {lines.detail ? <T style={{ fontSize: 12, color: C.muted }}>{lines.detail + (x.cansPerBox ? ' ·' : '')}</T> : null}
+            {lines.detail ? <T style={{ flexShrink: 1, fontSize: 12, color: C.muted }}>{lines.detail + (x.cansPerBox ? ' ·' : '')}</T> : null}
             {x.cansPerBox ? (
               <>
                 <BoxGlyph />
-                <T style={{ fontSize: 12, color: C.muted }}>{String(x.cansPerBox)}</T>
+                <T style={{ flexShrink: 1, fontSize: 12, color: C.muted }}>{String(x.cansPerBox)}</T>
               </>
             ) : null}
           </View>
@@ -210,7 +210,7 @@ export default function CatalogueScreen() {
             {loaded && !failed ? (
               <Text
                 accessibilityLabel={more ? 'Showing the first ' + CAP + '. Search to find the rest.' : undefined}
-                style={[{ fontSize: 13, color: h.muted }, weight(700)]}>
+                style={[{ fontSize: 13, lineHeight: 18, color: h.muted }, weight(700)]}>
                 {more ? 'First ' + CAP + ' · search for the rest' : plural(rows.length, 'product')}
               </Text>
             ) : null}

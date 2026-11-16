@@ -199,7 +199,8 @@ export default function NotificationsScreen() {
             accessibilityLabel="Mark all read"
             hitSlop={{ top: 4, bottom: 4 }}
             style={({ pressed }) => ({
-              height: 40,
+              minHeight: 40,
+              paddingVertical: 6,
               paddingHorizontal: 14,
               borderRadius: 20,
               backgroundColor: C.navy,
@@ -209,7 +210,7 @@ export default function NotificationsScreen() {
               opacity: pressed ? 0.85 : 1,
             })}>
             <Glyph shapes={[{ p: 'M3 12l5 5 9-10M12 17l1 1 9-10' }]} size={16} color={C.lime} strokeWidth={2.4} />
-            <Text style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>All read</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: '#FFFFFF' }, weight(700)]}>All read</Text>
           </Pressable>
         ) : null
       }
@@ -234,7 +235,7 @@ export default function NotificationsScreen() {
           <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: C.lavender, alignItems: 'center', justifyContent: 'center' }}>
             <Icon name="bell" size={28} color={C.primary} strokeWidth={2} />
           </View>
-          <Text style={[{ fontSize: 18, color: C.ink, marginTop: 12 }, weight(800)]}>Nothing yet</Text>
+          <Text style={[{ fontSize: 18, lineHeight: 25, color: C.ink, marginTop: 12 }, weight(800)]}>Nothing yet</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 12 }}>
             <Pill text="Order not accepted" bg={C.dangerBg} fg={C.danger} />
             <Pill text="Day to agree" bg={C.warnBg} fg={C.warnInk} />
@@ -251,7 +252,7 @@ export default function NotificationsScreen() {
           style={{ marginTop: 20, backgroundColor: C.dangerBg, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', gap: 10 }}>
           <Icon name="warn" size={20} color={C.danger} strokeWidth={2} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 14, color: C.danger }, weight(700)]}>Could not read your notifications</Text>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(700)]}>Could not read your notifications</Text>
             <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Nothing is lost — still on this phone. Go back and open again.</T>
           </View>
         </View>
@@ -264,7 +265,7 @@ export default function NotificationsScreen() {
         const settled = g !== 'Today';
         return (
           <View key={g} style={{ marginTop: 18 }}>
-            <Text accessibilityRole="header" style={[{ fontSize: 15, color: settled ? C.muted : C.ink, paddingHorizontal: 6 }, weight(700)]}>
+            <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: settled ? C.muted : C.ink, paddingHorizontal: 6 }, weight(700)]}>
               {g}
             </Text>
             <View style={{ marginTop: 8, backgroundColor: settled ? '#F6F8FB' : C.surface, borderRadius: 20, paddingHorizontal: 14, overflow: 'hidden' }}>
@@ -301,10 +302,10 @@ export default function NotificationsScreen() {
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: isUnread ? C.ink : C.body }, weight(isUnread ? 800 : 600)]}>
+                          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: isUnread ? C.ink : C.body }, weight(isUnread ? 800 : 600)]}>
                             {n.title}
                           </Text>
-                          <Text style={[{ fontSize: 12, color: C.faint }, tabular]}>{stamp(n.createdAt, g)}</Text>
+                          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.faint }, tabular]}>{stamp(n.createdAt, g)}</Text>
                         </View>
                         <T style={{ fontSize: 13, color: isUnread ? C.body : C.muted, marginTop: 2 }}>{n.body}</T>
                         {cta ? (

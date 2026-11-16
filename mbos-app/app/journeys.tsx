@@ -288,7 +288,7 @@ function AreasCard({
             }
             style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Icon name="tick" size={12} color={C.success} strokeWidth={2.4} />
-            <T style={[{ fontSize: 12, color: C.success }, weight(700)]}>
+            <T style={[{ flexShrink: 1, fontSize: 12, color: C.success }, weight(700)]}>
               {dmy(isoDate(new Date(accepted.clientCreatedAt))) + (accepted.syncState === 'queued' ? ' · unsent' : '')}
             </T>
           </View>
@@ -399,7 +399,7 @@ function AskSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 20, color: C.ink }, weight(800)]}>Ask for other cities</T>
+      <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>Ask for other cities</T>
       <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 2 }}>
         Manager decides. Until then: {current.length ? current.join(', ') : 'as you are'}.
       </T>

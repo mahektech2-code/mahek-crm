@@ -93,7 +93,7 @@ export default function TravelScreen() {
       {computation ? (
         <View style={{ flexDirection: 'row', gap: 16, marginTop: 4 }}>
           <T style={[{ fontSize: 14, color: C.onNavy }, weight(700), tabular]}>{km(computation.totalMetres)}</T>
-          <T style={[{ fontSize: 14, color: C.onNavy }, weight(700)]}>
+          <T style={[{ flexShrink: 1, fontSize: 14, color: C.onNavy }, weight(700)]}>
             {computation.legs.length + ' ' + (computation.legs.length === 1 ? 'trip' : 'trips')}
           </T>
         </View>

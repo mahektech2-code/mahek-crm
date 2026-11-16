@@ -48,7 +48,7 @@ export function Chip({
         alignItems: 'center',
         gap: 6,
       }}>
-      <T style={[{ fontSize: 13, color: fg }, weight(700)]}>{label}</T>
+      <T style={[{ flexShrink: 1, fontSize: 13, color: fg }, weight(700)]}>{label}</T>
       {count != null ? (
         <T style={[{ fontSize: 13, color: on ? C.lime : fg }, weight(700), tabular]}>{count}</T>
       ) : null}
@@ -157,7 +157,7 @@ export function Tabs({
               alignItems: 'center',
               gap: 6,
             }}>
-            <T style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{t.label}</T>
+            <T style={[{ flexShrink: 1, fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{t.label}</T>
             {t.count != null ? (
               <T style={[{ fontSize: 13, color: on ? C.lime : C.ink }, weight(700), tabular]}>{t.count}</T>
             ) : null}

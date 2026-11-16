@@ -331,7 +331,7 @@ export default function MapsScreen() {
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 17, lineHeight: 22, color: '#FFFFFF' }, weight(800)]}>Save maps before you need them</Text>
-            <Text style={{ fontSize: 12, color: C.onNavyMuted, marginTop: 2 }}>Works with no signal · save once, on Wi-Fi</Text>
+            <Text style={{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 2 }}>Works with no signal · save once, on Wi-Fi</Text>
           </View>
         </View>
         {blocked ? (
@@ -347,7 +347,7 @@ export default function MapsScreen() {
               backgroundColor: C.warnBg,
             }}>
             <Glyph shapes={G.noWifi} size={18} color={C.warnInk} />
-            <Text style={[{ flex: 1, fontSize: 13, color: C.warnInk }, weight(600)]}>{blocked}</Text>
+            <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.warnInk }, weight(600)]}>{blocked}</Text>
           </View>
         ) : null}
       </View>
@@ -374,13 +374,13 @@ export default function MapsScreen() {
       {listing?.areas.length ? (
         <>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20, paddingHorizontal: 6 }}>
-            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(700)]}>
+            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>
               {plural(listing.areas.length, 'place')} you work
             </Text>
             {listing.unpinned ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Glyph shapes={G.noPin} size={14} color={C.muted} />
-                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>{plural(listing.unpinned, 'shop')} unpinned</Text>
+                <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>{plural(listing.unpinned, 'shop')} unpinned</Text>
               </View>
             ) : null}
           </View>
@@ -433,7 +433,7 @@ export default function MapsScreen() {
 
       {listing?.orphans.length ? (
         <>
-          <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.muted, marginTop: 22, paddingHorizontal: 6 }, weight(700)]}>
+          <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.muted, marginTop: 22, paddingHorizontal: 6 }, weight(700)]}>
             Saved, but you do not work here now
           </Text>
           <View style={{ marginTop: 8, gap: 8 }}>
@@ -450,8 +450,8 @@ export default function MapsScreen() {
                   backgroundColor: '#F6F8FB',
                 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[{ fontSize: 15, color: C.body }, weight(700)]}>{pack.label}</Text>
-                  <Text style={{ fontSize: 12, color: C.muted }}>
+                  <Text style={[{ fontSize: 15, lineHeight: 21, color: C.body }, weight(700)]}>{pack.label}</Text>
+                  <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
                     {[
                       dataSize(pack.status?.completedResourceSize),
                       pack.savedAt ? 'saved ' + pretty(isoDate(new Date(pack.savedAt))) : null,
@@ -612,7 +612,7 @@ function AreaRow({
               changes the text without changing the state, and must not flicker
               on every progress event. */}
           <Swap id={rowState}>
-            <Text accessibilityLabel={line.replace(/≈ /g, 'about ')} style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+            <Text accessibilityLabel={line.replace(/≈ /g, 'about ')} style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 2 }}>
               {line}
             </Text>
           </Swap>
@@ -658,7 +658,7 @@ function AreaRow({
               is left of a stopped one is how far it got, which is a different
               statement. */}
           <FillBar pct={status.percentage} fill={stopped ? C.faint : C.primary} track={C.hairline} height={10} />
-          <Text style={[{ minWidth: 40, textAlign: 'right', fontSize: 13, color: stopped ? C.muted : C.ink }, weight(800), tabular]}>
+          <Text style={[{ minWidth: 40, textAlign: 'right', fontSize: 13, lineHeight: 18, color: stopped ? C.muted : C.ink }, weight(800), tabular]}>
             {pct}%
           </Text>
         </View>
@@ -669,7 +669,7 @@ function AreaRow({
           has already looked away from. A disabled control with no reason is
           the thing this app's own button primitive exists to prevent. */}
       {area.tooBig && !saved ? (
-        <Text style={{ marginTop: 8, fontSize: 12, color: C.warnInk }}>{whyTooBig}</Text>
+        <Text style={{ marginTop: 8, fontSize: 12, lineHeight: 17, color: C.warnInk }}>{whyTooBig}</Text>
       ) : null}
 
       {/* A DOWNLOAD SOMEBODY WANTS TO ABANDON, in either state.
@@ -749,7 +749,7 @@ function StateTag({
     info: { bg: C.primaryTint, fg: C.primaryDeep },
   }[tone];
   return (
-    <View style={{ height: 24, paddingHorizontal: 9, borderRadius: 12, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+    <View style={{ minHeight: 24, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 12, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
       {dot ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.primary }} /> : null}
       {glyph ? <Glyph shapes={glyph} size={12} color={t.fg} strokeWidth={2.4} /> : null}
       <Text style={[{ fontSize: 11, color: t.fg }, weight(800)]}>{text}</Text>
@@ -826,7 +826,7 @@ function Secondary({
   const primary = tone === 'primary';
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
-      <Text style={{ flex: 1, fontSize: 12, color: note === 'warn' ? C.warnInk : C.muted }}>{sentence}</Text>
+      <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: note === 'warn' ? C.warnInk : C.muted }}>{sentence}</Text>
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
@@ -834,7 +834,8 @@ function Secondary({
         /* 36 drawn, 48 to the thumb. */
         hitSlop={{ top: 6, bottom: 6 }}
         style={({ pressed }) => ({
-          height: 36,
+          minHeight: 36,
+          paddingVertical: 6,
           paddingHorizontal: 12,
           borderRadius: 18,
           backgroundColor: primary ? C.primary : C.canvas,
@@ -844,7 +845,7 @@ function Secondary({
           opacity: pressed ? 0.8 : 1,
         })}>
         {glyph ? <Glyph shapes={glyph} size={14} color={primary ? '#FFFFFF' : C.body} /> : null}
-        <Text style={[{ fontSize: 13, color: primary ? '#FFFFFF' : C.body }, weight(700)]}>{label}</Text>
+        <Text style={[{ fontSize: 13, lineHeight: 18, color: primary ? '#FFFFFF' : C.body }, weight(700)]}>{label}</Text>
       </Pressable>
     </View>
   );
@@ -874,7 +875,8 @@ function RowButton({
       accessibilityHint={a11yHint}
       hitSlop={{ top: 2, bottom: 2 }}
       style={({ pressed }) => ({
-        height: 44,
+        minHeight: 44,
+        paddingVertical: 6,
         paddingHorizontal: variant === 'primary' && label === 'Save' ? 16 : 14,
         borderRadius: 22,
         backgroundColor: bg,
@@ -884,7 +886,7 @@ function RowButton({
         opacity: pressed ? 0.85 : 1,
       })}>
       {glyph ? <Glyph shapes={glyph} size={16} color={fg} strokeWidth={2.2} /> : null}
-      <Text style={[{ fontSize: 14, color: fg }, weight(700)]}>{label}</Text>
+      <Text style={[{ fontSize: 14, lineHeight: 20, color: fg }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
