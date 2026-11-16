@@ -137,7 +137,8 @@ export function FreightDesk(p: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-stretch gap-3">
-        <nav aria-label="Stages" className="grid min-w-0 flex-[999_1_640px] grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
+        <nav aria-label="Stages" className="min-w-0 flex-[999_1_640px]">
+          <CardGrid min={200} gap="gap-3">
           <StageCard
             n={1}
             on={p.sub === "enter"}
@@ -149,6 +150,7 @@ export function FreightDesk(p: Props) {
           />
           <StageCard n={2} on={p.sub === "pay"} href={qs(p.base, { ft: "pay" })} label="To pay" big={inr(p.pendingPaise)} sub={plural(p.pendingCount, "bill")} alert={p.staleCount ? `${p.staleCount} to split again` : null} />
           <StageCard n={3} on={p.sub === "paid"} href={qs(p.base, { ft: "paid" })} label="Paid" big={inr(p.paidPaise)} sub={`${plural(p.paidCount, "bill")} paid in ${monthWord}`} alert={null} />
+          </CardGrid>
         </nav>
         <div className="flex flex-[1_1_200px] flex-col justify-end gap-2">
           {p.canWrite ? (
