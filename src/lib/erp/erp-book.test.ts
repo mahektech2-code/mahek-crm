@@ -197,7 +197,7 @@ describe("an ERP order in the book", () => {
     /* 17 cans at ₹299.37 with 18% GST is ₹6,005.36 exactly; the invoice says ₹6,005. */
     const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Round Figure Traders" }, [{ sku: SKU, qty: "17", rate: "299.37" }]);
     assert.ok(r.ok, JSON.stringify(r));
-    const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = 17`);
+    const [o] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, r.orderNo!));
     const b = await book(o.orderNo);
     assert.equal(Number(b.totalAmount), 600500, "the order is worth its round bill");
     assert.equal((b.lineItems as { amount: number }[])[0].amount, 600536, "its line keeps the exact amount");
@@ -445,7 +445,7 @@ describe("the Order Hub's gates after the order number", () => {
     const ctx = await as(admin);
     const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: "17", rate: "300" }], { gates: false });
     assert.ok(r.ok, JSON.stringify(r));
-    const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = 17`);
+    const [o] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, r.orderNo!));
     const b = await book(o.orderNo);
     assert.equal(b.status, "pending_approval");
     assert.match(msg(await mod("orders").actions!.ready(ctx, o.id, {})), /accounts have not approved it yet/);
