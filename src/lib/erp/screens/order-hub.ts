@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { erpOrders } from "@/db/schema";
 import { err, fieldErr, okVoid, type Err, type Result } from "@/lib/result";
 import { money, stamp } from "@/lib/format";
+import { calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "../access";
 import { erpLink } from "../registry";
 import { erpAudit, text, type ScreenModule } from "../server";
@@ -667,7 +668,7 @@ export const toHoldScreen: ScreenModule = {
         const releaseId = r.kind === "to" ? "releaseTo" : r.department === "office" ? "releaseOffice" : "releaseDesk";
         return {
           id: r.kind === "to" ? r.intakeId! : `${r.department}:${r.orderNo}:${r.lineId ?? ""}`,
-          v: { number: r.sub ? `${r.number} · ${r.sub}` : r.number, party: r.party, department: DEPARTMENT_LABEL[r.department], reason: r.reason, note: r.note, by: r.by, at: new Date(r.at).toISOString().slice(0, 10) },
+          v: { number: r.sub ? `${r.number} · ${r.sub}` : r.number, party: r.party, department: DEPARTMENT_LABEL[r.department], reason: r.reason, note: r.note, by: r.by, at: calendarDate(new Date(r.at)) },
           flags: [],
           title: `${r.number} · ${r.party}`,
           header: `${DEPARTMENT_LABEL[r.department]} · ${r.reason}`,
