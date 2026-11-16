@@ -2,11 +2,12 @@ import React from 'react';
 import { View, Text, Pressable, TextInput, FlatList, RefreshControl, ScrollView, Platform, type ListRenderItemInfo } from 'react-native';
 import { isOnline } from '../src/sync/engine';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { color as C, radius, type, weight } from '../src/theme/tokens';
-import { Icon } from '../src/components/ui/Icon';
-import { Badge, Card, HealthPill, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { color as C, type, weight } from '../src/theme/tokens';
+import { Icon, type IconName } from '../src/components/ui/Icon';
+import { Badge, HealthPill } from '../src/components/ui/primitives';
+import { PillButton, SwitchTabs } from '../src/components/ui/v3';
 import { BottomSheet } from '../src/components/ui/overlays';
-import { ChipRow, PageFooter, SearchBox, Segmented, SheetAction, ToolButton } from '../src/components/ui/book-controls';
+import { ChipRow, PageFooter, SearchBox, ToolButton } from '../src/components/ui/book-controls';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { getConfig } from '../src/data/config';
@@ -127,24 +128,25 @@ function sqlSort(mode: SortMode): CustomerSort {
  * The status half of the row's last line — what is due, or when he was last
  * there. The VERDICT is `reorderState`'s own, so this row and the record cannot
  * disagree about one shop; only the wording is shorter than `reorderLabel`.
+ * `long` is the sentence a screen reader is given, because V3 cut the visible
+ * words to "Late · 41 d / every 30".
  */
-function dueWords(x: Customer, today: string): { text: string; tone: 'late' | 'due' | 'quiet' } {
+function dueWords(x: Customer, today: string): { text: string; long: string; tone: 'late' | 'due' | 'quiet' | 'today' } {
   const state = reorderState(x.lastOrderDate, x.cycleDays, today);
   if (state) {
     const since = daysBetween(x.lastOrderDate, today) ?? 0;
     return {
-      text: `${state === 'overdue' ? 'Reorder late' : 'Reorder due'} · ${since} days, buys every ${x.cycleDays}`,
+      text: `${state === 'overdue' ? 'Late' : 'Due'} · ${since} d / every ${x.cycleDays}`,
+      long: `${state === 'overdue' ? 'Reorder late' : 'Reorder due'} · ${since} days, buys every ${x.cycleDays}`,
       tone: state === 'overdue' ? 'late' : 'due',
     };
   }
   const seen = daysSince(x.lastVisitDate, today);
-  return {
-    text: seen == null ? 'Never visited' : seen === 0 ? 'Visited today' : `Visited ${seen}d ago`,
-    tone: 'quiet',
-  };
+  const text = seen == null ? 'Never visited' : seen === 0 ? 'Visited today' : `Visited ${seen} d ago`;
+  return { text, long: text, tone: seen === 0 ? 'today' : 'quiet' };
 }
 
-/** A round 40-point button inside a row. The row itself is the 48-point target around it. */
+/** A round 44-point button inside a row. The row itself is the 48-point target around it. */
 function RowButton({
   icon,
   label,
@@ -163,22 +165,26 @@ function RowButton({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={4}
+      accessibilityState={{ disabled: dim }}
+      hitSlop={2}
       style={({ pressed }) => ({
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: pressed ? C.primaryEdge : tint ? C.primaryTint : 'transparent',
+        backgroundColor: pressed ? C.primaryEdge : dim ? C.wash : tint ? C.primaryTint : C.canvas,
       })}>
-      <Icon name={icon} size={18} color={dim ? C.faint : tint ? C.primaryDeep : C.muted} />
+      <Icon name={icon} size={18} color={dim ? C.faint : tint ? C.primaryDeep : C.ink} strokeWidth={2} />
     </Pressable>
   );
 }
 
 /**
  * ONE SHOP, AS A THREE-LINE ROW: who and the verdict; where; money and what is due.
+ *
+ * The rows of one list sit in ONE white card (V3): `first` and `last` round
+ * its two ends, and every other row carries the hairline above it.
  *
  * `React.memo` because a page arriving re-renders the list, and thirty new
  * rows should not cost re-drawing the three hundred above them. Every prop is
@@ -190,6 +196,8 @@ const CustomerRow = React.memo(function CustomerRow({
   showDistance,
   healthStrong,
   healthWatch,
+  first,
+  last,
   onOpen,
   onMore,
   onCall,
@@ -199,6 +207,8 @@ const CustomerRow = React.memo(function CustomerRow({
   showDistance: boolean;
   healthStrong: number;
   healthWatch: number;
+  first: boolean;
+  last: boolean;
   onOpen: (x: Customer) => void;
   onMore: (x: Customer) => void;
   onCall: (x: Customer) => void;
@@ -215,88 +225,115 @@ const CustomerRow = React.memo(function CustomerRow({
   const kindWord = line && line !== 'Customer' ? line : null;
   const due = dueWords(x, today);
   const owed = x.outstandingPaise > 0;
-  const where = [kindWord, x.contactPerson, x.city ? shortPlace(x.city, 28) : null]
-    .filter(Boolean)
-    .join(' · ');
+  /* Compared in PAISE against the one shared threshold — see
+     `OUTSTANDING_ALERT_PAISE`. */
+  const owedInk = !owed ? C.faint : x.outstandingPaise > OUTSTANDING_ALERT_PAISE ? C.danger : C.ink;
+  const dueInk =
+    due.tone === 'late' ? C.danger : due.tone === 'due' ? C.warnInk : due.tone === 'today' ? C.success : C.muted;
+  const place = x.city ? shortPlace(x.city, 28) : null;
+  const nothingWhere = !x.contactPerson && !place;
 
   return (
-    <Pressable
-      onPress={() => onOpen(x)}
-      accessibilityRole="button"
-      accessibilityLabel={shopName(x.name)}
-      style={({ pressed }) => ({
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingLeft: 14,
-        paddingRight: 6,
-        paddingVertical: 10,
-        backgroundColor: pressed ? C.wash : C.surface,
-      })}>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(600)]}>
-            {shopName(x.name)}
-          </Text>
-          {/* `Closed` is somebody's decision to stop dealing with this shop,
-              and the band cannot say it — `recomputeInactivity` never writes
-              `deactivated`. An account nothing has measured draws nothing. */}
-          {stage === 'Closed' ? (
-            <Badge tone="danger">Closed</Badge>
-          ) : x.healthScore != null || x.healthBand ? (
-            <HealthPill
-              value={x.healthScore ?? null}
-              band={x.healthBand ?? null}
-              strongAtOrAbove={healthStrong}
-              watchBelow={healthWatch}
-            />
-          ) : null}
+    <View
+      style={{
+        marginHorizontal: 14,
+        backgroundColor: C.surface,
+        borderTopLeftRadius: first ? 22 : 0,
+        borderTopRightRadius: first ? 22 : 0,
+        borderBottomLeftRadius: last ? 22 : 0,
+        borderBottomRightRadius: last ? 22 : 0,
+        paddingTop: first ? 4 : 0,
+        paddingBottom: last ? 4 : 0,
+        overflow: 'hidden',
+      }}>
+      <Pressable
+        onPress={() => onOpen(x)}
+        accessibilityRole="button"
+        accessibilityLabel={shopName(x.name)}
+        accessibilityHint={[owed ? inrFromPaise(x.outstandingPaise) + ' due' : 'Nothing due', due.long].join(', ')}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingLeft: 16,
+          paddingRight: 6,
+          paddingVertical: 12,
+          marginLeft: 0,
+          borderTopWidth: first ? 0 : 1,
+          borderTopColor: C.hairline,
+          backgroundColor: pressed ? C.wash : C.surface,
+        })}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 16, lineHeight: 21, color: C.ink }, weight(700)]}>
+              {shopName(x.name)}
+            </Text>
+            {/* `Closed` is somebody's decision to stop dealing with this shop,
+                and the band cannot say it — `recomputeInactivity` never writes
+                `deactivated`. An account nothing has measured draws nothing. */}
+            {stage === 'Closed' ? (
+              <Badge tone="danger">Closed</Badge>
+            ) : x.healthScore != null || x.healthBand ? (
+              <HealthPill
+                value={x.healthScore ?? null}
+                band={x.healthBand ?? null}
+                strongAtOrAbove={healthStrong}
+                watchBelow={healthWatch}
+              />
+            ) : null}
+          </View>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 4 }}>
+            {away ? <Text style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{away}</Text> : null}
+            {kindWord ? (
+              <View style={{ height: 20, paddingHorizontal: 8, borderRadius: 10, backgroundColor: C.canvas, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, color: C.muted }, weight(600)]}>{kindWord}</Text>
+              </View>
+            ) : null}
+            {x.contactPerson ? (
+              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted, maxWidth: 150 }}>
+                {x.contactPerson}
+              </Text>
+            ) : null}
+            {place ? <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{place}</Text> : null}
+            {nothingWhere ? <Text style={{ fontSize: 12, color: C.muted }}>No contact or town on record</Text> : null}
+          </View>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 6 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Icon name={owed ? 'wallet' : 'tick'} size={13} color={owedInk} strokeWidth={2.2} />
+              <Text style={[{ fontSize: 13, color: owedInk }, weight(owed ? 700 : 600)]}>
+                {owed ? inrFromPaise(x.outstandingPaise) : 'Nothing due'}
+              </Text>
+            </View>
+            {x.creditBlocked ? (
+              <View style={{ height: 22, paddingHorizontal: 8, borderRadius: 11, backgroundColor: C.dangerBg, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>Supply stopped</Text>
+              </View>
+            ) : null}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              {due.tone === 'late' || due.tone === 'due' ? (
+                <Icon name="reorder" size={13} color={dueInk} strokeWidth={2.2} />
+              ) : due.tone === 'today' ? (
+                <Icon name="tick" size={13} color={dueInk} strokeWidth={2.2} />
+              ) : null}
+              <Text style={[{ fontSize: 13, color: dueInk }, weight(due.tone === 'quiet' ? 600 : 700)]}>{due.text}</Text>
+            </View>
+          </View>
         </View>
 
-        <Text numberOfLines={1} style={[type.caption, { marginTop: 1 }]}>
-          {away ? <Text style={[{ color: C.ink }, weight(600)]}>{away}</Text> : null}
-          {away && where ? ' · ' : ''}
-          {where || (away ? '' : 'No contact or town on record')}
-        </Text>
-
-        <Text numberOfLines={1} style={{ marginTop: 3, fontSize: 13, lineHeight: 18 }}>
-          {/* Compared in PAISE against the one shared threshold — see
-              `OUTSTANDING_ALERT_PAISE`. */}
-          <Text
-            style={[
-              { color: !owed ? C.muted : x.outstandingPaise > OUTSTANDING_ALERT_PAISE ? C.danger : C.ink },
-              weight(owed ? 600 : 400),
-            ]}>
-            {owed ? inrFromPaise(x.outstandingPaise) + ' due' : 'Nothing due'}
-          </Text>
-          {x.creditBlocked ? <Text style={[{ color: C.danger }, weight(600)]}>{' · Supply stopped'}</Text> : null}
-          <Text style={{ color: C.faint }}>{'  |  '}</Text>
-          <Text
-            style={[
-              { color: due.tone === 'late' ? C.danger : due.tone === 'due' ? C.warnInk : C.muted },
-              weight(due.tone === 'quiet' ? 400 : 600),
-            ]}>
-            {due.text}
-          </Text>
-        </Text>
-      </View>
-
-      <RowButton
-        icon="call"
-        label={'Call ' + shopName(x.name)}
-        onPress={() => onCall(x)}
-        tint={!!x.phone}
-        dim={!x.phone}
-      />
-      <RowButton icon="dots" label={'More for ' + shopName(x.name)} onPress={() => onMore(x)} tint={false} />
-    </Pressable>
+        <RowButton
+          icon="call"
+          label={x.phone ? 'Call ' + shopName(x.name) : 'No number on this customer'}
+          onPress={() => onCall(x)}
+          tint={!!x.phone}
+          dim={!x.phone}
+        />
+        <RowButton icon="dots" label={'More for ' + shopName(x.name)} onPress={() => onMore(x)} tint={false} />
+      </Pressable>
+    </View>
   );
 });
-
-/** A hairline between rows, inset to the text — one list, not a stack of cards. */
-function RowGap() {
-  return <View style={{ height: 1, marginLeft: 14, backgroundColor: C.hairline }} />;
-}
 
 export default function Customers() {
   const custQ = useStore((s) => s.custQ);
@@ -680,6 +717,8 @@ export default function Customers() {
         showDistance={sortMode === 'me'}
         healthStrong={healthStrong}
         healthWatch={healthWatch}
+        first={index === 0}
+        last={index === rows.length - 1}
         onOpen={openAccount}
         onMore={setRowMore}
         onCall={callShop}
@@ -687,7 +726,7 @@ export default function Customers() {
       );
       return index < STAGGER_CAP ? <Stagger index={index}>{row}</Stagger> : row;
     },
-    [today, sortMode, healthStrong, healthWatch, openAccount, callShop],
+    [today, sortMode, healthStrong, healthWatch, openAccount, callShop, rows.length],
   );
 
   /* Only ever true when the server has SAID so. `exempt` is a manager or an
@@ -711,83 +750,124 @@ export default function Customers() {
   const orderWords =
     sortMode === 'me'
       ? origin
-        ? 'nearest first'
-        : 'A–Z, no GPS yet'
+        ? 'Nearest first'
+        : 'A–Z · no GPS'
       : sortMode === 'town'
         ? origin && town
-          ? `nearest ${shortPlace(town, 16)}`
+          ? `Nearest ${shortPlace(town, 16)}`
           : 'A–Z'
         : SORT_LABEL[sortMode];
-  const statusLine = !loaded
-    ? 'Reading your book…'
+  const statusLine: { count: string | null; rest: string } = !loaded
+    ? { count: null, rest: 'Reading your book…' }
     : total === 0
-      ? asked || filtered
-        ? 'No shop matches'
-        : noArea
-          ? 'No area set for you yet'
-          : 'No customers yet'
-      : `${grouped(total)} ${total === 1 ? 'shop' : 'shops'}` +
-        (filtered ? ` · ${filterLabel.toLowerCase()}` : '') +
-        (asked ? ` · “${shortPlace(asked, 14)}”` : '');
+      ? {
+          count: null,
+          rest: asked || filtered ? 'No shop matches' : noArea ? 'No area set for you yet' : 'No customers yet',
+        }
+      : {
+          count: grouped(total),
+          rest:
+            (total === 1 ? 'shop' : 'shops') +
+            (filtered ? ` · ${filterLabel.toLowerCase()}` : '') +
+            (asked ? ` · “${shortPlace(asked, 14)}”` : ''),
+        };
 
   /* ----------------------------------------------------------- the empty card */
+  const emptyShell = (children: React.ReactNode) => (
+    <View style={{ backgroundColor: C.surface, borderRadius: 24, paddingVertical: 22, paddingHorizontal: 18, alignItems: 'center' }}>
+      {children}
+    </View>
+  );
   const emptyCard = !loaded ? (
-    <Card style={{ alignItems: 'center', paddingVertical: 28 }}>
-      <Text style={[type.caption, { textAlign: 'center' }]}>Loading your customers…</Text>
-    </Card>
+    emptyShell(<Text style={[type.caption, { textAlign: 'center' }]}>Loading your customers…</Text>)
   ) : failed ? (
-    <Card style={{ alignItems: 'center', paddingVertical: 28 }}>
-      <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
-        Could not load your customers
-      </Text>
-      <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
-        Nothing is lost. Pull down to try again. If this keeps happening, tell the office.
-      </Text>
-    </Card>
+    emptyShell(
+      <>
+        <Icon name="alert" size={36} color={C.faint} strokeWidth={1.8} />
+        <Text style={[{ fontSize: 18, color: C.ink, textAlign: 'center', marginTop: 6 }, weight(800)]}>
+          Could not load your customers
+        </Text>
+        <Text style={{ fontSize: 13, color: C.muted, marginTop: 4, textAlign: 'center' }}>
+          Nothing is lost. Pull down to try again. If this keeps happening, tell the office.
+        </Text>
+      </>,
+    )
   ) : (
-    <Card style={{ alignItems: 'center', paddingVertical: 28 }}>
-      <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
-        {asked
-          ? 'No shop matches that'
-          : filtered
-            ? `No shop is ${filterLabel.toLowerCase()}`
-            : noArea
-              ? 'No area set for you yet'
-              : 'No customers yet'}
-      </Text>
-      <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
-        {noArea && !asked && !filtered
-          ? 'Your list stays empty until the office sets your area. Nothing is lost. Ask your manager to set your area.'
-          : filtered && !asked
-            ? 'The rest of your book is still here under All.'
-            : 'Are you in a shop where we deliver but bill someone else? Add it here and take the order.'}
-      </Text>
-      {/* A filter can hide the shop he searched for. Said, with the way out. */}
-      {filtered ? (
-        <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-          <SecondaryButton label="Show all shops" onPress={() => setFilter('all')} />
-        </View>
-      ) : null}
-      {/* WHERE THE ANSWER ACTUALLY IS — drawn only where there is something to
-          find, or people learn the other tab never has the answer either. */}
-      {asked && leadsMatching > 0 ? (
-        <View style={{ marginTop: 10, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-          <PrimaryButton
-            label={leadsMatching === 1 ? '1 lead matches. Open Leads' : `${grouped(leadsMatching)} leads match. Open Leads`}
-            onPress={() => setHalf('leads')}
+    emptyShell(
+      <>
+        <Icon name="shop" size={40} color={C.faint} strokeWidth={1.8} />
+        <Text style={[{ fontSize: 18, color: C.ink, textAlign: 'center', marginTop: 6 }, weight(800)]}>
+          {asked
+            ? 'No shop matches that'
+            : filtered
+              ? `No shop is ${filterLabel.toLowerCase()}`
+              : noArea
+                ? 'No area set for you yet'
+                : 'No customers yet'}
+        </Text>
+        <Text
+          accessibilityLabel={
+            noArea && !asked && !filtered
+              ? 'Your list stays empty until the office sets your area. Nothing is lost. Ask your manager to set your area.'
+              : filtered && !asked
+                ? 'The rest of your book is still here under All.'
+                : 'Are you in a shop where we deliver but bill someone else? Add it here and take the order.'
+          }
+          style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4, textAlign: 'center' }}>
+          {noArea && !asked && !filtered
+            ? 'Your list stays empty until the office sets your area. Nothing is lost — ask your manager.'
+            : filtered && !asked
+              ? 'The rest of your book is still here under All.'
+              : 'We deliver here but bill someone else? Add it and take the order.'}
+        </Text>
+        {/* A filter can hide the shop he searched for. Said, with the way out. */}
+        {filtered ? (
+          <PillButton
+            label="Show all shops"
+            variant="outline"
+            height={48}
+            onPress={() => setFilter('all')}
+            style={{ marginTop: 14, alignSelf: 'stretch' }}
           />
-        </View>
-      ) : null}
-      {(noArea && !asked) || (filtered && !asked) ? null : (
-        <View style={{ marginTop: 10, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-          {asked && leadsMatching > 0 ? (
-            <SecondaryButton label="Add a delivery shop" onPress={openAdd} />
-          ) : (
-            <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
-          )}
-        </View>
-      )}
-    </Card>
+        ) : null}
+        {/* WHERE THE ANSWER ACTUALLY IS — drawn only where there is something to
+            find, or people learn the other tab never has the answer either. */}
+        {asked && leadsMatching > 0 ? (
+          <Pressable
+            onPress={() => setHalf('leads')}
+            accessibilityRole="button"
+            accessibilityLabel={
+              leadsMatching === 1 ? '1 lead matches. Open Leads' : `${grouped(leadsMatching)} leads match. Open Leads`
+            }
+            style={({ pressed }) => ({
+              marginTop: 14,
+              alignSelf: 'stretch',
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+            })}>
+            <Icon name="person" size={16} color={C.primaryDeep} strokeWidth={2} />
+            <Text style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+              {leadsMatching === 1 ? '1 lead matches · Open Leads' : `${grouped(leadsMatching)} leads match · Open Leads`}
+            </Text>
+          </Pressable>
+        ) : null}
+        {(noArea && !asked) || (filtered && !asked) ? null : (
+          <PillButton
+            label="+ Add a delivery shop"
+            /* Secondary where the leads button above is the likelier answer. */
+            variant={asked && leadsMatching > 0 ? 'outline' : 'navy'}
+            height={56}
+            onPress={openAdd}
+            style={{ marginTop: asked && leadsMatching > 0 ? 8 : 14, alignSelf: 'stretch' }}
+          />
+        )}
+      </>,
+    )
   );
 
   /* No account on this handset can be billed, so the form cannot be finished.
@@ -800,27 +880,54 @@ export default function Customers() {
     return list.slice(0, 60);
   }, [cities, cityQ]);
 
-  return (
-    <AppFrame title="Customers" activeTab="customers" scroll={false}>
-      {/* THE TWO HALVES OF THE BOOK, above everything, because they decide
-          which of two jobs he is doing and that has to be on the screen the
-          whole time he is looking at it. */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-        <Segmented
-          options={[
-            { key: 'customers', label: 'Customers', badge: counts && !asked ? counts.all : null },
-            /* What is still being WORKED — a badge counting leads finished
-               with in March only ever grows and nobody can clear it. */
-            { key: 'leads', label: 'Leads', badge: leadCount },
-          ]}
-          value={half}
-          onChange={(h) => {
-            setHalfMoved(true);
-            setHalf(h);
-          }}
-        />
-      </View>
+  /* The order pill turns amber when "nearest" could not be honoured — the
+     list he is reading is A–Z and the pill is where he looks to see why. */
+  const orderFellBack = (sortMode === 'me' || sortMode === 'town') && !origin;
 
+  return (
+    <AppFrame
+      title="Book"
+      activeTab="customers"
+      scroll={false}
+      hero={
+        <View style={{ marginTop: 16 }}>
+          {/* THE TWO HALVES OF THE BOOK, above everything, because they decide
+              which of two jobs he is doing and that has to be on the screen the
+              whole time he is looking at it. */}
+          <SwitchTabs
+            options={[
+              { key: 'customers', label: 'Customers', icon: 'shop', badge: counts && !asked ? counts.all : null },
+              /* What is still being WORKED — a badge counting leads finished
+                 with in March only ever grows and nobody can clear it. */
+              { key: 'leads', label: 'Leads', icon: 'person', badge: leadCount },
+            ]}
+            value={half}
+            onChange={(h) => {
+              setHalfMoved(true);
+              setHalf(h);
+            }}
+          />
+          {half === 'customers' ? (
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+              <SearchBox
+                value={typed}
+                onChange={setTyped}
+                onClear={clearSearch}
+                placeholder="Name, phone, GST, city, code"
+              />
+              <ToolButton icon="filter" tone="navy" label={'Order: ' + SORT_LABEL[sortMode]} onPress={() => setSorting(true)} />
+              {/* LIST OR MAP. It does not change WHICH shops are in the book,
+                  only how the same page is drawn. */}
+              <ToolButton
+                icon={asMap ? 'list' : 'map'}
+                label={asMap ? 'Show as a list' : 'Show on a map'}
+                on={asMap}
+                onPress={() => setAsMap((m) => !m)}
+              />
+            </View>
+          ) : null}
+        </View>
+      }>
       {/* Two siblings, not a deeper level, so the new half fades in place
           rather than sliding. No `animateLayout` here: the half arriving
           carries a list, and moving every frame in it is the cost
@@ -835,29 +942,13 @@ export default function Customers() {
         ) : (
           <>
             {/* -------------------------------------------- the controls, fixed */}
-            <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <SearchBox
-                  value={typed}
-                  onChange={setTyped}
-                  onClear={clearSearch}
-                  placeholder="Name, phone, GST, city or code"
-                />
-                <ToolButton icon="filter" label={'Order: ' + SORT_LABEL[sortMode]} onPress={() => setSorting(true)} />
-                {/* LIST OR MAP. It does not change WHICH shops are in the book,
-                    only how the same page is drawn. */}
-                <ToolButton
-                  icon="pin"
-                  label={asMap ? 'Show as a list' : 'Show on a map'}
-                  on={asMap}
-                  onPress={() => setAsMap((m) => !m)}
-                />
-              </View>
-
+            <View style={{ paddingHorizontal: 14, paddingTop: 14, gap: 12 }}>
               {/* The tick is in `ChipRow`. The layout eases only on a short list —
                   the new page lands later and cascades in by itself. */}
               <ChipRow
-                chips={CUSTOMER_FILTERS}
+                chips={CHIPS}
+                decor={CHIP_DECOR}
+                wrap
                 value={filter}
                 onChange={(f) => {
                   animateLayoutFor(rows.length);
@@ -867,11 +958,33 @@ export default function Customers() {
               />
 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text numberOfLines={1} style={[type.caption, { flex: 1, minWidth: 0 }]}>
-                  {statusLine}
+                <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.muted }}>
+                  {statusLine.count != null ? (
+                    <Text style={[{ fontSize: 15, color: C.ink }, weight(800)]}>{statusLine.count + ' '}</Text>
+                  ) : null}
+                  {statusLine.rest}
                 </Text>
-                <Pressable onPress={() => setSorting(true)} accessibilityRole="button" hitSlop={8}>
-                  <Text numberOfLines={1} style={[{ fontSize: 13, color: C.primaryDeep, maxWidth: 170 }, weight(600)]}>
+                <Pressable
+                  onPress={() => setSorting(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel={'Order: ' + orderWords + '. Change it'}
+                  hitSlop={8}
+                  style={({ pressed }) => ({
+                    height: 32,
+                    paddingHorizontal: 12,
+                    borderRadius: 16,
+                    backgroundColor: orderFellBack ? C.warnBg : pressed ? C.wash : C.surface,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    maxWidth: 190,
+                  })}>
+                  {!orderFellBack && (sortMode === 'me' || sortMode === 'town') ? (
+                    <Icon name="nav" size={14} color={C.primaryDeep} strokeWidth={2} />
+                  ) : null}
+                  <Text
+                    numberOfLines={1}
+                    style={[{ fontSize: 13, color: orderFellBack ? C.warnInk : C.primaryDeep, flexShrink: 1 }, weight(700)]}>
                     {orderWords + ' ▾'}
                   </Text>
                 </Pressable>
@@ -881,56 +994,87 @@ export default function Customers() {
                   he knows is his needs to see the area before he concludes the
                   app has lost it. */}
               {area.length ? (
-                <Text numberOfLines={1} style={[type.caption, { marginTop: -6, color: C.muted }]}>
-                  {'Your area: ' + area.join(', ')}
-                </Text>
+                <View
+                  accessible
+                  accessibilityLabel={'Your area: ' + area.join(', ')}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -4 }}>
+                  <Icon name="pin" size={14} color={C.muted} strokeWidth={2} />
+                  <Text numberOfLines={1} style={{ flex: 1, fontSize: 12, color: C.muted }}>
+                    {area.join(', ')}
+                  </Text>
+                </View>
               ) : null}
               {noFix && sortMode === 'me' ? (
-                <Text style={[type.caption, { marginTop: -6, color: C.muted }]}>
-                  {noFix === 'denied'
-                    ? 'Location is not allowed for Mahek MBOS, so the list is A–Z. Allow it in phone settings, or pick a town.'
-                    : noFix === 'off'
-                      ? 'Location is switched off on this phone, so the list is A–Z. Turn it on, or pick a town.'
-                      : 'No GPS yet, so the list is A–Z. Step outside for a minute, or pick a town to sort from.'}
-                </Text>
+                <View
+                  style={{
+                    backgroundColor: C.warnBg,
+                    borderRadius: 16,
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    flexDirection: 'row',
+                    gap: 10,
+                  }}>
+                  <Icon name="locate" size={18} color={C.warnInk} strokeWidth={2} />
+                  <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: C.warnInk }}>
+                    {noFix === 'denied'
+                      ? 'Location is not allowed for Mahek MBOS, so A–Z. Allow it in phone settings, or pick a town.'
+                      : noFix === 'off'
+                        ? 'Location is switched off on this phone, so A–Z. Turn it on, or pick a town.'
+                        : 'No GPS yet, so A–Z. Step outside, or pick a town.'}
+                  </Text>
+                </View>
               ) : null}
             </View>
 
             {asMap ? (
               /* THE MAP draws the shops loaded so far, and says so — a map that
                  quietly showed the whole book would disagree with the count. */
-              <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+              <ScrollView contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 32 }}>
                 {rows.length ? (
                   <>
-                    <ShopMap
-                      height={440}
-                      pins={rows.map((x) => ({
-                        id: x.id,
-                        name: x.name,
-                        lat: x.gpsLat ?? NaN,
-                        lng: x.gpsLng ?? NaN,
-                        isLead: Boolean(x.isLead),
-                      }))}
-                      onPress={(p) => {
-                        const row = rows.find((r) => r.id === p.id);
-                        if (row) openAccount(row);
-                      }}
-                    />
-                    <Text style={[type.caption, { marginTop: 8 }]}>
-                      {rows.length < total
-                        ? `The first ${grouped(rows.length)} of ${grouped(total)} in this order. Search or filter to map others, or scroll the list to load more.`
-                        : `All ${grouped(total)} in this list.`}
-                    </Text>
-                    {hasMore ? (
-                      <View style={{ marginTop: 10 }}>
-                        <SecondaryButton
-                          label={loadingMore ? 'Loading…' : 'Add the next ' + Math.min(30, total - rows.length) + ' to the map'}
+                    <View style={{ borderRadius: 24, overflow: 'hidden' }}>
+                      <ShopMap
+                        height={440}
+                        pins={rows.map((x) => ({
+                          id: x.id,
+                          name: x.name,
+                          lat: x.gpsLat ?? NaN,
+                          lng: x.gpsLng ?? NaN,
+                          isLead: Boolean(x.isLead),
+                        }))}
+                        onPress={(p) => {
+                          const row = rows.find((r) => r.id === p.id);
+                          if (row) openAccount(row);
+                        }}
+                      />
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
+                      <Text
+                        accessibilityLabel={
+                          rows.length < total
+                            ? `The first ${grouped(rows.length)} of ${grouped(total)} in this order. Search or filter to map others, or scroll the list to load more.`
+                            : `All ${grouped(total)} in this list.`
+                        }
+                        style={{ flex: 1, fontSize: 13, color: C.muted }}>
+                        {rows.length < total ? 'Map shows ' : 'Map shows all '}
+                        <Text style={[{ color: C.ink }, weight(700)]}>
+                          {rows.length < total ? `${grouped(rows.length)} of ${grouped(total)}` : grouped(total)}
+                        </Text>
+                        {' in this order'}
+                      </Text>
+                      {hasMore ? (
+                        <PillButton
+                          label={loadingMore ? 'Loading…' : '+ next ' + Math.min(30, total - rows.length)}
+                          a11y={'Add the next ' + Math.min(30, total - rows.length) + ' to the map'}
+                          variant="white"
+                          height={44}
+                          disabled={loadingMore}
                           /* The map has no end to scroll to, so the next page is
                              asked for here, on purpose, rather than by a gesture. */
                           onPress={() => void loadMore()}
                         />
-                      </View>
-                    ) : null}
+                      ) : null}
+                    </View>
                   </>
                 ) : (
                   emptyCard
@@ -939,12 +1083,11 @@ export default function Customers() {
             ) : (
               <FlatList
                 style={{ flex: 1 }}
-                contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
+                contentContainerStyle={{ paddingTop: 12, paddingBottom: 24 }}
                 data={rows}
                 keyExtractor={(x) => x.id}
                 renderItem={renderRow}
-                ItemSeparatorComponent={RowGap}
-                ListEmptyComponent={<View style={{ paddingHorizontal: 16 }}>{emptyCard}</View>}
+                ListEmptyComponent={<View style={{ paddingHorizontal: 14 }}>{emptyCard}</View>}
                 ListFooterComponent={
                   rows.length ? (
                     <PageFooter
@@ -975,54 +1118,75 @@ export default function Customers() {
 
       {/* ------------------------------------------------------------ the order */}
       <BottomSheet open={sorting} onClose={() => setSorting(false)}>
-        <Text style={[{ fontSize: 17, color: C.ink, marginBottom: 8 }, weight(600)]}>Order the list by</Text>
-        {(['me', 'town', 'name', 'owed', 'unseen'] as const).map((m) => {
-          const on = sortMode === m;
-          return (
-            <Pressable
-              key={m}
-              onPress={() => {
-                setSorting(false);
-                if (m === 'town') {
-                  setCityQ('');
-                  setPickingCity(true);
-                  return;
-                }
-                setSortMode(m);
-              }}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: on }}
-              style={({ pressed }) => [
-                {
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  minHeight: 52,
-                  borderBottomWidth: 1,
-                  borderBottomColor: C.hairline,
-                },
-                pressed && { backgroundColor: C.wash },
-              ]}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
-                  {m === 'town' && town && on ? 'Nearest ' + shortPlace(town, 26) : SORT_LABEL[m]}
-                </Text>
-                <Text style={type.caption}>
-                  {m === 'me'
-                    ? 'From where you are standing now'
-                    : m === 'town'
-                      ? 'From the middle of a town you pick'
-                      : m === 'name'
-                        ? 'By shop name'
-                        : m === 'owed'
-                          ? 'Biggest outstanding first'
-                          : 'Never visited first, then the longest ago'}
-                </Text>
-              </View>
-              {on ? <Icon name="tick" size={18} color={C.primaryDeep} /> : null}
-            </Pressable>
-          );
-        })}
+        <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Order by</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
+          {(['me', 'town', 'name', 'owed', 'unseen'] as const).map((m) => {
+            const on = sortMode === m;
+            const wide = m === 'unseen';
+            const glyphInk = on ? C.lime : m === 'owed' ? C.danger : m === 'unseen' ? C.ink : C.primaryDeep;
+            const glyph =
+              m === 'name' ? (
+                <Text style={[{ fontSize: 20, color: on ? C.lime : C.primaryDeep }, weight(800)]}>A–Z</Text>
+              ) : (
+                <Icon
+                  name={m === 'me' ? 'nav' : m === 'town' ? 'pin' : m === 'owed' ? 'wallet' : 'clock'}
+                  size={22}
+                  color={glyphInk}
+                  strokeWidth={2}
+                />
+              );
+            const title =
+              m === 'town' && town && on ? 'Nearest ' + shortPlace(town, 18) : m === 'name' ? 'Name' : SORT_LABEL[m];
+            const sub =
+              m === 'me'
+                ? 'from where you stand'
+                : m === 'town'
+                  ? 'middle of a town you pick'
+                  : m === 'name'
+                    ? 'by shop name'
+                    : m === 'owed'
+                      ? 'biggest first'
+                      : 'never visited first, then longest ago';
+            return (
+              <Pressable
+                key={m}
+                onPress={() => {
+                  setSorting(false);
+                  if (m === 'town') {
+                    setCityQ('');
+                    setPickingCity(true);
+                    return;
+                  }
+                  setSortMode(m);
+                }}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={(m === 'name' ? 'A–Z' : title) + ', ' + sub}
+                style={({ pressed }) => ({
+                  width: wide ? '100%' : '48.5%',
+                  height: wide ? 64 : 92,
+                  borderRadius: 20,
+                  padding: 14,
+                  paddingVertical: wide ? 0 : 14,
+                  backgroundColor: on ? C.navy : pressed ? C.hairline : C.canvas,
+                  flexDirection: wide ? 'row' : 'column',
+                  alignItems: wide ? 'center' : 'flex-start',
+                  justifyContent: wide ? 'flex-start' : 'space-between',
+                  gap: wide ? 12 : 0,
+                })}>
+                {glyph}
+                <View style={{ flexShrink: 1 }}>
+                  <Text numberOfLines={1} style={[{ fontSize: 15, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>
+                    {title}
+                  </Text>
+                  <Text numberOfLines={1} style={[{ fontSize: 12, color: on ? C.faint : C.muted }, weight(500)]}>
+                    {sub}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       </BottomSheet>
 
       {/* THE TOWNS COME OUT OF THE BOOK, never a list typed into a screen. A
@@ -1030,35 +1194,23 @@ export default function Customers() {
           offered. Searchable, because a book of ten thousand sells into
           hundreds of them. */}
       <BottomSheet open={pickingCity} onClose={() => setPickingCity(false)} scroll>
-        <Text style={[{ fontSize: 17, color: C.ink, marginBottom: 4 }, weight(600)]}>Nearest to which town?</Text>
-        <Text style={[type.caption, { marginBottom: 10 }]}>Shops nearest the middle of the town come first.</Text>
+        <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Nearest which town?</Text>
+        <Text style={{ fontSize: 13, color: C.muted, marginTop: 2, marginBottom: 12 }}>
+          Shops nearest its middle come first.
+        </Text>
         {cities.length > 8 ? (
-          <TextInput
-            value={cityQ}
-            onChangeText={setCityQ}
-            placeholder="Find a town"
-            placeholderTextColor={C.faint}
-            style={{
-              height: 44,
-              paddingHorizontal: 12,
-              borderWidth: 1,
-              borderColor: C.border,
-              borderRadius: radius.sm,
-              fontSize: 15,
-              color: C.ink,
-              backgroundColor: C.surface,
-              marginBottom: 6,
-            }}
-          />
+          <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+            <SearchBox value={cityQ} onChange={setCityQ} onClear={() => setCityQ('')} placeholder="Find a town" bg={C.canvas} />
+          </View>
         ) : null}
         {cities.length === 0 ? (
           <Text style={[type.caption, { paddingVertical: 12 }]}>
-            None of your shops has a map location yet. So there is no town to pick.
+            None of your shops has a map pin yet, so there is no town to pick.
           </Text>
         ) : shownCities.length === 0 ? (
           <Text style={[type.caption, { paddingVertical: 12 }]}>No town with a pinned shop matches that.</Text>
         ) : (
-          shownCities.map((c) => (
+          shownCities.map((c, i) => (
             <Pressable
               key={c.city}
               onPress={() => {
@@ -1066,22 +1218,26 @@ export default function Customers() {
                 setSortMode('town');
                 setPickingCity(false);
               }}
+              accessibilityRole="button"
+              accessibilityLabel={c.city + ', ' + plural(c.n, 'shop')}
               style={({ pressed }) => [
                 {
                   flexDirection: 'row',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  paddingVertical: 13,
-                  borderBottomWidth: 1,
-                  borderBottomColor: C.border,
+                  gap: 10,
+                  minHeight: 54,
+                  borderTopWidth: i ? 1 : 0,
+                  borderTopColor: C.hairline,
                 },
                 pressed && { backgroundColor: C.wash },
               ]}>
-              <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
+              <Icon name="pin" size={16} color={C.primaryDeep} strokeWidth={2} />
+              <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]}>
                 {c.city}
               </Text>
-              <Text style={type.caption}>{plural(c.n, 'shop')}</Text>
+              <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.canvas, justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 12, color: C.body }, weight(700)]}>{grouped(c.n)}</Text>
+              </View>
             </Pressable>
           ))
         )}
@@ -1091,55 +1247,130 @@ export default function Customers() {
           Everything the old card's six buttons did, one tap further away, in
           words rather than glyphs. */}
       <BottomSheet open={!!rowMore} onClose={() => setRowMore(null)}>
-        <Text numberOfLines={1} style={[{ fontSize: 17, color: C.ink }, weight(600)]}>
-          {rowMore ? shopName(rowMore.name) : ''}
-        </Text>
-        <Text numberOfLines={1} style={[type.caption, { marginBottom: 8 }]}>
-          {rowMore ? [rowMore.contactPerson, rowMore.city, rowMore.phone].filter(Boolean).join(' · ') : ''}
-        </Text>
         {(() => {
           const x = rowMore;
           if (!x) return null;
           const close = () => setRowMore(null);
+          const tile = (
+            key: string,
+            icon: IconName,
+            label: string,
+            sub: string | null,
+            onPress: () => void,
+            a11y: string,
+            tone: 'primary' | 'plain' = 'plain',
+            iconInk: string = C.primaryDeep,
+          ) => (
+            <Pressable
+              key={key}
+              onPress={onPress}
+              accessibilityRole="button"
+              accessibilityLabel={a11y}
+              style={({ pressed }) => ({
+                width: '31.6%',
+                height: 92,
+                borderRadius: 20,
+                backgroundColor: tone === 'primary' ? (pressed ? C.primaryDeep : C.primary) : pressed ? C.hairline : C.canvas,
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: sub ? 4 : 8,
+                paddingHorizontal: 6,
+              })}>
+              <Icon name={icon} size={24} color={tone === 'primary' ? '#FFFFFF' : iconInk} strokeWidth={2} />
+              <Text style={[{ fontSize: 13, color: tone === 'primary' ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+              {sub ? (
+                <Text numberOfLines={1} style={[{ fontSize: 11, color: C.muted, textAlign: 'center' }, weight(500)]}>
+                  {sub}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+          const meta: { icon: IconName; text: string }[] = [];
+          if (x.contactPerson) meta.push({ icon: 'person', text: x.contactPerson });
+          if (x.city) meta.push({ icon: 'pin', text: shortPlace(x.city, 26) });
+          if (x.phone) meta.push({ icon: 'call', text: x.phone });
           return (
             <>
-              <SheetAction icon="shop" label="Start a visit" sub="Asks how you are getting there first" onPress={() => {
-                close();
-                askTravel({ customerId: x.id, customerName: x.name });
-              }} />
-              <SheetAction icon="order" label="Take an order" onPress={() => {
-                close();
-                set({ custId: x.id });
-                router.push('/order?from=customers');
-              }} />
-              <SheetAction icon="call" label="Call" sub={x.phone ?? 'No number on this customer'} onPress={() => {
-                close();
-                callShop(x);
-              }} />
-              <SheetAction icon="chat" label="WhatsApp" sub="Opens your own WhatsApp. Nothing is sent for you." onPress={async () => {
-                close();
-                if (!x.phone) return notify('No number on this customer', 'warn');
-                const out = await openWhatsApp(x.phone, '');
-                if (out.status !== 'handed_off') notify(out.reason, 'warn');
-              }} />
-              <SheetAction icon="nav" label="Directions" sub={x.gpsLat != null ? 'To the pin on the map' : 'No pin. Searches the name and town.'} onPress={async () => {
-                close();
-                const out = await openMaps({ lat: x.gpsLat, lng: x.gpsLng, name: x.name, city: x.city });
-                if (out.status !== 'opened') notify(out.reason, 'warn');
-              }} />
-              <SheetAction icon="sample" label="Request a sample" sub="Sent for approval" onPress={() => {
-                close();
-                set({ custId: x.id });
-                router.push('/samples?ask=1&from=customers');
-              }} />
-              <SheetAction icon="doc" label="Open the record" sub="Orders, bills, payments and history" onPress={() => {
-                close();
-                openAccount(x);
-              }} />
+              <Text numberOfLines={1} style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>
+                {shopName(x.name)}
+              </Text>
+              {meta.length ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 12, rowGap: 4, marginTop: 6 }}>
+                  {meta.map((m) => (
+                    <View key={m.icon} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      <Icon name={m.icon} size={14} color={C.muted} strokeWidth={2} />
+                      <Text numberOfLines={1} style={{ fontSize: 13, color: C.muted, maxWidth: 200 }}>
+                        {m.text}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              <Pressable
+                onPress={() => {
+                  close();
+                  askTravel({ customerId: x.id, customerName: x.name });
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Start a visit. Asks how you are getting there first"
+                style={({ pressed }) => ({
+                  marginTop: 16,
+                  height: 60,
+                  borderRadius: 30,
+                  backgroundColor: C.navy,
+                  opacity: pressed ? 0.88 : 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                })}>
+                <Icon name="shop" size={20} color={C.lime} strokeWidth={2} />
+                <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>Start a visit</Text>
+                <Text style={[{ fontSize: 12, color: C.faint }, weight(500)]}>· asks how you travel</Text>
+              </Pressable>
+
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8, marginTop: 10 }}>
+                {tile('order', 'order', 'Order', null, () => {
+                  close();
+                  set({ custId: x.id });
+                  router.push('/order?from=customers');
+                }, 'Take an order', 'primary')}
+                {tile('call', 'call', 'Call', x.phone ? null : 'no number', () => {
+                  close();
+                  callShop(x);
+                }, x.phone ? 'Call ' + x.phone : 'Call. No number on this customer')}
+                {tile('wa', 'chat', 'WhatsApp', 'your own app', async () => {
+                  close();
+                  if (!x.phone) return notify('No number on this customer', 'warn');
+                  const out = await openWhatsApp(x.phone, '');
+                  if (out.status !== 'handed_off') notify(out.reason, 'warn');
+                }, 'WhatsApp. Opens your own WhatsApp. Nothing is sent for you.', 'plain', C.success)}
+                {tile('nav', 'nav', 'Directions', x.gpsLat != null ? 'to the pin' : 'by name', async () => {
+                  close();
+                  const out = await openMaps({ lat: x.gpsLat, lng: x.gpsLng, name: x.name, city: x.city });
+                  if (out.status !== 'opened') notify(out.reason, 'warn');
+                }, x.gpsLat != null ? 'Directions to the pin on the map' : 'Directions. No pin. Searches the name and town.', 'plain', C.ink)}
+                {tile('sample', 'sample', 'Sample', 'for approval', () => {
+                  close();
+                  set({ custId: x.id });
+                  router.push('/samples?ask=1&from=customers');
+                }, 'Request a sample. Sent for approval')}
+                {tile('record', 'doc', 'Record', 'orders, bills, history', () => {
+                  close();
+                  openAccount(x);
+                }, 'Open the record. Orders, bills, payments and history', 'plain', C.ink)}
+              </View>
               {/* A complaint is raised from inside a visit, where the photographs
                   and the order it is about are to hand. Said here, because this
                   sheet is where somebody looks for it. */}
-              <Text style={[type.caption, { marginTop: 10 }]}>To log a complaint, start a visit.</Text>
+              <View
+                accessible
+                accessibilityLabel="To log a complaint, start a visit."
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 }}>
+                <Icon name="warn" size={16} color={C.danger} strokeWidth={2} />
+                <Text style={{ fontSize: 13, color: C.muted }}>Complaint? Start a visit.</Text>
+              </View>
             </>
           );
         })()}
@@ -1151,64 +1382,73 @@ export default function Customers() {
           the office's to decide and the record arrives without them rather
           than with a confident zero. */}
       <BottomSheet open={adding} onClose={() => setAdding(false)} scroll>
-        <Text style={[{ fontSize: 15, color: C.ink, marginBottom: 2 }, weight(600)]}>
-          Add a delivery shop
-        </Text>
-        <Text style={[type.caption, { marginBottom: 12 }]}>
-          Goods go to this shop. The bill goes to the one you pick below.
-        </Text>
+        <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Delivery shop</Text>
+        <View
+          accessible
+          accessibilityLabel="Add a delivery shop. Goods go to this shop. The bill goes to the one you pick below."
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+          <Icon name="route" size={16} color={C.muted} strokeWidth={2} />
+          <Text style={{ fontSize: 13, color: C.muted }}>Goods here · bill to the account below</Text>
+        </View>
 
-        {/* All four are REQUIRED and the labels say so. Every one of them was
+        {/* All four are REQUIRED and the marks say so. Every one of them was
             refused after the press, one at a time, by a toast — which is how a
             form teaches somebody that it is broken. */}
-        <Field label="Shop name" required value={newShopName} onChange={setNewShopName} placeholder="Name on the shop board" />
-        <Field
-          label="Phone"
-          required
-          value={shopPhone}
-          onChange={setShopPhone}
-          placeholder="10 digits"
-          keyboard="phone-pad"
-        />
-        <Field label="Town" required value={shopCity} onChange={setShopCity} placeholder="Nashik" />
+        <View style={{ gap: 10, marginTop: 14 }}>
+          <Field icon="shop" label="Shop name" required value={newShopName} onChange={setNewShopName} placeholder="Name on the shop board" />
+          <Field
+            icon="call"
+            label="Phone"
+            required
+            value={shopPhone}
+            onChange={setShopPhone}
+            placeholder="Phone, 10 digits"
+            keyboard="phone-pad"
+          />
+          <Field icon="pin" label="Town" required value={shopCity} onChange={setShopCity} placeholder="Town, e.g. Nashik" />
+        </View>
 
-        <Text style={[type.caption, { marginTop: 14, marginBottom: 6 }]}>
-          {'WHO GETS THE BILL · needed'}
-        </Text>
-        <TextInput
-          value={billerQ}
-          onChangeText={setBillerQ}
-          placeholder="Search your accounts"
-          placeholderTextColor={C.faint}
-          style={{
-            height: 44,
-            paddingHorizontal: 12,
-            borderWidth: 1,
-            borderColor: C.border,
-            borderRadius: radius.sm,
-            fontSize: 15,
-            color: C.ink,
-            backgroundColor: C.surface,
-          }}
-        />
-        <View style={{ gap: 6, marginTop: 8 }}>
-          {(billers ?? []).slice(0, 6).map((b) => (
-            <Pressable
-              key={b.id}
-              onPress={() => setBillerId(b.id)}
-              style={{
-                borderWidth: 1,
-                borderColor: b.id === billerId ? C.primaryDeep : C.border,
-                borderRadius: radius.sm,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-              }}>
-              <Text style={[{ fontSize: 14, color: C.ink }, weight(b.id === billerId ? 500 : 400)]}>
-                {b.name}
-              </Text>
-              <Text style={type.caption}>{[b.contactPerson, b.city].filter(Boolean).join(' · ')}</Text>
-            </Pressable>
-          ))}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 16, marginBottom: 8 }}>
+          <Icon name="doc" size={16} color={C.ink} strokeWidth={2} />
+          <Text accessibilityLabel="Who gets the bill, needed" style={[{ fontSize: 13, color: C.ink }, weight(700)]}>
+            Bill goes to <Text style={{ color: C.danger }}>*</Text>
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row' }}>
+          <SearchBox value={billerQ} onChange={setBillerQ} onClear={() => setBillerQ('')} placeholder="Search your accounts" bg={C.canvas} />
+        </View>
+        <View style={{ gap: 8, marginTop: 8 }}>
+          {(billers ?? []).slice(0, 6).map((b) => {
+            const on = b.id === billerId;
+            return (
+              <Pressable
+                key={b.id}
+                onPress={() => setBillerId(b.id)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={b.name}
+                style={{
+                  minHeight: 56,
+                  borderRadius: 18,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  backgroundColor: on ? C.navy : C.canvas,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text numberOfLines={1} style={[{ fontSize: 15, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>
+                    {b.name}
+                  </Text>
+                  <Text numberOfLines={1} style={{ fontSize: 12, color: on ? C.faint : C.muted }}>
+                    {[b.contactPerson, b.city].filter(Boolean).join(' · ')}
+                  </Text>
+                </View>
+                {on ? <Icon name="tick" size={20} color={C.lime} strokeWidth={2.4} /> : null}
+              </Pressable>
+            );
+          })}
           {/* Reading, nothing matched, and nothing at all are three different
               answers. Only the last one means the form cannot be finished. */}
           {billers === null ? (
@@ -1233,14 +1473,17 @@ export default function Customers() {
               accounts to get the bill. Wait for the office update, then try again.
             </Text>
           ) : (
-            <PrimaryButton
+            <PillButton
               label={saving ? 'Adding…' : 'Add the shop'}
+              variant="lime"
+              height={60}
               onPress={() => void saveShop()}
               /* Saving is a hard stop with no reason attached, so the button
                  swallows the second tap; a missing biller keeps the button
-                 pressable and `saveShop` answers in words. */
+                 pressable and answers in words. */
               disabled={saving || !billerId}
               whyDisabled={saving ? undefined : 'Pick who gets the bill, above.'}
+              onRefused={(why) => notify(why, 'warn')}
             />
           )}
         </View>
@@ -1249,14 +1492,26 @@ export default function Customers() {
   );
 }
 
+/** The V3 filter chips' words and glyphs. The data layer's labels stay the a11y names. */
+const CHIP_WORDS: Partial<Record<CustomerFilter, string>> = { followUp: 'Follow-up', unpinned: 'No pin' };
+const CHIPS = CUSTOMER_FILTERS.map((f) => ({ value: f.value, label: CHIP_WORDS[f.value] ?? f.label }));
+const CHIP_DECOR: Partial<Record<CustomerFilter, { icon?: IconName; ink?: string; iconInk?: string; iconOnly?: boolean }>> = {
+  owing: { icon: 'wallet', ink: C.danger, iconOnly: true },
+  followUp: { icon: 'cal', iconInk: C.primaryDeep },
+  reorder: { icon: 'reorder', ink: C.warnInk, iconOnly: true },
+  visitDue: { icon: 'shop' },
+  unpinned: { icon: 'pin' },
+};
+
 /**
  * One labelled box.
  *
  * Local to this screen rather than a primitive: three fields is not a design
- * system, and the app's `Input` is built for the taller, icon-bearing boxes
- * the rest of the flows use.
+ * system. V3 draws it as a wash pill with the field's glyph and a red `*`;
+ * the label rides on the box for a screen reader.
  */
 function Field({
+  icon,
   label,
   required,
   value,
@@ -1264,6 +1519,7 @@ function Field({
   placeholder,
   keyboard,
 }: {
+  icon: IconName;
   label: string;
   required?: boolean;
   value: string;
@@ -1272,27 +1528,27 @@ function Field({
   keyboard?: 'phone-pad';
 }) {
   return (
-    <View style={{ marginBottom: 10 }}>
-      <Text style={[type.caption, { marginBottom: 4 }]}>
-        {label.toUpperCase() + (required ? ' · needed' : '')}
-      </Text>
+    <View
+      style={{
+        height: 52,
+        borderRadius: 16,
+        backgroundColor: C.canvas,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 14,
+      }}>
+      <Icon name={icon} size={18} color={C.muted} strokeWidth={2} />
       <TextInput
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={C.faint}
         keyboardType={keyboard}
-        style={{
-          height: 44,
-          paddingHorizontal: 12,
-          borderWidth: 1,
-          borderColor: C.border,
-          borderRadius: radius.sm,
-          fontSize: 15,
-          color: C.ink,
-          backgroundColor: C.surface,
-        }}
+        accessibilityLabel={label + (required ? ', needed' : '')}
+        style={{ flex: 1, minWidth: 0, height: 52, fontSize: 15, color: C.ink }}
       />
+      {required ? <Text style={[{ color: C.danger, fontSize: 15 }, weight(700)]}>*</Text> : null}
     </View>
   );
 }

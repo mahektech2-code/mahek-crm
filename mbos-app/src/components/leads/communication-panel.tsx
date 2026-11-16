@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
-import { Badge, Choice, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { View, Pressable, Text } from 'react-native';
+import { PrimaryButton } from '../ui/primitives';
+import { Icon } from '../ui/Icon';
+import { SheetChip, SheetTitle } from './v3-parts';
 import { VoiceField } from '../ui/dictate';
 import { BottomSheet } from '../ui/overlays';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { plural } from '../../lib/format';
 import type { CommunicationLog, CommunicationOption } from '../../data/lead-communication';
 
@@ -44,22 +46,24 @@ export function CommunicationPanel({
   const [acting, setActing] = React.useState<CommunicationOption | null>(null);
 
   return (
-    <View style={{ marginTop: 20 }}>
-      <SectionLabel style={{ marginBottom: 10 }}>Contact them</SectionLabel>
+    <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+        Contact them
+      </Text>
 
-      <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
         {log.options.map((option) => (
           <ActionRow key={option.action.code} option={option} onPress={() => setActing(option)} />
         ))}
       </View>
 
       {log.unattributed > 0 ? (
-        <T s="caption" style={{ marginTop: 8 }}>
+        <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 10 }, weight(400)]}>
           {plural(log.unattributed, 'earlier contact') +
             ' on this lead ' +
             (log.unattributed === 1 ? 'is' : 'are') +
             ' not in this list. It was saved before the app kept the type.'}
-        </T>
+        </Text>
       ) : null}
 
       {acting ? (
@@ -94,52 +98,48 @@ function ActionRow({ option, onPress }: { option: CommunicationOption; onPress: 
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
+      accessibilityLabel={
+        option.action.label +
+        (sub ? '. ' + sub : '') +
+        (option.sent > 0 ? '. ' + (option.sent === 1 ? 'Sent' : 'Sent ' + option.sent + ' times') : '')
+      }
       /* Disabled rows stay pressable, because the sheet is where the reason is
          written out in full and a row that answers nothing reads as broken. */
-      style={{
-        minHeight: 56,
-        borderWidth: 1,
+      style={({ pressed }) => ({
+        flexGrow: 1,
+        flexBasis: '45%',
+        minHeight: 60,
+        borderRadius: 16,
+        borderWidth: nothing ? 1 : 0,
+        borderStyle: 'dashed',
         borderColor: C.border,
-        borderRadius: radius.lg,
-        backgroundColor: nothing ? C.hairline : C.surface,
-        paddingHorizontal: 14,
+        backgroundColor: nothing ? '#F4F6FA' : pressed ? C.hairline : C.canvas,
+        paddingLeft: 12,
+        paddingRight: option.sent > 0 ? 30 : 12,
         paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-      }}>
-      <View style={{ flex: 1 }}>
-        <T style={[{ fontSize: 16, color: nothing ? C.muted : C.ink }, weight(600)]}>
-          {option.action.label}
-        </T>
-        {sub ? (
-          <T s="caption" style={{ marginTop: 2 }}>
-            {sub}
-          </T>
-        ) : null}
-      </View>
+        justifyContent: 'center',
+      })}>
+      <Text style={[{ fontSize: 13, lineHeight: 17, color: nothing ? C.faint : C.ink }, weight(700)]}>
+        {option.action.label}
+      </Text>
+      {sub ? (
+        <Text numberOfLines={1} style={[{ fontSize: 11, lineHeight: 15, color: nothing ? C.faint : C.muted }, weight(400)]}>
+          {nothing ? 'Office must add one' : sub}
+        </Text>
+      ) : null}
 
-      {/* THE COUNT, NEVER A TICK — once and five times are different
+      {/* THE COUNT, NEVER A TICK ALONE — once and five times are different
           mornings, and the second is a salesman who should be ringing
           rather than posting a sixth brochure. */}
       {option.sent > 0 ? (
-        <Badge tone="success">{option.sent === 1 ? 'Sent' : 'Sent ×' + option.sent}</Badge>
+        <Text style={[{ position: 'absolute', right: 8, top: 8, fontSize: 10, color: C.success }, weight(700)]}>
+          {option.sent === 1 ? '✓' : '✓×' + option.sent}
+        </Text>
       ) : null}
     </Pressable>
   );
 }
 
-/**
- * The one question this sheet asks is WHICH DOCUMENT, and it asks it only
- * where there is a choice to make.
- *
- * The library on this phone carries no publication date — the wire sends the
- * id, the title and the category and nothing else — so "the current price
- * list" is a sentence the handset cannot honestly say where two are published.
- * Guessing is the silent failure: the shop gets last quarter's prices and the
- * record says the price list went. Where there is exactly one it is chosen for
- * him and the sheet says which.
- */
 function RecordSheet({
   option,
   onClose,
@@ -170,33 +170,26 @@ function RecordSheet({
 
   return (
     <BottomSheet open onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        {option.action.label}
-      </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        {option.sent === 0
-          ? 'Not sent yet.'
-          : 'Already sent ' + plural(option.sent, 'time') + '.'}
-      </T>
+      <SheetTitle
+        title={option.action.label}
+        sub={option.sent === 0 ? 'Not sent yet' : 'Already sent ' + plural(option.sent, 'time')}
+        lead={<Icon name={send ? 'doc' : 'call'} size={22} color={C.primaryDeep} strokeWidth={2} />}
+      />
 
       {send ? (
-        <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What you send</SectionLabel>
+        <View style={{ marginTop: 12 }}>
           {nothing ? (
-            <T style={{ fontSize: 15, lineHeight: 22, color: C.muted }}>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.muted }, weight(400)]}>
               No document here yet. The office adds these. Until then you cannot save it as sent.
-            </T>
+            </Text>
           ) : option.documents.length === 1 ? (
-            <T style={{ fontSize: 16, color: C.ink }}>{option.documents[0].title}</T>
+            <Text accessibilityLabel={'What you send: ' + option.documents[0].title} style={[{ fontSize: 15, color: C.ink }, weight(700)]}>
+              {option.documents[0].title}
+            </Text>
           ) : (
-            <View style={{ gap: 8 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {option.documents.map((doc) => (
-                <Choice
-                  key={doc.id}
-                  label={doc.title}
-                  selected={documentId === doc.id}
-                  onPress={() => setDocumentId(doc.id)}
-                />
+                <SheetChip key={doc.id} label={doc.title} on={documentId === doc.id} onPress={() => setDocumentId(doc.id)} />
               ))}
             </View>
           )}
@@ -207,32 +200,56 @@ function RecordSheet({
           deep link and nothing else: the phone he is holding already makes
           calls, and the app's job is to remember that he made one. */}
       {!send && onDial ? (
-        <SecondaryButton label="Call now" onPress={onDial} style={{ marginTop: 14 }} />
+        <Pressable
+          onPress={onDial}
+          accessibilityRole="button"
+          style={({ pressed }) => ({
+            alignSelf: 'flex-start',
+            marginTop: 10,
+            minHeight: 44,
+            paddingHorizontal: 16,
+            borderRadius: 22,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+          })}>
+          <Icon name="call" size={16} color={C.primaryDeep} strokeWidth={2} />
+          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Call now</Text>
+        </Pressable>
       ) : null}
 
-      <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Note (optional)</SectionLabel>
+      <View style={{ marginTop: 10 }}>
         <VoiceField
           value={note}
           onChangeText={setNote}
-          placeholder="He asked for the 20 litre rate"
+          placeholder="Note (optional) — he asked for the 20 litre rate"
           multiline
+          style={{ borderRadius: 18, backgroundColor: C.canvas, borderWidth: 0 }}
         />
       </View>
 
-      <PrimaryButton
-        label="Save"
-        disabled={Boolean(why)}
-        whyDisabled={why}
-        onPress={() => {
-          if (why) return;
-          if (saving.current) return;
-          saving.current = true;
-          onSave({ documentId, note: note.trim() || null });
-        }}
-        style={{ marginTop: 16 }}
-      />
-      <SecondaryButton label="Not now" onPress={onClose} style={{ marginTop: 10 }} />
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Not now</Text>
+        </Pressable>
+        <PrimaryButton
+          label="Save"
+          tone="navy"
+          disabled={Boolean(why)}
+          whyDisabled={why}
+          onPress={() => {
+            if (why) return;
+            if (saving.current) return;
+            saving.current = true;
+            onSave({ documentId, note: note.trim() || null });
+          }}
+          style={{ flex: 1, borderRadius: 28 }}
+        />
+      </View>
     </BottomSheet>
   );
 }

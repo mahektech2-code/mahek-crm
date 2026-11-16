@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import { Icon } from '../src/components/ui/Icon';
 import { Pop, Pulse, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import type { UpdateVerdict } from '../src/engines/app-update';
@@ -11,7 +12,7 @@ import { backgroundStartFailure, stalledAt as trackerStalledAt } from '../src/sy
 import { batteryExemption } from '../src/native/phone-setup';
 import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice';
 import type { BatteryExemption } from '../src/engines/phone-readiness';
-import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
+import { color as C, weight } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
 import { listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
 import { describePayload, entityLabel } from '../src/sync/labels';
@@ -77,7 +78,7 @@ function whyStuck(q: QueueItem): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
-function stateTone(s: string): BadgeTone {
+function stateTone(s: string): 'danger' | 'info' | 'amber' {
   return s === 'failed' || s === 'rejected' ? 'danger' : s === 'syncing' ? 'info' : 'amber';
 }
 
@@ -283,39 +284,117 @@ export default function SyncScreen() {
   const rejected = counts.rejected ?? 0;
 
   return (
-    <AppFrame title="Waiting to send" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-
-      <Card>
+    <AppFrame
+      tone="canvas"
+      title="Waiting to send"
+      activeTab={null}
+      onBack={back.go}
+      showTitle={false}
+      hero={
+        <Text
+          accessibilityRole="header"
+          style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: HERO.lavender.ink, marginTop: 14 }, weight(800)]}>
+          Waiting to send
+        </Text>
+      }
+      contentStyle={{ padding: 16, paddingBottom: 24 }}>
+      <View style={{ backgroundColor: C.navy, borderRadius: 24, padding: 18 }}>
         {/* The count pops when a pass changes it — "4 waiting" becoming "1
             waiting" is the outcome he pressed the button for, and a digit
             changing in place is easy to miss. It breathes while a pass is in
             flight, so the headline itself says something is happening. */}
         <Pulse active={sending} style={{ alignSelf: 'flex-start' }}>
           <Pop trigger={waiting} from={0.9}>
-            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to the office'}
-            </T>
+            <View
+              accessible
+              accessibilityRole="header"
+              accessibilityLabel={waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to the office'}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              {waiting ? (
+                <Glyph shapes={CLOUD_UP} size={34} color={C.lime} strokeWidth={1.8} />
+              ) : (
+                <View
+                  style={{
+                    width: 52,
+                    height: 52,
+                    borderRadius: 26,
+                    backgroundColor: C.lime,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                  <Icon name="tick" size={24} color={C.navy} strokeWidth={2.6} />
+                </View>
+              )}
+              {waiting ? (
+                <View>
+                  <Text style={[{ fontSize: 40, lineHeight: 42, letterSpacing: -0.8, color: '#FFFFFF' }, weight(800)]}>
+                    {waiting}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: C.onNavyMuted }}>
+                    {waiting === 1 ? 'thing waiting to send' : 'things waiting to send'}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={[{ fontSize: 22, letterSpacing: -0.44, color: '#FFFFFF' }, weight(800)]}>
+                  All sent to the office
+                </Text>
+              )}
+            </View>
           </Pop>
         </Pulse>
-        <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          You can save without signal. It sends by itself when you have signal.
-        </T>
-        <PrimaryButton
-          label={sending ? 'Sending…' : 'Send now'}
+        <Text
+          accessibilityLabel="You can save without signal. It sends by itself when you have signal."
+          style={{ fontSize: 13, lineHeight: 18, color: '#C9D1E0', marginTop: 10 }}>
+          Save without signal — it sends itself when signal comes back.
+        </Text>
+        <Pressable
+          onPress={sending ? undefined : () => void sendNow()}
           disabled={sending}
-          onPress={() => void sendNow()}
-          style={{ marginTop: 14, borderRadius: radius.xl }}
-        />
-      </Card>
+          accessibilityRole="button"
+          accessibilityLabel={sending ? 'Sending…' : 'Send now'}
+          accessibilityState={{ disabled: sending, busy: sending }}
+          style={({ pressed }) => ({
+            marginTop: 14,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: waiting ? C.lime : 'rgba(255,255,255,0.12)',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            opacity: sending ? 0.55 : pressed ? 0.88 : 1,
+          })}>
+          {waiting ? <Glyph shapes={PLANE} size={18} color={C.navy} strokeWidth={2.4} /> : null}
+          <Text style={[{ fontSize: 16, color: waiting ? C.navy : '#FFFFFF' }, weight(waiting ? 800 : 700)]}>
+            {sending ? 'Sending…' : 'Send now'}
+          </Text>
+        </Pressable>
+      </View>
 
       {media.pending > 0 ? (
-        <T s="caption" style={{ marginTop: 10 }}>
+        <View
+          accessible
+          accessibilityLabel={
+            plural(media.pending, 'photo or recording', 'photos and recordings') + ' sending. Your entries go first.'
+          }
+          style={{
+            marginTop: 10,
+            alignSelf: 'flex-start',
+            height: 32,
+            paddingHorizontal: 12,
+            borderRadius: 16,
+            backgroundColor: C.surface,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+          }}>
+          <Glyph shapes={CAMERA} size={14} color={C.body} />
           {/* The plural form is given rather than derived: appending an `s` to
               the whole phrase reads "2 photo or recordings". */}
-          {plural(media.pending, 'photo or recording', 'photos and recordings') +
-            ' sending. Your entries go first.'}
-        </T>
+          <Text style={[{ fontSize: 12, color: C.body }, weight(600)]}>
+            {media.pending + ' sending · entries go first'}
+          </Text>
+        </View>
       ) : null}
 
       {/* A PHOTOGRAPH THAT GAVE UP IS NOT ONE STILL UPLOADING.
@@ -332,20 +411,25 @@ export default function SyncScreen() {
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
-            minHeight: 56,
+            paddingVertical: 14,
             paddingHorizontal: 16,
-            marginTop: 12,
-            borderWidth: 1,
-            borderColor: C.dangerBg,
+            marginTop: 10,
             backgroundColor: C.dangerBg,
-            borderRadius: radius.card,
+            borderRadius: 22,
           }}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Could not be sent</T>
-            <T s="caption" style={{ color: C.danger }}>
-              {plural(media.failed, 'photo or recording', 'photos and recordings') +
-                ' did not send. They are still on this phone.'}
-            </T>
+          <Glyph shapes={CAMERA} size={22} color={C.danger} />
+          <View
+            accessible
+            accessibilityLabel={
+              'Could not be sent. ' +
+              plural(media.failed, 'photo or recording', 'photos and recordings') +
+              ' did not send. They are still on this phone.'
+            }
+            style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, color: C.danger }, weight(800)]}>{'Could not be sent · ' + media.failed}</Text>
+            <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger }}>
+              {(media.failed === 1 ? 'Photo or recording' : 'Photos and recordings') + ' — still on this phone.'}
+            </Text>
           </View>
           <Pressable
             onPress={() => {
@@ -364,16 +448,18 @@ export default function SyncScreen() {
               });
             }}
             accessibilityRole="button"
-            style={{
+            accessibilityLabel="Try again"
+            style={({ pressed }) => ({
+              width: 48,
               height: 48,
-              paddingHorizontal: 12,
-              borderWidth: 1,
+              borderRadius: 24,
+              borderWidth: 2,
               borderColor: C.danger,
-              borderRadius: radius.md,
               alignItems: 'center',
               justifyContent: 'center',
-            }}>
-            <T style={{ fontSize: 15, color: C.danger }}>Try again</T>
+              opacity: pressed ? 0.7 : 1,
+            })}>
+            <Icon name="refresh" size={20} color={C.danger} strokeWidth={2.2} />
           </Pressable>
         </View>
       ) : null}
@@ -384,68 +470,110 @@ export default function SyncScreen() {
           `queueDepth` ask the same question, so no rows means no depth and the
           caption below cannot be lost with it. */}
       {rows.length > 0 ? (
-      <ListCard style={{ marginTop: 12 }}>
-        {depth > rows.length ? (
-          <T s="caption" style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            {/* "records" rather than a bare count: photographs are counted in
-                the headline above and called out in their own line, and a
-                second unqualified number on one screen is how this screen came
-                to disagree with itself three ways in the first place. */}
-            {`Showing the ${rows.length} most urgent of ${plural(depth, 'entry', 'entries')} waiting.`}
-          </T>
-        ) : null}
-        {rows.map((q, i) => (
-          <Stagger
-            key={q.id}
-            index={i}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              borderTopWidth: i ? 1 : 0,
-              borderTopColor: C.wash,
-            }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 15, color: C.ink }}>{entityLabel(q.entityType)}</T>
-              <T s="caption">{describe(q) + ' · ' + when(q.createdAt, today)}</T>
-              {/* Coloured to match the badge beside it — an item still
-                  retrying is amber, not red. */}
-              {heldBehind(q, rows) ?? whyStuck(q) ? (
-                <T s="caption" style={{ color: stateTone(q.state) === 'danger' ? C.danger : C.warnInk, marginTop: 2 }}>
-                  {heldBehind(q, rows) ?? whyStuck(q)}
-                </T>
-              ) : null}
-            </View>
-            <Badge tone={stateTone(q.state)}>{stateLabel(q)}</Badge>
-            {q.state === 'failed' || (q.state === 'blocked' && !heldBehind(q, rows)) ? (
-              <Pressable
-                onPress={async () => {
-                  await retryItem(q.id);
-                  load();
-                  /* The local half is true whatever the radio is doing — the
-                     item is back in the queue. What the pass itself managed is
-                     the half that used to be discarded. */
-                  await sendNow();
-                }}
-                accessibilityRole="button"
-                style={{
-                  height: 48,
-                  paddingHorizontal: 12,
-                  borderWidth: 1,
-                  borderColor: C.border,
-                  backgroundColor: C.surface,
-                  borderRadius: radius.md,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                <T style={{ fontSize: 15, color: C.body }}>Try again</T>
-              </Pressable>
+        <>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 14, paddingHorizontal: 4 }}>
+            <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.ink }, weight(800)]}>
+              Most urgent first
+            </Text>
+            {depth > rows.length ? (
+              /* "entries" rather than a bare count: photographs are counted in
+                 the headline above and called out in their own line, and a
+                 second unqualified number on one screen is how this screen came
+                 to disagree with itself three ways in the first place. */
+              <Text
+                accessibilityLabel={`Showing the ${rows.length} most urgent of ${plural(depth, 'entry', 'entries')} waiting.`}
+                style={[{ fontSize: 13, color: C.faint }, weight(600)]}>
+                {`${rows.length} of ${plural(depth, 'entry', 'entries')}`}
+              </Text>
             ) : null}
-          </Stagger>
-        ))}
-      </ListCard>
+          </View>
+          <View style={{ marginTop: 8, backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 14 }}>
+            {rows.map((q, i) => {
+              const tone = stateTone(q.state);
+              const note = heldBehind(q, rows) ?? whyStuck(q);
+              const lead = LEAD[q.entityType] ?? LEAD_DEFAULT;
+              return (
+                <Stagger
+                  key={q.id}
+                  index={i}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingVertical: 12,
+                    borderTopWidth: i ? 1 : 0,
+                    borderTopColor: C.hairline,
+                  }}>
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: lead.bg,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Glyph shapes={lead.glyph} size={18} color={lead.ink} />
+                  </View>
+                  <View
+                    accessible
+                    accessibilityLabel={[entityLabel(q.entityType), describe(q), when(q.createdAt, today), stateLabel(q), note]
+                      .filter(Boolean)
+                      .join('. ')}
+                    style={{ flex: 1, minWidth: 0 }}>
+                    <Text numberOfLines={2} style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>
+                      {describe(q)}
+                    </Text>
+                    <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                      {entityLabel(q.entityType) + ' · ' + when(q.createdAt, today)}
+                    </Text>
+                    {/* Coloured to match the badge beside it — an item still
+                        retrying is amber, not red. */}
+                    {note ? (
+                      <Text style={{ fontSize: 12, lineHeight: 16, color: tone === 'danger' ? C.danger : C.warnInk }}>
+                        {note}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View
+                    style={{
+                      height: 26,
+                      paddingHorizontal: 9,
+                      borderRadius: 13,
+                      justifyContent: 'center',
+                      backgroundColor: BADGE[tone].bg,
+                    }}>
+                    <Text style={[{ fontSize: 11, color: BADGE[tone].ink }, weight(800)]}>{stateLabel(q)}</Text>
+                  </View>
+                  {q.state === 'failed' || (q.state === 'blocked' && !heldBehind(q, rows)) ? (
+                    <Pressable
+                      onPress={async () => {
+                        await retryItem(q.id);
+                        load();
+                        /* The local half is true whatever the radio is doing — the
+                           item is back in the queue. What the pass itself managed is
+                           the half that used to be discarded. */
+                        await sendNow();
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={'Try again: ' + describe(q)}
+                      style={({ pressed }) => ({
+                        width: 44,
+                        height: 44,
+                        borderRadius: 22,
+                        backgroundColor: pressed ? C.hairline : C.canvas,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      })}>
+                      <Icon name="refresh" size={18} color={C.ink} strokeWidth={2.2} />
+                    </Pressable>
+                  ) : null}
+                </Stagger>
+              );
+            })}
+          </View>
+        </>
       ) : null}
 
       {/* A NEWER BUILD EXISTS.
@@ -462,26 +590,32 @@ export default function SyncScreen() {
         <Pressable
           onPress={() => offerUpdate({ kind: 'install', version: update.version, url: update.url })}
           accessibilityRole="button"
-          style={{
+          accessibilityLabel={'Update to ' + update.version + '. A new version of the app is out. Tap to update. Nothing on this phone is lost. You stay signed in.'}
+          style={({ pressed }) => ({
             marginTop: 14,
             padding: 16,
-            borderRadius: radius.lg,
-            borderWidth: 1,
-            borderColor: C.primary,
-            backgroundColor: C.primaryTint,
-          }}>
-          <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>
-            {'Update to ' + update.version}
-          </T>
-          <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }}>
-            A new version of the app is out. Tap to update.
-            Nothing on this phone is lost. You stay signed in.
-          </T>
+            borderRadius: 22,
+            backgroundColor: C.lavender,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            opacity: pressed ? 0.85 : 1,
+          })}>
+          <View
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="download" size={20} color="#FFFFFF" strokeWidth={2.2} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(800)]}>{'Update to ' + update.version}</Text>
+            <Text style={{ fontSize: 12, lineHeight: 16, color: C.body }}>
+              Tap to update. Nothing is lost; you stay signed in.
+            </Text>
+          </View>
         </Pressable>
       ) : null}
 
       {/* WHY A DAY GOES QUIET, and the two switches that decide it.
-          
+
           Everything else on this screen is about work that is waiting to go
           up. This one is about the handset being allowed to record at all —
           which is upstream of all of it, and is the commonest reason a trail
@@ -489,18 +623,38 @@ export default function SyncScreen() {
       <Pressable
         onPress={() => router.push('/tracking-setup?from=sync')}
         accessibilityRole="button"
-        style={{
-          marginTop: 14,
-          padding: 16,
-          borderRadius: radius.lg,
-          borderWidth: 1,
-          borderColor: notice.tone === 'danger' ? C.danger : C.border,
+        accessibilityLabel={notice.title + '. ' + notice.detail}
+        style={({ pressed }) => ({
+          marginTop: 10,
+          paddingVertical: 14,
+          paddingHorizontal: 16,
+          borderRadius: 22,
+          borderWidth: notice.tone === 'danger' ? 2 : 0,
+          borderColor: C.danger,
           backgroundColor: C.surface,
-        }}>
-        <T style={[{ fontSize: 15, color: notice.tone === 'danger' ? C.danger : C.ink }, weight(600)]}>
-          {notice.title}
-        </T>
-        <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>{notice.detail}</T>
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          opacity: pressed ? 0.85 : 1,
+        })}>
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            backgroundColor: notice.tone === 'danger' ? C.dangerBg : C.canvas,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <Glyph shapes={TARGET} size={20} color={notice.tone === 'danger' ? C.danger : C.muted} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[{ fontSize: 15, color: notice.tone === 'danger' ? C.danger : C.ink }, weight(800)]}>
+            {notice.title}
+          </Text>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{notice.detail}</Text>
+        </View>
+        <Icon name="forward" size={18} color={notice.tone === 'danger' ? C.danger : C.muted} strokeWidth={2} />
       </Pressable>
 
       {/* A refusal is not a queue item to retry blindly — it goes to the screen
@@ -509,25 +663,24 @@ export default function SyncScreen() {
         <Pressable
           onPress={() => router.push('/rejections?from=sync')}
           accessibilityRole="button"
-          style={{
+          accessibilityLabel={'Not accepted. ' + plural(rejected, 'entry', 'entries') + ' not accepted by the office. Nothing is lost.'}
+          style={({ pressed }) => ({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
-            minHeight: 56,
+            paddingVertical: 14,
             paddingHorizontal: 16,
-            marginTop: 12,
-            borderWidth: 1,
-            borderColor: C.dangerBg,
+            marginTop: 10,
             backgroundColor: C.dangerBg,
-            borderRadius: radius.card,
-          }}>
+            borderRadius: 22,
+            opacity: pressed ? 0.85 : 1,
+          })}>
+          <Text style={[{ fontSize: 24, color: C.danger, minWidth: 30, textAlign: 'center' }, weight(800)]}>{rejected}</Text>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Not accepted</T>
-            <T s="caption" style={{ color: C.danger }}>
-              {plural(rejected, 'entry', 'entries') + ' not accepted by the office. Nothing is lost.'}
-            </T>
+            <Text style={[{ fontSize: 15, color: C.danger }, weight(800)]}>Not accepted</Text>
+            <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger }}>by the office. Nothing is lost.</Text>
           </View>
-          <Icon name="forward" size={20} color={C.danger} strokeWidth={1.5} />
+          <Icon name="forward" size={18} color={C.danger} strokeWidth={2} />
         </Pressable>
       ) : null}
 
@@ -536,20 +689,26 @@ export default function SyncScreen() {
           that is said rather than the book quietly missing something. */}
       {problems ? (
         <View
+          accessible
           style={{
-            borderWidth: 1,
-            borderColor: C.warnEdge,
             backgroundColor: C.warnBg,
-            borderRadius: radius.card,
-            padding: 16,
-            marginTop: 12,
+            borderRadius: 22,
+            paddingVertical: 14,
+            paddingHorizontal: 16,
+            marginTop: 10,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
           }}>
-          <T style={[{ fontSize: 15, color: C.warnInk }, weight(600)]}>
-            {plural(problems.count, 'update', 'updates') + ' from the office could not be saved'}
-          </T>
-          <T s="small" style={{ color: C.ink, marginTop: 6 }}>
-            Everything else came through. Tell your manager if this stays here after the next send.
-          </T>
+          <Glyph shapes={CLOUD_ALERT} size={22} color={C.warnInk} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, color: C.warnInk }, weight(800)]}>
+              {plural(problems.count, 'update', 'updates') + ' from the office could not be saved'}
+            </Text>
+            <Text style={{ fontSize: 12, lineHeight: 17, color: C.ink }}>
+              Everything else came through. Tell your manager if it stays after the next send.
+            </Text>
+          </View>
         </View>
       ) : null}
       {/* WHICH BUILD THIS IS. Without it, "the fix is not on my phone" and
@@ -557,14 +716,55 @@ export default function SyncScreen() {
           exactly the hour that was lost to an APK that had been built and
           never published. `embedded` means it is running the bundle that came
           with the install; anything else is an update it has picked up. */}
-      <T s="caption" style={{ textAlign: 'center', marginTop: 20 }}>
+      <Text style={{ fontSize: 12, color: C.faint, textAlign: 'center', marginTop: 16 }}>
         {(() => {
           const b = runningBuild();
           return b.embedded
             ? 'App version: as installed'
             : `App update ${b.id.slice(0, 8)}${b.channel ? ' · ' + b.channel : ''}`;
         })()}
-      </T>
+      </Text>
     </AppFrame>
   );
 }
+
+const BADGE = {
+  danger: { bg: C.dangerBg, ink: C.danger },
+  info: { bg: C.infoBg, ink: C.info },
+  amber: { bg: C.warnBg, ink: C.warnInk },
+} as const;
+
+const CLOUD_UP: GlyphShape[] = [{ p: 'M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 7 18z' }, { p: 'M12 11v5M10 13l2-2 2 2' }];
+const CLOUD_ALERT: GlyphShape[] = [{ p: 'M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 7 18z' }, { p: 'M12 10v4M12 16h.01' }];
+const PLANE: GlyphShape[] = [{ p: 'M4 12l16-8-6 16-2-6z' }];
+const CAMERA: GlyphShape[] = [{ r: [3, 7, 18, 13, 2] }, { c: [12, 13, 3] }, { p: 'M9 7l1.5-2h3L15 7' }];
+const TARGET: GlyphShape[] = [{ c: [12, 12, 7] }, { c: [12, 12, 2] }, { p: 'M12 2v3M12 19v3M2 12h3M19 12h3' }];
+
+/** The mark that leads a row: what kind of thing is waiting. */
+const LEAD_DEFAULT = { glyph: [{ p: 'M7 3h7l5 5v13H7z' }, { p: 'M14 3v5h5' }] as GlyphShape[], bg: C.canvas, ink: C.body };
+const LEAD: Record<string, { glyph: GlyphShape[]; bg: string; ink: string }> = {
+  order: {
+    glyph: [{ p: 'M4 5h2l2 10h10l2-7H7' }, { c: [9, 19, 1.5] }, { c: [17, 19, 1.5] }],
+    bg: C.primaryTint,
+    ink: C.primaryDeep,
+  },
+  order_change_request: {
+    glyph: [{ p: 'M4 5h2l2 10h10l2-7H7' }, { c: [9, 19, 1.5] }, { c: [17, 19, 1.5] }],
+    bg: C.primaryTint,
+    ink: C.primaryDeep,
+  },
+  payment: { glyph: [{ r: [3, 6, 18, 13, 2] }, { p: 'M3 10h18' }], bg: C.successBg, ink: C.success },
+  visit: {
+    glyph: [{ p: 'M12 21s7-6 7-11a7 7 0 0 0-14 0c0 5 7 11 7 11z' }, { c: [12, 10, 2.5] }],
+    bg: C.canvas,
+    ink: C.body,
+  },
+  lead: { glyph: [{ c: [12, 8, 4] }, { p: 'M4 21c0-4 4-6 8-6s8 2 8 6' }], bg: C.primaryTint, ink: C.primaryDeep },
+  expense: { glyph: [{ p: 'M6 3h12v18l-3-2-3 2-3-2-3 2z' }, { p: 'M9 8h6M9 12h6' }], bg: C.canvas, ink: C.body },
+  complaint: { glyph: [{ p: 'M12 4l9 16H3z' }, { p: 'M12 10v4M12 17h.01' }], bg: C.dangerBg, ink: C.danger },
+  sample: {
+    glyph: [{ p: 'M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3' }],
+    bg: C.primaryTint,
+    ink: C.primaryDeep,
+  },
+};

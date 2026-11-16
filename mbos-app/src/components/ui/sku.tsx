@@ -21,13 +21,17 @@ export function skuText(sku?: string | null): string | null {
 export function SkuChip({ sku, style }: { sku?: string | null; style?: object }) {
   const text = skuText(sku);
   if (!text) return null;
+  /* Version 3 draws the bare code in the chip ("NT-20L"); the word "SKU" is
+     what a screen reader says, so the code is never read as a word. */
   return (
     <View
+      accessible
+      accessibilityLabel={text}
       style={[
-        { alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: C.wash, marginBottom: 3 },
+        { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, backgroundColor: C.canvas, marginBottom: 3 },
         style,
       ]}>
-      <T style={[{ fontSize: 11, lineHeight: 15, color: C.body, letterSpacing: 0.3 }, weight(600), tabular]}>{text}</T>
+      <T style={[{ fontSize: 11, lineHeight: 15, color: C.body, letterSpacing: 0.3 }, weight(600), tabular]}>{sku?.trim()}</T>
     </View>
   );
 }

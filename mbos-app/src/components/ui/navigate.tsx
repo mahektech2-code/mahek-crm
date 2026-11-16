@@ -39,6 +39,8 @@ export function NavigateButton({
   detail,
   variant = 'row',
   style,
+  look = 'tint',
+  size,
 }: {
   lat?: number | null;
   lng?: number | null;
@@ -62,6 +64,14 @@ export function NavigateButton({
    */
   variant?: 'row' | 'button' | 'icon';
   style?: { flex?: number; marginTop?: number };
+  /**
+   * How the icon-only button is drawn, as Version 3 draws it in each place: a
+   * tinted square (the default), a 56pt outlined square on the next-stop card,
+   * a round grey one on a list row, white on a highlighted row, and a
+   * translucent one on a navy card.
+   */
+  look?: 'tint' | 'outline' | 'round' | 'white' | 'onNavy' | 'primary';
+  size?: number;
 }) {
   const notify = useStore((s) => s.notify);
   const [busy, setBusy] = React.useState(false);
@@ -94,19 +104,42 @@ export function NavigateButton({
         accessibilityRole="button"
         accessibilityLabel={'Navigate to ' + (name ?? 'the shop')}
         hitSlop={4}
-        style={({ pressed }) => [
-          {
-            width: HIT,
-            height: HIT,
-            borderRadius: radius.lg,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
-            opacity: busy ? 0.6 : 1,
-          },
-          style,
-        ]}>
-        <Icon name="route" size={20} color={C.primaryDeep} strokeWidth={1.8} />
+        style={({ pressed }) => {
+          const box = size ?? (look === 'outline' ? 56 : look === 'tint' ? HIT : 44);
+          const round = look === 'round' || look === 'white' || look === 'onNavy' || look === 'primary';
+          const bg =
+            look === 'outline'
+              ? pressed ? C.canvas : C.surface
+              : look === 'round'
+                ? pressed ? C.border : C.canvas
+                : look === 'white'
+                  ? C.surface
+                  : look === 'onNavy'
+                    ? 'rgba(255,255,255,0.12)'
+                    : look === 'primary'
+                      ? pressed ? C.primaryDeep : C.primary
+                    : pressed ? C.primaryEdge : C.primaryTint;
+          return [
+            {
+              width: box,
+              height: box,
+              borderRadius: round ? box / 2 : look === 'outline' ? 18 : radius.lg,
+              borderWidth: look === 'outline' ? 1 : 0,
+              borderColor: C.line,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: bg,
+              opacity: busy ? 0.6 : 1,
+            },
+            style,
+          ];
+        }}>
+        <Icon
+          name={look === 'tint' ? 'route' : 'nav'}
+          size={look === 'outline' ? 22 : 20}
+          color={look === 'onNavy' || look === 'primary' ? '#FFFFFF' : look === 'tint' ? C.primaryDeep : C.ink}
+          strokeWidth={2}
+        />
       </Pressable>
     );
   }

@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { Pressable, View, Text } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, T, PrimaryButton, SecondaryButton, Badge } from '../src/components/ui/primitives';
-import { color as C, radius, type, weight } from '../src/theme/tokens';
+import { Badge } from '../src/components/ui/primitives';
+import { Disc, PillButton } from '../src/components/ui/v3';
+import { type IconName } from '../src/components/ui/Icon';
+import { color as C, type, weight } from '../src/theme/tokens';
 import { discardRefused, listRejections, retryItem, type QueueItem } from '../src/sync/queue';
 import { entityLabel, readPayload as parsePayload } from '../src/sync/labels';
 import { syncNow } from '../src/sync/engine';
@@ -111,34 +113,68 @@ export default function Rejections() {
   );
 
   return (
-    <AppFrame title="Not accepted" contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame
+      tone="canvas"
+      title="Not accepted"
+      onBack={back.go}
+      activeTab="more"
+      showTitle={false}
+      heroTop={
+        <View>
+          <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
+            Not accepted
+          </Text>
+          <Text
+            numberOfLines={1}
+            accessibilityLabel="The office did not accept these. Each one says what to do. Nothing goes until you choose."
+            style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+            Nothing goes until you choose
+          </Text>
+        </View>
+      }
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Not accepted</T>
-      <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        The office did not accept these. Each one says what to do. Nothing goes until you choose.
-      </T>
 
       {rows === null ? (
-        <Text style={[type.small, { color: C.muted, marginTop: 16 }]}>
+        <Text style={[type.small, { color: C.muted, paddingHorizontal: 6 }]}>
           {readFailed ? 'Could not open this list. Try again in a minute.' : 'Reading…'}
         </Text>
       ) : rows.length === 0 ? (
-        <Card style={{ marginTop: 16, paddingVertical: 32, alignItems: 'center' }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 24, paddingHorizontal: 20, paddingVertical: 28, alignItems: 'center' }}>
           {/* NARROWED, because "everything went through" claimed more than this
               screen can see. `listRejections` reads the handset's own outbox —
               records refused BEFORE they were stored. An order accounts decline
               after it synced never reaches this queue and never will, so a
               salesman whose order was turned down this morning was being told
               nothing he saved had been refused. */}
-          <Text style={[{ fontSize: 16, color: C.ink }, weight(600)]}>Nothing is stuck</Text>
-          <Text style={[type.small, { color: C.muted, marginTop: 4, textAlign: 'center' }]}>
-            This list shows entries the office did not accept when you sent them. If the office
-            turned down an order later, see Your orders. The reason is on the order.
+          <Disc icon="tick" size={56} bg={C.successBg} ink={C.success} />
+          <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink, marginTop: 10 }, weight(800)]}>
+            Nothing is stuck
           </Text>
-        </Card>
+          <Text
+            accessibilityLabel="This list shows entries the office did not accept when you sent them. If the office turned down an order later, see Your orders. The reason is on the order."
+            style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4, textAlign: 'center' }}>
+            Only entries refused when sent. An order turned down later is on Your orders, with the reason.
+          </Text>
+          <Pressable
+            onPress={() => router.push('/orders?from=rejections')}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              marginTop: 12,
+              height: 44,
+              paddingHorizontal: 16,
+              borderRadius: 22,
+              backgroundColor: C.primaryTint,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: pressed ? 0.85 : 1,
+            })}>
+            <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Your orders</Text>
+          </Pressable>
+        </View>
       ) : null}
 
-      <View style={{ gap: 12, marginTop: 16 }}>
+      <View style={{ gap: 10 }}>
         {cards.map(({ row, payload }, i) => {
           /* An order's payload carries `totalAmountPaise`; a payment's carries
              `amountPaise`. Reading neither meant a refused PAYMENT showed its
@@ -154,18 +190,31 @@ export default function Rejections() {
               : null;
           const said = row.failureReason?.trim() || null;
           const guidance = row.failureCode ? WHAT_TO_DO[row.failureCode] ?? null : null;
+          const again = retake(row);
+          const kind = label(row.entityType);
 
           return (
             <Stagger key={row.id} index={i}>
-              <Card style={{ borderLeftWidth: 3, borderLeftColor: C.danger }}>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                      {label(row.entityType)}
-                      {payload.customerName ? ` · ${payload.customerName}` : ''}
+              <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Disc icon={ENTITY_ICON[row.entityType] ?? 'alert'} size={40} bg={C.dangerBg} ink={C.danger} />
+                  <View
+                    accessible
+                    accessibilityLabel={kind + (payload.customerName ? ` · ${payload.customerName}` : '') + (valueLine ? ', ' + valueLine : '')}
+                    style={{ flex: 1, minWidth: 0 }}>
+                    <Text numberOfLines={2} style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(800)]}>
+                      {payload.customerName ?? kind}
                     </Text>
-                    {valueLine ? (
-                      <Text style={[type.caption, { marginTop: 2 }]}>{valueLine}</Text>
+                    {payload.customerName || valueLine ? (
+                      <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                        {payload.customerName ? kind : ''}
+                        {payload.customerName && valueLine ? ' · ' : ''}
+                        {valueLine ? (
+                          <Text style={[{ color: value != null && !payload.valueUnavailable ? C.ink : C.muted }, weight(value != null && !payload.valueUnavailable ? 700 : 400)]}>
+                            {valueLine}
+                          </Text>
+                        ) : null}
+                      </Text>
                     ) : null}
                   </View>
                   <Badge tone="danger">Not accepted</Badge>
@@ -177,56 +226,63 @@ export default function Rejections() {
                     recognised code drew a "Refused" badge, a blank coloured box
                     and two buttons: no explanation of any kind, on the screen
                     whose whole promise is what the office said and what to do. */}
-                <View style={{ backgroundColor: C.dangerBg, borderRadius: radius.md, padding: 12, marginTop: 12 }}>
-                  <Text style={[type.small, { color: C.ink }]}>
-                    {said ??
-                      (guidance
+                <View style={{ backgroundColor: C.dangerBg, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginTop: 12 }}>
+                  <Text style={{ fontSize: 13, lineHeight: 18, color: C.ink }}>
+                    {said
+                      ? '“' + said + '”'
+                      : guidance
                         ? 'The office did not say why.'
-                        : 'The office did not say why. Send it again. If it comes back, ask your manager.')}
+                        : 'The office did not say why. Send it again. If it comes back, ask your manager.'}
                   </Text>
                 </View>
 
-                {guidance ? <Text style={[type.caption, { marginTop: 10 }]}>{guidance}</Text> : null}
+                {guidance ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 8 }}>{guidance}</Text> : null}
 
                 {/* TAKE IT AGAIN, for the two entries a salesman most needs
                     to: an order and a payment. Sending the refused one again
                     replays exactly what was refused; this opens the form for
                     the same shop and lets the refused entry go, so it is not
                     counted twice on his phone. */}
-                {retake(row) ? (
-                  <PrimaryButton
-                    label={retake(row)!.label}
+                {again ? (
+                  <PillButton
+                    label={again.label}
+                    variant="navyLime"
+                    height={52}
                     onPress={() =>
                       askConfirm({
-                        title: retake(row)!.label + '?',
-                        body: retake(row)!.body,
-                        confirmLabel: 'Yes, ' + retake(row)!.label.toLowerCase(),
+                        title: again.label + '?',
+                        body: again.body,
+                        confirmLabel: 'Yes, ' + again.label.toLowerCase(),
+                        cancelLabel: 'Cancel',
+                        tone: 'navy',
+                        subtitle: payload.customerName,
                         run: () => {
                           void (async () => {
                             await discardRefused(row.id);
                             if (payload.customerId) useStore.getState().set({ custId: payload.customerId });
                             load(true);
-                            router.push(retake(row)!.route);
+                            router.push(again.route);
                           })();
                         },
                       })
                     }
-                    style={{ marginTop: 14 }}
+                    style={{ marginTop: 12 }}
                   />
                 ) : null}
 
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                  <SecondaryButton
-                    label="Open the shop"
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: again ? 8 : 10 }}>
+                  <CardAction
+                    label="Open shop"
+                    a11y="Open the shop"
                     onPress={() => {
                       if (!payload.customerId) return notify('This entry is not for a shop.', 'error');
                       useStore.getState().set({ custId: payload.customerId });
                       router.push('/customer');
                     }}
-                    style={{ flex: 1 }}
                   />
-                  <SecondaryButton
+                  <CardAction
                     label="Remove"
+                    ink={C.danger}
                     onPress={() =>
                       askConfirm({
                         title: 'Remove this from your phone?',
@@ -235,6 +291,9 @@ export default function Rejections() {
                             ? 'The office never got it, and it will be gone from this phone too. Take it again first if it still matters.'
                             : 'The office keeps what it already has. Your change that it refused is let go.',
                         confirmLabel: 'Yes, remove it',
+                        cancelLabel: 'Cancel',
+                        tone: 'danger',
+                        lead: { icon: 'close', tint: C.danger, bg: C.dangerBg },
                         run: () => {
                           void discardRefused(row.id).then(() => {
                             load(true);
@@ -243,7 +302,6 @@ export default function Rejections() {
                         },
                       })
                     }
-                    style={{ flex: 1 }}
                   />
                   {/* Duplicates cannot be usefully resent — the office already has it. */}
                   {row.failureCode !== 'duplicate' ? (
@@ -252,8 +310,9 @@ export default function Rejections() {
                        identical until `load()` resolved, so nothing appeared to
                        happen and he tapped it several times, each tap firing a
                        fresh manual sync. */
-                    <PrimaryButton
+                    <CardAction
                       label={retrying === row.id ? 'Sending…' : 'Send again'}
+                      tint
                       disabled={retrying === row.id}
                       onPress={() => {
                         setRetrying(row.id);
@@ -268,16 +327,64 @@ export default function Rejections() {
                           }
                         })();
                       }}
-                      style={{ flex: 1 }}
                     />
                   ) : null}
                 </View>
-              </Card>
+              </View>
             </Stagger>
           );
         })}
       </View>
     </AppFrame>
+  );
+}
+
+/** The round glyph a refused card leads on, by what was refused. */
+const ENTITY_ICON: Record<string, IconName> = {
+  order: 'order',
+  payment: 'money',
+  visit: 'visit',
+  sample: 'sample',
+  task: 'task',
+};
+
+/** One of the three 44 pills a refused card ends on. */
+function CardAction({
+  label,
+  a11y,
+  ink = C.ink,
+  tint = false,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  a11y?: string;
+  ink?: string;
+  tint?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={a11y ?? label}
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => ({
+        flex: 1,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: tint ? C.primaryTint : C.canvas,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 6,
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      <Text numberOfLines={1} style={[{ fontSize: 13, color: disabled ? C.faint : tint ? C.primaryDeep : ink }, weight(700)]}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 

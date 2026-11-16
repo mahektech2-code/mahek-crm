@@ -1,12 +1,13 @@
 import React from 'react';
-import { AppState, Pressable, View } from 'react-native';
+import { AppState, Pressable, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame } from '../src/components/shell/AppFrame';
-import { Card, PrimaryButton, T } from '../src/components/ui/primitives';
+import { HERO } from '../src/components/shell/Chrome';
+import { Icon } from '../src/components/ui/Icon';
 import { DrawnTick, Swap, animateLayout } from '../src/components/ui/motion';
-import { SetupStepList, useSetupActions } from '../src/components/setup/SetupSteps';
-import { color as C, radius, weight } from '../src/theme/tokens';
+import { RESTART_SHORT, SetupStepList, useSetupActions } from '../src/components/setup/SetupSteps';
+import { color as C, weight } from '../src/theme/tokens';
 import { useStore } from '../src/state/store';
 import { markWalkthroughShown, readSetupSteps } from '../src/data/setup-walkthrough';
 import { firstOpen, stepsForEntry, type SetupStepView } from '../src/engines/setup-steps';
@@ -84,52 +85,129 @@ export default function SetupScreen() {
   if (current && !sawUnfinished) setSawUnfinished(true);
   const finishedHere = !!steps && !current && sawUnfinished;
 
-  return (
-    <AppFrame title="Set up your phone" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <Card>
-        <Swap id={current ? 'todo' : 'done'}>
-        {finishedHere ? (
-          <View style={{ alignItems: 'center', marginBottom: 10 }}>
-            <DrawnTick size={56} color={C.success} background={C.successBg} />
-          </View>
-        ) : null}
-        <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          {current ? 'Set this up once. It takes one minute.' : 'Your phone is set up'}
-        </T>
-        <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          {current
-            ? 'Android asks for each of these one by one. MBOS cannot turn them on for you. ' +
-              'Do each step below. Each button opens the right place.'
-            : 'Everything MBOS needs is allowed. ' + RESTART_ANSWER}
-        </T>
-        </Swap>
-      </Card>
+  const finished = !!steps && !current;
+  const tone = finished ? 'navy' : 'lavender';
+  const h = HERO[tone];
+  const stepNo = steps ? Math.min(doneCount + 1, steps.length) : 0;
 
+  return (
+    <AppFrame
+      title="Set up your phone"
+      activeTab={null}
+      hideBack
+      tone={tone}
+      showTitle={false}
+      heroTop={
+        <Text
+          accessibilityRole="header"
+          numberOfLines={1}
+          style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: h.ink }, weight(800)]}>
+          Set up your phone
+        </Text>
+      }
+      hero={
+        <Swap id={current ? 'todo' : 'done'}>
+          {finished ? (
+            <View
+              accessible
+              accessibilityLabel={'Your phone is set up. Everything MBOS needs is allowed. ' + RESTART_ANSWER}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 18 }}>
+                {finishedHere ? (
+                  <DrawnTick size={56} color={C.navy} background={C.lime} />
+                ) : (
+                  <View
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 28,
+                      backgroundColor: C.lime,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Icon name="tick" size={26} color={C.navy} strokeWidth={2.6} />
+                  </View>
+                )}
+                <Text style={[{ flex: 1, fontSize: 24, lineHeight: 28, letterSpacing: -0.48, color: '#FFFFFF' }, weight(800)]}>
+                  Your phone is set up
+                </Text>
+              </View>
+              <Text style={{ fontSize: 13, lineHeight: 19, color: '#C9D1E0', marginTop: 10 }}>
+                {'Everything MBOS needs is allowed. ' + RESTART_SHORT}
+              </Text>
+            </View>
+          ) : (
+            <View>
+              <View
+                accessible
+                accessibilityLabel="Set this up once. It takes one minute. Android asks for each of these one by one. MBOS cannot turn them on for you. Do each step below. Each button opens the right place.">
+                <Text style={[{ fontSize: 15, lineHeight: 20, color: h.ink, marginTop: 14 }, weight(700)]}>
+                  Once, about a minute.
+                </Text>
+                <Text style={{ fontSize: 13, lineHeight: 18, color: C.body, marginTop: 2 }}>
+                  Android asks one by one; MBOS cannot switch them on for you. Each button opens the right place.
+                </Text>
+              </View>
+              {steps && current ? (
+                <View
+                  accessible
+                  accessibilityLabel={`Step ${stepNo} of ${steps.length}`}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+                  {steps.map((st) => (
+                    <View
+                      key={st.key}
+                      style={{
+                        flex: 1,
+                        height: 6,
+                        borderRadius: 3,
+                        backgroundColor:
+                          st.tone === 'done' ? C.success : st.key === current.key ? C.primary : C.primaryEdge,
+                      }}
+                    />
+                  ))}
+                  <Text style={[{ fontSize: 12, color: C.primaryDeep, marginLeft: 4 }, weight(800)]}>
+                    {`${stepNo} / ${steps.length}`}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          )}
+        </Swap>
+      }
+      contentStyle={{ padding: 16, paddingBottom: 24 }}>
       {steps === null ? (
-        <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          Checking your phone…
-        </T>
+        <Text style={{ fontSize: 13, color: C.muted, marginTop: 8, textAlign: 'center' }}>Checking your phone…</Text>
       ) : (
         <>
-          {current ? (
-            <T s="caption" style={{ marginTop: 14 }}>
-              {`Step ${Math.min(doneCount + 1, steps.length)} of ${steps.length}`}
-            </T>
-          ) : null}
-
           <SetupStepList steps={steps} openKey={current?.key ?? null} actions={actions} />
 
           {current ? (
             <Pressable
               onPress={leave}
               accessibilityRole="button"
-              style={{ alignSelf: 'center', marginTop: 18, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}>
-              <T s="small" style={{ color: C.muted }}>
-                Do this later
-              </T>
+              style={{ alignSelf: 'stretch', marginTop: 14, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={[{ fontSize: 14, color: C.muted }, weight(600)]}>Do this later</Text>
             </Pressable>
           ) : (
-            <PrimaryButton label="Start using MBOS" onPress={leave} style={{ marginTop: 16, borderRadius: radius.xl }} />
+            <Pressable
+              onPress={leave}
+              accessibilityRole="button"
+              accessibilityLabel="Start using MBOS"
+              style={({ pressed }) => ({
+                marginTop: 14,
+                height: 60,
+                borderRadius: 30,
+                backgroundColor: C.navy,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                opacity: pressed ? 0.88 : 1,
+              })}>
+              <Text style={[{ fontSize: 17, color: '#FFFFFF' }, weight(700)]}>Start using MBOS</Text>
+              <View style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.lime, justifyContent: 'center' }}>
+                <Icon name="forward" size={14} color={C.navy} strokeWidth={2.6} />
+              </View>
+            </Pressable>
           )}
         </>
       )}

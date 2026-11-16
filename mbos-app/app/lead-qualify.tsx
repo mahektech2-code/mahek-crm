@@ -1,8 +1,9 @@
 import React from 'react';
 import { View, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { Card, Choice, Input, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import {
   distributorProfileOf,
@@ -229,13 +230,15 @@ export default function QualifyScreen() {
 
   if (!view) {
     return (
-      <AppFrame title="Qualification" activeTab={null} onBack={goBack} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={goBack} />
-        <Card style={{ paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+      <AppFrame title="Qualification" tone="lavender" activeTab={null} onBack={goBack} contentStyle={{ padding: 14 }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 26, alignItems: 'center' }}>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(800)]}>
             This lead is not on this phone
           </T>
-        </Card>
+          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+            Go back and open it from the list
+          </T>
+        </View>
       </AppFrame>
     );
   }
@@ -249,10 +252,23 @@ export default function QualifyScreen() {
      below, untouched. */
   if (!isDistributor && conditions.length > 0) {
     return (
-      <AppFrame title="Qualification" activeTab={null} onBack={goBack} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-        <BackLink label={back.label} onPress={goBack} />
-        <QualificationForm key={lead.id} view={view} onSaved={load} />
-      </AppFrame>
+      <QualificationForm
+        key={lead.id}
+        view={view}
+        onSaved={load}
+        frame={({ hero, body }) => (
+          <AppFrame
+            title="Qualification"
+            tone="lavender"
+            showTitle={false}
+            hero={hero}
+            activeTab={null}
+            onBack={goBack}
+            contentStyle={{ padding: 14, paddingBottom: 24 }}>
+            {body}
+          </AppFrame>
+        )}
+      />
     );
   }
 
@@ -365,42 +381,45 @@ export default function QualifyScreen() {
   return (
     <AppFrame
       title={isDistributor ? 'Distributor qualification' : 'Qualification'}
+      tone="lavender"
+      showTitle={false}
       activeTab={null}
       onBack={goBack}
-      contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={goBack} />
-
-      <Card>
-        <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink }, weight(600)]}>
-          {lead.company?.trim() || lead.name}
-        </T>
-        <T s="caption" style={{ marginTop: 2 }}>{stageLabel(view.stage)}</T>
-        <Divider style={{ marginVertical: 12 }} />
-        {/* A count, never a bar. It pops when a save moves it — the count
-            reads the RECORD, so this is the moment an answer actually counts,
-            not the moment a switch was flipped. */}
-        <Pop trigger={done} from={0.85} style={{ alignSelf: 'flex-start' }}>
-          <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>
-            {done + ' of ' + conditions.length + ' answered'}
+      contentStyle={{ padding: 14, paddingBottom: 24 }}
+      hero={
+        <View style={{ marginTop: 14 }}>
+          <T style={[{ fontSize: 13, color: HERO.lavender.muted }, weight(600)]}>
+            {(isDistributor ? 'Distributor qualification' : 'Qualification') + ' · ' + stageLabel(view.stage)}
           </T>
-        </Pop>
-        {/* KEPT, not typed. The count is what the phone is holding, so it does
-            not move until Save has been pressed — and Save writes the whole
-            checklist, not the group on the screen. */}
-        <T s="caption" style={{ marginTop: 2 }}>
-          {done === conditions.length
-            ? 'All saved. You can move it to the next stage on the lead page.'
-            : plural(conditions.length - done, 'question') +
-              ' left. Only saved answers count. Press Save to keep them all.'}
-        </T>
-      </Card>
-
+          <T style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: HERO.lavender.ink }, weight(800)]}>
+            {lead.company?.trim() || lead.name}
+          </T>
+          {/* A count, never a bar. It pops when a save moves it — the count
+              reads the RECORD, so this is the moment an answer actually
+              counts, not the moment a switch was flipped. */}
+          <Pop trigger={done} from={0.85} style={{ alignSelf: 'flex-start', marginTop: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+              <T style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.6, color: HERO.lavender.ink }, weight(800)]}>{String(done)}</T>
+              <T style={[{ fontSize: 15, color: HERO.lavender.muted }, weight(700)]}>{'of ' + conditions.length + ' answered'}</T>
+            </View>
+          </Pop>
+          {/* KEPT, not typed. The count is what the phone is holding, so it
+              does not move until Save has been pressed — and Save writes the
+              whole checklist, not the group on the screen. */}
+          <T style={[{ fontSize: 12, lineHeight: 17, color: HERO.lavender.muted, marginTop: 8 }, weight(400)]}>
+            {done === conditions.length
+              ? 'All saved. You can move it to the next stage on the lead page.'
+              : plural(conditions.length - done, 'question') +
+                ' left. Only saved answers count. Press Save to keep them all.'}
+          </T>
+        </View>
+      }>
       {isDistributor ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-          style={{ marginHorizontal: -16, paddingHorizontal: 16, marginTop: 16 }}>
+          style={{ marginHorizontal: -14, paddingHorizontal: 14, marginTop: 4 }}>
           {Object.keys(GROUP_TITLE).map((g) => {
             const inGroup = conditions.filter((c) => c.group === g);
             const got = inGroup.filter(answered).length;
@@ -517,7 +536,7 @@ export default function QualifyScreen() {
         /* One button, and it saves the WHOLE checklist however many groups are
            half filled in. It used to name the group it was standing on, which
            was an honest label for a save that dropped the other four. */
-        <PrimaryButton label="Save checklist" onPress={saveGroup} style={{ marginTop: 18 }} />
+        <PrimaryButton label="Save checklist" tone="navy" onPress={saveGroup} style={{ marginTop: 18, borderRadius: 30 }} />
       )}
 
       <SecondaryButton

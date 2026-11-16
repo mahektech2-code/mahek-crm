@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
+import { View, Text, Pressable, ScrollView, TextInput } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { color as C, HIT, radius, type, weight, tabular, type BadgeTone } from '../src/theme/tokens';
-import { Icon } from '../src/components/ui/Icon';
-import { Badge, Card, HealthPill, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { BADGE, color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
+import { Icon, type IconName } from '../src/components/ui/Icon';
+import { DashedAdd, Pill, PillButton } from '../src/components/ui/v3';
+import { HERO } from '../src/components/shell/Chrome';
+import { Badge, HealthPill } from '../src/components/ui/primitives';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { getFix } from '../src/native/location';
 import { SkuChip } from '../src/components/ui/sku';
@@ -117,6 +119,46 @@ const KIND_LABEL: Record<string, string> = {
   internal_note: 'Note',
 };
 const KIND_FALLBACK = 'Update';
+
+/** The disc each kind of entry wears on the timeline. */
+const KIND_ICON: Partial<Record<string, IconName>> = {
+  Visit: 'shop',
+  Order: 'order',
+  Payment: 'wallet',
+  Complaint: 'warn',
+  WhatsApp: 'chat',
+  Telecaller: 'call',
+  Call: 'call',
+  Sample: 'sample',
+  Lead: 'person',
+  Delivery: 'route',
+  'Other brand': 'shield',
+  Change: 'people',
+  Note: 'note',
+};
+
+/* V3's Visit is a teal of its own rather than the primary tint `teal` badges wear. */
+function kindLook(kind: string): { bg: string; fg: string } {
+  const tone = TONES[kind] ?? 'neutral';
+  if (tone === 'teal') return { bg: '#E3F4F4', fg: '#0E6E6E' };
+  return BADGE[tone];
+}
+
+const TAB_ICON: Partial<Record<string, IconName>> = {
+  Timeline: 'clock',
+  Orders: 'order',
+  Account: 'wallet',
+  Samples: 'sample',
+};
+
+/** An order's status word as a badge colour. */
+function orderTone(status: string): BadgeTone {
+  const s = status.toLowerCase();
+  if (s.includes('cancel') || s.includes('declin') || s.includes('reject')) return 'danger';
+  if (s.includes('deliver') || s.includes('approved') || s.includes('accepted')) return 'success';
+  if (s.includes('dispatch') || s.includes('transit')) return 'info';
+  return 'amber';
+}
 
 const TONES: Record<string, BadgeTone> = {
   Visit: 'teal',
@@ -357,12 +399,7 @@ export default function CustomerRecord() {
   if (!c) {
     return (
       <AppFrame title="Customer" activeTab="customers" onBack={() => router.back()} contentStyle={{ padding: 16 }}>
-        <Card style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Not on this phone yet</Text>
-          <Text style={[type.small, { color: C.muted, textAlign: 'center', marginTop: 6 }]}>
-            This customer will come with the next update from the office.
-          </Text>
-        </Card>
+        <Empty head="Not on this phone yet" body="This customer will come with the next update from the office." />
       </AppFrame>
     );
   }
@@ -410,141 +447,208 @@ export default function CustomerRecord() {
     return <Empty head={head} body={body} />;
   };
 
+  const heroInk = HERO.lavender.ink;
+  const heroMuted = HERO.lavender.muted;
+  const outstandingRed = c.outstandingPaise > OUTSTANDING_ALERT_PAISE;
+
   return (
-    <AppFrame title={shopName(c.name)} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
-      {/* ---- the head ---- */}
-      <View style={{ backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.hairline, padding: 16 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={type.h2}>{shopName(c.name)}</Text>
-            <Text style={[type.caption, { marginTop: 2 }]}>
-              {[c.contactPerson, c.city, c.phone].filter(Boolean).join(' · ')}
-            </Text>
-          </View>
-          {c.healthScore != null || c.healthBand ? (
-            <HealthPill
-              value={c.healthScore ?? null}
-              band={c.healthBand ?? null}
-              /* The configured pair, never the primitive's defaults — this is
-                 the same shop the list one screen back has just coloured. */
-              strongAtOrAbove={healthStrong}
-              watchBelow={healthWatch}
-              large
-            />
-          ) : null}
-        </View>
-
-        {/*
-          THE WAY TO THE FUNNEL, from the record.
-
-          The ladder, the §28 gates and both forms live on `/lead`, and `/leads`
-          was the only door to any of them — so this screen, which a salesman
-          reaches from search, from a journey stop and from a visit, could show
-          him a lead and give him no way to see which rung it was on, let alone
-          move it. It says the rung rather than just "Lead" because the rung is
-          the thing he is deciding about, and because a link whose label is a
-          category teaches nobody that there is a funnel behind it.
-        */}
-        {lead ? (
-          <Pressable
-            onPress={() => router.push(`/lead?id=${lead.id}&from=customer`)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              marginTop: 12,
-              paddingVertical: 10,
-              paddingHorizontal: 12,
-              borderRadius: radius.md,
-              borderWidth: 1,
-              borderColor: C.border,
-              backgroundColor: C.wash,
-            }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[{ fontSize: 14, color: C.ink }, weight(500)]}>
-                {/* Folded by `stageOf`, so this names the rung `/lead` highlights. */}
-                {'Lead · ' + stageLabel(stageOf(lead))}
-              </Text>
-              <Text style={[type.caption, { marginTop: 2 }]}>
-                Tap to move it to the next stage, or see what is pending
-              </Text>
-            </View>
-            <Text style={{ fontSize: 18, lineHeight: 18, color: C.muted }}>›</Text>
-          </Pressable>
-        ) : null}
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>
-          <View>
-            <Text style={type.label}>Outstanding</Text>
-            {/* Compared in PAISE against the one shared threshold, so the
-                record and the list card cannot turn red at two figures. */}
+    <AppFrame
+      title={shopName(c.name)}
+      activeTab="customers"
+      onBack={() => router.back()}
+      showTitle={false}
+      contentStyle={{ paddingBottom: 24 }}
+      hero={
+        /* ---- the head ---- */
+        <View style={{ marginTop: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
             <Text
-              style={[
-                { fontSize: 15, color: c.outstandingPaise > OUTSTANDING_ALERT_PAISE ? C.danger : C.ink },
-                weight(500),
-                tabular,
-              ]}>
-              {dues ? inr(dues) : 'Nothing due'}
+              accessibilityRole="header"
+              style={[{ flex: 1, minWidth: 0, fontSize: 26, lineHeight: 32, letterSpacing: -0.5, color: heroInk }, weight(800)]}>
+              {shopName(c.name)}
             </Text>
+            {c.healthScore != null || c.healthBand ? (
+              <View style={{ marginTop: 2 }}>
+                <HealthPill
+                  value={c.healthScore ?? null}
+                  band={c.healthBand ?? null}
+                  /* The configured pair, never the primitive's defaults — this is
+                     the same shop the list one screen back has just coloured. */
+                  strongAtOrAbove={healthStrong}
+                  watchBelow={healthWatch}
+                  large
+                />
+              </View>
+            ) : null}
           </View>
-          <View style={{ width: 1, height: 28, backgroundColor: C.hairline }} />
-          <View>
-            <Text style={type.label}>Credit</Text>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-              {c.creditDays != null ? c.creditDays + ' days' : '—'}
-            </Text>
-          </View>
-        </View>
+          {c.contactPerson || c.city || c.phone ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 12, rowGap: 4, marginTop: 8 }}>
+              {c.contactPerson ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                  <Icon name="person" size={14} color={heroMuted} strokeWidth={2} />
+                  <Text style={{ fontSize: 13, color: heroMuted }}>{c.contactPerson}</Text>
+                </View>
+              ) : null}
+              {c.city ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                  <Icon name="pin" size={14} color={heroMuted} strokeWidth={2} />
+                  <Text numberOfLines={1} style={{ fontSize: 13, color: heroMuted, maxWidth: 200 }}>
+                    {c.city}
+                  </Text>
+                </View>
+              ) : null}
+              {c.phone ? <Text style={{ fontSize: 13, color: heroMuted }}>{c.phone}</Text> : null}
+            </View>
+          ) : null}
 
-        {/* The age of the figures above, in the caption slot the design already
-            uses for exactly this kind of aside. */}
-        <Text style={[type.caption, { marginTop: 6 }]}>
-          {'Updated from office ' + freshness(c.lastSyncedAt, nowMs)}
-        </Text>
+          {/*
+            THE WAY TO THE FUNNEL, from the record.
 
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
-          <Pressable
-            /* Asks how he is getting there first — see `TravelGate`. The
-               shop's name goes with it so the question can name what it is
-               about; a sheet asking "how are you getting there?" with no
-               destination on it is a sheet somebody dismisses. */
-            onPress={() => askTravel({ customerId: c.id, customerName: c.name })}
-            style={{ flex: 1, height: 52, borderRadius: radius.md, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(600)]}>Visit</Text>
-          </Pressable>
-          {[
-            {
-              g: 'call',
-              l: 'Call ' + owner,
-              run: () => (c.phone ? void callNumber(c.phone) : notify('No number on this customer', 'error')),
-            },
-            {
-              g: 'chat',
-              l: 'WhatsApp ' + owner,
-              run: async () => {
-                if (!c.phone) return notify('No number on this customer', 'error');
-                const out = await openWhatsApp(c.phone, '');
-                if (out.status !== 'handed_off') notify(out.reason, 'warn');
-              },
-            },
-            { g: 'order', l: 'New order', run: () => router.push('/order?from=customer') },
-          ].map((b) => (
+            The ladder, the §28 gates and both forms live on `/lead`, and `/leads`
+            was the only door to any of them — so this screen, which a salesman
+            reaches from search, from a journey stop and from a visit, could show
+            him a lead and give him no way to see which rung it was on, let alone
+            move it. It says the rung rather than just "Lead" because the rung is
+            the thing he is deciding about, and because a link whose label is a
+            category teaches nobody that there is a funnel behind it.
+          */}
+          {lead ? (
             <Pressable
-              key={b.g}
-              onPress={b.run}
-              accessibilityLabel={b.l}
-              style={{ width: 56, height: 52, borderRadius: radius.md, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name={b.g} size={18} color={C.body} />
+              onPress={() => router.push(`/lead?id=${lead.id}&from=customer`)}
+              accessibilityRole="button"
+              accessibilityLabel={'Lead · ' + stageLabel(stageOf(lead))}
+              accessibilityHint="Tap to move it to the next stage, or see what is pending"
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                marginTop: 12,
+                height: 48,
+                paddingHorizontal: 16,
+                borderRadius: 24,
+                backgroundColor: pressed ? C.primaryTint : C.surface,
+              })}>
+              <Icon name="person" size={16} color={C.primaryDeep} strokeWidth={2} />
+              <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                {'Lead · ' + stageLabel(stageOf(lead))}
+                <Text style={[{ color: C.muted }, weight(500)]}>{' · next stage / pending'}</Text>
+              </Text>
+              <Text style={[{ fontSize: 18, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>›</Text>
             </Pressable>
-          ))}
-        </View>
-      </View>
+          ) : null}
 
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+            <View
+              accessible
+              accessibilityLabel={'Outstanding ' + (dues ? inr(dues) : 'nothing due')}
+              style={{ flex: 1, backgroundColor: C.surface, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 14 }}>
+              <Icon name="wallet" size={18} color={outstandingRed ? C.danger : C.ink} strokeWidth={2} />
+              {/* Compared in PAISE against the one shared threshold, so the
+                  record and the list card cannot turn red at two figures. */}
+              <Text
+                style={[
+                  { fontSize: 20, letterSpacing: -0.4, color: outstandingRed ? C.danger : C.ink, marginTop: 4 },
+                  weight(800),
+                  tabular,
+                ]}>
+                {dues ? inr(dues) : 'Nothing due'}
+              </Text>
+              <Text style={{ fontSize: 12, color: C.muted }}>outstanding</Text>
+            </View>
+            <View
+              accessible
+              accessibilityLabel={'Credit ' + (c.creditDays != null ? c.creditDays + ' days' : 'not set')}
+              style={{ flex: 1, backgroundColor: C.surface, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 14 }}>
+              <Icon name="cal" size={18} color={C.ink} strokeWidth={2} />
+              <Text style={[{ fontSize: 20, letterSpacing: -0.4, color: C.ink, marginTop: 4 }, weight(800)]}>
+                {c.creditDays != null ? c.creditDays + ' d' : '—'}
+              </Text>
+              <Text style={{ fontSize: 12, color: C.muted }}>credit</Text>
+            </View>
+          </View>
+
+          {/* The age of the figures above, in the caption slot the design already
+              uses for exactly this kind of aside. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+            <Icon name="synced" size={14} color={heroMuted} strokeWidth={2} />
+            <Text style={{ fontSize: 12, color: heroMuted }}>{'From office ' + freshness(c.lastSyncedAt, nowMs)}</Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            <Pressable
+              /* Asks how he is getting there first — see `TravelGate`. The
+                 shop's name goes with it so the question can name what it is
+                 about; a sheet asking "how are you getting there?" with no
+                 destination on it is a sheet somebody dismisses. */
+              onPress={() => askTravel({ customerId: c.id, customerName: c.name })}
+              accessibilityRole="button"
+              accessibilityLabel="Visit"
+              style={({ pressed }) => ({
+                flex: 1,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: C.navy,
+                opacity: pressed ? 0.88 : 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              })}>
+              <Icon name="shop" size={18} color={C.lime} strokeWidth={2} />
+              <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>Visit</Text>
+            </Pressable>
+            {(
+              [
+                {
+                  g: 'call',
+                  l: 'Call ' + owner,
+                  ink: C.primaryDeep,
+                  bg: C.surface,
+                  run: () => (c.phone ? void callNumber(c.phone) : notify('No number on this customer', 'error')),
+                },
+                {
+                  g: 'chat',
+                  l: 'WhatsApp ' + owner,
+                  ink: C.success,
+                  bg: C.surface,
+                  run: async () => {
+                    if (!c.phone) return notify('No number on this customer', 'error');
+                    const out = await openWhatsApp(c.phone, '');
+                    if (out.status !== 'handed_off') notify(out.reason, 'warn');
+                  },
+                },
+                { g: 'order', l: 'New order', ink: '#FFFFFF', bg: C.primary, run: () => router.push('/order?from=customer') },
+              ] as const
+            ).map((b) => (
+              <Pressable
+                key={b.g}
+                onPress={b.run}
+                accessibilityRole="button"
+                accessibilityLabel={b.l}
+                style={({ pressed }) => ({
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  backgroundColor: b.bg,
+                  opacity: pressed ? 0.85 : 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                })}>
+                <Icon name={b.g} size={20} color={b.ink} strokeWidth={2} />
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      }>
       {/* ---- tabs ---- */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.hairline, flexGrow: 0 }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0 }}
+        contentContainerStyle={{ gap: 8, paddingHorizontal: 14, paddingTop: 14 }}>
         {TABS.map((t, i) => {
           const on = pTab === i;
+          const icon = TAB_ICON[t];
           return (
             <Pressable
               key={t}
@@ -555,8 +659,21 @@ export default function CustomerRecord() {
                 }
                 set({ pTab: i });
               }}
-              style={{ height: HIT, paddingHorizontal: 16, borderBottomWidth: 2, borderBottomColor: on ? C.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.muted }, weight(on ? 500 : 400)]}>{t}</Text>
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={t}
+              hitSlop={{ top: 6, bottom: 6 }}
+              style={{
+                height: 36,
+                paddingHorizontal: on ? 14 : 12,
+                borderRadius: 18,
+                backgroundColor: on ? C.navy : C.surface,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}>
+              {icon && !on ? <Icon name={icon} size={14} color={C.ink} strokeWidth={2} /> : null}
+              <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{t}</Text>
             </Pressable>
           );
         })}
@@ -571,54 +688,78 @@ export default function CustomerRecord() {
         key={pTab}
         distance={tabMoved ? 4 : 0}
         duration={tabMoved ? DUR.quick + 20 : 0}
-        style={{ padding: 16 }}>
+        style={{ padding: 14 }}>
         {/* ---- overview ---- */}
         {pTab === 0 ? (
           <View style={{ gap: 12 }}>
-            <Card>
-              <Text style={[type.label, { marginBottom: 10 }]}>Basics</Text>
-              {[
-                /* Outstanding first. It is the fact that changes what he says
-                   when the door opens, and it was on the card and not here —
-                   so the record, which is the screen you open to prepare, was
-                   the one place it could not be read. */
-                {
-                  label: 'Outstanding',
-                  value: c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing outstanding',
-                },
-                { label: 'Contact', value: (fixed?.contactPerson ?? c.contactPerson) || '—' },
-                { label: 'Phone', value: (fixed?.phone ?? c.phone) || '—' },
-                {
-                  label: 'Map pin',
-                  value: fixed?.pinned || (c.gpsLat != null && c.gpsLng != null) ? 'Saved' : 'Not pinned yet',
-                },
-                { label: 'Where', value: [c.area, c.city].filter(Boolean).join(', ') || '—' },
-                { label: 'Beat', value: c.beat ?? '—' },
-                { label: 'GST', value: c.gstin ?? '—' },
-                { label: 'Dealer code', value: c.dealerCode ?? '—' },
-                {
-                  label: 'Credit limit',
-                  value: c.creditLimitPaise != null ? inrFromPaise(c.creditLimitPaise) : 'Not set',
-                },
-                { label: 'Credit days', value: c.creditDays != null ? c.creditDays + ' days' : '—' },
-                { label: 'Price list', value: c.priceTag ?? '—' },
-                { label: 'Can buy', value: c.potential ?? '—' },
-                { label: 'Orders every', value: c.cycleDays != null ? c.cycleDays + ' days' : '—' },
-                { label: 'Last visit', value: pretty(c.lastVisitDate) },
-                { label: 'Last order', value: pretty(c.lastOrderDate) },
-              ].map((b) => (
-                <View key={b.label} style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.wash }}>
-                  <Text style={{ fontSize: 13, color: C.muted }}>{b.label}</Text>
-                  <Text style={{ fontSize: 15, color: C.ink, textAlign: 'right', flexShrink: 1 }}>{b.value}</Text>
-                </View>
-              ))}
-              <SecondaryButton
+            <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+              {/* Outstanding first. It is the fact that changes what he says
+                  when the door opens, and it was on the card and not here —
+                  so the record, which is the screen you open to prepare, was
+                  the one place it could not be read. */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 }}>
+                {[
+                  { label: 'Outstanding', value: c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing outstanding' },
+                  { label: 'Credit limit', value: c.creditLimitPaise != null ? inrFromPaise(c.creditLimitPaise) : 'Not set' },
+                  { label: 'Credit days', value: c.creditDays != null ? c.creditDays + ' d' : '—' },
+                  { label: 'Can buy', value: c.potential ?? '—' },
+                  { label: 'Orders every', value: c.cycleDays != null ? c.cycleDays + ' d' : '—' },
+                  { label: 'Price list', value: c.priceTag ?? '—' },
+                ].map((b) => (
+                  <View
+                    key={b.label}
+                    accessible
+                    accessibilityLabel={b.label + ' ' + b.value}
+                    style={{ width: '31.8%', backgroundColor: C.canvas, borderRadius: 16, padding: 10 }}>
+                    <Text style={{ fontSize: 11, color: C.muted }}>{b.label}</Text>
+                    <Text numberOfLines={1} adjustsFontSizeToFit style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>
+                      {b.value}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={{ marginTop: 12 }}>
+                <InfoRow first icon="person" a11y="Contact">
+                  <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>
+                    {(fixed?.contactPerson ?? c.contactPerson) || '—'}
+                  </Text>
+                  <Text style={{ fontSize: 14, color: C.muted }}>{(fixed?.phone ?? c.phone) || 'No phone'}</Text>
+                </InfoRow>
+                <InfoRow icon="pin" a11y="Where">
+                  <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>
+                    {[c.area, c.city].filter(Boolean).join(', ') || '—'}
+                  </Text>
+                  {fixed?.pinned || (c.gpsLat != null && c.gpsLng != null) ? (
+                    <Pill text="Pin saved" height={24} bg={C.successBg} fg={C.success} a11y="Map pin saved" />
+                  ) : (
+                    <Pill text="Not pinned yet" height={24} bg={C.warnBg} fg={C.warnInk} a11y="Map pin not pinned yet" />
+                  )}
+                </InfoRow>
+                <InfoRow word="Beat">
+                  <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>{c.beat ?? '—'}</Text>
+                </InfoRow>
+                <InfoRow word="GST">
+                  <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>{c.gstin ?? '—'}</Text>
+                  <Text style={[{ fontSize: 11, color: C.muted }, weight(700)]}>Dealer</Text>
+                  <Text style={{ fontSize: 14, color: C.ink }}>{c.dealerCode ?? '—'}</Text>
+                </InfoRow>
+                <InfoRow icon="shop" a11y="Last visit">
+                  <Text style={{ flex: 1, fontSize: 14, color: C.ink }}>{pretty(c.lastVisitDate)}</Text>
+                  <View accessible accessibilityLabel={'Last order ' + pretty(c.lastOrderDate)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Icon name="order" size={16} color={C.muted} strokeWidth={2} />
+                    <Text style={{ fontSize: 14, color: C.ink }}>{pretty(c.lastOrderDate)}</Text>
+                  </View>
+                </InfoRow>
+              </View>
+
+              <TintButton
                 label="Correct contact, phone or pin"
+                icon="note"
                 onPress={() => setEditing(true)}
                 style={{ marginTop: 10 }}
               />
-            </Card>
-
+            </View>
 
             {/* ---- a private note for the office ----
 
@@ -637,20 +778,37 @@ export default function CustomerRecord() {
                 the note sits in the outbox until it goes, and after that this
                 phone has no copy. The screen says so rather than leaving him
                 to discover it by looking for a list that will never appear. */}
-            <Card>
-              <Text style={[type.label, { marginBottom: 6 }]}>Private note for the office</Text>
-              <Text style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginBottom: 10 }}>
-                Write something the customer must never see. It goes to the office only. It is not
-                kept on this phone, so you will not see it here later.
+            <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Icon name="lock" size={16} color={C.lime} strokeWidth={2} />
+                <Text style={[{ fontSize: 14, color: C.lime }, weight(700)]}>Private note for the office</Text>
+              </View>
+              <Text
+                accessibilityLabel="Write something the customer must never see. It goes to the office only. It is not kept on this phone, so you will not see it here later."
+                style={{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 4 }}>
+                Customer never sees it. Not kept on this phone.
               </Text>
-              <Input
+              <TextInput
                 value={note}
                 onChangeText={setNote}
-                placeholder="Pays on time but fights every rate. Send the rate list in writing."
+                placeholder="Pays on time but fights every rate…"
+                placeholderTextColor={C.onNavyMuted}
                 multiline
+                textAlignVertical="top"
+                accessibilityLabel="Private note for the office"
+                style={{
+                  marginTop: 10,
+                  minHeight: 84,
+                  padding: 12,
+                  borderRadius: 16,
+                  backgroundColor: C.navySoft,
+                  color: '#FFFFFF',
+                  fontSize: 15,
+                }}
               />
               <Pressable
                 accessibilityRole="button"
+                accessibilityState={{ disabled: noteBusy || !note.trim() }}
                 disabled={noteBusy || !note.trim()}
                 onPress={() => {
                   if (!id) return;
@@ -666,60 +824,44 @@ export default function CustomerRecord() {
                 style={({ pressed }) => ({
                   alignItems: 'center',
                   justifyContent: 'center',
-                  minHeight: 48,
+                  height: 48,
                   marginTop: 10,
-                  borderRadius: radius.sm,
-                  borderWidth: 1,
-                  borderColor: note.trim() ? C.primary : C.border,
-                  backgroundColor: pressed ? C.wash : note.trim() ? C.primaryTint : C.surface,
-                  opacity: noteBusy ? 0.6 : 1,
+                  borderRadius: 24,
+                  backgroundColor: note.trim() ? C.lime : '#2A3858',
+                  opacity: noteBusy ? 0.6 : pressed ? 0.88 : 1,
                 })}>
-                <Text
-                  style={[{ fontSize: 15, color: note.trim() ? C.primaryDeep : C.faint }, weight(500)]}>
-                  Send to office
+                <Text style={[{ fontSize: 14, color: note.trim() ? C.navy : C.onNavyMuted }, weight(700)]}>
+                  {noteBusy ? 'Sending…' : 'Send to office'}
                 </Text>
               </Pressable>
-            </Card>
+            </View>
           </View>
         ) : null}
 
         {/* ---- timeline ---- */}
         {pTab === 1 ? (
           <View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
-              {TL_FILTERS.map((f) => {
-                const on = tlFilter === f;
-                return (
-                  <Pressable
-                    key={f}
-                    onPress={() => {
-                      if (!on) feedback('select');
-                      set({ tlFilter: f });
-                    }}
-                    style={{ height: HIT, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: on ? C.primary : C.border, backgroundColor: on ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={[{ fontSize: 14, color: on ? C.primaryDeep : C.body }, weight(on ? 500 : 400)]}>{f}</Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingBottom: 12 }}>
+              {TL_FILTERS.map((f) => (
+                <ChipButton
+                  key={f}
+                  label={f}
+                  on={tlFilter === f}
+                  onPress={() => {
+                    if (tlFilter !== f) feedback('select');
+                    set({ tlFilter: f });
+                  }}
+                />
+              ))}
+            </View>
 
             {/* AN EMPTY TIMELINE HAD NOTHING TO SAY, which is not the same as
-                having nothing to show. Orders and Payments beside it both draw
-                an `Empty`; this tab drew the filter chips and then stopped, so
-                a shop with no history rendered as a blank space under a row of
-                pills — indistinguishable from a tab that had failed to load,
-                and reported as exactly that. The two causes are worth telling
-                apart in the words, because only one of them is the salesman's
-                to act on: a filter that excludes everything is undone by
-                pressing All, and an empty stream is the office's to fill.
-
-                AND THE FILTERED SENTENCE NO LONGER ASSERTS THE HALF IT CANNOT
-                SEE. It read "this shop has history, but none of it is
-                payments" — two claims, and the screen has evidence for neither
-                when the filtered read comes back empty: it has not asked what
-                else is here. What it can stand behind is what is on this phone
-                under this chip, which is now a real question asked of SQL
-                rather than a hundred-row window narrowed afterwards. */}
+                having nothing to show. The two causes are worth telling apart
+                in the words, because only one of them is the salesman's to act
+                on: a filter that excludes everything is undone by pressing
+                All, and an empty stream is the office's to fill. And the
+                filtered sentence says only what is on this phone under this
+                chip — it has not asked what else is here. */}
             {events.length === 0
               ? nothingYet(
                   tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter,
@@ -729,72 +871,88 @@ export default function CustomerRecord() {
                 )
               : null}
 
-            {events.map((e, i) => {
-              const last = i === events.length - 1;
-              const kind = KIND_LABEL[e.eventType] ?? KIND_FALLBACK;
-              return (
-                <Stagger key={e.id} index={i}>
-                  <View
-                    style={{
-                      position: 'relative',
-                      paddingLeft: 20,
-                      paddingBottom: last ? 0 : 18,
-                      marginLeft: 4,
-                      borderLeftWidth: 1,
-                      borderLeftColor: last ? 'transparent' : C.border,
-                    }}>
-                    <View
-                      style={{
-                        position: 'absolute',
-                        left: -5,
-                        top: 4,
-                        width: 10,
-                        height: 10,
-                        borderRadius: 5,
-                        borderWidth: 2,
-                        borderColor: C.wash,
-                        backgroundColor: kind === 'Telecaller' ? C.warn : C.faint,
-                      }}
-                    />
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <Badge tone={TONES[kind] ?? 'neutral'}>{kind}</Badge>
-                      <Text style={{ fontSize: 12, color: C.muted }}>
-                        {[pretty(isoDate(new Date(e.occurredAt))), e.actor].filter(Boolean).join(' · ')}
-                      </Text>
-                    </View>
-                    <Text style={[type.small, { color: C.ink, marginTop: 4 }]}>{e.summary}</Text>
-                    {e.sourceApp !== 'mbos' ? (
-                      <Text style={[type.caption, { marginTop: 2 }]}>From the office team</Text>
-                    ) : null}
-                  </View>
-                </Stagger>
-              );
-            })}
+            {events.length ? (
+              <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingVertical: 6, paddingHorizontal: 16 }}>
+                {events.map((e, i) => {
+                  const kind = KIND_LABEL[e.eventType] ?? KIND_FALLBACK;
+                  const look = kindLook(kind);
+                  const office = e.sourceApp !== 'mbos';
+                  return (
+                    <Stagger key={e.id} index={i}>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          gap: 12,
+                          paddingVertical: 12,
+                          borderTopWidth: i ? 1 : 0,
+                          borderTopColor: C.hairline,
+                        }}>
+                        <View
+                          accessible
+                          accessibilityRole="image"
+                          accessibilityLabel={kind}
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 17,
+                            backgroundColor: look.bg,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}>
+                          {KIND_ICON[kind] ? (
+                            <Icon name={KIND_ICON[kind]!} size={16} color={look.fg} strokeWidth={2} />
+                          ) : (
+                            <Text style={[{ fontSize: 11, color: look.fg }, weight(800)]}>i</Text>
+                          )}
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <Text style={[{ fontSize: 12, color: look.fg }, weight(700)]}>{kind}</Text>
+                            <Text style={{ fontSize: 12, color: C.muted }}>
+                              {[pretty(isoDate(new Date(e.occurredAt))), e.actor].filter(Boolean).join(' · ')}
+                            </Text>
+                            {office ? (
+                              <View
+                                accessible
+                                accessibilityLabel="From the office team"
+                                style={{ height: 18, paddingHorizontal: 6, borderRadius: 9, backgroundColor: C.lavender, justifyContent: 'center' }}>
+                                <Text style={[{ fontSize: 11, color: C.primaryDeep }, weight(700)]}>Office</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Text style={{ fontSize: 14, lineHeight: 19, color: C.ink, marginTop: 2 }}>{e.summary}</Text>
+                        </View>
+                      </View>
+                    </Stagger>
+                  );
+                })}
+              </View>
+            ) : null}
 
             {/* A CAPPED LIST ADMITS IT, the same rule Orders and Payments
                 follow one tab along. A full page means the read hit its cap,
                 not that this is the whole story — and a salesman who reads a
                 hundred entries as everything tells a customer so. */}
             {events.length >= TIMELINE_PAGE ? (
-              <Text style={[type.caption, { marginTop: 8 }]}>
-                {'The newest ' +
+              <Text style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
+                {'Newest ' +
                   TIMELINE_PAGE +
-                  (tlFilter === 'All' ? ' entries' : ' under ' + tlFilter) +
+                  (tlFilter === 'All' ? ' shown' : ' under ' + tlFilter + ' shown') +
                   '. Older history is not shown.'}
               </Text>
             ) : null}
 
-            <Text style={[type.caption, { marginTop: 8 }]}>
-              This is a record of what happened. You cannot add to it here. Each entry comes from the screen where
-              it was done.
+            <Text
+              accessibilityLabel="This is a record of what happened. You cannot add to it here. Each entry comes from the screen where it was done."
+              style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+              Read-only: each entry comes from the screen where it was done.
             </Text>
           </View>
         ) : null}
 
-        {/* ---- orders / payments / samples ---- */}
         {/* ---- what they bought ---- */}
         {pTab === 2 ? (
-          <View style={{ gap: 10 }}>
+          <View style={{ gap: 8 }}>
             {orders.length === 0 ? (
               nothingYet(
                 'No orders on this phone',
@@ -804,23 +962,36 @@ export default function CustomerRecord() {
               <>
                 {orders.map((o, i) => (
                   <Stagger key={o.id} index={i}>
-                    <Card style={{ gap: 4 }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                        <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                          {o.valuePaise != null ? inrFromPaise(o.valuePaise) : 'Value not recorded'}
+                    <View
+                      accessible
+                      accessibilityLabel={[
+                        o.valuePaise != null ? inrFromPaise(o.valuePaise) : 'Value not recorded',
+                        pretty(o.orderedAt),
+                        o.orderNo ? 'No. ' + o.orderNo : null,
+                        o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null,
+                        o.status,
+                      ]
+                        .filter(Boolean)
+                        .join(', ')}
+                      style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <Icon name="order" size={20} color={C.ink} strokeWidth={2} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        {o.valuePaise != null ? (
+                          <Text style={[{ fontSize: 17, color: C.ink }, weight(800), tabular]}>{inrFromPaise(o.valuePaise)}</Text>
+                        ) : (
+                          <Text style={[{ fontSize: 15, color: C.muted }, weight(700)]}>Value not recorded</Text>
+                        )}
+                        <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>
+                          {[o.orderNo, o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null]
+                            .filter(Boolean)
+                            .join(' · ') || 'No lines listed'}
                         </Text>
-                        <Text style={type.caption}>{pretty(o.orderedAt)}</Text>
                       </View>
-                      <Text style={type.caption}>
-                        {[
-                          o.orderNo ? 'No. ' + o.orderNo : null,
-                          o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null,
-                          o.status,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </Text>
-                    </Card>
+                      <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                        <Text style={{ fontSize: 12, color: C.muted }}>{pretty(o.orderedAt)}</Text>
+                        {o.status ? <Badge tone={orderTone(o.status)}>{o.status}</Badge> : null}
+                      </View>
+                    </View>
                   </Stagger>
                 ))}
                 <Slice n={orders.length} noun="order" />
@@ -857,41 +1028,19 @@ export default function CustomerRecord() {
             ) : (
               <>
                 {/* ---- the window ---- */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ gap: 8, paddingRight: 16 }}
-                  style={{ flexGrow: 0, marginHorizontal: -16, paddingHorizontal: 16 }}>
-                  {PERIODS.map((p) => {
-                    const on = period === p.key;
-                    return (
-                      <Pressable
-                        key={p.key}
-                        onPress={() => {
-                          if (!on) feedback('select');
-                          setPeriod(p.key);
-                        }}
-                        style={{
-                          height: 34,
-                          paddingHorizontal: 14,
-                          borderRadius: radius.pill,
-                          borderWidth: 1,
-                          borderColor: on ? C.primary : C.border,
-                          backgroundColor: on ? C.primaryTint : C.surface,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}>
-                        <Text
-                          style={[
-                            { fontSize: 14, color: on ? C.primaryDeep : C.body },
-                            weight(on ? 500 : 400),
-                          ]}>
-                          {p.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {PERIODS.map((p) => (
+                    <ChipButton
+                      key={p.key}
+                      label={p.label}
+                      on={period === p.key}
+                      onPress={() => {
+                        if (period !== p.key) feedback('select');
+                        setPeriod(p.key);
+                      }}
+                    />
+                  ))}
+                </View>
 
                 {/* ---- the four figures ----
 
@@ -901,39 +1050,30 @@ export default function CustomerRecord() {
                     phone from thirteen months of rows is exactly how a salesman
                     and an accounts clerk come to quote a shopkeeper two
                     different debts with him listening. */}
-                <Card style={{ gap: 10 }}>
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 14 }}>
                     <Figure label="Billed" value={inrFromPaise(statement.billedPaise)} />
-                    <Figure label="Received" value={inrFromPaise(statement.receivedPaise)} />
-                  </View>
-                  <View style={{ flexDirection: 'row', gap: 12, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 10 }}>
+                    <Figure label="Received" value={inrFromPaise(statement.receivedPaise)} tone={C.lime} />
                     <Figure
-                      label="Outstanding now"
+                      label="Outstanding now · office"
                       value={c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing'}
-                      tone={c.outstandingPaise ? C.danger : undefined}
+                      tone={c.outstandingPaise ? '#FF8A80' : undefined}
                     />
                     {statement.awaitingCount ? (
-                      <Figure
-                        label="With accounts"
-                        value={inrFromPaise(statement.awaitingPaise)}
-                        tone={C.warn}
-                      />
+                      <Figure label="With accounts" value={inrFromPaise(statement.awaitingPaise)} tone="#FFD27A" />
                     ) : (
                       <Figure label="Bills" value={String(billsInWindow)} />
                     )}
                   </View>
-                  <Text style={type.caption}>
-                    Billed and received are for the dates above. Outstanding is the office&apos;s figure
-                    for the whole account. It counts only money the accounts team has seen in the
-                    bank.
+                  <Text
+                    accessibilityLabel="Billed and received are for the dates above. Outstanding is the office's figure for the whole account. It counts only money the accounts team has seen in the bank."
+                    style={{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 10 }}>
+                    {'Billed and received are for these dates. Outstanding is the whole account, bank-seen money only.' +
+                      (statement.openingPaise !== 0
+                        ? ' Before these dates: ' + inrFromPaise(statement.openingPaise) + '.'
+                        : '')}
                   </Text>
-                </Card>
-
-                {statement.openingPaise !== 0 ? (
-                  <Text style={type.caption}>
-                    {inrFromPaise(statement.openingPaise)} was outstanding before these dates.
-                  </Text>
-                ) : null}
+                </View>
 
                 {/* ---- the lines ---- */}
                 {statement.entries.length === 0 ? (
@@ -975,10 +1115,15 @@ export default function CustomerRecord() {
                     reads "This year" over eight months of bills and tells a
                     shopkeeper that is all there was. */}
                 {reach ? (
-                  <Text style={[type.caption, { marginTop: 4 }]}>
-                    This phone has this account from {pretty(reach)}. Older records are with
-                    the office.
-                  </Text>
+                  <View
+                    accessible
+                    accessibilityLabel={'This phone has this account from ' + pretty(reach) + '. Older records are with the office.'}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    <Icon name="cal" size={14} color={C.muted} strokeWidth={2} />
+                    <Text style={{ flex: 1, fontSize: 12, color: C.muted }}>
+                      {'This phone holds from ' + pretty(reach) + ' · older with the office'}
+                    </Text>
+                  </View>
                 ) : null}
               </>
             )}
@@ -987,7 +1132,7 @@ export default function CustomerRecord() {
 
         {/* ---- what they were given to try ---- */}
         {pTab === 4 ? (
-          <View style={{ gap: 10 }}>
+          <View style={{ gap: 8 }}>
             {samples.length === 0 ? (
               nothingYet(
                 'No samples for this shop',
@@ -996,35 +1141,38 @@ export default function CustomerRecord() {
             ) : (
               <>
                 {samples.map((sm) => (
-                  <Card key={sm.id} style={{ gap: 4 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                      <View style={{ flexShrink: 1 }}>
-                        <SkuChip sku={sm.sku} />
-                        <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+                  <View key={sm.id} style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Icon name="sample" size={20} color={C.primaryDeep} strokeWidth={2} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>
                           {sm.productName ?? 'Product not recorded'}
                         </Text>
+                        <SkuChip sku={sm.sku} />
                       </View>
                       <Badge tone={sampleTone(sm.state)}>{sm.state}</Badge>
                     </View>
-                    <Text style={type.caption}>
-                      {[
-                        sm.cans ? sm.cans + (sm.cans === 1 ? ' can' : ' cans') : null,
-                        'asked for ' + pretty(isoDate(new Date(sm.requestedAt))),
-                        sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'result: ' + sm.trialOutcome : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Text>
-                    {/* The promise, and only while it is still a promise. A
-                        follow-up date on a trial that is already converted or
-                        rejected is a date nobody is going to keep. */}
-                    {sm.followUpDate && sm.state !== 'Converted' && sm.state !== 'Rejected' ? (
-                      <Text style={[type.caption, { color: C.body }]}>
-                        {'Ask again ' + pretty(sm.followUpDate)}
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 8 }}>
+                      {sm.cans ? <Text style={{ fontSize: 12, color: C.muted }}>{sm.cans + (sm.cans === 1 ? ' can' : ' cans')}</Text> : null}
+                      <Text style={{ fontSize: 12, color: C.muted }}>{'asked ' + pretty(isoDate(new Date(sm.requestedAt)))}</Text>
+                      <Text style={{ fontSize: 12, color: C.muted }}>
+                        {sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'result: ' + sm.trialOutcome : 'result pending'}
                       </Text>
-                    ) : null}
-                    {sm.reason ? <Text style={type.caption}>{sm.reason}</Text> : null}
-                  </Card>
+                      {/* The promise, and only while it is still a promise. A
+                          follow-up date on a trial that is already converted or
+                          rejected is a date nobody is going to keep. */}
+                      {sm.followUpDate && sm.state !== 'Converted' && sm.state !== 'Rejected' ? (
+                        <View
+                          accessible
+                          accessibilityLabel={'Ask again ' + pretty(sm.followUpDate)}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <Icon name="refresh" size={12} color={C.ink} strokeWidth={2.2} />
+                          <Text style={[{ fontSize: 12, color: C.ink }, weight(700)]}>{pretty(sm.followUpDate)}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    {sm.reason ? <Text style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{sm.reason}</Text> : null}
+                  </View>
                 ))}
               </>
             )}
@@ -1038,8 +1186,7 @@ export default function CustomerRecord() {
             the desk team, and nothing on this handset ever selected one back —
             so the next time the salesman walked into the same shop and was
             asked what had happened about it, the record could not tell him
-            even that it had been sent. The thing he is most likely to be asked
-            on his next visit was the one thing he could not look up.
+            even that it had been sent.
 
             `status` is the office's word and arrives on the sync, so an answer
             appears here without anybody on this end doing anything. */}
@@ -1051,36 +1198,33 @@ export default function CustomerRecord() {
                 'To add a complaint, start a visit and pick Complaint.',
               )
             ) : (
-              <View style={{ gap: 10 }}>
+              <View style={{ gap: 8 }}>
                 {gripes.map((g) => (
-                  <Card key={g.id}>
+                  <View key={g.id} style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Icon name="warn" size={20} color={C.danger} strokeWidth={2} />
                       {/* The stored value is already the word on the button.
                           `logComplaint` writes the design's own label locally
                           and only translates to MahekOne's enum on the WIRE —
                           see `wireComplaintCategory` — so there is nothing to
-                          map back here, and a mapping would be a second
-                          vocabulary to keep in step with the first. */}
-                      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
+                          map back here. */}
+                      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]}>
                         {g.category}
                       </Text>
-                      <Badge tone={g.status === 'open' ? 'amber' : 'success'}>
+                      <Badge tone={g.syncState === 'queued' ? 'neutral' : g.status === 'open' ? 'amber' : 'success'}>
                         {g.syncState === 'queued' ? 'Not sent' : g.status === 'open' ? 'Open' : 'Closed'}
                       </Badge>
                     </View>
                     <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
                       {g.description}
                     </Text>
-                    <Text style={type.caption}>{pretty(isoDate(new Date(g.clientCreatedAt)))}</Text>
-                  </Card>
+                    <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{pretty(isoDate(new Date(g.clientCreatedAt)))}</Text>
+                  </View>
                 ))}
-                {/* No `Slice` here, unlike Orders and Payments above it. Those
-                    two are the OFFICE's lists, capped at ten by the server, so
-                    "older ones stay in the office" is literally true of them.
-                    Complaints are only ever raised on this handset and there
-                    is no pull channel bringing others down, so this list is
-                    the whole history and saying otherwise would be a false
-                    sentence on a screen somebody reads before ringing. */}
+                {/* No `Slice` here, unlike Orders. Complaints are only ever
+                    raised on this handset and there is no pull channel bringing
+                    others down, so this list is the whole history and saying
+                    otherwise would be a false sentence. */}
               </View>
             )}
           </View>
@@ -1088,104 +1232,118 @@ export default function CustomerRecord() {
 
         {/* ---- competitors ---- */}
         {pTab === 6 ? (
-          <View>
+          <View style={{ gap: 8 }}>
             {!compForm ? (
-              <Pressable
-                onPress={() => setCompForm(true)}
-                style={{ width: '100%', height: 52, borderRadius: radius.sm, borderWidth: 1, borderStyle: 'dashed', borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>+ Add what you heard</Text>
-              </Pressable>
+              <>
+                <DashedAdd label="+ Add what you heard" onPress={() => setCompForm(true)} />
+                <Text style={{ fontSize: 12, color: C.muted }}>
+                  Fill this in from your talk with the shop. A name and a rate is enough.
+                </Text>
+              </>
             ) : (
-              <Card style={{ gap: 10 }}>
-                <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>What you heard</Text>
-                <Input
+              <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16, gap: 8 }}>
+                <Text style={[{ fontSize: 17, color: C.ink }, weight(800)]}>What you heard</Text>
+                <WashInput
                   value={comp.name}
                   onChangeText={(v) => setComp((s) => ({ ...s, name: v }))}
-                  placeholder="Other brand's name"
+                  placeholder="Brand name *"
+                  a11y="Other brand's name, needed"
                 />
-                <Input
-                  value={comp.rate}
-                  onChangeText={(v) => setComp((s) => ({ ...s, rate: cleanAmount(v) }))}
-                  keyboardType="decimal-pad"
-                  placeholder="Rate quoted, ₹ (optional)"
-                />
-                <Input
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <WashInput
+                    value={comp.rate}
+                    onChangeText={(v) => setComp((s) => ({ ...s, rate: cleanAmount(v) }))}
+                    keyboardType="decimal-pad"
+                    placeholder="₹ rate"
+                    a11y="Rate quoted, rupees, optional"
+                    style={{ flex: 1 }}
+                  />
+                  <WashInput
+                    value={comp.credit}
+                    onChangeText={(v) => setComp((s) => ({ ...s, credit: v }))}
+                    placeholder="Credit days"
+                    a11y="Credit days they give, optional"
+                    style={{ flex: 1 }}
+                  />
+                </View>
+                <WashInput
                   value={comp.note}
                   onChangeText={(v) => setComp((s) => ({ ...s, note: v }))}
-                  placeholder="Which product, and any note on the rate"
+                  placeholder="Which product, note on rate"
+                  a11y="Which product, and any note on the rate"
                 />
-                <Input
-                  value={comp.credit}
-                  onChangeText={(v) => setComp((s) => ({ ...s, credit: v }))}
-                  placeholder="Credit days they give (optional)"
-                />
-                {/* THE BOX THAT WAS NEVER DRAWN. `delivery` is initialised in
-                    this form's state, trimmed into `recordCompetitor`, carried
-                    on the wire and printed on the saved card beside the credit
-                    terms — and there was no input between credit and strengths,
-                    so it could never be anything but empty from this app. A
-                    column the record page shows is one the salesman standing in
-                    the shop has to be able to fill in. */}
-                <Input
+                {/* THE BOX THAT WAS NEVER DRAWN. `delivery` is carried on the
+                    wire and printed on the saved card, and had no input until
+                    this one — a column the record shows is one the salesman
+                    standing in the shop has to be able to fill in. */}
+                <WashInput
                   value={comp.delivery}
                   onChangeText={(v) => setComp((s) => ({ ...s, delivery: v }))}
-                  placeholder="How quickly they deliver (optional)"
+                  placeholder="How fast they deliver"
+                  a11y="How quickly they deliver, optional"
                 />
-                <Input
+                <WashInput
                   value={comp.strengths}
                   onChangeText={(v) => setComp((s) => ({ ...s, strengths: v }))}
-                  placeholder="What they are doing well (optional)"
+                  placeholder="Good at"
+                  a11y="What they are doing well, optional"
                 />
-                <Input
+                <WashInput
                   value={comp.weaknesses}
                   onChangeText={(v) => setComp((s) => ({ ...s, weaknesses: v }))}
-                  placeholder="Where we can win (optional)"
+                  placeholder="Where we can win"
+                  a11y="Where we can win, optional"
                 />
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                  <Pressable
-                    onPress={() => setCompForm(false)}
-                    style={{ flex: 1, height: 48, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 15, color: C.muted }}>Cancel</Text>
-                  </Pressable>
-                  <View style={{ flex: 1 }}>
-                    <PrimaryButton label={compBusy ? 'Saving…' : 'Save'} onPress={saveCompetitor} disabled={compBusy} />
-                  </View>
+                  <PillButton label="Cancel" variant="outline" height={52} onPress={() => setCompForm(false)} style={{ flex: 1 }} />
+                  <PillButton
+                    label={compBusy ? 'Saving…' : 'Save'}
+                    variant="navy"
+                    height={52}
+                    onPress={() => void saveCompetitor()}
+                    disabled={compBusy}
+                    style={{ flex: 2 }}
+                  />
                 </View>
-              </Card>
+                <Text style={{ fontSize: 12, color: C.muted }}>A name and a rate is enough.</Text>
+              </View>
             )}
-            <Text style={[type.caption, { marginTop: 10 }]}>
-              Fill this in from your talk with the shop. A name and a rate is enough.
-            </Text>
 
-            <View style={{ gap: 12, marginTop: 12 }}>
-              {competitors.map((k) => (
-                <Card key={k.id}>
-                  <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                    <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(500)]}>{k.competitorName}</Text>
-                    <Text style={[{ fontSize: 15, color: C.ink }, weight(500), tabular]}>
-                      {k.ratePaise != null ? inrFromPaise(k.ratePaise) : (k.rateNote ?? '')}
-                    </Text>
-                  </View>
-                  {k.creditTerms || k.delivery ? (
-                    <Text style={[type.caption, { marginTop: 2 }]}>
-                      {[k.creditTerms, k.delivery].filter(Boolean).join(' · ')}
-                    </Text>
-                  ) : null}
-                  {/* Both, when both were said: the half that used to be
-                      dropped was the weakness — the one a salesman sells
-                      against. */}
-                  {k.strengths ? (
-                    <Text style={[type.caption, { color: C.body, marginTop: 8 }]}>{'Good at: ' + k.strengths}</Text>
-                  ) : null}
-                  {k.weaknesses ? (
-                    <Text style={[type.caption, { color: C.body, marginTop: 4 }]}>{'Weak on: ' + k.weaknesses}</Text>
-                  ) : null}
-                  <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-                    {'Noted ' + pretty(isoDate(new Date(k.capturedAt)))}
+            {competitors.map((k) => (
+              <View key={k.id} style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                  <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(700)]}>{k.competitorName}</Text>
+                  <Text style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>
+                    {k.ratePaise != null ? inrFromPaise(k.ratePaise) : (k.rateNote ?? '')}
                   </Text>
-                </Card>
-              ))}
-            </View>
+                </View>
+                {k.creditTerms || k.delivery ? (
+                  <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+                    {[k.creditTerms, k.delivery].filter(Boolean).join(' · ')}
+                  </Text>
+                ) : null}
+                {/* Both, when both were said: the half that used to be
+                    dropped was the weakness — the one a salesman sells
+                    against. */}
+                {k.strengths || k.weaknesses ? (
+                  <View style={{ gap: 4, marginTop: 8 }}>
+                    {k.strengths ? (
+                      <Text accessibilityLabel={'Good at: ' + k.strengths} style={{ fontSize: 13, color: C.success }}>
+                        {'+ ' + k.strengths}
+                      </Text>
+                    ) : null}
+                    {k.weaknesses ? (
+                      <Text accessibilityLabel={'Weak on: ' + k.weaknesses} style={{ fontSize: 13, color: C.danger }}>
+                        {'− ' + k.weaknesses}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>
+                  {'Noted ' + pretty(isoDate(new Date(k.capturedAt)))}
+                </Text>
+              </View>
+            ))}
           </View>
         ) : null}
       </Appear>
@@ -1272,35 +1430,62 @@ function EditShopSheet(props: {
 
   return (
     <BottomSheet open={props.open} onClose={props.onClose} scroll>
-      <Text style={[{ fontSize: 17, color: C.ink }, weight(600)]}>Correct this shop</Text>
-      <Text style={[type.caption, { marginTop: 4, marginBottom: 12 }]}>
-        What you change here goes to the office.
+      <Text style={[{ fontSize: 20, color: C.ink, marginTop: 6 }, weight(800)]}>Correct this shop</Text>
+      <Text
+        accessibilityLabel="What you change here goes to the office."
+        style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>
+        Goes to the office.
       </Text>
-      <Text style={[type.label, { marginBottom: 6 }]}>Who runs it</Text>
-      <Input value={contact} onChangeText={setContact} placeholder="Name of the owner or manager" />
-      <Text style={[type.label, { marginTop: 12, marginBottom: 6 }]}>Phone</Text>
-      <Input value={phone} onChangeText={setPhone} placeholder="10 digits" keyboardType="phone-pad" />
-      <Text style={[type.label, { marginTop: 12, marginBottom: 6 }]}>Map pin</Text>
+      <WashInput
+        icon="person"
+        value={contact}
+        onChangeText={setContact}
+        placeholder="Owner or manager"
+        a11y="Who runs it. Name of the owner or manager"
+        style={{ marginTop: 14 }}
+      />
+      <WashInput
+        icon="call"
+        value={phone}
+        onChangeText={setPhone}
+        placeholder="10 digits"
+        keyboardType="phone-pad"
+        a11y="Phone"
+        style={{ marginTop: 10 }}
+      />
       {props.pinned ? (
-        <Text style={type.caption}>
+        <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 10 }}>
           This shop already has a pin. If it is in the wrong place, say so when you check in here, and your manager
           will move it.
         </Text>
       ) : (
         <>
-          <Text style={[type.caption, { marginBottom: 8 }]}>
+          <TintButton
+            icon="locate"
+            height={56}
+            label={
+              finding ? 'Finding where you are…' : pin ? 'Pinned here · ±' + Math.round(pin.accuracyM) + ' m' : 'Pin where I stand'
+            }
+            a11y={pin ? undefined : 'Map pin. Pin it where I am standing'}
+            onPress={() => void findMe()}
+            style={{ marginTop: 10 }}
+          />
+          <Text style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
             Only press this while you are standing in the shop.
           </Text>
-          <SecondaryButton
-            label={finding ? 'Finding where you are…' : pin ? 'Pinned here · ±' + Math.round(pin.accuracyM) + ' m' : 'Pin it where I am standing'}
-            onPress={() => void findMe()}
-          />
         </>
       )}
       {err ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{err}</Text> : null}
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={props.onClose} style={{ flex: 1 }} />
-        <PrimaryButton label={busy ? 'Saving…' : 'Save'} onPress={() => void save()} disabled={busy} style={{ flex: 1 }} />
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+        <PillButton label="Cancel" variant="outline" height={56} onPress={props.onClose} style={{ flex: 1 }} />
+        <PillButton
+          label={busy ? 'Saving…' : 'Save'}
+          variant="navy"
+          height={56}
+          onPress={() => void save()}
+          disabled={busy}
+          style={{ flex: 2 }}
+        />
       </View>
     </BottomSheet>
   );
@@ -1316,10 +1501,10 @@ function EditShopSheet(props: {
  */
 function Empty({ head, body }: { head: string; body: string }) {
   return (
-    <Card style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
-      <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(600)]}>{head}</Text>
-      <Text style={[type.small, { color: C.muted, textAlign: 'center', marginTop: 6 }]}>{body}</Text>
-    </Card>
+    <View style={{ backgroundColor: C.surface, borderRadius: 24, paddingVertical: 26, paddingHorizontal: 20, alignItems: 'center' }}>
+      <Text style={[{ fontSize: 17, color: C.ink, textAlign: 'center' }, weight(800)]}>{head}</Text>
+      <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center', marginTop: 6 }}>{body}</Text>
+    </View>
   );
 }
 
@@ -1334,20 +1519,170 @@ function Empty({ head, body }: { head: string; body: string }) {
 function Slice({ n, noun }: { n: number; noun: string }) {
   if (n < 10) return null;
   return (
-    <Text style={[type.caption, { textAlign: 'center', marginTop: 2 }]}>
-      {'The last ' + n + ' ' + noun + 's. Older ones are with the office.'}
+    <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 2 }}>
+      {'Last ' + n + ' ' + noun + 's · older ones are with the office.'}
     </Text>
   );
 }
 
-/** One figure on the account card. */
+/** One figure on the navy account card — two to a row. */
 function Figure({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
-    <View style={{ flex: 1, minWidth: 0 }}>
-      <Text style={type.label}>{label}</Text>
-      <Text style={[{ fontSize: 17, color: tone ?? C.ink, marginTop: 2 }, weight(600), tabular]}>
+    <View accessible accessibilityLabel={label + ' ' + value} style={{ width: '50%', paddingRight: 8 }}>
+      <Text numberOfLines={1} style={{ fontSize: 12, color: C.onNavyMuted }}>{label}</Text>
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        style={[{ fontSize: 22, letterSpacing: -0.4, color: tone ?? '#FFFFFF' }, weight(800), tabular]}>
         {value}
       </Text>
+    </View>
+  );
+}
+
+/** The 36-high pill chip V3 uses for every filter on the record. */
+function ChipButton({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel={label}
+      hitSlop={{ top: 6, bottom: 6 }}
+      style={{
+        height: 36,
+        paddingHorizontal: on ? 14 : 12,
+        borderRadius: 18,
+        backgroundColor: on ? C.navy : C.surface,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+      <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** A tinted pill action — "Correct contact, phone or pin", "Pin where I stand". */
+function TintButton({
+  label,
+  icon,
+  onPress,
+  height = 48,
+  a11y,
+  style,
+}: {
+  label: string;
+  icon: IconName;
+  onPress: () => void;
+  height?: number;
+  a11y?: string;
+  style?: object;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y ?? label}
+      style={({ pressed }) => [
+        {
+          height,
+          borderRadius: height / 2,
+          backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          paddingHorizontal: 16,
+        },
+        style,
+      ]}>
+      <Icon name={icon} size={height >= 56 ? 18 : 16} color={C.primaryDeep} strokeWidth={2} />
+      <Text numberOfLines={1} style={[{ fontSize: height >= 56 ? 15 : 14, color: C.primaryDeep }, weight(700)]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** A wash-filled box with an optional glyph — V3's form field. */
+function WashInput({
+  icon,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType,
+  a11y,
+  style,
+}: {
+  icon?: IconName;
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder: string;
+  keyboardType?: 'phone-pad' | 'decimal-pad';
+  a11y: string;
+  style?: object;
+}) {
+  return (
+    <View
+      style={[
+        {
+          height: icon ? 52 : 48,
+          borderRadius: 16,
+          backgroundColor: C.canvas,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingHorizontal: 14,
+        },
+        style,
+      ]}>
+      {icon ? <Icon name={icon} size={18} color={C.muted} strokeWidth={2} /> : null}
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={C.faint}
+        keyboardType={keyboardType}
+        accessibilityLabel={a11y}
+        style={{ flex: 1, minWidth: 0, height: '100%', fontSize: 15, color: C.ink }}
+      />
+    </View>
+  );
+}
+
+/** One line of the Overview's facts: a glyph (or a short word) and its values. */
+function InfoRow({
+  icon,
+  word,
+  a11y,
+  first = false,
+  children,
+}: {
+  icon?: IconName;
+  word?: string;
+  a11y?: string;
+  first?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: 40,
+        paddingVertical: 4,
+        borderTopWidth: first ? 0 : 1,
+        borderTopColor: C.hairline,
+      }}>
+      {icon ? (
+        <View accessible accessibilityRole="image" accessibilityLabel={a11y}>
+          <Icon name={icon} size={16} color={C.muted} strokeWidth={2} />
+        </View>
+      ) : (
+        <Text style={[{ fontSize: 11, color: C.muted, minWidth: 30 }, weight(700)]}>{word}</Text>
+      )}
+      {children}
     </View>
   );
 }
@@ -1385,82 +1720,86 @@ function BillCard({
   const settled = !unstated && (bill.balancePaise ?? 0) <= 0;
   const count = bill.lineCount ?? 0;
 
+  const late = !settled && !unstated && (bill.overdueDays ?? 0) > 0;
+
   return (
-    <Card style={{ gap: 8 }}>
+    <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16 }}>
       <Pressable
         onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
         accessibilityLabel={'What was on bill ' + (bill.billNo ?? '')}
-        style={{ gap: 6 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(600)]} numberOfLines={1}>
+        accessibilityHint={count ? count + (count === 1 ? ' item' : ' items') + (open ? '' : ', tap to see them') : 'No items listed'}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: C.infoBg, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="doc" size={15} color={C.info} strokeWidth={2} />
+          </View>
+          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(700)]} numberOfLines={1}>
             {bill.billNo ?? 'Bill'}
           </Text>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
+          <Text style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>
             {bill.amountPaise != null ? inrFromPaise(bill.amountPaise) : '—'}
           </Text>
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Text style={type.caption}>{pretty(bill.billDate)}</Text>
-          {bill.dueDate ? <Text style={type.caption}>· due {pretty(bill.dueDate)}</Text> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+          <Text style={{ fontSize: 12, color: C.muted }}>
+            {pretty(bill.billDate) + (bill.dueDate ? ' · due ' + pretty(bill.dueDate) : '')}
+          </Text>
           {settled ? (
             <Badge tone="success">Paid</Badge>
           ) : unstated ? (
             <Badge tone="neutral">No info</Badge>
-          ) : (bill.overdueDays ?? 0) > 0 ? (
-            <Badge tone="danger">{bill.overdueDays} days late</Badge>
+          ) : late ? (
+            <Badge tone="danger">{bill.overdueDays + ' d late'}</Badge>
           ) : (
             <Badge tone="amber">Open</Badge>
           )}
           {bill.disputed ? <Badge tone="danger">Disputed</Badge> : null}
-        </View>
-
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-          <Text style={type.caption}>
-            {count ? count + (count === 1 ? ' item' : ' items') + (open ? '' : ' · tap to see them') : 'No items listed'}
-          </Text>
-          <Text style={type.caption}>
+          <View style={{ flex: 1 }} />
+          <Text style={[{ fontSize: 12, color: unstated || settled ? C.muted : C.danger }, weight(unstated || settled ? 500 : 700)]}>
             {unstated
               ? 'No payment info yet'
               : settled
                 ? 'Paid in full'
-                : inrFromPaise(bill.balancePaise ?? 0) + ' still open'}
+                : inrFromPaise(bill.balancePaise ?? 0) + ' open'}
           </Text>
         </View>
+
+        {open ? (
+          lines.length ? (
+            <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 8, marginTop: 10, gap: 6 }}>
+              {lines.map((l, i) => (
+                <View key={l.product + i} style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
+                  <Text style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.body }}>{l.product}</Text>
+                  <Text style={[{ fontSize: 13, color: C.ink }, weight(700), tabular]}>
+                    {/* CANS, which is what the customer says and what the office
+                        stores. Litres are derived from the pack size and are not
+                        on the wire, so naming a unit we were not sent would be
+                        the screen inventing one. */}
+                    {l.qty}
+                  </Text>
+                  <Text style={[{ width: 84, textAlign: 'right', fontSize: 13, color: C.body }, tabular]}>
+                    {l.amountPaise != null ? inrFromPaise(l.amountPaise) : '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={{ fontSize: 12, color: C.muted, borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 8, marginTop: 10 }}>
+              The office has no items listed for this bill.
+            </Text>
+          )
+        ) : null}
+
+        <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+          {'Balance after · ' +
+            inrFromPaise(balanceAfterPaise) +
+            ' · ' +
+            (count ? count + (count === 1 ? ' item' : ' items') + (open ? ' ▴' : ' ▾') : 'no items listed')}
+        </Text>
       </Pressable>
-
-      {open ? (
-        lines.length ? (
-          <View style={{ borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8, gap: 6 }}>
-            {lines.map((l, i) => (
-              <View
-                key={l.product + i}
-                style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                <Text style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.body }}>{l.product}</Text>
-                <Text style={[{ fontSize: 14, color: C.ink }, tabular]}>
-                  {/* CANS, which is what the customer says and what the office
-                      stores. Litres are derived from the pack size and are not
-                      on the wire, so naming a unit we were not sent would be
-                      the screen inventing one. */}
-                  {l.qty}
-                </Text>
-                <Text style={[{ width: 92, textAlign: 'right', fontSize: 14, color: C.body }, tabular]}>
-                  {l.amountPaise != null ? inrFromPaise(l.amountPaise) : '—'}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
-            The office has no items listed for this bill.
-          </Text>
-        )
-      ) : null}
-
-      <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
-        {inrFromPaise(balanceAfterPaise)} outstanding after this
-      </Text>
-    </Card>
+    </View>
   );
 }
 
@@ -1500,24 +1839,47 @@ function ReceiptCard({
               : (receipt.status ?? 'Unknown');
 
   return (
-    <Card style={{ gap: 6, borderLeftWidth: 3, borderLeftColor: counted ? C.success : C.warn }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-        <Text style={[{ fontSize: 15, color: counted ? C.success : C.muted }, weight(600), tabular]}>
+    <View
+      accessible
+      accessibilityLabel={[
+        receipt.amountPaise != null ? inrFromPaise(receipt.amountPaise) : 'No amount',
+        word,
+        pretty(receipt.receivedAt),
+        receipt.mode,
+        receipt.reference,
+        counted ? inrFromPaise(balanceAfterPaise) + ' outstanding after this' : 'Not taken off the balance yet',
+      ]
+        .filter(Boolean)
+        .join(', ')}
+      style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 15,
+          backgroundColor: counted ? C.successBg : C.warnBg,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        <Icon name="wallet" size={15} color={counted ? C.success : C.warnInk} strokeWidth={2} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[{ fontSize: 16, color: counted ? C.success : C.muted }, weight(800), tabular]}>
           {receipt.amountPaise != null ? inrFromPaise(receipt.amountPaise) : '—'}
         </Text>
-        <Text style={type.caption}>{pretty(receipt.receivedAt)}</Text>
+        <Text style={{ fontSize: 12, color: C.muted }}>
+          {[
+            pretty(receipt.receivedAt),
+            receipt.mode,
+            receipt.reference,
+            counted ? 'after ' + inrFromPaise(balanceAfterPaise) : 'not off balance yet',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
       </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Badge tone={tone}>{word}</Badge>
-        {receipt.mode ? <Text style={type.caption}>{receipt.mode}</Text> : null}
-        {receipt.reference ? <Text style={type.caption}>· {receipt.reference}</Text> : null}
-      </View>
-      <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
-        {counted
-          ? inrFromPaise(balanceAfterPaise) + ' outstanding after this'
-          : 'Not taken off the balance yet'}
-      </Text>
-    </Card>
+      <Badge tone={tone}>{word}</Badge>
+    </View>
   );
 }
 

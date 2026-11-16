@@ -1,12 +1,15 @@
 import React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, PrimaryButton, T } from '../src/components/ui/primitives';
+import { PrimaryButton, T } from '../src/components/ui/primitives';
+import { feedback } from '../src/components/ui/feedback';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Appear, CountUp, FillBar, Swap } from '../src/components/ui/motion';
-import { color as C, radius, weight, tabular, type as typeScale } from '../src/theme/tokens';
+import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { dmy, inrFromPaise, plural, todayIst } from '../src/lib/format';
 import { activitySub, collectionLine } from '../src/engines/performance-labels';
 import {
@@ -145,11 +148,16 @@ export default function PerformanceScreen() {
     router.push('/customer?from=performance');
   };
   const collectedBp = current ? collectionShareBp(current) : null;
+  const showsScore = Boolean(current && current.hasTarget && current.totalScoreBp !== null);
 
   return (
-    <AppFrame title="Performance" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame
+      tone="canvas"
+      title="Performance"
+      activeTab={null}
+      onBack={back.go}
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Performance</T>
 
       {/* The periods. A row that scrolls sideways rather than a menu: which
           window he is looking at is the first thing on the screen, and a
@@ -157,56 +165,65 @@ export default function PerformanceScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ marginTop: 10, marginHorizontal: -16 }}
-        contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+        style={{ marginHorizontal: -14 }}
+        contentContainerStyle={{ gap: 8, paddingHorizontal: 20 }}>
         {PRESETS.map((p) => (
-          <Choice
-            key={p.key}
-            label={p.label}
-            selected={key === p.key}
-            onPress={() => setKey(p.key)}
-            style={{ minHeight: 40 }}
-          />
+          <PeriodChip key={p.key} label={p.label} selected={key === p.key} onPress={() => setKey(p.key)} />
         ))}
-        <Choice
-          label={key === 'custom' && custom ? rangeWords(custom) : 'Pick dates'}
+        {/* Until a range is picked this is only the calendar mark; once one
+            is, the chip carries the dates, so the window on screen is named
+            where it was chosen. */}
+        <PeriodChip
+          label={key === 'custom' && custom ? rangeWords(custom) : undefined}
+          a11y={key === 'custom' && custom ? rangeWords(custom) : 'Pick dates'}
+          glyph={CAL}
           selected={key === 'custom'}
           onPress={() => setPicking(true)}
-          style={{ minHeight: 40 }}
         />
       </ScrollView>
 
-      <T s="small" style={{ color: C.muted, marginTop: 8 }}>
-        {rangeWords(period)}
-        {current?.computedAt
-          ? ` · ${current.source === 'live' ? 'worked out' : 'synced'} ${asAt(current.computedAt)}`
-          : ''}
-      </T>
+      {/* The window and when the office worked it out. Inside the navy score
+          card where there is a score; here, under the chips, where there is
+          not — the range is said on every state of the screen. */}
+      {showsScore ? null : (
+        <T style={{ fontSize: 12, color: C.muted, marginTop: 10, paddingHorizontal: 6 }}>
+          {rangeWords(period)}
+          {current?.computedAt
+            ? ` · ${current.source === 'live' ? 'worked out' : 'synced'} ${asAt(current.computedAt)}`
+            : ''}
+        </T>
+      )}
 
       {months === null || waiting ? (
-        <T s="small" style={{ color: C.muted, marginTop: 12 }}>
-          Loading…
-        </T>
+        <View style={{ marginTop: 14, height: 44, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
+          <T style={{ fontSize: 13, color: C.muted }}>Loading…</T>
+        </View>
       ) : failed ? (
-        <Card style={{ marginTop: 12 }}>
-          <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-            This period is worked out by the office, and it could not be reached.
-          </T>
-          <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-            {failed}. This month and last month are kept on the phone and open without
-            signal — any other period needs a connection.
-          </T>
-        </Card>
+        <View
+          accessible
+          accessibilityLabel={`This period is worked out by the office, and it could not be reached. ${failed}. This month and last month are kept on the phone and open without signal — any other period needs a connection.`}
+          style={[note, { backgroundColor: C.dangerBg, alignItems: 'flex-start' }]}>
+          <Glyph shapes={NO_CLOUD} size={20} color={C.danger} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 14, color: C.danger }, weight(700)]}>The office could not be reached for this period</Text>
+            <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+              {failed}. This and last month open offline — any other period needs a connection.
+            </T>
+          </View>
+        </View>
       ) : !current ? (
-        <Card style={{ marginTop: 12 }}>
-          <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-            Nothing to show yet.
-          </T>
-          <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-            The office sets your target. It will come to this phone after that.
-            Until then there is nothing to measure against, so no percentage is shown.
-          </T>
-        </Card>
+        <View
+          accessible
+          accessibilityLabel="Nothing to show yet. The office sets your target. It will come to this phone after that. Until then there is nothing to measure against, so no percentage is shown."
+          style={[note, { alignItems: 'flex-start' }]}>
+          <Glyph shapes={CLOCK} size={20} color={C.muted} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Nothing to show yet</Text>
+            <T style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+              The office sets your target; it reaches this phone after that. No percentage until then.
+            </T>
+          </View>
+        </View>
       ) : (
         /* ONE PERIOD REPLACING ANOTHER. Keyed on the range, so picking a new
            period settles the figures in afresh — and the score, which counts
@@ -216,48 +233,31 @@ export default function PerformanceScreen() {
         <Swap id={rangeKey}>
 
           {current.hasTarget && current.totalScoreBp !== null ? (
-            <Card style={{ marginTop: 12, alignItems: 'flex-start' }}>
-              <T s="label">Overall</T>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                {/* The score is what this screen is for, so it counts up from
-                    nought rather than simply being there — and when the office's
-                    live answer replaces the synced one, it runs from the old
-                    figure to the new, which is the only way somebody sees that
-                    it moved. */}
-                <CountUp
-                  value={current.totalScoreBp / 100}
-                  format={(n) => n.toFixed(1)}
-                  fromZero
-                  duration={800}
-                  style={[
-                    typeScale.body,
-                    { fontSize: 34, lineHeight: 40, color: toneFor(current.totalScoreBp) },
-                    weight(600),
-                    tabular,
-                  ]}
-                />
-                <T s="small" style={{ color: C.muted }}>
-                  out of 100
-                </T>
+            <View style={{ marginTop: 14, backgroundColor: C.navy, borderRadius: 24, padding: 18 }}>
+              <RangeLine period={period} current={current} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 14 }}>
+                <ScoreRing bp={current.totalScoreBp} />
+                <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-start' }}>
+                  {current.rating ? (
+                    <Text style={[{ fontSize: 22, lineHeight: 28, letterSpacing: -0.44, color: '#FFFFFF' }, weight(800)]}>
+                      {current.rating}
+                    </Text>
+                  ) : null}
+                  {previous?.period && previous.totalScoreBp != null ? (
+                    <NavyTag glyph={TREND} text={`${monthName(previous.period)} was ${(previous.totalScoreBp / 100).toFixed(1)}`} />
+                  ) : current.monthsInRange > 1 ? (
+                    <NavyTag text={`${current.monthsTargeted} of ${plural(current.monthsInRange, 'month')} targeted`} />
+                  ) : null}
+                </View>
               </View>
-              {current.rating ? (
-                <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-                  {current.rating}
-                </T>
-              ) : null}
-              {previous?.period && previous.totalScoreBp != null ? (
-                <T s="micro" style={{ marginTop: 4 }}>
-                  {monthName(previous.period)} was {(previous.totalScoreBp / 100).toFixed(1)}
-                </T>
-              ) : null}
               {/* A range over several months is scored against the targets
                   those months carried, added up — and it has to say how many
                   that was. A year scored on three targeted months out of
                   twelve is a different statement from one scored on twelve. */}
               {current.monthsInRange > 1 || current.prorated ? (
-                <T s="micro" style={{ marginTop: 6 }}>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 10 }}>
                   {rangeTargetLine(current)}
-                </T>
+                </Text>
               ) : null}
               {/* WHAT WAS LEFT OUT IS PART OF THE NUMBER, not a footnote to it.
                   An 84 earned across six components and an 84 earned across
@@ -265,21 +265,23 @@ export default function PerformanceScreen() {
                   always said which — this one drew the 34-point figure and
                   stopped. */}
               {dropped ? (
-                <T s="micro" style={{ marginTop: 6 }}>
-                  {dropped}
-                </T>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 10 }}>{dropped}</Text>
               ) : null}
-            </Card>
+            </View>
           ) : (
-            <Card style={{ marginTop: 12 }}>
-              <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-                No target has been set for you {monthKey ? 'this month' : 'in this period'}.
-              </T>
-              <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-                Below is what you have done. There is no score, because no target
-                was set.
-              </T>
-            </Card>
+            <View>
+              <View style={note}>
+                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: C.canvas, alignItems: 'center', justifyContent: 'center' }}>
+                  <Glyph shapes={NO_TARGET} size={18} color={C.muted} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>
+                    No target set {monthKey ? 'this month' : 'in this period'}
+                  </Text>
+                  <T style={{ fontSize: 12, color: C.muted }}>What you did is below. No score without a target.</T>
+                </View>
+              </View>
+            </View>
           )}
 
           {/* Revenue and volume, side by side and in that order. See the note
@@ -291,8 +293,9 @@ export default function PerformanceScreen() {
               100× too big as well. The "What is short" card at the foot of the
               same screen has its own correct helper, so the two disagreed by
               two decimal places with nothing saying which half to believe. */}
-          <Card padded={false} style={{ marginTop: 12, flexDirection: 'row', overflow: 'hidden' }}>
+          <View style={grid2}>
             <Figure
+              glyph={RUPEE}
               label="Revenue excl. GST"
               value={inrFromPaise(current.revenueActualPaise)}
               count={{ n: current.revenueActualPaise, format: (n) => inrFromPaise(Math.round(n)) }}
@@ -300,13 +303,14 @@ export default function PerformanceScreen() {
               bp={current.revenueAchievementBp}
             />
             <Figure
+              glyph={DROP}
               label="Volume"
               value={litres(current.volumeActualMl)}
               count={{ n: current.volumeActualMl, format: litres }}
               target={current.volumeTargetMl ? litres(current.volumeTargetMl) : null}
               bp={current.volumeAchievementBp}
             />
-          </Card>
+          </View>
 
           {/* The warning arrives a beat after the two figures it is about, so
               it reads as a conclusion drawn from them rather than as part of
@@ -316,16 +320,18 @@ export default function PerformanceScreen() {
               delay={360}
               style={{
                 backgroundColor: C.warnBg,
-                borderWidth: 1,
-                borderColor: C.warnEdge,
-                borderRadius: radius.card,
-                paddingHorizontal: 16,
-                paddingVertical: 14,
-                marginTop: 12,
+                borderRadius: 18,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                marginTop: 10,
+                flexDirection: 'row',
+                gap: 10,
+                alignItems: 'flex-start',
               }}>
-              <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk }}>
-                You reached your rupee target but not your litres target. Prices went up,
-                but you sold less quantity. So this month is not as good as it looks.
+              <Glyph shapes={WARN} size={18} color={C.warnInk} />
+              <T style={{ flex: 1, fontSize: 13, lineHeight: 18, color: C.warnInk }}>
+                Rupee target reached, litres not. Prices went up but you sold less quantity — this month
+                is not as good as it looks.
               </T>
             </Appear>
           ) : null}
@@ -335,15 +341,20 @@ export default function PerformanceScreen() {
               actually sold — and with nothing saying so it reads as a slow
               day. Shown beside the revenue, never added to it. */}
           {shops && shops.summary.waitingPaise ? (
-            <T s="small" style={{ color: C.warnInk, marginTop: 8 }}>
-              {inrFromPaise(shops.summary.waitingPaise)} more is waiting for the office to accept.
-              It is not in the revenue above yet.
-            </T>
+            <View
+              accessible
+              accessibilityLabel={`${inrFromPaise(shops.summary.waitingPaise)} more is waiting for the office to accept. It is not in the revenue above yet.`}
+              style={{ marginTop: 8, minHeight: 36, borderRadius: 18, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8 }}>
+              <Glyph shapes={CLOCK} size={16} color={C.warnInk} />
+              <Text style={[{ flex: 1, fontSize: 13, color: C.warnInk }, weight(600)]}>
+                {inrFromPaise(shops.summary.waitingPaise)} waiting for the office · not in revenue yet
+              </Text>
+            </View>
           ) : null}
 
-          <Card padded={false} style={{ marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', overflow: 'hidden' }}>
+          <View style={grid2}>
             <Figure
-              half
+              glyph={NEW_PERSON}
               label="New customers"
               value={String(current.newCustomerActual)}
               target={current.newCustomerTarget ? String(current.newCustomerTarget) : null}
@@ -357,7 +368,7 @@ export default function PerformanceScreen() {
                 dash and a sentence, never 0% — nothing owed is nothing to fail
                 at, and the score leaves it out for exactly that reason. */}
             <Figure
-              half
+              glyph={CARD}
               label="Collected"
               value={collectedBp === null ? '—' : pct(collectedBp)}
               target={current.collectionTargetBp ? pct(current.collectionTargetBp) : null}
@@ -367,8 +378,10 @@ export default function PerformanceScreen() {
               )}
               bp={null}
             />
+          </View>
+          <View style={grid2}>
             <Figure
-              half
+              glyph={PIN}
               label="Visits and calls"
               value={String(current.activityActual)}
               target={current.activityTarget ? String(current.activityTarget) : null}
@@ -376,7 +389,7 @@ export default function PerformanceScreen() {
               bp={null}
             />
             <Figure
-              half
+              glyph={PIE}
               label="Product mix"
               value={
                 current.mixAchievementBp === null
@@ -401,20 +414,26 @@ export default function PerformanceScreen() {
                   ? `${plural(current.categories.length, 'formulation', 'formulations')} set`
                   : null
               }
+              bare
               bp={null}
             />
-          </Card>
+          </View>
 
           {current.categories.length ? (
-            <Card style={{ marginTop: 12 }}>
-              <T s="label">Product mix</T>
+            <View style={[card, { marginTop: 10 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+                <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Product mix</Text>
+                {current.revenueActualPaise === 0 ? null : (
+                  <Text style={{ fontSize: 12, color: C.muted }}>share of sales, by value · | = target</Text>
+                )}
+              </View>
               {current.revenueActualPaise === 0 ? (
                 /* An empty month is said in words rather than drawn as four
                    empty tracks. Bars at 0.0% under "share of what you sold"
                    read as a salesman selling none of what was asked, on the
                    2nd of the month, when the truth is nothing has been
                    approved yet. The target is what is worth reading then. */
-                <T s="small" style={{ marginTop: 6, color: C.body }}>
+                <T style={{ marginTop: 8, fontSize: 13, color: C.body }}>
                   {'Nothing sold yet this month.' +
                     (current.categories.some((c) => c.targetBp > 0)
                       ? ' Your target: ' +
@@ -425,11 +444,7 @@ export default function PerformanceScreen() {
                         '.'
                       : '')}
                 </T>
-              ) : (
-                <T s="micro" style={{ marginTop: 2 }}>
-                  Share of your sales, by value.
-                </T>
-              )}
+              ) : null}
               {(current.revenueActualPaise === 0
                 ? []
                 : /* A share nobody asked for and nothing has landed in is a
@@ -438,33 +453,26 @@ export default function PerformanceScreen() {
                      back the moment something sells into it. */
                   current.categories.filter((c) => c.targetBp > 0 || c.actualBp > 0)
               ).map((c, i) => (
-                <View key={c.name} style={{ marginTop: 14 }}>
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'baseline',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                    }}>
-                    <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>{c.name}</T>
-                    <T s="caption" style={tabular}>
-                      {(c.actualBp / 100).toFixed(1) + '% of ' + (c.targetBp / 100).toFixed(0) + '%'}
+                <View
+                  key={c.name}
+                  accessible
+                  accessibilityLabel={`${c.name}: ${(c.actualBp / 100).toFixed(1)}% of ${(c.targetBp / 100).toFixed(0)}%${c.actualMl ? ', ' + litres(c.actualMl) : ''}`}
+                  style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                    <Text style={[{ flexShrink: 1, fontSize: 14, color: C.ink }, weight(600)]}>{c.name}</Text>
+                    <Text style={[{ fontSize: 12, color: C.muted }, tabular]}>
+                      {(c.actualBp / 100).toFixed(1) + '% / ' + (c.targetBp / 100).toFixed(0) + '%'}
                       {c.actualMl ? ' · ' + litres(c.actualMl) : ''}
-                    </T>
+                    </Text>
                   </View>
-                  <View
-                    style={{
-                      position: 'relative',
-                      height: 8,
-                      marginTop: 6,
-                    }}>
+                  <View style={{ position: 'relative', height: 10, marginTop: 6 }}>
                     {/* Filled one after another, 60 ms apart, so the eye reads
                         the shares down the card in order rather than all at
                         once. The track is FillBar's own; this View only holds
                         the target rule over it. */}
                     <FillBar
                       pct={c.actualBp / 100}
-                      height={8}
+                      height={10}
                       delay={i * 60}
                       track={C.hairline}
                       fill={
@@ -485,8 +493,9 @@ export default function PerformanceScreen() {
                         position: 'absolute',
                         left: `${Math.min(100, c.targetBp / 100)}%`,
                         top: -3,
-                        width: 2,
-                        height: 14,
+                        width: 3,
+                        height: 16,
+                        borderRadius: 2,
                         backgroundColor: C.ink,
                       }}
                     />
@@ -495,34 +504,39 @@ export default function PerformanceScreen() {
                 </View>
               ))}
               {current.unmatchedRevenuePaise ? (
-                <T s="micro" style={{ marginTop: 12 }}>
-                  {inrFromPaise(current.unmatchedRevenuePaise)} this month is for products not in the
-                  product list. It counts as revenue, but adds no litres.
-                </T>
+                <View style={{ flexDirection: 'row', gap: 6, marginTop: 12 }}>
+                  <Glyph shapes={INFO} size={14} color={C.muted} />
+                  <T style={{ flex: 1, fontSize: 12, color: C.muted }}>
+                    {inrFromPaise(current.unmatchedRevenuePaise)} for products not in the product list —
+                    counts as revenue, adds no litres.
+                  </T>
+                </View>
               ) : null}
-            </Card>
+            </View>
           ) : null}
 
           {shortfalls(current).length || shops?.summary.openPaise ? (
-            <Card style={{ marginTop: 12 }}>
-              <T s="label">Still to reach</T>
+            <View style={[card, { marginTop: 10 }]}>
+              <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Still to reach</Text>
               {shortfalls(current).map((line) => (
-                <T
-                  key={line}
-                  style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 8 }}>
-                  {line}
-                </T>
+                <View key={line} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
+                  <Glyph shapes={shortfallGlyph(line)} size={18} color={C.muted} />
+                  <T style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }}>{line}</T>
+                </View>
               ))}
               {shops?.summary.openPaise ? (
-                <T style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 8 }}>
-                  {inrFromPaise(shops.summary.openPaise)} still open across{' '}
-                  {shops.summary.counts.open === 1
-                    ? 'one of your customers'
-                    : `${shops.summary.counts.open} of your customers`}
-                  {' '}— the list is below.
-                </T>
+                <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
+                  <Glyph shapes={SHOP} size={18} color={C.muted} />
+                  <T style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }}>
+                    {inrFromPaise(shops.summary.openPaise)} still open across{' '}
+                    {shops.summary.counts.open === 1
+                      ? 'one of your customers'
+                      : `${shops.summary.counts.open} of your customers`}
+                    {' '}— the list is below.
+                  </T>
+                </View>
               ) : null}
-            </Card>
+            </View>
           ) : null}
 
 
@@ -545,11 +559,17 @@ export default function PerformanceScreen() {
       ) : null}
 
       {current ? (
-        <T s="caption" style={{ marginTop: 12 }}>
-          Revenue counts only orders the office has accepted. Collection counts only money
-          found in the bank. So both go up some time after you add them. Collection is the share
-          of what was already overdue at the start of the period that has since been paid.
-        </T>
+        <View
+          accessible
+          accessibilityLabel="Revenue counts only orders the office has accepted. Collection counts only money found in the bank. So both go up some time after you add them. Collection is the share of what was already overdue at the start of the period that has since been paid."
+          style={{ flexDirection: 'row', gap: 8, marginTop: 12, paddingHorizontal: 6 }}>
+          <Glyph shapes={INFO} size={14} color={C.muted} />
+          <T style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
+            Revenue counts accepted orders only; collection counts money found in the bank — both rise
+            some time after you add them. Collection = share of what was overdue at the start that has
+            since been paid.
+          </T>
+        </View>
       ) : null}
 
       <RangeSheet
@@ -565,6 +585,179 @@ export default function PerformanceScreen() {
         }}
       />
     </AppFrame>
+  );
+}
+
+/* ---------------------------------------------------------- Version 3 bits */
+
+const card = { backgroundColor: C.surface, borderRadius: 20, padding: 16 } as const;
+const note = {
+  marginTop: 14,
+  backgroundColor: C.surface,
+  borderRadius: 20,
+  paddingVertical: 14,
+  paddingHorizontal: 16,
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 10,
+} as const;
+const grid2 = { flexDirection: 'row', gap: 10, marginTop: 10 } as const;
+
+const CAL: GlyphShape[] = [{ r: [4, 5, 16, 15, 2] }, { p: 'M4 10h16M9 3v4M15 3v4' }];
+const CAL_SMALL: GlyphShape[] = [{ r: [4, 5, 16, 15, 2] }, { p: 'M4 10h16' }];
+const SYNCED: GlyphShape[] = [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'M9.5 13.5l2 2 3.5-3.5' }];
+const NO_CLOUD: GlyphShape[] = [{ p: 'M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z' }, { p: 'M4 4l16 16' }];
+const CLOCK: GlyphShape[] = [{ c: [12, 12, 8] }, { p: 'M12 8v4l3 2' }];
+const TREND: GlyphShape[] = [{ p: 'M3 17l6-6 4 4 8-8' }];
+const RUPEE: GlyphShape[] = [{ p: 'M7 5h10M7 9h10M10 5c3 0 4 2 4 4s-2 4-5 4h-2l7 7' }];
+const DROP: GlyphShape[] = [{ p: 'M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z' }];
+const WARN: GlyphShape[] = [{ p: 'M12 4l9 16H3z' }, { p: 'M12 10v4M12 17h.01' }];
+const NEW_PERSON: GlyphShape[] = [{ c: [10, 8, 4] }, { p: 'M2 21c0-4 4-6 8-6M18 14v6M15 17h6' }];
+const CARD: GlyphShape[] = [{ r: [3, 6, 18, 13, 2] }, { p: 'M3 10h18' }];
+const PIN: GlyphShape[] = [{ p: 'M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z' }, { c: [12, 10, 2.5] }];
+const PIE: GlyphShape[] = [{ p: 'M12 3v9l7 5M21 12a9 9 0 1 1-9-9' }];
+const INFO: GlyphShape[] = [{ c: [12, 12, 8] }, { p: 'M12 8v5M12 16h.01' }];
+const SHOP: GlyphShape[] = [{ p: 'M3 21V9l9-6 9 6v12z' }];
+const NO_TARGET: GlyphShape[] = [{ c: [12, 12, 8] }, { c: [12, 12, 3] }, { p: 'M5 19L19 5' }];
+const PERSON: GlyphShape[] = [{ c: [12, 8, 4] }, { p: 'M4 21c0-4 4-6 8-6s8 2 8 6' }];
+const MIX: GlyphShape[] = [{ p: 'M4 20V10M10 20V4M16 20v-7' }];
+
+/** The mark beside a "still to reach" line, read off what the line is about. */
+function shortfallGlyph(line: string): GlyphShape[] {
+  const l = line.toLowerCase();
+  if (l.includes('revenue')) return RUPEE;
+  if (l.includes('volume')) return DROP;
+  if (l.includes('collect')) return CARD;
+  if (l.includes('customer')) return PERSON;
+  if (l.includes('visit') || l.includes('task')) return PIN;
+  return MIX;
+}
+
+/** A 36 period pill: navy when it is the window on screen, white otherwise. */
+function PeriodChip({
+  label,
+  a11y,
+  glyph,
+  selected,
+  onPress,
+}: {
+  label?: string;
+  a11y?: string;
+  glyph?: GlyphShape[];
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const fg = selected ? '#FFFFFF' : C.ink;
+  return (
+    <Pressable
+      onPress={() => {
+        if (!selected) feedback('select');
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={a11y ?? label}
+      hitSlop={{ top: 6, bottom: 6 }}
+      style={({ pressed }) => ({
+        height: 36,
+        minWidth: 36,
+        paddingHorizontal: label ? (glyph ? 12 : 14) : 0,
+        borderRadius: 18,
+        backgroundColor: selected ? C.navy : C.surface,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      {glyph ? <Glyph shapes={label ? CAL_SMALL : glyph} size={label ? 14 : 16} color={fg} /> : null}
+      {label ? <Text style={[{ fontSize: 13, color: fg }, weight(selected ? 700 : 600)]}>{label}</Text> : null}
+    </Pressable>
+  );
+}
+
+/** The range and when the office worked it out, in the score card. */
+function RangeLine({ period, current }: { period: Period; current: PerformanceMonth }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <Glyph shapes={CAL_SMALL} size={12} color={C.onNavyMuted} />
+      <Text style={{ fontSize: 12, color: C.onNavyMuted }}>{rangeWords(period)}</Text>
+      <View style={{ flex: 1 }} />
+      {current.computedAt ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Glyph shapes={SYNCED} size={12} color={C.onNavyMuted} />
+          <Text style={{ fontSize: 12, color: C.onNavyMuted }}>
+            {(current.source === 'live' ? 'worked out ' : 'synced ') + asAt(current.computedAt)}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** A 28 pill on the navy score card. */
+function NavyTag({ text, glyph }: { text: string; glyph?: GlyphShape[] }) {
+  return (
+    <View
+      style={{
+        marginTop: 6,
+        height: 28,
+        paddingHorizontal: 10,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+      }}>
+      {glyph ? <Glyph shapes={glyph} size={12} color={C.border} /> : null}
+      <Text numberOfLines={1} style={[{ fontSize: 12, color: C.border }, weight(700)]}>{text}</Text>
+    </View>
+  );
+}
+
+/**
+ * The score as a ring on the navy card, coloured by band: lime from 80, amber
+ * from 60, red under it — the same bands `toneFor` draws in words.
+ */
+function ScoreRing({ bp }: { bp: number }) {
+  const score = bp / 100;
+  const r = 38;
+  const circ = 2 * Math.PI * r;
+  const arc = Math.max(0, Math.min(1, score / 100)) * circ;
+  const ring = score >= 80 ? C.lime : score >= 60 ? '#F5B83D' : '#FF6B5E';
+  return (
+    <View accessible accessibilityRole="image" accessibilityLabel={`Overall ${score.toFixed(1)} out of 100`} style={{ width: 96, height: 96 }}>
+      <Svg width={96} height={96} viewBox="0 0 92 92">
+        <Circle cx={46} cy={46} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth={9} />
+        {arc > 0 ? (
+          <Circle
+            cx={46}
+            cy={46}
+            r={r}
+            fill="none"
+            stroke={ring}
+            strokeWidth={9}
+            strokeLinecap="round"
+            strokeDasharray={[arc, circ]}
+            transform="rotate(-90 46 46)"
+          />
+        ) : null}
+      </Svg>
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+        {/* The score is what this screen is for, so it counts up from nought
+            rather than simply being there — and when the office's live answer
+            replaces the synced one, it runs from the old figure to the new,
+            which is the only way somebody sees that it moved. */}
+        <CountUp
+          value={score}
+          format={(n) => n.toFixed(1)}
+          fromZero
+          duration={800}
+          style={[typeScale.body, { fontSize: 22, lineHeight: 26, color: '#FFFFFF' }, weight(800), tabular]}
+        />
+        <Text style={{ fontSize: 10, color: C.onNavyMuted }}>of 100</Text>
+      </View>
+    </View>
   );
 }
 
@@ -591,32 +784,40 @@ function RangeSheet({
   const [to, setTo] = React.useState(initial?.to ?? '');
   const [end, setEnd] = React.useState<'from' | 'to'>('from');
 
-  const dateBtn = (which: 'from' | 'to', value: string) => (
-    <Pressable
-      accessibilityRole="button"
-      onPress={() => setEnd(which)}
-      style={{
-        flex: 1,
-        minHeight: 48,
-        justifyContent: 'center',
-        paddingHorizontal: 12,
-        borderRadius: radius.md,
-        borderWidth: 1,
-        borderColor: end === which ? C.primary : C.border,
-        backgroundColor: end === which ? C.primaryTint : C.surface,
-      }}>
-      <T s="micro">{which === 'from' ? 'From' : 'To'}</T>
-      <T style={{ fontSize: 15, color: value ? C.ink : C.muted }}>{value ? dmy(value) : 'Pick a date'}</T>
-    </Pressable>
-  );
+  const dateBtn = (which: 'from' | 'to', value: string) => {
+    const on = end === which;
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ selected: on }}
+        accessibilityLabel={`${which === 'from' ? 'From' : 'To'}: ${value ? dmy(value) : 'pick a date'}`}
+        onPress={() => setEnd(which)}
+        style={{
+          flex: 1,
+          height: 56,
+          justifyContent: 'center',
+          paddingHorizontal: 14,
+          borderRadius: 18,
+          borderWidth: on ? 2 : 1,
+          borderColor: on ? C.primary : C.border,
+          backgroundColor: on ? C.primaryTint : C.surface,
+        }}>
+        <Text style={[{ fontSize: 11, color: on ? C.primaryDeep : C.muted }, weight(700)]}>{which === 'from' ? 'From' : 'To'}</Text>
+        <Text style={[{ fontSize: 15, color: value ? C.ink : C.muted }, weight(value ? 700 : 600)]}>
+          {value ? dmy(value) : 'Pick a date'}
+        </Text>
+      </Pressable>
+    );
+  };
 
   return (
     <BottomSheet open={open} onClose={onClose}>
-      <T s="h3" style={{ marginBottom: 10 }}>
+      <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
         Pick the dates
-      </T>
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 8 }}>
         {dateBtn('from', from)}
+        <Glyph shapes={[{ p: 'M5 12h14M13 6l6 6-6 6' }]} size={18} color={C.faint} />
         {dateBtn('to', to)}
       </View>
       <Calendar
@@ -642,13 +843,20 @@ function RangeSheet({
           }
         }}
       />
+      <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+        <Glyph shapes={INFO} size={14} color={C.muted} />
+        <T style={{ flex: 1, fontSize: 12, color: C.muted }}>Faded days: no figures yet, or before the start date.</T>
+      </View>
       <PrimaryButton
         label="Show this period"
         disabled={!from || !to}
         whyDisabled="Pick both dates."
         onPress={() => onPick(customPeriod(from, to))}
-        style={{ marginTop: 12 }}
+        style={{ marginTop: 14 }}
       />
+      {!from || !to ? (
+        <T style={{ fontSize: 12, color: C.muted, marginTop: 4, textAlign: 'center' }}>Pick both dates.</T>
+      ) : null}
     </BottomSheet>
   );
 }
@@ -680,18 +888,21 @@ function previousMonth(month: string): string {
  * A figure with what it was against.
  *
  * Both, always. The percentage on its own hides that a target was small, and
- * the number on its own hides that it was missed.
+ * the number on its own hides that it was missed. Version 3 draws each as its
+ * own white card, two to a row, with the achievement as a tag.
  */
 function Figure({
   label,
+  glyph,
   value,
   target,
   base,
   bp,
-  half,
   count,
+  bare = false,
 }: {
   label: string;
+  glyph: GlyphShape[];
   value: string;
   /*
    * The figure as a number, where it is one worth watching move. When the
@@ -713,45 +924,42 @@ function Figure({
    */
   base?: string | null;
   bp: number | null;
-  half?: boolean;
+  /** The target is a sentence of its own ("3 formulations set"), not "of" a figure. */
+  bare?: boolean;
 }) {
+  const valueStyle = [typeScale.body, { fontSize: 24, lineHeight: 30, letterSpacing: -0.48, color: C.ink, marginTop: 6 }, weight(800), tabular];
+  const met = bp !== null && bp >= 10_000;
   return (
-    <View
-      style={{
-        width: half ? '50%' : undefined,
-        flex: half ? undefined : 1,
-        minWidth: 0,
-        padding: 14,
-        borderTopWidth: 1,
-        borderTopColor: C.wash,
-      }}>
-      <T s="label">{label}</T>
+    <View style={{ flex: 1, minWidth: 0, backgroundColor: C.surface, borderRadius: 20, padding: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Glyph shapes={glyph} size={14} color={C.muted} />
+        <Text numberOfLines={1} style={[{ flexShrink: 1, fontSize: 12, color: C.muted }, weight(700)]}>{label}</Text>
+      </View>
       {count ? (
-        <CountUp
-          value={count.n}
-          format={count.format}
-          style={[
-            typeScale.body,
-            { fontSize: 22, lineHeight: 28, marginVertical: 2, color: C.ink },
-            weight(600),
-            tabular,
-          ]}
-        />
+        <CountUp value={count.n} format={count.format} style={valueStyle} />
       ) : (
-        <T
-          style={[
-            { fontSize: 22, lineHeight: 28, marginVertical: 2, color: C.ink },
-            weight(600),
-            tabular,
-          ]}>
-          {value}
-        </T>
+        <Text style={valueStyle}>{value}</Text>
       )}
-      <T s="micro">
-        {target ? `of ${target}` : 'no target'}
-        {bp === null ? '' : ` · ${(bp / 100).toFixed(0)}%`}
-      </T>
-      {base ? <T s="micro">{base}</T> : null}
+      <Text style={{ fontSize: 12, color: target ? C.muted : C.faint }}>
+        {target ? (bare ? target : `of ${target}`) : 'no target'}
+      </Text>
+      {base ? <Text style={{ fontSize: 12, color: C.muted }}>{base}</Text> : null}
+      {bp === null ? null : (
+        <View
+          style={{
+            marginTop: 8,
+            alignSelf: 'flex-start',
+            height: 26,
+            paddingHorizontal: 9,
+            borderRadius: 13,
+            backgroundColor: met ? C.successBg : C.warnBg,
+            justifyContent: 'center',
+          }}>
+          <Text style={[{ fontSize: 12, color: met ? C.success : C.warnInk }, weight(800), tabular]}>
+            {(bp / 100).toFixed(0)}%
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -767,13 +975,6 @@ function Figure({
  */
 function activityBaseLine(month: PerformanceMonth): string {
   return activitySub({ done: month.activityActual, base: month.activityAssigned });
-}
-
-function toneFor(bp: number): string {
-  const score = bp / 100;
-  if (score >= 80) return C.success;
-  if (score >= 60) return C.warnInk;
-  return C.ink;
 }
 
 function monthName(period: string): string {

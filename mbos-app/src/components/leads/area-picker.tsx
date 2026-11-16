@@ -1,9 +1,9 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
-import { Choice, SectionLabel, T } from '../ui/primitives';
+import { Pressable, Text, View } from 'react-native';
+import { Choice, T } from '../ui/primitives';
 import { SearchBox } from '../ui/book-controls';
-import { Icon } from '../ui/Icon';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { Icon, type IconName } from '../ui/Icon';
+import { color as C, weight } from '../../theme/tokens';
 import { grouped, plural } from '../../lib/format';
 import type { AreaChoice } from '../../engines/lead-areas';
 import {
@@ -48,9 +48,9 @@ export function AreaField({
 }) {
   if (choices.length <= CHIP_LIMIT) {
     return (
-      <>
-        <SectionLabel style={{ marginBottom: 6 }}>Area</SectionLabel>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+      <View style={{ paddingVertical: 12 }}>
+        <AreaLabel />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
           {choices.map((a) => (
             <Choice
               key={a.key}
@@ -61,53 +61,68 @@ export function AreaField({
             />
           ))}
         </View>
-      </>
+      </View>
     );
   }
   const parent = picked ? areaParent(picked) : null;
+  /* V3 draws the area as one row of the form's card: the pin, the label, the
+     name in bold with where it belongs under it, and a Change pill. */
   return (
-    <>
-      <SectionLabel style={{ marginBottom: 6 }}>Area</SectionLabel>
-      <Pressable
-        onPress={onOpen}
-        accessibilityRole="button"
-        accessibilityLabel={picked ? `Area: ${picked.label}. Change it` : 'Choose the area'}
-        style={({ pressed }) => ({
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          minHeight: 52,
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          marginBottom: 12,
-          borderRadius: radius.md,
-          borderWidth: 1,
-          borderColor: picked ? C.primaryEdge : C.border,
-          backgroundColor: pressed ? C.wash : picked ? C.primaryTint : C.surface,
-        })}>
-        <Icon name="pin" size={18} color={picked ? C.primaryDeep : C.muted} strokeWidth={1.6} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          {picked ? (
-            <>
-              <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                {areaName(picked)}
+    <Pressable
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel={picked ? `Area: ${picked.label}. Change it` : 'Choose the area'}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        minHeight: 60,
+        paddingVertical: 8,
+        backgroundColor: pressed ? C.wash : 'transparent',
+      })}>
+      <Icon name="pin" size={20} color={picked ? C.primaryDeep : C.muted} strokeWidth={2} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <AreaLabel />
+        {picked ? (
+          <>
+            <T numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.ink }, weight(700)]}>
+              {areaName(picked)}
+            </T>
+            {parent ? (
+              <T numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                {parent}
               </T>
-              {parent ? (
-                <T s="caption" numberOfLines={1}>
-                  {parent}
-                </T>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>Choose the area</T>
-              <T s="caption">{`Search your ${grouped(choices.length)} areas`}</T>
-            </>
-          )}
-        </View>
-        <T style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>{picked ? 'Change' : 'Choose'}</T>
-      </Pressable>
-    </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <T style={{ fontSize: 16, lineHeight: 21, color: C.faint }}>Choose the area</T>
+            <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{`Search your ${grouped(choices.length)} areas`}</T>
+          </>
+        )}
+      </View>
+      <View
+        style={{
+          height: 32,
+          paddingHorizontal: 12,
+          borderRadius: 16,
+          backgroundColor: C.primaryTint,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>{picked ? 'Change' : 'Choose'}</T>
+      </View>
+    </Pressable>
+  );
+}
+
+/** "Area *" — the 11-point label the form rows carry, the star in red. */
+function AreaLabel() {
+  return (
+    <T style={{ fontSize: 11, lineHeight: 15, color: C.faint }}>
+      {'Area'}
+      <T style={{ fontSize: 11, color: C.danger }}>{' *'}</T>
+    </T>
   );
 }
 
@@ -161,25 +176,26 @@ export function AreaPickerPage({
 
   return (
     <View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <Pressable
           onPress={onBack}
           accessibilityRole="button"
           accessibilityLabel="Back to the lead"
-          hitSlop={10}
           style={({ pressed }) => ({
-            width: 36,
-            height: 36,
-            borderRadius: radius.pill,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: pressed ? C.wash : 'transparent',
+            backgroundColor: pressed ? C.hairline : C.wash,
           })}>
-          <Icon name="back" size={20} color={C.ink} strokeWidth={1.8} />
+          <Icon name="back" size={20} color={C.ink} strokeWidth={2} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>Which area is the shop in?</T>
-          <T s="caption">{plural(choices.length, 'area') + ' are yours'}</T>
+          <Text accessibilityRole="header" style={[{ fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>
+            Which area?
+          </Text>
+          <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{plural(choices.length, 'area') + ' are yours'}</T>
         </View>
       </View>
 
@@ -194,19 +210,21 @@ export function AreaPickerPage({
           onChange={setQuery}
           onClear={() => setQuery('')}
           placeholder="Type the place name"
+          bg={C.wash}
           autoFocus={loaded != null && suggested.length === 0}
         />
       </View>
 
       {!asking && suggested.length > 0 ? (
         <>
-          <SectionLabel style={{ marginTop: 8, marginBottom: 2 }}>
-            {suggested[0].why === 'near' ? 'Near you' : 'You used recently'}
-          </SectionLabel>
+          <PickerHead
+            icon={suggested[0].why === 'near' ? 'locate' : 'clock'}
+            label={suggested[0].why === 'near' ? 'Near you' : 'Recently used'}
+          />
           {suggested.map((s, i) => (
             <React.Fragment key={'s' + s.choice.key}>
               {i > 0 && s.why === 'recent' && suggested[i - 1].why === 'near' ? (
-                <SectionLabel style={{ marginTop: 12, marginBottom: 2 }}>You used recently</SectionLabel>
+                <PickerHead icon="clock" label="Recently used" />
               ) : null}
               <AreaRow
                 choice={s.choice}
@@ -217,12 +235,12 @@ export function AreaPickerPage({
               />
             </React.Fragment>
           ))}
-          <SectionLabel style={{ marginTop: 16, marginBottom: 2 }}>All your areas</SectionLabel>
+          <PickerHead label="All your areas" />
         </>
       ) : null}
 
       {found.total === 0 ? (
-        <T s="caption" style={{ paddingVertical: 16 }}>
+        <T style={{ paddingVertical: 16, fontSize: 13, lineHeight: 19, color: C.muted }}>
           {`No area of yours is called “${query.trim()}”. A lead can only be added in your own area. If this shop should be yours, ask the office to add the area.`}
         </T>
       ) : (
@@ -239,7 +257,7 @@ export function AreaPickerPage({
       )}
 
       {found.total > found.rows.length ? (
-        <T s="caption" style={{ paddingTop: 12, textAlign: 'center' }}>
+        <T style={{ paddingTop: 12, textAlign: 'center', fontSize: 12, lineHeight: 17, color: C.muted }}>
           {`Showing ${grouped(found.rows.length)} of ${grouped(found.total)}. Type more of the name to find the rest.`}
         </T>
       ) : null}
@@ -289,32 +307,37 @@ function AreaRow({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-        paddingVertical: 12,
+        minHeight: 52,
+        paddingVertical: 8,
         paddingHorizontal: 4,
         borderBottomWidth: 1,
-        borderBottomColor: C.border,
+        borderBottomColor: C.hairline,
         backgroundColor: pressed ? C.wash : picked ? C.primaryTint : 'transparent',
       })}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(picked ? 600 : 500)]}>
+        <T numberOfLines={1} style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(picked ? 700 : 600)]}>
           {areaName(choice)}
         </T>
-        <T s="caption" numberOfLines={1}>
+        <T numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
           {sub}
         </T>
       </View>
       {nearM != null ? (
-        <View
-          style={{
-            paddingHorizontal: 8,
-            paddingVertical: 3,
-            borderRadius: radius.pill,
-            backgroundColor: C.primaryTint,
-          }}>
-          <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(600)]}>{nearLabel(nearM)}</T>
-        </View>
+        <T style={[{ fontSize: 12, color: C.primaryDeep }, weight(700)]}>{nearLabel(nearM)}</T>
       ) : null}
       {picked ? <Icon name="tick" size={18} color={C.primaryDeep} strokeWidth={2.2} /> : null}
     </Pressable>
+  );
+}
+
+/** A group heading in the picker — "Near you", "Recently used", "All your areas". */
+function PickerHead({ icon, label }: { icon?: IconName; label: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 2 }}>
+      {icon ? <Icon name={icon} size={14} color={icon === 'locate' ? C.primaryDeep : C.muted} strokeWidth={2.2} /> : null}
+      <Text accessibilityRole="header" style={[{ fontSize: 12, color: C.ink }, weight(700)]}>
+        {label}
+      </Text>
+    </View>
   );
 }

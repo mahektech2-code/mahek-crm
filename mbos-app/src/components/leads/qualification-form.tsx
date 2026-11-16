@@ -1,7 +1,9 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
-import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, T } from '../ui/primitives';
+import { PrimaryButton } from '../ui/primitives';
+import { Icon } from '../ui/Icon';
+import { HERO } from '../shell/Chrome';
 import { color as C, weight } from '../../theme/tokens';
 import { saveProspectFields, saveQualification, type LeadFunnelView } from '../../data/lead-funnel';
 import {
@@ -199,7 +201,17 @@ function openRows(input: LeadGateInput): Set<string> {
   return missing;
 }
 
-export function QualificationForm({ view, onSaved }: { view: LeadFunnelView; onSaved: () => void }) {
+export function QualificationForm({
+  view,
+  onSaved,
+  frame,
+}: {
+  view: LeadFunnelView;
+  onSaved: () => void;
+  /** The route draws the count and the bars in its lavender hero, as V3
+      does; the counts live here, so the form fills both halves. */
+  frame?: (parts: { hero: React.ReactNode; body: React.ReactNode }) => React.ReactElement;
+}) {
   const notify = useStore((s) => s.notify);
   const { lead, input } = view;
   const [draft, setDraft] = React.useState<Record<string, string>>(() => initialDraft(view));
@@ -262,93 +274,189 @@ export function QualificationForm({ view, onSaved }: { view: LeadFunnelView; onS
     }
   };
 
-  return (
-    <>
-      <Card>
-        <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink }, weight(600)]}>{lead.company?.trim() || lead.name}</T>
-        <Divider style={{ marginVertical: 12 }} />
-        <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>{done + ' of ' + total + ' answered'}</T>
-        <T s="caption" style={{ marginTop: 2 }}>
-          {done === total
-            ? 'All saved. Your Sales Manager validates the GST number and reviews the rest.'
-            : plural(total - done, 'question') + ' left. Only saved answers count. Press Save to keep them all.'}
-        </T>
-      </Card>
+  const hero = (
+    <View style={{ marginTop: 14 }}>
+      <Text style={[{ fontSize: 13, color: HERO.lavender.muted }, weight(600)]}>Qualification</Text>
+      <Text accessibilityRole="header" style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: HERO.lavender.ink }, weight(800)]}>
+        {lead.company?.trim() || lead.name}
+      </Text>
+      <View accessible accessibilityLabel={done + ' of ' + total + ' answered'} style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
+        <Text style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.6, color: HERO.lavender.ink }, weight(800)]}>{String(done)}</Text>
+        <Text style={[{ fontSize: 15, color: HERO.lavender.muted }, weight(700)]}>{'of ' + total + ' answered'}</Text>
+      </View>
+      {/* One bar a question, filled where the SAVED answer counts — the bars
+          read the record, like the count, so they move on Save. */}
+      <View style={{ flexDirection: 'row', gap: 4, marginTop: 8 }}>
+        {SECTIONS.map((sec) => (
+          <View key={sec.id} style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: kept.has(sec.id) ? C.primaryEdge : C.primary }} />
+        ))}
+      </View>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: HERO.lavender.muted, marginTop: 8 }, weight(400)]}>
+        {done === total
+          ? 'All saved. Your Sales Manager validates the GST number and reviews the rest.'
+          : plural(total - done, 'question') + ' left. Only saved answers count. Press Save to keep them all.'}
+      </Text>
+    </View>
+  );
 
+  const body = (
+    <View style={{ gap: 10 }}>
       {!writable ? (
-        <Card style={{ marginTop: 16 }}>
-          <T style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
+        <View style={{ backgroundColor: C.warnBg, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', gap: 8 }}>
+          <Icon name="lock" size={16} color={C.warnInk} strokeWidth={2.2} />
+          <Text style={[{ flex: 1, fontSize: 13, lineHeight: 19, color: C.warnInk }, weight(600)]}>
             Qualification opens once your Sales Manager has verified this Prospect. Until then there is nothing to answer here.
-          </T>
-        </Card>
+          </Text>
+        </View>
       ) : null}
 
-      <View style={{ marginTop: 16, gap: 12 }}>
-        {SECTIONS.map((section, i) => {
-          const open = live.has(section.id);
-          return (
-            <Card key={section.id}>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>
-                    {i + 1}. {section.title}
-                  </T>
-                  {section.id === 'gst_verified' && (draft.gstin ?? '').trim() ? (
-                    <T s="caption" style={{ marginTop: 2 }}>
-                      {validated ? 'Checked by your Sales Manager.' : 'With your Sales Manager. She checks the number when she reviews.'}
-                    </T>
-                  ) : null}
-                </View>
-                <T style={[{ fontSize: 14, color: open ? C.muted : C.success }, weight(600)]}>{open ? 'Not yet' : 'Done'}</T>
+      {SECTIONS.map((section, i) => {
+        const open = live.has(section.id);
+        const inline = section.fields.length === 1 && section.fields[0].kind === 'yesno';
+        return (
+          <View key={section.id} style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 14 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View
+                accessible
+                accessibilityLabel={open ? 'Not yet' : 'Done'}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: open ? 'transparent' : C.success,
+                  borderWidth: open ? 2 : 0,
+                  borderColor: C.border,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                {open ? (
+                  <Text style={[{ fontSize: 12, color: C.faint }, weight(800)]}>{String(i + 1)}</Text>
+                ) : (
+                  <Icon name="tick" size={15} color="#FFFFFF" strokeWidth={2.6} />
+                )}
               </View>
+              <Text accessibilityRole="header" style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>
+                {(open ? '' : i + 1 + ' · ') + section.title}
+              </Text>
+              {inline ? <YesNo field={section.fields[0]} value={draft[section.fields[0].key]} writable={writable} onSet={set} /> : null}
+            </View>
 
-              {section.fields.map((f) => (
-                <View key={f.key} style={{ marginTop: 12 }}>
-                  <T s="caption">{f.label}</T>
-                  {f.kind === 'yesno' || f.kind === 'choice' ? (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                      {(f.kind === 'yesno' ? YES_NO : (f.options ?? [])).map((o) => (
-                        <Choice
-                          key={o.value}
-                          label={o.label}
-                          selected={draft[f.key] === o.value}
-                          onPress={() => writable && set(f.key, draft[f.key] === o.value ? '' : o.value)}
-                          style={{ paddingHorizontal: 14, minHeight: 40 }}
-                        />
-                      ))}
+            {inline ? (
+              section.fields[0].hint ? (
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }, weight(400)]}>{section.fields[0].hint}</Text>
+              ) : null
+            ) : (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                {section.fields.map((f) =>
+                  f.kind === 'yesno' || f.kind === 'choice' ? (
+                    <View key={f.key} style={{ flexBasis: '100%', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {f.kind === 'yesno' ? (
+                        <Text style={[{ flex: 1, minWidth: 120, fontSize: 13, lineHeight: 18, color: C.ink }, weight(400)]}>{f.label}</Text>
+                      ) : null}
+                      <YesNo field={f} value={draft[f.key]} writable={writable} onSet={set} />
                     </View>
                   ) : (
-                    <Input
-                      value={draft[f.key] ?? ''}
-                      editable={writable}
-                      onChangeText={(v) => set(f.key, f.kind === 'int' ? cleanWhole(v) : v)}
-                      placeholder={f.kind === 'date' ? 'YYYY-MM-DD' : ''}
-                      keyboardType={f.kind === 'int' ? 'number-pad' : 'default'}
-                      wholeHint={f.kind === 'int' ? 'Whole days only.' : undefined}
-                      multiline={f.kind === 'long'}
-                      style={{ marginTop: 6 }}
-                    />
-                  )}
-                  {f.hint ? <T s="caption" style={{ marginTop: 4 }}>{f.hint}</T> : null}
-                </View>
-              ))}
-            </Card>
-          );
-        })}
-      </View>
+                    <View key={f.key} style={{ flexGrow: 1, flexBasis: f.kind === 'long' || section.fields.length === 1 ? '100%' : '45%' }}>
+                      <View style={{ minHeight: f.kind === 'long' ? 56 : 52, borderRadius: 16, backgroundColor: C.canvas, paddingHorizontal: 14, paddingVertical: 6 }}>
+                        {section.fields.length > 1 ? (
+                          <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint }, weight(400)]}>{f.label}</Text>
+                        ) : null}
+                        <TextInput
+                          value={draft[f.key] ?? ''}
+                          editable={writable}
+                          onChangeText={(v) => set(f.key, f.kind === 'int' ? cleanWhole(v) : v)}
+                          placeholder={f.kind === 'date' ? 'YYYY-MM-DD' : section.fields.length > 1 ? '' : f.label}
+                          placeholderTextColor={C.faint}
+                          accessibilityLabel={f.label + (f.hint ? '. ' + f.hint : '')}
+                          keyboardType={f.kind === 'int' ? 'number-pad' : 'default'}
+                          multiline={f.kind === 'long'}
+                          style={[{ fontSize: 14, lineHeight: 19, color: C.ink, paddingVertical: 4, paddingHorizontal: 0, textAlignVertical: f.kind === 'long' ? 'top' : 'center' }, weight(400)]}
+                        />
+                      </View>
+                      {f.kind === 'int' && (draft[f.key] ?? '').includes('.') ? (
+                        <Text style={[{ fontSize: 12, lineHeight: 16, color: C.danger, marginTop: 3 }, weight(400)]}>Whole days only.</Text>
+                      ) : null}
+                      {f.hint && section.id !== 'gst_verified' ? (
+                        <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint, marginTop: 3 }, weight(400)]}>{f.hint}</Text>
+                      ) : null}
+                    </View>
+                  ),
+                )}
+              </View>
+            )}
 
-      <PrimaryButton
-        label={busy ? 'Saving…' : 'Save answers'}
-        onPress={save}
-        disabled={busy || !writable}
-        whyDisabled={writable ? undefined : 'Qualification opens once your Sales Manager has verified this Prospect.'}
-        style={{ marginTop: 18 }}
-      />
-      <SecondaryButton
-        label="Back to the lead"
-        onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
-        style={{ marginTop: 10 }}
-      />
+            {section.id === 'gst_verified' && (draft.gstin ?? '').trim() ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                <Icon name={validated ? 'shield' : 'clock'} size={13} color={validated ? C.success : C.muted} strokeWidth={2.2} />
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: validated ? C.success : C.muted }, weight(400)]}>
+                  {validated ? 'Checked by your Sales Manager.' : 'With your Sales Manager. She checks the number when she reviews.'}
+                </Text>
+              </View>
+            ) : section.id === 'gst_verified' ? (
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }, weight(400)]}>{section.fields[0].hint}</Text>
+            ) : null}
+          </View>
+        );
+      })}
+
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+        <Pressable
+          onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
+          accessibilityRole="button"
+          accessibilityLabel="Back to the lead"
+          style={({ pressed }) => ({ width: 140, height: 60, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Back to lead</Text>
+        </Pressable>
+        <PrimaryButton
+          label={busy ? 'Saving…' : 'Save answers'}
+          tone="navy"
+          onPress={save}
+          disabled={busy || !writable}
+          whyDisabled={writable ? undefined : 'Qualification opens once your Sales Manager has verified this Prospect.'}
+          style={{ flex: 1, height: 60, minHeight: 60, borderRadius: 30 }}
+        />
+      </View>
+    </View>
+  );
+
+  return frame ? frame({ hero, body }) : (
+    <>
+      {hero}
+      {body}
     </>
+  );
+}
+
+/** Yes / No (or the three ways a price was taken) as 36 pills. A second tap
+    on the picked one clears it — an answer can be taken back before Save. */
+function YesNo({
+  field,
+  value,
+  writable,
+  onSet,
+}: {
+  field: Field;
+  value: string | undefined;
+  writable: boolean;
+  onSet: (key: string, value: string) => void;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+      {(field.kind === 'yesno' ? YES_NO : (field.options ?? [])).map((o) => {
+        const on = value === o.value;
+        return (
+          <Pressable
+            key={o.value}
+            onPress={() => writable && onSet(field.key, on ? '' : o.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on, disabled: !writable }}
+            accessibilityLabel={field.label + ': ' + o.label}
+            hitSlop={{ top: 6, bottom: 6 }}
+            style={{ minHeight: 36, paddingHorizontal: field.kind === 'yesno' ? 16 : 14, borderRadius: 18, justifyContent: 'center', backgroundColor: on ? C.navy : C.canvas }}>
+            <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{o.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }

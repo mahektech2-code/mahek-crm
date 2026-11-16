@@ -1,17 +1,21 @@
 import React from 'react';
-import { Animated, Image, View, Pressable, ScrollView } from 'react-native';
+import { Animated, Image, Text, View, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { HERO } from '../src/components/shell/Chrome';
+import { PillButton } from '../src/components/ui/v3';
+import { SearchBox } from '../src/components/ui/book-controls';
+import { LeadCard, LeadGlyph, SheetChip, StagePill, STAGE_PILL, WarnPill, WashInput } from '../src/components/leads/v3-parts';
+import { PrimaryButton, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
-import { Icon } from '../src/components/ui/Icon';
+import { Icon, type IconName } from '../src/components/ui/Icon';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { CommitmentCard } from '../src/components/leads/commitment-card';
 import { CommitmentSheet } from '../src/components/leads/commitment-sheet';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
-import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
+import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
 import {
   leadThresholds,
   setArchived,
@@ -65,9 +69,9 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from '../src/engines/funnel';
-import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
+import { compactInrFromPaise, dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
-import { Appear, FillBar, Pop, Presence, Stagger, useShake } from '../src/components/ui/motion';
+import { Appear, Pop, Presence, Stagger, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 
 /**
@@ -281,14 +285,18 @@ export default function LeadRecord() {
 
   if (!view) {
     return (
-      <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-        <BackLink label={back.label} onPress={back.go} />
-        <Card style={{ paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>This lead is not on this phone</T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Go back to the list. Open it from there.
-          </T>
-        </Card>
+      <AppFrame title="Lead" tone="lavender" activeTab={null} onBack={back.go} contentStyle={{ padding: 14, paddingBottom: 24 }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 26, alignItems: 'center' }}>
+          <Icon name="person" size={28} color={C.faint} strokeWidth={2} />
+          <Text style={[{ fontSize: 16, lineHeight: 21, color: C.ink, textAlign: 'center', marginTop: 8 }, weight(800)]}>
+            Not on this phone
+          </Text>
+          <Text
+            accessibilityLabel="This lead is not on this phone. Go back to the list. Open it from there."
+            style={[{ fontSize: 13, lineHeight: 19, color: C.muted, textAlign: 'center', marginTop: 4 }, weight(400)]}>
+            Go back and open it from the list
+          </Text>
+        </View>
       </AppFrame>
     );
   }
@@ -370,40 +378,74 @@ export default function LeadRecord() {
    * for another three weeks.
    */
   if (mustDecide) {
+    const cap = config.suspectMaxVisits;
     return (
-      <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-        <BackLink label={back.label} onPress={back.go} />
-
-        <Appear>
-        <Card>
-          <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>{title}</T>
-          <T s="caption" style={{ marginTop: 2 }}>
-            {[lead.city, lead.mobile].filter(Boolean).join(' · ')}
-          </T>
-
-          <Divider style={{ marginVertical: 14 }} />
-
-          <T style={[{ fontSize: 17, lineHeight: 24, color: C.ink }, weight(600)]}>
-            {'You have visited ' + plural(visits, 'time') + '. Should you keep visiting?'}
-          </T>
-          <T style={{ fontSize: 15, lineHeight: 22, color: C.muted, marginTop: 6 }}>
-            {'A Suspect gets ' + config.suspectMaxVisits +
-              ' visits. This one has had them all. Answer this first. Nothing else works until you do.'}
-          </T>
-
-          <PrimaryButton
-            label="Yes, make it a Prospect"
-            onPress={askProspect}
-            style={{ marginTop: 16 }}
-          />
-          <SecondaryButton
-            label="No, not a Prospect"
-            onPress={() => setSuspect('not')}
-            style={{ marginTop: 10 }}
-          />
-        </Card>
-        </Appear>
-
+      <AppFrame
+        title="Lead"
+        tone="navy"
+        showTitle={false}
+        activeTab={null}
+        onBack={back.go}
+        contentStyle={{ padding: 14, paddingBottom: 24 }}
+        hero={
+          <Appear>
+            <View style={{ marginTop: 18 }}>
+              <Text accessibilityRole="header" style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.5, color: '#FFFFFF' }, weight(800)]}>
+                {title}
+              </Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted, marginTop: 4 }, weight(400)]}>
+                {[lead.city, lead.mobile].filter(Boolean).join(' · ')}
+              </Text>
+              <View
+                accessible
+                accessibilityLabel={'You have visited ' + plural(visits, 'time') + '.'}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 18 }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {Array.from({ length: Math.max(1, Math.min(cap, 8)) }, (_, i) => (
+                    <View
+                      key={i}
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 17,
+                        backgroundColor: i < visits ? C.lime : C.navySoft,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}>
+                      <Icon name="visit" size={16} color={i < visits ? C.navy : C.onNavyMuted} strokeWidth={2} />
+                    </View>
+                  ))}
+                </View>
+                <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>{visits + ' of ' + cap + ' visits'}</Text>
+              </View>
+              <Text style={[{ fontSize: 20, lineHeight: 26, color: '#FFFFFF', marginTop: 18 }, weight(800)]}>
+                Keep visiting?
+              </Text>
+              <Text
+                accessibilityLabel={'You have visited ' + plural(visits, 'time') + '. Should you keep visiting? A Suspect gets ' + cap + ' visits. This one has had them all. Answer this first. Nothing else works until you do.'}
+                style={[{ fontSize: 13, lineHeight: 19, color: C.onNavyMuted, marginTop: 4 }, weight(400)]}>
+                {'A Suspect gets ' + cap + ' visits. Answer first, nothing else works until you do.'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <PillButton label="Yes, Prospect" a11y="Yes, make it a Prospect" variant="lime" height={56} onPress={askProspect} style={{ flex: 1 }} />
+                <Pressable
+                  onPress={() => setSuspect('not')}
+                  accessibilityRole="button"
+                  accessibilityLabel="No, not a Prospect"
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: pressed ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.12)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  })}>
+                  <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>No, not one</Text>
+                </Pressable>
+              </View>
+            </View>
+          </Appear>
+        }>
         {suspectSheet()}
       </AppFrame>
     );
@@ -434,169 +476,164 @@ export default function LeadRecord() {
   const alert = cfg ? leadAlert(lead, today, cfg) : null;
   const ladder = ladderFor(salesType);
 
-  return (
-    <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
+  const refused = lead.syncState === 'rejected' || lead.syncState === 'blocked';
+  const hero = (
+    <View style={{ marginTop: 16 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        <HeroTag tone={stageTone(stage)} text={stageLabel(stage)} />
+        {/* §4.1 — HOW HARD TO PUSH, and it is READ-ONLY on this phone.
+            It is the manager's judgement about the WORK — which of forty
+            leads to get to first — as against the potential below, which is
+            a judgement about the account. A priority the person being
+            measured could set himself would follow whatever he felt like
+            doing, which is why `lead.verify` gates it and why there is no
+            control here. Null is nobody having judged it and is NOT the same
+            as low, so nothing is drawn at all. */}
+        {lead.priority ? (
+          <HeroTag
+            tone={PRIORITY_TONE[lead.priority] ?? 'neutral'}
+            text={priorityWord(lead.priority).replace(/ priority$/, '')}
+            a11y={priorityWord(lead.priority)}
+            flag={lead.priority === 'high'}
+          />
+        ) : null}
+        <HeroTag tone="white" text={salesTypeLabel(salesType)} a11y={'Kind of sale: ' + salesTypeLabel(salesType)} />
+      </View>
+      <Text accessibilityRole="header" style={[{ marginTop: 10, fontSize: 26, lineHeight: 32, letterSpacing: -0.5, color: HERO.lavender.ink }, weight(800)]}>
+        {title}
+      </Text>
+      <Text style={[{ marginTop: 4, fontSize: 13, lineHeight: 18, color: HERO.lavender.muted }, weight(400)]}>{stageSentence(stage)}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 }}>
+        <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', columnGap: 12, rowGap: 4 }}>
+          {lead.company?.trim() && lead.name ? <HeroFact icon="person" text={lead.name} /> : null}
+          {lead.city ? <HeroFact icon="pin" text={lead.city} /> : null}
+          <HeroFact text={lead.mobile ?? 'Mobile not taken'} />
+          {lead.source ? <HeroFact text={lead.source} /> : null}
+        </View>
+        {/* THE NUMBER IS DIALLABLE. A lead is a shop nobody has sold to yet,
+            so ringing them is most of the work. Ringing is also the one thing
+            `touchLead` was written for: staleness, the archive prompt and the
+            untouched-lead escalation all measure from `lastActivityDate`, so
+            a lead worked hardest by phone must not be the one the app decides
+            has been abandoned. Bumped on a placed call — the handset cannot
+            tell whether they picked up. */}
+        {lead.mobile ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={'Call ' + title}
+            onPress={() => {
+              void callNumber(lead.mobile!).then((out) => {
+                if (out.status === 'failed') return notify(out.reason, 'warn');
+                void touchLead(lead.id, today).then(load);
+              });
+            }}
+            style={({ pressed }) => ({
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: pressed ? C.primaryDeep : C.primary,
+              alignItems: 'center',
+              justifyContent: 'center',
+            })}>
+            <Icon name="call" size={20} color="#FFFFFF" strokeWidth={2} />
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
 
+  /* The facts that are not always there — the lead going quiet, why it is
+     lost or waiting, where it stands against the visit cap, where it came
+     from — as one row of chips rather than lines down a card. */
+  const chips: React.ReactNode[] = [];
+  if (alert) chips.push(<WarnPill key="alert" text={alert} />);
+  if (stage === 'lost' && lead.lostReason) chips.push(<WarnPill key="lost" tone="danger" text={'Lost: ' + lead.lostReason} />);
+  /* Why it is not moving. One column answers two questions — "what is this
+     on hold for" and "why is this still a Suspect" — so it is drawn for
+     both; a parked lead gets it from the stage card instead. */
+  if (lead.holdReason && !parked) chips.push(<WarnPill key="wait" text={'Waiting: ' + lead.holdReason} />);
+  /* §4 — visits one and two just say where he is up to. */
+  if (stage === 'suspect' && !lead.suspectDecidedAt) {
+    chips.push(
+      <View
+        key="cap"
+        accessible
+        accessibilityLabel={'Visit ' + Math.max(1, visits) + ' of ' + config.suspectMaxVisits + '. Decide by then if this is a Prospect.'}>
+        <WarnPill text={'Visit ' + Math.max(1, visits) + ' of ' + config.suspectMaxVisits + ' · decide by then'} />
+      </View>,
+    );
+  }
+  /* Where it actually came from, in more words than "manual" — which
+     exhibition, whose referral. Drawn only where there is one. */
+  if (lead.sourceDetail?.trim()) {
+    chips.push(<InfoChip key="from" text={'Came from: ' + lead.sourceDetail.trim()} />);
+  }
+  if (lead.convertedCustomerId) {
+    chips.push(
+      <InfoChip
+        key="cust"
+        text="Open the customer"
+        icon="shop"
+        onPress={() => {
+          set({ custId: lead.convertedCustomerId ?? '', pTab: 0 });
+          router.push('/customer');
+        }}
+      />,
+    );
+  }
+
+  const ladderAt = ladder.indexOf(stage);
+
+  return (
+    <AppFrame
+      title="Lead"
+      tone="lavender"
+      showTitle={false}
+      hero={hero}
+      activeTab={null}
+      onBack={back.go}
+      contentStyle={{ padding: 14, paddingBottom: 24, gap: 12 }}>
       {/* Refused by the office — most often because the shop was already on
           the book. Said at the top, because a note or a visit added below a
           record the office never took goes nowhere. */}
-      {lead.syncState === 'rejected' || lead.syncState === 'blocked' ? (
-        <Card style={{ marginBottom: 12, borderColor: C.warnInk }}>
-          <T style={[{ fontSize: 15, lineHeight: 21, color: C.warnInk }, weight(600)]}>
-            The office did not accept this lead
-          </T>
-          <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
-            Anything you add here will not reach them. See why on Not accepted.
-          </T>
-          <SecondaryButton
-            label="Open Not accepted"
+      {refused ? (
+        <View style={{ backgroundColor: C.dangerBg, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Icon name="warn" size={20} color={C.danger} strokeWidth={2.2} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 14, lineHeight: 19, color: C.danger }, weight(700)]}>Office did not accept this lead</Text>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(400)]}>
+              Anything you add here will not reach them. See why on Not accepted.
+            </Text>
+          </View>
+          <Pressable
             onPress={() => router.push('/rejections?from=leads')}
-            style={{ marginTop: 10 }}
-          />
-        </Card>
+            accessibilityRole="button"
+            accessibilityLabel="Open Not accepted"
+            hitSlop={6}
+            style={({ pressed }) => ({ height: 36, paddingHorizontal: 12, borderRadius: 18, backgroundColor: pressed ? C.wash : C.surface, justifyContent: 'center' })}>
+            <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>Open</Text>
+          </Pressable>
+        </View>
       ) : null}
 
-      {/* ---------------------------------------------------------- who */}
-      <Card>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>{title}</T>
-            <T s="caption" style={{ marginTop: 2 }}>
-              {[lead.company?.trim() ? lead.name : null, lead.city, lead.source].filter(Boolean).join(' · ')}
-            </T>
-          </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <Badge tone={stageTone(stage)}>{stageLabel(stage)}</Badge>
-            {/* §4.1 — HOW HARD TO PUSH, and it is READ-ONLY on this phone.
-                It is the manager's judgement about the WORK — which of forty
-                leads to get to first — as against the potential below, which is
-                a judgement about the account. A priority the person being
-                measured could set himself would follow whatever he felt like
-                doing, which is why `lead.verify` gates it and why there is no
-                control here. It has ridden down on every pull since the wire
-                change and was drawn by nothing, so a manager marking forty
-                leads high was talking to himself.
+      {/* ---------------------------------------------------- the figures */}
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <StatTile
+          icon="money"
+          value={lead.estimatedPotentialPaise ? compactInrFromPaise(lead.estimatedPotentialPaise) : '—'}
+          sub={lead.estimatedPotentialPaise ? 'a month' : 'not estimated'}
+          a11y={'Can buy: ' + (lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated')}
+        />
+        <StatTile icon="visit" value={String(visits)} sub={visits === 1 ? 'visit' : 'visits'} a11y={'Visits: ' + plural(visits, 'visit')} />
+        <StatTile
+          icon="cal"
+          value={lead.nextFollowUpDate ? dmy(lead.nextFollowUpDate) : 'None'}
+          sub="follow-up"
+          a11y={'Next follow-up: ' + (lead.nextFollowUpDate ? pretty(lead.nextFollowUpDate) : 'None set')}
+        />
+      </View>
 
-                Null is nobody having judged it and is NOT the same as low, so
-                nothing is drawn at all — a "Low" badge on an unjudged lead is a
-                verdict the screen invented. */}
-            {lead.priority ? (
-              <Badge tone={PRIORITY_TONE[lead.priority] ?? 'neutral'}>
-                {priorityWord(lead.priority)}
-              </Badge>
-            ) : null}
-          </View>
-        </View>
-
-        <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 8 }}>{stageSentence(stage)}</T>
-
-        <Divider style={{ marginVertical: 12 }} />
-
-        <View style={{ gap: 8 }}>
-          <Line label="Kind of sale" value={salesTypeLabel(salesType)} />
-          {/* THE NUMBER IS NOW DIALLABLE, and it was text.
-              A lead is a shop nobody has sold to yet, so ringing them is most
-              of the work — and this screen printed the number as a label with
-              no way to call it, while the customer record two taps away has
-              had a call button since it was written.
-
-              Ringing is also the one thing `touchLead` was written for and
-              never got: staleness, the archive prompt and the untouched-lead
-              escalation all measure from `lastActivityDate`, the stage and
-              note paths bump it themselves, and its docstring names "a call
-              placed" as the case nothing covered. So a lead worked hardest by
-              phone was the one the app decided had been abandoned. */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Line label="Mobile" value={lead.mobile ?? 'Not taken'} />
-            </View>
-            {lead.mobile ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={'Call ' + title}
-                onPress={() => {
-                  void callNumber(lead.mobile!).then((out) => {
-                    if (out.status === 'failed') return notify(out.reason, 'warn');
-                    /* The clock moves on the ATTEMPT, not on a connected call:
-                       the handset cannot tell us whether they picked up, and
-                       treating an unanswered ring as no work would age exactly
-                       the leads somebody is chasing hardest. */
-                    void touchLead(lead.id, today).then(load);
-                  });
-                }}
-                style={({ pressed }) => ({
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                  minHeight: 48,
-                  paddingHorizontal: 14,
-                  borderRadius: radius.sm,
-                  borderWidth: 1,
-                  borderColor: C.primary,
-                  backgroundColor: pressed ? C.wash : C.primaryTint,
-                })}>
-                <Icon name="call" size={16} color={C.primaryDeep} />
-                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>Call</T>
-              </Pressable>
-            ) : null}
-          </View>
-          <Line
-            label="Can buy"
-            value={lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated'}
-          />
-          {/* Where it actually came from, in more words than "manual". The
-              subtitle above carries the SOURCE, which on a real book is one of
-              eight codes; this is the sentence behind it — which exhibition,
-              whose referral — and it is the half somebody opens the record for.
-              Drawn only where there is one: an empty row labelled "Came from"
-              is an invitation to fill a box this screen cannot open. */}
-          {lead.sourceDetail?.trim() ? (
-            <Line label="Came from" value={lead.sourceDetail.trim()} />
-          ) : null}
-          <Line label="Visits" value={plural(visits, 'visit')} />
-          <Line label="Next follow-up" value={lead.nextFollowUpDate ? pretty(lead.nextFollowUpDate) : 'None set'} />
-        </View>
-
-        {alert ? (
-          <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.warnInk }, weight(500)]}>{alert}</T>
-        ) : null}
-
-        {stage === 'lost' && lead.lostReason ? (
-          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }}>{'Lost: ' + lead.lostReason}</T>
-        ) : null}
-
-        {/* Why it is not moving. It was on the list card and nowhere on the
-            record, which is the screen somebody opens to find out. One column
-            answers two questions — "what is this on hold for" and "why is this
-            still a Suspect" — so it is drawn for both; a parked lead gets it
-            from the card below instead, so the sentence is on the screen once. */}
-        {lead.holdReason && !parked ? (
-          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.warnInk }}>
-            {'Waiting: ' + lead.holdReason}
-          </T>
-        ) : null}
-
-        {/* §4 — visits one and two just say where he is up to. The count is
-            the useful half; the demand only arrives at the cap. */}
-        {stage === 'suspect' && !lead.suspectDecidedAt ? (
-          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.muted }}>
-            {'Visit ' + Math.max(1, visits) + ' of ' + config.suspectMaxVisits +
-              '. Decide by then if this is a Prospect.'}
-          </T>
-        ) : null}
-
-        {lead.convertedCustomerId ? (
-          <SecondaryButton
-            label="Open the customer"
-            onPress={() => {
-              set({ custId: lead.convertedCustomerId ?? '', pTab: 0 });
-              router.push('/customer');
-            }}
-            style={{ marginTop: 12 }}
-          />
-        ) : null}
-      </Card>
+      {chips.length ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{chips}</View> : null}
 
       {/* ------------------------------- §A what he learned in the shop --
 
@@ -606,84 +643,95 @@ export default function LeadRecord() {
           optional fields went in and none of them came out, so the next visit
           started from nothing and he stopped filling them in. */}
       {learned.length > 0 || lead.shopPhotoId ? (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>What you found in the shop</SectionLabel>
-          <Card>
-            {learned.length > 0 ? (
-              <View style={{ gap: 8 }}>
-                {learned.map((l) => (
-                  <View key={l.label}>
-                    <Line label={l.label} value={l.value} />
+        <LeadCard style={{ borderRadius: 22 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="shop" size={18} color={C.ink} strokeWidth={2} />
+            <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>Found in the shop</Text>
+          </View>
+          {lead.shopPhotoId ? (
+            <View style={{ marginTop: 12 }}>
+              {photo?.uri ? (
+                <Image
+                  source={{ uri: photo.uri }}
+                  style={{ width: '100%', height: 140, borderRadius: 16, backgroundColor: C.border }}
+                  resizeMode="cover"
+                  accessibilityLabel={'The front of ' + title}
+                />
+              ) : (
+                /* A photograph that has synced is no longer on this phone.
+                   Saying so is the honest answer; an `<Image>` at a path that
+                   no longer exists is a grey rectangle that explains nothing. */
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>
+                  Shop photo taken. It was sent to the office. It is not on this phone now.
+                </Text>
+              )}
+            </View>
+          ) : null}
+          {learned.length > 0 ? (
+            <View style={{ gap: 10, marginTop: 12 }}>
+              {learned.map((l) => (
+                <View key={l.label} style={{ flexDirection: 'row', gap: 10 }} accessible accessibilityLabel={l.label + ': ' + l.value}>
+                  <LearnedIcon label={l.label} finding={l.finding} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(400)]}>{l.value}</Text>
                     {/* Under the value, never in a list of its own — see
                         `field-check-note.tsx`. A field nobody has checked
-                        draws nothing at all, which is the ordinary case and
-                        has to stay silent. */}
+                        draws nothing at all, which is the ordinary case. */}
                     <FieldCheckNote checks={l.finding ? (byFinding.get(l.finding) ?? []) : []} />
                   </View>
-                ))}
-              </View>
-            ) : null}
-
-            {lead.shopPhotoId ? (
-              <View style={{ marginTop: learned.length > 0 ? 12 : 0 }}>
-                {photo?.uri ? (
-                  <Image
-                    source={{ uri: photo.uri }}
-                    style={{ width: '100%', height: 160, borderRadius: radius.lg }}
-                    resizeMode="cover"
-                    accessibilityLabel={'The front of ' + title}
-                  />
-                ) : (
-                  /* The file goes the moment the office has the bytes, so a
-                     photograph that has synced is no longer on this phone.
-                     Saying so is the honest answer; an `<Image>` at a path
-                     that no longer exists is a grey rectangle that explains
-                     nothing. */
-                  <T s="caption">
-                    Shop photo taken. It was sent to the office. It is not on this phone now.
-                  </T>
-                )}
-              </View>
-            ) : null}
-          </Card>
-        </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </LeadCard>
       ) : null}
 
       {/* ------------------------------------------------- §3 the ladder */}
-      {settled ? null : (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Lead stage</SectionLabel>
+      {settled ? null : next || !parked ? (
+        <LeadCard style={{ borderRadius: 22 }}>
+          <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>Stage</Text>
+          {/* How far up the ladder, one bar a rung: the filled ones are the
+              rungs climbed, and the bar he reaches pops when he climbs one. */}
+          {ladderAt >= 0 ? (
+            <View
+              accessible
+              accessibilityLabel={'Stage ' + (ladderAt + 1) + ' of ' + ladder.length}
+              style={{ flexDirection: 'row', gap: 4, marginTop: 12 }}>
+              {ladder.map((rung, i) => (
+                <View key={rung} style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: i <= ladderAt ? C.primary : C.border }} />
+              ))}
+            </View>
+          ) : null}
           {/* Every rung of THIS lead's ladder, not a hardcoded six. A salesman
               learns the process from seeing what is above him, which is why
               the whole ladder is drawn rather than only the next step. */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-            style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
+            contentContainerStyle={{ gap: 6, paddingVertical: 2, paddingHorizontal: 16 }}
+            style={{ marginHorizontal: -16, marginTop: 10 }}>
             {ladder.map((rung) => {
+              const shut = rung === next && !gate.open;
               const chip = (
-                <Choice
+                <RungChip
                   label={stageLabel(rung)}
-                  selected={rung === stage}
+                  on={rung === stage}
+                  locked={shut}
                   onPress={() => {
-                    /* The rung above, shut: the chip shakes its head and the
-                       list under the button pops, so "why not" is answered
-                       where he is looking. The sentence is the same one any
-                       other rung gives, as a note rather than a tick. */
-                    if (rung === next && !gate.open) {
+                    /* Tapping the shut rung above shakes it and pops the
+                       list under the button, so "why not" is answered where
+                       he is looking. */
+                    if (shut) {
                       rungRefusal.shake();
                       setRefusals((n) => n + 1);
                     }
                     notify(stageSentence(rung), 'info');
                   }}
-                  style={{ paddingHorizontal: 14 }}
                 />
               );
-              /* Three shapes for three facts, keyed by rung so swapping the
-                 wrapper is a remount: the rung he is on pops when he has just
-                 reached it, the shut rung above can shake, every other rung
-                 is plain. */
+              /* The wrapper is a remount: the rung he is on pops when he has
+                 just reached it, the shut rung above can shake, every other
+                 rung is plain. */
               if (rung === stage) {
                 return (
                   <Pop key={rung + ':here'} trigger={stage} popOnMount={moves > 0} from={0.8}>
@@ -691,7 +739,7 @@ export default function LeadRecord() {
                   </Pop>
                 );
               }
-              if (rung === next && !gate.open) {
+              if (shut) {
                 return (
                   <Animated.View key={rung + ':shut'} style={rungRefusal.style}>
                     {chip}
@@ -701,256 +749,205 @@ export default function LeadRecord() {
               return <View key={rung}>{chip}</View>;
             })}
           </ScrollView>
-          {/* How far up the ladder, as a line rather than a number: the fill
-              eases to the new rung when he climbs one, which is the movement
-              between two chips that the chips alone cannot draw. */}
-          {ladder.indexOf(stage) >= 0 ? (
-            <View style={{ flexDirection: 'row', marginTop: 10 }}>
-              <FillBar
-                pct={((ladder.indexOf(stage) + 1) / ladder.length) * 100}
-                fill={C.primary}
-                track={C.hairline}
-                height={4}
-              />
-            </View>
-          ) : null}
 
           {/* ------------------------------------------------- §28 the gate */}
-          <View style={{ marginTop: 14 }}>
-            {next ? (
-              <>
-                <PrimaryButton
-                  label={'Move up to ' + stageLabel(next)}
-                  disabled={!gate.open}
-                  whyDisabled={
-                    gate.open
-                      ? undefined
-                      : 'Still to do: ' + gate.missing.map((c) => c.says.toLowerCase()).join(', ')
-                  }
-                  onPress={() => {
-                    if (!gate.open) {
-                      /* The button shakes and buzzes itself; the toast's own
-                         `warning` lands inside the same debounce. */
-                      setRefusals((n) => n + 1);
-                      return notify(gate.missing[0]?.says ?? 'Something is still missing.', 'warn');
-                    }
-                    void move(next);
-                  }}
-                />
-                {/* In and out rather than snapping: the list goes the moment
-                    the last condition is answered, and the button above it
-                    should not jump while his thumb is on its way to it. */}
-                <Presence show={!gate.open}>
-                  <Pop trigger={refusals} from={0.94}>
-                  <View
-                    style={{
-                      marginTop: 10,
-                      borderWidth: 1,
-                      borderColor: C.border,
-                      borderRadius: radius.lg,
-                      backgroundColor: C.surface,
-                      padding: 12,
-                      gap: 6,
-                    }}>
-                    <T s="caption">{'Before ' + stageLabel(next) + ', still to do'}</T>
+          {next ? (
+            <>
+              {/* In and out rather than snapping: the list goes the moment
+                  the last condition is answered. */}
+              <Presence show={!gate.open}>
+                <Pop trigger={refusals} from={0.94}>
+                  <View style={{ marginTop: 12, backgroundColor: C.warnBg, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12 }}>
+                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(700)]}>{'Before ' + stageLabel(next)}</Text>
                     {gate.missing.map((c, i) => (
                       <Stagger key={c.id} index={i}>
-                        <T style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>
-                          {'· ' + c.says}
-                        </T>
+                        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: i ? 4 : 6 }, weight(400)]}>
+                          {'• ' + c.says}
+                        </Text>
                       </Stagger>
                     ))}
                   </View>
-                  </Pop>
-                </Presence>
-              </>
-            ) : parked ? (
-              /* ON HOLD — NOT LOST, AND NOT FINISHED.
-                 There is no rung above a parked lead because it is standing on
-                 none: `on_hold` displaces the rung it was on, so the gate
-                 refuses to guess and this says so rather than offering the foot
-                 of the ladder, which is what the screen used to do — "Move up
-                 to Suspect", greyed, on a lead half way up. Coming back is a
-                 move to a NAMED rung, and the gate is asked about that rung
-                 exactly as it would be on any other move. */
-              <Card>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(600)]}>On hold</T>
-                  <Badge tone="amber">Parked</Badge>
-                </View>
-                <T style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 8 }}>
-                  {lead.holdReason
-                    ? 'Waiting: ' + lead.holdReason
-                    : lead.holdReasonCode
-                      ? 'Waiting: ' + labelOf(config.holdReasons, lead.holdReasonCode)
-                      : 'No reason was written for the hold.'}
-                </T>
-                {/* THE CODE AS WELL AS THE SENTENCE, where there are both.
-                    `holdReason` is what somebody typed and this is the coded
-                    answer beside it — the one that can be counted, and the one
-                    the office's own reports read. It has come down on the wire
-                    since that change landed and was drawn nowhere, so a lead
-                    parked from a desk under a named reason read on this phone
-                    as one parked for nothing. The label is resolved from the
-                    configured list, never printed raw: `budget_issue` on a
-                    card is the database talking. */}
-                {lead.holdReasonCode && lead.holdReason ? (
-                  <T s="caption" style={{ marginTop: 4 }}>
-                    {labelOf(config.holdReasons, lead.holdReasonCode)}
-                  </T>
-                ) : null}
-                {/* WHEN IT COMES BACK, said on the record rather than left to
-                    the diary field further down the page. A park with a reason
-                    and no end date is the state this exists to prevent, so the
-                    day it ends belongs beside the reason it started — and a
-                    parked lead whose card says nothing about a date reads as
-                    one nobody is watching, which is exactly what it would then
-                    be. It is `nextFollowUpDate` because that is the one column
-                    this phone brings a lead back on: `listLeads` orders by it
-                    and `leadAlert` measures lateness from it. */}
-                {/* THE OFFICE'S OWN RESUME DATE WINS where it has one.
-                    `holdResumeDate` is the day the park was set to end when it
-                    was set at a desk, and it now reaches this phone; the
-                    follow-up date beside it is the column this app brings a
-                    lead back on, which `putOnHold` fills in from the same
-                    answer when the park was made here. Where the two disagree
-                    the office's is the one somebody decided, so it is the one
-                    said out loud — and where only the follow-up exists nothing
-                    is lost, because that is how every park made on this phone
-                    is stored. */}
-                {lead.holdResumeDate ?? lead.nextFollowUpDate ? (
-                  <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 6 }, weight(500)]}>
-                    {(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today
-                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + '. Work on it now.'
-                      : 'Comes back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!)}
-                  </T>
-                ) : (
-                  <T style={{ fontSize: 15, lineHeight: 21, color: C.warnInk, marginTop: 6 }}>
-                    No return day was set. It will not come back by itself.
-                  </T>
-                )}
-                <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-                  It is not lost. To work on it again, choose the stage it goes back to.
-                </T>
-
-                {returning ? (
-                  <>
-                    <T s="caption" style={{ marginTop: 12 }}>Bring it back to this stage</T>
-                    {/* The rungs it can be WORKED at. The end of the ladder is
-                        left off: coming back off a hold is picking up where it
-                        stopped, and a one-tap jump to Converted on a record
-                        that has been stalled for a month is not that. The gate
-                        is still asked about whichever rung he picks, in the
-                        same words it would use from anywhere else. */}
-                    <View style={{ gap: 8, marginTop: 8 }}>
-                      {ladder.filter((rung) => !isTerminal(rung)).map((rung) => (
-                        <Choice
-                          key={rung}
-                          label={stageLabel(rung)}
-                          sub={stageSentence(rung)}
-                          selected={false}
-                          onPress={() => {
-                            setReturning(false);
-                            void move(rung);
-                          }}
-                          style={{ alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 10 }}
-                        />
-                      ))}
-                    </View>
-                    <SecondaryButton
-                      label="Leave it on hold"
-                      onPress={() => setReturning(false)}
-                      style={{ marginTop: 10 }}
-                    />
-                  </>
-                ) : (
-                  <PrimaryButton
-                    label="Bring it back"
-                    onPress={() => setReturning(true)}
-                    style={{ marginTop: 14 }}
-                  />
-                )}
-              </Card>
-            ) : (
-              <Card>
-                <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                  This is the last stage. There is no stage after this.
-                </T>
-              </Card>
-            )}
+                </Pop>
+              </Presence>
+              <PrimaryButton
+                label={'Move up to ' + stageLabel(next)}
+                disabled={!gate.open}
+                whyDisabled={
+                  gate.open
+                    ? undefined
+                    : 'Still to do: ' + gate.missing.map((c) => c.says.toLowerCase()).join(', ')
+                }
+                onPress={() => {
+                  if (!gate.open) {
+                    setRefusals((n) => n + 1);
+                    return notify(gate.missing[0]?.says ?? 'Something is still missing.', 'warn');
+                  }
+                  void move(next);
+                }}
+                style={{ marginTop: 12, height: 52, minHeight: 52, borderRadius: 26 }}
+              />
+            </>
+          ) : (
+            <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Icon name="tick" size={18} color={C.muted} strokeWidth={2} />
+              <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.muted }, weight(400)]}>
+                This is the last stage. There is no stage after this.
+              </Text>
+            </View>
+          )}
+        </LeadCard>
+      ) : (
+        /* PARKED. There is no rung above a parked lead because it is standing
+           on none: `on_hold` displaces the rung it was on, so the gate refuses
+           to guess and this says so rather than offering the foot of the
+           ladder. Coming back is a move to a NAMED rung, and the gate is asked
+           about that rung exactly as it would be on any other move. */
+        <LeadCard style={{ borderRadius: 22 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.warnBg, alignItems: 'center', justifyContent: 'center' }}>
+              <LeadGlyph name="pause" size={18} color={C.warnInk} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text accessibilityRole="header" style={[{ fontSize: 16, color: C.ink }, weight(800)]}>On hold</Text>
+              <Text style={[{ fontSize: 12, color: C.muted }, weight(400)]}>Not lost · parked</Text>
+            </View>
+            <StagePill tone="amber" text="Parked" />
           </View>
-        </View>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 12 }, weight(400)]}>
+            {lead.holdReason
+              ? 'Waiting: ' + lead.holdReason
+              : lead.holdReasonCode
+                ? 'Waiting: ' + labelOf(config.holdReasons, lead.holdReasonCode)
+                : 'No reason was written for the hold.'}
+          </Text>
+          {/* THE CODE AS WELL AS THE SENTENCE, where there are both — the
+              coded answer is the one that can be counted. Resolved from the
+              configured list, never printed raw. */}
+          {lead.holdReasonCode && lead.holdReason ? (
+            <Text style={[{ fontSize: 12, color: C.muted }, weight(400)]}>{labelOf(config.holdReasons, lead.holdReasonCode)}</Text>
+          ) : null}
+          {/* WHEN IT COMES BACK, beside the reason it started. The office's
+              own resume date wins where it has one; otherwise the follow-up
+              date `putOnHold` fills in from the same answer. */}
+          {lead.holdResumeDate ?? lead.nextFollowUpDate ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}>
+              <Icon name="cal" size={16} color={(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today ? C.danger : C.ink} strokeWidth={2} />
+              <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: (lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today ? C.danger : C.ink }, weight(700)]}>
+                {(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today
+                  ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + '. Work on it now.'
+                  : 'Back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!)}
+              </Text>
+            </View>
+          ) : (
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.warnInk, marginTop: 10 }, weight(600)]}>
+              No return day was set. It will not come back by itself.
+            </Text>
+          )}
+          <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 6 }, weight(400)]}>
+            It is not lost. To work on it again, choose the stage it goes back to.
+          </Text>
+
+          {returning ? (
+            <>
+              <Text style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]}>Bring back to</Text>
+              {/* The rungs it can be WORKED at. The end of the ladder is left
+                  off: coming back off a hold is picking up where it stopped. */}
+              <View style={{ gap: 8, marginTop: 8 }}>
+                {ladder.filter((rung) => !isTerminal(rung)).map((rung) => (
+                  <Pressable
+                    key={rung}
+                    onPress={() => {
+                      setReturning(false);
+                      void move(rung);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={'Bring it back to ' + stageLabel(rung) + '. ' + stageSentence(rung)}
+                    style={({ pressed }) => ({ minHeight: 52, borderRadius: 16, backgroundColor: pressed ? C.hairline : C.canvas, paddingHorizontal: 14, paddingVertical: 8, justifyContent: 'center' })}>
+                    <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>{stageLabel(rung)}</Text>
+                    <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>{stageSentence(rung)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <PillButton label="Leave it on hold" variant="outline" height={48} onPress={() => setReturning(false)} style={{ marginTop: 10 }} />
+            </>
+          ) : (
+            <PillButton label="Bring it back" variant="navyLime" height={52} onPress={() => setReturning(true)} style={{ marginTop: 14 }} />
+          )}
+        </LeadCard>
       )}
 
       {/* --------------------------------------------------- §24 next action */}
       {settled ? null : (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>What happens next</SectionLabel>
-          <Card>
-            {lead.nextAction ? (
-              <>
-                <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(500)]}>{lead.nextAction}</T>
-                <T s="caption" style={{ marginTop: 4 }}>
-                  {[lead.nextActionDate ? pretty(lead.nextActionDate) : null,
-                    lead.nextActionOwnerId === me?.id ? 'You' : 'Your lead manager']
-                    .filter(Boolean)
-                    .join(' · ')}
-                </T>
-                {lead.nextActionOutcome ? (
-                  <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-                    {'Expecting: ' + lead.nextActionOutcome}
-                  </T>
+        <View style={{ backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <LeadGlyph name="arrow" size={16} color={C.lime} />
+            <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.lime }, weight(700)]}>Next</Text>
+          </View>
+          {lead.nextAction ? (
+            <>
+              <Text style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF', marginTop: 8 }, weight(700)]}>{lead.nextAction}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, marginTop: 8 }}>
+                {lead.nextActionDate ? (
+                  <Text style={[{ fontSize: 13, color: C.onNavyMuted }, weight(400)]}>{pretty(lead.nextActionDate)}</Text>
                 ) : null}
-              </>
-            ) : (
-              <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                No action is pending on this lead. Set one, or it will be forgotten.
-              </T>
-            )}
-            <SecondaryButton
-              label={lead.nextAction ? 'Change it' : 'Set next action'}
-              onPress={() => setNextOpen(true)}
-              style={{ marginTop: 12 }}
-            />
-          </Card>
+                <Text style={[{ fontSize: 13, color: C.onNavyMuted }, weight(400)]}>
+                  {lead.nextActionOwnerId === me?.id ? 'You' : 'Your lead manager'}
+                </Text>
+              </View>
+              {lead.nextActionOutcome ? (
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted, marginTop: 4 }, weight(400)]}>
+                  {'Expecting: ' + lead.nextActionOutcome}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: '#FFD98A', marginTop: 8 }, weight(600)]}>
+              No action is pending on this lead. Set one, or it will be forgotten.
+            </Text>
+          )}
+          <Pressable
+            onPress={() => setNextOpen(true)}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              alignSelf: 'flex-start',
+              marginTop: 12,
+              minHeight: 44,
+              paddingHorizontal: 16,
+              borderRadius: 22,
+              justifyContent: 'center',
+              backgroundColor: lead.nextAction ? (pressed ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.12)') : C.lime,
+            })}>
+            <Text style={[{ fontSize: 13, color: lead.nextAction ? '#FFFFFF' : C.navy }, weight(700)]}>
+              {lead.nextAction ? 'Change it' : 'Set next action'}
+            </Text>
+          </Pressable>
         </View>
       )}
 
       {/* ------------------------------------------- §5.9 the chain --------
 
           Drawn only on a shop somebody else invoices, because that is the only
-          shape it is true of. See `RelationshipChain` for why it is four boxes
-          and why the sentence about commercial authority sits under them. */}
+          shape it is true of. See `RelationshipChain`. The sales manager is
+          the Lead Manager seat — the person the distributor's own side
+          actually deals with, already on the row with its name beside its id,
+          because this phone holds no user table to resolve one. */}
       {lead.thirdParty ? (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Who sells to this shop</SectionLabel>
-          <RelationshipChain
-            shopName={title}
-            distributorSalesmanName={lead.distributorSalesmanName}
-            distributorName={lead.distributorName}
-            distributorCount={lead.distributorCount}
-            /* The Mahek end of the chain is the lead manager — the seat that
-               picks a qualified lead up and runs the conversion. It is the
-               person the distributor's own side actually deals with, and it is
-               already on the row with its name beside its id, because this
-               phone holds no user table to resolve one. */
-            salesManagerName={lead.leadManagerName}
-          />
-        </View>
+        <RelationshipChain
+          shopName={title}
+          distributorSalesmanName={lead.distributorSalesmanName}
+          distributorName={lead.distributorName}
+          distributorCount={lead.distributorCount}
+          salesManagerName={lead.leadManagerName}
+        />
       ) : null}
 
       {/* -------------------------------------------------------- the forms */}
       {settled ? null : (
-        <View style={{ marginTop: 20, gap: 10 }}>
-          <SectionLabel style={{ marginBottom: 0 }}>Work to do</SectionLabel>
-
-          {/* §5.5 — THE COMMITMENT, and it sits at the TOP of the work.
-              It is the one condition in front of `first_order` that is this
-              salesman's to satisfy; everything under it on this list is a form
-              he fills in earlier on the ladder. Drawn only where the ladder he
-              is on actually has that rung: a legacy lead climbs the six this
-              app shipped with and a first order is not one of them, so a card
-              about it would be a question nobody asked. */}
+        <>
+          {/* §5.5 — THE COMMITMENT, and it sits at the TOP of the work. It is
+              the one condition in front of `first_order` that is this
+              salesman's to satisfy. Drawn only where the ladder he is on
+              actually has that rung. */}
           {ladder.includes('first_order') ? (
             <CommitmentCard
               date={lead.expectedOrderDate}
@@ -965,72 +962,78 @@ export default function LeadRecord() {
             />
           ) : null}
 
-          <SecondaryButton
-            label={'Prospect details (' + plural(PROSPECT_CONDITIONS.length, 'question') + ')'}
-            onPress={() => router.push(`/lead-prospect?id=${lead.id}&from=lead`)}
-          />
-          <SecondaryButton
-            label={salesType === 'distributor' ? 'Distributor qualification (30 questions)' : 'Qualification checklist'}
-            onPress={() => router.push(`/lead-qualify?id=${lead.id}&from=lead`)}
-          />
-
-          {/* §9 §10 — disabled until it is earned, and the title names what is
-              outstanding. A sample given to a shop whose application nobody
-              understands cannot be reviewed, because nobody knows what a good
-              result would look like. */}
-          {/* A distributor's ladder has no sample rung, so there is no button
-              to draw — a disabled one would wait for a condition that can never
-              be met. `sampleAsk` refuses the same case wherever it is asked. */}
-          {ladder.includes('sample_trial') ? (
-          <>
-          <PrimaryButton
-            label="Request a sample"
-            disabled={!sampleGate.open}
-            whyDisabled={
-              sampleGate.open
-                ? undefined
-                : 'Still to do: ' + sampleGate.missing.map((c) => c.says.toLowerCase()).join(', ')
-            }
-            onPress={() => {
-              if (!sampleGate.open) {
-                return notify(sampleGate.missing[0]?.says ?? 'Not yet.', 'warn');
-              }
-              router.push(`/samples?lead=${lead.id}&ask=1&from=lead`);
-            }}
-          />
-          {sampleGate.open ? null : (
-            <T s="caption">
-              {plural(sampleGate.missing.length, 'thing') + ' to answer before a sample can go.'}
-            </T>
-          )}
-          </>
-          ) : null}
-
-          <SecondaryButton
-            label={
-              lead.thirdParty
-                ? 'Billed by ' + (lead.distributorName ?? 'a distributor')
-                : 'Who bills this shop'
-            }
-            onPress={() => setParties(true)}
-          />
-          <DashedButton
-            label={'Kind of sale: ' + salesTypeLabel(salesType) + '. Change it'}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <WorkTile
+              icon="note"
+              label={'Prospect details · ' + PROSPECT_CONDITIONS.length}
+              a11y={'Prospect details (' + plural(PROSPECT_CONDITIONS.length, 'question') + ')'}
+              onPress={() => router.push(`/lead-prospect?id=${lead.id}&from=lead`)}
+            />
+            <WorkTile
+              icon="task"
+              label={salesType === 'distributor' ? 'Distributor qualification' : 'Qualification'}
+              a11y={salesType === 'distributor' ? 'Distributor qualification (30 questions)' : 'Qualification checklist'}
+              onPress={() => router.push(`/lead-qualify?id=${lead.id}&from=lead`)}
+            />
+            {/* §9 §10 — disabled until it is earned, and it names what is
+                outstanding. A distributor's ladder has no sample rung, so there
+                is no tile to draw — `sampleAsk` refuses the same case. */}
+            {ladder.includes('sample_trial') ? (
+              <WorkTile
+                icon="sample"
+                label="Request a sample"
+                sub={sampleGate.open ? undefined : plural(sampleGate.missing.length, 'thing') + ' to answer first'}
+                subTone="warn"
+                locked={!sampleGate.open}
+                a11y={
+                  sampleGate.open
+                    ? 'Request a sample'
+                    : 'Request a sample. Still to do: ' + sampleGate.missing.map((c) => c.says.toLowerCase()).join(', ')
+                }
+                onPress={() => {
+                  if (!sampleGate.open) {
+                    feedback('warning');
+                    return notify(sampleGate.missing[0]?.says ?? 'Not yet.', 'warn');
+                  }
+                  router.push(`/samples?lead=${lead.id}&ask=1&from=lead`);
+                }}
+              />
+            ) : null}
+            <WorkTile
+              icon="people2"
+              label={lead.thirdParty ? 'Billed by' : 'Who bills this shop'}
+              sub={lead.thirdParty ? lead.distributorName ?? 'a distributor' : undefined}
+              a11y={lead.thirdParty ? 'Billed by ' + (lead.distributorName ?? 'a distributor') : 'Who bills this shop'}
+              onPress={() => setParties(true)}
+            />
+          </View>
+          <Pressable
             onPress={() => setLadderOpen(true)}
-          />
-        </View>
+            accessibilityRole="button"
+            accessibilityLabel={'Kind of sale: ' + salesTypeLabel(salesType) + '. Change it'}
+            style={({ pressed }) => ({
+              minHeight: 48,
+              borderRadius: 24,
+              borderWidth: 1.5,
+              borderStyle: 'dashed',
+              borderColor: '#B9A6FF',
+              backgroundColor: pressed ? C.primaryTint : '#F7F4FF',
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 14,
+            })}>
+            <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>{'Kind of sale: ' + salesTypeLabel(salesType) + ' · change'}</Text>
+          </Pressable>
+        </>
       )}
 
       {/* ------------------------------------------------ §10.4 reaching out --
 
-          It sits under the work and above the follow-up date deliberately: it
-          is what he DOES between today and the day he goes back, and a panel
-          of eleven contact buttons above the qualification forms would read as
-          the app suggesting a brochure where it should be asking for answers.
-
-          Drawn only on a live lead, like everything else in this half of the
-          screen. Sending a price list to a shop somebody wrote off last month
-          is not a thing to make one tap away. */}
+          Under the work and above the history: it is what he DOES between
+          today and the day he goes back. Drawn only on a live lead — sending a
+          price list to a shop written off last month is not a thing to make
+          one tap away. Reaching out IS work on the lead, so it bumps
+          `touchLead`, or a live shop ages into the staleness sweep. */}
       {settled || !comms ? null : (
         <CommunicationPanel
           log={comms}
@@ -1046,10 +1049,6 @@ export default function LeadRecord() {
           onRecord={(args) => {
             void recordCommunication({ customerId: lead.id, ...args }).then((r) => {
               if (!r.ok) return notify(r.message, 'warn');
-              /* The clock moves on this exactly as it does on a ring from the
-                 header: reaching out IS work on the lead, and a record that
-                 aged while somebody was working it is how a live shop reaches
-                 the staleness sweep. */
               void touchLead(lead.id, today).then(load);
             });
           }}
@@ -1058,189 +1057,137 @@ export default function LeadRecord() {
 
       {/* The separate "Next follow-up on" picker that was here is gone.
           `setNextAction` already makes the next action's day the follow-up
-          day, so the two were the same date set from two controls — and the
-          picker set one without the other, which is how they came apart. One
-          question, asked once, on the card above. */}
+          day, so the two were the same date set from two controls. */}
 
       {/* ---------------------------------------------- §E validation calls --
 
           The office rings the shop the working day after a lead is qualified
-          and asks what the visit was actually like. `app/validate.tsx` records
-          it, `recordValidation` stores it and sends it — and `validationsFor`,
-          written beside them, was called by nothing. So the answers sat in
-          `lead_validations` where neither the salesman who raised the lead nor
-          the person who made the call could read them back.
-
-          `confirmedRequirement` is the point of the whole exercise: what the
-          office was told on the phone, kept apart from what the salesman was
-          told standing in the shop, precisely so the two can disagree.
-
-          AND THE OFFICE'S OWN CALLS ARRIVE HERE NOW. This list was every call
-          made on THIS PHONE and nothing else — `mbos_lead_validations` went up
-          and never came back — so a salesman could not see that the office had
-          rung his customer, what they were told, or the one that matters, that
-          the requirement he reported had been contradicted. It is the same
-          table either way, under the same row id, which is what keeps a call
-          made here from appearing twice.
-
-          ALL FOUR FIGURES ARE DRAWN, not the requirement alone. The other
-          three are a volume, a competitor and a potential, and each of them is
-          a number somebody will quote back at him. Where one disagrees with
-          what he has, the disagreement is SAID: it is the single most useful
-          thing this call produces, and a screen that prints both figures and
-          leaves the reader to notice is a screen that produces it for nobody. */}
-      {checks.length ? (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>The office called them</SectionLabel>
-          <View style={{ gap: 10 }}>
-            {checks.map((v) => {
-              const tone: BadgeTone =
-                v.verdict === 'confirmed'
-                  ? 'success'
-                  : v.verdict === 'not_qualified'
-                    ? 'danger'
-                    : v.verdict === 'on_hold'
-                      ? 'amber'
-                      : 'neutral';
-              return (
-                <Card key={v.id}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <T style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }, weight(500)]}>
-                      {/* Whether anybody picked up is the first thing worth
-                          knowing: a verdict off a call that never connected is
-                          a verdict about nothing. */}
-                      {v.reached ? 'Spoke to them' : 'Could not reach them'}
-                    </T>
-                    <Badge tone={tone}>{verdictWord(v.verdict)}</Badge>
-                  </View>
-                  <T s="caption" style={{ marginTop: 3 }}>
-                    {[
-                      pretty(isoDate(new Date(v.calledAt))),
-                      /* An id is not a person, and the answer to a figure he
-                         disagrees with is to ring whoever wrote it down. */
-                      v.calledByName,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    {v.syncState === 'queued' ? ' · not sent yet' : ''}
-                  </T>
-                  {told(v, lead).map((t) => (
-                    <View key={t.label} style={{ marginTop: 6 }}>
-                      <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
-                        {t.label + ': ' + t.said}
-                      </T>
-                      {/* Drawn only where the two readings differ. A shop that
-                          told the office the same thing it told him is a
-                          confirmation and reads as one; printing "you had the
-                          same" under every agreeing figure is four lines of
-                          furniture over the one that is not furniture. */}
-                      {t.differsFrom ? (
-                        <T s="caption" style={{ marginTop: 1, color: C.muted }}>
-                          {'You have: ' + t.differsFrom}
-                        </T>
-                      ) : null}
-                    </View>
-                  ))}
-                  {v.salesmanFeedback?.trim() ? (
-                    <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 6 }}>
-                      {'About the visit: ' + v.salesmanFeedback.trim()}
-                    </T>
-                  ) : null}
-                  {/* §8's OTHER ANSWERS, in §8's own words. The call asks
-                      seventeen questions and this card drew five, because five
-                      was all the wire carried — so the office's own reading of
-                      the shop arrived a third told. The ones that decide the
-                      next move are among the twelve: whether the SHOP said it
-                      was ready for a trial, which is what §5.4 sends a sample
-                      on, and whether the objection is the price or the credit,
-                      which is what decides what we offer.
-
-                      An unanswered question is LEFT OUT rather than drawn
-                      blank. Null is nobody having asked, and a line reading
-                      "Any concern about price? —" asserts the shop said no. */}
-                  {alsoSaid(v).map((a) => (
-                    <View key={a.id} style={{ marginTop: 6 }}>
-                      <T s="caption">{a.ask}</T>
-                      <T style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 1 }}>
-                        {a.said}
-                      </T>
-                    </View>
-                  ))}
-                  {v.verdictReason ? (
-                    <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
-                      {v.verdictReason}
-                    </T>
-                  ) : null}
-                </Card>
-              );
-            })}
-          </View>
-        </View>
-      ) : null}
+          and asks what the visit was actually like. `confirmedRequirement` is
+          the point: what the office was told on the phone, kept apart from
+          what the salesman was told standing in the shop, precisely so the two
+          can disagree. The office's own calls arrive here too, under the same
+          row id, which is what keeps a call made here from appearing twice.
+          Where a figure disagrees with what he has, the disagreement is SAID. */}
+      {checks.map((v) => {
+        const tone: BadgeTone =
+          v.verdict === 'confirmed'
+            ? 'success'
+            : v.verdict === 'not_qualified'
+              ? 'danger'
+              : v.verdict === 'on_hold'
+                ? 'amber'
+                : 'neutral';
+        return (
+          <LeadCard key={v.id} style={{ borderRadius: 22 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Icon name="call" size={18} color={C.ink} strokeWidth={2} />
+              <Text accessibilityRole="header" style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(800)]}>
+                Office check call
+              </Text>
+              <StagePill tone={tone} text={verdictWord(v.verdict)} />
+            </View>
+            {/* Whether anybody picked up is the first thing worth knowing: a
+                verdict off a call that never connected is a verdict about
+                nothing. Who made it is beside it — the way to argue with an
+                answer is to ring whoever wrote it down. */}
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 4 }, weight(400)]}>
+              {[v.reached ? 'Spoke to them' : 'Could not reach them', pretty(isoDate(new Date(v.calledAt))), v.calledByName]
+                .filter(Boolean)
+                .join(' · ')}
+              {v.syncState === 'queued' ? ' · not sent yet' : ''}
+            </Text>
+            {told(v, lead).map((t) => (
+              <Text key={t.label} style={[{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 6 }, weight(400)]}>
+                {t.label + ': ' + t.said}
+                {/* Only where the two readings differ. */}
+                {t.differsFrom ? <Text style={[{ fontSize: 12, color: C.warnInk }, weight(400)]}>{' · you have ' + t.differsFrom}</Text> : null}
+              </Text>
+            ))}
+            {v.salesmanFeedback?.trim() ? (
+              <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 6 }, weight(400)]}>
+                {'About the visit: ' + v.salesmanFeedback.trim()}
+              </Text>
+            ) : null}
+            {/* §8's OTHER ANSWERS, in §8's own words. An unanswered question
+                is LEFT OUT rather than drawn blank: null is nobody having
+                asked, and a blank line asserts the shop said no. */}
+            {alsoSaid(v).map((a) => (
+              <View key={a.id} style={{ marginTop: 6 }}>
+                <Text style={[{ fontSize: 12, lineHeight: 16, color: C.faint }, weight(400)]}>{a.ask}</Text>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(400)]}>{a.said}</Text>
+              </View>
+            ))}
+            {v.verdictReason ? (
+              <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }, weight(400)]}>{v.verdictReason}</Text>
+            ) : null}
+          </LeadCard>
+        );
+      })}
 
       {/* ------------------------------------------------- §25 the timeline */}
-      <View style={{ marginTop: 20 }}>
-        <SectionLabel style={{ marginBottom: 10 }}>History</SectionLabel>
-
+      <LeadCard style={{ borderRadius: 22 }}>
+        <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>History</Text>
         {events.length === 0 ? (
-          <Card style={{ paddingVertical: 24 }}>
-            <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-              Nothing here yet. Add a note. Write what they buy now, and from whom.
-            </T>
-          </Card>
+          <Text style={[{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 10 }, weight(400)]}>
+            Nothing here yet. Add a note. Write what they buy now, and from whom.
+          </Text>
         ) : (
-          <View style={{ gap: 10 }}>
-            {events.map((e) => (
-              <Card key={e.id}>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <T style={[{ fontSize: 15, lineHeight: 22, color: C.ink }, weight(e.kind === 'note' ? 400 : 500)]}>
-                      {e.summary}
-                    </T>
-                    {e.detail ? (
-                      <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 2 }}>{e.detail}</T>
-                    ) : null}
-                    <T s="caption" style={{ marginTop: 4 }}>
-                      {[pretty(isoDate(new Date(e.occurredAt))), e.actor].filter(Boolean).join(' · ')}
-                    </T>
-                  </View>
-                </View>
-              </Card>
-            ))}
-          </View>
+          events.map((e) => (
+            <View key={e.id} style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, backgroundColor: e.kind === 'note' ? C.faint : C.primary }} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(e.kind === 'note' ? 400 : 600)]}>{e.summary}</Text>
+                {e.detail ? (
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: C.muted }, weight(400)]}>{e.detail}</Text>
+                ) : null}
+                <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>
+                  {[pretty(isoDate(new Date(e.occurredAt))), e.actor].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+            </View>
+          ))
         )}
 
-        <View style={{ marginTop: 10 }}>
-          <VoiceField
-            value={note}
-            onChangeText={setNote}
-            placeholder="Buys 20 cans a month from Asian, wants 45 days credit"
-          />
-          <PrimaryButton label="Add note" onPress={saveNote} style={{ marginTop: 10 }} />
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 12 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <VoiceField
+              value={note}
+              onChangeText={setNote}
+              placeholder="Buys 20 cans a month from Asian, wants 45 days credit"
+              style={{ minHeight: 52, borderRadius: 18, backgroundColor: C.canvas, borderWidth: 0 }}
+            />
+          </View>
+          <Pressable
+            onPress={saveNote}
+            accessibilityRole="button"
+            accessibilityLabel="Add note"
+            style={({ pressed }) => ({ width: 52, height: 52, borderRadius: 26, backgroundColor: pressed ? C.primaryDeep : C.primary, alignItems: 'center', justifyContent: 'center' })}>
+            <Icon name="add" size={22} color="#FFFFFF" strokeWidth={2.2} />
+          </Pressable>
         </View>
-      </View>
+      </LeadCard>
 
       {/* --------------------------------------------------------- ending */}
-      <View style={{ marginTop: 24, gap: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
         {settled ? null : (
           <>
             {/* ON HOLD SITS BESIDE LOST, AND THAT PLACEMENT IS THE POINT.
                 This is the moment a salesman is standing in front of the two
                 answers — the plant is shut for two months, or they are never
-                buying — and until now only one of them was on the screen. A
-                park drawn anywhere else is a park nobody finds at the moment
-                they are reaching for Lost, and Lost is the one that cannot be
-                taken back in the reader's mind. It is offered only where the
-                lead is still being worked: a parked lead has the card above
-                with "Bring it back" on it, and parking a park says nothing. */}
+                buying — and a park drawn anywhere else is a park nobody finds
+                at the moment they are reaching for Lost. A parked lead has the
+                card above with "Bring it back" on it instead. */}
             {parked ? null : (
-              <SecondaryButton label="Put it on hold" onPress={() => setHold({ step: 'why' })} />
+              <EndTile glyph="pause" ink={C.warnInk} label="Put on hold" a11y="Put it on hold" onPress={() => setHold({ step: 'why' })} />
             )}
-            <SecondaryButton label="Mark lost" onPress={() => setLost(true)} />
+            <EndTile icon="close" ink={C.danger} label="Mark lost" onPress={() => setLost(true)} />
           </>
         )}
-        <DashedButton
-          label={lead.archived ? 'Bring it back to the list' : 'Close it (hide from list)'}
+        <EndTile
+          icon={lead.archived ? 'reorder' : 'lock'}
+          ink={C.muted}
+          label={lead.archived ? 'Bring back' : 'Close (hide)'}
+          a11y={lead.archived ? 'Bring it back to the list' : 'Close it (hide from list)'}
           onPress={() => {
             void setArchived(lead.id, !lead.archived, today).then(() => {
               load();
@@ -1304,14 +1251,14 @@ export default function LeadRecord() {
       />
 
       <BottomSheet open={hold?.step === 'until'} onClose={() => setHold(null)} scroll>
-        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
           When does it come back?
-        </T>
+        </Text>
         <T s="caption" style={{ marginTop: 2 }}>
           {/* The sentence says what the date DOES, because a date on a screen
               that does nothing is how "back after Diwali" became a lead nobody
               looked at for six months. */}
-          On this day it comes back to your list, with the next action you set.
+          Back on your list that day, with the next action you set · step 2 of 3
         </T>
         <View style={{ marginTop: 14 }}>
           <Calendar
@@ -1328,11 +1275,7 @@ export default function LeadRecord() {
             }
           />
         </View>
-        <SecondaryButton
-          label="Cancel"
-          onPress={() => setHold(null)}
-          style={{ minHeight: 48, height: 48, marginTop: 10, borderRadius: radius.xl }}
-        />
+        <PillButton label="Cancel" variant="outline" height={48} onPress={() => setHold(null)} style={{ marginTop: 10 }} />
       </BottomSheet>
 
       <NextActionSheet
@@ -1509,24 +1452,6 @@ export default function LeadRecord() {
 }
 
 /** A label and a value on one line — the record's own small table. */
-function Line({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 12 }}>
-      <T s="caption" style={{ width: 120 }}>{label}</T>
-      <T style={{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }}>{value}</T>
-    </View>
-  );
-}
-
-/**
- * §2 — changing which ladder a lead is on, which is not a chip beside the
- * stage.
- *
- * It comes back to the foot of the new ladder and it says so before it does,
- * because the rung it was standing on may not exist over there — and a lead
- * left on a rung that is not on its ladder is a record with no button and no
- * explanation.
- */
 function LadderSheet({
   open,
   current,
@@ -1543,12 +1468,14 @@ function LadderSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        What kind of sale is this?
-      </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        This decides which questions come next. If you change it, the lead goes back to the first stage.
-      </T>
+      <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
+        Kind of sale
+      </Text>
+      <Text
+        accessibilityLabel="This decides which questions come next. If you change it, the lead goes back to the first stage."
+        style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 2 }, weight(600)]}>
+        Changing it sends the lead back to the first stage
+      </Text>
 
       {/* The same withdrawal as the raise screen, and it bites hardest here:
           this sheet is the one place a lead could be MOVED onto the
@@ -1557,51 +1484,31 @@ function LadderSheet({
           already on that ladder is untouched — it sits at `current`, the
           button below is disabled while `picked === current`, and nothing here
           takes it off. */}
-      <View style={{ gap: 8, marginTop: 14 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
         {offeredSalesTypes().map((t) => (
-          <Choice
-            key={t.code}
-            label={t.label}
-            sub={t.hint}
-            selected={picked === t.code}
-            onPress={() => setPicked(t.code)}
-            style={{ alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 10 }}
-          />
+          <PickTile key={t.code} label={t.label} sub={t.hint} on={picked === t.code} onPress={() => setPicked(t.code)} />
         ))}
       </View>
 
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Why it is changing</SectionLabel>
-        <Input value={reason} onChangeText={setReason} placeholder="Optional. Example: he sells it, does not use it" />
-      </View>
+      <WashInput
+        value={reason}
+        onChangeText={setReason}
+        placeholder="Why it is changing (optional)"
+        style={{ marginTop: 8 }}
+      />
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton
-          label="Change it"
-          disabled={!picked || picked === current}
-          whyDisabled={!picked ? 'Choose one first.' : 'It is already this.'}
-          onPress={() => picked && picked !== current && onPick(picked, reason)}
-          style={{ flex: 1, borderRadius: radius.xl }}
-        />
-      </View>
+      <PrimaryButton
+        label="Change it"
+        disabled={!picked || picked === current}
+        whyDisabled={!picked ? 'Choose one first.' : 'It is already this.'}
+        onPress={() => picked && picked !== current && onPick(picked, reason)}
+        style={{ marginTop: 12, borderRadius: 28 }}
+      />
+      <PillButton label="Cancel" variant="outline" height={48} onPress={onClose} style={{ marginTop: 8 }} />
     </BottomSheet>
   );
 }
 
-/**
- * §23 — who invoices this shop, and who at the distributor calls on it.
- *
- * Both are asked on the lead rather than reconstructed at conversion, because
- * the answer is known on the first visit and nobody remembers it three months
- * later. The distributor is picked from the accounts on this handset — a shop
- * we deliver to is not holding the invoice and cannot be somebody's
- * distributor, which the picker enforces by only ever offering customers.
- *
- * The distributor's own salesman is a NAME. He has no MahekOne login and never
- * will, exactly like the CRM's `sales_manager_person_name`, so a box that
- * insisted on picking him from a list would have nothing in it.
- */
 function PartiesSheet({
   open,
   lead,
@@ -1638,90 +1545,75 @@ function PartiesSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
-      <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+      <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>
         Who bills this shop?
-      </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        If we deliver but do not bill the shop, it is a third-party customer. Say who bills it.
-      </T>
+      </Text>
+      <Text
+        accessibilityLabel="If we deliver but do not bill the shop, it is a third-party customer. Say who bills it."
+        style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 2 }, weight(400)]}>
+        We deliver, a distributor bills → third-party
+      </Text>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-        <Choice label="We do" selected={!thirdParty} onPress={() => setThirdParty(false)} style={{ paddingHorizontal: 16 }} />
-        <Choice label="A distributor" selected={thirdParty} onPress={() => setThirdParty(true)} style={{ paddingHorizontal: 16 }} />
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+        <SheetChip label="We bill" a11y="We do" on={!thirdParty} onPress={() => setThirdParty(false)} />
+        <SheetChip label="A distributor bills" a11y="A distributor" on={thirdParty} onPress={() => setThirdParty(true)} />
       </View>
 
       {thirdParty ? (
         <>
-          <View style={{ marginTop: 14 }}>
-            <SectionLabel style={{ marginBottom: 6 }}>Which distributor</SectionLabel>
-            <Input value={query} onChangeText={setQuery} placeholder="Search your accounts" />
-            <View style={{ gap: 8, marginTop: 8 }}>
-              {hits.map((h) => (
-                <Choice
-                  key={h.id}
-                  label={h.name}
-                  sub={h.city ?? undefined}
-                  selected={chosen?.id === h.id}
-                  onPress={() => setChosen({ id: h.id, name: h.name })}
-                  style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
-                />
-              ))}
-              {hits.length === 0 ? (
-                <T s="caption">No match. You can only choose shops we bill.</T>
-              ) : null}
-            </View>
+          <View style={{ flexDirection: 'row', marginTop: 10 }}>
+            <SearchBox value={query} onChange={setQuery} onClear={() => setQuery('')} placeholder="Search your accounts" bg={C.canvas} />
+          </View>
+          <View style={{ gap: 8, marginTop: 8 }}>
+            {hits.map((h) => (
+              <PickTile
+                key={h.id}
+                label={h.name}
+                sub={h.city ?? undefined}
+                on={chosen?.id === h.id}
+                onPress={() => setChosen({ id: h.id, name: h.name })}
+                wide
+              />
+            ))}
+            {hits.length === 0 ? (
+              <Text style={[{ fontSize: 12, lineHeight: 16, color: C.faint }, weight(400)]}>No match. You can only choose shops we bill.</Text>
+            ) : null}
           </View>
 
-          <View style={{ marginTop: 12 }}>
-            <SectionLabel style={{ marginBottom: 6 }}>Their salesman for this shop</SectionLabel>
-            <Input value={salesman} onChangeText={setSalesman} placeholder="Example: Rahul, who visits this shop" />
-            <T s="caption" style={{ marginTop: 6 }}>
-              A name is enough. He has no login here and does not need one.
-            </T>
-          </View>
+          <WashInput
+            icon="person"
+            value={salesman}
+            onChangeText={setSalesman}
+            placeholder="Their salesman for this shop, e.g. Rahul"
+            style={{ marginTop: 10 }}
+          />
+          <Text style={[{ fontSize: 11, lineHeight: 15, color: C.faint, marginTop: 4 }, weight(400)]}>
+            Their salesman · a name is enough. He has no login here and does not need one.
+          </Text>
         </>
       ) : null}
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-        <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton
-          label="Save"
-          disabled={thirdParty && !chosen}
-          whyDisabled="Choose the distributor who bills this shop."
-          onPress={() => {
-            if (thirdParty && !chosen) return;
-            onSave({
-              thirdParty,
-              distributorCustomerId: thirdParty ? chosen?.id ?? null : null,
-              distributorName: thirdParty ? chosen?.name ?? null : null,
-              distributorSalesmanName: thirdParty ? salesman.trim() || null : null,
-            });
-          }}
-          style={{ flex: 1, borderRadius: radius.xl }}
-        />
-      </View>
+      <PrimaryButton
+        label="Save"
+        tone="navy"
+        disabled={thirdParty && !chosen}
+        whyDisabled="Choose the distributor who bills this shop."
+        onPress={() => {
+          if (thirdParty && !chosen) return;
+          onSave({
+            thirdParty,
+            distributorCustomerId: thirdParty ? chosen?.id ?? null : null,
+            distributorName: thirdParty ? chosen?.name ?? null : null,
+            distributorSalesmanName: thirdParty ? salesman.trim() || null : null,
+          });
+        }}
+        style={{ marginTop: 12, borderRadius: 28 }}
+      />
+      <PillButton label="Cancel" variant="outline" height={48} onPress={onClose} style={{ marginTop: 8 }} />
     </BottomSheet>
   );
 }
 
-/**
- * §8 — WHAT THE SHOP TOLD THE OFFICE, beside what it told him.
- *
- * The four `confirmed*` figures are never written over the lead's own columns,
- * at either end, and the schema says why at length: what the salesman was told
- * standing in the shop and what the office was told on the phone are two
- * readings of one shop, and the whole value of the call is that they can
- * disagree. This is the reading back — the half that had no screen.
- *
- * The second line is drawn ONLY WHERE THEY DIFFER. A figure the shop repeated
- * is a confirmation and reads as one; printing "you have the same" under all
- * four would bury the one row that is not furniture, which is the same mistake
- * the microphone made when it was drawn at the weight of the resize grip.
- *
- * A figure the office did not ask about is left out entirely rather than drawn
- * as a blank. Null here is nobody having asked, not the shop having said
- * nothing — and a row saying "Gets through: —" asserts the second.
- */
 function told(
   v: Awaited<ReturnType<typeof validationsFor>>[number],
   lead: Lead,
@@ -1823,3 +1715,216 @@ function verdictWord(v: string): string {
     default: return 'Waiting';
   }
 }
+
+/* ------------------------------------------------------ V3 record pieces */
+
+/** A 28 tag in the lavender hero — the stage, the priority, the kind of sale. */
+function HeroTag({ tone, text, a11y, flag }: { tone: BadgeTone | 'white'; text: string; a11y?: string; flag?: boolean }) {
+  const t = tone === 'white' ? { bg: C.surface, fg: HERO.lavender.ink } : STAGE_PILL[tone];
+  return (
+    <View
+      accessible
+      accessibilityLabel={a11y ?? text}
+      style={{ height: 28, paddingHorizontal: 12, borderRadius: 14, backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      {flag ? <LeadGlyph name="flag" size={12} color={t.fg} strokeWidth={2.4} /> : null}
+      <Text style={[{ fontSize: 12, color: t.fg }, weight(700)]}>{text}</Text>
+    </View>
+  );
+}
+
+/** One fact under the name in the hero: the contact, the town, the number. */
+function HeroFact({ icon, text }: { icon?: IconName; text: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      {icon ? <Icon name={icon} size={13} color={HERO.lavender.muted} strokeWidth={2.2} /> : null}
+      <Text numberOfLines={1} style={[{ fontSize: 13, lineHeight: 18, color: HERO.lavender.muted }, weight(400)]}>
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+/** A quiet white chip — where it came from, the customer it became. */
+function InfoChip({ text, icon, onPress }: { text: string; icon?: IconName; onPress?: () => void }) {
+  const body = (
+    <View
+      style={{
+        minHeight: 32,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+        backgroundColor: onPress ? C.primaryTint : C.surface,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+      }}>
+      {icon ? <Icon name={icon} size={14} color={onPress ? C.primaryDeep : C.muted} strokeWidth={2.2} /> : null}
+      <Text style={[{ fontSize: 12, lineHeight: 16, color: onPress ? C.primaryDeep : C.muted }, weight(onPress ? 700 : 600)]}>{text}</Text>
+    </View>
+  );
+  if (!onPress) return body;
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={text} hitSlop={8}>
+      {body}
+    </Pressable>
+  );
+}
+
+/** One of the three figures under the hero. */
+function StatTile({ icon, value, sub, a11y }: { icon: IconName; value: string; sub: string; a11y: string }) {
+  return (
+    <View accessible accessibilityLabel={a11y} style={{ flex: 1, minWidth: 0, backgroundColor: C.surface, borderRadius: 18, padding: 12 }}>
+      <Icon name={icon} size={18} color={C.primaryDeep} strokeWidth={2} />
+      <Text numberOfLines={1} style={[{ fontSize: 19, lineHeight: 24, color: C.ink, marginTop: 8 }, weight(800)]}>{value}</Text>
+      <Text numberOfLines={1} style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>{sub}</Text>
+    </View>
+  );
+}
+
+/** The glyph beside a "found in the shop" line. */
+function LearnedIcon({ label, finding }: { label: string; finding?: string }) {
+  const name: IconName =
+    label === 'Where it is' ? 'pin' : finding === 'required_product' ? 'sample' : finding === 'competitor' ? 'shop' : 'note';
+  if (finding === 'monthly_litres') return <LeadGlyph name="drop" size={18} color={C.muted} strokeWidth={2} />;
+  return <Icon name={name} size={18} color={C.muted} strokeWidth={2} />;
+}
+
+/** A rung on the stage card: navy where he stands, a lock on the shut one above. */
+function RungChip({ label, on, locked, onPress }: { label: string; on: boolean; locked: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel={label + (on ? ', you are here' : locked ? ', locked' : '')}
+      hitSlop={{ top: 8, bottom: 8 }}
+      style={{
+        height: 32,
+        paddingHorizontal: 10,
+        borderRadius: 16,
+        backgroundColor: on ? C.navy : C.canvas,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+      }}>
+      {locked ? <Icon name="lock" size={12} color={C.muted} strokeWidth={2.2} /> : null}
+      <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** A square of the "work to do" grid — the forms, the sample, who bills it. */
+function WorkTile({
+  icon,
+  label,
+  sub,
+  subTone,
+  locked = false,
+  a11y,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  sub?: string;
+  subTone?: 'warn';
+  locked?: boolean;
+  a11y: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: locked }}
+      accessibilityLabel={a11y}
+      style={({ pressed }) => ({
+        flexGrow: 1,
+        flexBasis: '45%',
+        minHeight: 84,
+        borderRadius: 20,
+        backgroundColor: pressed ? C.wash : C.surface,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+      })}>
+      <Icon name={locked ? 'lock' : icon} size={20} color={locked ? C.faint : C.primaryDeep} strokeWidth={2} />
+      <Text numberOfLines={2} style={[{ fontSize: 13, lineHeight: 17, color: locked ? C.faint : C.ink, textAlign: 'center' }, weight(700)]}>
+        {label}
+      </Text>
+      {sub ? (
+        <Text numberOfLines={1} style={[{ fontSize: 11, lineHeight: 15, color: subTone === 'warn' ? C.warnInk : C.muted, textAlign: 'center' }, weight(600)]}>
+          {sub}
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
+/** One of the three ending tiles: hold, lost, close. */
+function EndTile({
+  icon,
+  glyph,
+  ink,
+  label,
+  a11y,
+  onPress,
+}: {
+  icon?: IconName;
+  glyph?: 'pause';
+  ink: string;
+  label: string;
+  a11y?: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y ?? label}
+      style={({ pressed }) => ({
+        flex: 1,
+        minHeight: 72,
+        borderRadius: 20,
+        backgroundColor: pressed ? C.wash : C.surface,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+      })}>
+      {glyph ? <LeadGlyph name={glyph} size={20} color={ink} /> : icon ? <Icon name={icon} size={20} color={ink} strokeWidth={2} /> : null}
+      <Text style={[{ fontSize: 12, color: ink }, weight(700)]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** A choice tile in a sheet: the brand edge when picked. */
+function PickTile({ label, sub, on, onPress, wide = false }: { label: string; sub?: string; on: boolean; onPress: () => void; wide?: boolean }) {
+  return (
+    <Pressable
+      onPress={() => {
+        if (!on) feedback('select');
+        onPress();
+      }}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel={sub ? label + '. ' + sub : label}
+      style={({ pressed }) => ({
+        flexGrow: 1,
+        flexBasis: wide ? '100%' : '45%',
+        minHeight: 52,
+        borderRadius: 18,
+        borderWidth: on ? 2 : 1,
+        borderColor: on ? C.primary : C.border,
+        backgroundColor: on ? C.primaryTint : pressed ? C.wash : C.surface,
+        paddingHorizontal: on ? 13 : 14,
+        paddingVertical: on ? 7 : 8,
+        justifyContent: 'center',
+      })}>
+      <Text style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>{label}</Text>
+      {sub ? <Text style={[{ fontSize: 11, lineHeight: 15, color: C.muted }, weight(400)]}>{sub}</Text> : null}
+    </Pressable>
+  );
+}
+
+

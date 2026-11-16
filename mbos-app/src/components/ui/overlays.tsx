@@ -1,11 +1,11 @@
 import React from 'react';
 import { Animated, Easing, View, Text, Pressable, Modal, PanResponder, ScrollView, StyleSheet, useWindowDimensions, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../theme/tokens';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
 import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TAB_BAR_HEIGHT } from '../shell/Chrome';
+import { TAB_BAR_GAP, TAB_BAR_HEIGHT } from '../shell/Chrome';
 import { useKeyboardHeight, useRevealFocusedField } from './keyboard';
 import { useReduceMotion, EASE, Presence } from './motion';
 import { feedback } from './feedback';
@@ -395,8 +395,8 @@ export function Toast({
           : keyboardHeight > 0
             ? /* The tab bar hides while typing, so the keyboard is the floor. */
               { bottom: keyboardHeight + 12 }
-            : /* 28 clears the raised + button, which sits 20 above the bar. */
-              { bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift },
+            : /* Clears the floating bar and the round + beside it. */
+              { bottom: TAB_BAR_HEIGHT + TAB_BAR_GAP + insets.bottom + 12 + lift },
         {
           opacity: progress,
           transform: [
@@ -545,6 +545,7 @@ export function ActionSheet({
   title,
   items,
   onClose,
+  layout = 'list',
 }: {
   open: boolean;
   title: string;
@@ -556,8 +557,14 @@ export function ActionSheet({
      `shell/AppFrame.tsx:306`, whose own `sheetItems` prop is typed `string`;
      annotate that as `IconName` and this line can follow, and then so can
      `Icon`'s own `name`. See the note on it. */
-  items: { glyph: string; label: string; sub: string; run: () => void }[];
+  items: { glyph: string; label: string; sub: string; run: () => void; tint?: string }[];
   onClose: () => void;
+  /**
+   * `quick` is the + sheet as Version 3 draws it: the first action as a navy
+   * bar with a lime disc, the rest as two-column tiles. Every other sheet is
+   * the plain list.
+   */
+  layout?: 'list' | 'quick';
 }) {
   const keyboardHeight = useKeyboardHeight();
   /* Clear of the navigation bar — see `BottomSheet`. */
@@ -565,14 +572,66 @@ export function ActionSheet({
   const bottomInset = keyboardHeight > 0 ? 0 : insets.bottom;
   return (
     <SheetModal open={open} onClose={onClose}>
-      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24 + bottomInset, boxShadow: shadow.sheet }]}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { paddingTop: 8, paddingBottom: 24 + bottomInset, boxShadow: shadow.sheet }]}>
         <View style={st.grabber} />
         <Text
           accessibilityRole="header"
-          style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
+          style={[
+            layout === 'quick'
+              ? { fontSize: 20, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6 }
+              : { fontSize: 17, color: C.ink, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+            weight(800),
+          ]}>
           {title}
         </Text>
-        {items.map((i) => (
+        {layout === 'quick' && items.length > 0 ? (
+          <View style={{ paddingHorizontal: 16, gap: 10, paddingTop: 8 }}>
+            <Pressable
+              onPress={() => {
+                onClose();
+                items[0].run();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={items[0].label + '. ' + items[0].sub}
+              style={({ pressed }) => [st.quickHero, pressed && { opacity: 0.9 }]}>
+              <View style={st.quickHeroDisc}>
+                <Icon name={items[0].glyph} size={22} color={C.navy} strokeWidth={2} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 16, color: '#FFFFFF' }, weight(800)]}>
+                  {items[0].label}
+                </Text>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>
+                  {items[0].sub}
+                </Text>
+              </View>
+            </Pressable>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              {items.slice(1).map((i) => (
+                <Pressable
+                  key={i.label}
+                  onPress={() => {
+                    onClose();
+                    i.run();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={i.label + '. ' + i.sub}
+                  style={({ pressed }) => [st.quickTile, pressed && { backgroundColor: C.primaryTint }]}>
+                  <Icon name={i.glyph} size={24} color={i.tint ?? C.primary} strokeWidth={2} />
+                  <View>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+                      {i.label}
+                    </Text>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>
+                      {i.sub}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+        {layout === 'quick' ? null : items.map((i) => (
           <Pressable
             key={i.label}
             onPress={() => {
@@ -621,12 +680,22 @@ export function ConfirmSheet({
   error,
   onCancel,
   onConfirm,
+  cancelLabel = 'Cancel',
+  tone = 'warn',
+  placeholder = 'Tell your manager what happened',
+  subtitle,
+  lead,
 }: {
   open: boolean;
   title: string;
   body: string;
   reasonLabel?: string;
   confirmLabel: string;
+  cancelLabel?: string;
+  tone?: 'warn' | 'navy' | 'danger';
+  placeholder?: string;
+  subtitle?: string;
+  lead?: { top?: string; bottom?: string; icon?: IconName; tint?: string; bg?: string };
   reason: string;
   onReason: (v: string) => void;
   error: boolean;
@@ -635,8 +704,37 @@ export function ConfirmSheet({
 }) {
   return (
     <BottomSheet open={open} onClose={onCancel}>
-      <Text style={[type.h2, { letterSpacing: -0.285 }]}>{title}</Text>
-      <Text style={[type.body, { marginTop: 6 }]}>{body}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {lead ? (
+          <View
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 16,
+              backgroundColor: lead.bg ?? (lead.icon ? C.primaryTint : C.navy),
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            {lead.icon ? (
+              <Icon name={lead.icon} size={24} color={lead.tint ?? C.primaryDeep} strokeWidth={2} />
+            ) : (
+              <>
+                {lead.top ? (
+                  <Text style={[{ fontSize: 18, lineHeight: 20, color: lead.tint ?? C.lime }, weight(800)]}>{lead.top}</Text>
+                ) : null}
+                {lead.bottom ? (
+                  <Text style={[{ fontSize: 11, lineHeight: 13, color: C.onNavyMuted }, weight(600)]}>{lead.bottom}</Text>
+                ) : null}
+              </>
+            )}
+          </View>
+        ) : null}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[{ fontSize: 20, lineHeight: 26, color: C.ink, letterSpacing: -0.4 }, weight(800)]}>{title}</Text>
+          {subtitle ? <Text style={[type.caption, { marginTop: 2 }]}>{subtitle}</Text> : null}
+        </View>
+      </View>
+      <Text style={[type.body, { marginTop: 10 }]}>{body}</Text>
       {reasonLabel ? (
         <View style={{ marginTop: 14 }}>
           <Text style={[type.label, { marginBottom: 6 }]}>{reasonLabel}</Text>
@@ -645,15 +743,15 @@ export function ConfirmSheet({
             onChangeText={onReason}
             multiline
             invalid={error}
-            placeholder="Tell your manager what happened"
-            style={{ minHeight: 80, borderRadius: radius.md, fontSize: 15 }}
+            placeholder={placeholder}
+            style={{ minHeight: 88, fontSize: 15 }}
           />
           {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Please write a reason.</Text> : null}
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-        <SecondaryButton label="Cancel" onPress={onCancel} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label={confirmLabel} onPress={onConfirm} tone="warn" style={{ flex: 1, borderRadius: radius.xl }} />
+        <SecondaryButton label={cancelLabel} onPress={onCancel} style={{ flex: 1, minHeight: 60, borderRadius: 30 }} />
+        <PrimaryButton label={confirmLabel} onPress={onConfirm} tone={tone} style={{ flex: 1, minHeight: 60, borderRadius: 30 }} />
       </View>
     </BottomSheet>
   );
@@ -736,13 +834,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Pressable onPress={() => page(-1)} accessibilityRole="button" accessibilityLabel="Previous month" style={st.calNav}>
-          <Text style={{ fontSize: 20, color: C.body }}>‹</Text>
+          <Icon name="back" size={18} color={C.ink} strokeWidth={2} />
         </Pressable>
-        <Text style={[{ flex: 1, textAlign: 'center', fontSize: 16, color: C.ink }, weight(600)]}>
+        <Text style={[{ flex: 1, textAlign: 'center', fontSize: 17, color: C.ink }, weight(800)]}>
           {monthName(shown.getMonth()) + ' ' + shown.getFullYear()}
         </Text>
         <Pressable onPress={() => page(1)} accessibilityRole="button" accessibilityLabel="Next month" style={st.calNav}>
-          <Text style={{ fontSize: 20, color: C.body }}>›</Text>
+          <Icon name="forward" size={18} color={C.ink} strokeWidth={2} />
         </Pressable>
       </View>
 
@@ -797,20 +895,20 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
                 style={{
                   width: 40,
                   height: 40,
-                  borderRadius: between && !picked ? 0 : radius.md,
+                  borderRadius: between && !picked ? 0 : 20,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: picked ? C.primary : between ? C.primaryTint : 'transparent',
-                  borderWidth: isToday && !picked ? 1 : 0,
-                  borderColor: C.primaryEdge,
+                  backgroundColor: picked ? C.navy : between ? C.primaryTint : 'transparent',
+                  borderWidth: isToday && !picked ? 1.5 : 0,
+                  borderColor: C.primary,
                 }}>
                 <Text
                   style={[
                     {
                       fontSize: 15,
-                      color: picked ? '#FFFFFF' : off || !inMonth ? C.faint : isToday ? C.primaryDeep : C.ink,
+                      color: picked ? C.lime : off || !inMonth ? C.faint : isToday ? C.primary : C.ink,
                     },
-                    weight(picked || isToday ? 600 : 400),
+                    weight(picked || isToday ? 800 : 500),
                     tabular,
                   ]}>
                   {d.getDate()}
@@ -838,11 +936,38 @@ const st = StyleSheet.create({
   },
   grabber: {
     width: 40,
-    height: 4,
-    borderRadius: 2,
+    height: 5,
+    borderRadius: 3,
     backgroundColor: C.border,
     alignSelf: 'center',
     marginVertical: 6,
+  },
+  quickHero: {
+    minHeight: 72,
+    borderRadius: 22,
+    backgroundColor: C.navy,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  quickHeroDisc: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: C.lime,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickTile: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    minHeight: 100,
+    borderRadius: 20,
+    backgroundColor: C.canvas,
+    padding: 12,
+    justifyContent: 'space-between',
   },
   sheetRow: {
     flexDirection: 'row',
@@ -857,12 +982,12 @@ const st = StyleSheet.create({
   sheetGlyph: {
     width: HIT,
     height: HIT,
-    borderRadius: radius.sm,
+    borderRadius: HIT / 2,
     backgroundColor: C.primaryTint,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  calNav: { width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
+  calNav: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: C.canvas },
   toast: {
     position: 'absolute',
     left: 16,
@@ -873,9 +998,7 @@ const st = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: C.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: C.hairline,
+    borderRadius: 20,
     paddingLeft: 18,
     paddingRight: 8,
     paddingVertical: 10,

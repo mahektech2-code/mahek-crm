@@ -4,9 +4,11 @@ import { Stack, router, usePathname, type ErrorBoundaryProps } from 'expo-router
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
-import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
-import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
+import { Geist_400Regular } from '@expo-google-fonts/geist/400Regular';
+import { Geist_500Medium } from '@expo-google-fonts/geist/500Medium';
+import { Geist_600SemiBold } from '@expo-google-fonts/geist/600SemiBold';
+import { Geist_700Bold } from '@expo-google-fonts/geist/700Bold';
+import { Geist_800ExtraBold } from '@expo-google-fonts/geist/800ExtraBold';
 import { color } from '../src/theme/tokens';
 import { BootProvider, useBoot } from '../src/state/boot';
 import { AuthLostBanner } from '../src/components/shell/AuthLostBanner';
@@ -114,7 +116,7 @@ function SignedOutGuard() {
 }
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold });
+  const [loaded, error] = useFonts({ Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold });
   const reduce = useReduceMotion();
 
   React.useEffect(() => {

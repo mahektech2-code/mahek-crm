@@ -1,11 +1,12 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, T } from '../src/components/ui/primitives';
+import { T } from '../src/components/ui/primitives';
+import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import { CountUp, Stagger } from '../src/components/ui/motion';
 import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
-import { inrFromPaise, plural } from '../src/lib/format';
+import { grouped, inrFromPaise, plural } from '../src/lib/format';
 import { monthReport, type MonthReport } from '../src/data/reports';
 import { useBoot } from '../src/state/boot';
 
@@ -46,12 +47,19 @@ export default function ReportsScreen() {
   useFocusEffect(load);
 
   return (
-    <AppFrame title="Reports" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame
+      tone="canvas"
+      title="Reports"
+      activeTab={null}
+      onBack={back.go}
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}
+      hero={
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          <Glyph shapes={[{ r: [7, 3, 10, 18, 2] }]} size={12} color={C.lavenderMuted} />
+          <T style={{ fontSize: 12, color: C.lavenderMuted }}>This month and last, as saved on this phone</T>
+        </View>
+      }>
       <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Reports</T>
-      <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 16 }}>
-        What you did this month and last, as saved on this phone.
-      </T>
 
       {!current ? (
         <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 24 }}>
@@ -60,7 +68,7 @@ export default function ReportsScreen() {
       ) : (
         <>
           <Stagger index={0}>
-            <ReportCard title={monthName(current.from) + ' · so far'} r={current} />
+            <ReportCard title={monthName(current.from)} r={current} />
           </Stagger>
           {previous ? (
             <Stagger index={1} style={{ marginTop: 10 }}>
@@ -73,68 +81,138 @@ export default function ReportsScreen() {
   );
 }
 
-function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?: boolean }) {
-  return (
-    <Card style={muted ? { opacity: 0.75 } : undefined}>
-      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{title}</T>
+/* The artboard's three stat marks: a pin, a cart, a drop. */
+const STAT_GLYPH: Record<'visits' | 'orders' | 'litres', GlyphShape[]> = {
+  visits: [{ p: 'M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z' }, { c: [12, 10, 2.5] }],
+  orders: [{ p: 'M4 5h2l2 11h10l2-8H7' }, { c: [10, 20, 1] }, { c: [17, 20, 1] }],
+  litres: [{ p: 'M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z' }],
+};
+const CART: GlyphShape[] = [{ p: 'M4 5h2l2 11h10l2-8H7' }];
+const CARD_GLYPH: GlyphShape[] = [{ r: [3, 6, 18, 13, 2] }, { p: 'M3 10h18' }];
+const REFUSED: GlyphShape[] = [{ c: [12, 12, 8] }, { p: 'M6.5 6.5l11 11' }];
 
-      <View style={{ flexDirection: 'row', marginTop: 14, gap: 18 }}>
+/**
+ * THIS MONTH IS THE NAVY CARD, LAST MONTH THE WHITE ONE. Version 3 draws the
+ * month being worked as the hero of the page and the settled month beneath it
+ * quieter, which is what `muted` already meant here.
+ */
+function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?: boolean }) {
+  const onNavy = !muted;
+  const value =
+    r.valuePaise == null
+      ? r.ordersTaken > 0
+        ? `${plural(r.ordersUnvalued, 'order')} without price yet`
+        : '—'
+      : inrFromPaise(r.valuePaise);
+  const unpriced = r.valuePaise == null && r.ordersTaken > 0;
+  const collected = inrFromPaise(r.collectedPaise) + ' · ' + plural(r.collectedCount, 'receipt');
+  const chipBg = onNavy ? 'rgba(255,255,255,0.08)' : C.canvas;
+  const chipFg = onNavy ? '#FFFFFF' : C.body;
+  const chipIcon = onNavy ? C.onNavyMuted : C.body;
+  return (
+    <View style={{ backgroundColor: onNavy ? C.navy : C.surface, borderRadius: 24, padding: 18 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text accessibilityRole="header" style={[{ fontSize: 15, color: onNavy ? '#FFFFFF' : C.muted }, weight(700)]}>
+          {title}
+        </Text>
+        {onNavy ? (
+          <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(198,255,52,0.14)', justifyContent: 'center' }}>
+            <T style={[{ fontSize: 12, color: C.lime }, weight(700)]}>so far</T>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={{ flexDirection: 'row', marginTop: onNavy ? 14 : 10, gap: 10 }}>
         {/* This month's three counts run up from nought — they are what the
             screen is opened to read. Last month's are settled history and are
             simply there. */}
-        <Stat label="Visits" value={r.visits} count={!muted} />
-        <Stat label="Orders" value={r.ordersTaken} count={!muted} />
-        <Stat label="Litres" value={r.litres} count={!muted} tenths />
+        <Stat label="Visits" glyph={onNavy ? STAT_GLYPH.visits : undefined} value={r.visits} count={!muted} big={onNavy} />
+        <Stat label="Orders" glyph={onNavy ? STAT_GLYPH.orders : undefined} value={r.ordersTaken} count={!muted} big={onNavy} />
+        <Stat label="Litres" glyph={onNavy ? STAT_GLYPH.litres : undefined} value={r.litres} count={!muted} tenths big={onNavy} />
       </View>
 
       <View
-        style={{
-          marginTop: 14,
-          paddingTop: 14,
-          borderTopWidth: 1,
-          borderTopColor: C.hairline,
-          gap: 8,
-        }}>
-        <Row
-          label="Order value"
-          value={
-            r.valuePaise == null
-              ? r.ordersTaken > 0
-                ? `${plural(r.ordersUnvalued, 'order')} without price yet`
-                : '—'
-              : inrFromPaise(r.valuePaise)
-          }
+        style={[
+          { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: onNavy ? 14 : 12 },
+          onNavy ? { paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)' } : null,
+        ]}>
+        <Chip
+          glyph={CART}
+          text={value}
+          a11y={'Order value: ' + value}
+          bg={unpriced ? C.warnBg : chipBg}
+          fg={unpriced ? C.warnInk : chipFg}
+          icon={unpriced ? C.warnInk : chipIcon}
         />
-        <Row label="Collected (as you reported)" value={inrFromPaise(r.collectedPaise) + ' · ' + plural(r.collectedCount, 'receipt')} />
+        <Chip glyph={CARD_GLYPH} text={collected} a11y={'Collected, as you reported: ' + collected} bg={chipBg} fg={chipFg} icon={chipIcon} />
         {r.ordersRejected > 0 ? (
-          <Row label="Not accepted" value={plural(r.ordersRejected, 'order')} tone={C.danger} />
+          <Chip
+            glyph={REFUSED}
+            text={plural(r.ordersRejected, 'order') + ' not accepted'}
+            a11y={'Not accepted: ' + plural(r.ordersRejected, 'order')}
+            bg={C.dangerBg}
+            fg={C.danger}
+            icon={C.danger}
+          />
         ) : null}
       </View>
-    </Card>
-  );
-}
-
-function Stat({ label, value, count, tenths }: { label: string; value: number; count: boolean; tenths?: boolean }) {
-  return (
-    <View>
-      <CountUp
-        value={value}
-        /* Litres carry one decimal; the counts are whole and must not pass
-           through 3.4 visits on their way to 7. */
-        format={(n) => String(tenths ? Math.round(n * 10) / 10 : Math.round(n))}
-        fromZero={count}
-        style={[typeScale.body, { fontSize: 20, color: C.ink }, weight(600), tabular]}
-      />
-      <T s="caption" style={{ marginTop: 2 }}>{label}</T>
+      {onNavy ? <T style={{ fontSize: 11, color: C.onNavyMuted, marginTop: 8 }}>Collected = as you reported</T> : null}
     </View>
   );
 }
 
-function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** Litres to one decimal, grouped the Indian way: 1,842.5. */
+function tenthsGrouped(n: number): string {
+  const t = Math.round(n * 10);
+  const whole = Math.trunc(t / 10);
+  const tenth = Math.abs(t % 10);
+  return grouped(whole) + (tenth ? '.' + tenth : '');
+}
+
+function Stat({
+  label,
+  value,
+  count,
+  tenths,
+  big,
+  glyph,
+}: {
+  label: string;
+  value: number;
+  count: boolean;
+  tenths?: boolean;
+  big: boolean;
+  glyph?: GlyphShape[];
+}) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-      <T s="small" style={{ color: C.muted }}>{label}</T>
-      <T s="small" style={[{ color: tone ?? C.ink }, weight(500)]}>{value}</T>
+    <View style={{ flex: 1, minWidth: 0 }}>
+      {glyph ? <Glyph shapes={glyph} size={18} color={C.onNavyMuted} /> : null}
+      <CountUp
+        value={value}
+        /* Litres carry one decimal; the counts are whole and must not pass
+           through 3.4 visits on their way to 7. */
+        format={(n) => (tenths ? tenthsGrouped(n) : grouped(Math.round(n)))}
+        fromZero={count}
+        style={[
+          typeScale.body,
+          { fontSize: big ? 28 : 22, lineHeight: big ? 34 : 28, letterSpacing: big ? -0.56 : 0, color: big ? '#FFFFFF' : C.body },
+          weight(800),
+          tabular,
+        ]}
+      />
+      <T style={{ fontSize: 12, color: big ? C.onNavyMuted : C.muted }}>{label}</T>
+    </View>
+  );
+}
+
+function Chip({ glyph, text, a11y, bg, fg, icon }: { glyph: GlyphShape[]; text: string; a11y: string; bg: string; fg: string; icon: string }) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={a11y}
+      style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <Glyph shapes={glyph} size={14} color={icon} />
+      <T style={[{ fontSize: 13, color: fg }, weight(700), tabular]}>{text}</T>
     </View>
   );
 }

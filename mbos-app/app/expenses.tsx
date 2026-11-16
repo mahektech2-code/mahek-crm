@@ -1,9 +1,11 @@
 import React from 'react';
-import { Pressable, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
+import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { Badge } from '../src/components/ui/primitives';
+import { PillButton } from '../src/components/ui/v3';
 import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
@@ -26,7 +28,7 @@ import { checkFare } from '../src/lib/travel-leg';
 import { cleanAmount, typedFromPaise } from '../src/lib/money-input';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
+import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 
 /**
  * Expenses — what he logged, what his manager decided, and his allowances.
@@ -486,351 +488,518 @@ export default function ExpensesScreen() {
     }
   };
 
+  const capTone: 'warn' | 'good' | 'plain' =
+    exOver || (preview.proofRequired && !ex.files.length) || capLine.startsWith('Nothing left')
+      ? 'warn'
+      : capLine.startsWith('Within policy')
+        ? 'good'
+        : 'plain';
+  const monthWord = MONTH_SHORT[Number(todayIso.slice(5, 7)) - 1] ?? 'this month';
+
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Expenses</T>
-      <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {totals?.pendingCount
-          ? inrFromPaise(pending) +
-            ' waiting on your manager · ' +
-            totals.pendingCount +
-            (totals.pendingCount === 1 ? ' expense' : ' expenses')
-          : 'Nothing waiting on your manager'}
-      </T>
-
-      {/* THIS MONTH, in the three figures he actually asks about: what is
-          still with his manager, what has been allowed, and what the work log
-          earned him on its own. */}
-      <Card style={{ marginTop: 12, flexDirection: 'row', gap: 12 }}>
-        {[
-          { label: 'Waiting', value: pending },
-          { label: 'Approved this month', value: totals?.approvedMonthPaise ?? 0 },
-          { label: 'Allowances this month', value: totals?.allowanceMonthPaise ?? 0 },
-        ].map((f) => (
-          <View key={f.label} style={{ flex: 1, minWidth: 0 }}>
-            <T s="caption" numberOfLines={2}>
-              {f.label}
-            </T>
-            <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
-              {inrFromPaise(f.value)}
-            </T>
+    <AppFrame
+      title="Expenses"
+      activeTab={null}
+      onBack={back.go}
+      tone="navy"
+      heroTop={
+        <Text
+          accessibilityLabel="MBOS"
+          style={{ textAlign: 'center', fontSize: 12, color: C.onNavyMuted }}>
+          MBOS
+        </Text>
+      }
+      hero={
+        <View>
+          {/* What is still with his manager — the one figure this screen is
+              mostly about, the size the design gives it. */}
+          {totals?.pendingCount ? (
+            <View
+              accessible
+              accessibilityLabel={
+                inrFromPaise(pending) +
+                ' waiting on your manager · ' +
+                totals.pendingCount +
+                (totals.pendingCount === 1 ? ' expense' : ' expenses')
+              }
+              style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <Text style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.68, color: C.lime }, weight(800), tabular]}>
+                {inrFromPaise(pending)}
+              </Text>
+              <Text style={{ fontSize: 13, color: C.onNavyMuted }}>{'with your manager · ' + totals.pendingCount}</Text>
+            </View>
+          ) : (
+            <Text style={{ fontSize: 14, color: C.onNavyMuted, marginTop: 10 }}>Nothing waiting on your manager</Text>
+          )}
+          {/* THIS MONTH, in the three figures he actually asks about: what is
+              still with his manager, what has been allowed, and what the work
+              log earned him on its own. */}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            {[
+              { label: 'Waiting', a11y: 'Waiting', value: pending, icon: <Icon name="clock" size={16} color={C.onNavyMuted} strokeWidth={2} /> },
+              {
+                label: 'Approved · ' + monthWord,
+                a11y: 'Approved this month',
+                value: totals?.approvedMonthPaise ?? 0,
+                icon: <Icon name="tick" size={16} color="#5BD08A" strokeWidth={2.2} />,
+              },
+              {
+                label: 'Allowances · ' + monthWord,
+                a11y: 'Allowances this month',
+                value: totals?.allowanceMonthPaise ?? 0,
+                icon: <G d="M12 3v18M5 10l7-7 7 7" color={C.lime} size={16} />,
+              },
+            ].map((f) => (
+              <View
+                key={f.a11y}
+                accessible
+                accessibilityLabel={f.a11y + ', ' + inrFromPaise(f.value)}
+                style={{ flex: 1, minWidth: 0, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.08)', padding: 10 }}>
+                {f.icon}
+                <Text numberOfLines={1} style={[{ fontSize: 16, color: '#FFFFFF', marginTop: 4 }, weight(800), tabular]}>
+                  {inrFromPaise(f.value)}
+                </Text>
+                <Text numberOfLines={1} style={{ fontSize: 11, color: C.onNavyMuted }}>
+                  {f.label}
+                </Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </Card>
+        </View>
+      }
+      contentStyle={{ padding: 14, paddingTop: 16, paddingBottom: 24, gap: 12 }}>
+      <PillButton label="Add an expense" variant="primary" height={56} icon="add" onPress={add} />
+      <View accessible accessibilityLabel={exRule(maxAgeDays)} style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+        <G d={RECEIPT_D} color={C.muted} size={16} />
+        <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
+          {'Bill or payment proof on every claim · photos or PDF · older than ' + maxAgeDays + ' days not accepted'}
+        </Text>
+      </View>
 
-      <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
-      <T s="caption" style={{ marginTop: 10 }}>
-        {exRule(maxAgeDays)}
-      </T>
-
-      <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
+      <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.ink, marginTop: 4 }, weight(800)]}>
         Your expenses
-      </T>
+      </Text>
       {logged.length ? (
-        <ListCard>
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 4 }}>
           {logged.map((e, i) => {
             const part = e.state === 'Approved' && e.approvedAmountPaise != null && e.approvedAmountPaise < e.amountPaise;
             const word = e.state === 'Approved' ? (part ? 'Part approved' : 'Approved') : e.state === 'Pending' ? 'Waiting' : 'Not approved';
             const tone: BadgeTone = e.state === 'Approved' ? (part ? 'amber' : 'success') : e.state === 'Pending' ? 'info' : 'danger';
             const onPhone = e.syncState !== 'synced';
+            const kindWord = kindLabel(e);
             return (
               <Stagger
                 key={e.id}
                 index={i}
-                style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
-                    {kindLabel(e) + ' · ' + inrFromPaise(e.amountPaise)}
-                  </T>
-                  <Badge tone={tone}>{word}</Badge>
+                style={{ paddingVertical: 12, borderTopWidth: i ? 1 : 0, borderTopColor: C.hairline }}>
+                <View
+                  accessible
+                  accessibilityLabel={kindWord + ' · ' + inrFromPaise(e.amountPaise) + ', ' + word}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{kindWord}</Text>
+                  <Text style={[{ fontSize: 16, color: C.ink }, weight(800), tabular]}>{inrFromPaise(e.amountPaise)}</Text>
+                  {/* Part approved draws its bar instead of a second badge. */}
+                  {part ? null : <Badge tone={tone}>{word}</Badge>}
                 </View>
-                <T s="caption" style={{ marginTop: 3 }} numberOfLines={2}>
-                  {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
-                </T>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <Text numberOfLines={2} style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
+                    {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
+                  </Text>
+                  {e.billPhotoId && !(onPhone && e.state === 'Pending') ? (
+                    <View accessible accessibilityLabel="Bill added">
+                      <G d={RECEIPT_D + 'M9 11l2 2 4-4'} color={C.success} size={14} />
+                    </View>
+                  ) : null}
+                </View>
                 {part ? (
-                  <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginTop: 2 }}>
-                    {inrFromPaise(e.approvedAmountPaise!) + ' of ' + inrFromPaise(e.amountPaise) + ' approved'}
-                  </T>
+                  <View
+                    accessible
+                    accessibilityLabel={'Part approved. ' + inrFromPaise(e.approvedAmountPaise!) + ' of ' + inrFromPaise(e.amountPaise) + ' approved'}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    <View style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: C.hairline, overflow: 'hidden' }}>
+                      <View
+                        style={{
+                          width: `${Math.max(0, Math.min(100, Math.round((e.approvedAmountPaise! / e.amountPaise) * 100)))}%`,
+                          height: 6,
+                          borderRadius: 3,
+                          backgroundColor: C.warn,
+                        }}
+                      />
+                    </View>
+                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(700)]}>
+                      {inrFromPaise(e.approvedAmountPaise!) + ' of ' + inrFromPaise(e.amountPaise)}
+                    </Text>
+                  </View>
                 ) : null}
                 {/* Logged is logged: a row still on the phone is saved and
                     will go the moment there is signal — said, so a salesman in
                     a godown does not log it twice. */}
                 {onPhone && e.state === 'Pending' ? (
-                  <T style={{ fontSize: 13, lineHeight: 19, color: C.muted }}>
-                    Saved on this phone. It goes to your manager when there is signal.
-                  </T>
-                ) : (
-                  <T style={{ fontSize: 13, lineHeight: 19, color: e.billPhotoId ? C.muted : C.warn }}>
-                    {e.billPhotoId ? 'Bill added' : 'No bill. May not be accepted.'}
-                  </T>
+                  <View
+                    accessible
+                    accessibilityLabel="Saved on this phone. It goes to your manager when there is signal."
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                    <G d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9zM4 4l16 16" color={C.warnInk} size={13} />
+                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(600)]}>On this phone · goes when there is signal</Text>
+                  </View>
+                ) : e.billPhotoId ? null : (
+                  <View
+                    accessible
+                    accessibilityLabel="No bill. May not be accepted."
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                    <Icon name="alert" size={13} color={C.warnInk} strokeWidth={2.2} />
+                    <Text style={[{ fontSize: 12, color: C.warnInk }, weight(600)]}>No bill · may not be accepted</Text>
+                  </View>
                 )}
                 {e.state === 'Rejected' ? (
-                  <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
                     {/* A rejection with no reason is NOT a missing bill. That
                         guess was printed in danger red, sometimes directly under
                         a row reading "Bill attached", and it sent him to
                         photograph a bill that was never the problem. */}
-                    <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
+                    <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>
                       {e.rejectionReason ?? e.decisionNote ?? 'Not approved. Your manager did not give a reason.'}
-                    </T>
-                    <Pressable
-                      accessibilityRole="button"
+                    </Text>
+                    <PillButton
+                      label="Fix & send again"
+                      a11y="Fix and send again"
+                      variant="navyLime"
+                      height={44}
                       onPress={() => fix(e)}
-                      style={{ minHeight: 48, justifyContent: 'center', marginTop: 2 }}>
-                      <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Fix and send again</T>
-                    </Pressable>
-                  </>
+                    />
+                  </View>
                 ) : e.decisionNote ? (
-                  <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 2 }}>
+                  <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 4, fontStyle: 'italic' }}>
                     {'“' + e.decisionNote + '”'}
-                  </T>
+                  </Text>
                 ) : null}
               </Stagger>
             );
           })}
-        </ListCard>
+        </View>
       ) : (
-        <Card>
-          <T s="small" style={{ color: C.ink }}>No expenses logged yet.</T>
-          <T s="caption" style={{ marginTop: 4 }}>
-            Add a fare, a hotel, a food bill or any other cost with a photo of the bill. It goes to
-            your manager straight away.
-          </T>
-        </Card>
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>No expenses logged yet.</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>
+            Add a fare, a hotel, a food bill or any other cost with a photo of the bill. It goes to your manager straight
+            away.
+          </Text>
+        </View>
       )}
 
       {/* A capped list says what it is a slice of — a screen showing sixty of
           seven hundred rows with nothing saying so is a screen that has lost the
           one he is looking for. */}
       {totals && totals.count > rows.length ? (
-        <T s="caption" style={{ marginTop: 10 }}>
-          {'Showing the latest ' + rows.length + ' of ' + totals.count + '. The office has all of them.'}
-        </T>
+        <Text
+          accessibilityLabel={'Showing the latest ' + rows.length + ' of ' + totals.count + '. The office has all of them.'}
+          style={{ fontSize: 12, color: C.muted, textAlign: 'center' }}>
+          {'Latest ' + rows.length + ' of ' + totals.count + ' · the office has all'}
+        </Text>
       ) : null}
 
-      <T s="label" style={{ marginTop: 20, marginBottom: 4 }}>
-        Allowances
-      </T>
-      <T s="caption" style={{ marginBottom: 8 }}>
-        Worked out for you from your punch-in, punch-out and trips on your own bike or car. Nothing
-        to add and nothing to send.
-      </T>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <Text accessibilityRole="header" style={[{ fontSize: 13, color: C.ink }, weight(800)]}>
+          Allowances
+        </Text>
+        <View
+          style={{
+            height: 24,
+            paddingHorizontal: 8,
+            borderRadius: 12,
+            backgroundColor: C.hairline,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+          }}>
+          <G d="M13 2L4 14h7l-1 8 9-12h-7z" color={C.muted} size={12} />
+          <Text style={[{ fontSize: 11, color: C.muted }, weight(700)]}>Automatic</Text>
+        </View>
+      </View>
+      <Text
+        accessibilityLabel="Worked out for you from your punch-in, punch-out and trips on your own bike or car. Nothing to add and nothing to send."
+        style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: -4 }}>
+        From your punches and own bike/car trips. Nothing to add or send.
+      </Text>
       {allowances.length ? (
-        <ListCard>
-          {allowances.map((e, i) => (
-            <Stagger
-              key={e.id}
-              index={i}
-              style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
-                  {kindLabel(e) + ' · ' + inrFromPaise(e.amountPaise)}
-                </T>
-                <Badge tone="neutral">Automatic</Badge>
-              </View>
-              <T s="caption" style={{ marginTop: 3 }} numberOfLines={2}>
-                {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
-              </T>
-            </Stagger>
-          ))}
-        </ListCard>
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 4 }}>
+          {allowances.map((e, i) => {
+            const k = e.kind ?? e.category;
+            return (
+              <Stagger
+                key={e.id}
+                index={i}
+                style={{
+                  paddingVertical: 12,
+                  borderTopWidth: i ? 1 : 0,
+                  borderTopColor: C.hairline,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                }}>
+                <KindGlyph kind={k === 'travel' ? 'bike' : k === 'food' ? 'food' : 'other'} color={C.primaryDeep} />
+                <View
+                  style={{ flex: 1, minWidth: 0 }}
+                  accessible
+                  accessibilityLabel={kindLabel(e) + ' · ' + inrFromPaise(e.amountPaise) + ', automatic'}>
+                  <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{kindLabel(e)}</Text>
+                  <Text numberOfLines={2} style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
+                    {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
+                  </Text>
+                </View>
+                <Text style={[{ fontSize: 16, color: C.success }, weight(800), tabular]}>{inrFromPaise(e.amountPaise)}</Text>
+              </Stagger>
+            );
+          })}
+        </View>
       ) : (
-        <Card>
-          <T s="small" style={{ color: C.ink }}>No allowances yet.</T>
-          <T s="caption" style={{ marginTop: 4 }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>No allowances yet.</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>
             They appear after you punch in and out. It can take a few minutes after the phone syncs.
-          </T>
-        </Card>
+          </Text>
+        </View>
       )}
 
       {/* ------------------------------------------------------ claim sheet */}
       <BottomSheet open={open} onClose={() => close()} scroll>
-        <T s="h2">{fixing ? 'Fix this expense' : 'Add an expense'}</T>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
+          {fixing ? 'Fix this expense' : 'Add an expense'}
+        </Text>
 
-        <View style={{ marginTop: 14 }}>
-          <T s="label">What for</T>
-          {/* WRAPPED, not four equal columns. At `flex: 1` inside a sheet
-              padded 20 either side, each chip is about 74dp less 24dp of its
-              own padding — some 50dp of text at 14px — and "Local transport"
-              broke mid-word inside a 48dp chip. The travel screen has always
-              done it this way. */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-            {kinds.map((k) => (
-              <Choice
+        {/* WHAT FOR, as five equal tiles with a glyph each — the kinds are
+            five short words with an icon, so nothing has to wrap mid-word
+            ("Local transport" broke inside a 48dp chip when they were four
+            equal text columns). The long name rides on the label. */}
+        <View accessibilityRole="radiogroup" accessibilityLabel="What for" style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
+          {kinds.map((k) => {
+            const on = kind === k.key;
+            return (
+              <Pressable
                 key={k.key}
-                label={k.label}
-                selected={kind === k.key}
-                onPress={() => patch({ kind: k.key })}
-              />
-            ))}
-          </View>
+                onPress={() => {
+                  if (!on) feedback('select');
+                  patch({ kind: k.key });
+                }}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: on }}
+                accessibilityLabel={k.label}
+                style={{
+                  flex: 1,
+                  height: 72,
+                  borderRadius: 20,
+                  backgroundColor: on ? C.navy : C.canvas,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}>
+                <KindGlyph kind={k.key} color={on ? C.lime : C.ink} />
+                <Text numberOfLines={1} style={[{ fontSize: 11, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>
+                  {KIND_SHORT[k.key] ?? k.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
-        <View style={{ marginTop: 14 }}>
-          <T s="label" style={{ marginBottom: 6 }}>
-            How much
-          </T>
+        <View
+          style={{
+            marginTop: 14,
+            height: 72,
+            borderRadius: 24,
+            backgroundColor: C.canvas,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            paddingHorizontal: 20,
+            borderWidth: bad('amt') ? 2 : 0,
+            borderColor: C.danger,
+          }}>
+          <Text style={[{ fontSize: 28, color: C.faint }, weight(800)]}>₹</Text>
+          <TextInput
+            value={ex.amt}
+            onChangeText={(v) => patch({ amt: cleanAmount(v) })}
+            keyboardType="decimal-pad"
+            maxLength={9}
+            placeholder="0"
+            accessibilityLabel="How much"
+            placeholderTextColor={C.faint}
+            style={[
+              { flex: 1, minWidth: 0, alignSelf: 'stretch', fontSize: 34, letterSpacing: -0.68, color: C.ink, padding: 0 },
+              weight(800),
+              tabular,
+            ]}
+          />
+        </View>
+        {bad('amt') ? (
+          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>{amtWhy ?? 'Enter what you spent.'}</Text>
+        ) : null}
+        {capLine ? (
           <View
             style={{
+              marginTop: 8,
+              borderRadius: 16,
+              backgroundColor: capTone === 'warn' ? C.warnBg : capTone === 'good' ? C.successBg : C.canvas,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flexDirection: 'row',
-              alignItems: 'center',
               gap: 8,
-              width: '100%',
-              height: 52,
-              paddingHorizontal: 12,
-              borderWidth: 1,
-              borderColor: bad('amt') ? C.danger : C.border,
-              borderRadius: radius.lg,
-              backgroundColor: C.surface,
             }}>
-            <T style={[{ fontSize: 18, color: C.muted }, weight(600)]}>₹</T>
-            <TextInput
-              value={ex.amt}
-              onChangeText={(v) => patch({ amt: cleanAmount(v) })}
-              keyboardType="decimal-pad"
-              maxLength={9}
-              placeholder="0"
-              placeholderTextColor={C.faint}
-              style={[{ flex: 1, minWidth: 0, alignSelf: 'stretch', fontSize: 18, color: C.ink, padding: 0 }, weight(600), tabular]}
+            <G
+              d={SHIELD_D}
+              color={capTone === 'warn' ? C.warnInk : capTone === 'good' ? C.success : C.muted}
+              size={16}
             />
+            <Text
+              style={[
+                { flex: 1, fontSize: 13, lineHeight: 18, color: capTone === 'warn' ? C.warnInk : capTone === 'good' ? C.success : C.muted },
+                weight(600),
+              ]}>
+              {capLine}
+            </Text>
           </View>
-          {bad('amt') ? (
-            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-              {amtWhy ?? 'Enter what you spent.'}
-            </T>
-          ) : null}
-          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: exOver ? C.warnInk : C.muted }}>{capLine}</T>
-        </View>
+        ) : null}
 
-        <View style={{ marginTop: 14 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 6 }}>
-            <T s="label">Bill and proof</T>
-            <T s="caption" style={{ marginLeft: 'auto' }}>
-              {ex.files.length + ' of ' + maxFiles}
-            </T>
-          </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
+          <Text accessibilityLabel="Bill and proof, needed" style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>
+            Bill &amp; proof
+            <Text style={{ color: C.danger }}>{' *'}</Text>
+          </Text>
+          <Text accessibilityLabel={ex.files.length + ' of ' + maxFiles} style={[{ fontSize: 12, color: C.muted }, weight(700)]}>
+            {ex.files.length + ' / ' + maxFiles}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
           {ex.files.map((f) => (
             <View
               key={f.mediaId}
+              accessible
+              accessibilityLabel={f.label}
               style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                width: '100%',
-                minHeight: 52,
-                marginBottom: 6,
-                paddingLeft: 14,
-                paddingRight: 6,
-                borderWidth: 1,
-                borderColor: C.success,
-                borderRadius: radius.lg,
+                width: 72,
+                height: 72,
+                borderRadius: 18,
                 backgroundColor: C.successBg,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 4,
               }}>
-              <Icon name={f.isPdf ? 'doc' : 'camera'} size={16} color={C.success} strokeWidth={2} />
-              <T numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.success }, weight(500)]}>
+              <Icon name={f.isPdf ? 'doc' : 'camera'} size={20} color={C.success} strokeWidth={2} />
+              <Text numberOfLines={1} style={[{ fontSize: 9, color: C.success, marginTop: 2 }, weight(700)]}>
                 {f.label}
-              </T>
+              </Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={'Remove ' + f.label}
                 onPress={() => removeFile(f.mediaId)}
-                style={{ minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 }}>
-                <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Remove</T>
+                hitSlop={10}
+                style={{
+                  position: 'absolute',
+                  right: -6,
+                  top: -6,
+                  width: 26,
+                  height: 26,
+                  borderRadius: 13,
+                  backgroundColor: C.navy,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                <Icon name="close" size={12} color="#FFFFFF" strokeWidth={2.6} />
               </Pressable>
             </View>
           ))}
-          {room > 0 ? (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {[
-                { glyph: 'camera', label: 'Photo', how: 'camera' as const },
-                { glyph: 'clip', label: 'Gallery', how: 'gallery' as const },
-                { glyph: 'doc', label: 'PDF', how: 'pdf' as const },
-              ].map((b) => (
+          {room > 0
+            ? (
+                [
+                  { how: 'camera' as const, a11y: 'Photograph the bill', icon: <Icon name="camera" size={22} color={C.primaryDeep} strokeWidth={2} /> },
+                  { how: 'gallery' as const, a11y: 'Choose photos from the gallery', icon: <Icon name="image" size={22} color={C.primaryDeep} strokeWidth={2} /> },
+                  {
+                    how: 'pdf' as const,
+                    a11y: 'Add a PDF',
+                    icon: <Text style={[{ fontSize: 12, color: C.primaryDeep }, weight(800)]}>PDF</Text>,
+                  },
+                ] as const
+              ).map((b) => (
                 <Pressable
                   key={b.how}
                   accessibilityRole="button"
-                  accessibilityLabel={b.how === 'camera' ? 'Photograph the bill' : b.how === 'gallery' ? 'Choose photos from the gallery' : 'Add a PDF'}
+                  accessibilityLabel={b.a11y}
                   onPress={() => void attach(b.how)}
-                  style={{
-                    flex: 1,
-                    flexDirection: 'row',
+                  style={({ pressed }) => ({
+                    width: 72,
+                    height: 72,
+                    borderRadius: 18,
+                    borderWidth: 1.5,
+                    borderStyle: 'dashed',
+                    borderColor: bad('bill') ? C.danger : '#B9A6FF',
+                    backgroundColor: pressed ? C.primaryTint : '#F7F4FF',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 6,
-                    minHeight: 52,
-                    borderWidth: 1,
-                    borderStyle: 'dashed',
-                    borderColor: bad('bill') ? C.danger : C.faint,
-                    borderRadius: radius.lg,
-                    backgroundColor: C.surface,
-                  }}>
-                  <Icon name={b.glyph} size={18} color={C.body} />
-                  <T style={[{ fontSize: 15, color: C.body }, weight(500)]}>{b.label}</T>
+                  })}>
+                  {b.icon}
                 </Pressable>
-              ))}
-            </View>
-          ) : null}
-          <T style={{ fontSize: 13, lineHeight: 19, marginTop: 6, color: bad('bill') ? C.danger : C.muted }}>
-            Needed on every claim. Add every page. Add the payment screenshot if you have it.
-          </T>
-          {bad('bill') ? (
-            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Add the bill or payment proof.</T>
-          ) : null}
+              ))
+            : null}
         </View>
+        <Text
+          accessibilityLabel="Needed on every claim. Add every page. Add the payment screenshot if you have it."
+          style={{ fontSize: 12, lineHeight: 17, marginTop: 6, color: bad('bill') ? C.danger : C.muted }}>
+          Every page · payment screenshot if you have it
+        </Text>
+        {bad('bill') ? (
+          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 4 }, weight(600)]}>Add the bill or payment proof.</Text>
+        ) : null}
 
-        <View style={{ marginTop: 14 }}>
-          <T s="label" style={{ marginBottom: 6 }}>
-            When you spent it
-          </T>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setErr([]);
-              setCal(true);
-            }}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              width: '100%',
-              minHeight: 52,
-              paddingHorizontal: 14,
-              borderWidth: 1,
-              borderColor: bad('when') || whenWhy ? C.danger : cal ? C.primary : C.border,
-              borderRadius: radius.lg,
-              backgroundColor: C.surface,
-            }}>
-            <T style={{ fontSize: 16, color: ex.when ? C.ink : C.muted }}>{ex.when || 'Pick the day'}</T>
-            <T style={{ fontSize: 18, color: C.muted }}>▾</T>
-          </Pressable>
-          {bad('when') ? (
-            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick the day you spent it.</T>
-          ) : whenWhy ? (
-            /* The day is filled in and still will not do — a rejected claim
-               reopened weeks later carries the day it was spent on. Say which
-               rule refuses it, and that it has to be re-picked. */
-            <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 6 }}>
-              {whenWhy + '. Pick another day, or ask your manager.'}
-            </T>
-          ) : null}
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={'When you spent it: ' + (ex.when || 'pick the day')}
+          onPress={() => {
+            setErr([]);
+            setCal(true);
+          }}
+          style={{
+            marginTop: 14,
+            height: 52,
+            borderRadius: 26,
+            backgroundColor: C.canvas,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            paddingHorizontal: 18,
+            borderWidth: bad('when') || whenWhy ? 2 : 0,
+            borderColor: C.danger,
+          }}>
+          <Icon name="cal" size={18} color={C.ink} strokeWidth={2} />
+          <Text style={[{ flex: 1, fontSize: 15, color: ex.when ? C.ink : C.muted }, weight(700)]}>{ex.when || 'Pick the day'}</Text>
+          <Text style={{ fontSize: 15, color: C.muted }}>▾</Text>
+        </Pressable>
+        {bad('when') ? (
+          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>Pick the day you spent it.</Text>
+        ) : whenWhy ? (
+          /* The day is filled in and still will not do — a rejected claim
+             reopened weeks later carries the day it was spent on. Say which
+             rule refuses it, and that it has to be re-picked. */
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(600)]}>
+            {whenWhy + '. Pick another day, or ask your manager.'}
+          </Text>
+        ) : null}
 
-        <View style={{ marginTop: 14 }}>
-          <T s="label" style={{ marginBottom: 6 }}>
-            What it was for
-          </T>
+        <View style={{ marginTop: 10 }}>
           <VoiceField
             value={ex.note}
             onChangeText={(v) => patch({ note: v })}
             invalid={bad('note')}
-            placeholder="Nagpur – Kamptee – Nagpur, 84 km"
-            style={{ minHeight: 72 }}
+            accessibilityLabel="What it was for"
+            placeholder="What it was for: Nagpur – Kamptee – Nagpur, 84 km"
+            style={[
+              { backgroundColor: C.canvas, borderRadius: 20, minHeight: 72, fontSize: 14, paddingHorizontal: 16, paddingVertical: 12 },
+              bad('note') ? { borderWidth: 2, borderColor: C.danger } : { borderWidth: 0 },
+            ]}
           />
           {bad('note') ? (
-            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+            <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>
               Say what it was for. Your manager approves based on this.
-            </T>
+            </Text>
           ) : null}
         </View>
 
@@ -839,21 +1008,28 @@ export default function ExpensesScreen() {
             keyboard; this is the half he can actually read at the moment he
             presses. */}
         <Presence show={err.length > 0}>
-          <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 16 }}>
-            {'Still needed: ' + err.map((k) => MISSING_WORDS[k]).join(', ') + '.'}
-          </T>
+          <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>
+              {'Still needed: ' + err.map((k) => MISSING_WORDS[k]).join(', ') + '.'}
+            </Text>
+          </View>
         </Presence>
         {sendFail ? (
-          <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 16 }}>{sendFail}</T>
+          <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.danger }, weight(600)]}>{sendFail}</Text>
+          </View>
         ) : null}
 
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />
-          <PrimaryButton
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <PillButton label="Cancel" variant="outline" height={56} onPress={() => close()} style={{ width: 120 }} />
+          <PillButton
             label={sending ? 'Sending…' : fixing ? 'Send again' : 'Send to manager'}
+            variant="navyLime"
+            height={56}
             onPress={send}
             disabled={sending}
             whyDisabled="Sending this claim. Please wait."
+            onRefused={(why) => notify(why, 'info')}
             style={{ flex: 1 }}
           />
         </View>
@@ -873,13 +1049,95 @@ export default function ExpensesScreen() {
         {/* BOTH refusals, because `Calendar` computes the sentence for a greyed
             day and never renders it — so the only place either rule can be read
             is here, and this line covered one of the two. */}
-        <T s="caption" style={{ marginTop: 10 }}>
-          {'Anything older than ' +
-            maxAgeDays +
-            ' days cannot be claimed. A future day cannot be claimed either.'}
-        </T>
-        <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
+        <View
+          accessible
+          accessibilityLabel={'Anything older than ' + maxAgeDays + ' days cannot be claimed. A future day cannot be claimed either.'}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+          <G d="M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM12 11v5M12 8h.01" color={C.muted} size={16} />
+          <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
+            {'Older than ' + maxAgeDays + ' days or a future day cannot be claimed'}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => setCal(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          style={({ pressed }) => ({
+            marginTop: 12,
+            height: 52,
+            borderRadius: 26,
+            backgroundColor: pressed ? C.hairline : C.canvas,
+            alignItems: 'center',
+            justifyContent: 'center',
+          })}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Close</Text>
+        </Pressable>
       </BottomSheet>
     </AppFrame>
+  );
+}
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** The tile words, short enough for a fifth of a sheet; the full name is the label. */
+const KIND_SHORT: Record<string, string> = {
+  food: 'Food',
+  lodging: 'Hotel',
+  travel: 'Bus/train',
+  local_transport: 'Local',
+  other: 'Other',
+};
+
+const RECEIPT_D = 'M6 3h12v18l-3-2-3 2-3-2-3 2z';
+const SHIELD_D = 'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z';
+
+/** A 24-grid stroke glyph the shared Icon set does not carry. */
+function G({ d, color, size = 18 }: { d: string; color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d={d} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** The glyph each claim kind is drawn with, lifted from the artboard. */
+function KindGlyph({ kind, color }: { kind: string; color: string }) {
+  if (kind === 'food') return <G d="M7 3v8a2 2 0 0 0 2 2v8M7 3v5M11 3v5M17 3c-2 2-2 6 0 8v10" color={color} />;
+  if (kind === 'lodging')
+    return (
+      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+        <Path d="M3 18V8M3 14h18v4M21 14v-2a3 3 0 0 0-3-3h-7v5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <Circle cx={7} cy={11} r={2} stroke={color} strokeWidth={2} />
+      </Svg>
+    );
+  if (kind === 'travel')
+    return (
+      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+        <Rect x={5} y={3} width={14} height={14} rx={3} stroke={color} strokeWidth={2} />
+        <Path d="M5 11h14M8 21l1-4M16 21l-1-4" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      </Svg>
+    );
+  if (kind === 'local_transport')
+    return (
+      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+        <Path d="M4 16V9l3-4h8l3 4h2v7" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+        <Circle cx={7} cy={17} r={2} stroke={color} strokeWidth={2} />
+        <Circle cx={17} cy={17} r={2} stroke={color} strokeWidth={2} />
+      </Svg>
+    );
+  if (kind === 'bike')
+    return (
+      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+        <Circle cx={6} cy={17} r={3} stroke={color} strokeWidth={2} />
+        <Circle cx={18} cy={17} r={3} stroke={color} strokeWidth={2} />
+        <Path d="M6 17l4-8h5l3 8M10 9l-1-3H7" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      </Svg>
+    );
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+      <Circle cx={6} cy={12} r={1.5} stroke={color} strokeWidth={2} />
+      <Circle cx={12} cy={12} r={1.5} stroke={color} strokeWidth={2} />
+      <Circle cx={18} cy={12} r={1.5} stroke={color} strokeWidth={2} />
+    </Svg>
   );
 }

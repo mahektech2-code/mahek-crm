@@ -1,8 +1,6 @@
 import React from 'react';
-import { ScrollView, View } from 'react-native';
-import { Card, T } from '../ui/primitives';
-import { Icon } from '../ui/Icon';
-import { color as C, radius, weight } from '../../theme/tokens';
+import { Text, View } from 'react-native';
+import { color as C, weight } from '../../theme/tokens';
 
 /**
  * §5.9 — THE CHAIN, on a shop we deliver to and do not bill.
@@ -67,48 +65,36 @@ export function RelationshipChain({
     },
   ];
 
+  const more = (distributorCount ?? 0) > 1 ? (distributorCount ?? 0) - 1 : 0;
   return (
-    <Card>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ alignItems: 'stretch', gap: 8 }}>
+    <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+        Who sells to this shop
+      </Text>
+      <View style={{ gap: 10, marginTop: 12 }}>
         {links.map((l, i) => (
-          <View key={l.role} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View
-              style={{
-                minWidth: 132,
-                maxWidth: 176,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-                borderWidth: 1,
-                borderColor: l.name ? C.border : C.warnInk,
-                borderRadius: radius.lg,
-                backgroundColor: l.name ? C.surface : C.wash,
-              }}>
-              <T s="caption">{l.role}</T>
-              <T
-                style={[
-                  { fontSize: 14, lineHeight: 19, marginTop: 2, color: l.name ? C.ink : C.warnInk },
-                  weight(l.name ? 500 : 400),
-                ]}>
-                {l.name ?? l.missing}
-              </T>
-            </View>
-            {i < links.length - 1 ? <Icon name="forward" size={14} color={C.faint} /> : null}
+          <View key={l.role} style={{ flexDirection: 'row', gap: 10 }} accessible accessibilityLabel={l.role + ': ' + (l.name ?? l.missing)}>
+            <Text style={[{ width: 100, fontSize: 12, lineHeight: 20, color: C.faint }, weight(400)]}>{l.role}</Text>
+            <Text
+              style={[
+                { flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: l.name ? C.ink : C.warnInk },
+                weight(l.name && i === 0 ? 700 : 400),
+              ]}>
+              {(l.name ?? l.missing) + (l.role === 'Billed by' && l.name && more ? ' · +' + more + ' more' : '')}
+            </Text>
           </View>
         ))}
-      </ScrollView>
+      </View>
 
-      <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 10 }}>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 10 }, weight(400)]}>
         We deliver to this shop. The distributor bills it. The distributor decides price and credit. Your job is the visit and what you learn there.
-      </T>
+      </Text>
 
-      {(distributorCount ?? 0) > 1 ? (
-        <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk, marginTop: 6 }}>
+      {more ? (
+        <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk, marginTop: 4 }, weight(600)]}>
           {distributorCount + ' distributors bill this shop. Only one is shown here.'}
-        </T>
+        </Text>
       ) : null}
-    </Card>
+    </View>
   );
 }

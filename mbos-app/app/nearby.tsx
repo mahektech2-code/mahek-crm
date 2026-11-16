@@ -1,10 +1,13 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, Choice, DashedButton, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
+import { T } from '../src/components/ui/primitives';
+import { Icon } from '../src/components/ui/Icon';
+import { feedback } from '../src/components/ui/feedback';
 import { NavigateButton } from '../src/components/ui/navigate';
-import { color as C, radius, weight } from '../src/theme/tokens';
+import { DashedAdd, GroupCard, Pill, PillButton } from '../src/components/ui/v3';
+import { color as C, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
 /* No `navigateTo` here either — both buttons on this screen are
    `NavigateButton`, so one failure message cannot drift from the other. */
@@ -84,57 +87,82 @@ export default function Nearby() {
     else router.push('/customer');
   };
 
-  return (
-    <AppFrame title="Near me" activeTab="customers" onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 32 }}>
-      <BackLink label={back.label} onPress={back.go} />
+  const isLead = (shop: { leadStage: string | null }) => {
+    const stage = shop.leadStage?.toLowerCase() ?? '';
+    return !!stage && stage !== 'converted' && stage !== 'won';
+  };
 
-      {/* The radii the office configured, not a list written into this screen. */}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-        {(answer?.options ?? []).map((m) => (
-          <Choice
+  const hero = (
+    /* The radii the office configured, not a list written into this screen. */
+    <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+      {(answer?.options ?? []).map((m) => {
+        const on = within === m;
+        return (
+          <Pressable
             key={m}
-            label={metresLabel(m)}
-            selected={within === m}
-            onPress={() => load(m)}
-            style={{ paddingHorizontal: 16 }}
-          />
-        ))}
-      </View>
+            onPress={() => {
+              if (!on) feedback('select');
+              load(m);
+            }}
+            accessibilityRole="radio"
+            accessibilityLabel={'Within ' + metresLabel(m)}
+            accessibilityState={{ selected: on }}
+            style={({ pressed }) => ({
+              flex: 1,
+              minWidth: 64,
+              height: 44,
+              borderRadius: 22,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: on ? C.navy : pressed ? C.primaryTint : C.surface,
+            })}>
+            <T style={[{ fontSize: 14, color: on ? C.lime : C.lavenderInk }, weight(700)]}>{metresLabel(m)}</T>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
 
+  return (
+    <AppFrame
+      title="Near me"
+      activeTab="customers"
+      onBack={back.go}
+      hero={hero}
+      contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 32, gap: 10 }}>
       {busy ? (
-        <T s="caption" style={{ marginTop: 16 }}>Searching…</T>
+        <T style={{ fontSize: 13, color: C.muted, paddingHorizontal: 6 }}>Searching…</T>
       ) : failed ? (
-        <Card style={{ marginTop: 16 }}>
-          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Could not load the list</T>
-          <T s="caption" style={{ marginTop: 4 }}>
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
+          <T style={[{ fontSize: 16, color: C.ink }, weight(800)]}>Could not load the list</T>
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
             Your customers are safe. The list could not be made right now.
           </T>
-          <DashedButton
-            label="Try again"
-            onPress={() => load(within ?? undefined)}
-            style={{ marginTop: 12 }}
-          />
-        </Card>
+          <DashedAdd label="Try again" onPress={() => load(within ?? undefined)} style={{ marginTop: 10 }} />
+        </View>
       ) : !answer?.from ? (
         /* No fix is a recorded fact and the screen says WHICH — refused, off, or
            simply not known yet. "Nothing nearby" would read as a book with no
            shops in it, which is a different and much worse thing to believe. */
-        <Card style={{ marginTop: 16 }}>
-          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-            {answer?.reason === 'denied'
-              ? 'Location permission is off'
-              : answer?.reason === 'off'
-                ? 'Location is switched off'
-                : 'No GPS yet'}
-          </T>
-          <T s="caption" style={{ marginTop: 4 }}>
-            {answer?.reason === 'denied'
-              ? 'Allow location for Mahek MBOS in your phone settings. Then come back.'
-              : answer?.reason === 'off'
-                ? 'Turn on Location from the top of your phone screen. Then come back.'
-                : 'Step outside for a minute so GPS can find you.'}
-          </T>
-        </Card>
+        <View style={{ backgroundColor: C.warnBg, borderRadius: 22, padding: 16, flexDirection: 'row', gap: 12 }}>
+          <Icon name="locate" size={24} color={C.warnInk} strokeWidth={2} />
+          <View style={{ flex: 1 }}>
+            <T style={[{ fontSize: 16, color: C.ink }, weight(800)]}>
+              {answer?.reason === 'denied'
+                ? 'Location permission is off'
+                : answer?.reason === 'off'
+                  ? 'Location is switched off'
+                  : 'No GPS yet'}
+            </T>
+            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+              {answer?.reason === 'denied'
+                ? 'Allow location for Mahek MBOS in your phone settings. Then come back.'
+                : answer?.reason === 'off'
+                  ? 'Turn on Location from the top of your phone screen. Then come back.'
+                  : 'Step outside for a minute so GPS can find you.'}
+            </T>
+          </View>
+        </View>
       ) : (
         <>
           {/* §G — one recommendation, and why. It is the head of the same list
@@ -142,98 +170,130 @@ export default function Nearby() {
               disagree about which shop. */}
           {answer.best ? (
             <Appear>
-              <Card style={{ marginTop: 16, borderLeftWidth: 3, borderLeftColor: C.primary }}>
-                <SectionLabel>Next best visit</SectionLabel>
-                <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 4 }, weight(600)]}>
+              <View style={{ backgroundColor: C.navy, borderRadius: 24, padding: 18 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Icon name="spark" size={16} color={C.lime} strokeWidth={2} />
+                  <T style={[{ flex: 1, fontSize: 13, color: C.lime }, weight(700)]}>Next best visit</T>
+                  <Icon name="nav" size={14} color="#FFFFFF" strokeWidth={2} />
+                  <T style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>{metresLabel(answer.best.metres)}</T>
+                </View>
+                <T style={[{ fontSize: 22, lineHeight: 28, letterSpacing: -0.44, color: '#FFFFFF', marginTop: 10 }, weight(800)]}>
                   {shopName(answer.best.shop.name)}
                 </T>
-                <T s="caption" style={{ marginTop: 2 }}>
-                  {metresLabel(answer.best.metres) + ' · ' + answer.best.reasons.join(' · ')}
-                </T>
-                {/* THE ONE Navigate, not a third hand-rolled one. `navigate.tsx`
-                    exists precisely so a second `openMaps` call site cannot let
-                    the failure message on one screen drift from the other's — and
-                    these two were worse than drift: they called `navigateTo`,
-                    which needs a coordinate and falls back to the clipboard,
-                    while every other Navigate in the app searches the shop's name
-                    and town when there is no pin. Half this book has no pin, and
-                    both of these began `if (!coords) return` — a tap that
-                    acknowledged nothing at all. */}
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                {answer.best.reasons.length || answer.best.shop.outstandingPaise > 0 ? (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                    {answer.best.reasons.map((r) => (
+                      <Pill key={r} text={r} bg="rgba(255,255,255,0.1)" fg="#FFFFFF" />
+                    ))}
+                    {answer.best.shop.outstandingPaise > 0 ? (
+                      <Pill
+                        text={inrFromPaise(answer.best.shop.outstandingPaise)}
+                        icon="wallet"
+                        bg="rgba(255,107,94,0.18)"
+                        fg="#FF8A7E"
+                        a11y={inrFromPaise(answer.best.shop.outstandingPaise) + ' outstanding'}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
+                {/* THE ONE Navigate, not a hand-rolled one. `navigate.tsx` exists
+                    precisely so a second `openMaps` call site cannot let the
+                    failure message on one screen drift from the other's — and
+                    every Navigate in the app searches the shop's name and town
+                    when there is no pin, which is half this book. */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 }}>
                   <NavigateButton
                     lat={answer.best.shop.coords?.lat}
                     lng={answer.best.shop.coords?.lng}
                     name={answer.best.shop.name}
-                    variant="button"
+                    variant="icon"
+                  />
+                  <PillButton
+                    label={isLead(answer.best.shop) ? 'Open lead' : 'Open shop'}
+                    variant="lime"
+                    block
+                    height={56}
+                    onPress={() => open(answer.best!.shop)}
                     style={{ flex: 1 }}
                   />
-                  <PrimaryButton
-                    label="Open shop"
-                    onPress={() => open(answer.best!.shop)}
-                    style={{ flex: 1, borderRadius: radius.xl }}
-                  />
                 </View>
-              </Card>
+              </View>
             </Appear>
           ) : null}
 
-          <T s="caption" style={{ marginTop: 16 }}>
-            {answer.shops.length
-              ? plural(answer.shops.length, 'shop') + ' to visit within ' + metresLabel(answer.radiusMetres)
-              : /* The advice only where there IS a wider circle. On the widest
-                   the sentence named the one action that does not exist, which
-                   is an empty state whose only instruction is a dead end. */
-                'Nothing within ' +
-                metresLabel(answer.radiusMetres) +
-                ' has anything pending.' +
-                (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a bigger distance.' : '')}
-          </T>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6 }}>
+            <T style={[{ flex: 1, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>
+              {answer.shops.length
+                ? plural(answer.shops.length, 'shop') + ' within ' + metresLabel(answer.radiusMetres)
+                : /* The advice only where there IS a wider circle. On the widest
+                     the sentence named the one action that does not exist. */
+                  'Nothing within ' +
+                  metresLabel(answer.radiusMetres) +
+                  ' has anything pending.' +
+                  (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a bigger distance.' : '')}
+            </T>
+            {answer.shops.length ? <T style={{ fontSize: 12, color: C.muted }}>best first</T> : null}
+          </View>
 
-          <View style={{ gap: 12, marginTop: 8 }}>
-            {/* Each radius re-reads and re-mounts the list, so the cascade plays
-                for a new circle and not for a pull that changed nothing. */}
-            {answer.shops.slice(0, NEARBY_PAGE).map((r, i) => (
-              <Stagger key={r.shop.id} index={i + 1}>
-                <Card>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+          {answer.shops.length ? (
+            <GroupCard style={{ paddingHorizontal: 12 }}>
+              {/* Each radius re-reads and re-mounts the list, so the cascade plays
+                  for a new circle and not for a pull that changed nothing. */}
+              {answer.shops.slice(0, NEARBY_PAGE).map((r, i) => (
+                <Stagger key={r.shop.id} index={i + 1}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 72, paddingVertical: 10 }}>
+                    <Pressable
+                      onPress={() => open(r.shop)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        shopName(r.shop.name) +
+                        ', ' +
+                        metresLabel(r.metres) +
+                        (r.reasons.length ? ', ' + r.reasons.join(', ') : '') +
+                        (r.shop.outstandingPaise > 0 ? ', ' + inrFromPaise(r.shop.outstandingPaise) + ' outstanding' : '')
+                      }
+                      style={({ pressed }) => ({ flex: 1, minWidth: 0, opacity: pressed ? 0.7 : 1 })}>
+                      <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(700)]}>
                         {shopName(r.shop.name)}
                       </T>
                       {/* Why it is on the list. A ranking nobody can get behind is
                           one they stop believing the first time it surprises them. */}
-                      <T s="caption" style={{ marginTop: 2 }}>{r.reasons.join(' · ')}</T>
-                    </View>
-                    <Badge tone="neutral">{metresLabel(r.metres)}</Badge>
+                      <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                        {[metresLabel(r.metres), ...r.reasons].join(' · ')}
+                      </T>
+                      {r.shop.outstandingPaise > 0 ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <Icon name="wallet" size={12} color={C.danger} strokeWidth={2} />
+                          <T style={[{ fontSize: 13, color: C.danger }, weight(700)]}>{inrFromPaise(r.shop.outstandingPaise)}</T>
+                        </View>
+                      ) : null}
+                    </Pressable>
+                    <NavigateButton lat={r.shop.coords?.lat} lng={r.shop.coords?.lng} name={r.shop.name} variant="icon" />
+                    <Pressable
+                      onPress={() => open(r.shop)}
+                      accessibilityRole="button"
+                      accessibilityLabel={isLead(r.shop) ? 'Open lead' : 'Open'}
+                      style={({ pressed }) => ({
+                        width: 44,
+                        height: 44,
+                        borderRadius: 22,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+                      })}>
+                      <Icon name="forward" size={18} color={C.primaryDeep} strokeWidth={2} />
+                    </Pressable>
                   </View>
-
-                  {r.shop.outstandingPaise > 0 ? (
-                    <T style={[{ fontSize: 14, marginTop: 8, color: C.danger }, weight(500)]}>
-                      {inrFromPaise(r.shop.outstandingPaise) + ' outstanding'}
-                    </T>
-                  ) : null}
-
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                    <NavigateButton
-                      lat={r.shop.coords?.lat}
-                      lng={r.shop.coords?.lng}
-                      name={r.shop.name}
-                      variant="button"
-                      style={{ flex: 1 }}
-                    />
-                    <DashedButton label="Open" onPress={() => open(r.shop)} style={{ flex: 1 }} />
-                  </View>
-                </Card>
-              </Stagger>
-            ))}
-          </View>
+                </Stagger>
+              ))}
+            </GroupCard>
+          ) : null}
 
           {/* What the list is a slice OF — the same sentence the pick screen
-              prints for the same reason. A capped list that counts itself is
-              how a screen shows thirty of a hundred and says nothing. */}
+              prints for the same reason. */}
           {answer.shops.length > NEARBY_PAGE ? (
-            <T s="caption" style={{ marginTop: 12, textAlign: 'center' }}>
-              {`${NEARBY_PAGE} of ${answer.shops.length}, best first. Pick a smaller distance to see shops close to you.`}
+            <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, textAlign: 'center' }}>
+              {`${NEARBY_PAGE} of ${answer.shops.length}, best first · pick a smaller distance`}
             </T>
           ) : null}
         </>
