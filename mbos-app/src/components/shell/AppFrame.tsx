@@ -725,7 +725,7 @@ function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: 
         <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
           {'At ' + name}
         </Text>
-        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+        <Text numberOfLines={1} style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
           {'Arrived ' + hhmm(at) + ' · not checked in'}
         </Text>
       </View>
@@ -779,7 +779,7 @@ function InVisitBar({
         <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>
           {(leftAt != null ? 'You left ' : 'In ') + name}
         </Text>
-        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+        <Text numberOfLines={1} style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
           {leftAt != null
             ? 'Not checked out · left about ' + hhmm(leftAt)
             : 'Checked in ' + hhmm(since) + ' · ' + spent}

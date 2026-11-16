@@ -439,7 +439,7 @@ export default function PickScreen() {
           <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: '#FFFFFF' }, weight(800)]}>
             {plural(picked.length, 'shop')}
           </T>
-          <T style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
+          <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
             {picked.length
               ? 'Your manager sees the day'
               : hadPicks

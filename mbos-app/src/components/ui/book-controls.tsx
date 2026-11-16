@@ -352,7 +352,7 @@ export function SheetAction({
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>{label}</Text>
-        {sub ? <Text style={type.caption}>{sub}</Text> : null}
+        {sub ? <Text style={[type.caption, { marginTop: 2 }]}>{sub}</Text> : null}
       </View>
     </Pressable>
   );

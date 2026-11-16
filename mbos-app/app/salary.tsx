@@ -173,7 +173,7 @@ function NavyFigure({ label, value }: { label: string; value: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12 }}>
       <T style={{ fontSize: 11, lineHeight: 15, color: C.onNavyMuted }}>{label}</T>
-      <T style={[{ fontSize: 17, lineHeight: 22, color: C.onNavy }, weight(800), tabular]}>{value}</T>
+      <T style={[{ marginTop: 4, fontSize: 17, lineHeight: 22, color: C.onNavy }, weight(800), tabular]}>{value}</T>
     </View>
   );
 }
@@ -235,7 +235,7 @@ function Figure({
     <View style={{ flex: 1 }} accessible accessibilityLabel={`${a11y}: ${value}`}>
       <Glyph shapes={icon} size={16} color={iconColor} />
       <T style={[{ fontSize: 19, lineHeight: 25, color: valueColor }, weight(800), tabular]}>{value}</T>
-      <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{label}</T>
+      <T style={{ marginTop: 4, fontSize: 11, lineHeight: 15, color: C.muted }}>{label}</T>
     </View>
   );
 }

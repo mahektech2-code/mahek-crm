@@ -436,7 +436,7 @@ export function SheetActions({
 }) {
   return (
     <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-      <PillButton label={cancelLabel} variant="outline" height={56} onPress={onCancel} style={{ width: 120 }} />
+      <PillButton label={cancelLabel} variant="outline" height={56} onPress={onCancel} style={{ minWidth: 120, flexShrink: 0 }} />
       <PillButton label={label} variant="navyLime" height={56} onPress={onPress} disabled={busy} style={{ flex: 1 }} />
     </View>
   );

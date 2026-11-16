@@ -306,7 +306,7 @@ export default function MoreScreen() {
           Me
         </Text>
         {user ? (
-          <Text numberOfLines={1} style={{ fontSize: 12, color: C.lavenderMuted }}>
+          <Text numberOfLines={1} style={{ marginTop: 4, fontSize: 12, color: C.lavenderMuted }}>
             {user.name.split(' ')[0] + (role ? ' · ' + role : '')}
           </Text>
         ) : null}

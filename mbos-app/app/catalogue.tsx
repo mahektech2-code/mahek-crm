@@ -163,7 +163,7 @@ export default function CatalogueScreen() {
           {/* The rate where one exists, the pack size under it; no rate is the
               pack size alone rather than a confident ₹0. */}
           {price ? <T style={[{ fontSize: 16, color: C.ink }, weight(800)]}>{price}</T> : null}
-          {x.packSize ? <T style={{ fontSize: 12, color: C.muted }}>{x.packSize}</T> : null}
+          {x.packSize ? <T style={{ marginTop: 4, fontSize: 12, color: C.muted }}>{x.packSize}</T> : null}
         </View>
       </View>
     );

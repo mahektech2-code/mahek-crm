@@ -278,7 +278,7 @@ export default function PerformanceScreen() {
                   <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>
                     No target set {monthKey ? 'this month' : 'in this period'}
                   </Text>
-                  <T style={{ fontSize: 12, color: C.muted }}>What you did is below. No score without a target.</T>
+                  <T style={{ marginTop: 2, fontSize: 12, color: C.muted }}>What you did is below. No score without a target.</T>
                 </View>
               </View>
             </View>
@@ -806,7 +806,7 @@ function RangeSheet({
           backgroundColor: on ? C.primaryTint : C.surface,
         }}>
         <Text style={[{ fontSize: 11, color: on ? C.primaryDeep : C.muted }, weight(700)]}>{which === 'from' ? 'From' : 'To'}</Text>
-        <Text style={[{ fontSize: 15, lineHeight: 21, color: value ? C.ink : C.muted }, weight(value ? 700 : 600)]}>
+        <Text style={[{ marginTop: 2, fontSize: 15, lineHeight: 21, color: value ? C.ink : C.muted }, weight(value ? 700 : 600)]}>
           {value ? dmy(value) : 'Pick a date'}
         </Text>
       </Pressable>
@@ -943,10 +943,10 @@ function Figure({
       ) : (
         <Text style={valueStyle}>{value}</Text>
       )}
-      <Text style={{ fontSize: 12, lineHeight: 17, color: target ? C.muted : C.faint }}>
+      <Text style={{ marginTop: 4, fontSize: 12, lineHeight: 17, color: target ? C.muted : C.faint }}>
         {target ? (bare ? target : `of ${target}`) : 'no target'}
       </Text>
-      {base ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{base}</Text> : null}
+      {base ? <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>{base}</Text> : null}
       {bp === null ? null : (
         <View
           style={{

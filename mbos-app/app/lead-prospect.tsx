@@ -711,7 +711,7 @@ export default function ProspectForm() {
           onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
           accessibilityRole="button"
           accessibilityLabel="Back to the lead"
-          style={({ pressed }) => ({ width: 140, minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          style={({ pressed }) => ({ minWidth: 120, flexShrink: 0, minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
           <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Back to lead</Text>
         </Pressable>
         <PrimaryButton

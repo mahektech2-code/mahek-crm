@@ -159,13 +159,13 @@ export default function TravelScreen() {
                       <T style={[{ fontSize: 15, color: C.ink }, weight(700)]} numberOfLines={2}>
                         {title}
                       </T>
-                      {caption ? <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{caption}</T> : null}
+                      {caption ? <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>{caption}</T> : null}
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
                       <T style={[{ fontSize: 16, color: pays ? C.ink : C.faint }, weight(800), tabular]}>
                         {c ? inrFromPaise(c.eligiblePaise) : '—'}
                       </T>
-                      <T style={[{ fontSize: 12, color: C.muted }, tabular]}>{km(c?.chosenMetres ?? null)}</T>
+                      <T style={[{ marginTop: 4, fontSize: 12, color: C.muted }, tabular]}>{km(c?.chosenMetres ?? null)}</T>
                     </View>
                   </View>
                   {zero ? (
@@ -196,7 +196,7 @@ export default function TravelScreen() {
           <Disc icon="doc" bg={C.primaryTint} ink={C.primaryDeep} />
           <View style={{ flex: 1 }}>
             <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Fare, toll or parking?</T>
-            <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+            <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>
               Log it with a bill photo in Expenses — it goes to your manager straight away. Wrong trip: your manager corrects it.
             </T>
           </View>

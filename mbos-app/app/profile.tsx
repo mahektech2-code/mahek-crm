@@ -212,7 +212,7 @@ export default function ProfileScreen() {
                 style={[{ fontSize: 16, lineHeight: 22, color: f.value ? C.ink : C.faint }, weight(f.value ? 600 : 400)]}>
                 {f.value || 'Not set'}
               </T>
-              <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{f.label}</T>
+              <T style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.muted }}>{f.label}</T>
             </View>
           </View>
         ))}

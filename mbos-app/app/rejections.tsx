@@ -127,7 +127,7 @@ export default function Rejections() {
           <Text
             numberOfLines={1}
             accessibilityLabel="The office did not accept these. Each one says what to do. Nothing goes until you choose."
-            style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+            style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.muted }}>
             Nothing goes until you choose
           </Text>
         </View>
@@ -207,7 +207,7 @@ export default function Rejections() {
                       {payload.customerName ?? kind}
                     </Text>
                     {payload.customerName || valueLine ? (
-                      <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                      <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>
                         {payload.customerName ? kind : ''}
                         {payload.customerName && valueLine ? ' · ' : ''}
                         {valueLine ? (

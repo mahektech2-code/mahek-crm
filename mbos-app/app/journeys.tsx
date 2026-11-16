@@ -466,7 +466,7 @@ function DayRow({ d, today, onPress }: { d: JourneyDay; today: string; onPress: 
         <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(700)]}>
           {dayLabelRelative(d.planDate, today) + ' · ' + dayWhere(d)}
         </T>
-        <T numberOfLines={2} style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+        <T numberOfLines={2} style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>
           {dayDetail(d, today)}
         </T>
       </View>
@@ -643,7 +643,7 @@ function DaySheet({
         <Pill text={words.label} bg={words.bg} fg={words.fg} height={26} />
       </View>
       <T style={[{ fontSize: 22, lineHeight: 28, color: C.ink, marginTop: 4 }, weight(800)]}>{dayWhere(day)}</T>
-      <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{dayDetail(day, today)}</T>
+      <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.muted }}>{dayDetail(day, today)}</T>
       {day.proposedBy || day.counterCity ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {day.proposedBy ? (
@@ -689,7 +689,7 @@ function DaySheet({
             <View style={{ flex: 1, minWidth: 0 }}>
               <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{s.customerName}</T>
               <T
-                style={{
+                style={{ marginTop: 2, 
                   fontSize: 12,
                   lineHeight: 16,
                   color: s.status === 'skipped' && s.skipReason ? C.danger : C.muted,

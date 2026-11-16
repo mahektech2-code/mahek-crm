@@ -118,7 +118,7 @@ export default function OrdersScreen() {
           </Text>
           <Text
             numberOfLines={1}
-            style={[{ fontSize: 12, lineHeight: 16, color: waiting ? C.warnInk : C.muted }, weight(waiting ? 700 : 400)]}>
+            style={[{ marginTop: 4, fontSize: 12, lineHeight: 16, color: waiting ? C.warnInk : C.muted }, weight(waiting ? 700 : 400)]}>
             {waiting ? plural(waiting, 'order') + ' waiting for office' : 'No order waiting for office'}
           </Text>
         </View>

@@ -212,7 +212,7 @@ export default function AttendanceScreen() {
               <T style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -1, color: C.onNavy, marginTop: 8 }, weight(800), tabular]}>
                 {workedLabel(workedSoFar, running)}
               </T>
-              <T style={{ fontSize: 12, color: C.onNavyMuted }}>so far</T>
+              <T style={{ marginTop: 4, fontSize: 12, color: C.onNavyMuted }}>so far</T>
             </>
           ) : (
             <T style={{ fontSize: 15, lineHeight: 22, color: C.onNavyMuted, marginTop: 8 }}>Punch in from Home.</T>
@@ -283,7 +283,7 @@ export default function AttendanceScreen() {
               ]}>
               {x.v}
             </T>
-            <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{x.s}</T>
+            <T style={{ marginTop: 4, fontSize: 11, lineHeight: 15, color: C.muted }}>{x.s}</T>
           </View>
         ))}
       </View>
@@ -383,7 +383,7 @@ export default function AttendanceScreen() {
                 }}>
                 <View style={{ width: 44, alignItems: 'center' }}>
                   <T style={[{ fontSize: 17, lineHeight: 21, color: C.ink }, weight(800), tabular]}>{dd}</T>
-                  <T style={{ fontSize: 11, lineHeight: 14, color: C.muted }}>
+                  <T style={{ marginTop: 4, fontSize: 11, lineHeight: 14, color: C.muted }}>
                     {MONTH_SHORT[mm - 1] + ' · ' + DAY_NAMES[new Date(d.day + 'T00:00:00').getDay()]}
                   </T>
                 </View>

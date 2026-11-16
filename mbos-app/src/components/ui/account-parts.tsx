@@ -97,7 +97,7 @@ export function Figure({
         {value}
       </T>
       {sub ? (
-        <T numberOfLines={2} style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>
+        <T numberOfLines={2} style={{ marginTop: 4, fontSize: 11, lineHeight: 15, color: C.muted }}>
           {sub}
         </T>
       ) : null}

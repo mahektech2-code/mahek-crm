@@ -451,7 +451,7 @@ export default function MapsScreen() {
                 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={[{ fontSize: 15, lineHeight: 21, color: C.body }, weight(700)]}>{pack.label}</Text>
-                  <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
+                  <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>
                     {[
                       dataSize(pack.status?.completedResourceSize),
                       pack.savedAt ? 'saved ' + pretty(isoDate(new Date(pack.savedAt))) : null,

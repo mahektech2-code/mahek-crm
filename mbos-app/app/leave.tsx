@@ -231,7 +231,7 @@ export default function LeaveScreen() {
       <T style={[{ fontSize: 12, color: C.lavenderMuted, marginTop: 16 }, weight(700)]}>
         {year ? 'Taken in ' + year : 'Taken this year'}
       </T>
-      <T style={[{ fontSize: takenTotal ? 36 : 28, lineHeight: takenTotal ? 42 : 34, letterSpacing: -1, color: C.lavenderInk }, weight(800), tabular]}>
+      <T style={[{ marginTop: 4, fontSize: takenTotal ? 36 : 28, lineHeight: takenTotal ? 42 : 34, letterSpacing: -1, color: C.lavenderInk }, weight(800), tabular]}>
         {takenTotal ? lengthOf(takenTotal) : 'No leave yet'}
       </T>
       {takenByKind.size ? (
@@ -326,7 +326,7 @@ export default function LeaveScreen() {
             {TYPES.map((k) => (
               <View key={k} style={{ width: '48.5%', backgroundColor: C.canvas, borderRadius: 16, padding: 10 }}>
                 <T style={[{ fontSize: 13, color: C.ink }, weight(800)]}>{k}</T>
-                <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{TYPE_HELP[k]}</T>
+                <T style={{ marginTop: 2, fontSize: 11, lineHeight: 15, color: C.muted }}>{TYPE_HELP[k]}</T>
               </View>
             ))}
           </View>
@@ -443,7 +443,7 @@ export default function LeaveScreen() {
                   <Glyph shapes={k === 'Morning' ? SUN : SUNSET} size={20} color={on ? C.primary : C.muted} />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <T style={[{ fontSize: 14, color: C.ink }, weight(800)]}>{label}</T>
-                    <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{hours}</T>
+                    <T style={{ marginTop: 2, fontSize: 11, lineHeight: 15, color: C.muted }}>{hours}</T>
                   </View>
                 </Pressable>
               );

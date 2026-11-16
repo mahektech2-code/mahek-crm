@@ -313,7 +313,7 @@ export function SetupStepList(props: {
                 <StepMark n={steps.indexOf(st) + 1} done state="plain" />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{st.title}</Text>
-                  <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{st.detail}</Text>
+                  <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>{st.detail}</Text>
                 </View>
                 <ToneBadge tone="done" />
               </View>

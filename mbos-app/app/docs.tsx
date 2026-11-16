@@ -324,7 +324,7 @@ const DocRow = React.memo(function DocRow({
             {d.title}
           </Text>
           {d.description ? (
-            <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }} numberOfLines={1}>
+            <Text style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.muted }} numberOfLines={1}>
               {d.description}
             </Text>
           ) : null}
@@ -428,7 +428,7 @@ function EmptyRow({
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{title}</Text>
-        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{body}</Text>
+        <Text style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.muted }}>{body}</Text>
       </View>
     </View>
   );

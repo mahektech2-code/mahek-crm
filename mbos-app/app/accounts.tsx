@@ -119,13 +119,13 @@ export default function AccountsScreen() {
           <T style={{ fontSize: 12, color: C.onNavyMuted, marginTop: 14 }}>Owed across your book · confirmed money</T>
           <T
             style={[
-              { fontSize: 38, lineHeight: 44, letterSpacing: -0.8, color: money?.owedPaise ? '#FF8A80' : '#FFFFFF' },
+              { marginTop: 4, fontSize: 38, lineHeight: 44, letterSpacing: -0.8, color: money?.owedPaise ? '#FF8A80' : '#FFFFFF' },
               weight(800),
               tabular,
             ]}>
             {money ? inrFromPaise(money.owedPaise) : '—'}
           </T>
-          <T style={{ fontSize: 12, color: C.onNavyMuted }}>
+          <T style={{ marginTop: 4, fontSize: 12, color: C.onNavyMuted }}>
             {money ? `${money.owing} of ${money.accounts} accounts owe` : 'Loading…'}
           </T>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
@@ -300,7 +300,7 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
           <T style={[{ fontSize: 16, lineHeight: 21, color: C.ink }, weight(700)]} numberOfLines={1}>
             {shopName(c.name)}
           </T>
-          <T s="caption" numberOfLines={1}>
+          <T style={{ marginTop: 4 }} s="caption" numberOfLines={1}>
             {[c.city, c.lastOrderDate ? 'ordered ' + longDay(c.lastOrderDate) : null].filter(Boolean).join(' · ') || '—'}
           </T>
         </View>
@@ -309,7 +309,7 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
             {owed > 0 ? inrFromPaise(owed) : 'Nothing due'}
           </T>
           {c.creditLimitPaise ? (
-            <T s="micro" style={tabular}>
+            <T s="micro" style={[tabular, { marginTop: 4 }]}>
               of {compactInrFromPaise(c.creditLimitPaise)} limit
             </T>
           ) : null}
@@ -379,7 +379,7 @@ function Stat({
         opacity: pressed ? 0.85 : 1,
       })}>
       <T style={[{ fontSize: 20, lineHeight: 25, color: ink }, weight(800), tabular]}>{value}</T>
-      <T style={[{ fontSize: 11, lineHeight: 14, color: on ? C.navy : C.onNavyMuted }, weight(on ? 600 : 500)]} numberOfLines={1}>
+      <T style={[{ marginTop: 4, fontSize: 11, lineHeight: 14, color: on ? C.navy : C.onNavyMuted }, weight(on ? 600 : 500)]} numberOfLines={1}>
         {label}
       </T>
     </Pressable>

@@ -601,7 +601,7 @@ export function ActionSheet({
                 <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF' }, weight(800)]}>
                   {items[0].label}
                 </Text>
-                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>
+                <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.onNavyMuted }}>
                   {items[0].sub}
                 </Text>
               </View>
@@ -622,7 +622,7 @@ export function ActionSheet({
                     <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
                       {i.label}
                     </Text>
-                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>
+                    <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={{ marginTop: 2, fontSize: 11, lineHeight: 15, color: C.muted }}>
                       {i.sub}
                     </Text>
                   </View>
@@ -648,7 +648,7 @@ export function ActionSheet({
               <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>
                 {i.label}
               </Text>
-              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={type.caption}>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[type.caption, { marginTop: 2 }]}>
                 {i.sub}
               </Text>
             </View>

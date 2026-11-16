@@ -71,11 +71,11 @@ export default function HolidaysScreen() {
             <>
               <View accessible accessibilityLabel={`Your holidays: ${mine.length}`}>
                 <T style={[{ fontSize: 30, lineHeight: 36, letterSpacing: -0.6, color: C.lavenderInk }, weight(800), tabular]}>{mine.length}</T>
-                <T style={{ fontSize: 12, color: C.lavenderMuted }}>your holidays</T>
+                <T style={{ marginTop: 4, fontSize: 12, color: C.lavenderMuted }}>your holidays</T>
               </View>
               <View accessible accessibilityLabel={`Still ahead: ${ahead.length}`}>
                 <T style={[{ fontSize: 30, lineHeight: 36, letterSpacing: -0.6, color: C.primaryDeep }, weight(800), tabular]}>{ahead.length}</T>
-                <T style={{ fontSize: 12, color: C.lavenderMuted }}>still ahead</T>
+                <T style={{ marginTop: 4, fontSize: 12, color: C.lavenderMuted }}>still ahead</T>
               </View>
             </>
           ) : null}
@@ -172,7 +172,7 @@ export default function HolidaysScreen() {
                       }}>
                       <View style={{ width: 44, alignItems: 'center' }}>
                         <T style={[{ fontSize: 17, lineHeight: 21, color: ink }, weight(800), tabular]}>{dd}</T>
-                        <T style={{ fontSize: 11, lineHeight: 14, color: ink }}>{weekday(h.onDate)}</T>
+                        <T style={{ marginTop: 4, fontSize: 11, lineHeight: 14, color: ink }}>{weekday(h.onDate)}</T>
                       </View>
                       <View style={{ flex: 1 }}>
                         <T style={[{ fontSize: 15, lineHeight: 20, color: ink }, weight(700)]}>{h.name}</T>
@@ -209,13 +209,13 @@ export default function HolidaysScreen() {
                         style={{ minHeight: 56, paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: C.hairline, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <View style={{ width: 44, alignItems: 'center' }}>
                           <T style={[{ fontSize: 17, lineHeight: 21, color: C.faint }, weight(800), tabular]}>{dd}</T>
-                          <T style={{ fontSize: 11, lineHeight: 14, color: C.faint }}>
+                          <T style={{ marginTop: 4, fontSize: 11, lineHeight: 14, color: C.faint }}>
                             {MONTHS[mm - 1].slice(0, 3)} · {weekday(h.onDate)}
                           </T>
                         </View>
                         <View style={{ flex: 1 }}>
                           <T style={{ fontSize: 15, lineHeight: 20, color: C.muted }}>{h.name}</T>
-                          <T style={{ fontSize: 12, lineHeight: 16, color: C.faint }}>Not yours · {h.scope ?? 'not given to you'}</T>
+                          <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.faint }}>Not yours · {h.scope ?? 'not given to you'}</T>
                         </View>
                       </View>
                     );

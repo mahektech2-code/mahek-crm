@@ -200,7 +200,7 @@ function Stat({
           tabular,
         ]}
       />
-      <T style={{ fontSize: 12, color: big ? C.onNavyMuted : C.muted }}>{label}</T>
+      <T style={{ marginTop: 4, fontSize: 12, color: big ? C.onNavyMuted : C.muted }}>{label}</T>
     </View>
   );
 }

@@ -136,7 +136,7 @@ export default function Nearby() {
       ) : failed ? (
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
           <T style={[{ fontSize: 16, color: C.ink }, weight(800)]}>Could not load the list</T>
-          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+          <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.muted }}>
             Your customers are safe. The list could not be made right now.
           </T>
           <DashedAdd label="Try again" onPress={() => load(within ?? undefined)} style={{ marginTop: 10 }} />
@@ -155,7 +155,7 @@ export default function Nearby() {
                   ? 'Location is switched off'
                   : 'No GPS yet'}
             </T>
-            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+            <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.muted }}>
               {answer?.reason === 'denied'
                 ? 'Allow location for Mahek MBOS in your phone settings. Then come back.'
                 : answer?.reason === 'off'

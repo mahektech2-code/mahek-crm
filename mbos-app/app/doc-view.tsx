@@ -21,6 +21,7 @@ import { shareAvailable, shareFile } from '../src/native/share';
 import { pdfPageCount, pdfPreviewAvailable, renderPdfPage } from '../src/native/pdf-preview';
 import { useStore } from '../src/state/store';
 import { dmy, isoDate } from '../src/lib/format';
+import { BADGE_FONT_CAP } from '../src/components/ui/font-scale';
 
 /**
  * ONE DOCUMENT, READ INSIDE THE APP.
@@ -263,7 +264,7 @@ function Downloading({ fraction, size }: { fraction: number | null; size: string
         {fraction == null ? (
           <ActivityIndicator size="small" color={C.primaryDeep} />
         ) : (
-          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(800)]}>{pct}%</Text>
+          <Text numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={BADGE_FONT_CAP} style={[{ fontSize: 14, lineHeight: 18, color: C.primaryDeep }, weight(800)]}>{pct}%</Text>
         )}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>

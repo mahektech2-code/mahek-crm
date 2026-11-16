@@ -330,7 +330,7 @@ export default function SyncScreen() {
                   <Text style={[{ fontSize: 40, lineHeight: 42, letterSpacing: -0.8, color: '#FFFFFF' }, weight(800)]}>
                     {waiting}
                   </Text>
-                  <Text style={{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
+                  <Text style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.onNavyMuted }}>
                     {waiting === 1 ? 'thing waiting to send' : 'things waiting to send'}
                   </Text>
                 </View>
@@ -429,7 +429,7 @@ export default function SyncScreen() {
             }
             style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 15, lineHeight: 21, color: C.danger }, weight(800)]}>{'Could not be sent · ' + media.failed}</Text>
-            <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger }}>
+            <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.danger }}>
               {(media.failed === 1 ? 'Photo or recording' : 'Photos and recordings') + ' — still on this phone.'}
             </Text>
           </View>
@@ -527,7 +527,7 @@ export default function SyncScreen() {
                     <Text numberOfLines={2} style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>
                       {describe(q)}
                     </Text>
-                    <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                    <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>
                       {entityLabel(q.entityType) + ' · ' + when(q.createdAt, today)}
                     </Text>
                     {/* Coloured to match the badge beside it — an item still
@@ -610,7 +610,7 @@ export default function SyncScreen() {
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 15, lineHeight: 21, color: C.primaryDeep }, weight(800)]}>{'Update to ' + update.version}</Text>
-            <Text style={{ fontSize: 12, lineHeight: 16, color: C.body }}>
+            <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.body }}>
               Tap to update. Nothing is lost; you stay signed in.
             </Text>
           </View>
@@ -655,7 +655,7 @@ export default function SyncScreen() {
           <Text style={[{ fontSize: 15, lineHeight: 21, color: notice.tone === 'danger' ? C.danger : C.ink }, weight(800)]}>
             {notice.title}
           </Text>
-          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{notice.detail}</Text>
+          <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>{notice.detail}</Text>
         </View>
         <Icon name="forward" size={18} color={notice.tone === 'danger' ? C.danger : C.muted} strokeWidth={2} />
       </Pressable>
@@ -681,7 +681,7 @@ export default function SyncScreen() {
           <Text style={[{ fontSize: 24, lineHeight: 30, color: C.danger, minWidth: 30, textAlign: 'center' }, weight(800)]}>{rejected}</Text>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 15, lineHeight: 21, color: C.danger }, weight(800)]}>Not accepted</Text>
-            <Text style={{ fontSize: 12, lineHeight: 16, color: C.danger }}>by the office. Nothing is lost.</Text>
+            <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.danger }}>by the office. Nothing is lost.</Text>
           </View>
           <Icon name="forward" size={18} color={C.danger} strokeWidth={2} />
         </Pressable>
@@ -708,7 +708,7 @@ export default function SyncScreen() {
             <Text style={[{ fontSize: 15, lineHeight: 21, color: C.warnInk }, weight(800)]}>
               {plural(problems.count, 'update', 'updates') + ' from the office could not be saved'}
             </Text>
-            <Text style={{ fontSize: 12, lineHeight: 17, color: C.ink }}>
+            <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.ink }}>
               Everything else came through. Tell your manager if it stays after the next send.
             </Text>
           </View>

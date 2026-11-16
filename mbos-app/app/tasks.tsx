@@ -711,7 +711,7 @@ export default function TasksScreen() {
             <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
               {closingForm.length ? 'Answer and finish' : 'Mark as done'}
             </Text>
-            {closing ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{closing.title}</Text> : null}
+            {closing ? <Text style={{ marginTop: 4, fontSize: 12, lineHeight: 17, color: C.muted }}>{closing.title}</Text> : null}
           </View>
         </View>
         {closing?.description && closingForm.length ? (
@@ -802,7 +802,7 @@ export default function TasksScreen() {
             <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
               Move to another day
             </Text>
-            {snoozing ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{snoozing.title}</Text> : null}
+            {snoozing ? <Text style={{ marginTop: 4, fontSize: 12, lineHeight: 17, color: C.muted }}>{snoozing.title}</Text> : null}
           </View>
         </View>
         {snoozing ? (
@@ -928,7 +928,7 @@ function PickRow({
       })}>
       <View style={{ flex: 1, minWidth: 0, paddingVertical: 8 }}>
         <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{label}</Text>
-        {sub ? <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{sub}</Text> : null}
+        {sub ? <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>{sub}</Text> : null}
       </View>
       <View
         style={{

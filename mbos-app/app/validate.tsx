@@ -390,7 +390,7 @@ export default function ValidateLead() {
         <Pressable
           onPress={leave}
           accessibilityRole="button"
-          style={({ pressed }) => ({ width: 120, minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          style={({ pressed }) => ({ minWidth: 120, flexShrink: 0, minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
           <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Cancel</Text>
         </Pressable>
         <PrimaryButton
