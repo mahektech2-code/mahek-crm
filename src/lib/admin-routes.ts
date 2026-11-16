@@ -109,6 +109,8 @@ export const ADMIN = {
   deletedLeads: "/admin/deleted-leads",
   integrations: "/admin/integrations",
   handsets: "/admin/handsets",
+  /** Switches, sentences and banners on salesmen's phones, changed without a release. */
+  mbosControl: "/admin/mbos-control",
   factoryHandsets: "/admin/factory-handsets",
   jobs: "/admin/jobs",
   notifications: "/admin/notifications",
@@ -173,6 +175,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     items: [
       { href: ADMIN.integrations, label: "Integrations", icon: "grid", platform: true },
       { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true },
+      { href: ADMIN.mbosControl, label: "MBOS control", icon: "settings", platform: true },
       { href: ADMIN.factoryHandsets, label: "Factory handsets", icon: "phone", platform: true },
       { href: ADMIN.jobs, label: "Jobs", icon: "clock", platform: true },
       { href: ADMIN.notifications, label: "Notifications", icon: "bell", platform: true },
