@@ -44,23 +44,23 @@ test("the remark says how far inside or past the grace the check-in was", () => 
 
 const base = { alreadyToday: false, distanceM: 50, officeHasPin: true, officeName: "Thane", radiusM: 200, privileged: false, privilegedRangeM: 9000, officialIn: "09:30", now: "09:45", graceMinutes: 30, name: "Priya" };
 
-test("check-in: the refusals, in order", () => {
+test("check-in: only already and late refuse; location is never a gate", () => {
   assert.deepEqual(decideCheckIn(base), { ok: true });
   assert.equal((decideCheckIn({ ...base, alreadyToday: true }) as { reason: string }).reason, "already");
-  assert.equal((decideCheckIn({ ...base, distanceM: null }) as { reason: string }).reason, "denied");
-  assert.equal((decideCheckIn({ ...base, officeHasPin: false }) as { reason: string }).reason, "noPin");
-  assert.equal((decideCheckIn({ ...base, distanceM: 450 }) as { reason: string }).reason, "outside");
+  assert.deepEqual(decideCheckIn({ ...base, distanceM: null }), { ok: true });
+  assert.deepEqual(decideCheckIn({ ...base, officeHasPin: false }), { ok: true });
+  assert.deepEqual(decideCheckIn({ ...base, distanceM: 3000 }), { ok: true });
   assert.equal((decideCheckIn({ ...base, now: "10:01" }) as { reason: string }).reason, "late");
 });
 
-test("check-in: HR's wider range and no late refusal", () => {
+test("check-in: HR is never late", () => {
   assert.deepEqual(decideCheckIn({ ...base, privileged: true, distanceM: 8000, now: "11:00" }), { ok: true });
-  assert.equal((decideCheckIn({ ...base, privileged: true, distanceM: 9500 }) as { reason: string }).reason, "outside");
 });
 
-test("check-out: same geofence; no pin does not trap somebody checked in", () => {
+test("check-out: never refused for location", () => {
   assert.deepEqual(decideCheckOut({ ...base, officeHasPin: false }), { ok: true });
-  assert.equal((decideCheckOut({ ...base, distanceM: 300 }) as { reason: string }).reason, "outside");
+  assert.deepEqual(decideCheckOut({ ...base, distanceM: 3000 }), { ok: true });
+  assert.deepEqual(decideCheckOut({ ...base, distanceM: null }), { ok: true });
 });
 
 test("minutesBetween refuses out before in", () => {

@@ -156,30 +156,14 @@ export type CheckInDecision = { ok: true } | { ok: false; reason: CheckInRefusal
  * is refused before anything is measured, and a late arrival only after the
  * person is shown to be at the office.
  */
+/**
+ * Whether a punch-in stands. LOCATION IS NOT A GATE (Nov 2026): a desktop has
+ * no GPS and the browser guesses from the network, kilometres out, so a
+ * geofence refused people sitting in the office. The distance is still read
+ * and stored on the day when there is one; only "already in" and "late" refuse.
+ */
 export function decideCheckIn(x: CheckInInput): CheckInDecision {
   if (x.alreadyToday) return { ok: false, reason: "already", message: "You have already checked in today", detail: "Check out at the end of the day." };
-  if (x.distanceM == null)
-    return {
-      ok: false,
-      reason: "denied",
-      message: "Location is turned off for this site",
-      detail: "HRMS needs your location to check you in. Allow location in your browser settings, then try again. If you cannot, ask your department head to mark your attendance.",
-    };
-  if (!x.officeHasPin)
-    return {
-      ok: false,
-      reason: "noPin",
-      message: `${x.officeName} has no map pin yet`,
-      detail: "HR sets the office's location on the Offices screen. Until then, ask your department head to mark your attendance.",
-    };
-  const range = x.privileged ? x.privilegedRangeM : x.radiusM;
-  if (x.distanceM > range)
-    return {
-      ok: false,
-      reason: "outside",
-      message: `${x.name}, you are too far from ${x.officeName} to check in`,
-      detail: `You are ${x.distanceM >= 1000 ? (x.distanceM / 1000).toFixed(1) + " km" : x.distanceM + " m"} from ${x.officeName}. The office radius is ${range} m. Go back to the office and check in again.`,
-    };
   const offIn = tmin(x.officialIn);
   const nowM = tmin(x.now);
   if (!x.privileged && offIn != null && nowM != null && nowM > offIn + x.graceMinutes)
@@ -192,19 +176,9 @@ export function decideCheckIn(x: CheckInInput): CheckInDecision {
   return { ok: true };
 }
 
-/** Whether a check-out stands: the same geofence (spec §6.2). */
+/** Whether a check-out stands: always, since location is not a gate. */
 export function decideCheckOut(x: Omit<CheckInInput, "alreadyToday" | "officialIn" | "now" | "graceMinutes">): CheckInDecision {
-  if (x.distanceM == null)
-    return { ok: false, reason: "denied", message: "Location is turned off for this site", detail: "HRMS needs your location to check you out. Allow location in your browser settings, then try again." };
-  if (!x.officeHasPin) return { ok: true };
-  const range = x.privileged ? x.privilegedRangeM : x.radiusM;
-  if (x.distanceM > range)
-    return {
-      ok: false,
-      reason: "outside",
-      message: `${x.name}, you are too far from ${x.officeName} to check out`,
-      detail: `You are ${x.distanceM >= 1000 ? (x.distanceM / 1000).toFixed(1) + " km" : x.distanceM + " m"} from ${x.officeName}. The office radius is ${range} m. Go back to the office and check out again.`,
-    };
+  void x;
   return { ok: true };
 }
 

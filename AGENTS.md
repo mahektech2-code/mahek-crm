@@ -6686,7 +6686,15 @@ its span counts as worked and comes off `stoppage_min`; declined needs a
 reason and the person is told. Attendance → Team today is the live board.
 The provider is mounted by `AppFrame` and the launcher; the timer rides with
 `NotificationBell`; `LauncherCheckIn` is now the day card (`DayPanel`). Desktop
-punch-in uses the HRMS office-location rules and never a camera.
+punch-in never uses a camera.
+
+**LOCATION IS RECORDED, NEVER A GATE (Nov 2026).** A desktop has no GPS; the
+browser guesses from the network and lands 2–3 km out, so the office geofence
+refused people sitting at their desks and the lock kept them out of every app.
+`decideCheckIn` now refuses only "already in" and "late", `decideCheckOut`
+never refuses, and a blocked location still punches in. The fix and its
+distance from the office are stored on the day when the browser gives one, so
+HR can still read where somebody punched from. QR check-in is unchanged.
 
 **THE HRMS IS SIMPLIFIED TO THREE ROLES, AND CHECKING IN LEFT IT (Nov 2026).**
 The role is the level on the HRMS grant, given on the Access screen: an
