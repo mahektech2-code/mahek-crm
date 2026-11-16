@@ -12,7 +12,7 @@ possible: the driver was already `postgres-js`, and only `DATABASE_URL` differs.
 
 ## What you need before you start
 
-- A droplet: **Regular, 1 GiB / 1 vCPU / 25 GiB, Bangalore (BLR1), Ubuntu 24.04
+- A droplet: **Regular, 2 GiB / 1 vCPU / 25 GiB disk (resized from 1 GiB, RAM and CPU only), Bangalore (BLR1), Ubuntu 24.04
   LTS**, with **daily backups** and **monitoring** enabled at creation.
 - A **reserved IP** attached to it. Free while attached, and it means rebuilding
   the droplet later does not mean editing DNS under pressure.
@@ -650,7 +650,7 @@ docker compose ps                      # what is running
 docker compose logs -f app             # the app
 docker compose logs --tail=100 postgres
 docker compose restart app
-free -h                                # memory — the number to watch on 1 GiB
+free -h                                # memory — the number to watch
 docker stats --no-stream
 ```
 
@@ -683,10 +683,16 @@ DATABASE_URL="postgres://mahek:<password>@127.0.0.1:5433/mahekone" \
 
 ---
 
-## When to spend the extra $6
+## When to resize again
 
-The box is 1 GiB, which is deliberate and slightly tight. Resize to 2 GiB —
-one reboot, about a minute, and reversible — when any of these appear:
+The box was 1 GiB until 16 Nov 2026, when the app's 320 MB heap filled every
+30-60 minutes under a busy day and the process died mid-request — the team saw
+"This screen could not be drawn" each time. It is 2 GiB / 1 vCPU now ($12),
+with the heap at 704 MB and `shared_buffers` at 256 MB. Resizing changes
+nothing on its own: those two numbers in `deploy/docker-compose.yml` are what
+use the memory, and the droplet's copy is edited by hand. The next step is
+4 GiB / 2 vCPU ($24) — one reboot, about five minutes, reversible — when any of
+these appear:
 
 - swap sitting above ~500 MB rather than spiking and clearing
 - the DigitalOcean memory alert firing more than occasionally
