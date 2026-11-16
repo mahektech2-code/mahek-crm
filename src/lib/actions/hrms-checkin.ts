@@ -19,6 +19,7 @@ import { hrmsLink } from "@/lib/hrms/registry";
 import { approvedSpans, forgetLock, mirrorPatch, offDayFor, sessionsOf, thresholdsFor } from "@/lib/hrms/services/workday";
 import { endSession, phaseOf } from "@/lib/hrms/engines/workday";
 import { punchInAgain, punchOutFromBreak } from "@/lib/hrms/workday-ops";
+import { onOfficeConnection, roughFixNote } from "@/lib/hrms/office-connection";
 
 /** Outside a request (a script, a test) nothing is cached, so there is nothing to invalidate — the CRM's rule. */
 function refresh() {
@@ -84,6 +85,8 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
   }
 
   const qr = !!input.code;
+  const net = qr ? { on: false, ip: null } : await onOfficeConnection(office);
+  const method = qr ? "qr" : net.on ? "network" : "geo";
   if (qr) {
     if (!config["hrms.attendance.qrEnabled"]) return err("QR check-in is switched off in HRMS settings.", "not_permitted");
     if (existing) return refusal("already", "You have already checked in today", "Check out at the end of the day.");
@@ -91,11 +94,14 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
       return refusal("outside", `That is not ${office?.name ?? "your office"}’s attendance QR code`, "Scan the code printed at your own office.");
   } else {
     const hasPin = office?.lat != null && office?.lng != null;
-    const distanceM = input.lat != null && input.lng != null && hasPin ? metresBetween({ lat: input.lat, lng: input.lng }, { lat: office!.lat!, lng: office!.lng! }) : input.lat == null ? null : 0;
+    const measured = input.lat != null && input.lng != null && hasPin ? metresBetween({ lat: input.lat, lng: input.lng }, { lat: office!.lat!, lng: office!.lng! }) : input.lat == null ? null : 0;
+    /* On the office's own connection the location is not asked: the rest of
+       the rule — already in, late — still is. */
+    const distanceM = net.on ? 0 : measured;
     const d = decideCheckIn({
       alreadyToday: !!existing,
       distanceM,
-      officeHasPin: hasPin,
+      officeHasPin: hasPin || net.on,
       officeName: office?.name ?? me.office ?? "your office",
       radiusM: office?.radiusM ?? 200,
       privileged,
@@ -105,7 +111,7 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
       graceMinutes: cfg.graceMinutes,
       name: me.name,
     });
-    if (!d.ok) return refusal(d.reason, d.message, d.detail);
+    if (!d.ok) return refusal(d.reason, d.message, d.reason === "outside" ? d.detail + roughFixNote(input.accuracy, office?.radiusM ?? 200, !!office?.networkIps?.length) : d.detail);
   }
 
   const id = hrmsId("hatt");
@@ -121,7 +127,7 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
       employeeId: me.id,
       date: t,
       officeName: me.office,
-      method: qr ? "qr" : "geo",
+      method,
       checkIn: nowT,
       officialIn: tm?.inTime ?? null,
       officialOut: tm?.outTime ?? null,
@@ -142,9 +148,9 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
     });
     if (input.photoId) await bindHrmsFiles(tx, [input.photoId], "hrms_attendance", id, ctx.user.id);
   });
-  await hrmsAudit(ctx, "hrms.attendance.checkIn", "hrms_attendance", id, null, { date: t, at: nowT, method: qr ? "qr" : "geo" });
+  await hrmsAudit(ctx, "hrms.attendance.checkIn", "hrms_attendance", id, null, { date: t, at: nowT, method, ...(net.on ? { ip: net.ip } : {}) });
   const fig = dayFigures(
-    { date: t, checkIn: nowT, checkOut: null, stoppageMin: 0, officialIn: tm?.inTime ?? null, officialOut: tm?.outTime ?? null, targetMin: tm ? minutesBetween(tm.inTime, tm.outTime) : null, method: qr ? "qr" : "geo" },
+    { date: t, checkIn: nowT, checkOut: null, stoppageMin: 0, officialIn: tm?.inTime ?? null, officialOut: tm?.outTime ?? null, targetMin: tm ? minutesBetween(tm.inTime, tm.outTime) : null, method },
     cfg,
     t,
   );
@@ -179,9 +185,10 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
   const privileged = has(ctx, "hr") || ctx.administrator;
   const hasPin = office?.lat != null && office?.lng != null;
   const distanceM = input.lat != null && input.lng != null && hasPin ? metresBetween({ lat: input.lat, lng: input.lng }, { lat: office!.lat!, lng: office!.lng! }) : input.lat == null ? null : 0;
-  if (row.method !== "qr") {
+  const net = row.method === "qr" ? { on: false, ip: null } : await onOfficeConnection(office);
+  if (row.method !== "qr" && !net.on) {
     const d = decideCheckOut({ distanceM, officeHasPin: hasPin, officeName: office?.name ?? me.office ?? "your office", radiusM: office?.radiusM ?? 200, privileged, privilegedRangeM: cfg.privilegedRangeM, name: me.name });
-    if (!d.ok) return refusal(d.reason, d.message, d.detail);
+    if (!d.ok) return refusal(d.reason, d.message, d.reason === "outside" ? d.detail + roughFixNote(input.accuracy, office?.radiusM ?? 200, !!office?.networkIps?.length) : d.detail);
   }
   const endedAt = Date.now();
   const patch = mirrorPatch(endSession(sessions, endedAt, "punch_out") ?? sessions, endedAt, await approvedSpans(row.id));
@@ -192,7 +199,7 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
       .where(eq(hrmsAttendance.id, row.id));
     if (input.photoId) await bindHrmsFiles(tx, [input.photoId], "hrms_attendance", row.id, ctx.user.id);
   });
-  await hrmsAudit(ctx, "hrms.attendance.checkOut", "hrms_attendance", row.id, null, { at: nowT });
+  await hrmsAudit(ctx, "hrms.attendance.checkOut", "hrms_attendance", row.id, null, { at: nowT, ...(net.on ? { via: "network", ip: net.ip } : {}) });
   const fig = dayFigures({ ...row, ...patch, checkOut: patch.checkOut ?? nowT, stoppageMin: patch.stoppageMin ?? row.stoppageMin }, cfg, t);
   forgetLock(ctx.user.id);
   refresh();

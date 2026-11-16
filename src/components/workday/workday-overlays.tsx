@@ -180,21 +180,20 @@ function Refusal({ r, onClose }: { r: OpResult; onClose: () => void }) {
   );
 }
 
-/** Location, read once, then the act. A refused location is said in words. */
+/**
+ * Location, read once, then the act. A blocked location is still sent on, as
+ * no fix: on the office's own internet connection the server needs none, and
+ * anywhere else it refuses with the "allow location" sentence itself.
+ */
 export async function withLocation(run: (fix: { lat: number | null; lng: number | null; accuracy: number | null }) => Promise<OpResult>): Promise<OpResult> {
   const fix = await locate();
-  if (fix === "denied") {
-    return {
-      ok: false,
-      refusal: "denied",
-      error: "Location is blocked for MahekOne",
-      detail: "Allow location for this site in your browser’s settings, then press the button again. It is read once, only when you punch in or out.",
-    };
-  }
-  return run(fix);
+  const r = await run(fix === "denied" ? { lat: null, lng: null, accuracy: null } : fix);
+  if (fix === "denied" && !r.ok && r.refusal === "denied")
+    return { ...r, error: "Location is blocked for MahekOne", detail: "Allow location for this site in your browser’s settings, then press the button again. It is read once, only when you punch in or out." };
+  return r;
 }
 
-type Where = { office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null };
+type Where = { office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null; network?: boolean };
 
 /**
  * Where the gate says somebody is before they press the button. Asked only
@@ -208,19 +207,25 @@ function useWhere(): Where | "ask" | null {
     let live = true;
     (async () => {
       try {
+        const ask = async (lat: number | null, lng: number | null) => {
+          const res = await fetch("/api/workday", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "where", lat, lng }) });
+          return ((await res.json()) as { where?: Where }).where ?? null;
+        };
         const p = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
         if (!p || p.state !== "granted") {
-          if (live) setWhere("ask");
+          /* The office's own connection needs no location, so it is asked first. */
+          const w = await ask(null, null);
+          if (live) setWhere(w?.network ? w : "ask");
           return;
         }
         const fix = await locate();
         if (fix === "denied" || fix.lat == null) {
-          if (live) setWhere("ask");
+          const w = await ask(null, null);
+          if (live) setWhere(w?.network ? w : "ask");
           return;
         }
-        const res = await fetch("/api/workday", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "where", lat: fix.lat, lng: fix.lng }) });
-        const j = (await res.json()) as { where?: Where };
-        if (live) setWhere(j.where ?? "ask");
+        const w = await ask(fix.lat, fix.lng);
+        if (live) setWhere(w ?? "ask");
       } catch {
         if (live) setWhere("ask");
       }
@@ -249,7 +254,13 @@ function WhereBanner({ where, office }: { where: Where | "ask" | null; office: s
   const name = (where && where !== "ask" ? where.office : null) ?? office ?? "your office";
   const tone =
     where && where !== "ask" && where.inside === true
-      ? { box: "bg-success-soft", icon: "text-success", title: "text-success", line1: `You are at ${name}`, line2: `${kmOrM(where.distanceM!)} from the office pin` }
+      ? {
+          box: "bg-success-soft",
+          icon: "text-success",
+          title: "text-success",
+          line1: `You are at ${name}`,
+          line2: where.network ? "On the office’s internet connection" : `${kmOrM(where.distanceM!)} from the office pin`,
+        }
       : where && where !== "ask" && where.inside === false
         ? { box: "bg-warn-soft", icon: "text-warn-ink", title: "text-warn-ink", line1: `You are ${kmOrM(where.distanceM!)} from ${name}`, line2: `Punch-in works within ${kmOrM(where.radiusM)} of the office pin` }
         : where === null

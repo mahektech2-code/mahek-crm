@@ -1,4 +1,6 @@
 import "server-only";
+import { normaliseIp, parseNetworkList } from "@/lib/hrms/engines/office-network";
+import { clientAddress } from "@/lib/services/sign-in-throttle";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { attachments, employees, hrmsAssetAssignments, hrmsAssetStock, hrmsOffices, hrmsStaffTimings, sessions, users } from "@/db/schema";
@@ -973,6 +975,9 @@ function parsePin(v: string | undefined): { lat: number; lng: number } | null {
 
 async function officeForm(office?: Office): Promise<FormSpec> {
   const max = (await getConfig())["hrms.office.maxRangeM"];
+  /* The address THIS computer is on right now, so HR standing in the office
+     can copy it in without knowing what an IP address is. */
+  const here = normaliseIp(await clientAddress());
   return {
     screen: "offices",
     id: office ? "edit" : "new",
@@ -994,6 +999,15 @@ async function officeForm(office?: Office): Promise<FormSpec> {
       { k: "pin", l: "Map pin", t: "pin", req: true, hint: "Pick the doorway on the map, use your location while standing there, or type latitude, longitude." },
       { k: "address", l: "Address", t: "area", req: true },
       { k: "radius", l: "Radius (metres)", t: "num", req: true, min: 1, max },
+      {
+        k: "network",
+        l: "Office internet addresses",
+        t: "area",
+        hintShown: true,
+        hint: here
+          ? `A computer punching in from one of these is taken to be in the office, whatever its location says — desktops can only guess where they are. This computer is on ${here} right now: add it while you are in the office. One per line.`
+          : "A computer punching in from one of these is taken to be in the office, whatever its location says. Open this form on a computer in the office to see its address. One per line.",
+      },
       { k: "open", l: "Opening time", t: "time", req: true },
       { k: "close", l: "Closing time", t: "time", req: true },
       { k: "timing", l: "Timing type", t: "select", req: true, opts: [...OFFICE_TIMINGS] },
@@ -1016,6 +1030,7 @@ async function officeForm(office?: Office): Promise<FormSpec> {
           pin: office.lat != null && office.lng != null ? `${office.lat}, ${office.lng}` : "",
           address: office.address ?? "",
           radius: String(office.radiusM),
+          network: (office.networkIps ?? []).join("\n"),
           open: office.openingTime ?? "",
           close: office.closingTime ?? "",
           timing: office.timingType,
@@ -1040,6 +1055,8 @@ async function saveOffice(ctx: HrmsContext, h: Values, existing?: Office) {
   // A42: the source's limit is 20 km whatever its message says.
   if (radius > max) return fieldErr("radius", `The radius can be at most ${max} metres (${max / 1000} km)`);
   if (radius <= 0) return fieldErr("radius", "The radius must be more than 0 metres");
+  const network = parseNetworkList(h.network);
+  if (!network.ok) return fieldErr("network", `“${network.bad}” is not an internet address. Write addresses like 49.36.12.7, one per line.`);
   const timing = text(h.timing) ?? "Full Day";
   if (!(OFFICE_TIMINGS as readonly string[]).includes(timing)) return fieldErr("timing", "Pick how long the office is open");
   const open = tmin(h.open);
@@ -1055,6 +1072,7 @@ async function saveOffice(ctx: HrmsContext, h: Values, existing?: Office) {
     lng: pin.lng,
     address: text(h.address),
     radiusM: Math.round(radius),
+    networkIps: network.ips,
     openingTime: h.open,
     closingTime: h.close,
     timingType: timing,

@@ -14762,6 +14762,13 @@ export const hrmsOffices = pgTable(
     imageAttachmentId: text("image_attachment_id"),
     /** The text the office's printed QR code carries. */
     qrText: text("qr_text"),
+    /**
+     * The public addresses of the office's own internet connection. A punch-in
+     * arriving from one of them passes the location check, because a desktop's
+     * browser can only guess where it is (engines/office-network.ts). IPv6
+     * entries match on their /64.
+     */
+    networkIps: text("network_ips").array().notNull().default(sql`'{}'::text[]`),
     active: boolean("active").notNull().default(true),
     ...hrmsStamps(),
   },

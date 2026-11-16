@@ -151,7 +151,9 @@ export function attendanceRow(ctx: HrmsContext, r: DayRow, p: Person | undefined
               ? "Imported"
               : r.method === "field"
                 ? "On the field app — corrected there, or on the Sales Dashboard’s attendance screen"
-                : "Location check",
+                : r.method === "network"
+                  ? "From the office’s internet connection"
+                  : "Location check",
     },
     { l: "Check-in photo", v: r.inPhotoId ? "Attached" : "None" },
     { l: "Check-out photo", v: r.outPhotoId ? "Attached" : "None" },
@@ -175,7 +177,7 @@ export function attendanceRow(ctx: HrmsContext, r: DayRow, p: Person | undefined
       workDay: r.fig.workDay,
       current: r.fig.current,
       pct: r.fig.pct,
-      distance: r.method === "officer" ? "Marked by department head" : distanceLabel(r.distanceM),
+      distance: r.method === "officer" ? "Marked by department head" : r.method === "network" ? "Office network" : distanceLabel(r.distanceM),
       dayTab: r.date === t ? "Today" : "Earlier",
     },
     flags: flagsOf(r, t),

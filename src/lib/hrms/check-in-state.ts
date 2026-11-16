@@ -52,7 +52,7 @@ export async function checkInState(ctx: HrmsContext): Promise<CheckInState> {
           workedMin: r.fig.workedMin,
           workDay: r.fig.workDay,
           fullDayPercent: cfg.fullDayPercent,
-          distance: r.method === "officer" ? `Marked by ${r.markedByName ?? "your department head"}` : distanceLabel(r.distanceM),
+          distance: r.method === "officer" ? `Marked by ${r.markedByName ?? "your department head"}` : r.method === "network" ? "Office network" : distanceLabel(r.distanceM),
           worked: hm(r.fig.workedMin),
           field: r.method === "field",
         }

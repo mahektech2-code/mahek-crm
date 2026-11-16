@@ -10,6 +10,7 @@ import { decideCheckIn, type CheckInRefusal } from "./engines/attendance";
 import { closeFromBreak, endSession, openSession, phaseOf, startSession, type WorkdayPhase, type WorkdaySession } from "./engines/workday";
 import { approvedSpans, forgetLock, mirrorPatch, sessionsOf, settledToday } from "./services/workday";
 import { metresBetween, nowHM } from "./time";
+import { onOfficeConnection, roughFixNote } from "./office-connection";
 import { managerUserIdsOf, powerHolderUserIds, usersOfEmployees } from "./services/notify";
 import { notifyUsers } from "@/lib/notify";
 import { hrmsLink } from "./registry";
@@ -61,11 +62,12 @@ export async function punchInAgain(
   if (phase === "done" || phase === "auto_out") {
     const cfg = await attendanceCfg();
     const hasPin = office?.lat != null && office?.lng != null;
-    const distanceM = fix.lat != null && fix.lng != null && hasPin ? metresBetween({ lat: fix.lat, lng: fix.lng }, { lat: office!.lat!, lng: office!.lng! }) : fix.lat == null ? null : 0;
+    const net = await onOfficeConnection(office);
+    const measured = fix.lat != null && fix.lng != null && hasPin ? metresBetween({ lat: fix.lat, lng: fix.lng }, { lat: office!.lat!, lng: office!.lng! }) : fix.lat == null ? null : 0;
     const d = decideCheckIn({
       alreadyToday: false,
-      distanceM,
-      officeHasPin: hasPin,
+      distanceM: net.on ? 0 : measured,
+      officeHasPin: hasPin || net.on,
       officeName: office?.name ?? me.office ?? "your office",
       radiusM: office?.radiusM ?? 200,
       privileged: has(ctx, "hr") || ctx.administrator,
@@ -76,7 +78,7 @@ export async function punchInAgain(
       graceMinutes: cfg.graceMinutes,
       name: me.name,
     });
-    if (!d.ok) return ok({ refusal: d.reason, message: d.message, detail: d.detail });
+    if (!d.ok) return ok({ refusal: d.reason, message: d.message, detail: d.reason === "outside" ? d.detail + roughFixNote(fix.accuracy, office?.radiusM ?? 200, !!office?.networkIps?.length) : d.detail });
   }
   const next = startSession(sessions, now);
   if (!next) return ok({ refusal: "already", message: "You are already at work", detail: "" });
@@ -236,12 +238,18 @@ export async function decideClaim(ctx: HrmsContext, id: string, approve: boolean
  * their office and how far its pin is from the fix. Read-only, and only ever
  * a preview — the punch-in measures again and decides.
  */
-export async function previewLocation(ctx: HrmsContext, fix: Fix): Promise<{ office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null }> {
+export async function previewLocation(
+  ctx: HrmsContext,
+  fix: Fix,
+): Promise<{ office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null; network: boolean }> {
   const me = ctx.employee;
   const name = me?.office ?? null;
   const [o] = name ? await db.select().from(hrmsOffices).where(eq(hrmsOffices.name, name)).limit(1) : [];
   const radiusM = o?.radiusM ?? 200;
-  if (!o || o.lat == null || o.lng == null || fix.lat == null || fix.lng == null) return { office: name, distanceM: null, radiusM, inside: null };
+  /* On the office's own connection the answer is yes whatever the fix says —
+     the punch-in decides the same way. */
+  if (o && (await onOfficeConnection(o)).on) return { office: name, distanceM: null, radiusM, inside: true, network: true };
+  if (!o || o.lat == null || o.lng == null || fix.lat == null || fix.lng == null) return { office: name, distanceM: null, radiusM, inside: null, network: false };
   const distanceM = Math.round(metresBetween({ lat: fix.lat, lng: fix.lng }, { lat: o.lat, lng: o.lng }));
-  return { office: name, distanceM, radiusM, inside: distanceM <= radiusM };
+  return { office: name, distanceM, radiusM, inside: distanceM <= radiusM, network: false };
 }

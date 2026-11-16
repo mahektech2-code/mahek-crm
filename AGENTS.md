@@ -6679,6 +6679,20 @@ and the lock screen always offers Punch in, so nobody is locked out for good.
 `serverLocked` caches its answer ten seconds per person and guards its own
 re-entry (`hrmsContext` calls `requireUser`).
 
+**THE OFFICE'S OWN INTERNET CONNECTION COUNTS AS BEING IN THE OFFICE.** A
+desktop has no GPS: its browser guesses its place from the Wi-Fi or the line,
+and in Ambernath that guess landed 1.3 km from the building for every computer
+there, so no desk could punch in. `hrms_offices.network_ips` (`0344`) lists the
+office's public addresses, typed on the Offices form, which shows the address
+the computer filling it in is on. A punch-in, punch-in-again or punch-out from
+one of them passes the location check (lateness still applies), with no
+location needed at all, and is stored as method `network` with the address in
+the audit row. The address is `clientAddress()` — Caddy's, never the
+browser's. IPv4 matches exactly, IPv6 on its /64 (`engines/office-network.ts`,
+pure). An "outside" refusal whose fix was rougher than the radius now says so
+and points at the office Wi-Fi or the phone. A dynamic broadband address that
+changes simply falls back to the location check until HR saves the new one.
+
 **AN AUTOMATIC BREAK IS NEVER QUIETLY TURNED BACK INTO WORK.** "I was working
 away from the screen" is a `hrms_workday_claims` row the person's manager (or
 HR) decides on Attendance → Corrections; nobody decides their own. Approved,
