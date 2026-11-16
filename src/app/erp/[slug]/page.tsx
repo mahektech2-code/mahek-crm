@@ -6,7 +6,7 @@ import { ListScreen } from "../_ui/list-screen";
 import { screenTabs } from "../_ui/screen-tabs";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { FLAG } from "@/lib/erp/ui";
-import { withReadMemo } from "@/lib/erp/read-memo";
+import { withRenderMemo } from "@/lib/erp/read-memo";
 import { scopeFor, windowInfo } from "@/lib/erp/window";
 import { lightPage, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 
@@ -56,7 +56,7 @@ export default async function ErpScreenPage({
   const query = parseListQuery(raw);
   /* `defer`: a heavy New form is not built for a page that would leave it on the server anyway. */
   const scope = { ...scopeFor(mod.window, query, sp.open ?? null), forms: "defer" as const };
-  const [{ spec, rows, tooWide }, { tabs, toggle, sections }] = await withReadMemo(() => Promise.all([mod.load(ctx, scope), screenTabs(ctx, screen, key)]));
+  const [{ spec, rows, tooWide }, { tabs, toggle, sections }] = await withRenderMemo(() => Promise.all([mod.load(ctx, scope), screenTabs(ctx, screen, key)]));
   /* A dashboard tile opens its list pre-filtered: `f` is the ids it counted,
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;

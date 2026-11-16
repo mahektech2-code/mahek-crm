@@ -2,7 +2,7 @@ import { calendarDate, isoWeekday, localMinutesSince, type BusinessDate } from "
 import { longDate } from "@/lib/format";
 import { NavLink } from "@/components/shell/nav-link";
 import { erpContext } from "@/lib/erp/access";
-import { withReadMemo } from "@/lib/erp/read-memo";
+import { withRenderMemo } from "@/lib/erp/read-memo";
 import { accuracyFlow, dashboardSections, latestDigest } from "@/lib/erp/dashboard";
 import { Callout, Card, cx, Dot, PageHeader, SectionLabel } from "@/components/ui/primitives";
 import { Icon } from "@/components/shell/icons";
@@ -19,7 +19,7 @@ const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 export default async function ErpDashboard() {
   const ctx = await erpContext();
   const where = ctx.workingGodown?.name ?? null;
-  const [sections, digest, flow] = await withReadMemo(() => Promise.all([dashboardSections(ctx, where), latestDigest(), accuracyFlow(ctx, where)]));
+  const [sections, digest, flow] = await withRenderMemo(() => Promise.all([dashboardSections(ctx, where), latestDigest(), accuracyFlow(ctx, where)]));
   const first = ctx.user.name.split(" ")[0];
   const now = new Date();
   const day = calendarDate(now);

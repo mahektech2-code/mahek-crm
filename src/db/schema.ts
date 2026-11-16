@@ -13168,6 +13168,8 @@ export const erpTransports = pgTable(
     index("erp_transports_order_idx").on(t.orderNo),
     uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
     index("erp_transports_lr_idx").on(t.lrId),
+    /* The LR lists count a bill under its LR OR its signed copy (drizzle/0344). */
+    index("erp_transports_signed_copy_idx").on(t.signedCopyId).where(sql`${t.signedCopyId} is not null`),
   ],
 );
 
