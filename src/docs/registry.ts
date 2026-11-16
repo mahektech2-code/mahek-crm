@@ -914,6 +914,14 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "order-hub",
+        title: "The Order Hub: TO numbers, checks, MRP and holds",
+        summary: "Every order starts as a TO number; the back office and the Production Head check it, Accounts approve it, the Production Head clears it against materials, and every hold sits on To Hold.",
+        group: "Sell and ship",
+        modules: ["erp.orderHub", "erp.mrpCheck", "erp.toHold"],
+        written: ALL,
+      },
+      {
         slug: "orders",
         title: "Orders, billing and the WhatsApp inbox",
         summary: "From an order being taken to its bill: pending, under process and ready, billing and dispatch, batch codes, labels and the WhatsApp inbox.",

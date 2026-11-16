@@ -1486,7 +1486,8 @@ async function myOrderStates(userId: string, sinceIso?: string) {
            (extract(epoch from o.approved_at) * 1000)::double precision as "decidedAt"
       from orders o
      where o.user_id = ${userId}
-       and o.source = 'mbos'
+       /* A field order the Order Hub gave its order number is the ERP's row now, and still his. */
+       and (o.source = 'mbos' or exists (select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.origin = 'mbos'))
        and ${sinceIso ? sql`o.updated_at > ${sinceIso}` : sql`o.created_at > now() - interval '90 days'`}
      order by o.updated_at asc
      limit 500

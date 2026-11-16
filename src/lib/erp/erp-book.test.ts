@@ -7,6 +7,7 @@
  *
  *   npm run test:integration
  */
+import { placeOrder } from "./test-orders";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -84,7 +85,7 @@ let skuId: string;
 /** One ERP order of `qty` cans for `party`, through the real handlers. */
 async function take(party: string, qty: number) {
   const ctx = await as(admin);
-  const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+  const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
   assert.ok(r.ok, JSON.stringify(r));
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = ${qty}`);
   return o;
@@ -92,7 +93,6 @@ async function take(party: string, qty: number) {
 /** Ready → allocated → billed → dispatch-verified. */
 async function send(o: typeof erpOrders.$inferSelect, bill: string, date: string) {
   const ctx = await as(admin);
-  assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(o.qtyCans) }, [], o.id)).ok);
   const billed = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: date });
@@ -195,7 +195,7 @@ describe("an ERP order in the book", () => {
     await db.insert(customers).values({ id: "cus_round", name: "Round Figure Traders", city: "Pune", phone: "9876500009", kind: "customer" });
     await db.insert(erpCustomerProfiles).values({ customerId: "cus_round" });
     /* 17 cans at ₹299.37 with 18% GST is ₹6,005.36 exactly; the invoice says ₹6,005. */
-    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Round Figure Traders" }, [{ sku: SKU, qty: "17", rate: "299.37" }]);
+    const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Round Figure Traders" }, [{ sku: SKU, qty: "17", rate: "299.37" }]);
     assert.ok(r.ok, JSON.stringify(r));
     const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = 17`);
     const b = await book(o.orderNo);
@@ -232,7 +232,6 @@ describe("one Tally invoice over several orders", () => {
   async function prep(party: string, qty: number) {
     const o = await take(party, qty);
     const ctx = await as(admin);
-    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(qty) }, [], o.id)).ok);
     return o;
@@ -299,7 +298,6 @@ describe("a Pending customer goes to the Accounts queue", () => {
     const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
     assert.equal(after.partyStatus, "Approved By Admin");
     /* The next ERP write re-states the order; the approval is not undone by it. */
-    assert.ok((await mod("orders").actions!.verifyOrder(await as(admin), o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(await as(admin), o.id, {})).ok);
     assert.equal((await book(o.orderNo)).status, "confirmed");
   });

@@ -1,8 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { bills, customers, erpOrders, orders, type OrderLine as BookLine } from "@/db/schema";
+import { bills, customers, erpOrderHolds, erpOrders, orders, type OrderLine as BookLine } from "@/db/schema";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { recomputeBuyingCycle, recomputeFollowUpState, recomputeOutstanding } from "@/lib/recompute";
@@ -57,6 +57,7 @@ type LineRow = {
   delivery: string;
   status: string;
   partyStatus: string | null;
+  accountsCheck: string;
   qtyCans: number;
   ratePaise: number | null;
   discountBp: number | null;
@@ -75,7 +76,7 @@ type LineRow = {
 
 /** The whole-order status an order number's lines add up to. */
 export function bookStatus(
-  lines: { status: string; partyStatus: string | null; verification: string | null }[],
+  lines: { status: string; partyStatus: string | null; verification: string | null; accountsCheck?: string | null }[],
   stage: string | null,
   decided: { approvedAt: Date | null; status: string } | null,
 ): "pending_approval" | "confirmed" | "dispatched" | "in_transit" | "delivered" | "cancelled" | "declined" {
@@ -83,7 +84,9 @@ export function bookStatus(
   if (decided?.status === "declined") return "declined";
   const live = lines.filter((l) => l.status !== "Cancel");
   if (!live.length) return "cancelled";
-  if (live.some((l) => l.partyStatus === "Pending") && !decided?.approvedAt) return "pending_approval";
+  /* A pending party, or an order the Order Hub made that Accounts have not
+     approved yet (held included: a hold is not a decision), waits in their queue. */
+  if (live.some((l) => l.partyStatus === "Pending" || l.accountsCheck === "Pending" || l.accountsCheck === "Hold") && !decided?.approvedAt) return "pending_approval";
   if (live.every((l) => l.verification === "Verified")) return bookStatusForStage(stage);
   return "confirmed";
 }
@@ -92,7 +95,7 @@ async function linesOf(orderNos: number[]): Promise<LineRow[]> {
   const rows = (await db.execute(sql`
     select o.id, o.order_no as "orderNo", o.order_date::text as "orderDate",
            o.billing_customer_id as billing, o.delivery_customer_id as delivery,
-           o.status, o.party_status as "partyStatus", o.qty_cans as "qtyCans",
+           o.status, o.party_status as "partyStatus", o.accounts_check as "accountsCheck", o.qty_cans as "qtyCans",
            o.rate_paise as "ratePaise", o.discount_bp as "discountBp",
            o.transport_cost_paise as "transportCostPaise", o.tally_bill_no as "tallyBillNo",
            o.dispatch_on::text as "dispatchOn", o.created_by_id as "createdById",
@@ -316,23 +319,44 @@ export async function syncAllBookOrders(): Promise<number> {
  */
 export async function afterBookDecision(orderId: string): Promise<void> {
   const [o] = await db
-    .select({ ref: orders.externalRef, source: orders.source, status: orders.status, reason: orders.declineReason })
+    .select({ ref: orders.externalRef, source: orders.source, status: orders.status, reason: orders.declineReason, approvedById: orders.approvedById })
     .from(orders)
     .where(eq(orders.id, orderId));
   if (!o || o.source !== "erp" || !o.ref?.startsWith("ERP-")) return;
   const orderNo = Number(o.ref.slice(4));
   if (!Number.isInteger(orderNo)) return;
+  const decidedBy = o.approvedById ?? null;
+  const waiting = or(eq(erpOrders.partyStatus, "Pending"), inArray(erpOrders.accountsCheck, ["Pending", "Hold"]));
   if (o.status === "declined") {
     await db
       .update(erpOrders)
-      .set({ partyStatus: "Declined", status: "Cancel", remark: sql`trim(both ' ' from coalesce(${erpOrders.remark}, '') || ' · Declined by Accounts: ' || ${o.reason ?? ""})`, updatedAt: new Date() })
-      .where(and(eq(erpOrders.orderNo, orderNo), eq(erpOrders.partyStatus, "Pending")));
+      .set({
+        partyStatus: sql`case when ${erpOrders.partyStatus} = 'Pending' then 'Declined' else ${erpOrders.partyStatus} end`,
+        accountsCheck: sql`case when ${erpOrders.accountsCheck} in ('Pending', 'Hold') then 'Declined' else ${erpOrders.accountsCheck} end`,
+        accountsCheckedById: decidedBy,
+        accountsCheckedAt: new Date(),
+        status: "Cancel",
+        remark: sql`trim(both ' ' from coalesce(${erpOrders.remark}, '') || ' · Declined by Accounts: ' || ${o.reason ?? ""})`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(erpOrders.orderNo, orderNo), waiting));
   } else {
     await db
       .update(erpOrders)
-      .set({ partyStatus: "Approved By Admin", updatedAt: new Date() })
-      .where(and(eq(erpOrders.orderNo, orderNo), eq(erpOrders.partyStatus, "Pending")));
+      .set({
+        partyStatus: sql`case when ${erpOrders.partyStatus} = 'Pending' then 'Approved By Admin' else ${erpOrders.partyStatus} end`,
+        accountsCheck: sql`case when ${erpOrders.accountsCheck} in ('Pending', 'Hold') then 'Approved' else ${erpOrders.accountsCheck} end`,
+        accountsCheckedById: decidedBy,
+        accountsCheckedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(erpOrders.orderNo, orderNo), waiting));
   }
+  /* An accounts hold ends with the decision, in the history. */
+  await db
+    .update(erpOrderHolds)
+    .set({ resolvedAt: new Date(), resolvedById: decidedBy, resolutionText: o.status === "declined" ? "Declined by Accounts." : "Approved by Accounts." })
+    .where(and(eq(erpOrderHolds.orderNo, orderNo), eq(erpOrderHolds.department, "accounts"), isNull(erpOrderHolds.resolvedAt)));
   /* An approved party may be what confirms the order to its customer. */
   await (await import("./order-tracking")).syncOrderTracking([orderNo]);
 }
@@ -355,6 +379,9 @@ export async function recomputeErpOrderHolds(): Promise<{ held: number; newlyHel
         left join erp_order_details d on d.order_id = o.id
        where o.status <> 'Cancel'
          and coalesce(d.verification, '') <> 'Verified'
+      /* A TO still waiting for its checks is an order the customer gave too. */
+      union
+      select i.billing_customer_id from erp_order_intakes i where i.status in ('open', 'correction', 'hold')
     ),
     changed as (
       update customers c

@@ -1066,6 +1066,9 @@ export async function saveInteraction(
   /** What the record keeps of who the next actions were handed to. */
   const routingRecord: Array<{ action: string; to: string; note: string }> = [];
 
+  /* Whether orders go through the ERP's Order Hub: only once the ERP is the order book. */
+  const hubLive = config["erp.orders.live"] === true;
+  let toNumber: number | null = null;
   await db.transaction(async (tx) => {
     /* ------------------------------------------------------------- order */
     if (isOrderReceived || input.outcome === "order_taken") {
@@ -1758,7 +1761,7 @@ export async function saveInteraction(
               // Monday for Friday's WhatsApp is not today.
               occurredAt: orderedAtTs ?? now,
               actorUserId: ctx.user.id,
-              summary: `Order taken by ${ctx.user.name} — awaiting approval by accounts`,
+              summary: hubLive ? `Order taken by ${ctx.user.name} — with the Order Hub for its checks` : `Order taken by ${ctx.user.name} — awaiting approval by accounts`,
             },
           ]
         : []),
@@ -1786,6 +1789,43 @@ export async function saveInteraction(
         discountAuthorisedById:
           bp != null && bp > ceilings.associateMaxBp ? ctx.user.id : null,
       });
+    }
+
+    /*
+     * THE ORDER HUB: with the ERP taking the orders, an order taken on a call
+     * is a TO number in the ERP's Order Hub until the back office and the
+     * Production Head have both checked it. This `orders` row stays the
+     * customer's order (the Call Log already reads it as "ordered"); the hub
+     * keeps it out of Accounts' queue until it has its order number, and then
+     * adopts it, so it is counted once.
+     */
+    if (orderId && lines.length && hubLive) {
+      const { createIntake } = await import("../erp/order-hub");
+      const made = await createIntake(
+        ctx.user.id,
+        {
+          origin: "crm",
+          originOrderId: orderId,
+          orderSource: "TeleCRM",
+          orderDate: isOrderReceived ? input.orderDate! : day,
+          godownId: null,
+          billingId: billingCustomer.id,
+          deliveryId: deliveryCustomerId ?? billingCustomer.id,
+          remark: input.notes?.trim() || null,
+          takenById: ctx.user.id,
+          lines: lines.map((l) => ({
+            skuId: l.productId,
+            qtyCans: l.quantity,
+            ratePaise: lineRates[l.productId]?.rateExGstPaise ?? null,
+            discountBp: discounts[l.productId] ?? null,
+            listRatePaise: lineRates[l.productId]?.rateExGstPaise ?? null,
+            discountAuthorisedById: (discounts[l.productId] ?? 0) > ceilings.associateMaxBp ? ctx.user.id : null,
+          })),
+        },
+        tx as never,
+      );
+      toNumber = made.toNo;
+      await tx.update(orders).set({ orderNo: `TO-${made.toNo}` }).where(eq(orders.id, orderId));
     }
 
     /* ---------------------------------------------- customer date rollups */
@@ -1979,6 +2019,10 @@ export async function saveInteraction(
   }
 
   if (orderId) await recomputeOutstanding(customer.id);
+  if (toNumber != null) {
+    const { tellNewIntake } = await import("../erp/order-hub");
+    await tellNewIntake(toNumber).catch(() => undefined);
+  }
 
   /* ------------------------------------------------ what happens next
    *
@@ -2028,7 +2072,9 @@ export async function saveInteraction(
      * making the call, which is the whole point, and being told so is what
      * teaches them the list keeps itself.
      */
-    complaintUpdated
+    toNumber != null
+      ? `Order taken: TO-${toNumber}. The back office and the Production Head check it; then it gets its order number`
+      : complaintUpdated
       ? "Added to the open complaint"
       : remindersClosed
         ? `Interaction saved - ${remindersClosed} reminder${remindersClosed === 1 ? "" : "s"} closed`

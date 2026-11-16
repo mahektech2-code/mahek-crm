@@ -113,7 +113,7 @@ export function orderBillBlockers(lines: BillLine[]): string[] {
   const miss: string[] = [];
   if (live.some((l) => l.orderCheck !== "Verified")) miss.push("the back office to verify the order");
   const notReady = live.filter((l) => l.status !== "Ready");
-  if (notReady.length) miss.push(`${notReady.map((l) => l.label).join(", ")} to be Ready — or moved to a new order to go later`);
+  if (notReady.length) miss.push(`${notReady.map((l) => l.label).join(", ")} to be Ready — or cancelled, to go later on a new order`);
   if (live.some((l) => l.partyPending)) miss.push("approval for this Pending customer");
   const noRate = live.filter((l) => l.ratePaise == null);
   if (noRate.length) miss.push(`a rate on ${noRate.map((l) => l.label).join(", ")}`);

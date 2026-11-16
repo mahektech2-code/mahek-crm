@@ -9775,6 +9775,60 @@ The customer's page skips the transporter's steps for our own vehicle
 (`OWN_VEHICLE_SKIPS`) and offers the signed copy as its document once
 delivered.
 
+## The Order Hub — a TO number before the order number
+
+**EVERY ORDER STARTS AS A TO, WHEREVER IT WAS TAKEN, AND GETS ITS ORDER NUMBER
+FROM TWO PEOPLE.** While `erp.orders.live` is on, the ERP's New order form, a
+TeleCRM call and the Salesman App all write an `erp_order_intakes` row
+(`TO-<n>`, series `tempOrder`) through `createIntake` — never an `erp_orders`
+row. Sales › Order Hub lists them. The back office and the Production Head
+(`productionCheck` power) each verify; `nextCheck` in `engines/order-hub.ts`
+says which check a press makes, and the same person cannot make both (an ERP
+administrator excepted). The SECOND check calls `makeOrder` in the same
+transaction: the order number, the `erp_orders` lines (Verified, with
+`accounts_check` and `production_check` Pending) and the review row. "TO number"
+is the only new word — the order number is still the order number.
+
+**A TO IS EDITED; AN ORDER IS NOT.** Editing a TO (`editIntake`, its taker or
+the hub) clears both checks. Once the order number exists its goods,
+quantities, parties, rates and discounts are fixed: Edit order, Edit this line,
+Add another, Move to a new order and Undo verification are gone, the edit form
+is Dispatch details only, the handset's edit is refused, and Accounts › Order
+changes is retired (drawn only while old requests remain). To change an order,
+cancel it and take a new one. Cancel, Delete, holds, Undo billing and Ready
+keep the rules they had. The customer's tracking page never had an edit and
+still has none.
+
+**TWO GATES AFTER THE ORDER NUMBER, AND THE DEFAULTS ARE WHY NOTHING STOPPED.**
+`accounts_check` (Accounts approve, hold or decline — `afterBookDecision`
+writes it) and `production_check` (the Production Head clears it at Sales ›
+MRP check, `engines/mrp.ts` reading stock as it stands; capacity is his tick,
+because MahekOne does not know it). `lineCleared` is both; Under Process, the
+day's plan, Ready and billing all ask it (`gateRefusal`). Both columns DEFAULT to
+the cleared value, so every line from before `0346` carried on. Customer
+tracking's "confirmed" now needs Accounts' approval.
+
+**COUNTED ONCE.** A TeleCRM or handset order already has its `orders` row; the
+TO points at it (`origin_order_id`), and `makeOrder` sets its `external_ref` to
+`ERP-<order no>` so `syncBookOrders` adopts it rather than writing a second.
+Until then it stays `pending_approval` — never `captured`, which counts as a
+sale — and `pendingOrders` leaves it out of the Accounts queue. An open TO
+still holds its customer off the Call Log (`recomputeErpOrderHolds`).
+
+**ONE TO HOLD, AND RELEASE SENDS IT BACK TO WHOEVER HELD IT.** A TO's hold is on
+the TO; an order's is an `erp_order_holds` row with a `department` (office,
+accounts, production). Sales › To Hold lists all of them; releasing a TO puts it
+back for both checks, an Accounts hold back in Order approvals, a production
+hold back at the MRP check, an office hold where its lines were — never past
+the desk that held it. Accounts hold and release from their own drawer
+(`holdOrderForAccounts`). The customer reads only the customer wording.
+
+**Not built yet:** the TeleCRM "My orders" view and the order thread on the
+customer record; the Salesman App's TO screens (an APK release — today's build
+shows the TO number as the order's number); and rewriting a TeleCRM or handset
+`orders` row's `line_items` when the hub edits its TO (it is rewritten at the
+order number).
+
 ## Customer order tracking
 
 **ONE LINK PER ORDER, FROM CONFIRMATION TO DELIVERY** (the Customer Order

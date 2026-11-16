@@ -10,7 +10,7 @@ type Party = { a: string; si: string; t: string };
 const map = <T>(data: Record<string, unknown>, k: string) => (data[k] ?? {}) as Record<string, T>;
 const deliveryOf = (h: Record<string, string>, data: Record<string, unknown>) => map<Party>(data, "party")[h.delivery || h.billing || ""];
 
-registerCalc("order.no", ({ h }) => (h.orderFixed ? h.orderFixed : "Next order number, on save"));
+registerCalc("order.no", ({ h }) => (h.orderFixed ? h.orderFixed : "A TO number, on save — the order number comes after both checks"));
 registerCalc("order.area", ({ h, data }) => deliveryOf(h, data)?.a ?? "");
 registerCalc("order.si", ({ h, data }) => (deliveryOf(h, data)?.si ?? "").replace(/( - )+$/, ""));
 
