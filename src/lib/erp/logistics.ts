@@ -1218,6 +1218,29 @@ export async function updateConsignment(ctx: ErpContext, transportIds: string[],
   return ok({ notified }, `${said} · next call ${nextCall}${notifyWords(notified)}`);
 }
 
+/**
+ * A call that reached nobody, or was told to ring back. Every LR gets a private
+ * `call` event saying so; nothing is shared with the customer. The next call
+ * moves only when a day was given (ring back at four); otherwise the calls stay
+ * due, because nobody has heard anything.
+ */
+export async function logCallAttempt(ctx: ErpContext, transportIds: string[], note: string, nextCallOn: string | null): Promise<Result<unknown>> {
+  const ts = (await load(transportIds)).filter((t) => t.materialStage !== CLOSED);
+  if (!ts.length) return err("Nothing here is still on the road.", "rule_violation");
+  const next = day(nextCallOn);
+  if (nextCallOn && !next) return fieldErr("nextCallOn", "The next call is not a date");
+  if (next && next < today()) return fieldErr("nextCallOn", "The next call cannot be in the past");
+  const ids = ts.map((t) => t.id);
+  await db.transaction(async (tx) => {
+    const t2 = tx as unknown as typeof db;
+    if (next) await tx.update(erpTransports).set({ reminderDate: next, updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpTransports.id, ids));
+    /* One event per LR, each at its own stage. */
+    for (const t of ts) await addEvent(t2, ctx, [t.id], "call", t.materialStage, note, false);
+  });
+  await erpAudit(ctx, "erp.logistics.callAttempt", "erp_transport", ids.join(","), null, { note, nextCallOn: next });
+  return okVoid(next ? `Logged · ring again ${next}` : "Logged · the calls stay due");
+}
+
 export async function raiseIssue(
   ctx: ErpContext,
   transportIds: string[],

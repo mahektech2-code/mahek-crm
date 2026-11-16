@@ -3,20 +3,24 @@
 import { NavLink } from "@/components/shell/nav-link";
 import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FilterPills } from "@/components/ui/overlays";
 import { Button, Card, cx, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { linkClass, SubTitle } from "../../_ui/look";
-import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsDeliveredBy, erpLogisticsIssue, erpLogisticsUpdate, erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
+import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsDeliveredBy, erpLogisticsIssue, erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
 import { Icon } from "../../_ui/icons";
 import { shrinkImage } from "@/lib/shrink-image";
-import { addDays, callDue, daysBetween, directWho, isMahekVehicle, ISSUES, MAHEK_VEHICLE, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
+import { callDue, daysBetween, directWho, isMahekVehicle, ISSUES, MAHEK_VEHICLE, runningLate, shortDay, trackingLink } from "@/lib/erp/engines/logistics";
 import { delayReasonForIssue, reasonsFor } from "@/lib/erp/engines/order-tracking";
 import type { Consignment, RouteSuggestions, UploadedLr } from "@/lib/erp/logistics";
 import { EditLrDialog } from "./edit-lr";
 import { UpdateLrDialog } from "./update-lr";
-import { BillRef, byLr, CallLink, DeliveryStatusBadge, driverPhone, DuePill, Empty, LrThumb, NotifyToggle, plural, RouteTrail, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
+import { ByTransporter } from "./by-transporter";
+import { CallTransporterDialog, type TransporterContact } from "./call-transporter";
+import { transporterKey } from "@/lib/erp/engines/transporter-calls";
+import { BillRef, byLr, DeliveryStatusBadge, driverPhone, DuePill, Empty, LrThumb, NotifyToggle, plural, RouteTrail, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
 
 /**
  * STEP 5 AND 6 — following the lorry. One card per LR (one LR is one
@@ -27,6 +31,7 @@ import { BillRef, byLr, CallLink, DeliveryStatusBadge, driverPhone, DuePill, Emp
  */
 type Filter = "all" | "calls" | "late" | "issue";
 type Dialog = { kind: "update" | "issue" | "delivered" | "deliveredBy" | "editLr"; group: Consignment[] } | null;
+type By = "lr" | "transporter";
 
 export function OnRoad({
   rows,
@@ -39,6 +44,8 @@ export function OnRoad({
   initialFilter,
   signedWaiting = [],
   transporters = [],
+  contacts = {},
+  initialBy = "lr",
 }: {
   rows: Consignment[];
   today: string;
@@ -51,11 +58,27 @@ export function OnRoad({
   /** Signed copies on the Documents desk, waiting for the delivery they close. */
   signedWaiting?: UploadedLr[];
   transporters?: string[];
+  /** Who to ring at each transporter, keyed by `transporterKey` — drawn only in the calling window. */
+  contacts?: Record<string, TransporterContact[]>;
+  initialBy?: By;
 }) {
   const { run, pending } = useAct();
   const [filter, setFilter] = useState<Filter>(initialFilter ?? "all");
   const [q, setQ] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [by, setBy] = useState<By>(initialBy);
+  const [calling, setCalling] = useState<string | null>(null);
+  const router = useRouter();
+  const path = usePathname();
+  const params = useSearchParams();
+  /* The view travels in the URL, so a reload or a shared link opens the same way. */
+  const pickBy = (v: By) => {
+    setBy(v);
+    const next = new URLSearchParams(params.toString());
+    if (v === "transporter") next.set("by", "transporter");
+    else next.delete("by");
+    router.replace(`${path}?${next.toString()}`, { scroll: false });
+  };
 
   const groups = useMemo(() => byLr(rows), [rows]);
   const isLate = (g: Consignment[]) => g.some((c) => runningLate({ expectedDeliveryOn: c.expectedDeliveryOn, billDate: c.billDate, materialStage: c.stage }, today, lateAfterDays));
@@ -67,7 +90,20 @@ export function OnRoad({
     .filter((g) => !needle || g.bills.some((c) => [c.lrNo, c.billNo, c.party, c.deliveryParty, c.transporter, String(c.orderNo), c.area, c.currentCity, c.destination, c.dispatchedFrom].some((x) => x?.toLowerCase().includes(needle))))
     .sort((a, b) => (a.bills[0].nextCallOn ?? "9999") .localeCompare(b.bills[0].nextCallOn ?? "9999"));
 
-  const calledNoChange = (g: Consignment[]) => run(() => erpLogisticsUpdate(g.map((c) => c.id), { note: g[0].ownVehicle ? "Called the driver — no change" : "Called the transporter — no change", nextCallOn: addDays(today, callEveryDays), notify: false }));
+  /* A call covers every LR of that transporter on the road, whatever the filter shows. */
+  const callGroups = (key: string) => groups.filter((g) => transporterKey(g.bills[0].transporter) === key);
+  const contactsFor = (key: string, gs: { bills: Consignment[] }[]): TransporterContact[] => {
+    if (gs[0]?.bills[0].ownVehicle) {
+      const seen = new Map<string, TransporterContact>();
+      for (const b of gs.flatMap((g) => g.bills)) {
+        const phone = driverPhone(b.driver);
+        if (phone && !seen.has(phone)) seen.set(phone, { id: null, name: b.driver?.replace(/[\d+\s-]{8,}/g, "").trim() || "Driver", role: "Driver", where: b.vehicleNo, phones: [phone] });
+      }
+      return [...seen.values()];
+    }
+    return contacts[key] ?? [];
+  };
+  const callingGroups = calling == null ? [] : callGroups(calling);
 
   return (
     <div className="space-y-3">
@@ -82,7 +118,26 @@ export function OnRoad({
             { key: "issue", label: "With a problem", count: counts.issue },
           ]}
         />
-        <span className="ml-auto w-[260px]">
+        <div role="group" aria-label="View" className="ml-auto flex items-center gap-1 rounded-control border border-line bg-surface p-0.5">
+          {(
+            [
+              ["lr", "Each LR", "menu"],
+              ["transporter", "By transporter", "truck"],
+            ] as const
+          ).map(([k, label, icon]) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={by === k}
+              onClick={() => pickBy(k)}
+              className={cx("inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-control px-2.5 text-meta", by === k ? "bg-brand font-semibold text-white" : "text-body hover:bg-canvas")}
+            >
+              <Icon n={icon} s={13} />
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="w-[260px]">
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter, city" aria-label="Search LR, bill, party, transporter, city" />
         </span>
       </div>
@@ -93,7 +148,19 @@ export function OnRoad({
         </Card>
       ) : null}
 
-      {shown.map(({ key, bills }) => {
+      {by === "transporter" && shown.length ? (
+        <ByTransporter
+          groups={shown}
+          today={today}
+          lateAfterDays={lateAfterDays}
+          canWrite={canWrite}
+          pending={pending}
+          onCall={(name) => setCalling(transporterKey(name))}
+          onAct={(kind, bills) => (kind === "solved" ? run(() => erpLogisticsClearIssue(bills.map((b) => b.id), "")) : setDialog({ kind, group: bills }))}
+        />
+      ) : null}
+
+      {by === "transporter" ? null : shown.map(({ key, bills }) => {
         const c = bills[0];
         const late = isLate(bills);
         const issue = bills.find((b) => b.issue);
@@ -179,7 +246,7 @@ export function OnRoad({
                 </div>
               </div>
               <div className="w-[190px] space-y-1.5 text-right">
-                {c.ownVehicle ? <CallLink phone={driverPhone(c.driver)} name={c.driver ?? "Driver"} /> : <CallLink phone={c.transporterPhone} name={c.transporter} />}
+                {c.ownVehicle && c.driver ? <div className="text-meta text-muted">{c.driver.replace(/[\d+\s-]{8,}/g, "").trim() || "Driver"}</div> : null}
                 {online && !c.ownVehicle ? (
                   <a href={online} target="_blank" rel="noreferrer" className={linkClass("brand", "block text-meta")}>
                     Track on {c.transporter}&apos;s site ↗
@@ -192,8 +259,9 @@ export function OnRoad({
                 <Button size="sm" variant="primary" disabled={pending} onClick={() => setDialog({ kind: "update", group: bills })}>
                   Update status
                 </Button>
-                <Button size="sm" disabled={pending} onClick={() => calledNoChange(bills)} title={`Logs the call to the ${c.ownVehicle ? "driver" : "transporter"} and books the next one in ${callEveryDays} days. The customer is not messaged.`}>
-                  Called — no change
+                <Button size="sm" disabled={pending} onClick={() => setCalling(transporterKey(c.transporter))} title={`Ring the ${c.ownVehicle ? "driver" : "transporter"} and log how it went — for every LR they carry for us`}>
+                  <Icon n="phone" s={13} />
+                  Call
                 </Button>
                 {issue ? (
                   <Button size="sm" disabled={pending} onClick={() => run(() => erpLogisticsClearIssue(bills.map((b) => b.id), ""))}>
@@ -229,6 +297,21 @@ export function OnRoad({
           </Card>
         );
       })}
+
+      {calling != null && callingGroups.length ? (
+        <CallTransporterDialog
+          key={calling}
+          transporter={callingGroups[0].bills[0].transporter?.trim() || "No transporter"}
+          own={callingGroups[0].bills[0].ownVehicle}
+          groups={callingGroups}
+          contacts={contactsFor(calling, callingGroups)}
+          today={today}
+          callEveryDays={callEveryDays}
+          notifyOn={notifyOn}
+          canWrite={canWrite}
+          onClose={() => setCalling(null)}
+        />
+      ) : null}
 
       {dialog?.kind === "editLr" ? (
         <EditLrDialog key={`e${dialog.group[0].id}`} group={dialog.group} today={today} transporters={transporters} notifyOn={notifyOn} onClose={() => setDialog(null)} />

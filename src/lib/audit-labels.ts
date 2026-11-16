@@ -1070,6 +1070,8 @@ export const VERBS: Record<string, string> = {
   unpay: "undid the payment of {}",
   /* The logistics desk (erp.logistics.*). */
   atTransport: "marked {} as reached the transporter",
+  callAttempt: "logged a call that reached nobody about {}",
+  transporterCall: "logged a call to a transporter about {}",
   delivered: "marked {} delivered",
   due: "planned when {} reaches the transporter",
   issue: "reported a problem on {}",

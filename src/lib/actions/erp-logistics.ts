@@ -3,9 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
+import { ErpNotPermitted, erpContext, previewRefusal, requireErpForm, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
 import * as F from "@/lib/erp/freight-bills";
+import * as C from "@/lib/erp/transporter-calls";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -244,4 +245,19 @@ export async function erpFreightBillDelete(billId: string, reason: string) {
 
 export async function erpLogisticsMergeTransporter(fromId: string, intoId: string, confirmation?: ImpactConfirmation) {
   return run((ctx) => L.mergeTransporter(ctx, String(fromId ?? ""), String(intoId ?? ""), confirmation));
+}
+
+/** One call to a transporter, covering every LR it carries for us — the calling window's save. */
+export async function erpLogisticsLogCall(input: C.CallInput) {
+  return run((ctx) => C.logTransporterCall(ctx, input && typeof input === "object" ? input : ({} as C.CallInput)));
+}
+
+/** The calling window's history. A read, so a preview may open it. */
+export async function erpLogisticsCallHistory(transporter: string): Promise<Result<C.CallHistory>> {
+  try {
+    await requireErpForm("transport");
+    return ok(await C.transporterCallHistory(typeof transporter === "string" ? transporter : ""));
+  } catch (e) {
+    return refused(e);
+  }
 }
