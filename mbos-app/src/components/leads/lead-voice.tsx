@@ -202,7 +202,7 @@ export function LeadVoicePanel({
           {phase === 'reading' ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 }}>
               <ActivityIndicator color={C.primaryDeep} />
-              <Text style={[{ fontSize: 14, color: C.body }, weight(600)]}>Filling the form from what you said…</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.body }, weight(600)]}>Filling the form from what you said…</Text>
             </View>
           ) : (
             <>
@@ -304,14 +304,18 @@ export function LeadVoicePanel({
               }}
               accessibilityRole="button"
               style={({ pressed }) => ({
-                width: 150,
-                height: 52,
+                minWidth: 110,
+                maxWidth: '45%',
+                flexShrink: 1,
+                paddingHorizontal: 12,
+                minHeight: 52,
+                paddingVertical: 8,
                 borderRadius: 26,
                 backgroundColor: pressed ? C.hairline : C.canvas,
                 alignItems: 'center',
                 justifyContent: 'center',
               })}>
-              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>Change what I said</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, textAlign: 'center' }, weight(700)]}>Change what I said</Text>
             </Pressable>
             <PillButton
               label="Fill the form"
@@ -384,8 +388,8 @@ function SmallChip({ label, on, onPress }: { label: string; on: boolean; onPress
       accessibilityState={{ selected: on }}
       accessibilityLabel={label}
       hitSlop={{ top: 6, bottom: 6 }}
-      style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: on ? C.navy : C.canvas }}>
-      <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{label}</Text>
+      style={{ minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: on ? C.navy : C.canvas }}>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: on ? '#FFFFFF' : C.ink }, weight(600)]}>{label}</Text>
     </Pressable>
   );
 }

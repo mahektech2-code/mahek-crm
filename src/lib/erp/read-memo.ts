@@ -1,5 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { cache } from "react";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
@@ -25,6 +26,28 @@ const dialect = new PgDialect();
 /** Runs a page's reads with identical statements answered once. */
 export function withReadMemo<T>(fn: () => Promise<T>): Promise<T> {
   return store.getStore() ? fn() : store.run(new Map<string, unknown>(), fn);
+}
+
+/*
+ * ONE MAP FOR THE WHOLE RENDER, layout and page alike.
+ *
+ * The ERP's layout counts its sidebar badges inside a memo of its own and the
+ * list page reads inside another, so the two never shared an answer: on
+ * Orders the open order book — the biggest read in the ERP — was read once for
+ * the badges and again for the tab strip and the list, on every load, every
+ * tab click and every refresh after a save. React's `cache` hands every caller
+ * in one render the same map, so the layout and the page now share it; outside
+ * a render (a test, a server action, a job) there is no render to share and
+ * each call gets a fresh map, exactly as `withReadMemo` does.
+ *
+ * Only for a render that WRITES NOTHING. Logistics brings its transport rows up
+ * to date as it loads, so it keeps a memo of its own.
+ */
+const renderMap = cache(() => new Map<string, unknown>());
+
+/** `withReadMemo`, sharing its answers with every other reader in the same React render. */
+export function withRenderMemo<T>(fn: () => Promise<T>): Promise<T> {
+  return store.getStore() ? fn() : store.run(renderMap(), fn);
 }
 
 /**

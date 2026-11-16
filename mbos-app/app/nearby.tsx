@@ -110,7 +110,8 @@ export default function Nearby() {
             style={({ pressed }) => ({
               flex: 1,
               minWidth: 64,
-              height: 44,
+              minHeight: 44,
+              paddingVertical: 6,
               borderRadius: 22,
               alignItems: 'center',
               justifyContent: 'center',
@@ -135,7 +136,7 @@ export default function Nearby() {
       ) : failed ? (
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
           <T style={[{ fontSize: 16, color: C.ink }, weight(800)]}>Could not load the list</T>
-          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+          <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.muted }}>
             Your customers are safe. The list could not be made right now.
           </T>
           <DashedAdd label="Try again" onPress={() => load(within ?? undefined)} style={{ marginTop: 10 }} />
@@ -154,7 +155,7 @@ export default function Nearby() {
                   ? 'Location is switched off'
                   : 'No GPS yet'}
             </T>
-            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+            <T style={{ marginTop: 4, fontSize: 13, lineHeight: 18, color: C.muted }}>
               {answer?.reason === 'denied'
                 ? 'Allow location for Mahek MBOS in your phone settings. Then come back.'
                 : answer?.reason === 'off'
@@ -175,7 +176,7 @@ export default function Nearby() {
                   <Icon name="spark" size={16} color={C.lime} strokeWidth={2} />
                   <T style={[{ flex: 1, fontSize: 13, color: C.lime }, weight(700)]}>Next best visit</T>
                   <Icon name="nav" size={14} color="#FFFFFF" strokeWidth={2} />
-                  <T style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>{metresLabel(answer.best.metres)}</T>
+                  <T style={[{ flexShrink: 1, fontSize: 13, color: '#FFFFFF' }, weight(700)]}>{metresLabel(answer.best.metres)}</T>
                 </View>
                 <T style={[{ fontSize: 22, lineHeight: 28, letterSpacing: -0.44, color: '#FFFFFF', marginTop: 10 }, weight(800)]}>
                   {shopName(answer.best.shop.name)}
@@ -232,7 +233,7 @@ export default function Nearby() {
                   ' has anything pending.' +
                   (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a bigger distance.' : '')}
             </T>
-            {answer.shops.length ? <T style={{ fontSize: 12, color: C.muted }}>best first</T> : null}
+            {answer.shops.length ? <T style={{ flexShrink: 1, fontSize: 12, color: C.muted }}>best first</T> : null}
           </View>
 
           {answer.shops.length ? (
@@ -264,7 +265,7 @@ export default function Nearby() {
                       {r.shop.outstandingPaise > 0 ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                           <Icon name="wallet" size={12} color={C.danger} strokeWidth={2} />
-                          <T style={[{ fontSize: 13, color: C.danger }, weight(700)]}>{inrFromPaise(r.shop.outstandingPaise)}</T>
+                          <T style={[{ flexShrink: 1, fontSize: 13, color: C.danger }, weight(700)]}>{inrFromPaise(r.shop.outstandingPaise)}</T>
                         </View>
                       ) : null}
                     </Pressable>

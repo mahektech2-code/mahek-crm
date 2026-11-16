@@ -71,16 +71,16 @@ export default function HolidaysScreen() {
             <>
               <View accessible accessibilityLabel={`Your holidays: ${mine.length}`}>
                 <T style={[{ fontSize: 30, lineHeight: 36, letterSpacing: -0.6, color: C.lavenderInk }, weight(800), tabular]}>{mine.length}</T>
-                <T style={{ fontSize: 12, color: C.lavenderMuted }}>your holidays</T>
+                <T style={{ marginTop: 4, fontSize: 12, color: C.lavenderMuted }}>your holidays</T>
               </View>
               <View accessible accessibilityLabel={`Still ahead: ${ahead.length}`}>
                 <T style={[{ fontSize: 30, lineHeight: 36, letterSpacing: -0.6, color: C.primaryDeep }, weight(800), tabular]}>{ahead.length}</T>
-                <T style={{ fontSize: 12, color: C.lavenderMuted }}>still ahead</T>
+                <T style={{ marginTop: 4, fontSize: 12, color: C.lavenderMuted }}>still ahead</T>
               </View>
             </>
           ) : null}
         </View>
-        <View style={{ height: 44, borderRadius: 22, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ minHeight: 44, borderRadius: 22, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center' }}>
           <Pressable accessibilityRole="button" accessibilityLabel="Previous year" onPress={() => setYear((y) => y - 1)} hitSlop={4} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
             <T style={{ fontSize: 18, color: C.lavenderInk }}>‹</T>
           </Pressable>
@@ -97,7 +97,7 @@ export default function HolidaysScreen() {
             accessibilityLabel={`Next: ${next.name}, ${dayLine(next.onDate)}`}
             style={{ marginTop: 12, minHeight: 44, borderRadius: 22, backgroundColor: C.navy, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14 }}>
             <Glyph shapes={CAL} size={16} color={C.lime} />
-            <T style={{ fontSize: 14, color: C.onNavyMuted }}>Next</T>
+            <T style={{ flexShrink: 1, fontSize: 14, color: C.onNavyMuted }}>Next</T>
             <T numberOfLines={1} style={[{ fontSize: 14, color: C.onNavy, flexShrink: 1 }, weight(800)]}>{next.name}</T>
             <View style={{ flex: 1 }} />
             <T style={[{ fontSize: 14, color: C.lime }, weight(700), tabular]}>{dayLine(next.onDate)}</T>
@@ -105,7 +105,7 @@ export default function HolidaysScreen() {
         ) : (
           <View style={{ marginTop: 12, minHeight: 44, borderRadius: 22, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14 }}>
             <Glyph shapes={CAL} size={16} color={C.lavenderMuted} />
-            <T style={{ fontSize: 14, color: C.lavenderMuted }}>No more holidays for you this year.</T>
+            <T style={{ flexShrink: 1, fontSize: 14, color: C.lavenderMuted }}>No more holidays for you this year.</T>
           </View>
         )
       ) : null}
@@ -172,7 +172,7 @@ export default function HolidaysScreen() {
                       }}>
                       <View style={{ width: 44, alignItems: 'center' }}>
                         <T style={[{ fontSize: 17, lineHeight: 21, color: ink }, weight(800), tabular]}>{dd}</T>
-                        <T style={{ fontSize: 11, lineHeight: 14, color: ink }}>{weekday(h.onDate)}</T>
+                        <T style={{ marginTop: 4, fontSize: 11, lineHeight: 14, color: ink }}>{weekday(h.onDate)}</T>
                       </View>
                       <View style={{ flex: 1 }}>
                         <T style={[{ fontSize: 15, lineHeight: 20, color: ink }, weight(700)]}>{h.name}</T>
@@ -191,9 +191,9 @@ export default function HolidaysScreen() {
               <Pressable
                 accessibilityRole="button"
                 onPress={() => setShowOthers((v) => !v)}
-                style={{ height: 48, borderRadius: 24, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 10 }}>
+                style={{ minHeight: 48, paddingVertical: 8, borderRadius: 24, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 10 }}>
                 <Glyph shapes={showOthers ? GLYPH.chevUp : GLYPH.chevDown} size={14} color={C.primaryDeep} strokeWidth={2.4} />
-                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                <T style={[{ flexShrink: 1, fontSize: 14, color: C.primaryDeep }, weight(700)]}>
                   {showOthers ? 'Hide' : 'Show'} {others.length} holiday{others.length === 1 ? '' : 's'} for other places
                 </T>
               </Pressable>
@@ -209,13 +209,13 @@ export default function HolidaysScreen() {
                         style={{ minHeight: 56, paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: C.hairline, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <View style={{ width: 44, alignItems: 'center' }}>
                           <T style={[{ fontSize: 17, lineHeight: 21, color: C.faint }, weight(800), tabular]}>{dd}</T>
-                          <T style={{ fontSize: 11, lineHeight: 14, color: C.faint }}>
+                          <T style={{ marginTop: 4, fontSize: 11, lineHeight: 14, color: C.faint }}>
                             {MONTHS[mm - 1].slice(0, 3)} · {weekday(h.onDate)}
                           </T>
                         </View>
                         <View style={{ flex: 1 }}>
                           <T style={{ fontSize: 15, lineHeight: 20, color: C.muted }}>{h.name}</T>
-                          <T style={{ fontSize: 12, lineHeight: 16, color: C.faint }}>Not yours · {h.scope ?? 'not given to you'}</T>
+                          <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.faint }}>Not yours · {h.scope ?? 'not given to you'}</T>
                         </View>
                       </View>
                     );

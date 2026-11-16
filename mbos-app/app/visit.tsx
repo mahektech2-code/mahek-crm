@@ -1400,15 +1400,15 @@ export default function Visit() {
         showTitle={false}
         heroTop={
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text accessibilityRole="header" style={[{ fontSize: 20, color: HERO.lavender.ink, flex: 1 }, weight(800)]}>
+            <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: HERO.lavender.ink, flex: 1 }, weight(800)]}>
               Arrived
             </Text>
             <View
               accessible
               accessibilityLabel={'Arrived ' + hhmm(arrival.arrivedAt) + ', trip ended'}
-              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              style={{ minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Icon name="clock" size={14} color={C.ink} strokeWidth={2.2} />
-              <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{hhmm(arrival.arrivedAt) + ' · trip ended'}</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>{hhmm(arrival.arrivedAt) + ' · trip ended'}</Text>
             </View>
           </View>
         }
@@ -1424,7 +1424,7 @@ export default function Visit() {
             the new card in rather than cutting to it. */}
         <Swap id="arrived">
           <Panel>
-            <Text style={[{ fontSize: 18, color: C.ink }, weight(800)]}>Check in?</Text>
+            <Text style={[{ fontSize: 18, lineHeight: 25, color: C.ink }, weight(800)]}>Check in?</Text>
             {/* WHAT THE TWO ANSWERS COST, said before they are pressed. The whole
                 reason this screen exists is the number underneath it, and a
                 salesman who does not know the clock starts here will read his own
@@ -1475,7 +1475,7 @@ export default function Visit() {
         onBack={() => router.back()}
         showTitle={false}
         heroTop={
-          <Text accessibilityRole="header" style={[{ fontSize: 20, color: HERO.lavender.ink }, weight(800)]}>
+          <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: HERO.lavender.ink }, weight(800)]}>
             Check in
           </Text>
         }
@@ -1490,7 +1490,7 @@ export default function Visit() {
         contentStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 24 }}>
         <Swap id="door">
           <Panel>
-            <Text style={[{ fontSize: 16, color: C.ink }, weight(700)]}>Check in when you are inside.</Text>
+            <Text style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(700)]}>Check in when you are inside.</Text>
             <View
               style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: 10 }}
               accessible
@@ -1567,7 +1567,7 @@ export default function Visit() {
         onBack={() => router.back()}
         showTitle={false}
         heroTop={
-          <Text accessibilityRole="header" style={[{ fontSize: 20, color: nav.ink }, weight(800)]}>
+          <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: nav.ink }, weight(800)]}>
             On your way
           </Text>
         }
@@ -1628,9 +1628,9 @@ export default function Visit() {
               />
               <View style={{ flex: 1, minWidth: 0 }}>
                 {distance ? (
-                  <Text style={[{ fontSize: 22, letterSpacing: -0.44, color: C.ink }, weight(800)]}>{distance}</Text>
+                  <Text style={[{ fontSize: 22, lineHeight: 29, letterSpacing: -0.44, color: C.ink }, weight(800)]}>{distance}</Text>
                 ) : (
-                  <Text style={[{ fontSize: 16, color: C.ink }, weight(700)]}>Navigate</Text>
+                  <Text style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(700)]}>Navigate</Text>
                 )}
                 {/* `navigationLine` carries the age of a stale reading and the
                     no-pin sentence; nothing is shown while there is no reading
@@ -1753,9 +1753,9 @@ export default function Visit() {
             <View
               accessible
               accessibilityLabel={'In the shop for ' + elapsedLabel(dwellSeconds)}
-              style={{ height: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: C.navy, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              style={{ minHeight: 36, paddingVertical: 6, paddingHorizontal: 14, borderRadius: 18, backgroundColor: C.navy, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Icon name="clock" size={16} color={C.lime} strokeWidth={2.2} />
-              <Text style={[{ fontSize: 14, color: C.lime }, weight(700)]}>{elapsedLabel(dwellSeconds)}</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.lime }, weight(700)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
           </View>
         ) : undefined
@@ -1793,7 +1793,7 @@ export default function Visit() {
               accessibilityLabel={'In the shop, ' + elapsedLabel(dwellSeconds)}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Icon name="clock" size={20} color={C.lime} strokeWidth={2} />
-              <Text style={[{ fontSize: 20, letterSpacing: -0.4, color: '#FFFFFF' }, weight(800)]}>{elapsedLabel(dwellSeconds)}</Text>
+              <Text style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: '#FFFFFF' }, weight(800)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
             {/* Live on `complete`, never on `verified`. An override is not a
                 missing requirement, and greying the button on one would demand
@@ -1805,14 +1805,15 @@ export default function Visit() {
               accessibilityLabel={verdict.complete ? 'Check out of the shop and save the visit' : verdict.firstFailure}
               style={({ pressed }) => ({
                 flex: 1,
-                height: 56,
+                minHeight: 56,
+                paddingVertical: 8,
                 borderRadius: 28,
                 alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: verdict.complete ? C.lime : 'rgba(255,255,255,0.14)',
                 opacity: pressed ? 0.85 : 1,
               })}>
-              <Text style={[{ fontSize: 16, color: verdict.complete ? C.navy : C.onNavyMuted }, weight(700)]}>
+              <Text style={[{ fontSize: 16, lineHeight: 22, color: verdict.complete ? C.navy : C.onNavyMuted }, weight(700)]}>
                 {saving ? 'Checking out…' : verdict.complete ? 'Check out' : 'Check out · ' + left + ' left'}
               </Text>
             </Pressable>
@@ -1830,7 +1831,7 @@ export default function Visit() {
           <View style={{ backgroundColor: C.warnBg, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', gap: 12 }}>
             <Icon name="warn" size={22} color={C.warnInk} strokeWidth={2} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(800)]}>You left without checking out</Text>
+              <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>You left without checking out</Text>
               <Text style={{ fontSize: 13, lineHeight: 18, color: C.body, marginTop: 2 }}>
                 {'Seen ' +
                   hhmm(leftAt) +
@@ -1853,10 +1854,10 @@ export default function Visit() {
             strokeWidth={2}
           />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>
               {gpsLocked ? 'Checked in here' : gps === 'off' ? 'No GPS' : 'Finding you…'}
             </Text>
-            <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
+            <Text style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.muted }}>
               {gpsLocked
                 ? fixReason ?? verdictGeo.sentence
                 : gps === 'off'
@@ -1869,7 +1870,7 @@ export default function Visit() {
               onPress={() => notify('Going on without location. At check-out, choose "Save as not checked" and say why. Your manager will see it had no location.', 'warn')}
               accessibilityRole="button"
               style={({ pressed }) => ({ height: HIT, paddingHorizontal: 14, borderRadius: HIT / 2, backgroundColor: pressed ? C.line : C.wash, alignItems: 'center', justifyContent: 'center' })}>
-              <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Carry on</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Carry on</Text>
             </Pressable>
           ) : null}
         </View>
@@ -1886,12 +1887,12 @@ export default function Visit() {
             accessibilityLabel={'Last time, ' + pretty(isoDate(new Date(lastTime.checkInAt))) + (lastTime.outcome ? ', ' + outcomeLabel(lastTime.outcome) : '') + '. ' + lastTime.note}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Icon name="clock" size={15} color={C.muted} strokeWidth={2} />
-              <Text style={[{ fontSize: 13, color: C.muted, flex: 1 }, weight(700)]}>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.muted, flex: 1 }, weight(700)]}>
                 {'Last time · ' + pretty(isoDate(new Date(lastTime.checkInAt)))}
               </Text>
               {lastTime.outcome ? (
-                <View style={{ height: 24, paddingHorizontal: 8, borderRadius: 12, backgroundColor: C.wash, justifyContent: 'center' }}>
-                  <Text style={[{ fontSize: 12, color: C.body }, weight(600)]}>{outcomeLabel(lastTime.outcome)}</Text>
+                <View style={{ flexShrink: 0, minHeight: 24, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 12, backgroundColor: C.wash, justifyContent: 'center' }}>
+                  <Text style={[{ fontSize: 12, lineHeight: 17, color: C.body }, weight(600)]}>{outcomeLabel(lastTime.outcome)}</Text>
                 </View>
               ) : null}
             </View>
@@ -1967,7 +1968,7 @@ export default function Visit() {
               <View
                 style={{ alignSelf: 'flex-start', minHeight: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: C.successBg, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Icon name="tick" size={14} color={C.success} strokeWidth={2.4} />
-                <Text style={[{ fontSize: 13, color: C.success, flexShrink: 1 }, weight(700)]}>{doneLine}</Text>
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: C.success, flexShrink: 1 }, weight(700)]}>{doneLine}</Text>
               </View>
             ) : (
               <View>
@@ -2014,8 +2015,8 @@ export default function Visit() {
                 <View
                   accessible
                   accessibilityLabel={capLabel + ', still a Suspect'}
-                  style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, justifyContent: 'center' }}>
-                  <Text style={[{ fontSize: 13, color: C.warnInk }, weight(800)]}>{capLabel}</Text>
+                  style={{ minHeight: 28, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, justifyContent: 'center' }}>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: C.warnInk }, weight(800)]}>{capLabel}</Text>
                 </View>
               }
             />
@@ -2122,7 +2123,7 @@ export default function Visit() {
                   keyboardType="decimal-pad"
                   style={[{ flex: 1, minWidth: 0, minHeight: 48, fontSize: reqLitres ? 18 : 14, color: C.ink }, reqLitres ? weight(800) : null]}
                 />
-                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>L / month</Text>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>L / month</Text>
               </View>
               {/* Cans, because that is what an ORDER is counted in — the litres
                   beside it are what the shop says its consumption is. Two
@@ -2137,11 +2138,11 @@ export default function Visit() {
                   keyboardType="number-pad"
                   style={[{ flex: 1, minWidth: 0, minHeight: 48, fontSize: reqCans ? 18 : 14, color: C.ink }, reqCans ? weight(800) : null]}
                 />
-                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>cans</Text>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>cans</Text>
               </View>
             </View>
             {wholeOnly(reqCans) ? (
-              <Text style={{ fontSize: 12, color: C.danger, marginTop: 4, textAlign: 'right' }}>Whole cans only.</Text>
+              <Text style={{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 4, textAlign: 'right' }}>Whole cans only.</Text>
             ) : null}
           </Panel>
         ) : null}
@@ -2162,7 +2163,8 @@ export default function Visit() {
                   accessibilityLabel={has ? b.on.replace(' ✓', ' photo taken, take again') : 'Take ' + b.off.toLowerCase()}
                   outerStyle={{ flex: 1 }}
                   style={{
-                    height: 88,
+                    minHeight: 88,
+                    paddingVertical: 8,
                     borderRadius: 20,
                     borderWidth: has ? 2 : 1.5,
                     borderStyle: has ? 'solid' : 'dashed',
@@ -2177,7 +2179,7 @@ export default function Visit() {
                   <Pop trigger={has}>
                     <Icon name={has ? 'tick' : 'camera'} size={22} color={has ? C.primaryDeep : C.ink} strokeWidth={2} />
                   </Pop>
-                  <Text style={[{ fontSize: 13, color: has ? C.primaryDeep : C.ink }, weight(700)]}>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: has ? C.primaryDeep : C.ink }, weight(700)]}>
                     {has ? b.on : b.off}
                   </Text>
                 </PressableScale>
@@ -2223,7 +2225,7 @@ export default function Visit() {
                     gap: 6,
                   }}>
                   <Icon name={m.k === 'call' ? 'call' : m.k === 'whatsapp' ? 'chat' : 'visit'} size={15} color={on ? C.lime : C.ink} strokeWidth={2} />
-                  <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{m.label}</Text>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{m.label}</Text>
                 </Pressable>
               );
             })}
@@ -2234,7 +2236,7 @@ export default function Visit() {
               accessibilityRole="button"
               accessibilityLabel={'Next contact on ' + pretty(nextDate) + ', change'}
               style={({ pressed }) => ({ height: HIT, borderRadius: HIT / 2, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.navy, opacity: pressed ? 0.85 : 1 })}>
-              <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>{pretty(nextDate)}</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(700)]}>{pretty(nextDate)}</Text>
               <Icon name="cal" size={16} color={C.lime} strokeWidth={2} />
             </Pressable>
             <Text style={{ flex: 1, fontSize: 12, lineHeight: 16, color: C.muted }}>
@@ -2284,7 +2286,7 @@ export default function Visit() {
               }}>
               {noFollowUp ? <Icon name="tick" size={12} color="#FFFFFF" strokeWidth={3} /> : null}
             </View>
-            <Text style={[{ fontSize: 14, color: C.ink }, weight(600)]}>No follow-up needed</Text>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>No follow-up needed</Text>
           </Pressable>
         </Panel>
 
@@ -2296,7 +2298,7 @@ export default function Visit() {
             under the thumb that answered it. */}
         <Presence show={!verdict.verified}>
         <Panel>
-          <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+          <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
             {verdict.title + (left ? ' · ' + left : '')}
           </Text>
 
@@ -2311,7 +2313,7 @@ export default function Visit() {
                   )}
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[{ fontSize: 14, color: k.ok ? C.ink : C.danger }, weight(k.ok ? 400 : 700)]}>{k.line}</Text>
+                  <Text style={[{ fontSize: 14, lineHeight: 20, color: k.ok ? C.ink : C.danger }, weight(k.ok ? 400 : 700)]}>{k.line}</Text>
                   {!k.ok ? <Text style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 2 }}>{k.why}</Text> : null}
                 </View>
               </View>
@@ -2372,14 +2374,14 @@ export default function Visit() {
       <BottomSheet open={asking} onClose={() => setAsking(false)} scroll>
         <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 22, letterSpacing: -0.44, color: C.ink }, weight(800)]}>
+            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 22, lineHeight: 29, letterSpacing: -0.44, color: C.ink }, weight(800)]}>
               Before you check out
             </Text>
             <View
-              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: verdict.complete ? C.successBg : C.dangerBg }}
+              style={{ flexShrink: 0, minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: verdict.complete ? C.successBg : C.dangerBg }}
               accessible
               accessibilityLabel={verdict.complete ? 'All answered.' : `${left} ${left === 1 ? 'thing' : 'things'} left for this visit.`}>
-              <Text style={[{ fontSize: 14, color: verdict.complete ? C.success : C.danger }, weight(800)]}>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: verdict.complete ? C.success : C.danger }, weight(800)]}>
                 {verdict.complete ? 'All answered' : left + ' left'}
               </Text>
             </View>
@@ -2407,7 +2409,7 @@ export default function Visit() {
                 onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
                 onHeard={setHeard}
               />
-              <Text style={[{ fontSize: 13, marginTop: 6, color: C.danger }, weight(700)]}>
+              <Text style={[{ fontSize: 13, lineHeight: 18, marginTop: 6, color: C.danger }, weight(700)]}>
                 {checks.find((k) => k.key === 'note')?.line}
               </Text>
             </View>
@@ -2417,8 +2419,8 @@ export default function Visit() {
             <View style={{ marginTop: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#F7F4FF', borderRadius: 20, paddingVertical: 10, paddingLeft: 14, paddingRight: 10 }}>
               <Icon name={outcome ? OUTCOME_ICON[outcome] ?? 'visit' : 'visit'} size={20} color={C.primary} strokeWidth={2} />
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{followOn.label}</Text>
-                <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{followOn.line}</Text>
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>{followOn.label}</Text>
+                <Text style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.muted }}>{followOn.line}</Text>
               </View>
               <Btn
                 label={followOn.cta}
@@ -2443,8 +2445,8 @@ export default function Visit() {
                 <View key={k.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Icon name={k.key === 'gps' ? 'locate' : 'clock'} size={20} color={C.danger} strokeWidth={2} />
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[{ fontSize: 13, color: C.danger }, weight(700)]}>{k.line}</Text>
-                    <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{k.why}</Text>
+                    <Text style={[{ fontSize: 13, lineHeight: 18, color: C.danger }, weight(700)]}>{k.line}</Text>
+                    <Text style={{ marginTop: 2, fontSize: 13, lineHeight: 18, color: C.muted }}>{k.why}</Text>
                   </View>
                 </View>
               ))}
@@ -2460,14 +2462,15 @@ export default function Visit() {
             accessibilityState={{ disabled: !verdict.complete || saving }}
             style={({ pressed }) => ({
               marginTop: 18,
-              height: 60,
+              minHeight: 60,
+              paddingVertical: 10,
               borderRadius: 30,
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: verdict.complete ? C.navy : C.line,
               opacity: pressed ? 0.85 : 1,
             })}>
-            <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.muted }, weight(700)]}>
+            <Text style={[{ fontSize: 16, lineHeight: 22, color: verdict.complete ? '#FFFFFF' : C.muted }, weight(700)]}>
               {verdict.complete ? 'Check out' : owed.length ? 'Answer the questions above' : 'Some things are missing'}
             </Text>
           </Pressable>
@@ -2504,7 +2507,7 @@ export default function Visit() {
               'The saved location for ' + (c?.name ?? 'this shop') + ' is about ' + (metresAway ?? refusedMetres ?? 'an unknown number of') +
               ' metres from where you checked in. If the shop is here and the map is wrong, ask your manager to move it. Then no visit here will be stopped again.'
             }>
-            <Text style={[{ fontSize: 26, letterSpacing: -0.52, color: C.ink }, weight(800)]}>
+            <Text style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.52, color: C.ink }, weight(800)]}>
               {'≈ ' + (metresAway ?? refusedMetres ?? '?') + ' m'}
             </Text>
             <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: C.muted }}>
@@ -2534,7 +2537,7 @@ export default function Visit() {
             />
           ))}
         </View>
-        {formErr === 'cat' ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick what it is about.</Text> : null}
+        {formErr === 'cat' ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>Pick what it is about.</Text> : null}
 
         {/* Laid out across rather than down: three short words fit one row,
             and a second scrolling list under the first would push the box he
@@ -2562,7 +2565,7 @@ export default function Visit() {
           style={{ minHeight: 90 }}
         />
         {formErr === 'what' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the shop said.</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>Write what the shop said.</Text>
         ) : null}
 
         {/* Said HERE and not in a toast: this sheet is a Modal and the toast
@@ -2607,7 +2610,7 @@ export default function Visit() {
             />
           ))}
         </View>
-        {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick the product they want to try.</Text> : null}
+        {formErr === 'sku' ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>Pick the product they want to try.</Text> : null}
 
         {/* A REAL FIGURE, because the godown picks stock against it. This was
             `cans: 1` in the handler with no box on the sheet, so a trial of six
@@ -2616,7 +2619,7 @@ export default function Visit() {
             offers letters invites "one". The stepper is the quick way; the
             number between its buttons is still typed into. */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 }}>
-          <Text style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>How many cans</Text>
+          <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>How many cans</Text>
           <StepButton
             label="One can fewer"
             glyph="−"
@@ -2644,10 +2647,10 @@ export default function Visit() {
           />
         </View>
         {wholeOnly(draft.cans ?? '1') ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6, textAlign: 'right' }}>Whole cans only.</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6, textAlign: 'right' }}>Whole cans only.</Text>
         ) : null}
         {formErr === 'cans' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6, textAlign: 'right' }}>How many cans?</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6, textAlign: 'right' }}>How many cans?</Text>
         ) : null}
 
         <FieldLabel text="What they will use it on" style={{ marginTop: 12, marginBottom: 6 }} />
@@ -2663,7 +2666,7 @@ export default function Visit() {
           style={{ minHeight: 80 }}
         />
         {formErr === 'application' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>
             What will they use it on? Without this, no one can judge the trial.
           </Text>
         ) : null}
@@ -2691,28 +2694,28 @@ export default function Visit() {
              is empty is an office that emptied it — and a heading with nothing
              under it reads as a broken screen rather than as a decision
              somebody made. */
-          <Text style={{ fontSize: 13, color: C.muted }}>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
             No trial reasons are set up yet. Ask the office to add them.
           </Text>
         )}
         {formErr === 'reason' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>
             Say why they want a trial. Your manager decides on this.
           </Text>
         ) : null}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
           <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={2} />
-          <Text style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>Come back on</Text>
+          <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>Come back on</Text>
           <Pressable
             onPress={() => setCalOpen('trial')}
             accessibilityRole="button"
             accessibilityLabel={'Trial follow-up on ' + pretty(draft.trial ?? trialDefault) + ', change'}
-            style={({ pressed }) => ({ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.navy, justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
+            style={({ pressed }) => ({ minHeight: 44, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 22, backgroundColor: C.navy, justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
             {/* `trialDefault`, the day worked out when the screen opened, and not
                 a fresh clock read — the date shown here and the one `submitSample`
                 stores have to be the same day on a screen open across midnight. */}
-            <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>{pretty(draft.trial ?? trialDefault)}</Text>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(700)]}>{pretty(draft.trial ?? trialDefault)}</Text>
           </Pressable>
         </View>
 
@@ -2742,7 +2745,7 @@ export default function Visit() {
 
       {/* ---- the date picker both of the above share ---- */}
       <BottomSheet open={!!calOpen} onClose={() => setCalOpen(null)}>
-        <Text accessibilityRole="header" style={[{ fontSize: 20, letterSpacing: -0.4, color: C.ink, marginBottom: 10 }, weight(800)]}>
+        <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: C.ink, marginBottom: 10 }, weight(800)]}>
           {calOpen === 'trial' ? 'Trial follow-up' : 'Next contact on'}
         </Text>
         <Calendar
@@ -2851,7 +2854,7 @@ function PanelTitle({ icon, text, right }: { icon?: IconName; text: string; righ
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
       {icon ? <Icon name={icon} size={18} color={C.primaryDeep} strokeWidth={2} /> : null}
-      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink, flex: 1, minWidth: 0 }, weight(800)]}>
+      <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink, flex: 1, minWidth: 0 }, weight(800)]}>
         {text}
       </Text>
       {right}
@@ -2877,7 +2880,7 @@ function RefusalBox({ verdict, radiusM }: { verdict: CheckInVerdict; radiusM: nu
           <Text style={[{ fontSize: 30, lineHeight: 32, letterSpacing: -0.6, color: C.warnInk }, weight(800)]}>
             {distanceLabel(verdict.metresAway) ?? Math.round(verdict.metresAway ?? 0) + ' m'}
           </Text>
-          <Text style={[{ fontSize: 12, color: C.warnInk }, weight(700)]}>{'need ≤ ' + radiusM + ' m'}</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(700)]}>{'need ≤ ' + radiusM + ' m'}</Text>
         </View>
       ) : (
         <Icon name="locate" size={24} color={C.warnInk} strokeWidth={2} />
@@ -3006,7 +3009,7 @@ function SheetHead({ icon, title, sub, right }: { icon: IconName; title: string;
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <Icon name={icon} size={22} color={C.primaryDeep} strokeWidth={2} />
-        <Text accessibilityRole="header" style={[{ fontSize: 22, letterSpacing: -0.44, color: C.ink, flex: 1 }, weight(800)]}>
+        <Text accessibilityRole="header" style={[{ fontSize: 22, lineHeight: 29, letterSpacing: -0.44, color: C.ink, flex: 1 }, weight(800)]}>
           {title}
         </Text>
         {right ? (
@@ -3015,7 +3018,7 @@ function SheetHead({ icon, title, sub, right }: { icon: IconName; title: string;
           </Text>
         ) : null}
       </View>
-      {sub ? <Text style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>{sub}</Text> : null}
+      {sub ? <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 2 }}>{sub}</Text> : null}
     </View>
   );
 }
@@ -3024,7 +3027,7 @@ function SheetHead({ icon, title, sub, right }: { icon: IconName; title: string;
 function FieldLabel({ text, style }: { text: string; style?: StyleProp<ViewStyle> }) {
   return (
     <View style={style}>
-      <Text style={[{ fontSize: 13, color: C.ink }, weight(700)]}>{text}</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>{text}</Text>
     </View>
   );
 }

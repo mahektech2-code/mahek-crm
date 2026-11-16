@@ -276,13 +276,13 @@ export function QualificationForm({
 
   const hero = (
     <View style={{ marginTop: 14 }}>
-      <Text style={[{ fontSize: 13, color: HERO.lavender.muted }, weight(600)]}>Qualification</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: HERO.lavender.muted }, weight(600)]}>Qualification</Text>
       <Text accessibilityRole="header" style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: HERO.lavender.ink }, weight(800)]}>
         {lead.company?.trim() || lead.name}
       </Text>
       <View accessible accessibilityLabel={done + ' of ' + total + ' answered'} style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
         <Text style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.6, color: HERO.lavender.ink }, weight(800)]}>{String(done)}</Text>
-        <Text style={[{ fontSize: 15, color: HERO.lavender.muted }, weight(700)]}>{'of ' + total + ' answered'}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: HERO.lavender.muted }, weight(700)]}>{'of ' + total + ' answered'}</Text>
       </View>
       {/* One bar a question, filled where the SAVED answer counts — the bars
           read the record, like the count, so they move on Save. */}
@@ -404,8 +404,8 @@ export function QualificationForm({
           onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
           accessibilityRole="button"
           accessibilityLabel="Back to the lead"
-          style={({ pressed }) => ({ width: 140, height: 60, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
-          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Back to lead</Text>
+          style={({ pressed }) => ({ minWidth: 110, maxWidth: '45%', flexShrink: 1, paddingHorizontal: 14, minHeight: 60, paddingVertical: 10, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, lineHeight: 19, color: C.ink, textAlign: 'center' }, weight(700)]}>Back to lead</Text>
         </Pressable>
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save answers'}
@@ -413,7 +413,7 @@ export function QualificationForm({
           onPress={save}
           disabled={busy || !writable}
           whyDisabled={writable ? undefined : 'Qualification opens once your Sales Manager has verified this Prospect.'}
-          style={{ flex: 1, height: 60, minHeight: 60, borderRadius: 30 }}
+          style={{ flex: 1, minHeight: 60, borderRadius: 30 }}
         />
       </View>
     </View>
@@ -453,7 +453,7 @@ function YesNo({
             accessibilityLabel={field.label + ': ' + o.label}
             hitSlop={{ top: 6, bottom: 6 }}
             style={{ minHeight: 36, paddingHorizontal: field.kind === 'yesno' ? 16 : 14, borderRadius: 18, justifyContent: 'center', backgroundColor: on ? C.navy : C.canvas }}>
-            <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{o.label}</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{o.label}</Text>
           </Pressable>
         );
       })}

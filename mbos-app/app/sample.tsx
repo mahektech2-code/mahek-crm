@@ -185,7 +185,7 @@ export default function SampleRecord() {
             gap: 10,
           }}>
           {status === 'reading' ? <ActivityIndicator size="small" color={C.primary} /> : null}
-          <T style={[{ fontSize: 14, color: C.ink, textAlign: 'center' }, weight(700)]}>
+          <T style={[{ fontSize: 14, lineHeight: 20, color: C.ink, textAlign: 'center' }, weight(700)]}>
             {status === 'reading'
               ? 'Loading…'
               : status === 'failed'
@@ -284,14 +284,14 @@ export default function SampleRecord() {
             {productLine ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
                 <Flask size={14} color={h.muted} />
-                <Text style={{ flexShrink: 1, fontSize: 13, color: h.muted }}>{productLine}</Text>
+                <Text style={{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: h.muted }}>{productLine}</Text>
               </View>
             ) : null}
           </View>
           {/* The mark he just made, answered on the badge: it pops as the
               state moves on. The toast that confirmed the save is the buzz. */}
           <Pop trigger={s.state}>
-            <Badge tone={toneFor(s.state)} style={{ height: 30, paddingHorizontal: 12, borderRadius: 15 }}>
+            <Badge tone={toneFor(s.state)} style={{ minHeight: 30, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 15 }}>
               {s.state}
             </Badge>
           </Pop>
@@ -331,7 +331,7 @@ export default function SampleRecord() {
           hidden: a card with one word on it. */}
       {s.rejectionReason || s.state === 'Rejected' ? (
         <View style={{ backgroundColor: C.dangerBg, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
-          <Text style={[{ fontSize: 12, color: C.danger }, weight(700)]}>Not accepted because</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>Not accepted because</Text>
           <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(700)]}>
             {/* A missing reason is said rather than drawn as an empty card.
                 The rule demands one, so its absence is itself worth knowing. */}
@@ -341,7 +341,7 @@ export default function SampleRecord() {
       ) : null}
       {s.cancelReason ? (
         <View style={{ backgroundColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
-          <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>Cancelled</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>Cancelled</Text>
           <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(700)]}>{s.cancelReason}</Text>
         </View>
       ) : null}
@@ -404,7 +404,7 @@ export default function SampleRecord() {
                   <Text style={{ fontSize: 11, color: C.muted }}>{f.label}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     {f.icon}
-                    <Text style={[{ flexShrink: 1, fontSize: 15, color: f.good ? C.success : C.ink }, weight(700)]}>
+                    <Text style={[{ flexShrink: 1, fontSize: 15, lineHeight: 21, color: f.good ? C.success : C.ink }, weight(700)]}>
                       {f.value}
                     </Text>
                   </View>
@@ -422,7 +422,7 @@ export default function SampleRecord() {
       {finished ? null : (
         <Swap id={s.state}>
           <View style={{ gap: 10 }}>
-            <Text accessibilityRole="header" accessibilityLabel="What happens next" style={[{ fontSize: 13, color: C.ink, marginTop: 4 }, weight(700)]}>
+            <Text accessibilityRole="header" accessibilityLabel="What happens next" style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 4 }, weight(700)]}>
               Next
             </Text>
 
@@ -451,7 +451,7 @@ export default function SampleRecord() {
 
             {s.state === 'Dispatched' ? (
               <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14 }}>
-                <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>Dispatched · Sample received &amp; review</Text>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>Dispatched · Sample received &amp; review</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
                   <Text style={[{ flex: 1, fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>
                     Has the sample been received?
@@ -599,7 +599,8 @@ export default function SampleRecord() {
               accessibilityRole="button"
               accessibilityLabel="Cancel this sample"
               style={({ pressed }) => ({
-                height: 48,
+                minHeight: 48,
+                paddingVertical: 8,
                 borderRadius: 24,
                 borderWidth: 1.5,
                 borderStyle: 'dashed',
@@ -611,7 +612,7 @@ export default function SampleRecord() {
                 opacity: pressed ? 0.7 : 1,
               })}>
               <Icon name="close" size={16} color={C.danger} strokeWidth={2.2} />
-              <Text style={[{ fontSize: 14, color: C.danger }, weight(700)]}>Cancel this sample</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(700)]}>Cancel this sample</Text>
             </Pressable>
           </View>
         </Swap>
@@ -634,13 +635,13 @@ export default function SampleRecord() {
       {review ? (
         <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(800)]}>
+            <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
               What they said
             </Text>
             {review.photoId ? (
               <View accessible accessibilityLabel="A photo is attached." style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Icon name="camera" size={18} color={C.muted} strokeWidth={2} />
-                <Text style={{ fontSize: 12, color: C.muted }}>A photo is attached</Text>
+                <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>A photo is attached</Text>
               </View>
             ) : null}
           </View>
@@ -651,7 +652,7 @@ export default function SampleRecord() {
               return (
                 <View key={f.id}>
                   <Text style={{ fontSize: 11, color: C.muted }}>{f.label}</Text>
-                  <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>{said}</Text>
+                  <Text style={{ marginTop: 2, fontSize: 15, lineHeight: 21, color: C.ink }}>{said}</Text>
                 </View>
               );
             })}
@@ -666,14 +667,15 @@ export default function SampleRecord() {
               accessibilityRole="button"
               accessibilityLabel="Change it"
               style={({ pressed }) => ({
-                height: 44,
+                minHeight: 44,
+                paddingVertical: 8,
                 paddingHorizontal: 16,
                 borderRadius: 22,
                 backgroundColor: pressed ? C.hairline : C.canvas,
                 alignItems: 'center',
                 justifyContent: 'center',
               })}>
-              <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Change it</Text>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Change it</Text>
             </Pressable>
           </View>
         </View>
@@ -858,7 +860,7 @@ function ChasePanel({ chase }: { chase: ChaseSchedule }) {
               ) : (
                 <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: r.duePassed ? C.warnInk : C.muted, marginVertical: 1 }} />
               )}
-              <Text style={[{ fontSize: 13, color: C.ink, marginTop: 2 }, weight(800)]}>{'Ask ' + r.ask}</Text>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 2 }, weight(800)]}>{'Ask ' + r.ask}</Text>
               <Text
                 style={[
                   { fontSize: 12, textAlign: 'center', color: done ? C.success : r.duePassed ? C.warnInk : C.muted },
@@ -939,7 +941,8 @@ function BigButton({ label, icon, onPress }: { label: string; icon?: React.React
     <PressableScale onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
       <View
         style={{
-          height: 56,
+          minHeight: 56,
+          paddingVertical: 8,
           borderRadius: 28,
           backgroundColor: C.primary,
           flexDirection: 'row',
@@ -948,7 +951,7 @@ function BigButton({ label, icon, onPress }: { label: string; icon?: React.React
           gap: 8,
         }}>
         {icon}
-        <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 22, color: '#FFFFFF' }, weight(700)]}>{label}</Text>
       </View>
     </PressableScale>
   );
@@ -991,7 +994,7 @@ function Tile({
         opacity: pressed || disabled ? 0.8 : 1,
       })}>
       {icon}
-      <Text style={[{ flexShrink: 1, fontSize: 13, color: tone === 'primary' ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: tone === 'primary' ? '#FFFFFF' : C.ink }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -1001,7 +1004,7 @@ function YesNo({ value, onChange }: { value: 'yes' | 'no' | null; onChange: (v: 
   return (
     <View
       accessibilityRole="radiogroup"
-      style={{ height: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
+      style={{ minHeight: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
       {(['yes', 'no'] as const).map((k) => {
         const on = value === k;
         return (
@@ -1022,7 +1025,7 @@ function YesNo({ value, onChange }: { value: 'yes' | 'no' | null; onChange: (v: 
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <Text style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>
               {k === 'yes' ? 'Yes' : 'No'}
             </Text>
           </Pressable>
@@ -1056,7 +1059,7 @@ function VerdictChip({ outcome }: { outcome: string | null }) {
         gap: 6,
       }}>
       {look.icon ? <Icon name={look.icon} size={14} color={look.fg} strokeWidth={2.2} /> : null}
-      <Text style={[{ flexShrink: 1, fontSize: 13, color: look.fg }, weight(700)]}>{verdictSentence(outcome)}</Text>
+      <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: look.fg }, weight(700)]}>{verdictSentence(outcome)}</Text>
     </View>
   );
 }
@@ -1073,7 +1076,7 @@ function SheetHead({ icon, title, sub, a11ySub }: { icon: React.ReactNode; title
         <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
           {title}
         </Text>
-        <Text accessibilityLabel={a11ySub} style={{ fontSize: 12, color: C.muted }}>
+        <Text accessibilityLabel={a11ySub} style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>
           {sub}
         </Text>
       </View>
@@ -1147,7 +1150,7 @@ function DispatchSheet({
 
       {byHand ? null : (
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Input
               value={courier}
               onChangeText={(v) => {
@@ -1159,7 +1162,7 @@ function DispatchSheet({
               style={WASH_BOX}
             />
           </View>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Input
               value={docket}
               onChangeText={(v) => {
@@ -1180,7 +1183,8 @@ function DispatchSheet({
         accessibilityLabel={'Should be there by: ' + (date ? dmy(date) : 'choose a day')}
         style={({ pressed }) => ({
           marginTop: 8,
-          height: 48,
+          minHeight: 48,
+          paddingVertical: 8,
           borderRadius: 24,
           backgroundColor: date ? C.primaryTint : pressed ? C.hairline : C.canvas,
           flexDirection: 'row',
@@ -1189,7 +1193,7 @@ function DispatchSheet({
           gap: 8,
         })}>
         <Icon name="cal" size={18} color={date ? C.primaryDeep : C.ink} strokeWidth={2} />
-        <Text style={[{ fontSize: 14, color: date ? C.primaryDeep : C.ink }, weight(date ? 700 : 600)]}>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: date ? C.primaryDeep : C.ink }, weight(date ? 700 : 600)]}>
           {'Should be there by · ' + (date ? dmy(date) : 'choose a day')}
         </Text>
       </Pressable>
@@ -1325,7 +1329,7 @@ function ReviewSheet({
       <View style={{ gap: 10, marginTop: 14 }}>
         {ACTIVE_FEEDBACK_FIELDS.map((f) => (
           <View key={f.id}>
-            <Text style={[{ fontSize: 13, color: C.ink, marginBottom: 6 }, weight(700)]}>{f.label}</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginBottom: 6 }, weight(700)]}>{f.label}</Text>
             <VoiceField
               value={fields[f.id] ?? ''}
               onChangeText={(v) => {
@@ -1340,7 +1344,7 @@ function ReviewSheet({
         ))}
       </View>
 
-      <Text style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]}>Verdict</Text>
+      <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 14 }, weight(700)]}>Verdict</Text>
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
         {VERDICTS.map((v) => {
           const on = outcome === v.key;
@@ -1356,7 +1360,8 @@ function ReviewSheet({
               accessibilityLabel={v.a11y}
               style={{
                 flex: 1,
-                height: 64,
+                minHeight: 64,
+                paddingVertical: 8,
                 borderRadius: 20,
                 backgroundColor: on ? v.strong : v.bg,
                 alignItems: 'center',
@@ -1365,7 +1370,7 @@ function ReviewSheet({
                 borderWidth: on ? 0 : 0,
               }}>
               <Icon name={v.icon} size={18} color={on ? '#FFFFFF' : v.fg} strokeWidth={2.2} />
-              <Text style={[{ fontSize: 12, color: on ? '#FFFFFF' : v.fg }, weight(700)]}>{v.label}</Text>
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: on ? '#FFFFFF' : v.fg }, weight(700)]}>{v.label}</Text>
             </Pressable>
           );
         })}
@@ -1399,7 +1404,8 @@ function ReviewSheet({
           accessibilityLabel={photo ? 'Take another' : 'Photo of the finish or the can, optional'}
           style={({ pressed }) => ({
             flex: 1,
-            height: 72,
+            minHeight: 72,
+            paddingVertical: 8,
             borderRadius: 16,
             borderWidth: 1.5,
             borderStyle: 'dashed',
@@ -1411,7 +1417,7 @@ function ReviewSheet({
             gap: 6,
           })}>
           <Icon name="camera" size={18} color={C.primaryDeep} strokeWidth={2} />
-          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>
             {photo ? 'Take another' : 'Photo of the finish or the can'}
           </Text>
         </Pressable>

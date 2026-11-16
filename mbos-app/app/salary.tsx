@@ -126,7 +126,7 @@ function PayCard({ m }: { m: SalaryMonth }) {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <T style={[{ flex: 1, fontSize: 13, color: C.onNavyMuted }, weight(700)]}>Your salary, as HR holds it</T>
         {m.employeeCode ? (
-          <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
+          <View style={{ flexShrink: 1, minHeight: 26, paddingVertical: 3, paddingHorizontal: 10, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
             <T style={[{ fontSize: 12, color: C.onNavy }, weight(700)]}>
               {m.employeeCode}
               {m.employeeStatus ? ' · ' + m.employeeStatus : ''}
@@ -173,7 +173,7 @@ function NavyFigure({ label, value }: { label: string; value: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12 }}>
       <T style={{ fontSize: 11, lineHeight: 15, color: C.onNavyMuted }}>{label}</T>
-      <T style={[{ fontSize: 17, lineHeight: 22, color: C.onNavy }, weight(800), tabular]}>{value}</T>
+      <T style={[{ marginTop: 4, fontSize: 17, lineHeight: 22, color: C.onNavy }, weight(800), tabular]}>{value}</T>
     </View>
   );
 }
@@ -235,7 +235,7 @@ function Figure({
     <View style={{ flex: 1 }} accessible accessibilityLabel={`${a11y}: ${value}`}>
       <Glyph shapes={icon} size={16} color={iconColor} />
       <T style={[{ fontSize: 19, lineHeight: 25, color: valueColor }, weight(800), tabular]}>{value}</T>
-      <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>{label}</T>
+      <T style={{ marginTop: 4, fontSize: 11, lineHeight: 15, color: C.muted }}>{label}</T>
     </View>
   );
 }

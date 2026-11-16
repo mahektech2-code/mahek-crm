@@ -5,6 +5,7 @@ import { Icon, type IconName } from './Icon';
 import { feedback } from './feedback';
 import { usePressScale } from './motion';
 import { color as C, weight } from '../../theme/tokens';
+import { BADGE_FONT_CAP, BAR_FONT_CAP } from './font-scale';
 
 /**
  * The Version 3 kit: the pill tags, pill buttons, switch tabs, round discs,
@@ -80,6 +81,7 @@ export function SwitchTabs<K extends string>({
             style={{
               flex: 1,
               minHeight: hero ? 36 : 40,
+              paddingVertical: 4,
               borderRadius: hero ? 18 : 20,
               flexDirection: 'row',
               alignItems: 'center',
@@ -88,19 +90,19 @@ export function SwitchTabs<K extends string>({
               backgroundColor: on ? (hero ? C.lime : C.navy) : 'transparent',
             }}>
             {o.icon ? <Icon name={o.icon} size={16} color={on && !hero ? C.lime : ink} strokeWidth={2} /> : null}
-            <Text style={[{ fontSize: 14, color: ink }, weight(on || !hero ? 700 : 600)]}>{o.label}</Text>
+            <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 19, textAlign: 'center', color: ink }, weight(on || !hero ? 700 : 600)]}>{o.label}</Text>
             {o.badge ? (
               <View
                 style={{
                   minWidth: 20,
-                  height: 20,
+                  minHeight: 20,
                   borderRadius: 10,
                   paddingHorizontal: 5,
                   alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor: on ? C.navy : C.primary,
                 }}>
-                <Text style={[{ fontSize: 11, color: on ? C.lime : '#FFFFFF' }, weight(700)]}>{o.badge}</Text>
+                <Text maxFontSizeMultiplier={BADGE_FONT_CAP} style={[{ fontSize: 11, color: on ? C.lime : '#FFFFFF' }, weight(700)]}>{o.badge}</Text>
               </View>
             ) : null}
           </Pressable>
@@ -136,7 +138,8 @@ export function Pill({
       accessibilityLabel={a11y}
       style={[
         {
-          height,
+          minHeight: height,
+          paddingVertical: 3,
           paddingHorizontal: height <= 26 ? 10 : 12,
           borderRadius: height / 2,
           backgroundColor: bg,
@@ -148,7 +151,7 @@ export function Pill({
         style,
       ]}>
       {icon ? <Icon name={icon} size={height <= 26 ? 12 : 14} color={fg} strokeWidth={2.2} /> : null}
-      <Text numberOfLines={1} style={[{ fontSize: height <= 26 ? 12 : 13, color: fg }, weight(700)]}>
+      <Text numberOfLines={1} style={[{ flexShrink: 1, fontSize: height <= 26 ? 12 : 13, color: fg }, weight(700)]}>
         {text}
       </Text>
     </View>
@@ -225,7 +228,8 @@ export function PillButton({
         accessibilityState={{ disabled }}
         accessibilityHint={disabled ? whyDisabled : undefined}
         style={({ pressed }) => ({
-          height,
+          minHeight: height,
+          paddingVertical: 6,
           borderRadius: block ? 18 : height / 2,
           backgroundColor: bg,
           borderWidth: v.border && !disabled ? 1 : 0,
@@ -238,7 +242,7 @@ export function PillButton({
           opacity: pressed ? 0.88 : 1,
         })}>
         {icon ? <Icon name={icon} size={18} color={fg} strokeWidth={2.2} /> : null}
-        <Text numberOfLines={1} style={[{ fontSize: height >= 56 ? 17 : height >= 52 ? 15 : 14, color: fg }, weight(700)]}>
+        <Text numberOfLines={2} style={[{ flexShrink: 1, textAlign: 'center', fontSize: height >= 56 ? 17 : height >= 52 ? 15 : 14, lineHeight: height >= 56 ? 22 : height >= 52 ? 20 : 19, color: fg }, weight(700)]}>
           {label}
         </Text>
       </Pressable>
@@ -299,7 +303,8 @@ export function DashedAdd({
       accessibilityLabel={a11y ?? label}
       style={({ pressed }) => [
         {
-          height: 52,
+          minHeight: 52,
+          paddingVertical: 8,
           borderRadius: 26,
           borderWidth: 2,
           borderStyle: 'dashed',
@@ -313,7 +318,7 @@ export function DashedAdd({
         style,
       ]}>
       <Icon name="add" size={18} color={C.primaryDeep} strokeWidth={2.2} />
-      <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(700)]}>{label}</Text>
+      <Text style={[{ flexShrink: 1, textAlign: 'center', fontSize: 15, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>{label}</Text>
     </Pressable>
   );
 }
@@ -375,7 +380,7 @@ export function Disc({
         justifyContent: 'center',
       }}>
       {text != null ? (
-        <Text style={[{ fontSize: 12, color: ink }, weight(800)]}>{text}</Text>
+        <Text maxFontSizeMultiplier={BADGE_FONT_CAP} style={[{ fontSize: 12, lineHeight: 17, color: ink }, weight(800)]}>{text}</Text>
       ) : icon ? (
         <Icon name={icon} size={size >= 40 ? 18 : 16} color={ink} strokeWidth={2} />
       ) : null}
@@ -407,7 +412,7 @@ export function Ring({ done, total, size = 84, label }: { done: number; total: n
         ) : null}
       </Svg>
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={[{ fontSize: size >= 80 ? 24 : 20, color: '#FFFFFF', letterSpacing: -0.5 }, weight(800)]}>
+        <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: size >= 80 ? 24 : 20, color: '#FFFFFF', letterSpacing: -0.5 }, weight(800)]}>
           {done + '/' + total}
         </Text>
       </View>
@@ -431,7 +436,7 @@ export function SheetActions({
 }) {
   return (
     <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-      <PillButton label={cancelLabel} variant="outline" height={56} onPress={onCancel} style={{ width: 120 }} />
+      <PillButton label={cancelLabel} variant="outline" height={56} onPress={onCancel} style={{ minWidth: 120, flexShrink: 0 }} />
       <PillButton label={label} variant="navyLime" height={56} onPress={onPress} disabled={busy} style={{ flex: 1 }} />
     </View>
   );

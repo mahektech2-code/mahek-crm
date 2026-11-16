@@ -10641,6 +10641,21 @@ and `stampLine` are called several times a row, and on ten thousand rows the
 formatters alone were half a second. They hold one `Intl` formatter each now;
 a new number or date helper on a list path should do the same.
 
+**THE OPEN ORDER BOOK IS READ ONCE PER RENDER (Nov 2026).** It was the ERP's
+biggest statement on prod — read by the layout's badges, again by the tab strip
+and list, and a third time by order number to see each order whole — and every
+save drew the page twice. Now: the layout and a read-only page share one memo
+(`withRenderMemo`, React `cache`; Logistics writes as it loads and keeps its
+own); a working tab asks only for the CLOSED lines of its orders
+(`closedWork`, `openWork`'s complement); "does this order have a billed line"
+is one indexed query over the read's order numbers, not an EXISTS over the
+whole book; and an Orders row's fields, actions and invoice panel are built
+only when read (`later`/`withLater` in `lazy-row.ts`). A kit that revalidates
+(`ScreenKit.revalidates`, the ERP's) does not `router.refresh()` after a save:
+the action's answer already carries the redrawn page. The LR lists count bills
+through `erp_transports_signed_copy_idx` (`0344`), and `consignments` reads each
+bill's order and newest event by index instead of grouping the whole book.
+
 ## The Website CMS and its review workflow
 
 **The Website app edits mahekindia.com's content, and an employee's edit reaches

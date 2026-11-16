@@ -1002,7 +1002,7 @@ export function LeadsBook({
           Leads
         </Text>
         {loaded ? (
-          <T style={[{ fontSize: 16, color: HERO.lavender.muted }, weight(700)]}>{grouped(total)}</T>
+          <T style={[{ fontSize: 16, lineHeight: 22, color: HERO.lavender.muted }, weight(700)]}>{grouped(total)}</T>
         ) : null}
       </View>
       <View style={{ marginTop: 12 }}>{searchRow}</View>
@@ -1045,7 +1045,8 @@ export function LeadsBook({
           accessibilityLabel={'Show leads due: ' + whenLabel}
           hitSlop={8}
           style={({ pressed }) => ({
-            height: 30,
+            minHeight: 30,
+            paddingVertical: 4,
             paddingHorizontal: 12,
             borderRadius: 15,
             backgroundColor: pressed ? C.wash : C.surface,
@@ -1103,7 +1104,7 @@ export function LeadsBook({
   );
 
   const body = (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, minWidth: 0 }}>
       {/*
         * IT IS A `FlatList`, and for the reason the customers list next door
         * spells out: the rows were `rows.map()` inside a `ScrollView`, so every
@@ -1180,7 +1181,7 @@ export function LeadsBook({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 6 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(800)]}>New lead</Text>
-            <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>Number checked against your book</T>
+            <T style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>Number checked against your book</T>
           </View>
           {/* SPEAKING fills the whole form, so it is offered first, here and
               again as a sentence under the header. Not drawn where the office
@@ -1422,10 +1423,10 @@ export function LeadsBook({
             accessibilityLabel={'What you found in the shop. ' + (detailsOpen ? 'All optional.' : detailsSummary(detailsCount))}
             style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <Icon name="spark" size={18} color={C.primaryDeep} strokeWidth={2} />
-            <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(700)]}>Found in the shop</T>
+            <T style={[{ flex: 1, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Found in the shop</T>
             {detailsCount > 0 ? (
-              <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.successBg, justifyContent: 'center' }}>
-                <T style={[{ fontSize: 12, color: C.success }, weight(700)]}>{detailsCount + ' answered'}</T>
+              <View style={{ minHeight: 26, paddingVertical: 3, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.successBg, justifyContent: 'center' }}>
+                <T style={[{ fontSize: 12, lineHeight: 17, color: C.success }, weight(700)]}>{detailsCount + ' answered'}</T>
               </View>
             ) : null}
             <View style={{ transform: [{ rotate: detailsOpen ? '-90deg' : '90deg' }] }}>
@@ -1450,7 +1451,7 @@ export function LeadsBook({
               />
               <T style={{ fontSize: 11, lineHeight: 15, color: C.faint, marginTop: -4 }}>If they have one. Needed later to qualify.</T>
               <View style={{ flexDirection: 'row', gap: 8 }}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
                   {/* In rupees, about. Empty where he does not know. */}
                   <BoxInput
                     icon="money"
@@ -1462,7 +1463,7 @@ export function LeadsBook({
                     accessibilityLabel="How much they can buy a month, in rupees"
                   />
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
                   {/* LITRES, not cans. There is no pack size agreed yet — a shop
                       says "about two hundred litres" long before anybody knows
                       what they will buy it as. */}
@@ -1493,7 +1494,7 @@ export function LeadsBook({
                   paddingHorizontal: 14,
                 }}>
                 <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={2} />
-                <T style={{ flex: 1, fontSize: 15, color: followUp ? C.ink : C.faint }}>
+                <T style={{ flex: 1, fontSize: 15, lineHeight: 21, color: followUp ? C.ink : C.faint }}>
                   {followUp ? pretty(followUp) : 'Choose a day'}
                 </T>
                 <T style={{ fontSize: 11, color: C.faint }}>next follow-up</T>
@@ -1505,7 +1506,7 @@ export function LeadsBook({
                 placeholder="Shop 4, Itwari Market, near the bus stand"
                 accessibilityLabel="Where the shop is"
               />
-              <T style={[{ fontSize: 12, color: C.ink, marginTop: 4 }, weight(700)]}>Kind of business</T>
+              <T style={[{ fontSize: 12, lineHeight: 17, color: C.ink, marginTop: 4 }, weight(700)]}>Kind of business</T>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {CUSTOMER_TYPES.map((t) => (
                   <WashChip
@@ -1548,7 +1549,7 @@ export function LeadsBook({
                   gap: 8,
                 })}>
                 <Icon name={shopPhotoId ? 'tick' : 'camera'} size={18} color={C.primaryDeep} strokeWidth={2} />
-                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                <T style={[{ fontSize: 14, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>
                   {shopPhotoId ? 'Photo taken · retake' : 'Shop photo'}
                 </T>
               </Pressable>
@@ -1593,13 +1594,14 @@ export function LeadsBook({
             accessibilityLabel="Cancel and delete what you typed"
             style={({ pressed }) => ({
               width: 110,
-              height: 60,
+              minHeight: 60,
+              paddingVertical: 10,
               borderRadius: 30,
               backgroundColor: pressed ? C.wash : C.surface,
               alignItems: 'center',
               justifyContent: 'center',
             })}>
-            <T style={[{ fontSize: 15, color: C.danger }, weight(700)]}>Cancel</T>
+            <T style={[{ fontSize: 15, lineHeight: 21, color: C.danger }, weight(700)]}>Cancel</T>
           </Pressable>
           <PillButton label="Add lead" variant="navy" height={60} onPress={save} style={{ flex: 1 }} />
         </View>
@@ -1637,7 +1639,7 @@ export function LeadsBook({
                   backgroundColor: on ? (late ? C.danger : C.navy) : pressed ? C.hairline : C.canvas,
                 })}>
                 {on ? <Icon name={late ? 'warn' : 'tick'} size={14} color={'#FFFFFF'} strokeWidth={2.4} /> : null}
-                <T style={[{ fontSize: 14, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{w.label}</T>
+                <T style={[{ fontSize: 14, lineHeight: 20, color: on ? '#FFFFFF' : C.ink }, weight(on ? 700 : 600)]}>{w.label}</T>
               </Pressable>
             );
           })}
@@ -1655,7 +1657,7 @@ export function LeadsBook({
             setCal(false);
           }}
         />
-        <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
+        <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, marginTop: 10 }} />
       </BottomSheet>
     </View>
   );
@@ -1699,14 +1701,15 @@ function RungChips({
             accessibilityLabel={n != null ? `${c.label}, ${n}` : c.label}
             hitSlop={{ top: 8, bottom: 8 }}
             style={{
-              height: 30,
+              minHeight: 30,
+              paddingVertical: 4,
               paddingHorizontal: 12,
               borderRadius: 15,
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: on ? C.primaryEdge : C.surface,
             }}>
-            <T style={[{ fontSize: 12, color: on ? C.lavenderInk : C.ink }, weight(on ? 700 : 600)]}>
+            <T style={[{ fontSize: 12, lineHeight: 17, color: on ? C.lavenderInk : C.ink }, weight(on ? 700 : 600)]}>
               {c.label + (n != null ? ' ' + grouped(n) : '')}
             </T>
           </Pressable>

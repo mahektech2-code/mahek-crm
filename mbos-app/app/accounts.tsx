@@ -119,13 +119,13 @@ export default function AccountsScreen() {
           <T style={{ fontSize: 12, color: C.onNavyMuted, marginTop: 14 }}>Owed across your book · confirmed money</T>
           <T
             style={[
-              { fontSize: 38, lineHeight: 44, letterSpacing: -0.8, color: money?.owedPaise ? '#FF8A80' : '#FFFFFF' },
+              { marginTop: 4, fontSize: 38, lineHeight: 44, letterSpacing: -0.8, color: money?.owedPaise ? '#FF8A80' : '#FFFFFF' },
               weight(800),
               tabular,
             ]}>
             {money ? inrFromPaise(money.owedPaise) : '—'}
           </T>
-          <T style={{ fontSize: 12, color: C.onNavyMuted }}>
+          <T style={{ marginTop: 4, fontSize: 12, color: C.onNavyMuted }}>
             {money ? `${money.owing} of ${money.accounts} accounts owe` : 'Loading…'}
           </T>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
@@ -158,7 +158,8 @@ export default function AccountsScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 10,
-          height: 48,
+          minHeight: 48,
+          paddingVertical: 4,
           paddingHorizontal: 16,
           borderRadius: 24,
           backgroundColor: C.surface,
@@ -222,7 +223,7 @@ export default function AccountsScreen() {
               accessibilityRole="button"
               accessibilityState={{ selected: sort === s.key }}
               hitSlop={8}
-              style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: sort === s.key ? C.navy : C.surface }}>
+              style={{ minHeight: 32, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: sort === s.key ? C.navy : C.surface }}>
               <T style={[{ fontSize: 12, color: sort === s.key ? '#FFFFFF' : C.ink }, weight(700)]}>
                 {s.label}
               </T>
@@ -259,7 +260,7 @@ export default function AccountsScreen() {
         <Pressable
           onPress={more}
           accessibilityRole="button"
-          style={({ pressed }) => ({ marginTop: 12, height: 52, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          style={({ pressed }) => ({ marginTop: 12, minHeight: 52, paddingVertical: 8, borderRadius: 26, backgroundColor: pressed ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' })}>
           <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
             {loadingMore ? 'Loading…' : `Show more · ${total - (rows?.length ?? 0)} left`}
           </T>
@@ -299,7 +300,7 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
           <T style={[{ fontSize: 16, lineHeight: 21, color: C.ink }, weight(700)]} numberOfLines={1}>
             {shopName(c.name)}
           </T>
-          <T s="caption" numberOfLines={1}>
+          <T style={{ marginTop: 4 }} s="caption" numberOfLines={1}>
             {[c.city, c.lastOrderDate ? 'ordered ' + longDay(c.lastOrderDate) : null].filter(Boolean).join(' · ') || '—'}
           </T>
         </View>
@@ -308,7 +309,7 @@ function AccountRow({ c, first, onPress }: { c: Customer; first: boolean; onPres
             {owed > 0 ? inrFromPaise(owed) : 'Nothing due'}
           </T>
           {c.creditLimitPaise ? (
-            <T s="micro" style={tabular}>
+            <T s="micro" style={[tabular, { marginTop: 4 }]}>
               of {compactInrFromPaise(c.creditLimitPaise)} limit
             </T>
           ) : null}
@@ -369,7 +370,8 @@ function Stat({
       accessibilityLabel={label + ', ' + value}
       style={({ pressed }) => ({
         flex: 1,
-        height: 64,
+        minHeight: 64,
+        paddingVertical: 8,
         borderRadius: 18,
         paddingHorizontal: 12,
         justifyContent: 'center',
@@ -377,7 +379,7 @@ function Stat({
         opacity: pressed ? 0.85 : 1,
       })}>
       <T style={[{ fontSize: 20, lineHeight: 25, color: ink }, weight(800), tabular]}>{value}</T>
-      <T style={[{ fontSize: 11, lineHeight: 14, color: on ? C.navy : C.onNavyMuted }, weight(on ? 600 : 500)]} numberOfLines={1}>
+      <T style={[{ marginTop: 4, fontSize: 11, lineHeight: 14, color: on ? C.navy : C.onNavyMuted }, weight(on ? 600 : 500)]} numberOfLines={1}>
         {label}
       </T>
     </Pressable>

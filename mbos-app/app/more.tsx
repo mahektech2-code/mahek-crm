@@ -299,14 +299,14 @@ export default function MoreScreen() {
   const identity = (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(700)]}>{user?.initials ?? '··'}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: '#FFFFFF' }, weight(700)]}>{user?.initials ?? '··'}</Text>
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, letterSpacing: -0.4, color: C.ink }, weight(800)]}>
           Me
         </Text>
         {user ? (
-          <Text numberOfLines={1} style={{ fontSize: 12, color: C.lavenderMuted }}>
+          <Text numberOfLines={1} style={{ marginTop: 4, fontSize: 12, color: C.lavenderMuted }}>
             {user.name.split(' ')[0] + (role ? ' · ' + role : '')}
           </Text>
         ) : null}
@@ -374,7 +374,8 @@ function Tile({ item, onPress }: { item: Item; onPress: () => void }) {
       style={({ pressed }) => ({
         flex: 1,
         minWidth: 0,
-        height: 92,
+        minHeight: 92,
+        paddingVertical: 10,
         borderRadius: 20,
         backgroundColor: pressed ? C.wash : C.surface,
         alignItems: 'center',
@@ -390,7 +391,7 @@ function Tile({ item, onPress }: { item: Item; onPress: () => void }) {
           a sync is the news this screen exists for. */}
       {item.badge ? (
         <Pop trigger={item.badge} style={{ position: 'absolute', top: 8, right: 8 }}>
-          <View style={{ height: 22, minWidth: 22, paddingHorizontal: 7, borderRadius: 11, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ minHeight: 22, minWidth: 22, paddingHorizontal: 7, borderRadius: 11, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center' }}>
             <Text numberOfLines={1} style={[{ fontSize: 11, color: t.fg }, weight(800)]}>{item.badge}</Text>
           </View>
         </Pop>
@@ -418,11 +419,11 @@ function ListRow({ item, first, onPress }: { item: Item; first: boolean; onPress
         opacity: pressed ? 0.7 : 1,
       })}>
       <Glyph shapes={item.glyph} size={20} color={item.ink} />
-      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: signOut ? C.danger : C.ink }, weight(600)]}>{item.label}</Text>
+      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: signOut ? C.danger : C.ink }, weight(600)]}>{item.label}</Text>
       {item.badge ? (
         <Pop trigger={item.badge}>
-          <View style={{ height: 26, minWidth: 26, paddingHorizontal: 9, borderRadius: 13, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={[{ fontSize: 12, color: t.fg }, weight(800)]}>{item.badge}</Text>
+          <View style={{ minHeight: 26, minWidth: 26, paddingHorizontal: 9, borderRadius: 13, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: t.fg }, weight(800)]}>{item.badge}</Text>
           </View>
         </Pop>
       ) : null}

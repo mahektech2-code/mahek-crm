@@ -73,7 +73,7 @@ export function NotificationsPrompt() {
               return (
                 <View
                   key={w}
-                  style={{ height: 30, paddingHorizontal: 10, borderRadius: 15, backgroundColor: red ? C.dangerBg : C.canvas, justifyContent: 'center' }}>
+                  style={{ minHeight: 30, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 15, backgroundColor: red ? C.dangerBg : C.canvas, justifyContent: 'center' }}>
                   <T style={[{ fontSize: 12, color: red ? C.danger : C.ink }, weight(600)]}>{w}</T>
                 </View>
               );

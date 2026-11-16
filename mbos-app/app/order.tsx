@@ -647,7 +647,8 @@ export default function OrderScreen() {
             accessible
             accessibilityLabel={overLimit ? 'Over the credit limit' : needsApproval ? 'Needs approval' : 'Inside the credit limit'}
             style={{
-              height: 30,
+              minHeight: 30,
+              paddingVertical: 4,
               paddingHorizontal: 10,
               borderRadius: 15,
               flexDirection: 'row',
@@ -661,7 +662,7 @@ export default function OrderScreen() {
               color={overLimit ? '#FF8A7E' : needsApproval ? '#FCE3A6' : C.lime}
               strokeWidth={2.2}
             />
-            <Tx style={[{ fontSize: 12, color: overLimit ? '#FF8A7E' : needsApproval ? '#FCE3A6' : C.lime }, weight(700)]}>
+            <Tx style={[{ fontSize: 12, lineHeight: 17, color: overLimit ? '#FF8A7E' : needsApproval ? '#FCE3A6' : C.lime }, weight(700)]}>
               {overLimit ? 'Over limit' : needsApproval ? 'Needs approval' : 'In limit'}
             </Tx>
           </View>
@@ -802,7 +803,8 @@ export default function OrderScreen() {
               accessibilityLabel="Change the shop"
               hitSlop={4}
               style={({ pressed }) => ({
-                height: 44,
+                minHeight: 44,
+                paddingVertical: 8,
                 paddingHorizontal: 16,
                 borderRadius: 22,
                 alignItems: 'center',
@@ -810,7 +812,7 @@ export default function OrderScreen() {
                 backgroundColor: C.primaryTint,
                 opacity: pressed ? 0.85 : 1,
               })}>
-              <Tx style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Change</Tx>
+              <Tx style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>Change</Tx>
             </Pressable>
           ) : null}
         </View>
@@ -848,7 +850,7 @@ export default function OrderScreen() {
                 accessibilityLabel={'Bill to ' + (biller?.name ?? 'no one in your list')}
                 style={[{ flex: 1, fontSize: 14, lineHeight: 19, color: biller ? C.ink : C.danger }, weight(700)]}>
                 {biller?.name ?? 'No one in your list'}
-                {biller && !deliverTo ? <Tx style={[{ fontSize: 14, color: C.muted }, weight(500)]}> · delivered to them</Tx> : null}
+                {biller && !deliverTo ? <Tx style={[{ fontSize: 14, lineHeight: 20, color: C.muted }, weight(500)]}> · delivered to them</Tx> : null}
               </Tx>
               {/* Opened on the whole arrangement rather than on the choosable
                   half of it. Where the only other party is off his book there is
@@ -861,7 +863,8 @@ export default function OrderScreen() {
                   accessibilityLabel={pickingBiller ? 'Done choosing who gets the bill' : 'Change who gets the bill'}
                   hitSlop={8}
                   style={({ pressed }) => ({
-                    height: 32,
+                    minHeight: 32,
+                    paddingVertical: 4,
                     paddingHorizontal: 12,
                     borderRadius: 16,
                     alignItems: 'center',
@@ -869,7 +872,7 @@ export default function OrderScreen() {
                     backgroundColor: pickingBiller ? C.navy : C.primaryTint,
                     opacity: pressed ? 0.85 : 1,
                   })}>
-                  <Tx style={[{ fontSize: 12, color: pickingBiller ? '#FFFFFF' : C.primaryDeep }, weight(700)]}>
+                  <Tx style={[{ fontSize: 12, lineHeight: 17, color: pickingBiller ? '#FFFFFF' : C.primaryDeep }, weight(700)]}>
                     {pickingBiller ? 'Done' : 'Change'}
                   </Tx>
                 </Pressable>
@@ -1010,11 +1013,11 @@ export default function OrderScreen() {
               <Icon name="reorder" size={18} color={C.primaryDeep} strokeWidth={2} />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Tx style={[{ fontSize: 14, lineHeight: 19, color: C.primaryDeep }, weight(700)]}>Repeat last order</Tx>
-                <Tx style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                <Tx style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }}>
                   {plural(lastOrder.length, 'line') + ' · check quantities before sending'}
                 </Tx>
               </View>
-              <Tx style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>Add all</Tx>
+              <Tx style={[{ fontSize: 14, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>Add all</Tx>
             </Pressable>
           ) : null}
 
@@ -1077,7 +1080,7 @@ export default function OrderScreen() {
           <View
             style={{
               marginTop: 14,
-              height: 48,
+              minHeight: 48,
               borderRadius: 24,
               backgroundColor: C.surface,
               borderWidth: 2,
@@ -1095,7 +1098,7 @@ export default function OrderScreen() {
               placeholderTextColor={C.faint}
               accessibilityLabel="Search product by name, pack size or code"
               returnKeyType="search"
-              style={[{ flex: 1, height: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
+              style={[{ flex: 1, minHeight: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
             />
           </View>
 
@@ -1147,11 +1150,11 @@ export default function OrderScreen() {
                 <View
                   accessible
                   accessibilityLabel={plural(inCart.length, 'product')}
-                  style={{ height: 26, minWidth: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.navy, alignItems: 'center', justifyContent: 'center' }}>
-                  <Tx style={[{ fontSize: 12, color: '#FFFFFF' }, weight(700), tabular]}>{inCart.length}</Tx>
+                  style={{ minHeight: 26, paddingVertical: 2, minWidth: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: C.navy, alignItems: 'center', justifyContent: 'center' }}>
+                  <Tx style={[{ fontSize: 12, lineHeight: 17, color: '#FFFFFF' }, weight(700), tabular]}>{inCart.length}</Tx>
                 </View>
               ) : (
-                <Tx accessibilityLabel="Nothing added yet" style={{ fontSize: 12, color: C.muted }}>Nothing yet</Tx>
+                <Tx accessibilityLabel="Nothing added yet" style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>Nothing yet</Tx>
               )
             }
           />
@@ -1281,7 +1284,7 @@ export default function OrderScreen() {
                           {value ? (
                             <>
                               {' · '}
-                              <Tx style={[{ fontSize: 14, color: C.ink }, weight(800), tabular]}>{value}</Tx>
+                              <Tx style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(800), tabular]}>{value}</Tx>
                               {atList ? ' at list rate' : ''}
                             </>
                           ) : null}
@@ -1522,7 +1525,8 @@ function DockButton({
       accessibilityHint={disabled ? whyDisabled : undefined}
       style={({ pressed }) => ({
         marginTop: 14,
-        height: 56,
+        minHeight: 56,
+        paddingVertical: 8,
         borderRadius: 28,
         backgroundColor: bg,
         alignItems: 'center',
@@ -1635,7 +1639,7 @@ function ProductRow({
           }}
         />
       ) : on ? (
-        <Tx style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>✓ Added</Tx>
+        <Tx style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>✓ Added</Tx>
       ) : (
         <View
           style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>
@@ -1678,7 +1682,7 @@ function ShopPicker({ current, onPick }: { current: Customer | null; onPick: (id
     <>
       <View
         style={{
-          height: 48,
+          minHeight: 48,
           borderRadius: 24,
           backgroundColor: C.surface,
           borderWidth: 2,
@@ -1697,7 +1701,7 @@ function ShopPicker({ current, onPick }: { current: Customer | null; onPick: (id
           accessibilityLabel="Which shop is this order for? Shop name, town or mobile"
           accessibilityHint="Search your book by name, town or mobile."
           autoFocus
-          style={[{ flex: 1, height: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
+          style={[{ flex: 1, minHeight: 44, fontSize: 15, color: C.ink, paddingVertical: 0 }, weight(400)]}
         />
       </View>
       <View style={{ marginTop: 12, backgroundColor: C.surface, borderRadius: 22, paddingHorizontal: 16 }}>
