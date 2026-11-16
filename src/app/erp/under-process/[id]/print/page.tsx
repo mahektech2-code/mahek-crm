@@ -110,7 +110,6 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                       <Td className={cx("px-1 py-1 whitespace-normal", r.mark && "font-bold")}>
                         {r.mark ? "★ " : ""}
                         <U>{r.productName}</U>
-                        {r.productCode ? <span className="block font-mono text-2xs font-normal text-muted">{r.productCode}</span> : null}
                       </Td>
                       <Td className="px-1 py-1">{r.size ?? "—"}</Td>
                       <Td align="right" className="px-1 py-1 font-bold tabular-nums">
@@ -120,7 +119,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                         <U>{r.unit}</U>
                       </Td>
                       <Td className="px-1 py-1 whitespace-normal">
-                        <U>{[r.remarks, r.orderRefs ? `Orders ${r.orderRefs}` : null, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ")}</U>
+                        <U>{[r.remarks, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ")}</U>
                       </Td>
                     </tr>
                   );

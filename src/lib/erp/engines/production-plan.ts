@@ -149,6 +149,8 @@ export type UnderProcessLine = {
   finishedGoodId: string | null;
   finishedGoodName: string | null;
   qtyCans: number;
+  /** What the customer asked for on the order line ("Remark / customer instructions"), if anything. */
+  remark?: string | null;
   /** The code a loose line of this finished good carries when it is typed in, so both kinds of line read alike. */
   looseCode?: string | null;
 };
@@ -163,10 +165,18 @@ export type OrderDemand = {
   quantity: number;
   unit: string;
   orderRefs: string;
+  /** The customers' own remarks on the orders behind this line, each once — what the floor reads under Remarks. */
+  remarks: string | null;
 };
 
+/** A plan line's remarks stay under the 300 characters a typed line is held to. */
+function clipRemarks(s: string): string | null {
+  if (!s) return null;
+  return s.length > 300 ? `${s.slice(0, 299).trimEnd()}…` : s;
+}
+
 export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
-  type Acc = { d: Omit<OrderDemand, "quantity" | "unit" | "orderRefs">; cans: number; cpb: number; orders: Set<number> };
+  type Acc = { d: Omit<OrderDemand, "quantity" | "unit" | "orderRefs" | "remarks">; cans: number; cpb: number; orders: Set<number>; remarks: Map<string, string> };
   const by = new Map<string, Acc>();
   for (const l of lines) {
     if (!(l.qtyCans > 0)) continue;
@@ -188,15 +198,18 @@ export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
         cans: 0,
         cpb: Math.max(1, l.cansPerBox || 1),
         orders: new Set(),
+        remarks: new Map(),
       };
       by.set(key, a);
     }
     a.cans += l.qtyCans;
     a.orders.add(l.orderNo);
+    const r = (l.remark ?? "").replace(/\s+/g, " ").trim();
+    if (r && !a.remarks.has(r.toLowerCase())) a.remarks.set(r.toLowerCase(), r);
   }
   const order = new Map(PLAN_CATEGORIES.map((c, i) => [c.key as string, i]));
   return [...by.values()]
-    .map(({ d, cans, cpb, orders }): OrderDemand => {
+    .map(({ d, cans, cpb, orders, remarks }): OrderDemand => {
       const boxes = cans / cpb;
       const inBoxes = d.category === "packing" && Number.isInteger(boxes);
       return {
@@ -204,6 +217,7 @@ export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
         quantity: d.category === "packing" && inBoxes ? boxes : cans,
         unit: d.category === "loose" ? "Cans" : inBoxes ? "Boxes" : "Cans",
         orderRefs: [...orders].sort((x, y) => x - y).join(", "),
+        remarks: clipRemarks([...remarks.values()].join(" · ")),
       };
     })
     .sort((a, b) => (order.get(a.category)! - order.get(b.category)!) || a.productName.localeCompare(b.productName));
