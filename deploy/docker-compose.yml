@@ -55,9 +55,14 @@ services:
       # localhost in every sense that matters — same machine, private network.
       DATABASE_URL: postgres://mahek:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/mahekone
       NODE_ENV: production
-      # A small box: cap the heap so a runaway render cannot take the database
-      # down with it. Node's default ceiling assumes it owns the machine.
-      NODE_OPTIONS: --max-old-space-size=320
+      # Cap the heap so a runaway render cannot take the database down with
+      # it. Node's default ceiling assumes it owns the machine. It was 320 on
+      # the 1 GiB box, and on 16 Nov 2026 the heap filled every 30-60 minutes
+      # under the day's load and the process died — every screen loading at
+      # that moment showed "This screen could not be drawn". 704 on 2 GiB
+      # leaves Postgres, the website (256M hard limit), Caddy and the OS their
+      # share.
+      NODE_OPTIONS: --max-old-space-size=704
     env_file:
       - .env
     depends_on:
@@ -110,7 +115,7 @@ services:
       # A named volume on the droplet's SSD. Rebuilding or rolling back the app
       # container does not touch it.
       - pgdata:/var/lib/postgresql/data
-    # TUNED FOR 1 GiB, and these numbers are not defaults being restated.
+    # TUNED FOR 2 GiB (it was 1 GiB until 16 Nov 2026), and these numbers are not defaults being restated.
     # Postgres ships assuming a far bigger machine; left alone it would reserve
     # more than this box has and the OOM killer would arrive during the nightly
     # recompute. The whole database is ~420 MB, so effective_cache_size is the
@@ -118,9 +123,9 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=128MB
+      - shared_buffers=256MB
       - -c
-      - effective_cache_size=384MB    # honest: the app holds a 320MB heap beside this
+      - effective_cache_size=640MB    # honest: the app holds a 704MB heap beside this
       - -c
       - work_mem=8MB                  # was 4MB; 1,901 sorts spilled 9.4GB to disk
       - -c
