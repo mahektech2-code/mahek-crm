@@ -4,7 +4,8 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { listAttachments, type AttachmentView } from "@/lib/services/attachment-service";
-import { isClosed, managesBoth, routineMissed, teamBelow, type TaskApp, type TaskPriority, type TaskStatus } from "./rules";
+import { isClosed, managesBoth, routineMissed, teamBelow, ROUTINE_GRACE_DEFAULT, ROUTINE_GRACE_MAX, MISSED_FROM, type TaskApp, type TaskPriority, type TaskStatus } from "./rules";
+import { getConfig } from "@/lib/config/store";
 import { appClock } from "./clock";
 import { AUTOMATION_BY_ID } from "./automations";
 import { scheduleWords, windowWords, type RoutineFrequency } from "./routines";
@@ -68,6 +69,8 @@ export type TaskRow = {
   routineId: string | null;
   /** The automatic rule that raised it, by id (lib/tasks/automations.ts). */
   autoRule: string | null;
+  /** While a routine's task is in its grace time: the moment it will be missed. Null otherwise. */
+  graceUntil: string | null;
 };
 
 export type TaskKind = "auto" | "routine" | "assigned" | "self";
@@ -157,6 +160,20 @@ export async function viewerManagesBoth(viewer: Viewer, fromId: string, toId: st
   return managesBoth(await teamOf(viewer), viewer.id, fromId, toId);
 }
 
+/* ----------------------------------------------------------- grace time */
+
+/** The routine tasks' grace time in minutes, from settings, held to 0–15. */
+export async function routineGraceMinutes(): Promise<number> {
+  const v = (await getConfig())["tasks.routineGraceMinutes"];
+  return Math.min(ROUTINE_GRACE_MAX, Math.max(0, Number.isFinite(v) ? v : ROUTINE_GRACE_DEFAULT));
+}
+
+/** A task's due moment: its day and time in India, the end of its day where no time is set. */
+export const routineDeadlineSql = sql`((t.due_date + coalesce(t.due_time, '24:00')::time) at time zone ${APP_TIMEZONE})`;
+
+/** The same grace time in SQL, read off the stored setting, for a column every task read carries. */
+const GRACE_SQL = sql`least(${ROUTINE_GRACE_MAX}, greatest(0, coalesce((select (s.value #>> '{}')::int from app_settings s where s.key = 'tasks.routineGraceMinutes'), ${ROUTINE_GRACE_DEFAULT})))`;
+
 /* ---------------------------------------------------------------- reads */
 
 /** The columns of a `TaskRow`. Paired with TASK_FROM so a count can share the joins a page reads through. */
@@ -165,6 +182,9 @@ export const TASK_COLUMNS = sql`
          t.assignee_id, a.name as assignee_name, t.created_by_id, cb.name as created_by_name,
          t.batch_id, t.status, t.priority, t.due_date::text as due_date, t.due_time,
          t.proof_required, t.remark_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at, t.routine_id, t.auto_rule,
+         case when t.routine_id is not null and t.status not in ('done','missed') and t.due_date >= ${MISSED_FROM}::date
+                   and ${routineDeadlineSql} <= now() and ${routineDeadlineSql} + make_interval(mins => ${GRACE_SQL}) > now()
+              then ${routineDeadlineSql} + make_interval(mins => ${GRACE_SQL}) end as grace_until,
          tr.id as tr_id, tr.from_id as tr_from, fu.name as tr_from_name, tr.to_id as tr_to, tu.name as tr_to_name,
          tr.requested_by_id as tr_by, tr.reason as tr_reason, tr.created_at as tr_at`;
 
@@ -211,6 +231,7 @@ export function toRow(r: Raw): TaskRow {
     createdAt: iso(r.created_at)!,
     routineId: (r.routine_id as string) ?? null,
     autoRule: (r.auto_rule as string) ?? null,
+    graceUntil: iso(r.grace_until),
     kind: r.auto_rule ? "auto" : r.routine_id ? "routine" : r.created_by_id !== r.assignee_id ? "assigned" : "self",
     transfer: r.tr_id
       ? {
@@ -341,7 +362,8 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
   const creator = task.createdById === viewer.id;
   /* A routine's task past its due time is missed whether or not the sweep has reached it yet. */
   const clock = appClock();
-  const missed = routineMissed(task, clock.day, clock.hm);
+  const grace = await routineGraceMinutes();
+  const missed = routineMissed(task, clock.day, clock.hm, grace);
   const open = !isClosed(task.status) && !missed;
   return {
     task,
@@ -364,7 +386,7 @@ export async function taskDetail(viewer: Viewer, id: string): Promise<TaskDetail
       setProof: open && (creator || above),
       close: open && (mine || above),
       // Done can be reopened while its day is still running; a routine's task past its time, and a missed one, never.
-      reopen: task.status === "done" && !(task.routineId && routineMissed({ ...task, status: "todo" }, clock.day, clock.hm)) && (mine || above || creator),
+      reopen: task.status === "done" && !(task.routineId && routineMissed({ ...task, status: "todo" }, clock.day, clock.hm, grace)) && (mine || above || creator),
       // An automatic task follows its record: the app that raised it decides who holds it.
       transfer: open && !task.transfer && !task.autoRule && (mine || above),
       decideTransfer: Boolean(task.transfer && task.transfer.toId === viewer.id),

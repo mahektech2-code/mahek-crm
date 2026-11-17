@@ -78,8 +78,23 @@ function FlagGlyph() {
   );
 }
 
+/** "5:15 PM" — when a task in its grace time will be missed, read in India. */
+function graceEnds(iso: string): string {
+  const hm = new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: APP_TIMEZONE });
+  return clock12(hm);
+}
+
 /** The left column of a row: the day, and under it the time or how late. */
 export function DueCell({ task, today }: { task: TaskRow; today: string }) {
+  /* Past its due time but not yet missed: the grace time, and the minute it ends. */
+  if (task.graceUntil && task.status !== "done" && task.status !== "missed") {
+    return (
+      <div className="text-sm leading-[18px] font-semibold text-warn-ink" title="Past its due time. It can still be done until then; after that it is missed.">
+        Grace time
+        <span className="block text-xs font-normal">Missed at {graceEnds(task.graceUntil)}</span>
+      </div>
+    );
+  }
   if (task.status === "missed") {
     return (
       <div className="text-sm leading-[18px] font-semibold text-danger">
@@ -116,6 +131,7 @@ export function DueCell({ task, today }: { task: TaskRow; today: string }) {
 export function DueText({ task, today }: { task: TaskRow; today: string }) {
   if (task.status === "done") return <span className="text-[12.5px] font-semibold text-success">Done</span>;
   if (task.status === "missed") return <span className="text-[12.5px] font-semibold text-danger">Missed</span>;
+  if (task.graceUntil) return <span className="text-[12.5px] font-semibold whitespace-nowrap text-warn-ink">Grace time · missed at {graceEnds(task.graceUntil)}</span>;
   const d = daysUntil(task.dueDate, today);
   return (
     <span className={cx("text-[12.5px] font-semibold whitespace-nowrap", d < 0 ? "text-danger" : d === 0 ? "text-brand-hover" : "text-body")}>

@@ -1561,6 +1561,17 @@ export const SETTINGS = [
     max: 23,
   },
   {
+    key: "tasks.routineGraceMinutes",
+    type: "integer",
+    category: "working-day",
+    label: "Grace time for routine tasks",
+    description:
+      "Minutes after a routine task's due time during which it can still be done. It shows as Grace time with the minute it will be missed, and is marked Missed only once these have passed. 15 at most; 0 turns grace time off.",
+    default: 15,
+    min: 0,
+    max: 15,
+  },
+  {
     key: "workingDay.workingDays",
     type: "structured",
     category: "working-day",
@@ -7018,6 +7029,7 @@ export type Config = {
   "workingDay.shiftStart": string;
   "workingDay.shiftEnd": string;
   "workingDay.dayBoundaryHour": number;
+  "tasks.routineGraceMinutes": number;
   "workingDay.workingDays": number[];
   "workingDay.timezone": string;
 
