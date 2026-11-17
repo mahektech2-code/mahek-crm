@@ -91,7 +91,7 @@ export type FieldActivitySyncOptions = {
  * the way it did, so a rename in HRMS must not cut a salesman off from his own
  * history. A spelling two different people answer to stays ambiguous.
  */
-async function salesmanCandidates(): Promise<{ id: string; name: string }[]> {
+export async function salesmanCandidates(): Promise<{ id: string; name: string }[]> {
   const [accounts, linked, aliases] = await Promise.all([
     db.select({ id: users.id, name: users.name }).from(users),
     db

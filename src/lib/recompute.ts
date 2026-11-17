@@ -1318,6 +1318,7 @@ export async function copyForwardSalesTargets(
  * on being displayed by a cache nobody clears.
  */
 export async function recomputeSalesPeople(): Promise<number> {
+  const idDir = await personDirectory();
   const parties = await db
     .select({
       partyName: sheetPartyRows.partyName,
@@ -1408,6 +1409,12 @@ export async function recomputeSalesPeople(): Promise<number> {
     const fromSheet = sheetKeys(c).map((k) => byKey.get(k)).find((v) => v !== undefined);
     const next = fromSheet ?? byCustomerId.get(c.id) ?? null;
     if (next === c.salesPersonName) continue;
+    /* The same person under an older spelling is not a change: the customer
+       keeps the name HR renamed them to. See party-projection-service. */
+    if (next && c.salesPersonName) {
+      const was = idDir.employeeByName(c.salesPersonName);
+      if (was && idDir.isSpellingOf(next, was)) continue;
+    }
     await db
       .update(customers)
       .set({ salesPersonName: next })
@@ -1528,6 +1535,10 @@ export async function recomputeSalesManagers(): Promise<number> {
 
       /* The same fallback chain as before — the owner on a lead, the sheet's
          salesperson on a customer, else its sales account — read by id. */
+      /* A salesperson name two people answer to is not resolved — and the
+         seat is LEFT as it is rather than blanked: a namesake arriving must not
+         clear the manager on every shop the other one works. */
+      if (c.kind !== "lead" && c.salesPersonName && dir.nameStatus(c.salesPersonName) === "many") continue;
       const manager =
         c.kind === "lead"
           ? (c.ownerId ? dir.managerOfAccount(c.ownerId) : null)

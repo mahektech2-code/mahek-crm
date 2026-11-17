@@ -470,9 +470,17 @@ async function readEmployee(
   const [dupe] = await db
     .select({ id: employees.id })
     .from(employees)
-    .where(and(sql`lower(${employees.name}) = ${name.toLowerCase()}`, e ? ne(employees.id, e.id) : undefined))
+    .where(and(sql`lower(${employees.name}) = ${name.toLowerCase()}`, e ? ne(employees.id, e.id) : undefined)) // identity-ok: refusing a duplicate name, not a lookup
     .limit(1);
   if (dupe) return bad("name", `There is already an employee called ${name}. Open their record instead, or add something to the name that tells the two apart.`);
+  /* A name somebody ELSE used to carry is taken too: the sheets still call
+     that person by it, and giving it to a second person would make every
+     customer it names belong to nobody. */
+  if (!e || name.trim().toLowerCase() !== e.name.trim().toLowerCase()) {
+    const { spellingTakenByOthers } = await import("@/lib/services/person-identity-service");
+    const was = await spellingTakenByOthers(db, e?.id ?? null, name);
+    if (was.length) return bad("name", `${name} is what ${was[0]} used to be called, and the sheets may still say it. Add something to the name that tells the two apart.`);
+  }
   if (!text(h.gender)) return bad("gender", "Required");
   const mobile = digits(h.mobile);
   if (!mobile) return bad("mobile", "Required");
@@ -762,6 +770,7 @@ const employeesScreen: HrmsScreenModule = {
       if (!e) return err("That employee no longer exists.", "not_found");
       const read = await readEmployee(ctx, h, e);
       if (!read.ok) return read.res;
+      let carried: string[] = [];
       await db.transaction(async (tx) => {
         await tx
           .update(employees)
@@ -771,10 +780,18 @@ const employeesScreen: HrmsScreenModule = {
            and the names stored on the customers they hold a seat on, follow it
            here rather than going on saying the old one. See
            `services/person-identity-service`. */
+        const { carryContactDetails, renameEmployee } = await import("@/lib/services/person-identity-service");
         if (read.cols.name && read.cols.name !== e.name) {
-          const { renameEmployee } = await import("@/lib/services/person-identity-service");
           await renameEmployee(tx, { employeeId: e.id, oldName: e.name, newName: read.cols.name, actorId: ctx.user.id, source: "rename" });
         }
+        /* And their sign-in number and email, where the account was carrying
+           the old ones from here. */
+        carried = await carryContactDetails(
+          tx,
+          e.id,
+          { companyMobile: e.companyMobile ?? null, email: e.email ?? null },
+          { companyMobile: read.cols.companyMobile, email: read.cols.email },
+        );
       });
       // The audit trail names what changed, never the full numbers.
       const logged = { ...read.cols };
@@ -782,7 +799,7 @@ const employeesScreen: HrmsScreenModule = {
       delete logged.accountNumber;
       await hrmsAudit(ctx, "hrms.employee.edit", "employees", e.id, { name: e.name }, logged);
       await placeOnChart();
-      return okVoid(`${read.cols.name} updated`);
+      return okVoid(`${read.cols.name} updated${carried.length ? ` — ${carried.join("; ")}` : ""}`);
     },
     async editSelf(ctx, h, _lines, recordId) {
       if (!recordId || ctx.employee?.id !== recordId) return err("This form changes only your own details.", "not_permitted");

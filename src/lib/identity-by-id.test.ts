@@ -22,6 +22,7 @@ import { join } from "node:path";
  * ------------------------------------------------------------------------- */
 
 const ROOT = join(process.cwd(), "src");
+const SCRIPTS = join(process.cwd(), "scripts");
 
 const BANNED: Array<{ re: RegExp; why: string }> = [
   { re: /managerNameByEmployeeName/, why: "the name-keyed org map was retired; use personDirectory().managerOfAccount" },
@@ -30,11 +31,18 @@ const BANNED: Array<{ re: RegExp; why: string }> = [
   { re: /\b(userByName|userIdByName|managerByName|ownerByName|usersByName|accountByName)\s*=\s*new Map/, why: "a Map from a person's name to their id" },
   { re: /\$\{employees\.(reportsTo|position)\}\)?\)?\s*=/, why: "a manager or team worked out from a job title; titles become chart links once, in placeByTitles" },
   { re: /lower\(trim\((reports_to|position)\)\)\s*=/, why: "a manager or team worked out from a job title in SQL" },
+  { re: /lower\((btrim\()?(\$\{)?(users\.name|employees\.name|employee_name)\}?\)?\)\s*=/, why: "a person found by comparing their name" },
+  { re: /\.name\.toLowerCase\(\)\s*===\s*\w+\.user\.name/, why: "the signed-in person found among employees by name; use their HRMS link" },
+  { re: /\b(byName|nameToId|idByName)\.(get|set)\(\s*(u|user|p|person|e|emp|employee|staff)\.name/, why: "a person indexed by their name" },
 ];
 
-/** path (relative to src) → why it may stay. */
+/**
+ * path (relative to the repo) → why it may stay. A single line can also say
+ * `identity-ok: <why>` — for a comparison that is not a lookup (refusing a
+ * duplicate name, an old row with no id to ask by).
+ */
 const ALLOWED: Record<string, string> = {
-  "lib/services/team-service.ts":
+  "src/lib/services/team-service.ts":
     "provisionBackOffice: a one-off that CREATED the back-office accounts from the sheet's names; it has to key on the name it is creating",
 };
 
@@ -50,11 +58,12 @@ function walk(dir: string, out: string[] = []): string[] {
 
 test("nothing resolves a person by their name", () => {
   const hits: string[] = [];
-  for (const file of walk(ROOT)) {
-    const rel = file.slice(ROOT.length + 1);
+  for (const file of [...walk(ROOT), ...walk(SCRIPTS)]) {
+    const rel = file.slice(process.cwd().length + 1);
     if (ALLOWED[rel]) continue;
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((line, i) => {
+      if (line.includes("identity-ok")) return;
       const code = line.replace(/\/\/.*$/, "");
       if (/^\s*(\*|\/\*)/.test(code)) return;
       for (const b of BANNED) if (b.re.test(code)) hits.push(`${rel}:${i + 1} — ${b.why}`);

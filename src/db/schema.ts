@@ -14663,7 +14663,9 @@ export const erpAdvances = pgTable(
   {
     id: text("id").primaryKey(),
     advanceNo: integer("advance_no").notNull(),
-    /** The employee, as HRMS names them. */
+    /** WHO holds it, by id — what "already holds an open advance" is asked of. Null on a name nobody could resolve. */
+    employeeId: text("employee_id").references(() => employees.id, { onDelete: "set null" }),
+    /** The employee's name as it was typed on the day — a label, not the key. */
     employeeName: text("employee_name").notNull(),
     purpose: text("purpose"),
     issuedOn: date("issued_on").notNull(),

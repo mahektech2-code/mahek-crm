@@ -1446,6 +1446,9 @@ async function saveTest(
   const testerName = text(h.tester);
   const { personDirectory } = await import("@/lib/services/person-identity-service");
   const tester = testerName ? { id: (await personDirectory()).accountByName(testerName) } : { id: ctx.user.id };
+  /* A named tester nobody can be found for is refused, not quietly recorded
+     as whoever pressed Save. */
+  if (testerName && !tester.id) return fieldErr("tester", `Nobody with a MahekOne account answers to ${testerName}. Pick the tester from the list.`);
   const density = num(h.density);
   if (tests.includes("Density") && density != null && (density < 0.5 || density > 1.5)) return fieldErr("density", "Density must be between 0.5 and 1.5.");
   const photoIds: Record<string, string | null> = {};

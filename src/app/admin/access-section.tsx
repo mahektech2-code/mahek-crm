@@ -3298,7 +3298,8 @@ function EmployeeLinkDialog({
         <p>
           This is what their salary, days worked and reimbursements are read
           from — on the Sales Dashboard and on their handset, from the same
-          record, so the two cannot disagree.
+          record, so the two cannot disagree. Their account also takes the
+          name HRMS has for them, and keeps it in step from then on.
         </p>
         {current ? (
           <p className="mt-2">

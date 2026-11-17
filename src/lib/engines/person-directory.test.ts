@@ -160,3 +160,17 @@ test("an account marked not-an-employee is never matched, even on its email", ()
   assert.equal(d.employeeOfAccount("u1"), null);
   assert.equal(d.howLinked("u1"), null);
 });
+
+test("a spelling a namesake later took still counts as the first person's — but resolves to nobody", () => {
+  const d = buildDirectory({
+    employees: [emp("e1", "Rahul Patil"), emp("e2", "Rahul")],
+    accounts: [],
+    links: [],
+    aliases: [{ key: "RAHUL", employeeId: "e1" }],
+  });
+  assert.equal(d.employeeByName("Rahul"), null, "two people answer to it");
+  assert.equal(d.nameStatus("Rahul"), "many");
+  assert.equal(d.isSpellingOf("rahul", "e1"), true, "so the renamed person's customers are not handed to the new hire");
+  assert.deepEqual(d.othersNamed("Rahul", "e1"), ["e2"]);
+  assert.equal(d.nameStatus("Western Line Sale"), "none");
+});

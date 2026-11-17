@@ -102,6 +102,12 @@ export type Directory = {
   accountOfEmployee(employeeId: string): string | null;
   /** The person a piece of text names, if exactly one does. Remembered spellings count. */
   employeeByName(text: string | null | undefined): string | null;
+  /** Whether a piece of text names nobody, exactly one person, or several. */
+  nameStatus(text: string | null | undefined): "none" | "one" | "many";
+  /** Is this text one of the spellings this employee answers to — today's name, a remembered one, or a linked account's? Shared spellings count. */
+  isSpellingOf(text: string | null | undefined, employeeId: string): boolean;
+  /** Who else (other employees) answers to this text, today or in the past. */
+  othersNamed(text: string | null | undefined, employeeId: string): string[];
   /** The account a piece of text names: through the employee it resolves to, or a unique account name. */
   accountByName(text: string | null | undefined): string | null;
   /** The org-chart manager of an employee. */
@@ -199,6 +205,7 @@ export function buildDirectory(input: DirectoryInput): Directory {
   }
 
   const employeeByName = (text: string | null | undefined) => only(textToEmployee.get(personKey(text)));
+  const holdersOf = (text: string | null | undefined) => textToEmployee.get(personKey(text)) ?? new Set<string>();
 
   const accountOfEmployee = (employeeId: string) => only(accountsOfEmployee.get(employeeId));
 
@@ -219,6 +226,12 @@ export function buildDirectory(input: DirectoryInput): Directory {
     howLinked: (userId) => (stored.has(userId) ? "stored" : (inferred.get(userId)?.how ?? null)),
     accountOfEmployee,
     employeeByName,
+    nameStatus(text) {
+      const n = personKey(text) ? holdersOf(text).size : 0;
+      return n === 0 ? "none" : n === 1 ? "one" : "many";
+    },
+    isSpellingOf: (text, employeeId) => Boolean(personKey(text)) && holdersOf(text).has(employeeId),
+    othersNamed: (text, employeeId) => [...holdersOf(text)].filter((id) => id !== employeeId),
     accountByName(text) {
       const e = employeeByName(text);
       if (e) return accountOfEmployee(e);

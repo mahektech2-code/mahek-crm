@@ -1397,6 +1397,42 @@ export async function runJob(
           triggeredById,
         ),
       ];
+    case "align-person-names":
+      /*
+       * ONE NAME, by hand — and with `--dry-run`, the list of every linked
+       * account whose login name would change to its HRMS name, and every
+       * account the data proves is somebody, WITHOUT writing anything. Run that
+       * against prod before the first nightly pass does it for real.
+       */
+      return [
+        await run(
+          "align-person-names",
+          async () => {
+            const svc = await import("./services/person-identity-service");
+            if (options.dryRun) {
+              const drift = await svc.accountNameDrift();
+              const dir = await svc.loadPersonDirectory();
+              const open = await db
+                .select({ id: users.id, name: users.name })
+                .from(users)
+                .where(sql`${users.employeeId} is null and ${users.notEmployee} = false`);
+              const linkable = open.filter((u) => ["email", "mobile"].includes(dir.howLinked(u.id) ?? ""));
+              const lines = [
+                ...drift.map((d) => `rename: ${d.accountName} -> ${d.employeeName}`),
+                ...linkable.map((u) => `link: ${u.name} -> ${dir.employeeName(dir.employeeOfAccount(u.id)!)} (${dir.howLinked(u.id)})`),
+              ];
+              for (const l of lines) console.log(l);
+              return { recordsAffected: 0, detail: `dry run: ${drift.length} renames, ${linkable.length} links — nothing written` };
+            }
+            const linked = await svc.autoLinkAccounts();
+            const chart = await svc.placeByTitles();
+            const n = await svc.alignAccountNames(triggeredById ?? null);
+            return { recordsAffected: linked + chart.placed + n, detail: `${linked} linked, ${chart.placed} placed on the org chart, ${n} renamed` };
+          },
+          triggeredById,
+        ),
+      ];
+
     case "recompute-sales-managers":
       /*
        * Hand-triggerable on its own, not only bundled in the nightly — the

@@ -1229,7 +1229,21 @@ export async function renamePerson(input: { userId: string; name: string }): Pro
     .limit(1);
   if (!person) return fail("That account no longer exists.", "not_found");
 
-  const { renameEmployee, renameUnlinkedAccount } = await import("@/lib/services/person-identity-service");
+  const { renameEmployee, renameUnlinkedAccount, spellingTakenByOthers } = await import("@/lib/services/person-identity-service");
+
+  /* A name somebody else answers to — today, or as a name they used to carry
+     — is refused: it would make everything that names either of them belong
+     to nobody. */
+  if (name.toLowerCase() !== person.name.toLowerCase()) {
+    const others = await spellingTakenByOthers(db, person.employeeId, name);
+    const [sameAccount] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(and(sql`lower(btrim(${users.name})) = ${name.toLowerCase()}`, ne(users.id, person.id))) // identity-ok: refusing a duplicate name, not a lookup
+      .limit(1);
+    const clash = others[0] ?? sameAccount?.name;
+    if (clash) return fieldErr("name", `${clash} already answers to ${name}. Add something to the name that tells the two apart.`);
+  }
 
   if (person.employeeId) {
     const [e] = await db
@@ -1335,8 +1349,13 @@ export async function linkEmployee(input: {
     .limit(1);
   if (!person) return fail("That account no longer exists.", "not_found");
 
+  const { forgetAccountSpellings, renameEmployee } = await import("@/lib/services/person-identity-service");
   if (input.employeeId === null) {
-    await db.update(users).set({ employeeId: null }).where(eq(users.id, person.id));
+    await db.transaction(async (tx) => {
+      await tx.update(users).set({ employeeId: null }).where(eq(users.id, person.id));
+      // What this account's own name taught the old record is wrong now.
+      await forgetAccountSpellings(tx, person.id);
+    });
     await audit(me.id, "unlink-employee", person.id, `${person.name} · unlinked from payroll`);
     refresh();
     return ok(
@@ -1377,7 +1396,13 @@ export async function linkEmployee(input: {
     );
   }
 
-  await db.update(users).set({ employeeId: employee.id }).where(eq(users.id, person.id));
+  /* ONE NAME, from the moment of linking: the account takes the HRMS record's
+     name now — said in the message below — rather than silently overnight. */
+  await db.transaction(async (tx) => {
+    await tx.update(users).set({ employeeId: employee.id }).where(eq(users.id, person.id));
+    await forgetAccountSpellings(tx, person.id);
+    await renameEmployee(tx, { employeeId: employee.id, oldName: null, newName: employee.name, actorId: me.id, source: "link" });
+  });
   await audit(
     me.id,
     "link-employee",
@@ -1387,7 +1412,7 @@ export async function linkEmployee(input: {
   refresh();
   return ok(
     { employeeCode: employee.code },
-    `${person.name} is ${employee.code} ${employee.name}. Their salary, days worked and reimbursements now read off that record.`,
+    `${person.name} is ${employee.code} ${employee.name}. Their salary, days worked and reimbursements now read off that record${person.name === employee.name ? "" : `, and their account is now called ${employee.name}, as HRMS has it`}.`,
   );
 }
 

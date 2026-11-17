@@ -1,5 +1,6 @@
 import "server-only";
 import { personDirectory } from "@/lib/services/person-identity-service";
+import { personKey } from "@/lib/engines/person-directory";
 import { eq, sql } from "drizzle-orm";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { db } from "@/db";
@@ -181,6 +182,23 @@ export async function projectParties(
      whichever account came back first. */
   const dir = await personDirectory();
   const accountFor = (text: string) => dir.accountByName(text) ?? undefined;
+  /* THE SAME PERSON, SPELT TWO WAYS, IS NOT A CHANGE. After HR renames
+     somebody, MahekOne carries the new name on the customer while this tab
+     goes on spelling them the old way. Writing the sheet's text back would
+     undo the rename on every pass — and on a decided account raise a conflict
+     about nothing. A spelling is only "different" when it means a different
+     person (or one the directory cannot tell). */
+  const samePerson = (sheet: string | null | undefined, stored: string | null | undefined) => {
+    if ((sheet ?? null) === (stored ?? null)) return true;
+    if (!sheet || !stored) return false;
+    if (personKey(sheet) === personKey(stored)) return true;
+    /* The stored name says who MahekOne has on the seat; the sheet's text is
+       the same person if it is any spelling they answer to — even one a
+       namesake later took, so a new hire never inherits a renamed person's
+       customers through the old spelling. */
+    const held = dir.employeeByName(stored);
+    return held !== null && dir.isSpellingOf(sheet, held);
+  };
 
   /*
    * Where a kept decision and the sheet disagree, so it can be reconciled.
@@ -285,7 +303,7 @@ export async function projectParties(
       // The NAME is what a person reads on both sides, so it is what the
       // conflict states — an id would send whoever reconciles it back to the
       // database to find out who it means.
-      if ((party.salesPersonName ?? null) !== (customer.salesPersonName ?? null)) {
+      if (!samePerson(party.salesPersonName, customer.salesPersonName)) {
         amConflicts.push({
           customerId: customer.id,
           field: "sales_person",
@@ -293,7 +311,7 @@ export async function projectParties(
           appValue: customer.salesPersonName ?? null,
         });
       }
-      if ((party.backOfficeName ?? null) !== (customer.backOfficeName ?? null)) {
+      if (!samePerson(party.backOfficeName, customer.backOfficeName)) {
         amConflicts.push({
           customerId: customer.id,
           field: "back_office_person",
@@ -343,7 +361,7 @@ export async function projectParties(
         // The NAME lands whether or not it matched an account, because the
         // name is what the screens say. Linking is a separate question and it
         // fails for most of these rows by design — see the header.
-        ...(!amDecided && party.salesPersonName
+        ...(!amDecided && party.salesPersonName && !samePerson(party.salesPersonName, customer.salesPersonName)
           ? { salesPersonName: party.salesPersonName }
           : {}),
         ...(!amDecided && backId ? { backOfficeAmId: backId } : {}),
@@ -351,7 +369,7 @@ export async function projectParties(
         // missing, so a back office name that matched no account was read,
         // counted as unlinked, and then thrown away — leaving every screen
         // saying "Unassigned" against a customer the sheet names somebody for.
-        ...(!amDecided && party.backOfficeName
+        ...(!amDecided && party.backOfficeName && !samePerson(party.backOfficeName, customer.backOfficeName)
           ? { backOfficeName: party.backOfficeName }
           : {}),
         ...(party.gstNumber && !customer.gstin ? { gstin: party.gstNumber } : {}),
