@@ -346,7 +346,6 @@ export function PlanEditor({ plan, items, today, readOnly, past }: { plan: PlanV
                     <thead>
                       <tr>
                         <Th className="w-[34%]">Product</Th>
-                        <Th>Code</Th>
                         {c.sizeLabel ? <Th>{c.sizeLabel}</Th> : null}
                         <Th align="right">{c.key === "loose" ? "Cans" : "Quantity"}</Th>
                         <Th>Unit</Th>
@@ -375,9 +374,7 @@ export function PlanEditor({ plan, items, today, readOnly, past }: { plan: PlanV
                               {l.productName}
                               {l.source === "order" ? <Badge tone="brand">From orders</Badge> : null}
                             </span>
-                            {l.orderRefs ? <span className="block text-meta font-normal text-muted">Orders {l.orderRefs}</span> : null}
                           </Td>
-                          <Td className="font-mono text-meta">{l.productCode ?? "—"}</Td>
                           {c.sizeLabel ? <Td>{l.size ?? "—"}</Td> : null}
                           <Td align="right" className="font-semibold tabular-nums">
                             {l.was != null ? <span className="mr-1.5 font-normal text-faint line-through">{nf(l.was)}</span> : null}
