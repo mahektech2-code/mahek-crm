@@ -562,17 +562,26 @@ export type CustomerListPage = {
  * `owner_id`, went on showing whoever ran the import. It looked exactly like
  * the unassign had silently failed to save.
  */
+/*
+ * THE ACCOUNT FIRST, the typed name only where no account holds the seat
+ * (owner, 2026-11-18). This read `sales_person_name` first because the party
+ * sheet was the authority on who sells to an account. The sheets are retired,
+ * every named salesman's seat holds his account, and a name read first meant a
+ * rename in HRMS did not reach this column until something rewrote the text.
+ * What is left for the text is a seat held by no person at all — "South Zone",
+ * "Marathwada" — which is still worth showing rather than a blank.
+ */
 export const SALES_AM_NAME_SQL = sql<string | null>`case
   when customers.kind = 'lead'
     then (select name from users u where u.id = customers.owner_id)
   when customers.am_decided_at is not null
     then coalesce(
-      customers.sales_person_name,
-      (select name from users u where u.id = customers.sales_am_id)
+      (select name from users u where u.id = customers.sales_am_id),
+      customers.sales_person_name
     )
   else coalesce(
-    customers.sales_person_name,
     (select name from users u where u.id = customers.sales_am_id),
+    customers.sales_person_name,
     (select name from users u where u.id = customers.owner_id)
   )
 end`;
@@ -750,8 +759,8 @@ export const listAmFilterOptions = cache(async function listAmFilterOptions(): P
       r.kind === "lead"
         ? nameOf(r.ownerId)
         : r.decided
-          ? coalesce(r.salesPersonName, nameOf(r.salesAmId))
-          : coalesce(r.salesPersonName, nameOf(r.salesAmId), nameOf(r.ownerId)),
+          ? coalesce(nameOf(r.salesAmId), r.salesPersonName)
+          : coalesce(nameOf(r.salesAmId), r.salesPersonName, nameOf(r.ownerId)),
     );
     keep(salesManager, coalesce(nameOf(r.salesManagerId), r.salesManagerPersonName));
     keep(backOffice, coalesce(nameOf(r.backOfficeAmId), r.backOfficeName));

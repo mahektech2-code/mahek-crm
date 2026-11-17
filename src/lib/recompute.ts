@@ -1,5 +1,4 @@
 import "server-only";
-import { sheetKeys } from "@/lib/customer-rename";
 import { randomUUID } from "node:crypto";
 import { billedInMonthSql, orderCountsSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
@@ -16,8 +15,6 @@ import {
   payments,
   salesTargetCategories,
   salesTargets,
-  sheetCustomerMasterRows,
-  sheetPartyRows,
   sheetTakenOrderRows,
   waMessages,
   employeeReporting,
@@ -33,7 +30,6 @@ import {
   type EscalationBill,
 } from "./engines/escalation";
 import { billCreditDaysSql } from "./bill-terms";
-import { partyNameKey } from "./sheet-parse";
 import { evaluateInactivity } from "./engines/inactivity";
 import { resolveTarget } from "./engines/targets";
 import {
@@ -1299,131 +1295,6 @@ export async function copyForwardSalesTargets(
   return { created, failed };
 }
 
-/* ------------------------------------------------------------ salespeople */
-
-/**
- * Who sells to each customer, mirrored from the customer master.
- *
- * The Sales Party tab's `Sales Person` is the answer to "who is the account
- * manager for sales", and it is a NAME rather than an account: Heena Pritesh
- * Doshi, Rahul, and entries that are not people at all — "Western Line Sale",
- * "Company Own", "JAIPUR". `salesAmId` can only hold a `users` row, so every
- * screen fell through to the owner and showed a telecaller as the salesperson
- * for all 557 customers.
- *
- * This reads what is already stored rather than the sheet, so it is the
- * command to run when the READING changed and not the row — the same reason
- * `taken-order-reparse` exists. It rewrites every customer on every pass,
- * including back to null: a salesperson removed from the master must not go
- * on being displayed by a cache nobody clears.
- */
-export async function recomputeSalesPeople(): Promise<number> {
-  const idDir = await personDirectory();
-  const parties = await db
-    .select({
-      partyName: sheetPartyRows.partyName,
-      salesPersonName: sheetPartyRows.salesPersonName,
-    })
-    .from(sheetPartyRows)
-    .where(eq(sheetPartyRows.status, "present"));
-
-  // Nothing synced yet is not the same as nobody having a salesperson. A pass
-  // over an empty tab would blank the column for the whole book.
-  if (!parties.length) return 0;
-
-  const byKey = new Map(
-    parties.map((p) => [partyNameKey(p.partyName), p.salesPersonName]),
-  );
-
-  /*
-   * THE OTHER PLACE A SALESMAN IS NAMED, and the reason it is read here
-   * rather than written by the import that found it.
-   *
-   * The EMP 2.0 shop master names a salesman for nearly every one of its
-   * 5,292 shops, and the projection deliberately leaves that on the staging
-   * row: writing it to `customers.sales_person_name` would last until this
-   * job's next pass, which rewrites the column for every undecided customer
-   * from the PARTY sheet — including back to null where the party sheet is
-   * silent, which it is for all of them. Setting `am_decided_at` to protect
-   * it would be a lie, since no person decided anything, and would freeze
-   * both manager seats against a future sync as a side effect.
-   *
-   * So the fix belongs here, in the job that was going to overwrite it. The
-   * party sheet still WINS wherever it speaks — this is a fallback, not a
-   * merge — so no customer that has a name today gains a different one, and
-   * the only rows that change are the ones that were being blanked.
-   *
-   * What it costs is visible and intended: those shops start showing a
-   * salesperson on the CRM and Accounts lists, because `SALES_AM_NAME_SQL`
-   * reads this column first. That is the truth the shop master already held
-   * and nothing could reach.
-   */
-  const masterRows = await db
-    .select({
-      customerId: sheetCustomerMasterRows.projectedCustomerId,
-      salesPersonName: sheetCustomerMasterRows.salesPersonName,
-    })
-    .from(sheetCustomerMasterRows)
-    .where(
-      and(
-        eq(sheetCustomerMasterRows.status, "present"),
-        isNotNull(sheetCustomerMasterRows.projectedCustomerId),
-        isNotNull(sheetCustomerMasterRows.salesPersonName),
-      ),
-    );
-
-  const byCustomerId = new Map(
-    masterRows
-      .filter((r) => r.customerId && r.salesPersonName?.trim())
-      .map((r) => [r.customerId as string, r.salesPersonName as string]),
-  );
-
-  const rows = await db
-    .select({
-      id: customers.id,
-      name: customers.name,
-      sheetName: customers.sheetName,
-      salesPersonName: customers.salesPersonName,
-      amDecidedAt: customers.amDecidedAt,
-    })
-    .from(customers);
-
-  let changed = 0;
-  for (const c of rows) {
-    /*
-     * An account somebody has reassigned in the app is off limits, name
-     * included.
-     *
-     * This is the quiet half of the guard and the half that would have been
-     * missed. Holding `sales_am_id` while letting this rewrite
-     * `sales_person_name` produces the worst outcome available: the account
-     * moves to the new manager for scope, the queue, collections and every
-     * scoped list — and the screens go on displaying the OLD name, because
-     * they read the sheet's name first and the linked account only where it
-     * is silent. Nobody reports that as a bug. They report that the
-     * reassignment did not work, and they are half right in a way that takes
-     * a day to unpick.
-     */
-    if (c.amDecidedAt) continue;
-    // A renamed party is found under the name the sheet still uses.
-    const fromSheet = sheetKeys(c).map((k) => byKey.get(k)).find((v) => v !== undefined);
-    const next = fromSheet ?? byCustomerId.get(c.id) ?? null;
-    if (next === c.salesPersonName) continue;
-    /* The same person under an older spelling is not a change: the customer
-       keeps the name HR renamed them to. See party-projection-service. */
-    if (next && c.salesPersonName) {
-      const was = idDir.employeeByName(c.salesPersonName);
-      if (was && idDir.isSpellingOf(next, was)) continue;
-    }
-    await db
-      .update(customers)
-      .set({ salesPersonName: next })
-      .where(eq(customers.id, c.id));
-    changed++;
-  }
-  return changed;
-}
-
 /**
  * The third seat, kept in step with the org chart — every customer whose
  * sales manager NOBODY HAS DECIDED, which is `recomputeSalesPeople`'s own
@@ -1533,20 +1404,16 @@ export async function recomputeSalesManagers(): Promise<number> {
          is only lifted for the field verifier's own leads. */
       if (chartEmpty) continue;
 
-      /* The same fallback chain as before — the owner on a lead, the sheet's
-         salesperson on a customer, else its sales account — read by id. */
-      /* A salesperson name two people answer to is not resolved — and the
-         seat is LEFT as it is rather than blanked: a namesake arriving must not
-         clear the manager on every shop the other one works. */
-      if (c.kind !== "lead" && c.salesPersonName && dir.nameStatus(c.salesPersonName) === "many") continue;
+      /* The owner on a lead, the sales seat on a customer — by ACCOUNT. This
+         read the typed salesperson name first; a name decides nothing now
+         (owner, 2026-11-18), and every customer's seat holds the person its
+         name did, so the answer did not move when it changed. */
       const manager =
         c.kind === "lead"
           ? (c.ownerId ? dir.managerOfAccount(c.ownerId) : null)
-          : c.salesPersonName
-            ? dir.managerOfName(c.salesPersonName)
-            : c.salesAmId
-              ? dir.managerOfAccount(c.salesAmId)
-              : null;
+          : c.salesAmId
+            ? dir.managerOfAccount(c.salesAmId)
+            : null;
 
       nextId = manager?.userId ?? null;
       nextName = manager && !manager.userId ? manager.name : null;
@@ -1648,8 +1515,6 @@ export async function recomputeEverything(): Promise<Record<string, number>> {
   // From what the Taken Order tab last said. A no-op until that tab has been
   // synced at least once — see the guard at the top of it.
   const { held } = await recomputeOrderSystemHolds();
-  // From what the Sales Party tab last said, for the same reason.
-  const salesPeople = await recomputeSalesPeople();
 
   const all = await db.select({ id: customers.id }).from(customers);
   for (const c of all) await recomputeLastContact(c.id);
@@ -1662,7 +1527,6 @@ export async function recomputeEverything(): Promise<Record<string, number>> {
     inactive,
     targets,
     held,
-    salesPeople,
   };
 }
 

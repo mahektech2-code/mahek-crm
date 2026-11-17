@@ -1060,7 +1060,7 @@ export async function scopedCustomer(
         and(
           eq(customers.id, customerId),
           // The ONE definition of whose book a customer is in — and the SAME
-          // one the pull sends from, `namedByUsers` included. `scopedToUsers`
+          // one the pull sends from, `salesSeatOf` included. `scopedToUsers`
           // alone refused every shop the customer master names this salesman
           // on, which are shops his own phone shows him.
           principalBookClause(principal),

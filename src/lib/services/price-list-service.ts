@@ -934,7 +934,7 @@ export async function customerPricing(customerId: string, todayIso: string): Pro
   }>(sql`
     select c.id, c.name, c.city, c.region, c.freight_term as "freightTerm",
            c.price_tag as "priceTag", c.kind,
-           coalesce(c.sales_person_name, (select u.name from users u where u.id = c.sales_am_id)) as "salesmanName",
+           coalesce((select u.name from users u where u.id = c.sales_am_id), c.sales_person_name) as "salesmanName",
            c.sales_am_id as "salesAmId", c.owner_id as "ownerId", c.back_office_am_id as "backOfficeAmId"
       from customers c where c.id = ${customerId}
   `);
@@ -1217,7 +1217,7 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
            (select p.name from places p where p.id = c.resolved_area_id) as "resolvedArea",
            c.customer_type::text as "customerType", c.freight_term as "freightTerm",
            c.name,
-           coalesce(c.sales_person_name, (select u.name from users u where u.id = c.sales_am_id)) as "salesmanName"
+           coalesce((select u.name from users u where u.id = c.sales_am_id), c.sales_person_name) as "salesmanName"
       from customers c
      where c.kind = 'customer' and c.status <> 'deactivated' and ${bookClause(ids)}
      order by c.name asc

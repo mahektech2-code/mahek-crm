@@ -34,6 +34,8 @@ const BANNED: Array<{ re: RegExp; why: string }> = [
   { re: /lower\((btrim\()?(\$\{)?(users\.name|employees\.name|employee_name)\}?\)?\)\s*=/, why: "a person found by comparing their name" },
   { re: /\.name\.toLowerCase\(\)\s*===\s*\w+\.user\.name/, why: "the signed-in person found among employees by name; use their HRMS link" },
   { re: /\b(byName|nameToId|idByName)\.(get|set)\(\s*(u|user|p|person|e|emp|employee|staff)\.name/, why: "a person indexed by their name" },
+  { re: /coalesce\(\s*(c|customers|r)\.(sales_person_name|salesPersonName)\b/, why: "the typed salesperson name read before the account; the seat's account comes first, the text only where nobody holds it" },
+  { re: /nameFold\(customers\.salesPersonName\)/, why: "a shop given to somebody by matching their name" },
 ];
 
 /**
@@ -80,9 +82,10 @@ test("HRMS renames carry to the account", () => {
   assert.match(sync, /rememberSheetRenames\(/, "the employee sheet sync must remember the old spelling");
 });
 
-test("the MBOS book reads remembered spellings through the account's employee link", () => {
+test("the MBOS book is decided by the sales seat, never by a name", () => {
   const mbos = readFileSync(join(ROOT, "lib/services/mbos-service.ts"), "utf8");
-  assert.match(mbos, /person_name_aliases a on a\.employee_id = u\.employee_id/);
+  assert.match(mbos, /inArray\(customers\.salesAmId, ids\)/, "the handset adds the shops he is the sales seat on");
+  assert.doesNotMatch(mbos, /salesPersonName\)\}? in \(|nameFold\(customers\.salesPersonName/, "no shop reaches a handset by its typed salesman name");
 });
 
 /* ---------------------------------------------------------------------------

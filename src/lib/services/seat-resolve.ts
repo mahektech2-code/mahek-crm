@@ -27,5 +27,22 @@ export async function resolveSeat(seat: SeatPick, label: string): Promise<Resolv
     .from(employees)
     .where(and(eq(employees.id, seat.employeeId), eq(employees.status, "active")))
     .limit(1);
-  return e ? { userId: null, name: e.name } : `The ${label} is no longer on the current staff list.`;
+  if (!e) return `The ${label} is no longer on the current staff list.`;
+  /* EVERY EMPLOYEE HAS AN ACCOUNT (owner, 2026-11-18), so a person picked
+     from the staff list is held by it — the seat is an id, and the name shown
+     comes from the account. Held as a bare name only if, for a moment, the
+     account has not been made yet; `ensureEmployeeAccounts` is asked first. */
+  const account = await employeesAccount(seat.employeeId);
+  return account ? { userId: account.id, name: account.name } : { userId: null, name: e.name };
+}
+
+/** The one account an employee has — made now if, for a moment, it was not yet. */
+export async function employeesAccount(employeeId: string): Promise<{ id: string; name: string } | null> {
+  const find = async () =>
+    (await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.employeeId, employeeId)).limit(1))[0] ?? null;
+  const found = await find();
+  if (found) return found;
+  const { ensureEmployeeAccounts } = await import("@/lib/services/person-identity-service");
+  await ensureEmployeeAccounts();
+  return find();
 }

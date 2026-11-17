@@ -18,7 +18,6 @@ import { appAccess, customerContacts, customers, erpCustomerProfiles, mbosUserTe
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { createDirectCustomer } from "@/lib/actions/customer-create";
-import { recomputeSalesPeople } from "@/lib/recompute";
 import { customerIdsInScope, type MbosPrincipal } from "@/lib/services/mbos-service";
 import type { NewCustomerInput } from "@/lib/new-customer";
 
@@ -205,13 +204,6 @@ describe("Adding a customer from Accounts", () => {
       input({ name: "No City", phone: "9876500055", place: { state: { id: "pl_t_mh" }, district: { id: "pl_t_ngd" } } }),
     );
     assert.equal(missingCity.ok, false);
-  });
-
-  test("the nightly sales-people pass leaves the seat's name alone", async () => {
-    const r = await createDirectCustomer(input());
-    assert.ok(r.ok, JSON.stringify(r));
-    await recomputeSalesPeople();
-    assert.equal((await record(r.data.id)).salesPersonName, "Mahesh Field");
   });
 
   test("an Accounts associate cannot decide whose book it is in", async () => {
