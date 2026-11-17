@@ -104,6 +104,7 @@ export type JobName =
   | "recompute-cycles"
   | "recompute-sales-managers"
   | "align-person-names"
+  | "ensure-employee-accounts"
   | "self-raised-verifier-seats"
   | "recompute-inactivity"
   | "recompute-followups"
@@ -446,18 +447,22 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
    */
   results.push(
     await run("align-person-names", async () => {
-      const { alignAccountNames, autoLinkAccounts, placeByTitles } = await import("./services/person-identity-service");
+      const { alignAccountNames, autoLinkAccounts, ensureEmployeeAccounts, placeByTitles } = await import("./services/person-identity-service");
       /* Proven account ↔ HRMS links first, then the chart links the sheet's
          titles prove, then the names — so a newly linked account takes its
          HRMS name the same night. */
       const linked = await autoLinkAccounts();
       const chart = await placeByTitles();
       const n = await alignAccountNames();
+      /* And everybody in HRMS without an account gets one — the id the rest
+         of the night's passes hang their records off. */
+      const accts = await ensureEmployeeAccounts();
       const toPlace = chart.ambiguous.length + chart.unknown.length;
       return {
-        recordsAffected: linked + chart.placed + n,
+        recordsAffected: linked + chart.placed + n + accts.created.length,
         detail:
-          `${linked} accounts linked to HRMS, ${chart.placed} placed on the org chart from their title, ${n} accounts renamed to match HRMS` +
+          `${linked} accounts linked to HRMS, ${chart.placed} placed on the org chart from their title, ${n} accounts renamed to match HRMS, ${accts.created.length} accounts made for employees who had none` +
+          (accts.waitingForLink.length ? `; ${accts.waitingForLink.length} wait for their existing account to be linked (${accts.waitingForLink.join(", ")})` : "") +
           (toPlace ? `; ${toPlace} still to place on the org chart by hand` : ""),
       };
     }, triggeredById).catch((e) => ({ job: "align-person-names" as const, recordsAffected: 0, detail: String(e) })),
@@ -1393,6 +1398,25 @@ export async function runJob(
             const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
             const n = await ensureSelfRaisedVerifierSeats();
             return { recordsAffected: n, detail: `${n} leads seated` };
+          },
+          triggeredById,
+        ),
+      ];
+    case "ensure-employee-accounts":
+      /* EVERY EMPLOYEE HAS AN ACCOUNT. `--dry-run` lists who would get one
+         and who waits for a link, writing nothing. Also part of nightly. */
+      return [
+        await run(
+          "ensure-employee-accounts",
+          async () => {
+            const { ensureEmployeeAccounts } = await import("./services/person-identity-service");
+            const r = await ensureEmployeeAccounts({ dryRun: options.dryRun });
+            for (const n of r.created) console.log(`${options.dryRun ? "would create" : "created"}: ${n}`);
+            for (const n of r.waitingForLink) console.log(`waits for a link: ${n}`);
+            return {
+              recordsAffected: options.dryRun ? 0 : r.created.length,
+              detail: `${options.dryRun ? "dry run: " : ""}${r.created.length} accounts ${options.dryRun ? "would be " : ""}made, ${r.waitingForLink.length} wait for a link`,
+            };
           },
           triggeredById,
         ),
