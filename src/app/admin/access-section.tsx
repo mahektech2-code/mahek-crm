@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { downloadCsv, toCsv } from "@/lib/csv";
+import { HintTip } from "@/components/ui/hint-tip";
 import { useRouter } from "next/navigation";
 import {
   Badge,
@@ -231,6 +233,47 @@ export function AccessSection({
     expiresInMinutes: number;
   } | null>(null);
 
+  /* BULK. Selection is a set of user ids; it survives switching views, and
+     every bulk action runs the same per-person action the row menu runs, so a
+     refusal for one person is that person's and the rest still go through. */
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = React.useState(false);
+  const toggle = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  async function runBulk(label: string, fn: (id: string) => Promise<{ ok: boolean }>) {
+    const ids = [...picked];
+    setBulkBusy(true);
+    let done = 0;
+    for (const id of ids) if ((await fn(id)).ok) done++;
+    setBulkBusy(false);
+    push(done === ids.length ? `${label} for ${done} ${done === 1 ? "person" : "people"}.` : `${label} for ${done} of ${ids.length}. The rest were refused.`);
+    setPicked(new Set());
+    router.refresh();
+  }
+  function exportCsv(list: AccessRow[]) {
+    downloadCsv(
+      "people-and-access",
+      toCsv(
+        ["Name", "Email", "Phone", "Signs in", "Account level", "Employee", "Apps"],
+        list.map((r) => [
+          r.name,
+          r.email,
+          r.phone,
+          r.active ? "Enabled" : "Disabled",
+          r.role,
+          r.employeeCode,
+          r.grants.map((g) => `${g.appName} (${g.role}, ${g.grantedCount}/${g.totalCount})`).join("; "),
+        ]),
+      ),
+      [view, onlyApp],
+    );
+  }
+
   const say = (r: { ok: boolean; message?: string; error?: string }) => {
     push(r.ok ? (r.message ?? "Saved.") : (r.error ?? "That did not work."));
     if (r.ok) router.refresh();
@@ -283,6 +326,9 @@ export function AccessSection({
           </select>
         ) : null}
         <span className="flex-1" />
+        <Button size="sm" variant="secondary" onClick={() => exportCsv(picked.size ? rows.filter((r) => picked.has(r.userId)) : inView)}>
+          Export CSV
+        </Button>
         <span className="text-[13px] whitespace-nowrap text-muted">
           {withAccess} with access · {narrowed} narrowed
           {undecided ? ` · ${undecided} with new screens to decide` : ""}
@@ -290,10 +336,47 @@ export function AccessSection({
         </span>
       </div>
 
+      {picked.size && isPlatformAdmin ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-card bg-ink px-4 py-2.5 text-white">
+          <b className="mr-2">{picked.size} selected</b>
+          <span className="flex-1" />
+          {[
+            { label: "Send reset links", fn: sendPasswordResetFor, done: "Reset link sent" },
+            { label: "End sessions", fn: endSessionsFor, done: "Sessions ended" },
+          ].map((b) => (
+            <button
+              key={b.label}
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void runBulk(b.done, b.fn)}
+              className="h-8 rounded-control border border-[#3a4766] px-3 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {b.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => exportCsv(rows.filter((r) => picked.has(r.userId)))}
+            className="h-8 rounded-control border border-[#3a4766] px-3 text-sm font-semibold text-white"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={() => setPicked(new Set())}
+            className="h-8 rounded-control px-3 text-sm font-semibold text-[#c9d1e3]"
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
+
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader
           title="Who opens what"
-          hint="Every app a person holds, and how far into each one it reaches. Manage access opens all of it on one page — an app is granted by ticking it and taken away by unticking it, reviewed before anything is written."
+          action={
+            <HintTip text="Every app a person holds, and how far into each one it reaches. Manage access opens all of it on one page — an app is granted by ticking it and taken away by unticking it, reviewed before anything is written." />
+          }
         />
         {inView.length === 0 ? (
           <EmptyState
@@ -323,6 +406,17 @@ export function AccessSection({
             <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
+                  <Th className="w-8">
+                    <input
+                      type="checkbox"
+                      aria-label="Select everyone in this view"
+                      checked={inView.length > 0 && inView.every((r) => picked.has(r.userId))}
+                      onChange={(e) =>
+                        setPicked(e.target.checked ? new Set([...picked, ...inView.map((r) => r.userId)]) : new Set())
+                      }
+                      className="h-4 w-4 accent-brand"
+                    />
+                  </Th>
                   <Th>Person</Th>
                   <Th>Sign-in</Th>
                   <Th>
@@ -337,7 +431,16 @@ export function AccessSection({
               </thead>
               <tbody>
                 {inView.map((r, i) => (
-                  <Tr key={r.userId} className={i % 2 ? "bg-canvas" : ""}>
+                  <Tr key={r.userId} className={picked.has(r.userId) ? "bg-brand-soft" : i % 2 ? "bg-canvas" : ""}>
+                    <Td className="w-8 align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${r.name}`}
+                        checked={picked.has(r.userId)}
+                        onChange={() => toggle(r.userId)}
+                        className="h-4 w-4 accent-brand"
+                      />
+                    </Td>
                     <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} />
                     <Td>
                       {r.grants.length === 0 ? (

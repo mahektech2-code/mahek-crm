@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Badge, Card, CardHeader, EmptyState, Td, Th } from "@/components/ui/primitives";
 import { ADMIN } from "@/lib/admin-routes";
 import { stamp } from "@/lib/format";
-import { buildDistribution, type BuildCount } from "@/lib/services/admin-console-service";
+import { buildDistribution, compareVersions, type BuildCount } from "@/lib/services/admin-console-service";
+import { getConfig } from "@/lib/config/store";
 import { AdminPage } from "../_shell/admin-page";
 import { requirePlatformAdmin } from "../_shell/context";
 
@@ -15,7 +16,10 @@ import { requirePlatformAdmin } from "../_shell/context";
  */
 export default async function ReleasesPage() {
   await requirePlatformAdmin();
-  const { field, factory } = await buildDistribution();
+  const [{ field, factory }, config] = await Promise.all([buildDistribution(), getConfig()]);
+  const floors = { field: config["releases.salesmanMinimumVersion"].trim(), factory: config["releases.factoryMinimumVersion"].trim() };
+  const below = (l: BuildCount[], floor: string) =>
+    floor ? l.filter((b) => b.version !== "Not reported" && compareVersions(b.version, floor) < 0).reduce((n, b) => n + b.phones, 0) : 0;
   const total = (l: BuildCount[]) => l.reduce((n, b) => n + b.phones, 0);
   const onLatest = (l: BuildCount[]) => l[0]?.phones ?? 0;
 
@@ -27,6 +31,11 @@ export default async function ReleasesPage() {
         { label: "Salesman App · latest", value: field[0]?.version ?? "—", sub: `${onLatest(field)} of ${total(field)} phones` },
         { label: "Factory app · latest", value: factory[0]?.version ?? "—", sub: `${onLatest(factory)} of ${total(factory)} phones` },
         {
+          label: "Below the floor",
+          value: String(below(field, floors.field) + below(factory, floors.factory)),
+          tone: below(field, floors.field) + below(factory, floors.factory) ? "danger" : undefined,
+        },
+        {
           label: "Behind",
           value: String(total(field) - onLatest(field) + total(factory) - onLatest(factory)),
           tone: total(field) - onLatest(field) + total(factory) - onLatest(factory) ? "warn" : undefined,
@@ -34,8 +43,11 @@ export default async function ReleasesPage() {
       ]}
     >
       <div className="grid gap-4 lg:grid-cols-2">
-        <Fleet title="Salesman App" builds={field} href={ADMIN.handsets} />
-        <Fleet title="Factory app" builds={factory} href={ADMIN.factoryHandsets} />
+        <Fleet title="Salesman App" builds={field} href={ADMIN.handsets} floor={floors.field} />
+        <Fleet title="Factory app" builds={factory} href={ADMIN.factoryHandsets} floor={floors.factory} />
+      </div>
+      <div className="mt-3 text-[13px] text-muted">
+        <Link href={ADMIN.settingsFor("platform", "releases")}>Set the update floor</Link>
       </div>
     </AdminPage>
   );
@@ -43,11 +55,21 @@ export default async function ReleasesPage() {
 
 const SHADES = ["bg-brand", "bg-brand-softer", "bg-warn", "bg-danger", "bg-line-strong"];
 
-function Fleet({ title, builds, href }: { title: string; builds: BuildCount[]; href: string }) {
+function Fleet({ title, builds, href, floor }: { title: string; builds: BuildCount[]; href: string; floor: string }) {
   const total = builds.reduce((n, b) => n + b.phones, 0);
   return (
     <Card className="overflow-hidden">
-      <CardHeader title={title} action={<Link href={href} className="text-sm font-semibold">Handsets</Link>} />
+      <CardHeader
+        title={title}
+        action={
+          <span className="flex items-center gap-3">
+            {floor ? <Badge tone="brand">Floor {floor}</Badge> : null}
+            <Link href={href} className="text-sm font-semibold">
+              Handsets
+            </Link>
+          </span>
+        }
+      />
       {total === 0 ? (
         <EmptyState title="No phone has reported" />
       ) : (
@@ -85,7 +107,15 @@ function Fleet({ title, builds, href }: { title: string; builds: BuildCount[]; h
                     {b.phones}
                   </Td>
                   <Td className="text-muted">{stamp(b.lastSeen)}</Td>
-                  <Td>{i === 0 ? <Badge tone="success">Latest</Badge> : <Badge tone="warn">Behind</Badge>}</Td>
+                  <Td>
+                    {floor && b.version !== "Not reported" && compareVersions(b.version, floor) < 0 ? (
+                      <Badge tone="danger">Below the floor</Badge>
+                    ) : i === 0 ? (
+                      <Badge tone="success">Latest</Badge>
+                    ) : (
+                      <Badge tone="warn">Behind</Badge>
+                    )}
+                  </Td>
                 </tr>
               ))}
             </tbody>

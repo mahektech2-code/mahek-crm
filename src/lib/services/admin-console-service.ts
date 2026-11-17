@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { definition } from "@/lib/config/registry";
 import { getConfig } from "@/lib/config/store";
 import { AUDIT_GROUPS, translate } from "@/lib/audit-labels";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * The reads behind the Admin Console screens added in the v4 redraw: Change
@@ -283,4 +284,83 @@ export async function recentAdminActivity(limit = 6): Promise<AdminActivity[]> {
       entity: def?.label ?? r.entity,
     };
   });
+}
+
+/* ------------------------------------------------------------ integration use */
+
+export type ProviderUsage = { provider: string; calls: number; failures: number; today: number };
+
+/** Requests to each outside service this month (Asia/Kolkata), and today. */
+export async function usageThisMonth(): Promise<ProviderUsage[]> {
+  const list = await rows<{ provider: string; calls: number; failures: number; today: number }>(sql`
+    select provider,
+           sum(calls)::int as calls,
+           sum(failures)::int as failures,
+           coalesce(sum(calls) filter (where day = (now() at time zone ${APP_TIMEZONE})::date), 0)::int as today
+      from integration_usage
+     where day >= date_trunc('month', (now() at time zone ${APP_TIMEZONE}))::date
+     group by provider`);
+  return list;
+}
+
+/* -------------------------------------------------------------- recycle bin */
+
+export type BinFile = {
+  id: string;
+  filename: string;
+  bytes: number;
+  kind: string;
+  removedAt: Date;
+  /** The day the hold runs out and the bytes go. */
+  purgeOn: Date;
+};
+
+/** Files a person removed, still held, newest first. */
+export async function binFiles(): Promise<BinFile[]> {
+  const days = (await getConfig())["attachments.removedRetentionDays"];
+  const list = await rows<{ id: string; filename: string; bytes: number; kind: string; removed_at: Date }>(sql`
+    select a.id, a.filename, a.size_bytes::float8 as bytes, a.removed_parent_type::text as kind, a.removed_at
+      from attachments a
+     where a.status = 'removed' and a.purged_at is null and a.removed_parent_id is not null
+     order by a.removed_at desc
+     limit 300`);
+  return list.map((r) => ({
+    id: r.id,
+    filename: r.filename,
+    bytes: r.bytes,
+    kind: r.kind,
+    removedAt: new Date(r.removed_at),
+    purgeOn: new Date(new Date(r.removed_at).getTime() + days * 86_400_000),
+  }));
+}
+
+export type BinDocument = { id: string; title: string; updatedAt: Date };
+
+/** Library documents withdrawn from the handsets. */
+export async function binDocuments(): Promise<BinDocument[]> {
+  const list = await rows<{ id: string; title: string; updated_at: Date }>(sql`
+    select id, title, updated_at from mbos_documents where not active order by updated_at desc limit 300`);
+  return list.map((r) => ({ id: r.id, title: r.title, updatedAt: new Date(r.updated_at) }));
+}
+
+export type BinAnnouncement = { id: string; text: string; toLabel: string; fromName: string; deletedAt: Date; deletedBy: string | null; people: number };
+
+/** HRMS and Sales Dashboard announcements somebody deleted. */
+export async function binAnnouncements(): Promise<BinAnnouncement[]> {
+  const list = await rows<{ id: string; text: string; to_label: string; from_name: string; deleted_at: Date; deleted_by: string | null; people: number }>(sql`
+    select n.id, n.text, n.to_label, n.from_name, n.deleted_at, u.name as deleted_by,
+           jsonb_array_length(n.recipient_user_ids)::int as people
+      from hrms_notifications n left join users u on u.id = n.deleted_by_id
+     where n.deleted_at is not null
+     order by n.deleted_at desc
+     limit 300`);
+  return list.map((r) => ({
+    id: r.id,
+    text: r.text,
+    toLabel: r.to_label,
+    fromName: r.from_name,
+    deletedAt: new Date(r.deleted_at),
+    deletedBy: r.deleted_by,
+    people: r.people,
+  }));
 }

@@ -2,7 +2,12 @@ import { getConfig } from "@/lib/config/store";
 import { secretStatuses } from "@/lib/secrets";
 import { OLA_KEY_NAMES, olaPoolStatus } from "@/lib/services/ola-key-service";
 import { integrationStatus } from "@/lib/services/admin-platform-service";
-import { Card } from "@/components/ui/primitives";
+import { Badge, Card } from "@/components/ui/primitives";
+import { HintTip } from "@/components/ui/hint-tip";
+import { usageThisMonth } from "@/lib/services/admin-console-service";
+import { sheetsConfigured } from "@/lib/sheets";
+import type { TestableProvider } from "@/lib/actions/admin-console";
+import { TestButton } from "./test-button";
 import { AdminPage } from "../_shell/admin-page";
 import { SecretCredentialRow } from "../secret-credential-row";
 import { requirePlatformAdmin } from "../_shell/context";
@@ -20,12 +25,22 @@ import { VoiceSection } from "../voice-section";
  */
 export default async function IntegrationsPage() {
   const ctx = await requirePlatformAdmin();
-  const [config, secrets, olaPool, integrations] = await Promise.all([
+  const [config, secrets, olaPool, integrations, usage] = await Promise.all([
     getConfig(),
     secretStatuses(),
     olaPoolStatus(),
     integrationStatus(),
+    usageThisMonth(),
   ]);
+  const held = (name: string) => secrets.some((s) => s.name === name && s.source !== "unset");
+  const used = (id: string) => usage.find((u) => u.provider === id);
+  const cards = CONNECTIONS.map((c) => ({
+    ...c,
+    set: c.key === "env:RESEND_API_KEY" ? Boolean(process.env.RESEND_API_KEY) : c.key ? held(c.key) : sheetsConfigured(),
+    use: used(c.id),
+  }));
+  const totalCalls = usage.reduce((n, u) => n + u.calls, 0);
+  const totalFailures = usage.reduce((n, u) => n + u.failures, 0);
 
   /*
    * Statuses only — which credentials exist, from where, and their last four
@@ -44,7 +59,35 @@ export default async function IntegrationsPage() {
     <AdminPage
       title="Integrations & keys"
       subtitle="Every outside service MahekOne talks to, whether it is connected, and the keys it uses. Keys are set here so a deploy nobody has shell access to can still be connected."
+      metrics={[
+        { label: "Connected", value: String(cards.filter((c) => c.set).length), tone: "success" },
+        { label: "Not set", value: String(cards.filter((c) => !c.set).length), tone: cards.some((c) => !c.set) ? "warn" : undefined },
+        { label: "Requests this month", value: totalCalls.toLocaleString("en-IN") },
+        { label: "Failed this month", value: totalFailures.toLocaleString("en-IN"), tone: totalFailures ? "warn" : undefined },
+      ]}
     >
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
+        {cards.map((c) => (
+          <Card key={c.id} className="flex flex-col gap-2.5 px-4 py-3.5">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate font-semibold text-ink">{c.name}</span>
+              <Badge tone={c.set ? "success" : "warn"}>{c.set ? "Key set" : "Not set"}</Badge>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-bold text-ink tabular-nums">{(c.use?.calls ?? 0).toLocaleString("en-IN")}</span>
+              <span className="text-xs text-muted">requests this month</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <span className="flex-1">
+                {c.use?.today ?? 0} today
+                {c.use?.failures ? <span className="text-danger"> · {c.use.failures} failed</span> : null}
+              </span>
+              {c.test && c.set ? <TestButton provider={c.test} name={c.name} /> : null}
+            </div>
+          </Card>
+        ))}
+      </div>
+
       <IntegrationsTab data={{ integrations }} />
 
       <Section id="speech" title="Speech and writing" hint={"The keys dictation calls out with. Which provider hears the speech, and which models are used, are settings — they live under Settings → Voice & AI."}>
@@ -230,11 +273,30 @@ export default async function IntegrationsPage() {
   );
 }
 
+/**
+ * One card per outside service. `key` is the credential whose presence says
+ * "set" (an env name for Resend, which is not a console credential); `test`
+ * is offered only where a read-only request exists.
+ */
+const CONNECTIONS: { id: string; name: string; key: string | null; test: TestableProvider | null }[] = [
+  { id: "openai", name: "OpenAI", key: "openai.apiKey", test: "openai" },
+  { id: "anthropic", name: "Anthropic", key: "anthropic.apiKey", test: "anthropic" },
+  { id: "sarvam", name: "Sarvam", key: "sarvam.apiKey", test: null },
+  { id: "ola", name: "Ola Maps", key: "olamaps.apiKey", test: "ola" },
+  { id: "wati", name: "Wati · WhatsApp", key: "wati.apiToken", test: "wati" },
+  { id: "minimoth", name: "MiniMoth · codes", key: "minimoth.apiKey", test: null },
+  { id: "resend", name: "Resend · mail", key: "env:RESEND_API_KEY", test: "resend" },
+  { id: "github", name: "GitHub", key: "github.token", test: "github" },
+  { id: "google", name: "Google Sheets", key: null, test: null },
+];
+
 function Section({ id, title, hint, children }: { id: string; title: string; hint: string; children: React.ReactNode }) {
   return (
     <section id={id} className="mt-8 scroll-mt-6">
-      <h2 className="text-lg leading-6 font-semibold text-ink">{title}</h2>
-      <p className="mt-0.5 mb-4 text-[13px] leading-[18px] text-muted">{hint}</p>
+      <h2 className="mb-4 flex items-center gap-2 text-lg leading-6 font-bold text-ink">
+        {title}
+        <HintTip text={hint} />
+      </h2>
       {children}
     </section>
   );

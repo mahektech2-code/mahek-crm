@@ -6442,6 +6442,24 @@ change), Data health (counts, plus a rebuild per derived figure —
 `rebuildDerived`, platform admin, audited `job.rebuild`), App releases (builds
 reported by `mbos_devices` and `factory_devices`) and Storage & files.
 
+**AND THE REST OF THE REDRAW (Nov 2026).** Settings rows put their help
+behind ⓘ, show the key, mark a changed value with its default, and filter to
+"Changed only"; unsaved work turns the foot bar navy. People & access selects
+rows for bulk reset links, ended sessions and a CSV. Jobs opens on four
+cadence lanes (late at twice the interval) and each job shows its last runs.
+Integrations draws a card per service with **Test connection**
+(`testConnection`, one read-only request with the stored key) and **requests
+this month**, counted by `lib/integration-usage.ts` off Node's
+`undici:request:*` diagnostics channel — started in `src/instrumentation.ts`,
+so every outbound call is counted whichever library made it, flushed once a
+minute into `integration_usage`. A count, never rupees. **The recycle bin holds
+files, documents and announcements too**: `removeAttachment` keeps
+`removed_parent_*` and the orphan sweep leaves such a file for
+`attachments.removedRetentionDays` (90) before purging (`purged_at`); an HRMS
+announcement is soft-deleted (`deleted_at`) and restoring sends it again. App
+releases reads `releases.*MinimumVersion` and marks phones below it — a floor
+the console reads; no handset acts on it until a build reads it.
+
 **One home per screen.** The app registry was drawn twice (Apps → Registry,
 Overview → Health), credentials lived in three places (Voice, Maps, Overview →
 Integrations, which listed neither of the other two), sheet sync history in

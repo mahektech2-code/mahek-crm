@@ -21,6 +21,7 @@ import {
   type Values,
 } from "./settings-model";
 import { RichTextEditor } from "./rich-text";
+import { HintTip } from "@/components/ui/hint-tip";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
 import { cleanDecimal, cleanWhole } from "@/lib/format";
@@ -41,6 +42,7 @@ export function SettingsSection({
   onDraft,
   isPlatformAdmin,
   collections,
+  changedOnly = false,
 }: {
   tab: SchemaTab;
   values: Values;
@@ -49,7 +51,14 @@ export function SettingsSection({
   onDraft: (key: string, value: unknown) => void;
   isPlatformAdmin: boolean;
   collections: Record<string, Collection>;
+  /** Only the settings that differ from their default, or carry a draft. */
+  changedOnly?: boolean;
 }) {
+  const shown = (f: SchemaField) =>
+    !changedOnly || (f.control !== "entity" && (isDirty(values, drafts, f) || !isAtDefault(values, drafts, f)));
+  const groups = tab.groups
+    .map((g) => ({ ...g, fields: g.fields.filter(shown) }))
+    .filter((g) => g.fields.length > 0);
   return (
     <div>
       {errors.length ? (
@@ -67,13 +76,16 @@ export function SettingsSection({
         </div>
       ) : null}
 
-      {tab.groups.map((group) => (
+      {changedOnly && groups.length === 0 ? (
+        <Card className="mt-5 px-5 py-6 text-sm text-muted">Every setting on this tab is at its default.</Card>
+      ) : null}
+      {groups.map((group) => (
         <Card key={group.label} className="mt-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
           <div className="border-b border-divider px-5 py-4">
-            <div className="text-lg leading-6 font-semibold text-ink">{group.label}</div>
-            {group.note ? (
-              <div className="mt-0.5 text-[13px] text-muted">{group.note}</div>
-            ) : null}
+            <div className="flex items-center gap-2 text-md leading-6 font-bold text-ink">
+              {group.label}
+              {group.note ? <HintTip text={group.note} /> : null}
+            </div>
           </div>
           {group.fields.map((field, i) => (
             <FieldRow
@@ -125,7 +137,7 @@ function FieldRow({
       /* The search in the header lands on a setting by its key. */
       id={field.key}
       className={cx(
-        "flex scroll-mt-6 items-start gap-5 px-5 py-4 target:ring-2 target:ring-brand target:ring-inset",
+        "flex scroll-mt-6 items-center gap-5 px-5 py-3.5 target:ring-2 target:ring-brand target:ring-inset",
         first ? "" : "border-t border-canvas",
         error ? "bg-danger-soft" : "bg-surface",
       )}
@@ -144,22 +156,15 @@ function FieldRow({
               🔒 Platform admin
             </Badge>
           ) : null}
-          {dirty ? <span className="block h-1.5 w-1.5 flex-none rounded-full bg-brand" /> : null}
+          {field.help ? <HintTip text={field.help} /> : null}
+          {dirty ? <span title="Unsaved" className="block h-1.5 w-1.5 flex-none rounded-full bg-brand" /> : null}
         </div>
-        {field.help ? (
-          <div className="mt-0.5 text-[13px] leading-[19px] text-muted">{field.help}</div>
-        ) : null}
         {field.control === "entity" ? null : (
-        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted">
-          <span>
-            {dirty
-              ? `Unsaved — was ${readable(savedValue(values, field))}`
-              : atDefault
-                ? "Default · never changed"
-                : `Changed from the default of ${readable(field.def)}`}
-          </span>
-        </div>
+          <div className="mt-1 font-mono text-[11px] text-muted">{field.key}</div>
         )}
+        {dirty ? (
+          <div className="mt-1 text-xs text-brand">Unsaved · was {readable(savedValue(values, field))}</div>
+        ) : null}
       </div>
 
       <div className="min-w-0 flex-1">
@@ -174,9 +179,14 @@ function FieldRow({
           <Button size="sm" variant="ghost" onClick={() => onDraft(field.key, savedValue(values, field))}>
             Reset
           </Button>
-        ) : atDefault ? (
-          <span className="text-xs whitespace-nowrap text-muted">Default</span>
-        ) : null}
+        ) : atDefault ? null : (
+          <span
+            title="Changed from the default"
+            className="inline-flex h-6 max-w-[120px] items-center truncate rounded-full bg-brand-soft px-2.5 text-xs font-semibold text-brand-deep"
+          >
+            Default {readable(field.def)}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import "server-only";
 import { MAX_PROOFS } from "@/lib/tasks/rules";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   attachments,
@@ -315,6 +315,10 @@ export async function removeAttachment(attachmentId: string): Promise<Result> {
       status: "removed",
       parentType: null,
       parentId: null,
+      /* Where it was, so the recycle bin can put it back while the bytes
+         are held (`attachments.removedRetentionDays`). */
+      removedParentType: row.parentType,
+      removedParentId: row.parentId,
       removedAt: new Date(),
       updatedAt: new Date(),
       updatedById: ctx.user.id,
@@ -923,7 +927,7 @@ export async function sweepAttendanceSelfies(): Promise<{ swept: number }> {
     if (row.storedRef) await fileStorage.remove(row.storedRef).catch(() => {});
     await db
       .update(attachments)
-      .set({ status: "removed", removedAt: new Date(), updatedAt: new Date() })
+      .set({ status: "removed", removedAt: new Date(), purgedAt: new Date(), updatedAt: new Date() })
       .where(eq(attachments.id, row.id));
   }
 
@@ -936,18 +940,28 @@ export async function sweepOrphans(): Promise<{ swept: number }> {
     Date.now() - config["attachments.orphanCleanupHours"] * 60 * 60 * 1000,
   );
 
+  /* A file a PERSON removed is held for the recycle bin; one that never had
+     a record, or whose hold has run out, goes. Purged rows are not asked again. */
+  const holdCutoff = new Date(Date.now() - config["attachments.removedRetentionDays"] * 86_400_000);
   const orphans = await db
     .select()
     .from(attachments)
-    .where(and(isNull(attachments.parentId), lt(attachments.uploadedAt, cutoff)));
+    .where(
+      and(
+        isNull(attachments.parentId),
+        isNull(attachments.purgedAt),
+        lt(attachments.uploadedAt, cutoff),
+        or(isNull(attachments.removedParentId), lt(attachments.removedAt, holdCutoff)),
+      ),
+    );
 
   for (const row of orphans) {
-    // The bytes go here: nothing ever pointed at them, so there is no
-    // interaction record being destroyed.
+    // The bytes go here: nothing points at them any more, and a removed
+    // file's hold has run out.
     if (row.storedRef) await fileStorage.remove(row.storedRef).catch(() => {});
     await db
       .update(attachments)
-      .set({ status: "removed", removedAt: new Date(), updatedAt: new Date() })
+      .set({ status: "removed", removedAt: row.removedAt ?? new Date(), purgedAt: new Date(), updatedAt: new Date() })
       .where(eq(attachments.id, row.id));
   }
 

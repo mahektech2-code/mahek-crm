@@ -100,3 +100,21 @@ export async function markAnnouncementSeen(bellIds: string[], userId: string): P
   const r = await db.update(notifications).set({ read: true }).where(and(inArray(notifications.id, bellIds), eq(notifications.userId, userId))).returning({ id: notifications.id });
   return r.length > 0;
 }
+
+/**
+ * Brings a deleted announcement back: the bells it withdrew are sent again,
+ * to exactly the people it reached, and it is on HRMS's list once more.
+ * `href` is where its bells open — the caller knows the screen.
+ */
+export async function restoreAnnouncement(id: string, href: string | null): Promise<{ reached: number } | null> {
+  const [n] = await db.select().from(hrmsNotifications).where(eq(hrmsNotifications.id, id));
+  if (!n || !n.deletedAt) return null;
+  const bellIds = await notifyUsers(
+    n.recipientUserIds.map((userId) => ({ userId, title: n.title?.trim() || n.fromName, body: n.text, general: true as const, href })),
+  );
+  await db
+    .update(hrmsNotifications)
+    .set({ deletedAt: null, deletedById: null, bellIds, updatedAt: new Date() })
+    .where(eq(hrmsNotifications.id, id));
+  return { reached: bellIds.length };
+}

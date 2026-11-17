@@ -61,7 +61,7 @@ export const ADMIN_TABS = {
     { slug: "people", label: "By person" },
   ],
   person: [
-    { slug: "profile", label: "Profile" },
+    { slug: "profile", label: "Overview" },
     { slug: "apps", label: "Apps" },
     { slug: "sessions", label: "Sessions" },
     { slug: "audit", label: "Audit" },

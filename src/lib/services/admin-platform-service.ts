@@ -480,6 +480,8 @@ export type JobRow = {
   detail: string | null;
   runs: number;
   failures: number;
+  /** The last runs, newest last — true where it succeeded. */
+  recent: boolean[];
 };
 
 export type QueueOwner = {
@@ -555,6 +557,13 @@ export async function jobHealth(): Promise<JobRow[]> {
     .groupBy(jobRuns.job);
   const byJob = new Map(weekly.map((w) => [w.job, w]));
 
+  const recent = new Map<string, boolean[]>();
+  for (const r of rows) {
+    const list = recent.get(r.job) ?? [];
+    if (list.length < 14) list.unshift(r.ok);
+    recent.set(r.job, list);
+  }
+
   const latest = new Map<string, JobRow>();
   for (const r of rows) {
     if (latest.has(r.job)) continue;
@@ -568,6 +577,7 @@ export async function jobHealth(): Promise<JobRow[]> {
       detail: r.detail,
       runs: w?.runs ?? 0,
       failures: w?.failures ?? 0,
+      recent: recent.get(r.job) ?? [],
     });
   }
 
