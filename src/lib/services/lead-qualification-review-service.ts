@@ -18,6 +18,7 @@ import { PROSPECT_REVIEW_AUDIT, prospectReviewStateOf } from "@/lib/prospect-rev
 import { gateTo } from "@/lib/engines/lead-gates";
 import { requestOf } from "./lead-prospect-request-service";
 import { leadGateInput, leadRow } from "./lead-service";
+import { callRefusalFor } from "./qualification-call-gate";
 import { canVerifyLeadById, creatorFactsFor, qualificationCollectorRefusal } from "./lead-verifier";
 import { answersMissing, canDecideProspect } from "./prospect-verifier";
 import { assertDesignatedQualificationApprover, designatedQualificationApprover } from "./qualification-approver";
@@ -90,6 +91,14 @@ export type QualificationReviewModel = {
   };
   products: { id: string; name: string }[];
   history: HistoryEntry[];
+  /**
+   * The optional verification call, on the Qualification review only and only for
+   * the designated approver. `saved` is whether the review has been saved since
+   * Qualification opened: the call is offered once it has, and never before. Null
+   * where there is no call to offer (before Qualification, a viewer who cannot
+   * decide, a distributor). It is never a condition of anything.
+   */
+  call: { saved: boolean } | null;
 };
 
 async function nameMap(ids: (string | null | undefined)[]): Promise<Map<string, string>> {
@@ -213,7 +222,7 @@ export async function loadQualificationReview(
       unmetProspect,
       unmetQualification,
     },
-    { editable: canDecide, collectorOnlyReason },
+    { editable: canDecide, collectorOnlyReason, kind: kind === "prospect" ? "prospect" : "qualification" },
   );
 
   /* BEFORE QUALIFICATION OPENS the review is of the Suspect and Prospect answers
@@ -336,6 +345,9 @@ export async function loadQualificationReview(
   const approverId = approver?.id ?? null;
   const verifierNames = approverId && !names.has(approverId) ? await nameMap([approverId]) : names;
 
+  const callApplies = kind === "qualification" && canDecide && lead.leadSalesType !== "distributor";
+  const call = callApplies ? { saved: (await callRefusalFor(customerId)) === null } : null;
+
   return {
     customerId,
     name: lead.name,
@@ -374,5 +386,6 @@ export async function loadQualificationReview(
     },
     products: productList,
     history,
+    call,
   };
 }

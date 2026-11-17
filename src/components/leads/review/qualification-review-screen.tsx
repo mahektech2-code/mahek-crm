@@ -82,9 +82,13 @@ export function QualificationReviewScreen({
   const [error, setError] = React.useState<string | null>(null);
   const [note, setNote] = React.useState("");
   const [rejectKind, setRejectKind] = React.useState<"incomplete" | "clarification">("incomplete");
+  const [callSkipped, setCallSkipped] = React.useState(false);
 
   const dirtyKeys = editable.map((f) => f.editKey as string).filter((k) => draft[k] !== initial[k]);
   const dirty = dirtyKeys.length > 0;
+  /* At Qualification the approver may save with nothing changed: "read, nothing to
+     correct". It is what opens the optional verification call. */
+  const canSaveUnchanged = model.kind === "qualification" && model.call !== null;
 
   function build(): ReviewEdits {
     const edits: { fields: Record<string, string | number | null>; answers: Record<string, string> } = {
@@ -423,6 +427,47 @@ export function QualificationReviewScreen({
             </p>
           ) : null}
 
+          {model.call ? (
+            <section
+              className="mt-4 rounded-[6px] border border-line bg-surface px-5 py-4"
+              data-testid="call-panel"
+              data-call-saved={model.call.saved ? "yes" : "no"}
+            >
+              <h2 className="text-[15px] font-semibold text-ink">Verification call — optional</h2>
+              {model.call.saved ? (
+                <>
+                  <p className="mt-1 text-[13px] text-muted">
+                    The review is saved. You can ring the customer to check the answers, or skip it —
+                    confirming the qualification does not need a call.
+                  </p>
+                  {callSkipped ? (
+                    <p className="mt-2 text-[13px] text-body" data-testid="call-skipped">
+                      Skipped. You can still make the call later from the lead&apos;s record.
+                    </p>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <Link
+                        href={leadHref(workspace, `leads/${model.customerId}/verify`)}
+                        data-testid="make-call"
+                        className="inline-flex h-8.5 items-center rounded-[4px] bg-brand px-3 text-[13px] font-medium text-white no-underline hover:no-underline"
+                      >
+                        Make the call
+                      </Link>
+                      <Button tone="quiet" onClick={() => setCallSkipped(true)} data-testid="skip-call">
+                        Skip the call
+                      </Button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="mt-1 text-[13px] text-muted" data-testid="call-locked">
+                  Save the review first and the call becomes available. It is optional, and you can confirm
+                  without it.
+                </p>
+              )}
+            </section>
+          ) : null}
+
           <section className="mt-6" data-testid="history">
             <h2 className="text-[15px] font-semibold text-ink">History</h2>
             {model.history.length === 0 ? (
@@ -487,7 +532,7 @@ export function QualificationReviewScreen({
                     Discard
                   </Button>
                 ) : null}
-                <Button tone="primary" disabled={!dirty || busy !== null} onClick={save}>
+                <Button tone="primary" disabled={(!dirty && !canSaveUnchanged) || busy !== null} onClick={save}>
                   {busy === "save"
                     ? "Saving…"
                     : dirty

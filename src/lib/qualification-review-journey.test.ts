@@ -461,8 +461,17 @@ describe("the review model", () => {
     const lead = await answeredLead();
     const m = (await loadQualificationReview(lead.id, approver))!;
     assert.deepEqual(m.rows.filter((r) => r.section === "suspect").map((r) => r.id), DESK_FIELDS.map((f) => f.key));
-    assert.deepEqual(m.rows.filter((r) => r.section === "prospect").map((r) => r.id), PROSPECT_CONDITIONS.map((c) => c.id));
-    assert.deepEqual(m.rows.filter((r) => r.section === "qualification").map((r) => r.id), QUALIFICATION_CONDITIONS.map((c) => c.id));
+    /* A question asked twice is drawn once: the Prospect questions the Suspect list
+       already asked, and the two Qualification questions whose only answer is a
+       Suspect row (GST, application), are carried by the Suspect rows. */
+    assert.deepEqual(
+      m.rows.filter((r) => r.section === "prospect").map((r) => r.id),
+      PROSPECT_CONDITIONS.filter((c) => !["customer_type", "monthly_litres", "competitor", "required_product", "gstin"].includes(c.id)).map((c) => c.id),
+    );
+    assert.deepEqual(
+      m.rows.filter((r) => r.section === "qualification").map((r) => r.id),
+      QUALIFICATION_CONDITIONS.filter((c) => !["gst_verified", "application_understood"].includes(c.id)).map((c) => c.id),
+    );
     const f = (k: string, id: string) => m.rows.find((r) => r.key === k)!.fields.find((x) => x.id === id)!;
     assert.equal(f("suspect:monthlyLitres", "monthlyLitres").display, "300 Litres");
     assert.equal(f("suspect:competitor", "competitor").display, "Local thinner");
@@ -502,7 +511,7 @@ describe("the review model", () => {
       assert.ok(m, u.name);
       assert.equal(m.viewer.canDecide, false, u.name);
       assert.equal(m.rows.flatMap((r) => r.fields).filter((f) => f.editKey).length, 0, u.name);
-      assert.equal(m.rows.length, DESK_FIELDS.length + PROSPECT_CONDITIONS.length + QUALIFICATION_CONDITIONS.length);
+      assert.equal(m.rows.length, 20, "the consolidated review: each question once");
     }
   });
 

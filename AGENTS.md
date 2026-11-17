@@ -9210,6 +9210,36 @@ the screen draws disabled from. The Calling Desk's own pre-Prospect answers
 (which include GSTIN, buyer, credit days and application) are its own writes and
 are untouched.
 
+**THE REVIEW DRAWS EACH QUESTION ONCE.** The Suspect list (11), the Prospect
+conditions (8) and the Qualification conditions (8) ask several of the same
+things, and most of those are one stored answer — the same lead column. The
+review (`buildReviewRows`) draws that answer on the Suspect row, which takes over
+the repeated question's "required" and its gate verdict: five Prospect questions
+(type, litres, competitor, product, GST) and the two Qualification questions
+whose only answer is already a Suspect row (GST, application) are not drawn
+again, and the decision maker, buyer and credit days boxes inside Qualification's
+people and price questions are dropped, leaving only what nothing above asked.
+That is 20 unique rows (14 before Qualification opens), not 27. IT CHANGES WHAT
+IS SHOWN AND NOTHING THAT IS ASKED: `PROSPECT_CONDITIONS` and
+`QUALIFICATION_CONDITIONS` are untouched because `lead-gates.ts` is mirrored to
+the handset byte for byte, and no stored answer moves — each was always one
+column, so there is nothing to map.
+
+**THE VERIFICATION CALL COMES AFTER THE QUALIFICATION REVIEW IS SAVED, AND IS
+NEVER REQUIRED.** In Qualification the designated approver reads the one review,
+corrects what needs it and presses Save changes (which may be pressed with
+nothing changed — "read, nothing to correct"). That writes a
+`lead.qualificationReview.saved` audit row, a mark and nothing more: it approves
+nothing, moves nothing and is read by no gate. Only then is a call offered, as
+"Make the call" or "Skip". `callRefusalFor` (`services/qualification-call-gate.ts`)
+is the one question — "may a call be recorded now?" — and `recordLeadValidationCall`
+asks it, so the button, the direct `/verify` address and a posted request cannot
+disagree. The mark counts for the stay in Qualification it was made in. It applies
+only where there is a review to save: a Prospect is still verified by the Prospect
+review or by the call, a lead past Qualification is not held, and a distributor's
+checklist (not edited from the review) is left alone. The handset records its
+verifications through its own handler and is untouched.
+
 **GST IS THE TELECALLER'S END TO END.** They enter it and they validate it; the
 self-check that refused the lead's owner is gone, and what keeps that honest is
 that a validation belongs to the number it was made against — changing the GSTIN

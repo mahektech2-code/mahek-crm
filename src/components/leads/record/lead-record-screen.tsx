@@ -327,6 +327,7 @@ export function LeadRecordScreen({
   discountThresholdPercent,
   creditLimitThresholdPaise,
   canVerify,
+  callLockedReason,
   canWork,
   canHandOver,
   canMigrate,
@@ -424,6 +425,8 @@ export function LeadRecordScreen({
   discountThresholdPercent: number;
   creditLimitThresholdPaise: number;
   canVerify: boolean;
+  /** Why the optional verification call is not offered yet (Qualification review not saved); null when it is. */
+  callLockedReason?: string | null;
   canWork: boolean;
   canHandOver: boolean;
   /**
@@ -961,6 +964,7 @@ export function LeadRecordScreen({
               total={counts.calls}
               base={base}
               canVerify={canVerify}
+              callLockedReason={callLockedReason ?? null}
               onStart={() => setVerifying(true)}
             />
           ) : null}
@@ -1766,6 +1770,7 @@ function VerificationPanel({
   total,
   base,
   canVerify,
+  callLockedReason,
   onStart,
 }: {
   record: LeadRecord;
@@ -1773,6 +1778,7 @@ function VerificationPanel({
   total: number;
   base: string;
   canVerify: boolean;
+  callLockedReason: string | null;
   onStart: () => void;
 }) {
   return (
@@ -1788,17 +1794,19 @@ function VerificationPanel({
       }
       action={
         <div className="flex flex-col items-end gap-1.5">
-          <Link
-            href={`${base}/verify`}
-            title={
-              canVerify
-                ? "The findings and the twelve questions, at full size"
-                : "Only a Sales Manager can make the check call."
-            }
-            className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Full screen
-          </Link>
+          {callLockedReason ? null : (
+            <Link
+              href={`${base}/verify`}
+              title={
+                canVerify
+                  ? "The findings and the twelve questions, at full size"
+                  : "Only a Sales Manager can make the check call."
+              }
+              className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              Full screen
+            </Link>
+          )}
           <Link
             href={`${base}/review`}
             title="Every Suspect, Prospect and Qualification answer on one page"
@@ -1809,11 +1817,13 @@ function VerificationPanel({
           <Button
             size="sm"
             tone={record.verifiedAt ? "default" : "primary"}
-            disabled={!canVerify}
+            disabled={!canVerify || Boolean(callLockedReason)}
             title={
-              canVerify
-                ? undefined
-                : "Only a Sales Manager can make the check call."
+              callLockedReason
+                ? callLockedReason
+                : canVerify
+                  ? undefined
+                  : "Only a Sales Manager can make the check call."
             }
             onClick={onStart}
           >
