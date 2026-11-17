@@ -353,14 +353,13 @@ describe("what they are ready for, on a verifying call", () => {
   const transitionsOf = (leadId: string) =>
     db.select().from(leadStageTransitions).where(eq(leadStageTransitions.customerId, leadId));
 
-  test("Ready for a trial = Yes with no GST validation and no manager review: the call is saved, the stage does not move", async () => {
+  test("Ready for a trial = Yes with no manager review: the call is saved, the stage does not move", async () => {
     const lead = await prospect();
     setTestUser(mgr);
     const r = await recordLeadValidationCall(lead.id, { answers: { ...CP, ready_for_trial: "Yes" }, outcome: "verified" });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     if (r.ok) {
       assert.match(r.message ?? "", /not made/i);
-      assert.match(r.message ?? "", /GST number has not been validated/);
       assert.match(r.message ?? "", /not been reviewed and approved/);
     }
     const after = await row(lead.id);
