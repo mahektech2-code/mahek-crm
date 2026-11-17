@@ -2,7 +2,7 @@
   "expo": {
     "name": "Mahek MBOS",
     "slug": "mbos",
-    "version": "1.28.0",
+    "version": "1.29.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,14 +15,14 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "in.mahek.mbos",
-      "versionCode": 38,
+      "versionCode": 39,
       "permissions": [
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "android.permission.REQUEST_INSTALL_PACKAGES"
