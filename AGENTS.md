@@ -9240,6 +9240,31 @@ review or by the call, a lead past Qualification is not held, and a distributor'
 checklist (not edited from the review) is left alone. The handset records its
 verifications through its own handler and is untouched.
 
+**THE ONE REVIEW: A SALES MANAGER VERIFIES A PROSPECT AND QUALIFICATION IS DONE
+IN THE SAME CONFIRM.** For a direct or third-party lead (`combinedReviewApplies`:
+standing at Prospect, or a Suspect the calling desk has asked to promote, on a
+ladder with both a Qualification and a Sample / Trial rung) the review the designated
+verifier opens draws all 20 questions once — the six only Qualification asks
+(trial plan, who decides/buys/pays, price and reaction, delivery, willing to test,
+next step) included — and she answers what is blank. The optional call comes after
+she saves. ONE Confirm (`confirmProspectReview`) then verifies the Prospect, opens
+Qualification, validates the GST number (ticked in the review), records her verdict,
+confirms the figures and moves the lead to Sample / Trial (`advanceToSampleTrial`);
+there is no separate Telecaller Qualification step. A distributor, a lead with no
+sales type and the handset keep today's flow, and `lead-gates.ts` is untouched.
+
+Three things have to hold, and each has a test. (1) The manager is normally refused
+the Qualification-only answers (`saveLeadQualification`, `saveProspectFields`), and
+still is everywhere else: the review's allowance is a server-side context
+(`combined-review-context`, entered only by `saveQualificationReviewEdits` after it
+has identified her), never an argument a request can post. (2) The order is fixed:
+the GST check comes BEFORE the verdict is recorded, because validating a number is a
+material change and voids a verdict already on the record; and it comes AFTER
+Qualification opens, because it is refused until then. (3) The hand-off bell "qualification
+is ready for your review" is suppressed inside that context: she is the reviewer.
+A Qualification-stage Confirm (`reviewLeadQualification`) now moves the lead on too;
+what is left to change under a standing note is a review that sent it back.
+
 **GST IS THE TELECALLER'S END TO END.** They enter it and they validate it; the
 self-check that refused the lead's owner is gone, and what keeps that honest is
 that a validation belongs to the number it was made against — changing the GSTIN

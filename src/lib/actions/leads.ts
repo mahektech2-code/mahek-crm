@@ -73,6 +73,7 @@ import { gstinChangeClear, materialOf, reviewVoidPatch } from "@/lib/lead-review
 import { readReadiness, type ReadinessChoice } from "@/lib/verification-readiness";
 import { moveOnReadiness } from "@/lib/services/lead-readiness-move-service";
 import { qualificationAccess, QUALIFICATION_ONLY_FIELDS } from "@/lib/lead-qualification-access";
+import { inCombinedReview } from "@/lib/services/combined-review-context";
 import { litresSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
@@ -972,12 +973,18 @@ export async function saveLeadQualification(
        it would be counted the moment the rung opens — as work somebody did
        before anybody had checked there was a lead. Refused here, on the server,
        and drawn as disabled on the screen from the same sentence. */
-    const access = qualificationAccess(lead.leadStage);
-    if (!access.writable) return err(access.reason, "rule_violation");
+    /* EXCEPT IN THE ONE REVIEW: there the designated Sales Manager answers the
+       Qualification-only questions as part of verifying the Prospect, and the
+       review has already asked who she is. That is a server-side context, never an
+       argument — see `combined-review-context`. */
+    if (!inCombinedReview(customerId)) {
+      const access = qualificationAccess(lead.leadStage);
+      if (!access.writable) return err(access.reason, "rule_violation");
 
-    /* The Sales Manager the lead is under reviews it; she does not fill it in. */
-    const barred = await qualificationCollectorRefusal(ctx.user, lead);
-    if (barred) return err(barred, "rule_violation");
+      /* The Sales Manager the lead is under reviews it; she does not fill it in. */
+      const barred = await qualificationCollectorRefusal(ctx.user, lead);
+      if (barred) return err(barred, "rule_violation");
+    }
 
     /* The condition ids, and the stored answers the eight questions keep in this
        jsonb. Anything else a stale screen sends is dropped rather than stored. */
@@ -1123,7 +1130,7 @@ export async function saveProspectFields(
        Manager's verification, and nothing changes the number under it. */
     const beforeProspect = !lead.leadStage || ["suspect", "new", "contacted"].includes(lead.leadStage);
     const asked = QUALIFICATION_ONLY_FIELDS.filter((k) => f[k] !== undefined && !(k === "gstin" && beforeProspect));
-    if (asked.length) {
+    if (asked.length && !inCombinedReview(customerId)) {
       const access = qualificationAccess(lead.leadStage);
       if (!access.writable) return err(access.reason, "rule_violation");
       /* The Sales Manager the lead is under reviews it; she does not fill in

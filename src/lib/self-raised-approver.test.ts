@@ -273,11 +273,14 @@ describe("A: the designated person verifies, validates GST and reviews; she coll
     assert.ok((await saveLeadQualification(lead.id, { ...QUALIFICATION_ANSWERS })).ok);
     asPritesh();
     assert.equal((await validateGstin({ customerId: lead.id, valid: true })).ok, true);
-    assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
+    /* A verified review now moves the lead on, so what stays open to change is a review that SENT IT BACK:
+       he marks it incomplete, and her change puts it in front of him again. */
+    assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "incomplete", note: "Confirm the pack size" })).ok, true);
+    assert.equal((await row(lead.id)).leadStage, "qualification", "a note holds the lead at Qualification");
 
     asSeema();
     assert.ok((await saveLeadQualification(lead.id, { trial_pack: "5 L" })).ok);
-    assert.equal((await row(lead.id)).leadQualificationReview, null, "the approval was about different answers");
+    assert.equal((await row(lead.id)).leadQualificationReview, null, "the note was about different answers");
   });
 });
 

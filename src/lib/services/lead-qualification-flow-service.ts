@@ -23,6 +23,7 @@ import {
 } from "./lead-service";
 import { nextWorkingDate } from "./lead-qualification-service";
 import { approverFor } from "./lead-verifier";
+import { inCombinedReview } from "./combined-review-context";
 
 /* ---------------------------------------------------------------------------
  * THE QUALIFICATION WORKFLOW, in one place.
@@ -213,6 +214,10 @@ export async function settleQualificationState(
   opts: { voided?: boolean } = {},
 ): Promise<{ handedTo: "manager" | "owner" | null }> {
   try {
+    /* IN THE ONE REVIEW the person who would be handed the review is the one
+       confirming it, in the same breath: telling her "qualification is ready for
+       your review" in the middle of that is a bell for work she is doing. */
+    if (inCombinedReview(customerId)) return { handedTo: null };
     const lead = await leadRow(customerId);
     if (!lead || lead.leadStage !== "qualification") return { handedTo: null };
     if (!lead.leadSalesType || lead.leadSalesType === "distributor") return { handedTo: null };
@@ -415,6 +420,10 @@ export type OpenQualificationOutcome = {
 export async function openQualificationAfterVerification(
   actor: LeadMoveActor,
   customerId: string,
+  /* `quiet` is for the one-review flow, which carries straight on to Sample /
+     Trial: telling the Telecaller "Qualification is ready for you" in the
+     middle of that would send her to do a step that is already done. */
+  opts: { quiet?: boolean } = {},
 ): Promise<OpenQualificationOutcome> {
   const lead = await leadRow(customerId);
   if (!lead) return { opened: false, reason: "not_found", message: "That lead is not on MahekOne." };
@@ -489,7 +498,7 @@ export async function openQualificationAfterVerification(
 
   const verifier = await nameOf(lead.leadVerifiedById ?? actor.userId);
   const sentence = `Verified by ${verifier} on ${stampDate(lead.leadVerifiedAt)}. Qualification is now ready for you.`;
-  if (telecaller && telecaller !== actor.userId) {
+  if (telecaller && telecaller !== actor.userId && !opts.quiet) {
     await notifyUser({
       userId: telecaller,
       title: `${lead.name}: qualification is ready for you`,
@@ -507,6 +516,86 @@ export async function openQualificationAfterVerification(
         : "Verified. Qualification is open and the lead's owner has been told."
       : "Verified. Qualification is open. Name a Salesman as this lead's owner; he completes it and you review it.",
   };
+}
+
+/* ------------------------------------------- Qualification done, on to Sample */
+
+export type AdvanceOutcome = { moved: boolean; message: string };
+
+/**
+ * THE SALES MANAGER HAS CONFIRMED THE QUALIFICATION — move the lead to Sample / Trial.
+ *
+ * Confirming used to leave the lead at Qualification with "Request the sample"
+ * waiting for somebody to press Move; the Sales Manager's confirmation IS the
+ * decision that Qualification is complete, so the move follows it. It asks the
+ * ORDINARY gate with no override, so every other thing that stands in the way
+ * (a third-party lead with no distributor named, a rejected review) comes back as
+ * words and the lead stays where it is, verified, rather than being pushed.
+ *
+ * It never fails the confirmation: that is already on the record. The next action
+ * goes to the lead's owner as "Request the sample", exactly as the hand-back after
+ * a verdict has always done, and the owner is told.
+ */
+export async function advanceToSampleTrial(
+  actor: LeadMoveActor,
+  customerId: string,
+): Promise<AdvanceOutcome> {
+  const lead = await leadRow(customerId);
+  if (!lead) return { moved: false, message: "That lead is not on MahekOne." };
+  if (lead.leadStage !== "qualification") {
+    return { moved: false, message: "Only a lead at Qualification moves on to Sample / trial." };
+  }
+  if (!ladderFor(lead.leadSalesType as LeadSalesType | null).includes("sample_trial")) {
+    return { moved: false, message: "This lead's ladder has no Sample / trial rung." };
+  }
+  const gate = await leadGateInput(customerId);
+  if (!gate) return { moved: false, message: "That lead is not on MahekOne." };
+
+  const owner = await collectorOf(lead);
+  const next = {
+    action: QUAL_NEXT.sample,
+    date: await nextWorkingDate(),
+    ownerId: owner ?? actor.userId,
+    outcome: "Eligible for Sample / Trial",
+  };
+  const decision = await evaluateLeadStageMove({
+    lead,
+    gate: { ...gate, nextAction: next.action, nextActionDate: next.date, nextActionOwnerId: next.ownerId },
+    to: "sample_trial",
+    override: null,
+    canOverride: false,
+  });
+  if (!decision.ok) {
+    /* Said as the list of what is still to do — "1 thing still to do" tells the
+       Sales Manager nothing she can act on. */
+    const todo = decision.missing.map((c) => c.says);
+    return { moved: false, message: todo.length ? `Still to do: ${todo.join("; ")}.` : decision.message };
+  }
+
+  try {
+    await applyLeadStageMove(actor, lead, "sample_trial", {
+      decision,
+      reasonCode: null,
+      note: null,
+      nextAction: next,
+      day: await today(),
+      expectFrom: "qualification",
+    });
+  } catch (e) {
+    if (e instanceof StageAlreadyMoved) return { moved: false, message: "The lead has already moved on." };
+    throw e;
+  }
+
+  if (owner && owner !== actor.userId) {
+    await notifyUser({
+      userId: owner,
+      title: `${lead.name}: qualification is complete`,
+      body: "Your sales manager has confirmed the qualification and the lead is at Sample / trial. Request the sample.",
+      kind: "info",
+      href: `/crm/leads/${lead.id}`,
+    }).catch(() => {});
+  }
+  return { moved: true, message: "Qualification is complete and the lead is now at Sample / trial." };
 }
 
 /* ------------------------------------------------------ sample eligibility */

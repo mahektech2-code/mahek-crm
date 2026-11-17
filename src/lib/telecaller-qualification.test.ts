@@ -669,15 +669,16 @@ describe("the Sales Manager's review is mandatory", () => {
     assert.ok(told.some((n) => /Confirm the credit days/.test(n.body)));
   });
 
-  test("verified hands the Telecaller the sample request and tells them", async () => {
+  test("verified moves the lead to Sample / trial, hands the Telecaller the sample request and tells them", async () => {
     const lead = await answered();
     setTestUser(mgr);
     assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
     const after = await row(lead.id);
+    assert.equal(after.leadStage, "sample_trial", "confirming is the decision that Qualification is complete");
     assert.equal(after.leadNextAction, QUAL_NEXT.sample);
     assert.equal(after.leadNextActionOwnerId, tele.id);
     const told = await db.select().from(notifications).where(eq(notifications.userId, tele.id));
-    assert.ok(told.some((n) => /qualification verified/.test(n.title)));
+    assert.ok(told.some((n) => /qualification is complete/.test(n.title)));
   });
 
   test("only a manager reviews, and only at Qualification — a Telecaller cannot approve their own", async () => {
@@ -970,7 +971,7 @@ describe("Sample / Trial: only a reviewed Qualification is eligible", () => {
 /* ============================================================ END TO END */
 
 describe("the whole workflow, start to finish", () => {
-  test("Suspect → Calling Desk → Prospect → verified → Qualification → review → edit → review again → Sample/Trial", async () => {
+  test("Suspect → Calling Desk → Prospect → verified → Qualification → review → straight to Sample/Trial", async () => {
     // 1. The Telecaller captures the lead and works the desk.
     setTestUser(tele);
     const made = await captureLead({ ...CAPTURE(), salesType: "direct" });
@@ -1022,22 +1023,21 @@ describe("the whole workflow, start to finish", () => {
     assert.equal((await row(leadId)).leadNextActionOwnerId, mgr.id, "it is now with the manager");
     assert.equal((await ask(leadId)).ok, false, "not yet: nothing has been reviewed");
 
-    // 5. The manager validates the GST number, reviews and verifies.
+    // 5. The manager validates the GST number, reviews and verifies, and the lead moves
+    //    straight to Sample / trial. Confirming is the decision that Qualification is done.
     setTestUser(mgr);
     assert.equal((await validateGstin({ customerId: leadId, valid: true })).ok, true);
     assert.equal((await reviewLeadQualification({ customerId: leadId, verdict: "verified" })).ok, true);
+    assert.equal((await row(leadId)).leadStage, "sample_trial");
     assert.equal((await row(leadId)).leadNextActionOwnerId, tele.id);
 
-    // 6. The Telecaller changes a material field — the approval no longer stands.
+    // 6. Qualification is closed once the lead has moved on: the Telecaller can no longer
+    //    change a Qualification answer, so the approval cannot be undermined afterwards.
     setTestUser(tele);
-    assert.equal((await saveProspectFields(leadId, { creditDaysWanted: 45 })).ok, true);
-    assert.equal((await row(leadId)).leadQualificationReview, null);
-    assert.equal((await ask(leadId)).ok, false, "a voided review blocks the sample again");
-    assert.equal((await row(leadId)).leadNextActionOwnerId, mgr.id, "and it is back with the manager");
+    assert.equal((await saveProspectFields(leadId, { creditDaysWanted: 45 })).ok, false);
+    assert.equal((await row(leadId)).leadQualificationReview, "verified");
 
-    // 7. Reviewed again — now the sample is eligible, requested by the Telecaller, approved by the manager.
-    setTestUser(mgr);
-    assert.equal((await reviewLeadQualification({ customerId: leadId, verdict: "verified" })).ok, true);
+    // 7. The sample is requested by the Telecaller and approved by the manager.
     setTestUser(tele);
     const asked = await ask(leadId);
     assert.equal(asked.ok, true, asked.ok ? "" : asked.error);
@@ -1045,7 +1045,7 @@ describe("the whole workflow, start to finish", () => {
     const sample = (await db.select().from(mbosSamples).where(eq(mbosSamples.customerId, leadId)))[0];
     assert.equal((await decideSample(sample.id, { approve: true })).ok, true);
     assert.equal((await row(leadId)).ownerId, tele.id, "the owner was the Telecaller throughout");
-    assert.equal((await leadRow(leadId))?.leadCreditDaysWanted, 45);
+    assert.equal((await leadRow(leadId))?.leadCreditDaysWanted, 30, "the answer the manager approved is the one on record");
   });
 
   const ask = (leadId: string) =>

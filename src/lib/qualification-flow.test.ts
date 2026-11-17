@@ -323,20 +323,21 @@ describe("B: GST is validated by the Sales Manager, once, against the number it 
     assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
   });
 
-  test("changing the number AFTER approval clears the validation and takes the approval away", async () => {
+  test("after approval the lead is at Sample / trial and the number can no longer be changed under the approval", async () => {
     const lead = await readyForReview();
     asSeema();
     assert.equal((await validateGstin({ customerId: lead.id, valid: true })).ok, true);
     assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
     assert.equal((await row(lead.id)).leadQualificationReview, "verified");
+    assert.equal((await row(lead.id)).leadStage, "sample_trial", "approving moves the lead on");
 
     asSalesman();
     const changed = await saveProspectFields(lead.id, { gstin: "29AAAAA0000A1Z5" } as never);
-    assert.ok(changed.ok, changed.ok ? "" : changed.error);
+    assert.equal(changed.ok, false, "Qualification is closed, so the number cannot be swapped after it was approved");
     const after = await row(lead.id);
-    assert.equal(after.leadQualificationReview, null, "the approval no longer stands");
-    assert.notEqual(after.gstVerified, true, "and neither does the validation");
-    assert.ok((await missingForSample(lead.id)).includes("gst_verified"));
+    assert.equal(after.leadQualificationReview, "verified", "the approval stands");
+    assert.equal(after.gstVerified, true, "and so does the validation");
+    assert.equal(after.gstin, "27ABCDE1234F1Z5");
   });
 
   test("nobody but the responsible Sales Manager validates it", async () => {

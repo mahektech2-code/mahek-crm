@@ -9,8 +9,10 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { confirmProspectReview, resubmitProspectForReview, returnProspectForCorrection } from "@/lib/actions/prospect-review";
+import { saveQualificationReviewEdits } from "@/lib/actions/lead-qualification-review-edit";
 import { loadQualificationReview } from "@/lib/services/lead-qualification-review-service";
 import { PROSPECT_REVIEW_AUDIT, PROSPECT_REVIEW_NEXT } from "@/lib/prospect-review";
+import { QUALIFICATION_ANSWERS } from "@/lib/qualification-fixtures";
 import { testPhone } from "@/lib/test-phone";
 
 /* ---------------------------------------------------------------------------
@@ -110,13 +112,25 @@ after(async () => {
   await db.$client.end();
 });
 
-describe("the review shows Suspect and Prospect answers only", () => {
-  test("no Qualification-only question is shown or counted as missing", async () => {
+describe("the review before Qualification opens", () => {
+  test("a direct or third-party Prospect gets the ONE review: every question once, Qualification's included", async () => {
     const lead = await prospect();
     const model = await loadQualificationReview(lead.id, mgr);
     assert.ok(model);
     assert.equal(model.kind, "prospect");
+    assert.equal(model.combined, true);
     assert.equal(model.viewer.canDecide, true);
+    assert.equal(model.rows.length, 20);
+    assert.equal(model.rows.filter((r) => r.section === "qualification").length, 6);
+    assert.equal(model.tally.total, model.rows.length);
+  });
+
+  test("a distributor keeps the Suspect and Prospect answers only — no Qualification question is shown or missing", async () => {
+    const lead = await prospect({ leadSalesType: "distributor" });
+    const model = await loadQualificationReview(lead.id, mgr);
+    assert.ok(model);
+    assert.equal(model.kind, "prospect");
+    assert.equal(model.combined, false);
     assert.ok(model.rows.length > 0);
     assert.ok(model.rows.every((r) => r.section !== "qualification"), "a Qualification row leaked in");
     assert.equal(model.tally.total, model.rows.length);
@@ -124,12 +138,12 @@ describe("the review shows Suspect and Prospect answers only", () => {
 });
 
 describe("Confirm", () => {
-  test("verifies a complete Prospect and opens Qualification, with no call", async () => {
-    const lead = await prospect();
-    const r = await confirmProspectReview({ customerId: lead.id });
+  test("verifies a complete Prospect, completes Qualification and moves it to Sample / trial, with no call", async () => {
+    const lead = await prospect({ leadQualification: { ...QUALIFICATION_ANSWERS } });
+    const r = await confirmProspectReview({ customerId: lead.id, gstChecked: true });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     const after = await row(lead.id);
-    assert.equal(after.leadStage, "qualification");
+    assert.equal(after.leadStage, "sample_trial");
     assert.equal(after.leadVerifiedById, mgr.id);
     assert.ok(after.leadVerifiedAt);
     assert.equal(
@@ -205,9 +219,10 @@ describe("Return and Resubmit", () => {
     assert.equal(await auditCount(lead.id, PROSPECT_REVIEW_AUDIT.resubmit), 1);
 
     setTestUser(mgr);
-    const done = await confirmProspectReview({ customerId: lead.id });
+    await saveQualificationReviewEdits({ customerId: lead.id, edits: { answers: { ...QUALIFICATION_ANSWERS } } });
+    const done = await confirmProspectReview({ customerId: lead.id, gstChecked: true });
     assert.equal(done.ok, true, done.ok ? "" : done.error);
-    assert.equal((await row(lead.id)).leadStage, "qualification");
+    assert.equal((await row(lead.id)).leadStage, "sample_trial");
   });
 
   test("an unauthorised person cannot return it", async () => {
@@ -220,11 +235,13 @@ describe("Return and Resubmit", () => {
 });
 
 describe("Qualification onward is untouched", () => {
-  test("confirming does not answer the Qualification questions or review them", async () => {
+  test("confirming never invents a Qualification answer: with none in, it is refused and nothing is written", async () => {
     const lead = await prospect();
-    await confirmProspectReview({ customerId: lead.id });
+    const r = await confirmProspectReview({ customerId: lead.id, gstChecked: true });
+    assert.equal(r.ok, false);
     const after = await row(lead.id);
-    assert.equal(after.leadStage, "qualification");
+    assert.equal(after.leadStage, "prospect");
+    assert.deepEqual(after.leadQualification, {});
     assert.equal(after.leadQualificationReview, null);
   });
 });
