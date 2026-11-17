@@ -238,6 +238,12 @@ export type WaitingBill = {
   transporter: string | null;
   lines: number;
   litres: number;
+  /** Description of goods: each product with its cans, "Engine Oil 5L × 20, Gear Oil 1L × 120". */
+  goods: string;
+  /** Cans ordered on these lines. */
+  qty: number;
+  /** Boxes they left as — the dispatch desk's count (`fillPackages`): a boxed SKU's cans to whole boxes, anything else one package a can. */
+  boxes: number;
   /**
    * The order lines this sales bill stands for. Entering a bill from a row
    * ticks these and nothing else on the vehicle: the bill is split over the
@@ -257,6 +263,9 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
   const rows = (await db.execute(sql`
     with l as (
       select upper(regexp_replace(t.vehicle_no, '\s', '', 'g')) as vkey, t.vehicle_no, d.dispatch_date, t.id as tid, o.id as oid,
+             coalesce(p.name, 'Unknown product') as product, o.qty_cans as cans,
+             case when coalesce(pk.box_type, '') like 'Empty Box%' and coalesce(p.cans_per_box, 0) > 1
+                  then ceil(o.qty_cans::numeric / p.cans_per_box) else o.qty_cans end as boxes,
              nullif(trim(coalesce(t.bill_no, o.tally_bill_no)), '') as bill_no, t.bill_date, c.name as party,
              coalesce(t.transporter, o.transporter) as transporter,
              (o.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000) as litres
@@ -266,6 +275,7 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
         join customers c on c.id = o.billing_customer_id
         left join products p on p.id = o.sku_id
         left join finished_goods fg on fg.id = p.finished_good_id
+        left join erp_product_packing pk on pk.product_id = p.id
        where d.dispatch_date >= ${since}::date and coalesce(trim(t.vehicle_no), '') <> '' and o.status <> 'Cancel'
          and lower(regexp_replace(coalesce(t.payment_type, c.freight_term, ''), '[\s-]+', '_', 'g')) = 'paid'
          and not exists (select 1 from erp_freight_bill_lines bl where bl.order_id = o.id and bl.live)
@@ -273,7 +283,10 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
     select bill_no as "billNo", max(bill_date)::text as "billDate", mode() within group (order by party) as party,
            min(vehicle_no) as "vehicleNo", dispatch_date::text as "dispatchOn", mode() within group (order by transporter) as transporter,
            count(*)::int as lines, coalesce(sum(litres), 0)::float8 as litres,
-           array_agg(oid::text) as "orderIds"
+           array_agg(oid::text) as "orderIds",
+           (select string_agg(g.product || ' × ' || g.cans, ', ' order by g.product)
+              from (select x.product, sum(x.cans)::int as cans from unnest(array_agg(product), array_agg(cans)) as x(product, cans) group by x.product) g) as goods,
+           coalesce(sum(cans), 0)::int as qty, coalesce(sum(boxes), 0)::int as boxes
       from l group by coalesce(bill_no, tid), bill_no, vkey, dispatch_date
      order by max(bill_date) desc nulls last, dispatch_date desc, bill_no desc
   `)) as unknown as Row[];
@@ -286,6 +299,9 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
     transporter: s(r.transporter),
     lines: Number(r.lines),
     litres: Math.round(Number(r.litres) * 1000) / 1000,
+    goods: String(r.goods ?? ""),
+    qty: Number(r.qty),
+    boxes: Number(r.boxes),
     orderIds: pgTextArray(r.orderIds),
   }));
 }
