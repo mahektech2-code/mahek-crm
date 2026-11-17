@@ -4,7 +4,7 @@ import { planPrint, planView } from "@/lib/erp/production-plan";
 import { PLAN_CATEGORIES, printMarks } from "@/lib/erp/engines/production-plan";
 import { erpPlanHref } from "@/lib/erp/trace-links";
 import { fdLong, nf } from "@/lib/erp/ui";
-import { clock, stamp, stampDate } from "@/lib/format";
+import { clock, stampDate } from "@/lib/format";
 import { calendarDate } from "@/lib/business-date";
 import { Td, Th } from "@/components/ui/primitives";
 import { linkClass } from "../../../_ui/look";
@@ -44,11 +44,8 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
   const weekday = WEEKDAYS[new Date(`${plan.planDate}T00:00:00Z`).getUTCDay()] ?? "";
   const factsLine = `PLAN-${plan.planNo} · ${plan.godown ?? "All godowns"} · ${rows.length} ${rows.length === 1 ? "line" : "lines"} · Print ${print.current.printNo}`;
   const printedLine = `Created by ${plan.createdBy ?? "—"} · Printed ${stampDate(print.current.printedAt)}, ${clock(new Date(print.current.printedAt))}`;
-  const changeLine = !print.previous
-    ? "First print of the day"
-    : marked
-      ? `★ underlined = new or changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)})`
-      : `Nothing changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)}) — the same work as that sheet.`;
+  /* Said only when there is something to explain: a star on a reprint. A first print, or a reprint with nothing changed, says nothing. */
+  const changeLine = print.previous && marked ? `★ underlined = changed since Print ${print.previous.printNo}` : null;
   const runningHead = `PLAN-${plan.planNo} · ${fdLong(plan.planDate)} · Print ${print.current.printNo}`;
 
   return (
@@ -143,7 +140,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
           </div>
         ) : null}
 
-        <footer className="pp-ft">{changeLine}</footer>
+        {changeLine ? <footer className="pp-ft">{changeLine}</footer> : <div className="pp-ft" />}
         {/* On paper this line and the page number sit in the page's own bottom margin, on every page. */}
         <div className="pp-ft2 print:hidden">
           <div>{factsLine}</div>
