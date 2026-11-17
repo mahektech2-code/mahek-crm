@@ -49,7 +49,7 @@ export function SettingsScreen({
   collections: Record<string, Collection>;
 }) {
   return (
-    <div className="flex w-full max-w-[1240px] flex-col gap-[18px] px-7 pt-6 pb-10 text-sm leading-[1.5]">
+    <div className="flex w-full min-w-0 flex-col gap-4 px-6 pt-6 pb-10 text-sm leading-[1.5]">
       <SettingsEditor
         key={`${active}/${activeTab}`}
         owner={owner}

@@ -1,5 +1,6 @@
 import type { AdminTab } from "@/lib/admin-routes";
 import type { Metric } from "@/components/console/parts";
+import { PageHeader } from "@/components/ui/primitives";
 import { Figures, Tabs, type Figure } from "./kit";
 
 /* ---------------------------------------------------------------------------
@@ -11,6 +12,11 @@ import { Figures, Tabs, type Figure } from "./kit";
  * explaining a screen to the person who opened it on purpose was read once.
  * `subtitle` is still accepted, for the ⓘ on the title, so no page had to
  * change to stop drawing it.
+ *
+ * THE TITLE IS THE SUITE'S `PageHeader`, and the column is the ERP's — full
+ * width, 24px in (2026-11-17). The console had its own heading and a 1240px
+ * column, so moving from the ERP or HRMS into it the title jumped, the page
+ * narrowed and sat off-centre on a wide screen: a different product.
  * ------------------------------------------------------------------------- */
 
 export function AdminPage({
@@ -41,17 +47,13 @@ export function AdminPage({
       tone: m.tone === "success" ? "ok" : m.tone,
     }));
   return (
-    <div className="flex w-full max-w-[1240px] flex-col gap-[18px] px-7 pt-6 pb-10 text-[13px] leading-[1.45]">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <h1 className="m-0 text-[22px] leading-7 font-bold tracking-[-0.02em] text-ink" title={typeof subtitle === "string" ? subtitle : undefined}>
-          {title}
-        </h1>
-        <span className="flex-1" />
-        {actions ? <div className="flex flex-wrap items-center gap-2.5 print:hidden">{actions}</div> : null}
+    <div className="flex w-full min-w-0 flex-col gap-4 px-6 pt-6 pb-10 text-[13px] leading-[1.45]">
+      <div className="-mb-4">
+        <PageHeader title={title} subtitle={typeof subtitle === "string" ? subtitle : undefined} actions={actions} />
       </div>
       {cards && cards.length ? <Figures items={cards} /> : null}
       {tabs ? <Tabs items={tabs.items.map((t) => ({ ...t, href: tabs.href(t.slug) }))} active={tabs.active} /> : null}
-      <div className="flex min-w-0 flex-col gap-[18px]">{children}</div>
+      <div className="flex min-w-0 flex-col gap-4">{children}</div>
     </div>
   );
 }

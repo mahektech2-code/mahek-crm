@@ -56,7 +56,8 @@ export type Figure = {
   dot?: Tone;
   /** Colours the figure itself — amber or red where it is a count of trouble. */
   tone?: "warn" | "danger" | "ok";
-  /** The one navy card: the number that matters on this screen. */
+  /** Was the one navy card. Every other app draws its figures white, so it is
+      now drawn like the rest — kept so no page had to change. */
   navy?: boolean;
   /** The card is a link. */
   href?: string;
@@ -66,7 +67,8 @@ export type Figure = {
 export function Figures({ items, min = 170 }: { items: Figure[]; min?: number }) {
   return (
     <CardGrid min={min} gap="gap-3">
-      {items.map((f) => {
+      {items.map((raw) => {
+        const f = { ...raw, navy: false };
         const body = (
           <>
             <span className={cx("flex min-w-0 items-center gap-1.5 text-xs font-medium", f.navy ? "text-[#c9d1e3]" : "text-muted")}>
@@ -155,10 +157,10 @@ export function BtnLink({ href, children, kind = "plain", size = "md" }: { href:
 
 export type TabItem = { slug: string; label: string; href: string; count?: number | null; /** A red chip: the count is work owed. */ urgent?: boolean };
 
-/** Tabs that are links: 26px apart, the live one inked with a brand underline, a count chip beside. */
+/** Tabs that are links, drawn as the ERP draws its list tabs: 14px, 20px apart, a brand underline; a count beside, a red chip only where it is work owed. */
 export function Tabs({ items, active }: { items: readonly TabItem[]; active: string }) {
   return (
-    <nav aria-label="Tabs" className="flex flex-wrap gap-x-[26px] border-b border-line">
+    <nav aria-label="Tabs" className="flex flex-wrap items-center gap-x-5 border-b border-line">
       {items.map((t) => {
         const on = t.slug === active;
         return (
@@ -167,13 +169,17 @@ export function Tabs({ items, active }: { items: readonly TabItem[]; active: str
             href={t.href}
             aria-current={on ? "page" : undefined}
             className={cx(
-              "-mb-px flex items-center gap-1.5 border-b-2 py-2.5 text-[13px] font-semibold whitespace-nowrap no-underline hover:no-underline",
-              on ? "border-brand text-ink" : "border-transparent text-muted hover:text-body",
+              "-mb-px flex items-center gap-1.5 border-b-2 py-2 text-sm whitespace-nowrap no-underline hover:no-underline",
+              on ? "border-brand font-semibold text-ink" : "border-transparent font-medium text-muted hover:text-body",
             )}
           >
             {t.label}
             {t.count != null ? (
-              <span className={cx("rounded-full px-[7px] py-px text-[11px] font-semibold", t.urgent && t.count ? "bg-danger text-white" : "bg-[#eef1f6] text-[#4a5670]")}>{t.count}</span>
+              t.urgent && t.count ? (
+                <span className="min-w-4.5 rounded-full bg-danger-soft px-1.5 text-center text-2xs leading-[17px] font-bold text-danger">{t.count}</span>
+              ) : (
+                <span className="text-muted">{t.count}</span>
+              )
             ) : null}
           </Link>
         );
