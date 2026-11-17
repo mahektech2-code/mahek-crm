@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ADMIN } from "@/lib/admin-routes";
+import { calendarDate } from "@/lib/business-date";
 import { DERIVED_FIGURES } from "@/lib/admin-derived";
 import { clock, nowMs, shortDate } from "@/lib/format";
 import { dataHealthChecks } from "@/lib/services/admin-console-service";
@@ -38,11 +39,11 @@ export default async function DataHealthPage() {
   const stale = DERIVED_FIGURES.filter((d) => !rebuilt[d.id] || now - Date.parse(rebuilt[d.id]!) > DAY).length;
   /* Trouble first, the passing checks after — the order the canvas reads in. */
   const ordered = [...checks].sort((a, b) => rank(a) - rank(b));
-  const today = new Date(now).toISOString().slice(0, 10);
+  const today = calendarDate(new Date(now));
   const when = (iso: string | null) => {
     if (!iso) return "Never";
     const d = new Date(iso);
-    return d.toISOString().slice(0, 10) === today ? `${clock(d)} today` : shortDate(d);
+    return calendarDate(d) === today ? `${clock(d)} today` : shortDate(d);
   };
 
   return (

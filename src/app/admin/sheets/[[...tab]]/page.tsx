@@ -3,6 +3,7 @@ import { CardGrid } from "@/components/ui/card-grid";
 import { ADMIN, ADMIN_TABS, tabIndexOf } from "@/lib/admin-routes";
 import { canFor, isPlatformAdmin } from "@/lib/access-control";
 import { nowMs } from "@/lib/format";
+import { calendarDate } from "@/lib/business-date";
 import { openConflicts, sheetSourceCards, type SheetSourceCard } from "@/lib/services/admin-data-view-service";
 import { sheetsConfigured } from "@/lib/sheets";
 import { getConfig } from "@/lib/config/store";
@@ -126,7 +127,7 @@ function SourceCards({
   switches: ReturnType<typeof sheetSwitches>;
   cutover: string;
 }) {
-  const today = new Date(now).toISOString().slice(0, 10);
+  const today = calendarDate(new Date(now));
   return (
     <CardGrid min={260} gap="gap-3">
       {cards.map((c) => {

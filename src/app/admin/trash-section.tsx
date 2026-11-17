@@ -7,7 +7,7 @@ import { ConfirmDialog } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { useToast } from "@/components/ui/toast";
 import { restoreLeads } from "@/lib/actions/lead-trash";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { APP_TIMEZONE, addDays, type BusinessDate } from "@/lib/business-date";
 import { phoneDisplay, shortDate, stamp, stampDate } from "@/lib/format";
 import { Card, Pill, btnClass } from "./_shell/kit";
 import type { TrashRow, TrashSort } from "@/lib/services/lead-trash-service";
@@ -409,9 +409,7 @@ export const BIN_ACTIONS_SLOT = "bin-actions";
 function dayWord(iso: string, today: string): string {
   const day = new Date(iso).toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
   if (day === today) return "Today";
-  const y = new Date(`${today}T00:00:00Z`);
-  y.setUTCDate(y.getUTCDate() - 1);
-  if (day === y.toISOString().slice(0, 10)) return "Yesterday";
+  if (day === addDays(today as BusinessDate, -1)) return "Yesterday";
   return shortDate(iso);
 }
 

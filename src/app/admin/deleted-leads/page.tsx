@@ -1,6 +1,6 @@
 import { ADMIN } from "@/lib/admin-routes";
 import { canFor } from "@/lib/access-control";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { APP_TIMEZONE, addDays, type BusinessDate } from "@/lib/business-date";
 import { nowMs, shortDate, stamp, stampDate } from "@/lib/format";
 import { binAnnouncements, binDocuments, binFiles, sizeLine } from "@/lib/services/admin-console-service";
 import { listTrash } from "@/lib/services/lead-trash-service";
@@ -199,7 +199,5 @@ function BinTable({ heads, rows, empty }: { heads: string[]; rows: Array<{ id: s
 function dayWord(at: string | Date, today: string): string {
   const day = new Date(at).toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
   if (day === today) return "Today";
-  const y = new Date(`${today}T00:00:00Z`);
-  y.setUTCDate(y.getUTCDate() - 1);
-  return day === y.toISOString().slice(0, 10) ? "Yesterday" : shortDate(at);
+  return day === addDays(today as BusinessDate, -1) ? "Yesterday" : shortDate(at);
 }
