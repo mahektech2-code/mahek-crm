@@ -74,6 +74,7 @@ export function SettingsEditor({
     entries: Array<{ key: string; value: unknown }>;
   }>(null);
   const [leaving, setLeaving] = React.useState<string | null>(null);
+  const [changedOnly, setChangedOnly] = React.useState(false);
 
   const dirty = dirtyFields(tab, values, drafts);
   const errors = introducedProblems(tab, values, drafts, config);
@@ -177,7 +178,18 @@ export function SettingsEditor({
         </div>
       ) : null}
 
+      <label className="mt-4 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-body">
+        <input
+          type="checkbox"
+          checked={changedOnly}
+          onChange={(e) => setChangedOnly(e.target.checked)}
+          className="h-4 w-4 accent-brand"
+        />
+        Changed only
+      </label>
+
       <SettingsSection
+        changedOnly={changedOnly}
         tab={tab}
         values={values}
         drafts={drafts}
@@ -188,44 +200,47 @@ export function SettingsEditor({
       />
 
       <div className="sticky bottom-0 mt-5 bg-canvas pt-4">
-        <Card className="flex items-center gap-3 px-5 py-3 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          <span className="text-sm text-body">
-            {readOnly
-              ? "Read-only. Configuration is changed by a manager."
-              : errors.length
-                ? `${errors.length} ${errors.length === 1 ? "relationship" : "relationships"} to fix before saving`
-                : dirty.length
-                  ? `${dirty.length} unsaved ${dirty.length === 1 ? "change" : "changes"} on this tab`
-                  : "No unsaved changes. Values take effect the moment they are saved."}
-          </span>
-          <span className="flex-1" />
-          {!dirty.length && lastSet ? (
-            <Button variant="ghost" onClick={rollback}>
-              Undo the last change set
-            </Button>
-          ) : null}
-          {dirty.length ? (
-            <Button variant="secondary" onClick={() => setDrafts({})}>
-              Discard changes
-            </Button>
-          ) : null}
-          <Button
-            variant="primary"
-            disabled={readOnly || saving || !!errors.length || !dirty.length}
-            title={
-              readOnly
-                ? "You can see these settings but not change them"
-                : errors.length
-                  ? "Fix the relationships above first"
-                  : !dirty.length
-                    ? "Nothing to save"
-                    : undefined
-            }
-            onClick={save}
-          >
-            Save changes
-          </Button>
-        </Card>
+        {dirty.length && !readOnly ? (
+          /* Unsaved work is the one state that must not be missed: the bar
+             turns navy and says what will change. */
+          <div className="flex items-center gap-3 rounded-card bg-ink px-5 py-3 text-white shadow-pop">
+            <b className="flex-none">
+              {errors.length
+                ? `${errors.length} to fix`
+                : `${dirty.length} unsaved`}
+            </b>
+            <span className="min-w-0 flex-1 truncate text-sm text-[#c9d1e3]">
+              {dirty.map((f) => `${f.label}: ${readable(savedValue(values, f))} → ${readable(drafts[f.key])}`).join(" · ")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDrafts({})}
+              className="h-9 flex-none rounded-control border border-[#3a4766] px-3.5 text-sm font-semibold text-white"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              disabled={saving || !!errors.length}
+              onClick={save}
+              className="h-9 flex-none rounded-control bg-brand-lime px-4 text-sm font-semibold text-ink disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <Card className="flex items-center gap-3 px-5 py-3">
+            <span className="text-sm text-muted">
+              {readOnly ? "Read-only. Configuration is changed by a manager." : "Nothing unsaved."}
+            </span>
+            <span className="flex-1" />
+            {lastSet ? (
+              <Button variant="ghost" onClick={rollback}>
+                Undo the last change set
+              </Button>
+            ) : null}
+          </Card>
+        )}
       </div>
 
       <Modal

@@ -4034,6 +4034,16 @@ export const attachments = pgTable(
       .references(() => users.id),
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
     removedAt: timestamp("removed_at", { withTimezone: true }),
+    /**
+     * WHERE A REMOVED FILE WAS, so the Admin Console's recycle bin can put it
+     * back. Removing detaches (parent_* go null, the rule above); these keep
+     * the answer until the hold runs out. Null on every row removed before
+     * the column existed, and on files the sweeps removed rather than a person.
+     */
+    removedParentType: attachmentParentEnum("removed_parent_type"),
+    removedParentId: text("removed_parent_id"),
+    /** When the bytes were deleted from storage. A file with a value here cannot come back. */
+    purgedAt: timestamp("purged_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -15614,6 +15624,13 @@ export const hrmsNotifications = pgTable("hrms_notifications", {
   source: text("source").notNull().default("hrms"),
   /** The bell's title. HRMS titles a bell with the sender; the Sales Dashboard asks for one. */
   title: text("title"),
+  /**
+   * A deleted announcement is kept, so the Admin Console's recycle bin can
+   * bring it back. Its bells are withdrawn at delete exactly as before;
+   * restoring sends it again to the same people.
+   */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedById: text("deleted_by_id"),
   ...hrmsStamps(),
 });
 
@@ -18455,4 +18472,25 @@ export const accountsSlaRemarks = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("accounts_sla_remarks_breach_idx").on(t.breachId, t.createdAt)],
+);
+
+/* ------------------------------------------------------- integration usage */
+
+/**
+ * Requests MahekOne made to each outside service, a row per service per day
+ * (Asia/Kolkata). Counted from Node's own network diagnostics channel in
+ * `lib/integration-usage.ts`, so every call is counted whichever library
+ * made it. A count of requests, never a rupee figure: no provider's price
+ * is known here, and a guessed one would be read as the bill.
+ */
+export const integrationUsage = pgTable(
+  "integration_usage",
+  {
+    provider: text("provider").notNull(),
+    day: date("day").notNull(),
+    calls: integer("calls").notNull().default(0),
+    failures: integer("failures").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.provider, t.day] })],
 );

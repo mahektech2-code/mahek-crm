@@ -52,6 +52,10 @@ export const ADMIN_TABS = {
     { slug: "sync", label: "Sync" },
     { slug: "history", label: "Every sheet's history" },
   ],
+  roles: [
+    { slug: "matrix", label: "By permission" },
+    { slug: "clashes", label: "Clashing hats" },
+  ],
   otp: [
     { slug: "requests", label: "Every request" },
     { slug: "people", label: "By person" },
@@ -63,7 +67,7 @@ export const ADMIN_TABS = {
     { slug: "templates", label: "Job templates" },
   ],
   person: [
-    { slug: "profile", label: "Profile" },
+    { slug: "profile", label: "Overview" },
     { slug: "apps", label: "Apps" },
     { slug: "sessions", label: "Sessions" },
     { slug: "audit", label: "Audit" },
@@ -105,6 +109,18 @@ export const ADMIN = {
   /** Access, narrowed to the holders of one ERP designation. */
   accessForDesignation: (id: string) => `/admin/access?designation=${id}`,
   signIns: (tab?: TabsOf<"signIns">) => withTab("/admin/sign-ins", tab),
+  /** The sign-in policy: lockouts, the console re-check, codes. */
+  security: "/admin/security",
+  /** The permission matrix, read-only, and who holds each power. */
+  roles: (tab?: TabsOf<"roles">) => withTab("/admin/roles", tab),
+  /** Every configuration change, old value beside new. */
+  changes: "/admin/changes",
+  /** Checks over the book, and the rebuild button for each derived figure. */
+  health: "/admin/health",
+  /** Which build every handset runs. */
+  releases: "/admin/releases",
+  /** Files: space by kind, and how long each kind is kept. */
+  storage: "/admin/storage",
   /** Every one-time code sent through MiniMoth or Wati, and every request refused. */
   otp: (tab?: TabsOf<"otp">) => withTab("/admin/otp", tab),
   settings: "/admin/settings",
@@ -141,6 +157,8 @@ export type AdminNavItem = {
   platform?: boolean;
   /** Which count to draw beside it. */
   badge?: "attention" | "feedback" | "catalogue" | "sheets";
+  /** Other path prefixes this row is lit on. */
+  match?: readonly string[];
 };
 
 export type AdminNavGroup = { label: string; icon: string; items: AdminNavItem[] };
@@ -148,23 +166,30 @@ export type AdminNavGroup = { label: string; icon: string; items: AdminNavItem[]
 /** Above the groups: where you start, and the one inbox. */
 export const ADMIN_PINNED: AdminNavItem[] = [
   { href: ADMIN.home, label: "Home", icon: "dashboard", exact: true, platform: true, badge: "attention" },
-  { href: ADMIN.feedback(), label: "Feedback", icon: "mail", badge: "feedback" },
+  { href: ADMIN.feedback(), label: "Inbox", icon: "mail", badge: "feedback" },
 ];
 
 /**
- * The groups. The settings group is filled in by the layout from
- * `SETTINGS_PAGES`, because which apps somebody may configure is theirs.
+ * The groups, by the job somebody came here to do. The settings group is
+ * filled in by the layout from `SETTINGS_PAGES`, because which apps somebody
+ * may configure is theirs.
  */
 export const ADMIN_GROUPS: AdminNavGroup[] = [
   {
-    label: "People",
+    label: "People & access",
     icon: "people",
     items: [
-      { href: ADMIN.access, label: "Access", icon: "people", platform: true },
+      { href: ADMIN.access, label: "People & access", icon: "people", platform: true },
+      { href: ADMIN.roles(), label: "Roles & permissions", icon: "grid", platform: true },
       { href: ADMIN.powers(), label: "Powers & screens", icon: "lock", platform: true },
       { href: ADMIN.designations, label: "ERP designations", icon: "book", platform: true },
-      { href: ADMIN.signIns(), label: "Sign-ins", icon: "lock", platform: true },
-      { href: ADMIN.otp(), label: "OTP history", icon: "phone", platform: true },
+      {
+        href: ADMIN.signIns(),
+        label: "Security & sign-ins",
+        icon: "lock",
+        platform: true,
+        match: ["/admin/otp", "/admin/security"],
+      },
     ],
   },
   { label: "Settings", icon: "settings", items: [] },
@@ -174,21 +199,49 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     items: [
       { href: ADMIN.catalogue(), label: "Catalogue", icon: "book", badge: "catalogue" },
       { href: ADMIN.expensePolicy(), label: "Expense policy", icon: "wallet" },
-      { href: ADMIN.sheets(), label: "Sheets", icon: "doc", badge: "sheets" },
-      { href: ADMIN.deletedLeads, label: "Deleted leads", icon: "history", platform: true },
+      { href: ADMIN.sheets(), label: "Sheets & imports", icon: "doc", badge: "sheets" },
+      { href: ADMIN.health, label: "Data health", icon: "checkCircle", platform: true },
+      { href: ADMIN.deletedLeads, label: "Recycle bin", icon: "history", platform: true },
+    ],
+  },
+  {
+    label: "Devices",
+    icon: "phone",
+    items: [
+      { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true, match: ["/admin/factory-handsets"] },
+      { href: ADMIN.mbosControl, label: "MBOS control", icon: "settings", platform: true },
+      { href: ADMIN.releases, label: "App releases", icon: "repeat", platform: true },
     ],
   },
   {
     label: "System",
     icon: "grid",
     items: [
-      { href: ADMIN.integrations, label: "Integrations", icon: "grid", platform: true },
-      { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true },
-      { href: ADMIN.mbosControl, label: "MBOS control", icon: "settings", platform: true },
-      { href: ADMIN.factoryHandsets, label: "Factory handsets", icon: "phone", platform: true },
-      { href: ADMIN.jobs, label: "Jobs", icon: "clock", platform: true },
+      { href: ADMIN.integrations, label: "Integrations & keys", icon: "bolt", platform: true },
+      { href: ADMIN.jobs, label: "Jobs & schedules", icon: "clock", platform: true },
       { href: ADMIN.notifications, label: "Notifications", icon: "bell", platform: true },
+      { href: ADMIN.storage, label: "Storage & files", icon: "image", platform: true },
+      { href: ADMIN.changes, label: "Change history", icon: "history", platform: true },
       { href: ADMIN.audit(), label: "Audit log", icon: "eye", platform: true },
     ],
   },
 ];
+
+/**
+ * Security & sign-ins is one screen to read and three routes underneath: the
+ * sessions, the code history and the policy each keep the address they had,
+ * and share this one tab strip so the screen reads as one.
+ */
+export const SECURITY_TABS = [
+  { slug: "now", label: "Signed in now", href: ADMIN.signIns("now") },
+  { slug: "never", label: "Never signed in", href: ADMIN.signIns("never") },
+  { slug: "codes", label: "Codes", href: ADMIN.otp("requests") },
+  { slug: "codes-people", label: "Codes by person", href: ADMIN.otp("people") },
+  { slug: "policy", label: "Policy", href: ADMIN.security },
+] as const;
+
+/** Handsets likewise: the salesman's phones and the factory's, one fleet. */
+export const HANDSET_TABS = [
+  { slug: "field", label: "Salesman App", href: ADMIN.handsets },
+  { slug: "factory", label: "Factory app", href: ADMIN.factoryHandsets },
+] as const;

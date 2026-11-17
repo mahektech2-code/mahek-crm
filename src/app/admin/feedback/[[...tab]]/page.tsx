@@ -48,7 +48,7 @@ export default async function FeedbackPage({
   if (slug === "overview") {
     const period = one("p") === "90" ? 90 : 30;
     return (
-      <AdminPage title="Feedback" tabs={tabs}>
+      <AdminPage title="Inbox" tabs={tabs}>
         <FeedbackOverviewScreen overview={await feedbackOverview(period)} />
       </AdminPage>
     );
@@ -83,7 +83,7 @@ export default async function FeedbackPage({
   const [fix, connected] = await Promise.all([selected ? getFix(selected.id) : null, githubConnected()]);
 
   return (
-    <AdminPage title="Feedback" tabs={tabs}>
+    <AdminPage title="Inbox" tabs={tabs}>
       <FeedbackSection
         rows={rows}
         selected={selected}

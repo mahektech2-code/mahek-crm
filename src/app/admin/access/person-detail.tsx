@@ -3,7 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, CardHeader, Td, Th, cx } from "@/components/ui/primitives";
+import { HintTip } from "@/components/ui/hint-tip";
+import { mintImpersonationLink } from "@/lib/actions/impersonation";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -11,7 +13,7 @@ import { APPS, webApps } from "@/lib/apps";
 import { LEVEL_LABELS } from "@/lib/hat-labels";
 import type { AppGrant } from "@/lib/services/access-service";
 import { ADMIN, ADMIN_TABS, type TabsOf } from "@/lib/admin-routes";
-import { stamp, stampDate } from "@/lib/format";
+import { initialsOf, stamp, stampDate } from "@/lib/format";
 import { endSessionsFor, sendPasswordResetFor, setUserActive } from "@/lib/actions/people";
 import type { Person } from "@/lib/services/admin-people-service";
 import type { SessionRow } from "@/lib/services/admin-platform-service";
@@ -113,20 +115,35 @@ export function PersonDetail({
     <AdminPage
       title={
         <span className="flex items-center gap-3">
+          <span className="flex h-12 w-12 flex-none items-center justify-center rounded-full bg-brand-softer text-lg font-bold text-brand-deep">
+            {initialsOf(person.name)}
+          </span>
           {person.name}
-          <Badge tone={person.active ? "success" : "neutral"}>{person.active ? "Active" : "Deactivated"}</Badge>
+          <Badge tone={person.active ? "success" : "neutral"}>{person.active ? "Enabled" : "Disabled"}</Badge>
         </span>
-      }
-      subtitle={
-        <>
-          <Link href={ADMIN.access}>Access</Link>
-          <span title={ACCOUNT_LEVEL_HINT}> · {LEVEL_LABELS[person.role] ?? person.role}</span>
-          {person.email ? ` · ${person.email}` : ""}
-          {person.phone ? ` · ${person.phone}` : ""} · joined {joined}
-        </>
       }
       actions={
         <>
+          <Link
+            href={ADMIN.access}
+            className="ui-btn ui-btn-primary inline-flex h-9 items-center rounded-control bg-brand px-4 text-sm font-semibold text-white no-underline hover:bg-brand-hover hover:no-underline"
+          >
+            Manage access
+          </Link>
+          <Button
+            variant="secondary"
+            disabled={busy || !person.active}
+            title={person.active ? "A one-time link that signs in as this person" : "This account cannot sign in"}
+            onClick={async () => {
+              setBusy(true);
+              const r = await mintImpersonationLink(person.id);
+              setBusy(false);
+              if (r.ok) window.location.assign(r.data.url);
+              else notify(r.error);
+            }}
+          >
+            Sign in as
+          </Button>
           {/* A WEB sign-in reset link, mailed to the work email. It used to be
               labelled a "field-app password link", which it never was: it
               opens /login/reset in a browser, and an account with no email has
@@ -143,11 +160,22 @@ export function PersonDetail({
                   : "Mails a single-use link to their work email to choose a new password. It expires in 30 minutes."
             }
             onClick={() => void run(sendPasswordResetFor(person.id))}
+            aria-label="Email a password-reset link"
           >
-            Email a password-reset link
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <path d="M4 6h16v12H4zM4 7l8 6 8-6" />
+            </svg>
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => void run(endSessionsFor(person.id))}>
-            End every session
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void run(endSessionsFor(person.id))}
+            title="End every session"
+            aria-label="End every session"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <path d="M10 4H5v16h5M15 8l4 4-4 4M19 12H9" />
+            </svg>
           </Button>
           {person.active ? (
             <Button
@@ -156,11 +184,11 @@ export function PersonDetail({
               disabled={busy}
               onClick={() => setConfirmingDeactivate(true)}
             >
-              Deactivate
+              Disable
             </Button>
           ) : (
             <Button variant="primary" disabled={busy} onClick={() => void run(setUserActive(person.id, true))}>
-              Reactivate account
+              Enable
             </Button>
           )}
         </>
@@ -187,23 +215,92 @@ export function PersonDetail({
         />
       ) : null}
       {tab === "profile" ? (
-        <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          <CardHeader
-            title="Account"
-            hint="Both the email and the work number are sign-ins: office staff know their email and telecallers know their number."
-          />
-          <Facts
-            rows={[
-              ["Name", person.name],
-              ["Work email", person.email ?? "Not recorded"],
-              ["Work number", person.phone ?? "Not recorded"],
-              ["Account level", LEVEL_LABELS[person.role] ?? person.role],
-              ["Customers in their book", String(person.customerCount || 0)],
-              ["Created", joined],
-              ["Last signed in", lastSeen],
-            ]}
-          />
-        </Card>
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(300px,1fr)]">
+          <div className="flex min-w-0 flex-col gap-5">
+            <Card className="overflow-hidden">
+              <CardHeader title="Apps" action={<Link href={ADMIN.person(person.id, "apps")} className="text-sm font-semibold">All apps</Link>} />
+              {grants.length === 0 ? (
+                <div className="px-5 py-6 text-sm text-muted">No app.</div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <Th>App</Th>
+                      <Th>Level</Th>
+                      <Th>Screens</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {grants.map((g) => (
+                      <tr key={g.app} className="border-b border-divider">
+                        <Td className="font-semibold text-ink">{g.appName}</Td>
+                        <Td>
+                          <Badge tone={g.role === "associate" ? "neutral" : "brand"}>
+                            {g.app === "admin" && g.role === "admin" ? "Platform admin" : LEVEL_LABELS[g.role]}
+                          </Badge>
+                        </Td>
+                        <Td>
+                          <span className="flex items-center gap-2.5">
+                            <span className="tabular-nums">
+                              {g.grantedCount >= g.totalCount ? "All" : `${g.grantedCount} / ${g.totalCount}`}
+                            </span>
+                            <span className="h-1.5 w-24 overflow-hidden rounded-full bg-divider">
+                              <span className="block h-full bg-brand" style={{ width: `${(g.grantedCount / Math.max(1, g.totalCount)) * 100}%` }} />
+                            </span>
+                            {g.newScreens.length ? <Badge tone="warn">{g.newScreens.length} new</Badge> : null}
+                            {g.readOnly.map((label) => (
+                              <Badge key={label} tone="warn">
+                                {label} read
+                              </Badge>
+                            ))}
+                          </span>
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+            <Card className="overflow-hidden">
+              <CardHeader title="Details" action={<HintTip text={ACCOUNT_LEVEL_HINT} />} />
+              <Facts
+                rows={[
+                  ["Work email", person.email ?? "Not recorded"],
+                  ["Work number", person.phone ?? "Not recorded"],
+                  ["Account level", LEVEL_LABELS[person.role] ?? person.role],
+                  ["Reports to", person.reportsToName ?? "Nobody"],
+                  ["Created", joined],
+                ]}
+              />
+            </Card>
+          </div>
+          <div className="flex min-w-0 flex-col gap-5">
+            <Card className="overflow-hidden">
+              <CardHeader title="Sign-in" />
+              <Facts
+                rows={[
+                  ["Last signed in", lastSeen],
+                  ["Open sessions", String(sessions.length)],
+                ]}
+              />
+            </Card>
+            <Card className="overflow-hidden">
+              <CardHeader title="Seats held" action={<HintTip text="Disabling a sign-in does not move these." />} />
+              <div className="flex items-center gap-3 px-5 py-3.5">
+                <span className="flex-1 text-sm text-body">Customers in their book</span>
+                <span className="text-lg font-bold text-ink tabular-nums">{(person.customerCount || 0).toLocaleString("en-IN")}</span>
+              </div>
+            </Card>
+            <Card className="overflow-hidden">
+              <CardHeader title="Recent activity" action={<Link href={ADMIN.person(person.id, "audit")} className="text-sm font-semibold">All</Link>} />
+              {audit.entries.length === 0 ? (
+                <div className="px-5 py-5 text-sm text-muted">Nothing recorded yet.</div>
+              ) : (
+                <AuditEntries entries={audit.entries.slice(0, 4)} today={today} />
+              )}
+            </Card>
+          </div>
+        </div>
       ) : null}
       {tab === "profile" ? (
         /* Keyed on the stored line, so a save remounts it from what was
@@ -328,13 +425,11 @@ function Facts({ rows }: { rows: Array<[string, string]> }) {
     <CardGrid min={240} gap="gap-x-8 gap-y-3" className="px-5 py-4">
       {rows.map(([label, value]) => (
         <div key={label}>
-          <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            {label}
-          </div>
+          <div className="text-xs font-semibold text-muted">{label}</div>
           {/* NOT capitalised. It used to be, so an email read "Priya@mahek.in" —
               a different string from the one they sign in with. The values
               that need a capital already carry one. */}
-          <div className="mt-0.5 text-sm text-ink">{value}</div>
+          <div className="mt-0.5 text-sm font-medium text-ink">{value}</div>
         </div>
       ))}
     </CardGrid>

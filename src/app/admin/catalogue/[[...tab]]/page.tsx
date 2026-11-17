@@ -61,6 +61,13 @@ export default async function CataloguePage({
     <AdminPage
       title="Catalogue"
       subtitle={"Formulation, brand, finished good and SKU. An order line attaches to a SKU and to nothing else."}
+      metrics={[
+        { label: "SKUs", value: String(summary.skus) },
+        { label: "Orderable", value: String(summary.orderable) },
+        { label: "Formulations", value: String(summary.formulations) },
+        { label: "Duplicates", value: String(summary.unresolved), tone: summary.unresolved ? "warn" : undefined },
+        { label: "Held", value: String(summary.held), tone: summary.held ? "warn" : undefined },
+      ]}
       tabs={{
         items: ADMIN_TABS.catalogue,
         active: ADMIN_TABS.catalogue[index].slug,

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { ADMIN, ADMIN_GROUPS, ADMIN_PINNED, ADMIN_TABS } from "./admin-routes";
+import { ADMIN, ADMIN_GROUPS, ADMIN_PINNED, ADMIN_TABS, HANDSET_TABS, SECURITY_TABS } from "./admin-routes";
 import { ADMIN_REDIRECTS } from "./admin-redirects";
 import { SETTINGS_PAGES } from "./config/settings-pages";
 import { schemaForPage } from "./config/settings-schemas";
@@ -58,6 +58,14 @@ test("every address the console builds has a page behind it", () => {
     ADMIN.handsets,
     ADMIN.jobs,
     ADMIN.notifications,
+    ADMIN.security,
+    ADMIN.changes,
+    ADMIN.health,
+    ADMIN.releases,
+    ADMIN.storage,
+    ...ADMIN_TABS.roles.map((t) => ADMIN.roles(t.slug)),
+    ...SECURITY_TABS.map((t) => t.href),
+    ...HANDSET_TABS.map((t) => t.href),
     ...ADMIN_TABS.feedback.map((t) => ADMIN.feedback(t.slug)),
     ...ADMIN_TABS.signIns.map((t) => ADMIN.signIns(t.slug)),
     ...ADMIN_TABS.catalogue.map((t) => ADMIN.catalogue(t.slug)),
