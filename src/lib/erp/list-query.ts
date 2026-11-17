@@ -18,6 +18,27 @@ import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type Selec
 
 export type ListSort = { k: string; d: 1 | -1 };
 
+/*
+ * WHEN A TYPED SEARCH GOES TO THE SERVER.
+ *
+ * Measured on prod (Caddy log, 17 Nov): somebody typing order 1957 into ERP
+ * Orders sent "1", "19" and "1957" as three full server renders inside a
+ * second — keystrokes 350 ms and 630 ms apart, so a 300 ms pause let each one
+ * through. On a one-vCPU box each waited for the one before and the answer
+ * they wanted came back after 5.4 s. "1" was also the dearest of the three: a
+ * single character matches nearly the whole book, and is almost never what
+ * anybody is looking for.
+ */
+
+/** How long typing must pause before the list asks the server. */
+export const SEARCH_PAUSE_MS = 500;
+
+/** Whether this typed text is worth a server search: cleared, or at least two characters. */
+export function searchWorthAsking(typed: string): boolean {
+  const n = typed.trim().length;
+  return n === 0 || n >= 2;
+}
+
 /** Everything the list's toolbar and pager can say, as it travels in the URL. */
 export type ListQuery = {
   q: string;
