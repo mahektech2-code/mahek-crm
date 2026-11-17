@@ -42,6 +42,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
   /* A sheet printed on a later day than the one it plans says so, or it reads as a fresh sheet for that day. */
   const printedLate = calendarDate(new Date(print.current.printedAt)) !== plan.planDate;
   const weekday = WEEKDAYS[new Date(`${plan.planDate}T00:00:00Z`).getUTCDay()] ?? "";
+  const factsLine = `PLAN-${plan.planNo} · ${plan.godown ?? "All godowns"} · ${rows.length} ${rows.length === 1 ? "line" : "lines"} · Print ${print.current.printNo}`;
   const printedLine = `Created by ${plan.createdBy ?? "—"} · Printed ${stampDate(print.current.printedAt)}, ${clock(new Date(print.current.printedAt))}`;
   const changeLine = !print.previous
     ? "First print of the day"
@@ -52,7 +53,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
 
   return (
     <div className="mx-auto grid w-full max-w-[640px] gap-4 p-6">
-      <style>{sheetCss({ runningHead, printedLine })}</style>
+      <style>{sheetCss({ runningHead, footLines: [factsLine, printedLine] })}</style>
       <div className="flex items-center justify-between gap-3 print:hidden">
         <a href={erpPlanHref(id)} className={linkClass("brand", "text-sm")}>
           ← Back to PLAN-{plan.planNo}
@@ -78,24 +79,6 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
           </div>
         </header>
 
-        <div className="pp-facts">
-          <div>
-            <span>Plan</span>
-            <b>PLAN-{plan.planNo}</b>
-          </div>
-          <div>
-            <span>Godown</span>
-            <b>{plan.godown ?? "All"}</b>
-          </div>
-          <div>
-            <span>Lines</span>
-            <b>{rows.length}</b>
-          </div>
-          <div className="pp-print">
-            <span>Print</span>
-            <b>{print.current.printNo}</b>
-          </div>
-        </div>
         {printedLate ? <div className="pp-late">Printed on {stampDate(print.current.printedAt)}, not on the plan&apos;s day</div> : null}
 
         <table className="pp-table">
@@ -162,7 +145,10 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
 
         <footer className="pp-ft">{changeLine}</footer>
         {/* On paper this line and the page number sit in the page's own bottom margin, on every page. */}
-        <div className="pp-ft2 print:hidden">{printedLine}</div>
+        <div className="pp-ft2 print:hidden">
+          <div>{factsLine}</div>
+          <div>{printedLine}</div>
+        </div>
       </article>
     </div>
   );
@@ -195,7 +181,7 @@ function cssText(s: string): string {
  * "Default" margins in the print dialog — "None" overrides all of this. A row
  * never splits across pages, and a section heading never ends a page.
  */
-function sheetCss({ runningHead, printedLine }: { runningHead: string; printedLine: string }): string {
+function sheetCss({ runningHead, footLines }: { runningHead: string; footLines: string[] }): string {
   const ink = "rgb(20 20 20)";
   const soft = "rgb(95 95 95)";
   const faint = "rgb(138 138 138)";
@@ -204,7 +190,7 @@ function sheetCss({ runningHead, printedLine }: { runningHead: string; printedLi
   const blue = "rgb(31 47 179)";
   return `
 @page { size: A5 portrait; margin: 10mm 10mm 12mm;
-  @bottom-left { content: ${cssText(printedLine)}; font: 6.5pt sans-serif; color: ${faint}; }
+  @bottom-left { content: ${footLines.map(cssText).join(' "\\A" ')}; white-space: pre; font: 6.5pt/1.5 sans-serif; color: ${soft}; }
   @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 6.5pt sans-serif; color: ${soft}; }
   @top-left { content: ${cssText(runningHead)}; font: 7pt sans-serif; color: ${soft}; } }
 @page :first { @top-left { content: none; } }
@@ -214,20 +200,14 @@ function sheetCss({ runningHead, printedLine }: { runningHead: string; printedLi
   .pp-paper { position: absolute; inset: 0 auto auto 0; width: 100%; box-shadow: none !important; padding: 0 !important; min-height: 0 !important; }
 }
 .pp-paper { background: white; color: ${ink}; box-shadow: 0 1px 2px rgb(0 0 0 / .2), 0 10px 28px rgb(0 0 0 / .14); padding: 10mm 10mm 9mm; min-height: 210mm; font-size: 8.4pt; line-height: 1.3; display: flex; flex-direction: column; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.pp-hd { display: grid; grid-template-columns: auto 1fr auto; gap: 3mm; align-items: center; }
+.pp-hd { display: grid; grid-template-columns: auto 1fr auto; gap: 3mm; align-items: center; padding-bottom: 2.5mm; margin-bottom: 3mm; border-bottom: 2px solid ${ink}; }
 .pp-logo { width: 15mm; height: 15mm; display: block; }
 .pp-ttl { font-weight: 700; font-size: 14pt; line-height: 1.1; text-transform: uppercase; }
 .pp-co { color: ${soft}; font-size: 8pt; margin-top: 0.6mm; }
 .pp-when { text-align: right; }
 .pp-date { font-weight: 700; font-size: 12.5pt; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pp-day { color: ${soft}; font-size: 7.8pt; }
-.pp-facts { display: grid; grid-template-columns: repeat(4, 1fr); margin: 3mm 0; border-top: 2px solid ${ink}; border-bottom: 1px solid ${ink}; }
-.pp-facts div { padding: 1.4mm 1.5mm; border-left: 1px solid ${hair}; display: grid; }
-.pp-facts div:first-child { border-left: 0; padding-left: 0; }
-.pp-facts span { font-size: 6.3pt; text-transform: uppercase; letter-spacing: .08em; color: ${soft}; font-weight: 600; }
-.pp-facts b { font-size: 9pt; font-weight: 600; overflow-wrap: anywhere; }
-.pp-facts .pp-print b { justify-self: start; border: 1.5px solid ${ink}; padding: 0 1.2mm; }
-.pp-late { font-size: 7pt; font-weight: 700; margin: -1.5mm 0 2mm; }
+.pp-late { font-size: 7pt; font-weight: 700; margin: -1mm 0 2mm; }
 .pp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .pp-table th { position: static; white-space: normal; text-align: left; font-size: 6.3pt; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: ${soft}; padding: 0 1mm 1.2mm; border-bottom: 1px solid ${ink}; background: white; }
 .pp-table td { white-space: normal; padding: 1.6mm 1mm; border-bottom: 1px solid ${hair}; vertical-align: top; overflow-wrap: anywhere; }
