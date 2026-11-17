@@ -651,6 +651,19 @@ export function confirmBlockers(gate: LeadGateInput): string[] {
   return missing.length ? missing.map((c) => c.says) : ["The Qualification is not complete."];
 }
 
+/**
+ * What still stands between the Sales Manager and the ONE Confirm that verifies a
+ * Prospect, completes Qualification and moves the lead to Sample / Trial: the
+ * Qualification gate's own words, less the three things that confirming itself
+ * settles — the manager's review, the next action, and the figures (she has just
+ * read them). Words and ids, so the screen and the refusal say one thing.
+ */
+export function combinedConfirmBlockers(gate: LeadGateInput): { id: string; says: string }[] {
+  return gateTo(gate, "sample_trial").missing.filter(
+    (c) => !c.id.startsWith("manager_review") && c.id !== "next_action" && c.id !== "figures_fresh",
+  );
+}
+
 /** The ids the gate says are unmet at a target rung — what the rows' "answered" is read from. */
 export function unmetAt(gate: LeadGateInput, to: "prospect" | "sample_trial"): Set<string> {
   return new Set(gateTo(gate, to).missing.map((c) => c.id));
