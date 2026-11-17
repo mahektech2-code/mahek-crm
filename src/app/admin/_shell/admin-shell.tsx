@@ -99,6 +99,10 @@ export function AdminShell({
           /* No 1100px floor: a laptop, a zoomed screen and a half-width window
              reflow rather than scroll sideways — the ERP's choice. */
           floor={false}
+          /* And no 1600px ceiling: on a 32-inch monitor the console used the
+             middle of the screen with a band of nothing either side. Pages
+             keep their own 24px margin, so they run edge to edge. */
+          bleed
           sidebarFirst
           header={
             <header data-v4-header className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
