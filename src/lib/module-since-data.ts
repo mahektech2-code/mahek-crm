@@ -30,6 +30,7 @@ export const MODULE_SINCE: Readonly<Record<string, string>> = {
   "crm.reminders": "2026-09-01",
   "crm.history": "2026-09-01",
   "crm.opportunities": "2026-10-07",
+  "crm.my-orders": "2026-11-17",
   "crm.payments": "2026-09-01",
   "crm.whatsapp": "2026-09-01",
   "crm.whatsapp-reply": "2026-10-05",

@@ -2178,6 +2178,25 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE customer_targets ADD COLUMN customerCity TEXT;`,
   ],
 
+  /*
+   * THE ORDER HUB'S WORDS, sent on `myOrders`. An order is a TO number until
+   * the back office and the Production Head have checked it; then it has its
+   * order number, goes to accounts and the Production Head's MRP check, and on
+   * to the lorry. The office works out where it is (`lib/order-journey.ts`)
+   * and the phone draws it: `journeySteps` is that ladder as JSON, and
+   * `journeyEditable` is whether it is still a TO he may change. NULL on every
+   * order the office has not described yet, which the screen reads the old way.
+   */
+  [
+    `ALTER TABLE orders ADD COLUMN toNo INTEGER;`,
+    `ALTER TABLE orders ADD COLUMN erpOrderNo INTEGER;`,
+    `ALTER TABLE orders ADD COLUMN journeyStatus TEXT;`,
+    `ALTER TABLE orders ADD COLUMN journeyTone TEXT;`,
+    `ALTER TABLE orders ADD COLUMN journeyBanner TEXT;`,
+    `ALTER TABLE orders ADD COLUMN journeyEditable INTEGER;`,
+    `ALTER TABLE orders ADD COLUMN journeySteps TEXT;`,
+  ],
+
 ];
 
 /**

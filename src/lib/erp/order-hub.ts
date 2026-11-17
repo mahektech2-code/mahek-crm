@@ -148,7 +148,7 @@ export async function intakeByOriginOrder(orderId: string): Promise<Intake | nul
  * is a different order from the one anybody checked, so both checks are
  * cleared and a TO that was sent back is waiting for its checks again.
  */
-export async function editIntake(userId: string, id: string, header: Partial<Omit<IntakeInput, "lines" | "origin" | "originOrderId" | "takenById">>, lines: IntakeLineInput[] | null): Promise<Result<{ toNo: number }>> {
+export async function editIntake(userId: string, id: string, header: Partial<Omit<IntakeInput, "lines" | "origin" | "originOrderId" | "takenById">>, lines: IntakeLineInput[] | null, opts: { syncOrigin?: boolean } = {}): Promise<Result<{ toNo: number }>> {
   const got = await intakeById(id);
   if (!got) return err("That TO no longer exists.", "not_found");
   const { intake } = got;
@@ -184,6 +184,12 @@ export async function editIntake(userId: string, id: string, header: Partial<Omi
       await writeLines(tx, id, lines);
     }
   });
+  /* A TeleCRM or handset TO: its `orders` row says what the TO now says. The
+     handset's own edit has already rewritten that row in its transaction. */
+  if (intake.originOrderId && opts.syncOrigin !== false) {
+    const { syncOriginOrderFromIntake } = await import("./book");
+    await syncOriginOrderFromIntake(id);
+  }
   if (intake.status === "correction") await tellNewIntake(intake.toNo);
   return ok({ toNo: intake.toNo });
 }

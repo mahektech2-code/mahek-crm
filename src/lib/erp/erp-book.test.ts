@@ -487,3 +487,46 @@ describe("the Order Hub's gates after the order number", () => {
     await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
   });
 });
+
+describe("a TeleCRM TO, from the call to the order number", () => {
+  test("an edit in the Order Hub rewrites the call's order, and the journey reads TO then order number", async () => {
+    const { createIntake, editIntake, checkIntake } = await import("./order-hub");
+    const { customerOrderThreads, ordersTakenBy, journeysForOrders } = await import("@/lib/services/order-journey-service");
+    await live(true);
+    const orderId = id("ord");
+    await db.insert(orders).values({ id: orderId, customerId: "cus_shree", userId: admin.id, source: "crm", status: "pending_approval", orderedAt: new Date("2026-09-10T05:00:00Z"), totalAmount: 0, lineItems: [] });
+    const made = await createIntake(admin.id, {
+      origin: "crm",
+      originOrderId: orderId,
+      orderSource: "TeleCRM",
+      orderDate: "2026-09-10",
+      godownId: "erpg_bhiwandi",
+      billingId: "cus_shree",
+      takenById: admin.id,
+      lines: [{ skuId, qtyCans: 6, ratePaise: 30000, discountBp: null }],
+    });
+
+    let [row] = await customerOrderThreads("cus_shree");
+    assert.equal(row.journey.title, `TO-${made.toNo}`);
+    assert.equal(row.journey.status, "Order check");
+    assert.equal(row.journey.editable, true);
+    assert.ok((await ordersTakenBy(admin.id)).some((r) => r.id === orderId));
+
+    const edited = await editIntake(admin.id, made.id, {}, [{ skuId, qtyCans: 10, ratePaise: 30000, discountBp: null }]);
+    assert.ok(edited.ok);
+    const [o] = await db.select().from(orders).where(eq(orders.id, orderId));
+    assert.equal(o.lineItems?.[0]?.quantity, 10, "the call's order says what the TO now says");
+    assert.ok(Number(o.totalAmount) > 0);
+
+    const who = { userId: admin.id, backOffice: true, production: true, admin: true };
+    assert.ok((await checkIntake(who, made.id, null)).ok);
+    assert.ok((await checkIntake(who, made.id, null)).ok);
+    row = (await journeysForOrders([orderId])).get(orderId)!;
+    assert.match(row.journey.title, /^Order \d+$/);
+    assert.equal(row.journey.toNo, made.toNo);
+    assert.equal(row.journey.editable, false);
+    assert.equal(row.journey.status, "With accounts");
+    assert.ok(!(await editIntake(admin.id, made.id, {}, [{ skuId, qtyCans: 2, ratePaise: 30000, discountBp: null }])).ok, "an order with its order number is not changed");
+    await live(false);
+  });
+});

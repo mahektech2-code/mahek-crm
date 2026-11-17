@@ -72,6 +72,7 @@ import {
   invoiceShareRefusal,
   logisticsOf,
   ORDER_SOURCES,
+  TAKEN_SOURCES,
   orderBillBlockers,
   orderStatusOf,
   productionOf,
@@ -763,6 +764,7 @@ export async function intakeForm(ctx: ErpContext, intake: Intake, lines: IntakeL
   const skuName = new Map([...skus.values()].map((x) => [x.id, x.name]));
   const partyName = new Map(parties.map((p) => [p.id, p.name]));
   const godownName = gds.find((g) => g.id === intake.godownId)?.name ?? "";
+  const taken = !!intake.orderSource && (TAKEN_SOURCES as readonly string[]).includes(intake.orderSource);
   return {
     ...base,
     screen,
@@ -771,10 +773,13 @@ export async function intakeForm(ctx: ErpContext, intake: Intake, lines: IntakeL
     title: `Edit TO-${intake.toNo}`,
     sub: "Saving clears both checks: the back office and the Production Head check it again. Once it has its order number it cannot be changed.",
     submit: "Save TO",
-    header: base.header.filter((f) => f.k !== "dupOk"),
+    /* A TO taken on a call or on the Salesman App keeps where it was taken. */
+    header: base.header
+      .filter((f) => f.k !== "dupOk")
+      .map((f) => (f.k === "source" && taken ? { ...f, opts: [intake.orderSource!], readOnly: true } : f)),
     init: {
       date: intake.orderDate,
-      source: intake.orderSource && (ORDER_SOURCES as readonly string[]).includes(intake.orderSource) ? intake.orderSource : "Other",
+      source: taken ? intake.orderSource! : intake.orderSource && (ORDER_SOURCES as readonly string[]).includes(intake.orderSource) ? intake.orderSource : "Other",
       godown: godownName,
       billing: partyName.get(intake.billingCustomerId) ?? "",
       delivery: intake.deliveryCustomerId && intake.deliveryCustomerId !== intake.billingCustomerId ? (partyName.get(intake.deliveryCustomerId) ?? "") : "",
@@ -2227,7 +2232,8 @@ export async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: 
   if (partyStatus(billing) === "Deactive") return fieldErr("billing", "This party is deactivated");
   /* A draft read off a WhatsApp message came by WhatsApp, whatever the form was sent with. */
   const source = text(h.source) ?? (text(h.inboxId) ? "WhatsApp" : null);
-  if (!source || !(ORDER_SOURCES as readonly string[]).includes(source)) return fieldErr("source", "Say how the order was received");
+  const takenSource = !!editTo && !!source && (TAKEN_SOURCES as readonly string[]).includes(source);
+  if (!source || (!(ORDER_SOURCES as readonly string[]).includes(source) && !takenSource)) return fieldErr("source", "Say how the order was received");
   const named = await deliveryByName(text(h.delivery), billing);
   if (!named.ok) return named;
   const delivery = named.data;

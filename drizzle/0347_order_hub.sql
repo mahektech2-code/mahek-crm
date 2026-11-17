@@ -115,3 +115,10 @@ CREATE INDEX IF NOT EXISTS "erp_orders_intake_idx" ON "erp_orders" ("intake_id")
 ALTER TABLE "erp_order_holds" ADD COLUMN IF NOT EXISTS "department" text DEFAULT 'office' NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "erp_order_holds" ADD CONSTRAINT "erp_order_holds_department_check" CHECK ("department" in ('office','accounts','production'));
+
+--> statement-breakpoint
+-- A TO taken on a TeleCRM call or on the Salesman App carries where it was
+-- taken onto its order lines; the check 0285 wrote knew only the ERP form's four.
+ALTER TABLE "erp_orders" DROP CONSTRAINT IF EXISTS "erp_orders_order_source_check";
+--> statement-breakpoint
+ALTER TABLE "erp_orders" ADD CONSTRAINT "erp_orders_order_source_check" CHECK ("order_source" is null or "order_source" in ('WhatsApp', 'Phone', 'Sales Order', 'Other', 'TeleCRM', 'Salesman App'));

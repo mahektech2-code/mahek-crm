@@ -396,3 +396,69 @@ export async function recomputeErpOrderHolds(): Promise<{ held: number; newlyHel
   const r = rows[0] ?? { held: 0, newlyHeld: 0, released: 0 };
   return { held: Number(r.held), newlyHeld: Number(r.newlyHeld), released: Number(r.released), unmatched: 0 };
 }
+
+/**
+ * A TeleCRM or Salesman App order is its TO until the order number exists, so
+ * an edit made to the TO in the Order Hub is written back onto the `orders`
+ * row the Call Log, the handset and the customer record read — the same
+ * figures `syncOne` will write once the book adopts it. Only while that row is
+ * still the TO's (not yet adopted, not decided).
+ */
+export async function syncOriginOrderFromIntake(intakeId: string): Promise<void> {
+  const rows = (await db.execute(sql`
+    select i.origin_order_id as "orderId", i.billing_customer_id as billing, i.delivery_customer_id as delivery,
+           l.qty_cans as "qtyCans", l.rate_paise as "ratePaise", l.discount_bp as "discountBp",
+           p.id as "productId", p.name as sku,
+           coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as "litresPerCan",
+           pk.box_type as "boxType"
+      from erp_order_intakes i
+      join erp_order_intake_lines l on l.intake_id = i.id
+      join products p on p.id = l.sku_id
+      left join finished_goods fg on fg.id = p.finished_good_id
+      left join erp_product_packing pk on pk.product_id = p.id
+     where i.id = ${intakeId} and i.origin_order_id is not null
+     order by l.position`)) as unknown as {
+    orderId: string;
+    billing: string;
+    delivery: string | null;
+    qtyCans: number;
+    ratePaise: number | null;
+    discountBp: number | null;
+    productId: string;
+    sku: string;
+    litresPerCan: number | null;
+    boxType: string | null;
+  }[];
+  if (!rows.length) return;
+  const items = rows.map((r) => {
+    const f = billFigures({
+      type: orderType(r.boxType),
+      qtyCans: Number(r.qtyCans),
+      litresPerCan: Number(r.litresPerCan ?? 0),
+      ratePaise: r.ratePaise == null ? null : Number(r.ratePaise),
+      discountBp: r.discountBp == null ? null : Number(r.discountBp),
+      transportCostPaise: 0,
+      gstBp: 1800,
+    });
+    return {
+      product: r.sku,
+      productId: r.productId,
+      quantity: Number(r.qtyCans),
+      unitPrice: r.ratePaise == null ? 0 : Number(r.ratePaise),
+      amount: f.finalPaise ?? 0,
+      netAmount: f.amountPaise == null ? 0 : f.amountPaise - (f.discountedPaise ?? 0),
+    };
+  });
+  const head = rows[0];
+  await db
+    .update(orders)
+    .set({
+      customerId: head.billing,
+      deliveryCustomerId: head.delivery && head.delivery !== head.billing ? head.delivery : null,
+      lineItems: items,
+      totalAmount: roundedTotal(items.reduce((n, i) => n + i.amount, 0)),
+      netAmountPaise: items.reduce((n, i) => n + i.netAmount, 0),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(orders.id, head.orderId), isNull(orders.externalRef), inArray(orders.status, ["pending_approval", "captured"])));
+}

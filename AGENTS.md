@@ -9830,11 +9830,28 @@ approval task and the Command Centre all read it — so no TO raises a deadline
 or a task the queue does not show. The hub's sidebar badges and dashboard
 tiles are `orderHubCounts`, each the count its own list draws.
 
-**Not built yet:** the TeleCRM "My orders" view and the order thread on the
-customer record; the Salesman App's TO screens (an APK release — today's build
-shows the TO number as the order's number); and rewriting a TeleCRM or handset
-`orders` row's `line_items` when the hub edits its TO (it is rewritten at the
-order number).
+**ONE READING OF WHERE AN ORDER IS, ON EVERY SCREEN THAT SHOWS ONE.**
+`journeyOf` in `lib/order-journey.ts` (pure) turns the facts — the TO's checks,
+sent-back note, hold and cancellation, the order number, Accounts' and the MRP
+check on the lines, a desk's hold, the tracking milestones — into one status
+word, the events in order, and the handset's ladder; `services/order-journey-service.ts`
+reads them for a page of `orders` rows. TeleCRM's **My orders** (`crm.my-orders`)
+lists the caller's own; the customer record's Orders tab draws the newest as a
+thread (`components/orders/order-journey.tsx`); `myOrders` on the sync carries
+the same words to the Salesman App (`toNo`, `erpOrderNo`, `journey*`), and its
+delta also sends an order whose TO, lines, hold or milestone moved. Change and
+Cancel TO are the TAKER's, only while it is a TO (`actions/my-orders.ts`).
+
+**An edited TO rewrites its call's order.** `editIntake` calls
+`syncOriginOrderFromIntake` (`book.ts`), so the TeleCRM or handset `orders` row
+says what the TO now says; the handset's own edit, which has already rewritten
+that row in its transaction, passes `syncOrigin: false`. And a TO keeps where
+it was TAKEN — "TeleCRM" and "Salesman App" (`TAKEN_SOURCES`) are carried onto
+its order lines, which `0347` widened `erp_orders_order_source_check` to allow;
+before that the second check of every such TO was refused at the insert.
+
+The handset's screens arrive with an APK release; an older build shows the TO
+number as the order's number.
 
 ## Customer order tracking
 

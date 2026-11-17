@@ -9,9 +9,12 @@ import { PillButton } from '../src/components/ui/v3';
 import { SkuChip } from '../src/components/ui/sku';
 import {
   editableStatus,
+  journeyStepsOf,
   latestChangeRequests,
   listOrders,
   orderLines,
+  orderTitle,
+  type JourneyStep,
   type ChangeRequest,
   type PunchedLine,
   type PunchedOrder,
@@ -47,8 +50,22 @@ function notAccepted(o: PunchedOrder): boolean {
   return o.syncState === 'rejected' || o.syncState === 'blocked';
 }
 
+/* The office's tone words onto the phone's badges. */
+const JOURNEY_TONE: Record<string, BadgeTone> = { info: 'info', good: 'success', warn: 'amber', bad: 'danger', muted: 'neutral' };
+
+/**
+ * WHETHER HE MAY STILL CHANGE IT. Where the office has described the order,
+ * its answer wins: only a TO that is open or sent back can be changed, and
+ * one with its order number never can. Older orders are read the old way.
+ */
+function canEdit(o: PunchedOrder): boolean {
+  if (o.journeyEditable != null) return o.journeyEditable === 1;
+  return editableStatus(o.status);
+}
+
 function stateOf(o: PunchedOrder): { label: string; tone: BadgeTone } {
   if (notAccepted(o)) return { label: 'Not accepted', tone: 'danger' };
+  if (o.journeyStatus) return { label: o.journeyStatus, tone: JOURNEY_TONE[o.journeyTone ?? ''] ?? 'neutral' };
   switch (o.status) {
     case 'approved': return { label: 'Approved', tone: 'success' };
     case 'rejected': return { label: 'Not approved', tone: 'danger' };
@@ -202,7 +219,8 @@ export default function OrdersScreen() {
                       <T numberOfLines={1} style={{ flexShrink: 1, fontSize: 12, lineHeight: 16, color: C.muted }}>
                         {[
                           dmy(isoDate(new Date(o.orderedAt))),
-                          o.orderNumber,
+                          orderTitle(o) ?? o.orderNumber,
+                          o.erpOrderNo != null && o.toNo != null ? 'was TO-' + o.toNo : null,
                           o.deliveryDate ? 'for ' + dmy(o.deliveryDate) : null,
                         ]
                           .filter(Boolean)
@@ -239,6 +257,11 @@ export default function OrdersScreen() {
                     </T>
                   ) : null}
 
+                  {/* What the office said about it, where it is held up. */}
+                  {!refused && o.journeyBanner ? (
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginTop: 8 }}>{o.journeyBanner}</T>
+                  ) : null}
+
                   {/* A change he asked for after approval, followed to its
                       answer on the order itself rather than on a screen of its own. */}
                   {changes.get(o.id) ? <ChangeLine c={changes.get(o.id) as ChangeRequest} /> : null}
@@ -246,6 +269,7 @@ export default function OrdersScreen() {
 
                 {on ? (
                   <View style={{ marginHorizontal: 16, marginTop: 12, marginBottom: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.hairline, gap: 8 }}>
+                    {journeyStepsOf(o).length ? <Ladder steps={journeyStepsOf(o)} /> : null}
                     {mine == null ? (
                       <T s="caption">Loading…</T>
                     ) : mine.length === 0 ? (
@@ -278,12 +302,19 @@ export default function OrdersScreen() {
                         danger
                         onPress={() => router.push('/rejections?from=orders')}
                       />
-                    ) : editableStatus(o.status) ? (
+                    ) : canEdit(o) ? (
                       <RowAction
                         label="Edit this order"
                         icon="note"
                         onPress={() => router.push(`/order?edit=${o.id}&from=orders`)}
                       />
+                    ) : o.erpOrderNo != null ? (
+                      /* THE ORDER HUB: once it has its order number it is not
+                         changed and not asked about; the office cancels it and
+                         a new one is taken. */
+                      <T style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
+                        This order has its order number, so it can no longer be changed. To change it, ask the office to cancel it and take a new one.
+                      </T>
                     ) : o.status === 'approved' ? (
                       changes.get(o.id)?.status === 'pending' ? (
                         <T style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
@@ -305,6 +336,31 @@ export default function OrdersScreen() {
         </View>
       )}
     </AppFrame>
+  );
+}
+
+/* Where the order is, rung by rung: the ladder the office worked out. */
+const STEP_DOT: Record<JourneyStep['state'], string> = { done: C.success, current: C.primary, hold: C.danger, todo: C.hairline };
+
+function Ladder({ steps }: { steps: JourneyStep[] }) {
+  return (
+    <View style={{ gap: 2, paddingBottom: 6, marginBottom: 4, borderBottomWidth: 1, borderBottomColor: C.hairline }}>
+      {steps.map((st) => (
+        <View key={st.key} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 4 }}>
+          <View style={{ width: 12, height: 12, borderRadius: 6, marginTop: 3, backgroundColor: STEP_DOT[st.state] }} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={[{ fontSize: 13, lineHeight: 18, color: st.state === 'todo' ? C.faint : C.ink }, weight(st.state === 'current' || st.state === 'hold' ? 700 : 400)]}>
+              {st.label}
+            </T>
+            {st.at || st.note ? (
+              <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
+                {[st.at ? dmy(isoDate(new Date(st.at))) : null, st.note].filter(Boolean).join(' · ')}
+              </T>
+            ) : null}
+          </View>
+        </View>
+      ))}
+    </View>
   );
 }
 

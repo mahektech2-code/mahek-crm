@@ -285,6 +285,15 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "my-orders",
+        title: "My orders",
+        summary: "The orders you took on a call, from the TO number to the shop's door.",
+        group: "Daily calling",
+        modules: ["crm.my-orders"],
+        screen: "/crm/my-orders",
+        written: ALL,
+      },
+      {
         slug: "payments",
         title: "Payment Follow-up",
         summary: "The collections worklist: who owes money, which stage the chase is at, and logging what they said.",

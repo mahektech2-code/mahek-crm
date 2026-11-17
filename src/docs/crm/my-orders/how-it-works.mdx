@@ -1,0 +1,21 @@
+## One reading of where an order is
+
+My orders, the customer record's order thread and the Salesman App all show the same status word and the same steps. Each is worked out from facts already recorded:
+
+- the TO's two checks, its sent-back note, its hold and its cancellation,
+- the order number,
+- Accounts' check and the Production Head's MRP check on the order's lines,
+- a hold on any desk, with its department,
+- the customer-tracking steps: ready, billed, dispatched, delivered.
+
+Nothing is typed into a status. A step with no fact behind it is not done.
+
+## Who may change a TO
+
+Only the person who took it, and only while it is open or sent back. The Order Hub can change it too, from the ERP. Either way both checks start again, and the order on the call is rewritten to match the TO, so the Call Log and the customer record show what was changed.
+
+Once the order number exists, the order is what was checked and what Accounts approve. It is never changed afterwards. Cancel it and take a new one.
+
+## The settings it depends on
+
+The TO exists only while the ERP takes the orders: <Setting k="erp.orders.live" />. With it off, a call's order goes straight to Accounts and My orders shows it with its book status.

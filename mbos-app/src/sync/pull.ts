@@ -1298,6 +1298,8 @@ async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
       id: string; status: string; declineReason?: string | null; orderNo?: string | null;
       totalAmountPaise?: number | null;
       lineItems?: { product: string; productId?: string; quantity: number; unitPrice?: number; amount?: number }[] | null;
+      toNo?: number | null; erpOrderNo?: number | null; journeyStatus?: string | null; journeyTone?: string | null;
+      journeyBanner?: string | null; journeyEditable?: boolean | null; journeySteps?: unknown[] | null;
     };
     const status = ORDER_STATUS[o.status] ?? o.status;
     const local = await one<{ id: string }>('SELECT id FROM orders WHERE id = ?', [o.id]);
@@ -1314,6 +1316,19 @@ async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
         WHERE id = ?`,
       [status, o.declineReason ?? null, o.orderNo ?? null, o.totalAmountPaise ?? null, o.id],
     );
+    /* The Order Hub's reading of where it is, when the office sent one. An
+       older server sends none, and the columns stay as they were. */
+    if (o.journeyStatus) {
+      await run(
+        `UPDATE orders SET toNo = ?, erpOrderNo = ?, journeyStatus = ?, journeyTone = ?, journeyBanner = ?,
+                journeyEditable = ?, journeySteps = ? WHERE id = ?`,
+        [
+          o.toNo ?? null, o.erpOrderNo ?? null, o.journeyStatus, o.journeyTone ?? null, o.journeyBanner ?? null,
+          o.journeyEditable == null ? null : o.journeyEditable ? 1 : 0,
+          Array.isArray(o.journeySteps) ? JSON.stringify(o.journeySteps) : null, o.id,
+        ],
+      );
+    }
     if (Array.isArray(o.lineItems) && o.lineItems.length) {
       await run('DELETE FROM order_lines WHERE orderId = ?', [o.id]);
       for (const [i, l] of o.lineItems.entries()) {

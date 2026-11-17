@@ -248,6 +248,12 @@ export const APP_MODULES: AppModule[] = [
     "Daily calling",
     "What customers' calls turned up that somebody may buy — to be worked, not only read.",
   ),
+  crm(
+    "my-orders",
+    "My orders",
+    "Daily calling",
+    "The orders they took on a call: each one's TO number until the Order Hub checks it, then its order number and where it is.",
+  ),
   crm("payments", "Payment Follow-up", "Collections", "Chasing money owed. A telecaller who only sells does not need it."),
   /*
    * COLLECTIONS, after Payment Follow-up. It sat under Daily calling, on the

@@ -127,6 +127,7 @@ export const NAV: NavGroup[] = [
       },
       { href: at("/history"), label: "Call History", icon: "history" },
       { href: at("/opportunities"), label: "Opportunities", icon: "target" },
+      { href: at("/my-orders"), label: "My orders", icon: "box" },
     ],
   },
   {

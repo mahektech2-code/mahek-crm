@@ -1484,7 +1484,7 @@ async function customersForDevice(ids: string[]) {
  * bootstrap reaches back ninety days, the delta whatever moved since.
  */
 async function myOrderStates(userId: string, sinceIso?: string) {
-  return db.execute<Record<string, unknown>>(sql`
+  const rows = await db.execute<Record<string, unknown>>(sql`
     select o.id, o.status::text as status, o.decline_reason as "declineReason",
            o.order_no as "orderNo", o.total_amount::double precision as "totalAmountPaise",
            o.line_items as "lineItems",
@@ -1493,10 +1493,39 @@ async function myOrderStates(userId: string, sinceIso?: string) {
      where o.user_id = ${userId}
        /* A field order the Order Hub gave its order number is the ERP's row now, and still his. */
        and (o.source = 'mbos' or exists (select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.origin = 'mbos'))
-       and ${sinceIso ? sql`o.updated_at > ${sinceIso}` : sql`o.created_at > now() - interval '90 days'`}
+       and ${
+         sinceIso
+           ? /* Where it IS moves without the row: a check on its TO, Accounts or
+                the MRP check on its lines, a hold, a step of its tracking. */
+             sql`(o.updated_at > ${sinceIso}
+               or exists (select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.updated_at > ${sinceIso})
+               or (o.external_ref like 'ERP-%' and exists (
+                     select 1 from erp_orders e where e.order_no::text = substring(o.external_ref from 5) and e.source = 'erp' and e.updated_at > ${sinceIso}
+                     union all select 1 from erp_order_holds h where h.order_no::text = substring(o.external_ref from 5) and coalesce(h.resolved_at, h.raised_at) > ${sinceIso}
+                     union all select 1 from erp_order_milestones m where m.order_no::text = substring(o.external_ref from 5) and coalesce(m.withdrawn_at, m.created_at) > ${sinceIso})))`
+           : sql`o.created_at > now() - interval '90 days'`
+       }
      order by o.updated_at asc
      limit 500
   `);
+  const list = [...rows] as Record<string, unknown>[];
+  if (!list.length) return list;
+  const { journeysForOrders } = await import("./order-journey-service");
+  const journeys = await journeysForOrders(list.map((r) => String(r.id)));
+  return list.map((r) => {
+    const j = journeys.get(String(r.id))?.journey;
+    if (!j) return r;
+    return {
+      ...r,
+      toNo: j.toNo,
+      erpOrderNo: j.orderNo,
+      journeyStatus: j.status,
+      journeyTone: j.tone,
+      journeyBanner: j.banner,
+      journeyEditable: j.editable,
+      journeySteps: j.steps,
+    };
+  });
 }
 
 /** The changes he asked for on approved orders, and what accounts said. */

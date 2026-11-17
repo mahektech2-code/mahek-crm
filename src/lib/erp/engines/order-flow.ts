@@ -17,6 +17,12 @@
 
 export const ORDER_SOURCES = ["WhatsApp", "Phone", "Sales Order", "Other"] as const;
 export type OrderSource = (typeof ORDER_SOURCES)[number];
+/**
+ * Where a TO was TAKEN when it did not come in on the ERP's own form: a call
+ * on TeleCRM or the Salesman App. Never offered on the New order form; kept as
+ * it is when the hub edits such a TO, and carried onto its order lines.
+ */
+export const TAKEN_SOURCES = ["TeleCRM", "Salesman App"] as const;
 
 /** Pending | Verified | Correction — the back office's check of an entered order. */
 export type OrderCheck = "Pending" | "Verified" | "Correction";

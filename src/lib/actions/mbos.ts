@@ -2096,6 +2096,7 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
         asTo.id,
         {},
         p.lines.map((l) => ({ skuId: l.productId, qtyCans: l.quantityCans, ratePaise: l.ratePaise ?? null, discountBp: null })),
+        { syncOrigin: false },
       );
       if (!edited.ok) {
         decidedMeanwhile = true;
