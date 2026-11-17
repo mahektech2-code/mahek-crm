@@ -7,6 +7,9 @@ import { useRouter } from "next/navigation";
 import { money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { cx, Input, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { Modal } from "@/components/ui/overlays";
+import { decideAfterQualification } from "@/lib/actions/lead-qualification-decision";
+import { NOT_READY_REASONS } from "@/lib/qualification-decision";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { Condition, GateVerdict } from "@/lib/engines/lead-gates";
@@ -481,9 +484,19 @@ export function QualifyScreen({
   }
 
   const dirty = Object.keys(draft).length;
+  const [completing, setCompleting] = React.useState(false);
 
   return (
     <div className="p-6">
+      {completing ? (
+        <CompleteQualificationDialog
+          customerId={customerId}
+          conditions={conditions}
+          stored={stored}
+          requiredProductName={requiredProductName}
+          onClose={() => setCompleting(false)}
+        />
+      ) : null}
       <ScreenHeader
         entity
         title="Qualification"
@@ -496,12 +509,19 @@ export function QualifyScreen({
           </>
         }
         actions={
-          <Link
-            href={leadHref(workspace, `leads/${customerId}`)}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Back to the record
-          </Link>
+          <span className="inline-flex items-center gap-2">
+            {editable && !distributor && stage === "qualification" ? (
+              <Button tone="primary" onClick={() => setCompleting(true)} data-testid="complete-qualification">
+                Complete Qualification
+              </Button>
+            ) : null}
+            <Link
+              href={leadHref(workspace, `leads/${customerId}`)}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← Back to the record
+            </Link>
+          </span>
         }
       />
 
@@ -1391,5 +1411,205 @@ function Resubmit({ customerId }: { customerId: string }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * COMPLETE QUALIFICATION — one centred dialog.
+ *
+ * The seven questions (the same boxes the page draws, from the same field map),
+ * then SAVE, and only then "Ready for Sample / Trial?". Yes asks for the move to
+ * Sample / Trial. No demands a reason; "Skip Sample / Trial — Move directly to
+ * Negotiation" asks for Negotiation. Whether the lead actually moves is the
+ * existing rules' to say (`decideAfterQualification`): the answers and the
+ * decision are always saved and audited, and where a move is not allowed the
+ * dialog says what is still needed instead of moving anything.
+ * ------------------------------------------------------------------------- */
+function CompleteQualificationDialog({
+  customerId,
+  conditions,
+  stored,
+  requiredProductName,
+  onClose,
+}: {
+  customerId: string;
+  conditions: readonly Condition[];
+  stored: QualifyValues;
+  requiredProductName: string | null;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [step, setStep] = React.useState<"answers" | "decide" | "reason" | "done">("answers");
+  const [draft, setDraft] = React.useState<Record<string, string | boolean | null>>({});
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [reasonCode, setReasonCode] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [finished, setFinished] = React.useState<{ message: string; moved: boolean } | null>(null);
+
+  const specs = React.useMemo(() => {
+    const m = new Map<string, FieldSpec>();
+    for (const c of conditions) for (const s of SHOP_FIELDS[c.id] ?? []) m.set(s.key, s);
+    return m;
+  }, [conditions]);
+
+  function valueOf(spec: FieldSpec): string | boolean | null {
+    if (spec.key in draft) return draft[spec.key];
+    const v = stored[spec.key];
+    return v === null || v === undefined ? "" : String(v);
+  }
+
+  async function saveAnswers() {
+    setBusy(true);
+    setError(null);
+    try {
+      const prospect: Record<string, unknown> = {};
+      const answers: Record<string, boolean | string> = {};
+      for (const [key, raw] of Object.entries(draft)) {
+        const spec = specs.get(key);
+        if (!spec) continue;
+        if (spec.target === "prospect") prospect[key] = coerce(spec, raw);
+        else answers[key] = typeof raw === "string" ? raw.trim() : "";
+      }
+      /* SAVED FIRST: nothing about the stage is asked until the answers are stored. */
+      if (Object.keys(prospect).length) {
+        const r = await saveProspectFields(customerId, prospect as Parameters<typeof saveProspectFields>[1]);
+        if (!r.ok) return setError(r.error);
+      }
+      if (Object.keys(answers).length) {
+        const r = await saveLeadQualification(customerId, answers);
+        if (!r.ok) return setError(r.error);
+      }
+      setDraft({});
+      setStep("decide");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decide(ready: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await decideAfterQualification({
+        customerId,
+        ready,
+        reasonCode: ready ? undefined : reasonCode,
+        note: ready ? undefined : note.trim() || undefined,
+      });
+      if (!r.ok) return setError(r.error);
+      setFinished({ message: r.message ?? "Recorded.", moved: r.data.moved });
+      setStep("done");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Complete Qualification" width={760}>
+      {step === "answers" ? (
+        <>
+          <div className="max-h-[58vh] overflow-y-auto pr-1" data-testid="complete-qualification-questions">
+            {conditions.map((c, i) => (
+              <div key={c.id} className="mb-4">
+                <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                  <span className="text-[14px] font-medium text-ink">
+                    {i + 1}. {c.says}
+                  </span>
+                  {c.optional ? <Pill tone="neutral">Optional</Pill> : null}
+                </div>
+                <div className="flex flex-col gap-2">
+                  {(SHOP_FIELDS[c.id] ?? []).map((s) => (
+                    <FieldControl
+                      key={s.key}
+                      spec={s}
+                      value={valueOf(s)}
+                      disabled={busy}
+                      customerId={customerId}
+                      productName={s.kind === "product" ? requiredProductName : null}
+                      onChange={(v) => setDraft((d) => ({ ...d, [s.key]: v }))}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {error ? <p className="mt-2 text-[13px] text-danger" role="alert">{error}</p> : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button tone="quiet" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button tone="primary" onClick={saveAnswers} disabled={busy} data-testid="save-and-continue">
+              {busy ? "Saving…" : "Save answers"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+
+      {step === "decide" ? (
+        <>
+          <p className="mb-1 text-[13px] text-muted">Your answers are saved.</p>
+          <h3 className="mt-0 mb-3 text-[16px] font-semibold text-ink" data-testid="ready-question">
+            Ready for Sample / Trial?
+          </h3>
+          {error ? <p className="mb-2 text-[13px] text-danger" role="alert">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button tone="quiet" onClick={onClose} disabled={busy}>Decide later</Button>
+            <Button onClick={() => { setError(null); setStep("reason"); }} disabled={busy} data-testid="ready-no">No</Button>
+            <Button tone="primary" onClick={() => decide(true)} disabled={busy} data-testid="ready-yes">
+              {busy ? "Saving…" : "Yes"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+
+      {step === "reason" ? (
+        <>
+          <h3 className="mt-0 mb-2 text-[16px] font-semibold text-ink">Why is it not going to a sample?</h3>
+          <label className="block">
+            <span className="mb-1 block text-[13px] text-muted">Reason (required)</span>
+            <select
+              data-testid="no-reason"
+              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-ink"
+              value={reasonCode}
+              onChange={(e) => setReasonCode(e.target.value)}
+            >
+              <option value="">Pick a reason…</option>
+              {NOT_READY_REASONS.map((r) => (
+                <option key={r.code} value={r.code}>{r.label}</option>
+              ))}
+            </select>
+          </label>
+          {reasonCode ? (
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] text-muted">
+                {reasonCode === "other" ? "Say what it is (required)" : "Anything to add (optional)"}
+              </span>
+              <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+            </label>
+          ) : null}
+          {error ? <p className="mt-2 text-[13px] text-danger" role="alert">{error}</p> : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button tone="quiet" onClick={() => { setError(null); setStep("decide"); }} disabled={busy}>Back</Button>
+            <Button
+              tone="primary"
+              onClick={() => decide(false)}
+              disabled={busy || !reasonCode || (reasonCode === "other" && !note.trim())}
+              data-testid="confirm-no"
+            >
+              {busy ? "Saving…" : "Confirm"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+
+      {step === "done" && finished ? (
+        <>
+          <p className="mb-3 text-[14px] text-ink" data-testid="decision-result">{finished.message}</p>
+          <div className="flex justify-end">
+            <Button tone="primary" onClick={onClose}>Close</Button>
+          </div>
+        </>
+      ) : null}
+    </Modal>
   );
 }

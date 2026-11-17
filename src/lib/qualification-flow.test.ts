@@ -25,9 +25,11 @@ import { db } from "@/db";
 import {
   appAccess,
   appModuleAccess,
+  auditLog,
   customers,
   employeeReporting,
   employees,
+  leadStageTransitions,
   mbosUserTerritories,
   notifications,
   products,
@@ -39,6 +41,7 @@ import { captureLead } from "@/lib/actions/lead-intake";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { reassignLead } from "@/lib/actions/sales";
 import { saveLeadQualification, saveProspectFields } from "@/lib/actions/leads";
+import { decideAfterQualification } from "@/lib/actions/lead-qualification-decision";
 import { validateGstin } from "@/lib/actions/lead-gst";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
@@ -609,5 +612,120 @@ describe("G: the handset sends the same answers through the sync handler", () =>
     assert.equal(result.status, "rejected", JSON.stringify(result));
     const q = ((await row(lead.id)).leadQualification ?? {}) as Record<string, unknown>;
     assert.equal(q.trial_product, undefined);
+  });
+});
+
+/* ═══════════════════════════════ H — "Ready for Sample / Trial?" after Qualification */
+
+describe("H: Ready for Sample / Trial? is asked after the answers are saved", () => {
+  const decisions = (leadId: string) =>
+    db.select().from(auditLog).where(sql`${auditLog.entityId} = ${leadId} and ${auditLog.action} = 'lead.qualification_decision'`);
+
+  async function qualified(ownerId: string | null) {
+    const lead = await makeProspect(ownerId);
+    asSeema();
+    assert.equal((await verify(lead.id)).ok, true);
+    return lead;
+  }
+
+  test("Yes before the Sales Manager has reviewed: the decision is recorded, nothing moves, and it says why", async () => {
+    const lead = await qualified(salesman.id);
+    await salesmanAnswersAll(lead.id);
+    asSalesman();
+    const r = await decideAfterQualification({ customerId: lead.id, ready: true });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    if (r.ok) {
+      assert.equal(r.data.moved, false);
+      assert.match(r.data.held ?? "", /not open yet/i);
+      assert.ok(r.data.missing.some((m) => /review/i.test(m)), r.data.missing.join(" | "));
+    }
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    const [a] = await decisions(lead.id);
+    assert.equal((a.afterState as Record<string, unknown>).ready, true);
+    assert.equal((a.afterState as Record<string, unknown>).moved, false);
+  });
+
+  test("Yes once the review is approved: the lead moves to Sample / Trial, with a transition and an audit row", async () => {
+    const lead = await qualified(salesman.id);
+    await salesmanAnswersAll(lead.id);
+    asSeema();
+    assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
+    asSalesman();
+    const r = await decideAfterQualification({ customerId: lead.id, ready: true });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    if (r.ok) assert.equal(r.data.moved, true);
+    assert.equal((await row(lead.id)).leadStage, "sample_trial");
+    const moves = await db.select().from(leadStageTransitions).where(eq(leadStageTransitions.customerId, lead.id));
+    assert.ok(moves.some((t) => t.toStage === "sample_trial" && t.fromStage === "qualification"));
+    assert.equal((await decisions(lead.id)).length, 1);
+  });
+
+  test("No demands a reason from the list, and Other demands the sentence", async () => {
+    const lead = await qualified(salesman.id);
+    await salesmanAnswersAll(lead.id);
+    asSalesman();
+    const none = await decideAfterQualification({ customerId: lead.id, ready: false });
+    assert.equal(none.ok, false);
+    const bogus = await decideAfterQualification({ customerId: lead.id, ready: false, reasonCode: "because" });
+    assert.equal(bogus.ok, false);
+    const other = await decideAfterQualification({ customerId: lead.id, ready: false, reasonCode: "other" });
+    assert.equal(other.ok, false);
+    assert.equal((await decisions(lead.id)).length, 0, "a refused decision writes nothing");
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+  });
+
+  test("No with an ordinary reason: the lead stays at Qualification and the reason is audited in words", async () => {
+    const lead = await qualified(salesman.id);
+    await salesmanAnswersAll(lead.id);
+    asSalesman();
+    const r = await decideAfterQualification({ customerId: lead.id, ready: false, reasonCode: "customer_declined_sample" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    const [a] = await decisions(lead.id);
+    const after = a.afterState as Record<string, unknown>;
+    assert.equal(after.ready, false);
+    assert.equal(after.reasonCode, "customer_declined_sample");
+    assert.match(String(after.reason), /does not want a sample/);
+  });
+
+  test("Skip Sample / Trial by the Salesman: recorded, NOT moved — skipping is the designated Sales Manager's, as before", async () => {
+    const lead = await qualified(salesman.id);
+    await salesmanAnswersAll(lead.id);
+    asSeema();
+    assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
+    asSalesman();
+    const r = await decideAfterQualification({ customerId: lead.id, ready: false, reasonCode: "skip_to_negotiation" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    if (r.ok) {
+      assert.equal(r.data.moved, false);
+      assert.match(r.data.held ?? "", /designated Sales Manager/);
+    }
+    assert.equal((await row(lead.id)).leadStage, "qualification");
+    const [a] = await decisions(lead.id);
+    assert.equal((a.afterState as Record<string, unknown>).reasonCode, "skip_to_negotiation");
+  });
+
+  test("Skip Sample / Trial by the lead's designated Sales Manager: moves straight to Negotiation, with a skipped transition and the reason", async () => {
+    const lead = await qualified(salesman.id);
+    await salesmanAnswersAll(lead.id);
+    asSeema();
+    assert.equal((await reviewLeadQualification({ customerId: lead.id, verdict: "verified" })).ok, true);
+    const r = await decideAfterQualification({ customerId: lead.id, ready: false, reasonCode: "skip_to_negotiation" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    if (r.ok) assert.equal(r.data.moved, true, JSON.stringify(r.data));
+    assert.equal((await row(lead.id)).leadStage, "negotiation");
+    const moves = await db.select().from(leadStageTransitions).where(eq(leadStageTransitions.customerId, lead.id));
+    const t = moves.find((m) => m.toStage === "negotiation");
+    assert.ok(t, "a transition to Negotiation was written");
+    assert.equal(t!.reasonCode, "skip_to_negotiation");
+    assert.equal((await decisions(lead.id)).length, 1);
+    assert.equal(((await decisions(lead.id))[0].afterState as Record<string, unknown>).moved, true);
+  });
+
+  test("the question is asked at Qualification only", async () => {
+    const lead = await makeProspect(salesman.id);
+    asSalesman();
+    const r = await decideAfterQualification({ customerId: lead.id, ready: true });
+    assert.equal(r.ok, false);
   });
 });

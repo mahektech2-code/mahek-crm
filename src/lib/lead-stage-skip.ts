@@ -11,7 +11,11 @@ import { REASON_CODE_NEEDING_REMARKS } from "./lead-labels";
  * that file is mirrored byte for byte onto the handset and a Sales Manager's
  * choice made at a desk is not something a phone asks.
  */
+/** The code the Qualification completion dialog records for "skip the trial, go to Negotiation". */
+export const SKIP_TO_NEGOTIATION = "skip_to_negotiation";
+
 export const STAGE_SKIP_REASONS: readonly { code: string; label: string }[] = [
+  { code: SKIP_TO_NEGOTIATION, label: "Skip Sample / Trial — Move directly to Negotiation" },
   { code: "knows_product", label: "They already know and use our product" },
   { code: "sample_not_needed", label: "A sample is not needed for this shop" },
   { code: "trial_done_outside", label: "The trial was done outside the system" },
