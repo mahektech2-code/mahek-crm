@@ -15,12 +15,9 @@ import { PROSPECT_REVIEW_AUDIT, PROSPECT_REVIEW_NEXT, prospectReviewStateOf } fr
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { leadGateInput, leadRow } from "@/lib/services/lead-service";
 import { answersMissing, requireProspectVerifier } from "@/lib/services/prospect-verifier";
-import { advanceToSampleTrial, openQualificationAfterVerification } from "@/lib/services/lead-qualification-flow-service";
-import { combinedReviewApplies } from "@/lib/combined-review";
-import { runInCombinedReview } from "@/lib/services/combined-review-context";
-import { combinedConfirmBlockers } from "@/lib/qualification-review";
-import { validateGstin } from "@/lib/actions/lead-gst";
+import { openQualificationAfterVerification } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf, settleProspectRequest } from "@/lib/services/lead-prospect-request-service";
+import { reviewCallStatus } from "@/lib/services/qualification-call-gate";
 import { returnProspectRequest } from "@/lib/actions/lead-calling-desk";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 
@@ -67,11 +64,7 @@ function refresh(customerId: string) {
   }
 }
 
-const confirmSchema = z.object({
-  customerId: z.string().min(1),
-  /** The Sales Manager says the GST number checks out — only read in the one-review flow, where the number is validated as part of confirming. */
-  gstChecked: z.boolean().optional(),
-});
+const confirmSchema = z.object({ customerId: z.string().min(1) });
 const returnSchema = z.object({
   customerId: z.string().min(1),
   note: z.string().trim().min(1, "Say what needs correcting — the owner works from this sentence.").max(2000),
@@ -127,44 +120,25 @@ export async function confirmProspectReview(input: z.input<typeof confirmSchema>
       return err(`Not ready to confirm: ${missing.map((c) => c.says).join("; ")}.`, "rule_violation");
     }
 
-    /* THE ONE-REVIEW FLOW. For a direct or third-party lead this Confirm is the
-       whole decision: it verifies the Prospect, completes Qualification and moves
-       the lead to Sample / Trial. So everything Qualification asks must be in —
-       the Sales Manager answered it in this review — and the GST number must have
-       been checked, which she says here rather than on another screen. */
-    const combined = combinedReviewApplies({
-      stage: lead.leadStage,
-      salesType: lead.leadSalesType,
-      deskRequest: req?.state === "awaiting" || req?.state === "followup",
-    });
-    /* THE GST NUMBER IS CHECKED RIGHT AFTER QUALIFICATION OPENS, not before: the
-       validation is refused until it has ("GST is validated once Qualification
-       opens"). So a number the Sales Manager has ticked is taken as satisfied for
-       the purpose of holding Confirm, and is validated by the same call that
-       opens the rung, before the move to Sample / Trial. */
-    const gstWillBeChecked = Boolean(parsed.data.gstChecked) && Boolean(gate.gstin?.trim()) && !gate.gstVerified;
-    if (combined) {
-      const open = combinedConfirmBlockers({ ...gate, prospectReasonRecorded: true }).filter(
-        (c) => !(c.id === "gst_verified" && gstWillBeChecked),
+    /* THE CALL COMES FIRST, and it has to have checked out. She confirms only on a
+       call made for this round of the review that found every answer as recorded;
+       a call that found one wrong is a reason to reject, not to confirm. */
+    const call = await reviewCallStatus(customerId);
+    if (!call.made) {
+      return err("Make the verification call first. Confirm opens once a call to the customer has been recorded.", "rule_violation");
+    }
+    if (call.corrections > 0) {
+      return err(
+        `The call found ${call.corrections} answer${call.corrections === 1 ? "" : "s"} different from what the customer said. Reject the verification so the owner corrects ${call.corrections === 1 ? "it" : "them"}.`,
+        "rule_violation",
       );
-      if (open.length) {
-        return err(`Not ready to confirm: ${open.map((c) => c.says).join("; ")}.`, "rule_violation");
-      }
     }
 
     const now = new Date();
     await db.transaction(async (tx) => {
       await tx
         .update(customers)
-        .set({
-          leadVerifiedAt: now,
-          leadVerifiedById: ctx.user.id,
-          leadLastActivityDate: await today(),
-          updatedAt: now,
-          /* Confirming in the one review is also her word that the four figures still
-             hold: she has just read them and corrected what was wrong. */
-          ...(combined ? { leadFiguresConfirmedAt: now } : {}),
-        })
+        .set({ leadVerifiedAt: now, leadVerifiedById: ctx.user.id, leadLastActivityDate: await today(), updatedAt: now })
         .where(eq(customers.id, customerId));
       await writeTimelineEvent(tx, {
         customerId,
@@ -197,63 +171,11 @@ export async function confirmProspectReview(input: z.input<typeof confirmSchema>
       }
     }
 
-    const actor = { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" as const };
-    const opened = await openQualificationAfterVerification(actor, customerId, { quiet: combined }).catch(() => null);
-    /* …and in the one review the GST number is validated now that the rung is open,
-       and the move carries straight on to Sample / Trial. */
-    let gstNote: string | null = null;
-    if (combined && opened?.opened && gstWillBeChecked) {
-      const checked = await runInCombinedReview(customerId, () => validateGstin({ customerId, valid: true })).catch(() => null);
-      if (!checked?.ok) gstNote = `The GST number could not be marked as checked${checked && !checked.ok ? `: ${checked.error}` : "."}`;
-    }
-    /* THE VERDICT IS RECORDED AFTER THE GST CHECK, never before it: validating the
-       number is a material change and voids a verdict already on the record. */
-    if (combined && opened?.opened && !gstNote) {
-      const at = new Date();
-      await db.transaction(async (tx) => {
-        await tx
-          .update(customers)
-          .set({
-            leadQualificationReview: "verified",
-            leadQualificationReviewNote: null,
-            leadQualificationReviewedAt: at,
-            leadQualificationReviewedById: ctx.user.id,
-            updatedAt: at,
-          })
-          .where(eq(customers.id, customerId));
-        await writeTimelineEvent(tx, {
-          customerId,
-          eventType: MBOS_EVENT.qualificationReview,
-          sourceApp: "crm",
-          sourceRecordId: `${customerId}:review:${at.toISOString()}`,
-          occurredAt: at,
-          actorUserId: ctx.user.id,
-          summary: `Sales manager verified the qualification for ${lead.name} in the one review.`,
-        });
-        await tx.insert(auditLog).values({
-          id: gen("aud"),
-          actorId: ctx.user.id,
-          action: "lead.qualificationReview",
-          entityType: "customer",
-          entityId: customerId,
-          actorRole: ctx.authorisedBy,
-          actorApp: ctx.authorisedIn,
-          beforeState: { leadQualificationReview: null },
-          afterState: { leadQualificationReview: "verified", leadQualificationReviewNote: null, via: "prospect review" },
-        });
-      });
-    }
-    const advanced =
-      combined && opened?.opened && !gstNote ? await advanceToSampleTrial(actor, customerId).catch(() => null) : null;
+    const opened = await openQualificationAfterVerification(
+      { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
+      customerId,
+    ).catch(() => null);
     refresh(customerId);
-    if (combined) {
-      return ok(
-        null,
-        advanced?.moved
-          ? "Confirmed — Qualification is complete and the lead is now at Sample / trial."
-          : `Confirmed. The lead stays at Qualification: ${gstNote ?? advanced?.message ?? opened?.message ?? "it could not be moved."}`,
-      );
-    }
     return ok(
       null,
       opened?.opened

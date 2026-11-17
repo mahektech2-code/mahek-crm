@@ -347,6 +347,8 @@ export type ReviewContext = {
   editable: boolean;
   /** Where the CRM keeps Qualification answers for the collector, the sentence to say so. */
   collectorOnlyReason: string | null;
+  /** The sentence for a box that is read-only because the whole review is, rather than because the viewer may not decide. */
+  readOnlyReason?: string;
   /**
    * Which decision this review is for. Before Qualification opens (`"prospect"`)
    * the Qualification questions are not asked yet, so they are not built at
@@ -421,7 +423,7 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
     const earlier = editedAt.get(id);
     if (earlier) return { editKey: null, sameAs: earlier, readOnlyReason: `Same answer as “${earlier}” — change it there.` };
     editedAt.set(id, label);
-    if (!ctx.editable) return { editKey: null, readOnlyReason: NOT_APPROVER };
+    if (!ctx.editable) return { editKey: null, readOnlyReason: ctx.readOnlyReason ?? NOT_APPROVER };
     if (isCollectorEdit(id) && ctx.collectorOnlyReason) {
       return { editKey: null, readOnlyReason: ctx.collectorOnlyReason };
     }
@@ -649,19 +651,6 @@ export function confirmBlockers(gate: LeadGateInput): string[] {
     (c) => !c.id.startsWith("manager_review") && c.id !== "next_action",
   );
   return missing.length ? missing.map((c) => c.says) : ["The Qualification is not complete."];
-}
-
-/**
- * What still stands between the Sales Manager and the ONE Confirm that verifies a
- * Prospect, completes Qualification and moves the lead to Sample / Trial: the
- * Qualification gate's own words, less the three things that confirming itself
- * settles — the manager's review, the next action, and the figures (she has just
- * read them). Words and ids, so the screen and the refusal say one thing.
- */
-export function combinedConfirmBlockers(gate: LeadGateInput): { id: string; says: string }[] {
-  return gateTo(gate, "sample_trial").missing.filter(
-    (c) => !c.id.startsWith("manager_review") && c.id !== "next_action" && c.id !== "figures_fresh",
-  );
 }
 
 /** The ids the gate says are unmet at a target rung — what the rows' "answered" is read from. */

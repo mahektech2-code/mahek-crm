@@ -9240,30 +9240,26 @@ review or by the call, a lead past Qualification is not held, and a distributor'
 checklist (not edited from the review) is left alone. The handset records its
 verifications through its own handler and is untouched.
 
-**THE ONE REVIEW: A SALES MANAGER VERIFIES A PROSPECT AND QUALIFICATION IS DONE
-IN THE SAME CONFIRM.** For a direct or third-party lead (`combinedReviewApplies`:
-standing at Prospect, or a Suspect the calling desk has asked to promote, on a
-ladder with both a Qualification and a Sample / Trial rung) the review the designated
-verifier opens draws all 20 questions once — the six only Qualification asks
-(trial plan, who decides/buys/pays, price and reaction, delivery, willing to test,
-next step) included — and she answers what is blank. The optional call comes after
-she saves. ONE Confirm (`confirmProspectReview`) then verifies the Prospect, opens
-Qualification, validates the GST number (ticked in the review), records her verdict,
-confirms the figures and moves the lead to Sample / Trial (`advanceToSampleTrial`);
-there is no separate Telecaller Qualification step. A distributor, a lead with no
-sales type and the handset keep today's flow, and `lead-gates.ts` is untouched.
+**THE SALES MANAGER'S VERIFICATION OF A PROSPECT IS STEP 1, AND IT ONLY CHECKS.**
+Before Qualification opens, the designated verifier's review is exactly the fourteen
+items — the eleven Suspect answers and the three Prospect-only ones — and every one
+of them is READ-ONLY. She does not edit or correct anything (`saveQualificationReviewEdits`
+refuses at Prospect, and the boxes say why). The order is: she makes the verification
+call FIRST (a call recorded with `forReview`, which records what the customer said
+and decides nothing — no verification, no promotion, no Qualification opened); she
+checks the recorded answers against it; then she CONFIRMS, which opens the existing
+Qualification step, or REJECTS with a reason, which sends it back to the owner to
+correct and resubmit. `reviewCallStatus` is the one question "has a call been made
+for THIS round": Confirm is refused until one has, and refused while the latest call
+found an answer wrong (`lead_verification_corrections`, verdict `corrected`). A
+rejection starts a new round, so a corrected lead needs a new call. The other doors
+(the verification queue, the Sales Manager desk's Verify) do not send `forReview` and
+verify by a call exactly as before.
 
-Three things have to hold, and each has a test. (1) The manager is normally refused
-the Qualification-only answers (`saveLeadQualification`, `saveProspectFields`), and
-still is everywhere else: the review's allowance is a server-side context
-(`combined-review-context`, entered only by `saveQualificationReviewEdits` after it
-has identified her), never an argument a request can post. (2) The order is fixed:
-the GST check comes BEFORE the verdict is recorded, because validating a number is a
-material change and voids a verdict already on the record; and it comes AFTER
-Qualification opens, because it is refused until then. (3) The hand-off bell "qualification
-is ready for your review" is suppressed inside that context: she is the reviewer.
-A Qualification-stage Confirm (`reviewLeadQualification`) now moves the lead on too;
-what is left to change under a standing note is a review that sent it back.
+Step 2 is the Qualification page that already exists (the Telecaller answers its
+questions there, the Sales Manager reviews them, and only then may a lead move to
+Sample / Trial). Step 1 does NOT move a lead to Sample / Trial, and nothing here
+changes that page or the gate rules mirrored onto the handset.
 
 **GST IS THE TELECALLER'S END TO END.** They enter it and they validate it; the
 self-check that refused the lead's owner is gone, and what keeps that honest is

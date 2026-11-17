@@ -73,7 +73,6 @@ import { gstinChangeClear, materialOf, reviewVoidPatch } from "@/lib/lead-review
 import { readReadiness, type ReadinessChoice } from "@/lib/verification-readiness";
 import { moveOnReadiness } from "@/lib/services/lead-readiness-move-service";
 import { qualificationAccess, QUALIFICATION_ONLY_FIELDS } from "@/lib/lead-qualification-access";
-import { inCombinedReview } from "@/lib/services/combined-review-context";
 import { litresSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
@@ -973,18 +972,12 @@ export async function saveLeadQualification(
        it would be counted the moment the rung opens — as work somebody did
        before anybody had checked there was a lead. Refused here, on the server,
        and drawn as disabled on the screen from the same sentence. */
-    /* EXCEPT IN THE ONE REVIEW: there the designated Sales Manager answers the
-       Qualification-only questions as part of verifying the Prospect, and the
-       review has already asked who she is. That is a server-side context, never an
-       argument — see `combined-review-context`. */
-    if (!inCombinedReview(customerId)) {
-      const access = qualificationAccess(lead.leadStage);
-      if (!access.writable) return err(access.reason, "rule_violation");
+    const access = qualificationAccess(lead.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
 
-      /* The Sales Manager the lead is under reviews it; she does not fill it in. */
-      const barred = await qualificationCollectorRefusal(ctx.user, lead);
-      if (barred) return err(barred, "rule_violation");
-    }
+    /* The Sales Manager the lead is under reviews it; she does not fill it in. */
+    const barred = await qualificationCollectorRefusal(ctx.user, lead);
+    if (barred) return err(barred, "rule_violation");
 
     /* The condition ids, and the stored answers the eight questions keep in this
        jsonb. Anything else a stale screen sends is dropped rather than stored. */
@@ -1130,7 +1123,7 @@ export async function saveProspectFields(
        Manager's verification, and nothing changes the number under it. */
     const beforeProspect = !lead.leadStage || ["suspect", "new", "contacted"].includes(lead.leadStage);
     const asked = QUALIFICATION_ONLY_FIELDS.filter((k) => f[k] !== undefined && !(k === "gstin" && beforeProspect));
-    if (asked.length && !inCombinedReview(customerId)) {
+    if (asked.length) {
       const access = qualificationAccess(lead.leadStage);
       if (!access.writable) return err(access.reason, "rule_violation");
       /* The Sales Manager the lead is under reviews it; she does not fill in
@@ -1599,6 +1592,14 @@ export async function recordLeadValidationCall(
      * of a manager's words end up in a column nobody reads.
      */
     followUpNote?: string;
+    /**
+     * THE CALL IS MADE FOR THE SALES MANAGER'S REVIEW, so recording it decides
+     * nothing: no verification, no promotion, no Qualification opened. She checks
+     * the recorded answers against it and then confirms or rejects. Only ever
+     * narrows what a call does, so it is safe to accept from the client; the other
+     * doors (the queue, the desk's Verify) do not send it and verify as before.
+     */
+    forReview?: boolean;
     /** §26's code, required by the move rather than by this schema. */
     lostReasonCode?: string;
     /** §8 — what the call FOUND. Required on `not_qualified`; the loss code is
@@ -1640,6 +1641,7 @@ export async function recordLeadValidationCall(
         answers: z.record(z.string(), z.string().trim().max(1000)),
         outcome: z.enum(["verified", "follow_up", "not_qualified"]),
         followUpNote: z.string().trim().max(2000).optional(),
+        forReview: z.boolean().optional(),
         lostReasonCode: z.string().trim().max(80).optional(),
         /**
          * §8 — WHAT THE CALL ACTUALLY FOUND, and it is a second question from
@@ -1980,7 +1982,7 @@ export async function recordLeadValidationCall(
         leadLastActivityDate: day,
         updatedAt: new Date(),
       };
-      if (c.outcome === "verified") {
+      if (c.outcome === "verified" && !c.forReview) {
         set.leadVerifiedAt = new Date();
         set.leadVerifiedById = ctx.user.id;
       }
@@ -2109,6 +2111,10 @@ export async function recordLeadValidationCall(
      * it. Loaded lazily: that service imports this file for the move it makes, and
      * a static import back would be a cycle.
      */
+    if (c.forReview && c.outcome === "verified") {
+      refresh(customerId);
+      return ok(null, "Call recorded. Check the answers against it, then confirm or reject the verification.");
+    }
     const { settleProspectRequest } = await import("../services/lead-prospect-request-service");
     const settled = await settleProspectRequest(customerId, c.outcome);
     if (!settled.ok) {

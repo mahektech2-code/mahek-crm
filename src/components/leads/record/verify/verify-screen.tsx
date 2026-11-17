@@ -110,6 +110,7 @@ export function VerifyScreen({
   priorCalls,
   failureReasons,
   canVerify,
+  forReview = false,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -124,6 +125,8 @@ export function VerifyScreen({
   /** §8's seven findings. NOT the loss reasons — the loss code is fixed. */
   failureReasons: { code: string; label: string }[];
   canVerify: boolean;
+  /** Opened from the Sales Manager's review: the call is recorded and decides nothing, and the screen returns to the review. */
+  forReview?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -333,6 +336,7 @@ export function VerifyScreen({
         followUpNote: composedNote.trim() || undefined,
         failureReasonCode: verdict === "not_qualified" ? failureReason : undefined,
         corrections,
+        forReview: forReview || undefined,
       });
       if (!result.ok) {
         setError(result.error);
@@ -344,7 +348,7 @@ export function VerifyScreen({
       setFailureReason("");
       setNote("");
       toast.push(result.message ?? "Call recorded.");
-      router.push(leadHref(workspace, `leads/${customerId}`));
+      router.push(leadHref(workspace, forReview ? `leads/${customerId}/review` : `leads/${customerId}`));
       router.refresh();
     } finally {
       /* Cleared whatever happened. An action that rejects rather than returning
@@ -364,7 +368,7 @@ export function VerifyScreen({
 
 
   const record = leadHref(workspace, `leads/${customerId}`);
-  const closeDialog = () => router.push(record);
+  const closeDialog = () => router.push(forReview ? leadHref(workspace, `leads/${customerId}/review`) : record);
 
   /* What the newest earlier call recorded, so reopening shows it. Read-only. */
   const last = priorCalls[0] ?? null;

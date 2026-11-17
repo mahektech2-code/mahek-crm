@@ -178,8 +178,8 @@ describe("the consolidated review shows each question once, with the answers alr
     assert.equal(f("qualification:trial_plan", "trial_product").value, QUALIFICATION_ANSWERS.trial_product);
   });
 
-  test("a distributor's Prospect-stage review is the 14 rows before Qualification opens", async () => {
-    const lead = await qualificationLead({ leadSalesType: "distributor", leadStage: "prospect", leadVerifiedAt: null, leadVerifiedById: null, leadNextAction: "Verify this Prospect" });
+  test("the Prospect-stage review is the 14 rows before Qualification opens", async () => {
+    const lead = await qualificationLead({ leadStage: "prospect", leadVerifiedAt: null, leadVerifiedById: null, leadNextAction: "Verify this Prospect" });
     const m = await loadQualificationReview(lead.id, approver);
     assert.ok(m);
     assert.equal(m.kind, "prospect");
@@ -224,8 +224,8 @@ describe("the verification call is offered only after the review has been saved"
     assert.equal((await followUpCall(lead.id)).ok, true);
   });
 
-  test("for a distributor, a save before Qualification opens still has nothing to save, and offers no call", async () => {
-    const lead = await qualificationLead({ leadSalesType: "distributor", leadStage: "prospect", leadVerifiedAt: null, leadVerifiedById: null, leadNextAction: "Verify this Prospect" });
+  test("a save before Qualification opens still has nothing to save, and offers no call", async () => {
+    const lead = await qualificationLead({ leadStage: "prospect", leadVerifiedAt: null, leadVerifiedById: null, leadNextAction: "Verify this Prospect" });
     const r = await saveQualificationReviewEdits({ customerId: lead.id, edits: {} });
     assert.equal(r.ok, false);
     if (!r.ok) assert.match(r.error, /nothing to save/i);
@@ -311,7 +311,7 @@ describe("the call is gated only where there is a review to save", () => {
 /* ============================================ THE CALL IS NEVER REQUIRED */
 
 describe("skipping the call blocks nothing", () => {
-  test("confirm qualification works with no call ever made, and the lead goes straight to Sample / trial", async () => {
+  test("confirm qualification works with no call ever made, and the lead may then be sent a sample", async () => {
     const lead = await qualificationLead();
     assert.equal((await saveQualificationReviewEdits({ customerId: lead.id, edits: {} })).ok, true);
     /* …and the approver simply does not call. */
@@ -319,9 +319,8 @@ describe("skipping the call blocks nothing", () => {
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await row(lead.id)).leadQualificationReview, "verified");
     assert.equal((await validations(lead.id)).length, 0, "no call was made or needed");
-    assert.equal((await row(lead.id)).leadStage, "sample_trial", "confirming moves the lead on");
-    /* …so there is no longer a gate in front of a sample request: the lead is past it. */
-    assert.deepEqual(await sampleEligibility(lead.id), { applies: false });
+    const e = await sampleEligibility(lead.id);
+    assert.deepEqual(e, { applies: true, eligible: true });
   });
 
   test("confirming does not even need the review to have been saved first — the save is not an approval step", async () => {
@@ -356,6 +355,6 @@ describe("skipping the call blocks nothing", () => {
     const c = await followUpCall(lead.id);
     assert.equal(c.ok, true, c.ok ? "" : c.error);
     assert.equal((await row(lead.id)).leadQualificationReview, "verified");
-    assert.equal((await row(lead.id)).leadStage, "sample_trial", "the call does not undo the move");
+    assert.equal((await row(lead.id)).leadStage, "qualification");
   });
 });

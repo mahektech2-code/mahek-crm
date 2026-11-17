@@ -13,12 +13,7 @@ import { requireCapability } from "@/lib/access-control";
 import { notifyUser } from "@/lib/notify";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
-import {
-  advanceToSampleTrial,
-  handBackAfterReview,
-  settleQualificationState,
-  type AdvanceOutcome,
-} from "@/lib/services/lead-qualification-flow-service";
+import { handBackAfterReview, settleQualificationState } from "@/lib/services/lead-qualification-flow-service";
 import { leadGateInput, leadRow } from "@/lib/services/lead-service";
 import { gateTo, qualificationComplete, qualificationReadyForReview } from "@/lib/engines/lead-gates";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
@@ -356,17 +351,7 @@ export async function reviewLeadQualification(
        the moment their next action becomes "Request the sample", and a next
        action nobody is told about is a list nobody opens. */
     await handBackAfterReview(customerId, verdict, note, ctx.user.id);
-    /* CONFIRMING IS THE DECISION THAT QUALIFICATION IS COMPLETE, so the lead moves
-       on to Sample / Trial. The ordinary gate decides (no override): if anything
-       else stands in the way the lead stays here, verified, with the reason said. */
-    let advanced: AdvanceOutcome | null = null;
-    if (verdict === "verified") {
-      advanced = await advanceToSampleTrial(
-        { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
-        customerId,
-      ).catch(() => null);
-    }
-    if (salesman && salesman !== ctx.user.id && !advanced?.moved) {
+    if (salesman && salesman !== ctx.user.id) {
       await notifyUser({
         userId: salesman,
         title: blockedNow
@@ -408,13 +393,9 @@ export async function reviewLeadQualification(
     return ok(
       null,
       verdict === "verified"
-        ? advanced?.moved
-          ? "Qualification confirmed — the lead is now at Sample / trial."
-          : advanced
-            ? `Verified. The lead stays at Qualification: ${advanced.message}`
-            : blockedBefore
-              ? `Verified — ${row.name} is no longer held at qualification.`
-              : "Verified."
+        ? blockedBefore
+          ? `Verified — ${row.name} is no longer held at qualification.`
+          : "Verified."
         : verdict === "incomplete"
           ? `Marked incomplete. ${row.name} is held at qualification and the Salesman has been told why.`
           : `Sent back for clarification. ${row.name} is held at qualification and the Salesman has been told what is wanted.`,

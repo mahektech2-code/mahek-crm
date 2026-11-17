@@ -132,7 +132,7 @@ export const WEIGHTS = {
   "src/lib/lead-verifier-seat.test.ts": 3,
   "src/lib/qualification-flow.test.ts": 9,
   "src/lib/consolidated-review-call.test.ts": 9,
-  "src/lib/one-review.test.ts": 9,
+  "src/lib/prospect-review-flow.test.ts": 9,
   "src/lib/self-raised-approver.test.ts": 4,
   "src/lib/telecaller-verifier-routing.test.ts": 7,
   "src/lib/field-verifier-routing.test.ts": 7,

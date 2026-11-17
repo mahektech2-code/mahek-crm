@@ -43,11 +43,15 @@ import { prospectRequestFor } from "@/lib/services/lead-calling-desk-service";
 export async function Body({
   workspace,
   params,
+  searchParams,
 }: {
   workspace: LeadWorkspace;
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ review?: string }>;
 }) {
   const { id } = await params;
+  /* `?review=1` is the Sales Manager's review sending her here to ring the customer. */
+  const forReview = (await searchParams)?.review === "1";
   const day = await today();
   const user = await requireUser();
 
@@ -172,6 +176,7 @@ export async function Body({
       priorCalls={calls}
       failureReasons={failureReasons}
       canVerify={canVerify}
+      forReview={forReview}
     />
     </>
   );

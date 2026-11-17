@@ -1,7 +1,8 @@
 import "server-only";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, leadStageTransitions } from "@/db/schema";
+import { auditLog, customers, leadStageTransitions, leadVerificationCorrections, mbosLeadValidations } from "@/db/schema";
+import { PROSPECT_REVIEW_AUDIT } from "@/lib/prospect-review";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { REVIEW_SAVED_ACTION } from "@/lib/qualification-review";
 
@@ -47,32 +48,76 @@ export function callAllowed(input: {
   return input.savedAt.some((d) => d.getTime() >= since);
 }
 
-/**
- * Has the Sales Manager saved the ONE review of this Prospect? The call is offered
- * after that save in the one-review flow just as it is at Qualification, but it is
- * not refused before it: at Prospect a call is still the alternative way of
- * verifying, and nothing here may block the doors that use it.
- */
-export async function combinedReviewSaved(customerId: string): Promise<boolean> {
+/* ---------------------------------------------------------------------------
+ * STEP 1 OF THE SALES MANAGER'S VERIFICATION: THE CALL COMES FIRST.
+ *
+ * The manager rings the customer, and only then checks the recorded answers
+ * against what was said: all right, she confirms; any wrong, she rejects and the
+ * owner corrects. So Confirm needs a call made for THIS review — one recorded
+ * since the lead last went to the manager (it became a Prospect, the desk asked
+ * for it, or the owner resubmitted it after a rejection). A rejection starts a
+ * new round and so needs a new call: the answers it was about have changed.
+ *
+ * Only a call that reached the shop counts (`verified`); a follow-up or a failed
+ * verification is not a call that checked anything. And a call that found an
+ * answer wrong (`corrected`) is not one she can confirm on.
+ * ------------------------------------------------------------------------- */
+
+export type ReviewCallStatus = {
+  /** A call that reached the shop has been recorded for this round of the review. */
+  made: boolean;
+  /** How many of the answers the call found different from what the customer said. */
+  corrections: number;
+  at: Date | null;
+};
+
+export async function reviewCallStatus(customerId: string): Promise<ReviewCallStatus> {
+  const [lead] = await db
+    .select({ requestedAt: customers.prospectRequestedAt })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
   const [entered] = await db
     .select({ at: leadStageTransitions.at })
     .from(leadStageTransitions)
     .where(and(eq(leadStageTransitions.customerId, customerId), eq(leadStageTransitions.toStage, "prospect")))
     .orderBy(desc(leadStageTransitions.at))
     .limit(1);
-  const rows = await db
-    .select({ id: auditLog.id })
+  const [resubmitted] = await db
+    .select({ at: auditLog.at })
     .from(auditLog)
     .where(
       and(
         eq(auditLog.entityType, "customer"),
         eq(auditLog.entityId, customerId),
-        eq(auditLog.action, REVIEW_SAVED_ACTION),
-        ...(entered ? [gte(auditLog.at, entered.at)] : []),
+        inArray(auditLog.action, [PROSPECT_REVIEW_AUDIT.resubmit, PROSPECT_REVIEW_AUDIT.returned]),
       ),
     )
+    .orderBy(desc(auditLog.at))
     .limit(1);
-  return rows.length > 0;
+  const since = [lead?.requestedAt, entered?.at, resubmitted?.at]
+    .filter((d): d is Date => d instanceof Date)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+
+  const [call] = await db
+    .select({ id: mbosLeadValidations.id, at: mbosLeadValidations.calledAt })
+    .from(mbosLeadValidations)
+    .where(
+      and(
+        eq(mbosLeadValidations.customerId, customerId),
+        eq(mbosLeadValidations.verdict, "confirmed"),
+        ...(since ? [gte(mbosLeadValidations.calledAt, since)] : []),
+      ),
+    )
+    .orderBy(desc(mbosLeadValidations.calledAt))
+    .limit(1);
+  if (!call) return { made: false, corrections: 0, at: null };
+
+  const corrected = await db
+    .select({ id: leadVerificationCorrections.id })
+    .from(leadVerificationCorrections)
+    .where(and(eq(leadVerificationCorrections.validationId, call.id), eq(leadVerificationCorrections.verdict, "corrected")));
+  return { made: true, corrections: corrected.length, at: call.at };
 }
 
 /**

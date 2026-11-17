@@ -317,8 +317,8 @@ const files = [
   "src/lib/qualification-flow.test.ts",
   // The consolidated Qualification review (each question once) and the optional verification call that follows its save.
   "src/lib/consolidated-review-call.test.ts",
-  // The ONE review: the Sales Manager answers every question once, and a single Confirm completes Qualification and moves the lead to Sample / trial.
-  "src/lib/one-review.test.ts",
+  // Step 1 of the Sales Manager's verification: the 14 items read-only, the call FIRST, confirm opens Qualification, reject sends it back to the owner.
+  "src/lib/prospect-review-flow.test.ts",
   // A lead the Sales Manager raised herself is approved by the person Mahek designates.
   "src/lib/self-raised-approver.test.ts",
   // Who verifies a Prospect on each of the three workflows, kept apart: a Telecaller's lead,
