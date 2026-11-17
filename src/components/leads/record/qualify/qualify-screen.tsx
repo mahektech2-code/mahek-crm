@@ -7,7 +7,8 @@ import { useRouter } from "next/navigation";
 import { money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { cx, Input, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { Modal } from "@/components/ui/overlays";
+import { BodyPortal } from "@/components/ui/body-portal";
+import { useEscape } from "@/components/ui/modal";
 import { decideAfterQualification } from "@/lib/actions/lead-qualification-decision";
 import { NOT_READY_REASONS } from "@/lib/qualification-decision";
 import { VoiceTextarea } from "@/components/ui/dictate";
@@ -491,6 +492,10 @@ export function QualifyScreen({
       {completing ? (
         <CompleteQualificationDialog
           customerId={customerId}
+          leadName={leadName}
+          detail={detail}
+          stageName={stageLabel(stage)}
+          salesTypeName={salesTypeLabel(salesType)}
           conditions={conditions}
           stored={stored}
           requiredProductName={requiredProductName}
@@ -1425,14 +1430,22 @@ function Resubmit({ customerId }: { customerId: string }) {
  * decision are always saved and audited, and where a move is not allowed the
  * dialog says what is still needed instead of moving anything.
  * ------------------------------------------------------------------------- */
-function CompleteQualificationDialog({
+export function CompleteQualificationDialog({
   customerId,
+  leadName,
+  detail,
+  stageName,
+  salesTypeName,
   conditions,
   stored,
   requiredProductName,
   onClose,
 }: {
   customerId: string;
+  leadName: string;
+  detail: string;
+  stageName: string;
+  salesTypeName: string;
   conditions: readonly Condition[];
   stored: QualifyValues;
   requiredProductName: string | null;
@@ -1506,110 +1519,216 @@ function CompleteQualificationDialog({
     }
   }
 
+  useEscape(onClose);
+  const answeredCount = conditions.filter((c) => !c.optional && (SHOP_FIELDS[c.id] ?? []).every((s) => {
+    const v = valueOf(s);
+    return typeof v === "string" ? v.trim().length > 0 : v != null;
+  })).length;
+  const requiredCount = conditions.filter((c) => !c.optional).length;
+  const stepTitle =
+    step === "answers" ? "Questions" : step === "done" ? "Result" : "Decision";
+
   return (
-    <Modal open onClose={onClose} title="Complete Qualification" width={760}>
-      {step === "answers" ? (
-        <>
-          <div className="max-h-[58vh] overflow-y-auto pr-1" data-testid="complete-qualification-questions">
-            {conditions.map((c, i) => (
-              <div key={c.id} className="mb-4">
-                <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                  <span className="text-[14px] font-medium text-ink">
-                    {i + 1}. {c.says}
-                  </span>
-                  {c.optional ? <Pill tone="neutral">Optional</Pill> : null}
-                </div>
-                <div className="flex flex-col gap-2">
-                  {(SHOP_FIELDS[c.id] ?? []).map((s) => (
-                    <FieldControl
-                      key={s.key}
-                      spec={s}
-                      value={valueOf(s)}
-                      disabled={busy}
-                      customerId={customerId}
-                      productName={s.kind === "product" ? requiredProductName : null}
-                      onChange={(v) => setDraft((d) => ({ ...d, [s.key]: v }))}
-                    />
-                  ))}
-                </div>
+    <BodyPortal>
+      <div
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Complete Qualification · ${leadName}`}
+        className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(26,30,40,0.45)] p-6"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        >
+          {/* ------------------------------------------------------- header */}
+          <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2.5">
+                <span className="text-[22px] leading-7 font-semibold text-ink">{leadName}</span>
+                <Pill tone="brand">Lead</Pill>
               </div>
-            ))}
-          </div>
-          {error ? <p className="mt-2 text-[13px] text-danger" role="alert">{error}</p> : null}
-          <div className="mt-4 flex justify-end gap-2">
-            <Button tone="quiet" onClick={onClose} disabled={busy}>Cancel</Button>
-            <Button tone="primary" onClick={saveAnswers} disabled={busy} data-testid="save-and-continue">
-              {busy ? "Saving…" : "Save answers"}
-            </Button>
-          </div>
-        </>
-      ) : null}
-
-      {step === "decide" ? (
-        <>
-          <p className="mb-1 text-[13px] text-muted">Your answers are saved.</p>
-          <h3 className="mt-0 mb-3 text-[16px] font-semibold text-ink" data-testid="ready-question">
-            Ready for Sample / Trial?
-          </h3>
-          {error ? <p className="mb-2 text-[13px] text-danger" role="alert">{error}</p> : null}
-          <div className="flex justify-end gap-2">
-            <Button tone="quiet" onClick={onClose} disabled={busy}>Decide later</Button>
-            <Button onClick={() => { setError(null); setStep("reason"); }} disabled={busy} data-testid="ready-no">No</Button>
-            <Button tone="primary" onClick={() => decide(true)} disabled={busy} data-testid="ready-yes">
-              {busy ? "Saving…" : "Yes"}
-            </Button>
-          </div>
-        </>
-      ) : null}
-
-      {step === "reason" ? (
-        <>
-          <h3 className="mt-0 mb-2 text-[16px] font-semibold text-ink">Why is it not going to a sample?</h3>
-          <label className="block">
-            <span className="mb-1 block text-[13px] text-muted">Reason (required)</span>
-            <select
-              data-testid="no-reason"
-              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-ink"
-              value={reasonCode}
-              onChange={(e) => setReasonCode(e.target.value)}
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+                <span>Complete Qualification</span>
+                {detail ? (
+                  <>
+                    <span>·</span>
+                    <span>{detail}</span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              title="Close"
+              aria-label="Close"
+              className="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-[16px] text-muted hover:bg-canvas hover:text-body"
             >
-              <option value="">Pick a reason…</option>
-              {NOT_READY_REASONS.map((r) => (
-                <option key={r.code} value={r.code}>{r.label}</option>
-              ))}
-            </select>
-          </label>
-          {reasonCode ? (
-            <label className="mt-3 block">
-              <span className="mb-1 block text-[13px] text-muted">
-                {reasonCode === "other" ? "Say what it is (required)" : "Anything to add (optional)"}
+              ×
+            </button>
+          </div>
+
+          {/* ---------------------------------------------- the facts strip */}
+          <div className="flex items-center gap-5 overflow-hidden border-y border-divider bg-canvas px-6 py-2.5 text-sm">
+            <span>
+              <span className="block text-[11px] text-muted">Stage</span>
+              <span className="font-medium text-ink">{stageName}</span>
+            </span>
+            <span className="h-7 w-px bg-divider" />
+            <span>
+              <span className="block text-[11px] text-muted">Sales type</span>
+              <span className="font-medium text-ink">{salesTypeName}</span>
+            </span>
+            <span className="h-7 w-px bg-divider" />
+            <span>
+              <span className="block text-[11px] text-muted">Required answers</span>
+              <span className="font-medium text-ink">
+                {answeredCount} of {requiredCount}
               </span>
-              <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
-            </label>
-          ) : null}
-          {error ? <p className="mt-2 text-[13px] text-danger" role="alert">{error}</p> : null}
-          <div className="mt-4 flex justify-end gap-2">
-            <Button tone="quiet" onClick={() => { setError(null); setStep("decide"); }} disabled={busy}>Back</Button>
-            <Button
-              tone="primary"
-              onClick={() => decide(false)}
-              disabled={busy || !reasonCode || (reasonCode === "other" && !note.trim())}
-              data-testid="confirm-no"
-            >
-              {busy ? "Saving…" : "Confirm"}
-            </Button>
+            </span>
+            <span className="flex-1" />
           </div>
-        </>
-      ) : null}
 
-      {step === "done" && finished ? (
-        <>
-          <p className="mb-3 text-[14px] text-ink" data-testid="decision-result">{finished.message}</p>
-          <div className="flex justify-end">
-            <Button tone="primary" onClick={onClose}>Close</Button>
+          {/* --------------------------------------------------------- tabs */}
+          <div className="flex gap-5 border-b border-divider px-6">
+            <span className="-mb-px border-b-2 border-brand py-2.5 text-sm font-medium text-ink" data-testid="dialog-step">
+              {stepTitle}
+            </span>
           </div>
-        </>
-      ) : null}
-    </Modal>
+
+          {/* --------------------------------------------------------- body */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5" data-testid="complete-qualification-questions">
+            {step === "answers" ? (
+              <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+                {conditions.map((c, i) => (
+                  <div key={c.id} className="min-w-0">
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                      <span className="text-[14px] font-medium text-ink">
+                        {i + 1}. {c.says}
+                      </span>
+                      {c.optional ? <Pill tone="neutral">Optional</Pill> : null}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {(SHOP_FIELDS[c.id] ?? []).map((s) => (
+                        <FieldControl
+                          key={s.key}
+                          spec={s}
+                          value={valueOf(s)}
+                          disabled={busy}
+                          customerId={customerId}
+                          productName={s.kind === "product" ? requiredProductName : null}
+                          onChange={(v) => setDraft((d) => ({ ...d, [s.key]: v }))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {step === "decide" ? (
+              <div className="mx-auto max-w-[560px] py-6 text-center">
+                <p className="mb-2 text-sm text-muted">Your answers are saved.</p>
+                <h3 className="m-0 text-[20px] font-semibold text-ink" data-testid="ready-question">
+                  Ready for Sample / Trial?
+                </h3>
+                <p className="mt-2 text-sm text-muted">
+                  Yes asks for the move to Sample / Trial. No asks you to say why.
+                </p>
+              </div>
+            ) : null}
+
+            {step === "reason" ? (
+              <div className="mx-auto max-w-[560px] py-4">
+                <h3 className="mt-0 mb-3 text-[18px] font-semibold text-ink">Why is it not going to a sample?</h3>
+                <label className="block">
+                  <span className="mb-1 block text-[13px] text-muted">Reason (required)</span>
+                  <select
+                    data-testid="no-reason"
+                    className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-ink"
+                    value={reasonCode}
+                    onChange={(e) => setReasonCode(e.target.value)}
+                  >
+                    <option value="">Pick a reason…</option>
+                    {NOT_READY_REASONS.map((r) => (
+                      <option key={r.code} value={r.code}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {reasonCode ? (
+                  <label className="mt-3 block">
+                    <span className="mb-1 block text-[13px] text-muted">
+                      {reasonCode === "other" ? "Say what it is (required)" : "Anything to add (optional)"}
+                    </span>
+                    <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+
+            {step === "done" && finished ? (
+              <div className="mx-auto max-w-[560px] py-6 text-center">
+                <p className="m-0 text-[16px] text-ink" data-testid="decision-result">
+                  {finished.message}
+                </p>
+              </div>
+            ) : null}
+
+            {error ? (
+              <p className="mt-3 text-[13px] text-danger" role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
+
+          {/* ------------------------------------------------------ footer */}
+          <div className="flex items-center gap-2.5 border-t border-divider px-6 py-3">
+            {step === "reason" ? (
+              <Button tone="quiet" onClick={() => { setError(null); setStep("decide"); }} disabled={busy}>
+                ◀ Back
+              </Button>
+            ) : null}
+            <span className="flex-1" />
+            {step === "done" ? (
+              <Button tone="primary" onClick={onClose}>
+                Close
+              </Button>
+            ) : (
+              <>
+                <Button onClick={onClose} disabled={busy}>
+                  {step === "decide" ? "Decide later" : "Close"}
+                </Button>
+                {step === "answers" ? (
+                  <Button tone="primary" onClick={saveAnswers} disabled={busy}>
+                    {busy ? "Saving…" : "Save answers ▸"}
+                  </Button>
+                ) : null}
+                {step === "decide" ? (
+                  <>
+                    <Button onClick={() => { setError(null); setStep("reason"); }} disabled={busy}>
+                      No
+                    </Button>
+                    <Button tone="primary" onClick={() => decide(true)} disabled={busy}>
+                      {busy ? "Saving…" : "Yes"}
+                    </Button>
+                  </>
+                ) : null}
+                {step === "reason" ? (
+                  <Button
+                    tone="primary"
+                    onClick={() => decide(false)}
+                    disabled={busy || !reasonCode || (reasonCode === "other" && !note.trim())}
+                  >
+                    {busy ? "Saving…" : "Confirm"}
+                  </Button>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </BodyPortal>
   );
 }

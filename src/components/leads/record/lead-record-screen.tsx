@@ -86,6 +86,7 @@ import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
 import { PrimaryGateAction } from "./move-forward";
+import { CompleteQualificationDialog, type QualifyValues } from "./qualify/qualify-screen";
 import { ActivityMenuItems } from "@/components/leads/activity/lead-activity";
 import { CheckVisitsButton } from "@/components/leads/activity/check-visits";
 import type { ReopenOffer } from "@/components/leads/lost/reopen-lost-dialog";
@@ -329,6 +330,7 @@ export function LeadRecordScreen({
   canVerify,
   callLockedReason,
   canWork,
+  qualifyBarred = null,
   canHandOver,
   canMigrate,
   canChangeLadder,
@@ -428,6 +430,8 @@ export function LeadRecordScreen({
   /** Why the optional verification call is not offered yet (Qualification review not saved); null when it is. */
   callLockedReason?: string | null;
   canWork: boolean;
+  /** The sentence the Qualification refuses this person with (the lead's own Sales Manager reviews it and does not fill it in), or null where they may write it. */
+  qualifyBarred?: string | null;
   canHandOver: boolean;
   /**
    * Whether this person may move a lead off the retired distributor ladder.
@@ -561,6 +565,10 @@ export function LeadRecordScreen({
   const nextCall = callLead ? nextCallNumber(callLead.phase, callLead.callCount) : null;
   const canCall = canWork && nextCall !== null;
   const [calling, setCalling] = React.useState(Boolean(openCall && callLead && canCall));
+  /* "Complete qualification" opens its dialog on THIS page for whoever may write the
+     Qualification here and now; everybody else keeps the link to the screen. */
+  const [completing, setCompleting] = React.useState(false);
+  const canCompleteHere = canWork && !qualifyBarred && record.stage === "qualification" && record.salesType !== "distributor";
   const deskCalls = callLead
     ? {
         calls: callLead.calls,
@@ -693,7 +701,34 @@ export function LeadRecordScreen({
               base={base}
               facts={gateFacts}
               canVerify={canVerify}
+              onCompleteQualification={canCompleteHere ? () => setCompleting(true) : undefined}
             />
+            {completing ? (
+              <CompleteQualificationDialog
+                customerId={record.customerId}
+                leadName={record.name}
+                detail={detail}
+                stageName={stageLabel(record.stage)}
+                salesTypeName={salesTypeLabel(record.salesType)}
+                conditions={checklistFor(record.salesType, "qualification")}
+                stored={
+                  {
+                    gstin: record.gstin,
+                    monthlyLitres: record.monthlyLitres,
+                    potentialPaise: record.potentialPaise,
+                    requiredProductId: record.requiredProductId,
+                    competitor: record.competitor,
+                    creditDaysWanted: record.creditDaysWanted,
+                    decisionMaker: record.decisionMaker,
+                    buyer: record.buyer,
+                    application: record.application,
+                    ...(record.qualification ?? {}),
+                  } as QualifyValues
+                }
+                requiredProductName={record.requiredProductName}
+                onClose={() => setCompleting(false)}
+              />
+            ) : null}
             <MoreMenu>
               <ReassignLead
                 customerId={record.customerId}
