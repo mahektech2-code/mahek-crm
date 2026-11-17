@@ -783,6 +783,16 @@ const DESCRIBE: Record<string, Describer> = {
     says: ["could not move the lead", c.subject(), "on a verification call — the stage move was held back"],
     changes: false,
   }),
+  "lead.qualification_decision": (c) => ({
+    says: [
+      "said the lead",
+      c.subject(),
+      c.a.ready === true ? "is ready for Sample / Trial" : "is not going to Sample / Trial",
+      ...(c.a.moved === true ? ["— and moved it on"] : ["— it was not moved"]),
+    ],
+    note: str(c.a.reason) ?? null,
+    changes: false,
+  }),
   "lead.readiness_next_action": (c) => ({
     says: ["set the next action on", c.subject(), "after a verification call said the customer is ready to order"],
     changes: false,
