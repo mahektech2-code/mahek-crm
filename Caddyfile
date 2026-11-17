@@ -13,6 +13,28 @@
 	# the cutover against a throwaway subdomain, then comment it out again —
 	# certificates it issues are NOT trusted by browsers.
 	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+	# WHO THE VISITOR IS, BEHIND CLOUDFLARE.
+	#
+	# With a host's record orange in Cloudflare, every connection arrives from
+	# a Cloudflare address and the visitor's own is in CF-Connecting-IP. The
+	# app reads the visitor from X-Forwarded-For — the sign-in throttle
+	# (sign-in-throttle.ts) counts attempts per address, and Locker's audit
+	# records it — so without this every person behind one Cloudflare edge is
+	# one address, and one person's wrong passwords lock out a city.
+	#
+	# The header is believed ONLY from these ranges. A request straight to the
+	# droplet (a grey record, or anybody who knows the IP) cannot name itself:
+	# its peer is not trusted, so {client_ip} is the real peer, exactly as
+	# before. Each reverse_proxy below sends {client_ip} on as X-Forwarded-For
+	# and X-Real-IP, overwriting whatever the request carried.
+	#
+	# Cloudflare's published list, https://www.cloudflare.com/ips — it changes
+	# rarely and announces changes in advance. Checked 2026-11-18.
+	servers {
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP
+	}
 }
 
 {$DOMAIN} {
@@ -89,6 +111,11 @@
 		lb_try_duration 30s
 		lb_try_interval 250ms
 
+		# The visitor, as the global `servers` block worked it out — never a
+		# header the request brought with it.
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Real-IP {client_ip}
+
 		# Server Actions and dictation uploads are POSTs that take a while.
 		# Two minutes of Opus audio is a slow request, not a hung one.
 		#
@@ -142,6 +169,8 @@
 		fail_duration 5s
 		lb_try_duration 30s
 		lb_try_interval 250ms
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Real-IP {client_ip}
 	}
 
 	@immutable path /_next/static/*

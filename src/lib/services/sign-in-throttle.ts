@@ -23,9 +23,11 @@ import { otpAvailability } from "@/lib/services/otp-service";
  * ------------------------------------------------------------------------- */
 
 /**
- * The client's address as Caddy reports it. Caddy sets X-Forwarded-For from
- * the connection itself and does not trust one the client sent, so the first
- * entry is the real peer. Null outside a request and in development, where
+ * The client's address as Caddy reports it. Caddy overwrites X-Forwarded-For
+ * with its own {client_ip}: the connection's peer, or — only when that peer is
+ * one of Cloudflare's published ranges — Cloudflare's CF-Connecting-IP (the
+ * `servers` block in the Caddyfile). A header the client sent is never
+ * believed, so the first entry is the real visitor. Null outside a request and in development, where
  * nothing sets it — the per-address count is then simply not applied.
  */
 export async function clientAddress(): Promise<string | null> {
