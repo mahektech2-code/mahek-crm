@@ -161,7 +161,7 @@ async function navCounts(ctx: ErpContext, only: ReadonlySet<string> | null): Pro
         out.labels = new Set(c.stickersDue.map((l) => l.o.orderNo)).size;
       }),
     );
-  if (wants("orderHub", "hubCorrection", "mrpCheck", "toHold") && ["orderHub", "mrpCheck", "toHold"].some((k) => ctx.screens.has(k)))
+  if (wants("orderHub", "hubCorrection", "mrpCheck", "mrpHold", "toHold") && ["orderHub", "mrpCheck", "toHold"].some((k) => ctx.screens.has(k)))
     jobs.push(
       import("./screens/order-hub").then(async ({ orderHubCounts }) => {
         const c = await orderHubCounts();
@@ -169,7 +169,10 @@ async function navCounts(ctx: ErpContext, only: ReadonlySet<string> | null): Pro
           out.orderHub = c.orderHub;
           out.hubCorrection = c.hubCorrection;
         }
-        if (ctx.screens.has("mrpCheck")) out.mrpCheck = c.mrpCheck;
+        if (ctx.screens.has("mrpCheck")) {
+          out.mrpCheck = c.mrpCheck;
+          out.mrpHold = c.mrpHold;
+        }
         if (ctx.screens.has("toHold")) out.toHold = c.toHold;
       }),
     );

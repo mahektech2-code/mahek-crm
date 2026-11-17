@@ -75,12 +75,20 @@ export function OrderThread({ row, canEdit, defaultOpen = false, showCustomer = 
         <span className="min-w-0">{orderSummary(row)}</span>
         {editable ? (
           <span className="ml-auto flex gap-2">
-            <Button size="sm" onClick={() => setEditing(true)}>
-              Change
-            </Button>
-            <Button size="sm" onClick={() => setCancelling(true)}>
-              Cancel TO
-            </Button>
+            {j.state === "correction" ? (
+              <Button size="sm" variant="primary" onClick={() => setEditing(true)}>
+                Correct and send
+              </Button>
+            ) : (
+              <>
+                <Button size="sm" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button size="sm" onClick={() => setCancelling(true)}>
+                  Cancel TO
+                </Button>
+              </>
+            )}
           </span>
         ) : null}
       </div>
@@ -88,10 +96,10 @@ export function OrderThread({ row, canEdit, defaultOpen = false, showCustomer = 
       {open ? (
         <div className="mt-2 rounded-card border border-divider px-3">
           <JourneyEvents journey={j} />
-          <p className="py-2 text-[12px] text-muted">{j.editable ? "Only a TO can be changed. Once it has its order number, it cannot be changed." : j.orderNo != null ? "This order has its order number, so it can no longer be changed." : ""}</p>
+          <p className="py-2 text-[12px] text-muted">{j.editable ? "You can change it until Accounts approve it." : j.orderNo != null ? "Approved: changes in the ERP." : ""}</p>
         </div>
       ) : null}
-      {editing && row.intakeId ? <EditToDialog key={row.intakeId} intakeId={row.intakeId} onClose={() => setEditing(false)} /> : null}
+      {editing && row.intakeId ? <EditToDialog key={row.intakeId} intakeId={row.intakeId} correcting={j.state === "correction"} onClose={() => setEditing(false)} /> : null}
       {cancelling && row.intakeId ? <CancelToDialog intakeId={row.intakeId} title={j.title} onClose={() => setCancelling(false)} /> : null}
     </div>
   );
@@ -99,7 +107,7 @@ export function OrderThread({ row, canEdit, defaultOpen = false, showCustomer = 
 
 type Line = { skuId: string; name: string; qtyCans: string; ratePaise: number | null };
 
-export function EditToDialog({ intakeId, onClose }: { intakeId: string; onClose: () => void }) {
+export function EditToDialog({ intakeId, onClose, correcting = false }: { intakeId: string; onClose: () => void; correcting?: boolean }) {
   const router = useRouter();
   const { run } = useToast();
   const [state, setState] = React.useState<{ toNo: number; lines: Line[]; remark: string } | null>(null);
@@ -143,12 +151,12 @@ export function EditToDialog({ intakeId, onClose }: { intakeId: string; onClose:
       open
       onClose={onClose}
       width={620}
-      title={state ? `Change TO-${state.toNo}` : "Change the TO"}
+      title={state ? `${correcting ? "Correct" : "Change"} TO-${state.toNo}` : "Change the TO"}
       footer={
         <>
           <Button onClick={onClose}>Close</Button>
           <Button variant="primary" disabled={!state || busy} onClick={save}>
-            Save · checks start again
+            {correcting ? "Correct and send" : "Save"}
           </Button>
         </>
       }
@@ -157,7 +165,7 @@ export function EditToDialog({ intakeId, onClose }: { intakeId: string; onClose:
       {error ? <p className="mb-3 text-sm text-danger">{error}</p> : null}
       {state ? (
         <div className="flex flex-col gap-3">
-          <p className="text-[13px] text-muted">The back office and the Production Head check it again after a change. A product you add is priced from the shop&apos;s list.</p>
+          <p className="text-[13px] text-muted">Accounts check it again after a change. A product you add is priced from the shop&apos;s list.</p>
           <ul className="divide-y divide-divider rounded-card border border-divider">
             {state.lines.map((l, i) => (
               <li key={l.skuId} className="flex items-center gap-3 px-3 py-2 text-sm">
@@ -191,7 +199,7 @@ export function EditToDialog({ intakeId, onClose }: { intakeId: string; onClose:
               }}
             />
           </Field>
-          <Field label="Note for the Order Hub" optional>
+          <Field label="Note for Accounts" optional>
             <Textarea rows={2} value={state.remark} onChange={(e) => setState({ ...state, remark: e.target.value })} />
           </Field>
         </div>
@@ -200,7 +208,7 @@ export function EditToDialog({ intakeId, onClose }: { intakeId: string; onClose:
   );
 }
 
-function CancelToDialog({ intakeId, title, onClose }: { intakeId: string; title: string; onClose: () => void }) {
+export function CancelToDialog({ intakeId, title, onClose }: { intakeId: string; title: string; onClose: () => void }) {
   const router = useRouter();
   const { run } = useToast();
   const [reason, setReason] = React.useState("");

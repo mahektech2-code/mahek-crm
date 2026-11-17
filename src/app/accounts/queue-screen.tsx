@@ -44,7 +44,10 @@ export function QueueScreen({
   canDecide,
   staleHours,
   quietDays,
+  title,
 }: {
+  /** Overrides the queue's own heading (Order approvals draws the TO queue above this one). */
+  title?: string;
   kind: QueueKind;
   rows: QueueRow[];
   canDecide: boolean;
@@ -112,7 +115,7 @@ export function QueueScreen({
   return (
     <div className="px-6 pt-6 pb-12">
       <div className="w-full min-w-0">
-        <ScreenHeader title={copy.title} subtitle={copy.subtitle} />
+        <ScreenHeader title={title ?? copy.title} subtitle={copy.subtitle} />
 
         <MetricRow metrics={metrics} />
 

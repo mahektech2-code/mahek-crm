@@ -2197,6 +2197,19 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE orders ADD COLUMN journeySteps TEXT;`,
   ],
 
+  /*
+   * THE ORDER HUB, OPTION A: Accounts approve a TO, send it back or decline
+   * it, and an order sent with no signal may be marked a POSSIBLE DUPLICATE of
+   * another TO. `journeyState` is where it is as a code (`lib/order-journey.ts`'s
+   * `JourneyState`), `journeyReason` is Accounts' words, `duplicateOfToNo` the
+   * TO it may be. NULL until the office describes the order.
+   */
+  [
+    `ALTER TABLE orders ADD COLUMN journeyState TEXT;`,
+    `ALTER TABLE orders ADD COLUMN journeyReason TEXT;`,
+    `ALTER TABLE orders ADD COLUMN duplicateOfToNo INTEGER;`,
+  ],
+
 ];
 
 /**

@@ -1,26 +1,32 @@
-## Why two checks, and why no edits after them
+## Why Accounts make the order number
 
-An order used to get its number the moment it was typed, and the back office verified it afterwards. Production could start, and the order could be edited, while nobody had looked at it. Now nothing downstream sees an order until two people have: the TO lives in its own tables and is invisible to stock, the production plan, the order book and the customer.
+The hub first asked the back office and the Production Head to check every TO, and then asked Accounts to approve the order and the Production Head to clear it again. The back office was Accounts, so each desk looked at every order twice. Now each desk looks once: **Accounts** approve the TO (checking what was entered, the customer and their credit), and approving makes the order number; the **Production Head**'s one check is the MRP check.
 
-The two checks are two **people**. Whoever made one cannot make the other, so an order never gets its number on one person's say-so. An ERP administrator is the one exception, as with the invoice check.
+Accounts may change the lines while they review - product, cans, rate, discount, a line added or taken off - for that order only. They never change the parties or the godown; a wrong one is sent back to whoever took it. Every line needs a rate before it can be approved, and Accounts fill one that is missing.
 
-Once the order number exists, the order is what was checked and what Accounts approve. Changing it afterwards would mean Accounts approved one order and the floor made another, so the content is fixed and the only way to change it is to cancel it and take a new one.
+## Duplicates
+
+Orders are shared on WhatsApp groups and get punched by more than one person. A **duplicate** is the same day, the same billing party AND the same delivery party, and exactly the same items. The same billing party with a different delivery party is a different order (a distributor ordering for two shops).
+
+The check runs when the order is saved, on all three doors, and again inside the save so two people saving at once cannot both get through. The person punching answers **Same order** (nothing is created, and whoever punched the first one is told) or **Different order** (with a reason, kept on the TO). A Salesman App order sent with no signal is never lost: it is created and marked **Possible duplicate** for Accounts. The one-line comparison is written by an AI model where one is set up (<Setting k="erp.orders.duplicateAiModel" />); the match is always decided by the rule. <Setting k="erp.orders.duplicateCheck" /> switches the check off.
+
+## Editing until Bill it
+
+Until it is billed, the Production Head can change an order in the ERP, and nothing is approved again. Lots allocated to, and boxes scanned onto, a line whose product changes, that is taken off or whose cans drop go back to the shelf, and a Ready line the shelf no longer covers goes back to Under Process. Whoever took the order can change it only until Accounts approve it.
 
 ## The gates after the order number
 
-Every order the hub makes carries two checks on its lines:
+- **Accounts** - approved when the order number is made.
+- **Production** - Pending until the Production Head clears it at the MRP check.
 
-- **Accounts** — Pending until Accounts approve it. The order waits in their approval queue.
-- **Production** — Pending until the Production Head clears it at the MRP check.
+A line reaches Under Process, the day's plan, Ready and billing only when both are cleared. Every order from before the hub carries both as cleared.
 
-A line reaches Under Process, the day's plan, Ready and billing only when both are cleared. Every order from before the hub carries both as cleared, so nothing that was already moving stopped.
-
-The MRP check reads stock as it is now. It is shared with every other order, so it says what is there, not what is promised elsewhere. MahekOne does not know the floor's capacity, so capacity is the Production Head's tick.
+The MRP check reads stock as it is now. MahekOne does not know the floor's capacity, so capacity is the Production Head's tick. Releasing a production hold clears the order.
 
 ## The settings it depends on
 
-The hub runs with the ERP as the order book: <Setting k="erp.orders.live" />. With it off, TeleCRM and Salesman App orders go to Accounts the old way and do not enter the hub.
+The hub runs with the ERP as the order book: <Setting k="erp.orders.live" />. With it off, TeleCRM and Salesman App orders go to Accounts the old way and do not enter the hub. Accounts' deadline (<Setting k="accountsSla.hours" />) runs from the moment a TO lands.
 
 ## Holds
 
-A TO's hold is kept on the TO. An order's hold is a row in the order holds, with the **department** that held it. Releasing sends the order back to that desk, never past it. The customer reads only the customer wording, never a staff remark, and is not messaged about a hold before Accounts have confirmed the order.
+A TO's hold is kept on the TO; an order's hold is a row with the **department** that held it. A production hold is internal unless the Production Head ticks **Tell the customer**; an internal hold never reaches the customer's tracking page or messages.

@@ -330,6 +330,23 @@ export const saveInteractionSchema = z.object({
    * from. It changes nothing about the call itself.
    */
   aiDraftId: z.string().optional(),
+
+  /* ------------------------------------------- the duplicate order check --
+   *
+   * Asked BEFORE this save (`checkCallOrderDuplicateAction`), because a
+   * refusal inside the call's transaction would lose the call. The panel
+   * sends back what the telecaller answered:
+   *
+   * `sameOrderAs` - "Same order - don't create": the call is still saved, its
+   * outcome still says an order was received, and no order or TO is made; the
+   * person who punched the first one is told. `duplicateDecision` - "Different
+   * order - create it", with the reason, which the TO carries for Accounts.
+   * Both only mean anything while the ERP takes the orders.
+   */
+  sameOrderAs: z.string().min(1).optional(),
+  duplicateDecision: z
+    .object({ decision: z.literal("different"), ofId: z.string().min(1), reason: z.string().trim().min(1).max(300) })
+    .optional(),
 });
 
 export type SaveInteractionInput = z.input<typeof saveInteractionSchema>;
@@ -1101,10 +1118,33 @@ export async function saveInteraction(
   /* Whether orders go through the ERP's Order Hub: only once the ERP is the order book. */
   const hubLive = config["erp.orders.live"] === true;
   let toNumber: number | null = null;
+  /*
+   * SAME ORDER: the telecaller was shown a TO already punched for the same
+   * parties, the same day and the same items, and said it is that order. The
+   * call is saved as an order received; no `orders` row and no TO are made,
+   * because a second row would put the order in front of Accounts twice.
+   * Checked again here - the first one may have been cancelled meanwhile, and
+   * then nothing would stand for this order at all.
+   */
+  let sameOrderToNo: number | null = null;
+  if (input.sameOrderAs && hubLive && (isOrderReceived || input.outcome === "order_taken")) {
+    const { sameOrdersFor } = await import("../erp/order-hub");
+    const found = await sameOrdersFor(db, {
+      billingId: billingCustomer.id,
+      deliveryId: deliveryCustomerId ?? billingCustomer.id,
+      date: isOrderReceived ? input.orderDate! : day,
+      lines: lines.map((l) => ({ skuId: l.productId, qtyCans: l.quantity })),
+    });
+    const match = found.find((f) => f.id === input.sameOrderAs);
+    if (!match) {
+      return err("The order it looked like has changed or been cancelled. Save again to check.", "rule_violation");
+    }
+    sameOrderToNo = match.toNo;
+  }
   let toIntakeId: string | null = null;
   await db.transaction(async (tx) => {
     /* ------------------------------------------------------------- order */
-    if (isOrderReceived || input.outcome === "order_taken") {
+    if ((isOrderReceived || input.outcome === "order_taken") && sameOrderToNo == null) {
       // Rates are not held in the system yet, so an order records quantities
       // and a zero value. Flagged, because it leaves target achievement,
       // EOD order value and shortfall analysis all reading zero.
@@ -1794,7 +1834,7 @@ export async function saveInteraction(
               // Monday for Friday's WhatsApp is not today.
               occurredAt: orderedAtTs ?? now,
               actorUserId: ctx.user.id,
-              summary: hubLive ? `Order taken by ${ctx.user.name} — with the Order Hub for its checks` : `Order taken by ${ctx.user.name} — awaiting approval by accounts`,
+              summary: hubLive ? `Order taken by ${ctx.user.name} - waiting for Accounts to approve it` : `Order taken by ${ctx.user.name} — awaiting approval by accounts`,
             },
           ]
         : []),
@@ -1856,6 +1896,10 @@ export async function saveInteraction(
           })),
         },
         tx as never,
+        /* Inside the call's transaction a duplicate never stops the save: what
+           the telecaller answered is carried, and an unanswered one (an older
+           page, or a TO punched since the check) is marked possible. */
+        { duplicate: input.duplicateDecision ?? null, onDuplicate: "flag" },
       );
       toNumber = made.toNo;
       toIntakeId = made.id;
@@ -2057,6 +2101,10 @@ export async function saveInteraction(
     const { tellNewIntake } = await import("../erp/order-hub");
     await tellNewIntake(toNumber).catch(() => undefined);
   }
+  if (sameOrderToNo != null && input.sameOrderAs) {
+    const { tellSameOrder } = await import("../erp/order-hub");
+    await tellSameOrder(input.sameOrderAs, ctx.user.id).catch(() => undefined);
+  }
 
   /* ------------------------------------------------ what happens next
    *
@@ -2108,7 +2156,9 @@ export async function saveInteraction(
      * teaches them the list keeps itself.
      */
     toNumber != null
-      ? `Order taken: TO-${toNumber}. The back office and the Production Head check it; then it gets its order number`
+      ? `Order taken: TO-${toNumber}. Accounts approve it; approving gives it its order number`
+      : sameOrderToNo != null
+      ? `Call saved. It is the same order as TO-${sameOrderToNo}, so no new order was made`
       : complaintUpdated
       ? "Added to the open complaint"
       : remindersClosed

@@ -43,8 +43,7 @@ export default function OrderSent() {
 
   const title = order ? (orderTitle(order) ?? 'Order saved') : 'Order saved';
   const steps = order ? journeyStepsOf(order) : [];
-  const checked = steps.find((s) => s.key === 'checked');
-  const check = (key: 'backOffice' | 'production') => (checked?.state === 'done' || checked?.[key] ? 'done' : 'waiting');
+  const accounts = steps.find((s) => s.key === 'accounts');
   const editable = order ? (order.journeyEditable != null ? order.journeyEditable === 1 : order.status === 'submitted' || order.status === 'pending_approval') : false;
   const queued = order?.syncState === 'queued';
 
@@ -95,22 +94,20 @@ export default function OrderSent() {
 
       <View style={{ paddingHorizontal: 16, paddingTop: 16, gap: 12 }}>
         <View style={card}>
-          <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{order?.erpOrderNo != null ? 'Order number made' : 'With order check'}</T>
+          <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{order?.erpOrderNo != null ? 'Order number made' : 'Waiting for Accounts'}</T>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }}>
             {queued
-              ? 'Saved on this phone. It gets its TO number when it reaches the office. Then the back office and the Production Head check it.'
-              : 'The back office and the Production Head check it. When both have, it gets its order number and goes to accounts.'}
+              ? 'Saved on this phone. It gets its TO number when it reaches the office. Then Accounts check it.'
+              : 'Accounts check it. Approving it makes the order number, and then the Production Head checks the materials.'}
           </T>
           <View style={{ marginTop: 10, gap: 6 }}>
-            <Row label="Back office" value={check('backOffice') === 'done' ? 'checked' : 'waiting'} done={check('backOffice') === 'done'} />
-            <Row label="Production Head" value={check('production') === 'done' ? 'checked' : 'waiting'} done={check('production') === 'done'} />
-            <Row label="Accounts" value={order?.erpOrderNo != null ? 'checking' : 'after the order number'} done={false} />
+            <Row label="Accounts" value={order?.erpOrderNo != null || accounts?.state === 'done' ? 'approved' : accounts?.state === 'hold' ? (accounts.label ?? 'on hold') : 'waiting'} done={order?.erpOrderNo != null || accounts?.state === 'done'} />
           </View>
         </View>
 
         {editable ? (
           <View style={{ backgroundColor: C.warnBg, borderWidth: 1, borderColor: C.warnEdge, borderRadius: 16, padding: 14 }}>
-            <T style={{ fontSize: 13, lineHeight: 19, color: C.ink }}>You can still change this order. Once it has its order number, ask the office to change it.</T>
+            <T style={{ fontSize: 13, lineHeight: 19, color: C.ink }}>You can still change this order. Once Accounts approve it, ask the office to change it.</T>
           </View>
         ) : null}
 
