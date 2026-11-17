@@ -3,7 +3,7 @@
  * decision. Configuration and the clock come in as arguments.
  * ------------------------------------------------------------------------- */
 
-import { tmin } from "../time";
+import { hhmm, tmin } from "../time";
 
 export type AttendanceCfg = {
   graceMinutes: number;
@@ -69,15 +69,19 @@ export function hms(min: number): string {
 
 export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string): DayFigures {
   const qr = r.method === "qr";
-  const grace = qr ? cfg.qrGraceMinutes : cfg.graceMinutes;
   const inM = tmin(r.checkIn);
   const outM = tmin(r.checkOut);
   const offIn = tmin(r.officialIn);
   const durationMin = inM != null && outM != null ? outM - inM : null;
   const workedMin = durationMin == null ? null : durationMin - (r.stoppageMin || 0);
-  const lateMin = inM != null && offIn != null ? inM - offIn : null;
-  const lateOrEarlyMin = inM != null && offIn != null ? offIn + grace - inM : null;
-  const lateBeyondGrace = lateOrEarlyMin != null && lateOrEarlyMin < 0;
+  /* NO LATE, NO GRACE (Nov 2026). People punch in whenever they choose: a
+     day is never marked late, and nothing downstream (the monthly report,
+     performance, the payroll late-mark deduction) has a lateness to count.
+     The fields stay, always empty, so every reader keeps working; the office
+     start time is still shown where "Late 12 min" used to be. */
+  const lateMin = null;
+  const lateOrEarlyMin = null;
+  const lateBeyondGrace = false;
   const target = r.targetMin ?? null;
   const pct = workedMin != null && target ? Math.round((workedMin * 100) / target) : null;
   let workDay: DayFigures["workDay"] = "";
@@ -98,7 +102,7 @@ export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string):
     lateMin,
     lateOrEarlyMin,
     lateBeyondGrace,
-    lateTxt: lateMin == null ? "No timing set" : lateMin > 0 ? `Late ${lateMin} min` : lateMin < 0 ? `Early ${-lateMin} min` : "On time",
+    lateTxt: offIn != null ? `Office from ${hhmm(offIn)}` : "",
     pct,
     workDay,
     current,

@@ -142,17 +142,6 @@ const PHASE_PILL: Record<string, { text: string; cls: string }> = {
   done: { text: "Punched out", cls: "bg-canvas text-muted" },
 };
 
-/** "on time" or "late by 12 min", against the office's opening and its grace. */
-export function punctuality(firstIn: number | null, officialIn: string | null, grace: number): string | null {
-  if (!firstIn || !officialIn) return null;
-  const [h, m] = officialIn.split(":").map(Number);
-  /* The office's opening on the same IST day as the punch-in. */
-  const ist = new Date(firstIn + 5.5 * 3_600_000);
-  const openUtc = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(), h, m) - 5.5 * 3_600_000;
-  const late = Math.floor((firstIn - openUtc) / 60_000);
-  return late > grace ? `late by ${longDur(late * 60_000)}` : "on time";
-}
-
 /** The day and what can be done with it — the header timer's menu. */
 export function DayPanel({ onBreak, onOut, onDone }: { onBreak: () => void; onOut: () => void; onDone?: () => void }) {
   const w = useWorkday()!;
@@ -162,7 +151,6 @@ export function DayPanel({ onBreak, onOut, onDone }: { onBreak: () => void; onOu
   const reasons = [...new Set(state.breaks.map((b) => (b.kind === "auto_break" ? "Auto-break" : b.kind === "away" ? "Away" : (b.reason?.split(" · ")[0] ?? "Break"))))];
   const toGo = Math.max(0, state.presentMin * 60_000 - w.workedMs);
   const first = state.sessions[0]?.in ?? null;
-  const punct = punctuality(first, state.officialIn, state.graceMinutes);
   const pill = state.phase === "working" && state.offDay ? { text: "Extra work", cls: "bg-brand-soft text-brand-deep" } : PHASE_PILL[state.phase];
   const ended = state.phase === "done" || state.phase === "auto_out";
 
@@ -189,7 +177,7 @@ export function DayPanel({ onBreak, onOut, onDone }: { onBreak: () => void; onOu
       {first ? <DayTimeline /> : null}
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
         <dt className="text-muted">Punched in</dt>
-        <dd className="font-medium">{first ? `${at(first)}${punct ? ` · ${punct}` : ""}` : "Not yet"}</dd>
+        <dd className="font-medium">{first ? at(first) : "Not yet"}</dd>
         <dt className="text-muted">Breaks</dt>
         <dd className="font-medium">{state.breaks.length ? `${longDur(breaksMs)} · ${reasons.join(", ")}` : "None"}</dd>
         {!state.offDay && !ended ? (

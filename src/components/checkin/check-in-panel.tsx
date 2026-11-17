@@ -237,7 +237,7 @@ export function CheckInPanel({ state, canHelp, onDone }: { state: CheckInState; 
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 text-[13px]">
-                <span className={cx("font-medium", t.lateBad ? "text-danger" : "text-success")}>{t.late}</span>
+                {t.late ? <span className="text-muted">{t.late}</span> : null}
                 {t.remark ? <span className="text-muted">{t.remark}</span> : null}
               </div>
               {t.out ? (
