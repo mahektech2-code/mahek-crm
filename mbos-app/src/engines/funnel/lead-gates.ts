@@ -131,15 +131,34 @@ export const PROSPECT_CONDITIONS: readonly Condition[] = [
  * stays where it is and is simply never read.
  * ---------------------------------------------------------------------------
  */
+/*
+ * THE SEVEN QUESTIONS (Nov 2026) — these replace the eight above on the
+ * Qualification page. They are SEPARATE from the fourteen the Sales Manager
+ * verifies before Qualification opens: GST, the decision maker and the buyer are
+ * asked there and are not asked again here.
+ *
+ *   product_wanted        the product chosen at Prospect, shown and not re-asked,
+ *                         with room for another
+ *   price_discussed       what price was discussed, and how they took it
+ *   credit_days           the credit days agreed
+ *   application_understood  what they will use it on
+ *   delivery_workable     OPTIONAL — where, how long, and does that suit them
+ *   trial_plan            OPTIONAL — product and pack, quantity, who tests, how long
+ *   next_step_dated       the follow-up: a date and a note
+ *
+ * An `optional` question is drawn and saved like the rest but never holds the
+ * Sample / Trial gate. The retired ids (`gst_verified`, `people_identified`,
+ * `price_and_credit`, `willing_to_test`) are simply no longer read: the answers
+ * stay where they were stored and nothing is rewritten.
+ */
 export const QUALIFICATION_CONDITIONS: readonly Condition[] = [
-  { id: "gst_verified", says: "Get their GST number — your Sales Manager validates it at review" },
+  { id: "product_wanted", says: "Confirm the product they want, and add another if they need one" },
+  { id: "price_discussed", says: "Discuss the price, and note how they took it" },
+  { id: "credit_days", says: "Agree the credit days" },
   { id: "application_understood", says: "Find out what they will use it on" },
-  { id: "trial_plan", says: "Agree the trial: the product and pack, the quantity, who will test it and for how long" },
-  { id: "people_identified", says: "Name who decides, who places the order and who pays" },
-  { id: "price_and_credit", says: "Discuss price and credit, and note how they took it" },
-  { id: "delivery_workable", says: "Say where we deliver and how long it takes, and whether that suits them" },
-  { id: "willing_to_test", says: "Check they will still test it, now they know the price, credit and delivery" },
-  { id: "next_step_dated", says: "Agree what happens if the trial goes well, and by when" },
+  { id: "delivery_workable", says: "Say where we deliver, how long it takes and whether that suits them", optional: true },
+  { id: "trial_plan", says: "Plan the trial: the product and pack, the quantity, who will test it and for how long", optional: true },
+  { id: "next_step_dated", says: "Set the follow-up date and note" },
 ] as const;
 
 /**
@@ -148,12 +167,15 @@ export const QUALIFICATION_CONDITIONS: readonly Condition[] = [
  * by a stale screen is dropped rather than stored.
  */
 export const QUALIFICATION_ANSWER_KEYS = [
+  /* product_wanted — the product itself is a Prospect column; this is the rest */
+  "other_products",
   /* trial_plan */
   "trial_product",
   "trial_pack",
   "trial_quantity",
   "trial_tester",
   "trial_duration",
+  "trial_notes",
   /* people_identified — the decision maker is a Prospect column. The buyer's name
      is the web's `lead_buyer` column OR `buyer_name` here: the handset has no
      way to write that column, and the Salesman works on the handset. */
@@ -500,8 +522,15 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       const isDistributorLadder = i.salesType === "distributor";
       if (!isDistributorLadder) {
         out.push(
-          ...missingFrom(QUALIFICATION_CONDITIONS, (c) => {
+          ...missingFrom(QUALIFICATION_CONDITIONS.filter((c) => !c.optional), (c) => {
             switch (c.id) {
+              case "product_wanted": return has(i.requiredProductId);
+              case "price_discussed":
+                return (
+                  answered(q, "price_range") &&
+                  (PRICE_REACTIONS as readonly string[]).includes(textOf(q, "price_reaction"))
+                );
+              case "credit_days": return has(i.creditDaysWanted);
               /* EVERY ONE OF THE EIGHT READS A STORED ANSWER. A ticked box beside
                  an empty field is exactly the state this engine exists to stop,
                  so the gate reads the value and there is no tick to satisfy it.
@@ -956,6 +985,7 @@ export function qualificationAnswerSummary(id: string, i: LeadGateInput): string
         t("trial_quantity"),
         t("trial_tester") ? `tested by ${t("trial_tester")}` : "",
         t("trial_duration"),
+        t("trial_notes"),
       ]);
     case "people_identified":
       return join([
@@ -969,12 +999,12 @@ export function qualificationAnswerSummary(id: string, i: LeadGateInput): string
               : "",
         t("payer") ? `pays: ${t("payer")}` : isYes(q, "payer_same") ? "pays: the same person" : "",
       ]);
-    case "price_and_credit":
-      return join([
-        t("price_range"),
-        i.creditDaysWanted !== null && i.creditDaysWanted !== undefined ? `credit ${i.creditDaysWanted} days` : "",
-        t("price_reaction"),
-      ]);
+    case "product_wanted":
+      return join([i.requiredProductId ? "the product chosen at Prospect" : "", t("other_products") ? `also: ${t("other_products")}` : ""]);
+    case "price_discussed":
+      return join([t("price_range"), t("price_reaction")]);
+    case "credit_days":
+      return i.creditDaysWanted !== null && i.creditDaysWanted !== undefined ? `${i.creditDaysWanted} days` : "";
     case "delivery_workable":
       return join([
         t("delivery_location"),

@@ -29,7 +29,7 @@ const ALL_QUAL = new Set(QUALIFICATION_CONDITIONS.map((c) => c.id));
    Qualification questions whose only answer is already a Suspect row. Each is
    the same stored answer, so the review draws it once, on the Suspect row. */
 const PROSPECT_REPEATS = ["customer_type", "monthly_litres", "competitor", "required_product", "gstin"];
-const QUALIFICATION_REPEATS = ["gst_verified", "application_understood"];
+const QUALIFICATION_REPEATS = ["credit_days", "application_understood"];
 const PROSPECT_ONLY = PROSPECT_CONDITIONS.filter((c) => !PROSPECT_REPEATS.includes(c.id));
 const QUALIFICATION_ONLY = QUALIFICATION_CONDITIONS.filter((c) => !QUALIFICATION_REPEATS.includes(c.id));
 
@@ -102,14 +102,14 @@ describe("every CURRENT question is on the review", () => {
   test("the Qualification questions that add something the review has not already drawn", () => {
     assert.deepEqual(rows.filter((r) => r.section === "qualification").map((r) => r.id), QUALIFICATION_ONLY.map((c) => c.id));
   });
-  test("the whole review is 20 unique rows, the Prospect-stage one 14", () => {
-    assert.equal(rows.length, 20);
+  test("the whole review is 19 unique rows, the Prospect-stage one 14", () => {
+    assert.equal(rows.length, 19);
     assert.equal(buildReviewRows(EMPTY, { ...READER, kind: "prospect" }).length, 14);
   });
-  test("the counts are the current ones: 11, 8 (GST number added) and 8", () => {
+  test("the counts are the current ones: 11, 8 and 7", () => {
     assert.equal(DESK_FIELDS.length, 11);
     assert.equal(PROSPECT_CONDITIONS.length, 8);
-    assert.equal(QUALIFICATION_CONDITIONS.length, 8);
+    assert.equal(QUALIFICATION_CONDITIONS.length, 7);
   });
   test("the two optional Prospect questions are drawn, but are not 'required'", () => {
     const rows = buildReviewRows(EMPTY, READER);
@@ -136,18 +136,18 @@ describe("every CURRENT question is on the review", () => {
   test("Qualification keeps only the part of a shared question that nothing above asked", () => {
     const r = buildReviewRows(FULL, APPROVER);
     const boxes = (key: string) => r.find((x) => x.key === key)!.fields.map((f) => f.id);
-    assert.deepEqual(boxes("qualification:people_identified"), ["decision_maker_phone", "buyer_same", "buyer_phone", "payer", "payer_same", "payer_phone"]);
-    assert.deepEqual(boxes("qualification:price_and_credit"), ["price_range", "price_reaction"]);
+    assert.deepEqual(boxes("qualification:product_wanted"), ["other_products"]);
+    assert.deepEqual(boxes("qualification:price_discussed"), ["price_range", "price_reaction"]);
   });
   test("before Qualification opens its questions are not built, and the Prospect review is 14 rows", () => {
     const r = buildReviewRows(FULL, { ...APPROVER, kind: "prospect" });
     assert.equal(r.some((x) => x.section === "qualification"), false);
     assert.equal(r.length, 14);
   });
-  test("a duplicate's gate verdict is kept on the one row: GST not yet validated reads as unanswered at Qualification only", () => {
-    const pending = { ...FULL, unmetQualification: new Set(["gst_verified"]) };
-    assert.equal(buildReviewRows(pending, APPROVER).find((x) => x.key === "suspect:gstin")!.answered, false);
-    assert.equal(buildReviewRows(pending, { ...APPROVER, kind: "prospect" }).find((x) => x.key === "suspect:gstin")!.answered, true);
+  test("a duplicate's gate verdict is kept on the one row: credit days not yet agreed reads as unanswered at Qualification only", () => {
+    const pending = { ...FULL, unmetQualification: new Set(["credit_days"]) };
+    assert.equal(buildReviewRows(pending, APPROVER).find((x) => x.key === "suspect:creditDaysWanted")!.answered, false);
+    assert.equal(buildReviewRows(pending, { ...APPROVER, kind: "prospect" }).find((x) => x.key === "suspect:creditDaysWanted")!.answered, true);
     const unmetApplication = { ...FULL, unmetQualification: new Set(["application_understood"]) };
     assert.equal(buildReviewRows(unmetApplication, APPROVER).find((x) => x.key === "suspect:application")!.answered, false);
   });
@@ -165,7 +165,8 @@ describe("every CURRENT question is on the review", () => {
     /* `buyer_name` is the handset's alternative to the `lead_buyer` column; the
        Qualify screen draws no box for it either, and the review shows it as the
        buyer's value. */
-    for (const k of QUALIFICATION_ANSWER_KEYS.filter((k) => k !== "buyer_name")) assert.ok(boxed.has(k), `no box for ${k}`);
+    const RETIRED = ["buyer_name", "buyer_same", "buyer_phone", "decision_maker_phone", "payer", "payer_same", "payer_phone", "willing_to_test"];
+    for (const k of QUALIFICATION_ANSWER_KEYS.filter((k) => !RETIRED.includes(k))) assert.ok(boxed.has(k), `no box for ${k}`);
   });
   test("the boxes' labels and keys are the Qualify screen's own (drift guard)", () => {
     const screen = readFileSync("src/components/leads/record/qualify/qualify-screen.tsx", "utf8");
@@ -188,7 +189,7 @@ describe("saved answers are loaded and read as a person reads them", () => {
   });
   test("composite Qualification answers are read part by part", () => {
     assert.equal(fieldOf(rows, "qualification:trial_plan", "trial_product").value, "PU Thinner");
-    assert.equal(fieldOf(rows, "qualification:price_and_credit", "price_reaction").display, "Negotiating");
+    assert.equal(fieldOf(rows, "qualification:price_discussed", "price_reaction").display, "Negotiating");
     assert.equal(fieldOf(rows, "qualification:delivery_workable", "delivery_suits").display, "Yes");
   });
   test("the prospect reason and next action are shown", () => {
@@ -202,15 +203,15 @@ describe("answered is the GATE's verdict, and missing answers are flagged", () =
     assert.equal(reviewTally(buildReviewRows(FULL, APPROVER)).missingRequired, 0);
   });
   test("a question the gate lists as unmet is unanswered, whatever the columns say", () => {
-    const rows = buildReviewRows({ ...FULL, unmetQualification: new Set(["people_identified"]) }, APPROVER);
-    assert.equal(rows.find((r) => r.key === "qualification:people_identified")!.answered, false);
+    const rows = buildReviewRows({ ...FULL, unmetQualification: new Set(["price_discussed"]) }, APPROVER);
+    assert.equal(rows.find((r) => r.key === "qualification:price_discussed")!.answered, false);
     assert.equal(rows.find((r) => r.key === "qualification:trial_plan")!.answered, true);
   });
   test("a blank lead shows every required answer as missing", () => {
     const t = reviewTally(buildReviewRows(EMPTY, APPROVER));
     /* Six Suspect rows now carry a required question (customer type, litres, product,
-       competitor, GST, application), plus next action and the six Qualification rows. */
-    assert.equal(t.missingRequired, 13);
+       competitor, GST, application), plus next action and the Qualification rows that are their own (product, price, follow-up). */
+    assert.equal(t.missingRequired, 11);
   });
 });
 
@@ -240,7 +241,7 @@ describe("what an approver may edit — and what the CRM keeps for the Salesman"
     const rows = buildReviewRows(FULL, SALES_MANAGER);
     for (const [k, id] of [
       ["suspect:gstin", "gstin"], ["suspect:application", "application"], ["suspect:buyer", "buyer"], ["suspect:creditDaysWanted", "creditDaysWanted"],
-      ["qualification:trial_plan", "trial_product"], ["qualification:price_and_credit", "price_range"], ["qualification:next_step_dated", "next_step"],
+      ["qualification:trial_plan", "trial_product"], ["qualification:price_discussed", "price_range"], ["qualification:next_step_dated", "next_step"],
     ]) {
       const f = fieldOf(rows, k, id);
       assert.equal(f.editKey, null, k);

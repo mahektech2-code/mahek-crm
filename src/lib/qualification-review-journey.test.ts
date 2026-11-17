@@ -421,7 +421,7 @@ describe("the CRM's own division of labour: a Sales Manager reviews, the Salesma
     const lead = await seatedLead();
     const m = (await loadQualificationReview(lead.id, otherMgr))!;
     assert.equal(m.viewer.canDecide, true);
-    const f = m.rows.find((r) => r.key === "qualification:price_and_credit")!.fields.find((x) => x.id === "price_range")!;
+    const f = m.rows.find((r) => r.key === "qualification:price_discussed")!.fields.find((x) => x.id === "price_range")!;
     assert.equal(f.editKey, null);
     assert.match(f.readOnlyReason ?? "", /Salesman who owns this lead completes its Qualification/);
     assert.equal(m.rows.find((r) => r.key === "suspect:competitor")!.fields[0].editKey, "competitor");
@@ -470,7 +470,7 @@ describe("the review model", () => {
     );
     assert.deepEqual(
       m.rows.filter((r) => r.section === "qualification").map((r) => r.id),
-      QUALIFICATION_CONDITIONS.filter((c) => !["gst_verified", "application_understood"].includes(c.id)).map((c) => c.id),
+      QUALIFICATION_CONDITIONS.filter((c) => !["credit_days", "application_understood"].includes(c.id)).map((c) => c.id),
     );
     const f = (k: string, id: string) => m.rows.find((r) => r.key === k)!.fields.find((x) => x.id === id)!;
     assert.equal(f("suspect:monthlyLitres", "monthlyLitres").display, "300 Litres");
@@ -511,7 +511,7 @@ describe("the review model", () => {
       assert.ok(m, u.name);
       assert.equal(m.viewer.canDecide, false, u.name);
       assert.equal(m.rows.flatMap((r) => r.fields).filter((f) => f.editKey).length, 0, u.name);
-      assert.equal(m.rows.length, 20, "the consolidated review: each question once");
+      assert.equal(m.rows.length, 19, "the consolidated review: each question once");
     }
   });
 

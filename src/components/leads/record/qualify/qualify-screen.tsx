@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { cx, Input, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { Condition, GateVerdict } from "@/lib/engines/lead-gates";
 import { saveLeadQualification, saveProspectFields } from "@/lib/actions/leads";
@@ -75,7 +76,14 @@ type FieldSpec = {
   label?: string;
   /** The choices of a `choice` box, value then words. */
   options?: readonly { value: string; label: string }[];
+  /** Quick picks drawn under a text box; choosing one fills it. The box stays free text. */
+  suggestions?: readonly string[];
+  /** Draw the microphone on this box. */
+  voice?: boolean;
 };
+
+/** What a customer will use the product on. A starter list: "Other" is free text. */
+const APPLICATION_OPTIONS = ["Furniture", "Wood polish", "Automotive", "Industrial", "Construction", "Other"] as const;
 
 /**
  * Condition id → the column that answers it.
@@ -88,45 +96,15 @@ type FieldSpec = {
  * record, and a column named wrongly writes an answer into the wrong place.
  */
 const SHOP_FIELDS: Record<string, FieldSpec[]> = {
-  /* GST is a NUMBER the Salesman writes; the VALIDATION is the responsible Sales
-     Manager's, made as part of her review. It is not a tick: the gate reads
-     `customers.gst_verified` (with who and when), so the control for it is a
-     real action further down and this box is only the number. Changing the
-     number clears the validation and takes a standing approval away. */
-  gst_verified: [
-    { target: "prospect", key: "gstin", kind: "text", hint: "15 characters, as printed. Changing it clears any validation." },
+  /* 1. THE PRODUCT CHOSEN AT PROSPECT is shown, not asked again; another can be
+     added. The product itself is the Prospect column. */
+  product_wanted: [
+    { target: "prospect", key: "requiredProductId", kind: "product", label: "Product they want", hint: "Chosen at the previous stage" },
+    { target: "answer", key: "other_products", kind: "text", label: "Another product (optional)", hint: "Name it if they need one more" },
   ],
-  /* What they will use it on — and nothing more. There is no success criterion. */
-  application_understood: [
-    {
-      target: "prospect",
-      key: "application",
-      kind: "long",
-      hint: "What they will use it on.",
-    },
-  ],
-  trial_plan: [
-    { target: "answer", key: "trial_product", kind: "text", label: "Product", hint: "What we are sending for the trial" },
-    { target: "answer", key: "trial_pack", kind: "text", label: "Pack size", hint: "For example 20 L" },
-    { target: "answer", key: "trial_quantity", kind: "text", label: "Sample quantity", hint: "For example 2 cans" },
-    { target: "answer", key: "trial_tester", kind: "text", label: "Who will test it" },
-    { target: "answer", key: "trial_duration", kind: "text", label: "Expected trial duration", hint: "For example 7 days" },
-  ],
-  /* The decision maker and the buyer are Prospect columns; the payer has no
-     column. Where one person does two jobs, saying so is the answer. */
-  people_identified: [
-    { target: "prospect", key: "decisionMaker", kind: "text", label: "Who decides" },
-    { target: "answer", key: "decision_maker_phone", kind: "text", label: "Their phone (optional)" },
-    { target: "prospect", key: "buyer", kind: "text", label: "Who places the order", hint: "Leave empty and answer yes below if it is the same person" },
-    { target: "answer", key: "buyer_same", kind: "yesno", label: "Is the buyer the same person as the decision maker?" },
-    { target: "answer", key: "buyer_phone", kind: "text", label: "Buyer's phone (optional)" },
-    { target: "answer", key: "payer", kind: "text", label: "Who pays", hint: "Leave empty and answer yes below if it is the same person" },
-    { target: "answer", key: "payer_same", kind: "yesno", label: "Is the payer the same person as the decision maker?" },
-    { target: "answer", key: "payer_phone", kind: "text", label: "Payer's phone (optional)" },
-  ],
-  price_and_credit: [
+  /* 2. */
+  price_discussed: [
     { target: "answer", key: "price_range", kind: "text", label: "Price or range discussed" },
-    { target: "prospect", key: "creditDaysWanted", kind: "int", label: "Credit days requested", hint: "Days, 0 to 365", max: 365 },
     {
       target: "answer",
       key: "price_reaction",
@@ -139,18 +117,39 @@ const SHOP_FIELDS: Record<string, FieldSpec[]> = {
       ],
     },
   ],
+  /* 3. */
+  credit_days: [
+    { target: "prospect", key: "creditDaysWanted", kind: "int", label: "Credit days agreed", hint: "Days, 0 to 365", max: 365 },
+  ],
+  /* 4. A pick-list with "Other" as free text: the buttons fill the box. */
+  application_understood: [
+    {
+      target: "prospect",
+      key: "application",
+      kind: "long",
+      hint: "Pick one, or write it. Choose Other to say it in your own words.",
+      suggestions: APPLICATION_OPTIONS,
+    },
+  ],
+  /* 5. OPTIONAL — never holds the gate. */
   delivery_workable: [
     { target: "answer", key: "delivery_location", kind: "text", label: "Where we deliver" },
-    { target: "answer", key: "delivery_lead_time", kind: "text", label: "Lead time we quoted", hint: "For example 3 days" },
-    { target: "answer", key: "delivery_suits", kind: "yesno", label: "Does that timing suit them?" },
+    { target: "answer", key: "delivery_lead_time", kind: "text", label: "How long it takes", hint: "For example 3 days" },
+    { target: "answer", key: "delivery_suits", kind: "yesno", label: "Does that suit them?" },
   ],
-  /* ONLY A YES PASSES. A no is recorded, and the lead is held. */
-  willing_to_test: [
-    { target: "answer", key: "willing_to_test", kind: "yesno", label: "Will they still test it?", hint: "Ask this after price, credit and delivery. Only a yes passes." },
+  /* 6. OPTIONAL — with a microphone on the notes. */
+  trial_plan: [
+    { target: "answer", key: "trial_product", kind: "text", label: "Product", hint: "What we are sending for the trial" },
+    { target: "answer", key: "trial_pack", kind: "text", label: "Pack size", hint: "For example 20 L" },
+    { target: "answer", key: "trial_quantity", kind: "text", label: "Sample quantity", hint: "For example 2 cans" },
+    { target: "answer", key: "trial_tester", kind: "text", label: "Who will test it" },
+    { target: "answer", key: "trial_duration", kind: "text", label: "Expected trial duration", hint: "For example 7 days" },
+    { target: "answer", key: "trial_notes", kind: "long", label: "Notes", hint: "Speak or type", voice: true },
   ],
+  /* 7. */
   next_step_dated: [
-    { target: "answer", key: "next_step", kind: "long", label: "What happens if the trial goes well" },
-    { target: "answer", key: "next_step_date", kind: "date", label: "By when" },
+    { target: "answer", key: "next_step", kind: "long", label: "Follow-up note" },
+    { target: "answer", key: "next_step_date", kind: "date", label: "Follow-up date" },
   ],
 };
 
@@ -384,6 +383,9 @@ export function QualifyScreen({
   }
   function answered(c: Condition): boolean {
     if (unsaved(c)) return false;
+    /* An OPTIONAL question never appears in the gate's missing list, so the gate
+       cannot say whether it was answered: read the boxes. */
+    if (c.optional) return answeredLocally(c);
     if (verdict) return !(verdict.missing ?? []).some((m) => m.id === c.id);
     return answeredLocally(c);
   }
@@ -609,6 +611,7 @@ export function QualifyScreen({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[14px] font-medium text-ink">{c.says}</span>
                         {blocking ? <Pill tone="warn">Holding the gate</Pill> : null}
+                        {c.optional ? <Pill tone="neutral">Optional</Pill> : null}
                       </div>
 
                       {c.id === "buyer_confirmed" && decisionMaker ? (
@@ -1007,7 +1010,36 @@ function FieldControl({
 
   return (
     <div>
-      {spec.kind === "long" ? (
+      {spec.label && spec.kind === "long" ? (
+        <span className="mb-1 block text-[12.5px] text-muted">{spec.label}</span>
+      ) : null}
+      {spec.suggestions ? (
+        <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="application-options">
+          {spec.suggestions.map((o) => (
+            <button
+              key={o}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(o === "Other" ? "" : o)}
+              className={cx(
+                "rounded-[4px] border px-2.5 py-1 text-[12.5px]",
+                text.trim() === o ? "border-brand bg-brand-soft text-ink" : "border-line bg-surface text-body",
+              )}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {spec.kind === "long" && spec.voice ? (
+        <VoiceTextarea
+          rows={3}
+          disabled={disabled}
+          value={text}
+          onChange={(e) => onChange(e.target.value)}
+          onDictate={(v) => onChange(v)}
+        />
+      ) : spec.kind === "long" ? (
         <Textarea
           rows={2}
           disabled={disabled}

@@ -570,11 +570,11 @@ describe("Qualification is the Telecaller's, and it exists only after verificati
     assert.equal((await confirmLeadFigures({ customerId: lead.id })).ok, true);
     gate = await leadGateInput(lead.id);
     assert.equal(qualificationReadyForReview(gate!), true, "everything the owner collects is answered");
-    assert.equal(qualificationComplete(gate!), false, "the GST validation is still the manager's to make");
+    assert.equal(qualificationComplete(gate!), true, "GST is verified before Qualification now, so nothing else is asked of the owner");
     assert.deepEqual(
       gateTo(gate!, "sample_trial").missing.map((c) => c.id).sort(),
-      ["gst_verified", "manager_review_pending"],
-      "the manager's validation and review stand in the way, and nothing else",
+      ["manager_review_pending"],
+      "the manager's review stands in the way, and nothing else",
     );
 
     const after = await row(lead.id);
@@ -585,9 +585,8 @@ describe("Qualification is the Telecaller's, and it exists only after verificati
     const bells = await db.select().from(notifications).where(eq(notifications.userId, mgr.id));
     assert.equal(bells.filter((b) => /ready for your review/.test(b.title)).length, 1);
 
-    // The manager validates the number; only his review remains.
+    // Only the manager's review remains.
     setTestUser(mgr);
-    assert.equal((await validateGstin({ customerId: lead.id, valid: true })).ok, true);
     gate = await leadGateInput(lead.id);
     assert.equal(qualificationComplete(gate!), true);
     assert.deepEqual(gateTo(gate!, "sample_trial").missing.map((c) => c.id), ["manager_review_pending"]);

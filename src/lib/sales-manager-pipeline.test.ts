@@ -357,7 +357,7 @@ describe("R — the reads are counted in the database", () => {
     assert.equal(l.gate.kind, "requestSample", "every sample condition is met, so the engine's own verdict opens it");
     assert.equal(l.caps.canVerify, true);
     assert.equal(l.caps.canApproveSample, true);
-    assert.equal(l.qualItems.length, 8);
+    assert.equal(l.qualItems.length, 7);
     assert.ok(l.qualItems.every((q) => q.done), "the checklist is the engine's — and it agrees with the gate");
     assert.deepEqual(l.orders, []);
 
@@ -365,16 +365,13 @@ describe("R — the reads are counted in the database", () => {
   });
 
   test("a checklist that is short says which conditions, from the engine, and draws the checklist button", async () => {
-    const lead = await qualifiedLead({ leadQualification: { willing_to_test: "yes" }, gstVerified: false });
+    const lead = await qualifiedLead({ leadQualification: { next_step: "Call after the trial", next_step_date: "2026-12-01" } });
     const l = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(l.gate.kind, "qualify");
     assert.ok(l.qualItems.some((q) => !q.done));
-    const gst = l.qualItems.find((q) => q.id === "gst_verified")!;
-    assert.equal(gst.tickable, false, "a value on the record is never a box to tick");
     assert.ok(l.qualItems.every((q) => !q.tickable), "the Sales Manager reads answers; nothing on her checklist is a tick");
-    assert.equal(l.qualItems.find((q) => q.id === "trial_plan")!.done, false);
-    assert.equal(l.qualItems.find((q) => q.id === "willing_to_test")!.answer, "yes", "what was answered is shown, for the read-through");
-    assert.equal(l.gstState, "unchecked", "entered, nobody has validated it");
+    assert.equal(l.qualItems.find((q) => q.id === "price_discussed")!.done, false);
+    assert.equal(l.qualItems.find((q) => q.id === "next_step_dated")!.done, true, "what was answered is shown, for the read-through");
   });
 
   test("a regional manager cannot open a lead outside the patch, and the list does not draw it", async () => {
@@ -604,11 +601,11 @@ describe("M — every mutation persists, and the screen is told what the databas
   });
 
   test("qualification: ticks persist and merge, and the manager's review is recorded and holds the lead", async () => {
-    const lead = await qualifiedLead({ leadQualification: { willing_to_test: "yes" } });
+    const lead = await qualifiedLead({ leadQualification: { next_step: "Call after the trial", next_step_date: "2026-12-01" } });
     const before = (await pipelineLead(lead.id, DAY))!.lead;
-    assert.equal(before.qualItems.find((q) => q.id === "delivery_workable")!.done, false);
+    assert.equal(before.qualItems.find((q) => q.id === "price_discussed")!.done, false);
 
-    const rest = Object.fromEntries(Object.entries(QUALIFICATION_ANSWERS).filter(([k]) => k !== "willing_to_test"));
+    const rest = Object.fromEntries(Object.entries(QUALIFICATION_ANSWERS).filter(([k]) => k !== "next_step" && k !== "next_step_date"));
     const saved = await saveLeadQualification(lead.id, rest);
     assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
     assert.deepEqual(

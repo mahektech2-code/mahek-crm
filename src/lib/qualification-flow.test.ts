@@ -237,11 +237,11 @@ describe("A: a Salesman's lead, from the handset to an open Sample/Trial gate", 
     assert.equal(opened.leadNextAction, QUAL_NEXT.complete);
     assert.equal(opened.leadNextActionOwnerId, salesman.id);
 
-    /* He answers all eight. GST is entered, not yet validated. */
+    /* He answers the seven. GST is not one of them: it was verified before Qualification. */
     await salesmanAnswersAll(entityId);
     const stillOpen = await missingForSample(entityId);
-    assert.ok(stillOpen.includes("gst_verified"), "the number is entered, not yet validated");
-    for (const answered of ["application_understood", "trial_plan", "people_identified", "price_and_credit", "delivery_workable", "willing_to_test", "next_step_dated"]) {
+    assert.ok(!stillOpen.includes("gst_verified"), "GST is not asked at Qualification");
+    for (const answered of ["product_wanted", "price_discussed", "credit_days", "application_understood", "next_step_dated"]) {
       assert.ok(!stillOpen.includes(answered), answered + " is answered");
     }
 
@@ -251,15 +251,8 @@ describe("A: a Salesman's lead, from the handset to an open Sample/Trial gate", 
     assert.equal(handed.leadNextActionOwnerId, seema.id);
     assert.ok((await told(seema.id)).some((n) => /ready for your review/i.test(n.title)));
 
-    /* She validates GST, then verifies. */
+    /* She reviews. */
     asSeema();
-    const g = await validateGstin({ customerId: entityId, valid: true });
-    assert.equal(g.ok, true, g.ok ? "" : g.error);
-    const afterGst = await row(entityId);
-    assert.equal(afterGst.gstVerified, true);
-    assert.equal(afterGst.gstVerifiedById, seema.id, "who validated it is recorded");
-    assert.ok(afterGst.gstVerifiedAt, "and when");
-
     const r = await reviewLeadQualification({ customerId: entityId, verdict: "verified" });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     const done = await row(entityId);
@@ -284,27 +277,6 @@ describe("B: GST is validated by the Sales Manager, once, against the number it 
     await salesmanAnswersAll(lead.id);
     return lead;
   }
-
-  test("an invalid number blocks approval and goes back to the Salesman with its reason", async () => {
-    const lead = await readyForReview();
-    asSeema();
-    const noReason = await validateGstin({ customerId: lead.id, valid: false });
-    assert.equal(noReason.ok, false, "a refusal has to say what is wrong");
-
-    const refused = await validateGstin({ customerId: lead.id, valid: false, note: "The last four characters are wrong." });
-    assert.equal(refused.ok, true, refused.ok ? "" : refused.error);
-    assert.equal((await row(lead.id)).gstVerified, false);
-
-    const v = await reviewLeadQualification({ customerId: lead.id, verdict: "verified" });
-    assert.equal(v.ok, false, "cannot be verified over a refused number");
-    assert.match(!v.ok ? v.error : "", /GST/i);
-
-    const back = await row(lead.id);
-    assert.equal(back.leadNextAction, QUAL_NEXT.gst);
-    assert.equal(back.leadNextActionOwnerId, salesman.id);
-    assert.match(back.leadNextActionOutcome ?? "", /last four characters/);
-    assert.ok((await told(salesman.id)).some((n) => /GST number was refused/i.test(n.title) && /last four characters/.test(n.body ?? "")));
-  });
 
   test("correcting the number clears the refusal, and it can be validated and approved", async () => {
     const lead = await readyForReview();
@@ -336,7 +308,6 @@ describe("B: GST is validated by the Sales Manager, once, against the number it 
     const after = await row(lead.id);
     assert.equal(after.leadQualificationReview, null, "the approval no longer stands");
     assert.notEqual(after.gstVerified, true, "and neither does the validation");
-    assert.ok((await missingForSample(lead.id)).includes("gst_verified"));
   });
 
   test("nobody but the responsible Sales Manager validates it", async () => {
@@ -547,35 +518,38 @@ describe("F: 'verified' needs every answer and a validated number", () => {
     assert.equal((await verify(lead.id)).ok, true);
     await salesmanAnswersAll(lead.id);
     asSalesman();
-    assert.ok((await saveLeadQualification(lead.id, { delivery_location: "" })).ok);
+    assert.ok((await saveLeadQualification(lead.id, { price_range: "" })).ok);
 
     asSeema();
     assert.equal((await validateGstin({ customerId: lead.id, valid: true })).ok, true);
     const r = await reviewLeadQualification({ customerId: lead.id, verdict: "verified" });
     assert.equal(r.ok, false);
-    assert.match(!r.ok ? r.error : "", /deliver/i);
+    assert.match(!r.ok ? r.error : "", /price/i);
     assert.equal((await row(lead.id)).leadQualificationReview, null);
   });
 
-  test("without a validated number, even a complete checklist cannot be verified", async () => {
+  test("the seven questions' own answers are stored, and their shapes are checked", async () => {
     const lead = await makeProspect(salesman.id);
     asSeema();
     assert.equal((await verify(lead.id)).ok, true);
-    await salesmanAnswersAll(lead.id);
-    asSeema();
-    const r = await reviewLeadQualification({ customerId: lead.id, verdict: "verified" });
-    assert.equal(r.ok, false);
-    assert.match(!r.ok ? r.error : "", /GST/i);
-  });
-
-  test("a 'no' to willingness holds the lead", async () => {
-    const lead = await makeProspect(salesman.id);
-    asSeema();
-    assert.equal((await verify(lead.id)).ok, true);
-    await salesmanAnswersAll(lead.id);
     asSalesman();
-    assert.ok((await saveLeadQualification(lead.id, { willing_to_test: "no" })).ok);
-    assert.ok((await missingForSample(lead.id)).includes("willing_to_test"));
+    const ok = await saveLeadQualification(lead.id, {
+      other_products: "PU Sealer",
+      trial_notes: "Wants to test on teak",
+      price_range: "180 to 200 a litre",
+      price_reaction: "negotiating",
+      next_step: "Call after the trial",
+      next_step_date: "2026-12-01",
+    });
+    assert.ok(ok.ok, ok.ok ? "" : ok.error);
+    const q = (await row(lead.id)).leadQualification as Record<string, unknown>;
+    assert.equal(q.other_products, "PU Sealer");
+    assert.equal(q.trial_notes, "Wants to test on teak");
+    for (const bad of [{ price_reaction: "happy" }, { next_step_date: "next week" }, { next_step_date: "2026-13-45" }] as Array<Record<string, string>>) {
+      assert.equal((await saveLeadQualification(lead.id, bad)).ok, false, JSON.stringify(bad));
+    }
+    const tooLong = await saveLeadQualification(lead.id, { trial_notes: "x".repeat(501) });
+    assert.equal(tooLong.ok, false, "an answer over the length ceiling is refused");
   });
 
   test("an answer the gate cannot read is refused in words", async () => {
