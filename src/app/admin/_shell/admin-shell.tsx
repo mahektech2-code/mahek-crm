@@ -56,7 +56,7 @@ export function AdminShell({
 }) {
   const pathname = usePathname() ?? "/admin";
   const here = activeItem(pathname, pinned, groups);
-  const crumb = here ? (here.group ? `${here.group} › ${here.item.label}` : here.item.label) : "Admin Console";
+  const crumb = here ? (here.group && here.group !== here.item.label ? `${here.group} › ${here.item.label}` : here.item.label) : "Admin Console";
 
   return (
     <ToastProvider>
