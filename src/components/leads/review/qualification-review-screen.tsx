@@ -88,10 +88,7 @@ export function QualificationReviewScreen({
   const dirty = dirtyKeys.length > 0;
   /* At Qualification the approver may save with nothing changed: "read, nothing to
      correct". It is what opens the optional verification call. */
-  const canSaveUnchanged = (model.kind === "qualification" || model.combined) && model.call !== null;
-  /* The one review: the manager says here that the GST number checks out. */
-  const [gstChecked, setGstChecked] = React.useState(false);
-  const gstHolds = model.combined && model.gstNeedsCheck && !gstChecked;
+  const canSaveUnchanged = model.kind === "qualification" && model.call !== null;
 
   function build(): ReviewEdits {
     const edits: { fields: Record<string, string | number | null>; answers: Record<string, string> } = {
@@ -141,7 +138,7 @@ export function QualificationReviewScreen({
       const r =
         model.kind === "prospect"
           ? verdict === "verified"
-            ? await confirmProspectReview({ customerId: model.customerId, gstChecked: model.gstNeedsCheck ? gstChecked : undefined })
+            ? await confirmProspectReview({ customerId: model.customerId })
             : await returnProspectForCorrection({ customerId: model.customerId, note })
           : await reviewLeadQualification({ customerId: model.customerId, verdict, note });
       if (!r.ok) {
@@ -192,7 +189,7 @@ export function QualificationReviewScreen({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 id="qr-title" className="text-[16px] leading-[22px] font-semibold text-ink">
-                {model.kind === "prospect" && !model.combined ? "Prospect review — before Qualification" : "Qualification review"}
+                {model.kind === "prospect" ? "Prospect review — before Qualification" : "Qualification review"}
               </h1>
               <p className="text-[12px] text-muted">
                 {model.name} · {stageLabel(model.stage as LeadStage)}
@@ -224,13 +221,11 @@ export function QualificationReviewScreen({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-5">
           <Banner
             tone={copy.tone}
-            title={model.state === "prospect_pending" && model.viewer.canDecide ? (model.combined ? "Your decision — confirm to complete Qualification and move to Sample / trial, or return it" : "Your decision — confirm to open Qualification, or return it") : copy.title}
+            title={model.state === "prospect_pending" && model.viewer.canDecide ? "Your decision — confirm to open Qualification, or return it" : copy.title}
             body={
               model.state === "prospect_pending"
                 ? model.viewer.canDecide
-                  ? model.combined
-                    ? "Read every answer below, answer what is still blank and correct what is wrong. Confirming completes Qualification and moves the lead to Sample / trial; returning sends it back to its owner with your reason."
-                    : "Read every Suspect and Prospect answer below. Confirming opens Qualification; returning sends it back to its owner with your reason."
+                  ? "Read every Suspect and Prospect answer below. Confirming opens Qualification; returning sends it back to its owner with your reason."
                   : "Submitted for Qualification. Its designated verifier reads these answers, then confirms it or returns it."
                 : model.state === "prospect_returned"
                   ? model.viewer.canResubmit
@@ -389,37 +384,14 @@ export function QualificationReviewScreen({
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Button
                   tone="primary"
-                  disabled={busy !== null || blocked || dirty || gstHolds}
+                  disabled={busy !== null || blocked || dirty}
                   title={
-                    dirty
-                      ? "Save your changes first."
-                      : blocked
-                        ? "Required answers are still missing."
-                        : gstHolds
-                          ? "Tick that the GST number checks out first."
-                          : undefined
+                    dirty ? "Save your changes first." : blocked ? "Required answers are still missing." : undefined
                   }
                   onClick={() => decide("verified")}
                 >
-                  {busy === "verified"
-                    ? "Confirming…"
-                    : model.combined
-                      ? "Confirm — complete Qualification and go to Sample / trial"
-                      : model.kind === "prospect"
-                        ? "Confirm — open Qualification"
-                        : "Confirm qualification"}
+                  {busy === "verified" ? "Confirming…" : model.kind === "prospect" ? "Confirm — open Qualification" : "Confirm qualification"}
                 </Button>
-                {model.combined && model.gstNeedsCheck ? (
-                  <label className="flex cursor-pointer items-center gap-2 text-[13px] text-body" data-testid="gst-checked">
-                    <input
-                      type="checkbox"
-                      checked={gstChecked}
-                      disabled={busy !== null}
-                      onChange={(e) => setGstChecked(e.target.checked)}
-                    />
-                    The GST number checks out
-                  </label>
-                ) : null}
                 <span className="mx-1 h-5 w-px bg-line" aria-hidden />
                 {model.kind === "prospect" ? null : (
                   <Select
@@ -445,9 +417,7 @@ export function QualificationReviewScreen({
               </div>
               <p className="mt-2 text-[12px] text-muted">
                 {model.kind === "prospect"
-                  ? model.combined
-                    ? "Returning keeps every answer and tells the owner why; they correct it and send it back. A verification call is optional — make it after you save the review and before you confirm, or skip it."
-                    : "Returning keeps every answer and tells the owner why; they correct it and send it back. A verification call is optional — record one after this decision from the lead's record."
+                  ? "Returning keeps every answer and tells the owner why; they correct it and send it back. A verification call is optional — record one after this decision from the lead's record."
                   : "Rejecting keeps every answer, holds the lead at Qualification, and tells the owner why."}
               </p>
             </section>
