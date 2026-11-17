@@ -511,7 +511,7 @@ export function AdvancesTable({ rows, depts, today }: { rows: AdvanceRow[]; dept
                 </Td>
                 <Td>
                   <div className="font-semibold text-ink">{a.employee}</div>
-                  <div className="text-sm text-muted">{depts.get(a.employee.toLowerCase()) ?? a.purpose ?? ""}</div>
+                  <div className="text-sm text-muted">{(a.userId ? depts.get(a.userId) : null) ?? a.purpose ?? ""}</div>
                 </Td>
                 <Td>{fd(a.issuedOn)}</Td>
                 <Td>{a.issueTxn?.from ?? "—"}</Td>

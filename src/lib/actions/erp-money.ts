@@ -97,7 +97,7 @@ export async function erpMoneyTransfer(x: M.TransferInput) {
 export async function erpMoneyAdvance(x: M.AdvanceInput) {
   return run((a) =>
     M.giveAdvance(a, {
-      employee: s(x.employee),
+      userId: s(x.userId),
       amountPaise: n(x.amountPaise),
       date: s(x.date) ?? "",
       purpose: s(x.purpose),

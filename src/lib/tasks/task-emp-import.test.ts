@@ -1,13 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { routineProblems } from "./routines";
-import { mapTaskList, mapToDoList, monthKey, sheetDate, sheetStamp, todoAsTask, type EmployeeRef, type SheetRow } from "./task-emp-import";
+import { buildDirectory } from "../engines/person-directory";
+import { mapTaskList, mapToDoList, monthKey, personLookup, sheetDate, sheetStamp, todoAsTask, type SheetRow } from "./task-emp-import";
 
-const people: EmployeeRef[] = [
-  { id: "e-sarthika", code: "EMP-4030", name: "Sarthika Sandesh Londhe", active: true },
-  { id: "e-puja", code: "EMP-2266", name: "Puja Jaysing Yadruk", active: true },
-  { id: "e-rohini", code: "EMP-5613", name: "Rohini Ashok Mohite", active: false },
+/* The sheet's names go through the person directory: HRMS records, the
+   accounts linked to them, and the spellings each person has carried. */
+const staff = [
+  { id: "e-sarthika", emp: "EMP-4030", name: "Sarthika Sandesh Londhe", active: true },
+  { id: "e-puja", emp: "EMP-2266", name: "Puja Jaysing Yadruk", active: true },
+  { id: "e-rohini", emp: "EMP-5613", name: "Rohini Ashok Mohite", active: false },
+  // Two people with one name: neither is ever guessed.
+  { id: "e-amit1", emp: "EMP-1", name: "Amit Patil", active: true },
+  { id: "e-amit2", emp: "EMP-2", name: "Amit Patil", active: true },
 ];
+const accounts = staff.map((s) => ({ id: s.id, name: s.name, active: s.active, employeeId: s.emp, email: null, phone: null, salesPersonName: null }));
+const dir = buildDirectory({
+  employees: staff.map((s) => ({ id: s.emp, name: s.name, email: null, companyMobile: null, personalMobile: null, active: s.active })),
+  accounts,
+  links: [],
+  // Puja once carried another surname in HRMS; the directory remembers it.
+  aliases: [{ key: "PUJA JAYSING PATIL", employeeId: "EMP-2266" }],
+});
+const people = personLookup(dir, accounts);
 let n = 1;
 const row = (cells: Record<string, string>): SheetRow => ({ rowNumber: ++n, cells });
 const tl = (c: Partial<Record<string, string>>) =>
@@ -140,4 +155,15 @@ test("a done to-do with no stamp closes on its own day, and a long title keeps i
   assert.ok(t.note!.includes(long));
   assert.equal(t.closedAt?.toISOString(), "2026-10-03T12:30:00.000Z");
   assert.equal(t.closeRemark, "Marked done in Task EMP 2.0.");
+});
+
+test("people are found through the directory: an old spelling resolves, a shared name resolves to nobody", () => {
+  const { drafts } = mapTaskList([tl({ "Name Of Employee": "puja  jaysing PATIL" })], people);
+  assert.equal(drafts[0]?.assigneeId, "e-puja", "a spelling the directory remembers, in any case and spacing");
+  const shared = mapTaskList([tl({ "Name Of Employee": "Amit Patil" })], people);
+  assert.equal(shared.drafts.length, 0);
+  assert.match(shared.skipped[0].reason, /more than one person/);
+  const todo = mapToDoList([td({ "Assign To": "Amit Patil" })], people);
+  assert.equal(todo.drafts.length, 0);
+  assert.match(todo.skipped[0].reason, /more than one person/);
 });

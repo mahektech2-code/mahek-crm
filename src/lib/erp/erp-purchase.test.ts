@@ -413,9 +413,13 @@ describe("testing", () => {
     const form = await mod("testing").load(ctx);
     const line = (form.spec.newForm?.header.find((f) => f.k === "line")?.opts ?? [])[0];
     assert.equal(line, "PR 1001 · Toluene");
-    const made = await mod("testing").forms!.new(ctx, { line, tester: "Kavita Admin", date: TODAY, godown: "Bhiwandi", smell: "Good" }, []);
+    const tester = form.spec.newForm?.header.find((f) => f.k === "tester");
+    assert.equal(tester?.optLabels?.[admin.id], "Kavita Admin", "the Tester picker offers people, labelled with their names");
+    assert.ok(!tester?.opts?.includes("Kavita Admin"), "and sends the person, never the name");
+    const made = await mod("testing").forms!.new(ctx, { line, tester: admin.id, date: TODAY, godown: "Bhiwandi", smell: "Good" }, []);
     assert.ok(made.ok, JSON.stringify(made));
     const [t] = await db.select().from(erpTests);
+    assert.equal(t.testerId, admin.id);
     const early = await mod("testing").actions!.verify(ctx, t.id, {});
     assert.ok(!early.ok && /density/.test(early.error));
 
@@ -434,7 +438,7 @@ describe("testing", () => {
   test("verifying creates the register row once, carrying the tested density", async () => {
     const ctx = await as(admin);
     const [t] = await db.select().from(erpTests);
-    const saved = await mod("testing").forms!.edit(ctx, { smell: "Good", density: "0.9", tester: "Kavita Admin", date: TODAY }, [], t.id);
+    const saved = await mod("testing").forms!.edit(ctx, { smell: "Good", density: "0.9", tester: admin.id, date: TODAY }, [], t.id);
     assert.ok(saved.ok);
     await db.update(erpTests).set({ densityPhotoId: "att_fake" }).where(eq(erpTests.id, t.id));
     const v = await mod("testing").actions!.verify(ctx, t.id, {});

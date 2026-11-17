@@ -14,6 +14,7 @@ import {
   users,
 } from "@/db/schema";
 import { today } from "@/lib/format";
+import { paymentMethodColumns } from "./person-columns";
 import { DEFAULT_LADDERS, type TimeModel } from "./catalogue";
 import { lockerAccess } from "./access";
 import { actionDays, daysLeft, daysSinceCheck, isComplete, isLive, isUnchecked, statusOf, type Status } from "./engine";
@@ -61,7 +62,7 @@ export const lockerTypes = cache(async function lockerTypes(): Promise<AssetType
 
 export const lockerEntitiesList = cache(async () => db.select().from(lockerEntities).orderBy(asc(lockerEntities.name)));
 export const lockerSitesList = cache(async () => db.select().from(lockerSites).orderBy(asc(lockerSites.name)));
-export const lockerPaymentMethodsList = cache(async () => db.select().from(lockerPaymentMethods).orderBy(asc(lockerPaymentMethods.label)));
+export const lockerPaymentMethodsList = cache(async () => db.select(paymentMethodColumns).from(lockerPaymentMethods).orderBy(asc(lockerPaymentMethods.label)));
 
 /** Everybody who can be named as an owner, backup or approver: active MahekOne accounts. */
 export const lockerPeople = cache(async function lockerPeople(): Promise<Person[]> {

@@ -982,7 +982,7 @@ function reviewValue(f: FieldSpec, v: string): string {
   if (f.t === "photo" || f.t === "video") return "Attached";
   if (f.t === "csv") return "File read";
   if (f.t === "multi") return v.split("|").filter(Boolean).join(", ");
-  return v;
+  return f.optLabels?.[v] ?? v;
 }
 
 /** The lines on the review: the fields somebody fills in, a row each. */

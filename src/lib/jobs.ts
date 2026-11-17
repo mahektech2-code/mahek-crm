@@ -206,6 +206,8 @@ export type JobName =
   | "sheet-lot-costing"
   /** Leads sharing a live customer's name, to the Lead Trash. `--dry-run` first. */
   | "trash-lead-twins"
+  /** Person ids (0353) filled from the names stored beside them, through the person directory. `--dry-run` first; never guesses, idempotent. */
+  | "person-ids-backfill"
   | "provision-team"
   | "backfill-timeline"
   /** Find the photographs and PDFs customers sent before the webhook kept them. */
@@ -1572,6 +1574,19 @@ export async function runJob(
       return [await runRevertSheetPaid(triggeredById, options)];
     case "sheet-lot-costing":
       return [await runSheetLotCosting(triggeredById, options)];
+    case "person-ids-backfill":
+      return [
+        await run(
+          "person-ids-backfill",
+          async () => {
+            const { backfillPersonIds, backfillReport } = await import("./services/person-ids-backfill");
+            const counts = await backfillPersonIds({ dryRun: options.dryRun });
+            const filled = counts.reduce((n, c) => n + c.filled, 0);
+            return { recordsAffected: options.dryRun ? 0 : filled, detail: backfillReport(counts, !!options.dryRun) };
+          },
+          triggeredById,
+        ),
+      ];
     case "trash-lead-twins":
       return [await runTrashLeadTwins(triggeredById, options)];
     case "provision-team":

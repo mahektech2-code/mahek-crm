@@ -20,8 +20,12 @@ export default async function AccountsPage() {
         sub="Every Google, Microsoft, GitHub and Apple account the company relies on. A personal account rooting company services stays red until it is resolved."
       />
       <IdentitiesScreen
-        rows={rows.map((r) => ({ ...r.identity, score: r.score, direct: r.direct, ownerName: r.ownerName, ownerId: r.ownerId }))}
-        people={people.map((p) => ({ v: p.id, l: p.name }))}
+        rows={rows.map((r) => ({ ...r.identity, score: r.score, direct: r.direct, ownerName: r.ownerName, ownerId: r.ownerId, controlledById: r.controlledById }))}
+        people={[
+          ...people.map((p) => ({ v: p.id, l: p.name })),
+          /* Somebody who has left still controls what they controlled until it is handed over. */
+          ...[...new Map(rows.filter((r) => r.controlledById && !people.some((p) => p.id === r.controlledById)).map((r) => [r.controlledById!, { v: r.controlledById!, l: r.identity.controlledByName ?? "" }])).values()],
+        ]}
       />
     </>
   );

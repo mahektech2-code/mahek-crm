@@ -15,6 +15,7 @@ import {
   users,
 } from "@/db/schema";
 import { today } from "@/lib/format";
+import { identityColumns } from "./person-columns";
 import { lockerAccess, type LockerAccess } from "./access";
 import { DEFAULT_STEPS } from "./catalogue";
 import { actionDate, daysLeft, identityRisk, type Tier } from "./engine";
@@ -239,7 +240,7 @@ export type IdentityRisk = { id: string; email: string; provider: string; contro
 /** Sign-in accounts with how many logins hang off them and the spec's §6.5 risk score. */
 export async function identityRisks(): Promise<IdentityRisk[]> {
   const [ids, links, creds] = await Promise.all([
-    db.select().from(lockerIdentities).where(eq(lockerIdentities.active, true)).orderBy(asc(lockerIdentities.email)),
+    db.select(identityColumns).from(lockerIdentities).where(eq(lockerIdentities.active, true)).orderBy(asc(lockerIdentities.email)),
     db.select({ identityId: lockerLinks.identityId, credentialId: lockerLinks.credentialId }).from(lockerLinks),
     db.select({ identityId: lockerCredentials.viaIdentityId, id: lockerCredentials.id, tier: lockerCredentials.tier }).from(lockerCredentials).where(eq(lockerCredentials.active, true)),
   ]);

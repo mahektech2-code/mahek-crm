@@ -104,7 +104,7 @@ export const moneyTxnImpact: ImpactSource = {
 
 async function advanceHead(id: string) {
   const [a] = await db.execute<{ no: number; on: string; employee: string; status: string; by: string | null }>(sql`
-    select advance_no as no, issued_on::text as on, employee_name as employee, status, created_by_id as by from erp_advances where id = ${id}`);
+    select a.advance_no as no, a.issued_on::text as on, coalesce(h.name, a.employee_name) as employee, a.status, a.created_by_id as by from erp_advances a left join users h on h.id = a.user_id where a.id = ${id}`);
   return a ?? null;
 }
 

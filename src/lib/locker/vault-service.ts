@@ -14,6 +14,7 @@ import {
   users,
 } from "@/db/schema";
 import { today } from "@/lib/format";
+import { identityColumns } from "./person-columns";
 import { rotationDue, type Tier } from "./engine";
 import { blastRadius, dependentsOf, rankIdentities, type GCred, type GIdentity, type GLink } from "./graph";
 import { lapseRequests } from "./vault-core";
@@ -62,7 +63,7 @@ async function names(): Promise<Map<string, string>> {
 export async function listCredentials(): Promise<CredRow[]> {
   const [creds, idents, s, N, revealAgg, fps] = await Promise.all([
     db.select().from(lockerCredentials).where(eq(lockerCredentials.active, true)).orderBy(asc(lockerCredentials.title)),
-    db.select().from(lockerIdentities),
+    db.select(identityColumns).from(lockerIdentities),
     lockerSettingsRow(),
     names(),
     db
@@ -138,7 +139,7 @@ export async function credentialDetail(id: string) {
     db.select({ id: lockerSecrets.id, field: lockerSecrets.field, hint: lockerSecrets.hint, createdAt: lockerSecrets.createdAt, retiredAt: lockerSecrets.retiredAt, createdById: lockerSecrets.createdById, fingerprint: lockerSecrets.fingerprint }).from(lockerSecrets).where(eq(lockerSecrets.credentialId, id)).orderBy(desc(lockerSecrets.createdAt)),
     db.select().from(lockerLinks).where(eq(lockerLinks.credentialId, id)),
     db.select({ by: lockerReveals.userId, at: lockerReveals.revealedAt, reason: lockerReveals.reason, field: lockerReveals.field, previous: lockerReveals.previous, bg: lockerReveals.breakglassId, approvedBy: lockerReveals.decidedById }).from(lockerReveals).where(and(eq(lockerReveals.credentialId, id), eq(lockerReveals.state, "revealed"))).orderBy(desc(lockerReveals.revealedAt)).limit(50),
-    db.select().from(lockerIdentities),
+    db.select(identityColumns).from(lockerIdentities),
   ]);
   const row = rows.find((r) => r.id === id) ?? null;
   const I = new Map(idents.map((i) => [i.id, i]));
@@ -181,7 +182,7 @@ export async function credentialDetail(id: string) {
 
 export async function graphData() {
   const [idents, creds, links] = await Promise.all([
-    db.select().from(lockerIdentities).where(eq(lockerIdentities.active, true)),
+    db.select(identityColumns).from(lockerIdentities).where(eq(lockerIdentities.active, true)),
     db.select({ id: lockerCredentials.id, title: lockerCredentials.title, tier: lockerCredentials.tier, provider: lockerCredentials.provider, identityId: lockerCredentials.identityId }).from(lockerCredentials).where(eq(lockerCredentials.active, true)),
     db.select({ id: lockerLinks.id, credentialId: lockerLinks.credentialId, identityId: lockerLinks.identityId, kind: lockerLinks.kind, sole: lockerLinks.sole }).from(lockerLinks),
   ]);
@@ -197,7 +198,7 @@ export async function identitiesView() {
   const ranked = rankIdentities(identities, creds, links);
   const raw = new Map(idents.map((i) => [i.id, i]));
   return ranked
-    .map((r) => ({ ...r, ownerName: raw.get(r.identity.id)?.ownerId ? (N.get(raw.get(r.identity.id)!.ownerId!) ?? null) : null, ownerId: raw.get(r.identity.id)?.ownerId ?? null }))
+    .map((r) => ({ ...r, ownerName: raw.get(r.identity.id)?.ownerId ? (N.get(raw.get(r.identity.id)!.ownerId!) ?? null) : null, ownerId: raw.get(r.identity.id)?.ownerId ?? null, controlledById: raw.get(r.identity.id)?.controlledById ?? null }))
     .sort((a, b) => Number(a.identity.controlled) - Number(b.identity.controlled) || b.score - a.score);
 }
 

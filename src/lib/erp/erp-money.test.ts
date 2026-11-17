@@ -192,10 +192,16 @@ describe("cash traced from where it came", () => {
 describe("advances", () => {
   test("given, accounted for with bills, reviewed and settled — the unspent part comes back", async () => {
     const pettyBefore = await balance("Petty Cash");
-    const give = await M.giveAdvance(actor(head, false), { employee: "Suresh K", amountPaise: 5_000_00, date: daysAgo(3), purpose: "Diesel and loading", billsDueOn: today(), from: "Petty Cash", mode: "Cash", reference: null, note: null });
+    // The picker sends the person, by account; the name is only what it shows.
+    const suresh = await makeUser("Suresh K", "associate");
+    const give = await M.giveAdvance(actor(head, false), { userId: suresh.id, amountPaise: 5_000_00, date: daysAgo(3), purpose: "Diesel and loading", billsDueOn: today(), from: "Petty Cash", mode: "Cash", reference: null, note: null });
     assert.ok(give.ok, msg(give));
     assert.equal(await balance("Petty Cash"), pettyBefore - 5_000_00, "the advance leaves Petty Cash as it is given");
-    assert.match(msg(await M.giveAdvance(actor(head, false), { employee: "suresh k", amountPaise: 1, date: today(), purpose: null, billsDueOn: null, from: "Petty Cash", mode: "Cash", reference: null, note: null })), /^Suresh K still holds ADV-\d\d-0001/);
+    assert.match(msg(await M.giveAdvance(actor(head, false), { userId: suresh.id, amountPaise: 1, date: today(), purpose: null, billsDueOn: null, from: "Petty Cash", mode: "Cash", reference: null, note: null })), /^Suresh K still holds ADV-\d\d-0001/);
+    // Renamed in HRMS, he is still the same person: the open advance still stops a second one, under his new name.
+    await db.update(users).set({ name: "Suresh Kumar" }).where(eq(users.id, suresh.id));
+    assert.match(msg(await M.giveAdvance(actor(head, false), { userId: suresh.id, amountPaise: 1, date: today(), purpose: null, billsDueOn: null, from: "Petty Cash", mode: "Cash", reference: null, note: null })), /^Suresh Kumar still holds ADV-\d\d-0001/);
+    await db.update(users).set({ name: "Suresh K" }).where(eq(users.id, suresh.id));
 
     const bill = { date: daysAgo(2), category: "Hardware", payee: "Balaji Hardware", invoiceNo: "BH/3390", amountPaise: 2_860_00, noBillReason: null, description: null, photo: null };
     assert.equal(msg(await M.submitAdvanceBills(actor(head, false), give.data.id, [bill])), "Bill 1: add a photo of the bill.");
@@ -234,7 +240,8 @@ describe("advances", () => {
 
   test("an advance with no bills can be cancelled, and its money goes back", async () => {
     const before = await balance("Petty Cash");
-    const g = await M.giveAdvance(actor(head, false), { employee: "Anil P", amountPaise: 3_000_00, date: today(), purpose: null, billsDueOn: null, from: "Petty Cash", mode: "Cash", reference: null, note: null });
+    const anil = await makeUser("Anil P", "associate");
+    const g = await M.giveAdvance(actor(head, false), { userId: anil.id, amountPaise: 3_000_00, date: today(), purpose: null, billsDueOn: null, from: "Petty Cash", mode: "Cash", reference: null, note: null });
     assert.ok(g.ok);
     assert.match(msg(await mod("advances").actions!.cancelAdvance(await as(head), g.data.id, { reason: "Given to the wrong person" })), /Check what this affects/);
     const undo = await confirmed(head, "erp-money-advance", g.data.id);

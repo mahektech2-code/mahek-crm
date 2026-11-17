@@ -112,6 +112,13 @@ export type FieldSpec = {
   reqWhen?: When;
   /** Fixed options. */
   opts?: string[];
+  /**
+   * What each option is CALLED, where the option itself is a key — a person's
+   * account id, which the form sends and nobody ever sees. A person picker
+   * offers ids labelled with names, so a rename changes the label and never
+   * what was chosen. An option missing here is shown as itself.
+   */
+  optLabels?: Record<string, string>;
   /** Options that depend on other fields' values: `{ by: "type", map: { Chemical: [...] } }`; a list of fields keys the map by their values joined with "|". */
   optsBy?: { by: string | string[]; map: Record<string, string[]> };
   hint?: string;
