@@ -1476,23 +1476,12 @@ function QualificationPanel({
   };
   const join = (parts: Array<string | null | undefined>) => parts.filter((p) => p && String(p).trim()).join(" · ");
   const shown: Record<string, string | number | null> = {
-    gst_verified: record.gstin
-      ? `${record.gstin}${record.gstVerified ? " · validated by the Sales Manager" : " · not yet validated"}`
-      : null,
+    product_wanted: said("other_products") ? `also: ${said("other_products")}` : null,
+    price_discussed: join([said("price_range"), said("price_reaction")]),
+    credit_days: record.creditDaysWanted != null ? `${record.creditDaysWanted} days` : null,
     application_understood: record.application,
-    trial_plan: join([said("trial_product"), said("trial_pack"), said("trial_quantity"), said("trial_tester"), said("trial_duration")]),
-    people_identified: join([
-      record.decisionMaker ? `decides: ${record.decisionMaker}` : "",
-      record.buyer ? `orders: ${record.buyer}` : said("buyer_name") ? `orders: ${said("buyer_name")}` : said("buyer_same") === "yes" ? "orders: the same person" : "",
-      said("payer") ? `pays: ${said("payer")}` : said("payer_same") === "yes" ? "pays: the same person" : "",
-    ]),
-    price_and_credit: join([
-      said("price_range"),
-      record.creditDaysWanted != null ? `credit ${record.creditDaysWanted} days` : "",
-      said("price_reaction"),
-    ]),
+    trial_plan: join([said("trial_product"), said("trial_pack"), said("trial_quantity"), said("trial_tester"), said("trial_duration"), said("trial_notes")]),
     delivery_workable: join([said("delivery_location"), said("delivery_lead_time"), said("delivery_suits") ? `suits them: ${said("delivery_suits")}` : ""]),
-    willing_to_test: said("willing_to_test"),
     next_step_dated: join([said("next_step"), said("next_step_date")]),
   };
 

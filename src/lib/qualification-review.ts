@@ -243,28 +243,12 @@ type Spec = {
  * as text and fails if a label or key here drifts from it.
  */
 export const QUALIFICATION_FIELDS: Record<string, Spec[]> = {
-  gst_verified: [{ id: "gstin", kind: "text", hint: "15 characters, as printed. Changing it clears any validation." }],
-  application_understood: [{ id: "application", kind: "long", hint: "What they will use it on." }],
-  trial_plan: [
-    { id: "trial_product", kind: "text", label: "Product", hint: "What we are sending for the trial" },
-    { id: "trial_pack", kind: "text", label: "Pack size", hint: "For example 20 L" },
-    { id: "trial_quantity", kind: "text", label: "Sample quantity", hint: "For example 2 cans" },
-    { id: "trial_tester", kind: "text", label: "Who will test it" },
-    { id: "trial_duration", kind: "text", label: "Expected trial duration", hint: "For example 7 days" },
+  product_wanted: [
+    { id: "requiredProductId", kind: "product", label: "Product they want" },
+    { id: "other_products", kind: "text", label: "Another product (optional)", hint: "Name it if they need one more" },
   ],
-  people_identified: [
-    { id: "decisionMaker", kind: "text", label: "Who decides" },
-    { id: "decision_maker_phone", kind: "text", label: "Their phone (optional)" },
-    { id: "buyer", kind: "text", label: "Who places the order", hint: "Leave empty and answer yes below if it is the same person" },
-    { id: "buyer_same", kind: "yesno", label: "Is the buyer the same person as the decision maker?" },
-    { id: "buyer_phone", kind: "text", label: "Buyer's phone (optional)" },
-    { id: "payer", kind: "text", label: "Who pays", hint: "Leave empty and answer yes below if it is the same person" },
-    { id: "payer_same", kind: "yesno", label: "Is the payer the same person as the decision maker?" },
-    { id: "payer_phone", kind: "text", label: "Payer's phone (optional)" },
-  ],
-  price_and_credit: [
+  price_discussed: [
     { id: "price_range", kind: "text", label: "Price or range discussed" },
-    { id: "creditDaysWanted", kind: "days", label: "Credit days requested", hint: "Days, 0 to 365" },
     {
       id: "price_reaction",
       kind: "choice",
@@ -276,17 +260,24 @@ export const QUALIFICATION_FIELDS: Record<string, Spec[]> = {
       ],
     },
   ],
+  credit_days: [{ id: "creditDaysWanted", kind: "days", label: "Credit days agreed", hint: "Days, 0 to 365" }],
+  application_understood: [{ id: "application", kind: "long", hint: "What they will use it on." }],
   delivery_workable: [
     { id: "delivery_location", kind: "text", label: "Where we deliver" },
-    { id: "delivery_lead_time", kind: "text", label: "Lead time we quoted", hint: "For example 3 days" },
-    { id: "delivery_suits", kind: "yesno", label: "Does that timing suit them?" },
+    { id: "delivery_lead_time", kind: "text", label: "How long it takes", hint: "For example 3 days" },
+    { id: "delivery_suits", kind: "yesno", label: "Does that suit them?" },
   ],
-  willing_to_test: [
-    { id: "willing_to_test", kind: "yesno", label: "Will they still test it?", hint: "Ask this after price, credit and delivery. Only a yes passes." },
+  trial_plan: [
+    { id: "trial_product", kind: "text", label: "Product", hint: "What we are sending for the trial" },
+    { id: "trial_pack", kind: "text", label: "Pack size", hint: "For example 20 L" },
+    { id: "trial_quantity", kind: "text", label: "Sample quantity", hint: "For example 2 cans" },
+    { id: "trial_tester", kind: "text", label: "Who will test it" },
+    { id: "trial_duration", kind: "text", label: "Expected trial duration", hint: "For example 7 days" },
+    { id: "trial_notes", kind: "long", label: "Notes" },
   ],
   next_step_dated: [
-    { id: "next_step", kind: "long", label: "What happens if the trial goes well" },
-    { id: "next_step_date", kind: "date", label: "By when" },
+    { id: "next_step", kind: "long", label: "Follow-up note" },
+    { id: "next_step_date", kind: "date", label: "Follow-up date" },
   ],
 };
 
@@ -379,7 +370,8 @@ const PROSPECT_AS_DESK: Readonly<Record<string, DeskFieldKey>> = {
  * not yet validated" visible on the one place the number is shown.
  */
 const QUALIFICATION_AS_DESK: Readonly<Record<string, DeskFieldKey>> = {
-  gst_verified: "gstin",
+  product_wanted: "requiredProductId",
+  credit_days: "creditDaysWanted",
   application_understood: "application",
 };
 
@@ -604,7 +596,7 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
       id: c.id,
       label: c.says,
       answered: !src.unmetQualification.has(c.id),
-      required: true,
+      required: !c.optional,
       fields: fresh.map((s) => {
         const v = columnValue(s.id);
         return {
