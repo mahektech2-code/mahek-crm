@@ -269,7 +269,11 @@ export async function sameOrdersFor(
   const me = { key: "new", billingId: shape.billingId, deliveryId: shape.deliveryId, date: shape.date, lines: shape.lines };
   return [...byId.values()]
     .filter((m) => sameOrder(me, { key: m.id, billingId: shape.billingId, deliveryId: m.deliveryId, date: shape.date, lines: m.lines }))
-    .map(({ deliveryId: _d, ...m }) => m);
+    .map((m) => {
+      const { deliveryId, ...rest } = m;
+      void deliveryId;
+      return rest;
+    });
 }
 
 /** "Priya (ERP)" — who punched it, and where. */
