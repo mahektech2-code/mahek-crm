@@ -1,4 +1,5 @@
 import "server-only";
+import { changedFields } from "@/lib/changed-fields";
 import { personDirectory } from "@/lib/services/person-identity-service";
 import { personKey } from "@/lib/engines/person-directory";
 import { eq, sql } from "drizzle-orm";
@@ -354,7 +355,7 @@ export async function projectParties(
       }
     }
 
-    updates.push({ id: customer.id, values: {
+    const values: Partial<typeof customers.$inferInsert> = {
         ...(fillPhone ? { phone: party.mobileNo! } : {}),
         ...(fillWhatsapp ? { whatsappPhone: party.whatsappNo! } : {}),
         ...(!amDecided && salesId ? { salesAmId: salesId } : {}),
@@ -438,8 +439,20 @@ export async function projectParties(
                 deactivationReason: null,
               }
             : {}),
-        updatedAt: new Date(),
-      } });
+      };
+
+    /*
+     * ONLY WHAT ACTUALLY MOVED, AND NOTHING AT ALL WHEN NOTHING DID.
+     *
+     * Every matched party used to be written on every pass — 1,095 rows each
+     * half hour with `updatedAt` stamped fresh, and the account-manager ids
+     * re-set whenever they linked, changed or not. Postgres counted 2.6
+     * million such updates in two months. Worse, `updated_at` is what the
+     * handset sync pulls by (mbos-service), so every salesman's phone
+     * re-downloaded its whole book twice an hour for nothing.
+     */
+    const changed = changedFields(values, customer);
+    if (changed) updates.push({ id: customer.id, values: { ...changed, updatedAt: new Date() } });
   }
 
   // Written in flights rather than one at a time: 555 sequential round trips
