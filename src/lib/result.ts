@@ -19,6 +19,8 @@ export type Err = {
   error: string;
   code?: ErrorCode;
   fieldErrors?: FieldError[];
+  /** What a screen needs to answer the refusal itself — a duplicate order's comparison, for one. */
+  detail?: unknown;
 };
 
 export type Result<T = undefined> = Ok<T> | Err;

@@ -6,7 +6,7 @@ import { saveIdentity } from "@/lib/actions/locker-vault";
 import { C, Pill, nf, useModal, useToast, type ModalField } from "../../_ui/kit";
 import { Alert, Block, Cell, GTable, Stats, Yes } from "../../_ui/vault-parts";
 
-export type IdRow = { id: string; email: string; provider: string; kind: string; controlled: boolean; mfa: boolean; recovery: boolean; controlledByName: string | null; score: number; direct: number; ownerName: string | null; ownerId: string | null };
+export type IdRow = { id: string; email: string; provider: string; kind: string; controlled: boolean; mfa: boolean; recovery: boolean; controlledByName: string | null; controlledById: string | null; score: number; direct: number; ownerName: string | null; ownerId: string | null };
 
 export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v: string; l: string }[] }) {
   const router = useRouter();
@@ -19,7 +19,8 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
       { k: "provider", l: "Provider", type: "select", req: true, init: i?.provider ?? "Google Workspace", opts: ["Google Workspace", "Google (personal)", "Microsoft 365", "GitHub organisation", "GitHub (personal)", "Apple Developer", "Meta Business", "LinkedIn", "Google Cloud", "AWS", "Other"] },
       { k: "kind", l: "Kind", type: "select", init: i?.kind ?? "organisational", opts: [{ v: "organisational", l: "Organisational" }, { v: "shared", l: "Shared mailbox" }, { v: "personal", l: "Personal" }, { v: "service", l: "Service account" }] },
       { k: "controlled", l: "Company controlled?", type: "select", init: i ? (i.controlled ? "yes" : "no") : "yes", opts: [{ v: "yes", l: "Yes — the company can recover it" }, { v: "no", l: "No — it belongs to a person" }] },
-      { k: "by", l: "Controlled by (for a personal account)", init: i?.controlledByName ?? "" },
+      { k: "byId", l: "Controlled by (for a personal account)", type: "select", init: i?.controlledById ?? "", opts: [{ v: "", l: "Somebody not on the staff (name them below)" }, ...people] },
+      { k: "by", l: "Their name, if they are not on the staff", init: i?.controlledById ? "" : (i?.controlledByName ?? "") },
       { k: "mfa", l: "2-step sign-in", type: "select", init: i?.mfa ? "yes" : "no", opts: [{ v: "yes", l: "On" }, { v: "no", l: "Off" }] },
       { k: "recovery", l: "Recovery configured", type: "select", init: i?.recovery ? "yes" : "no", opts: [{ v: "yes", l: "Yes" }, { v: "no", l: "No" }] },
       { k: "owner", l: "Owner", type: "select", init: i?.ownerId ?? "", opts: [{ v: "", l: "Nobody" }, ...people] },
@@ -31,7 +32,7 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
       fields,
       okL: "Save",
       done: async (v) => {
-        const r = await saveIdentity(i?.id ?? null, { email: v.email, provider: v.provider, kind: v.kind, controlled: v.controlled === "yes", mfa: v.mfa === "yes", recovery: v.recovery === "yes", controlledByName: v.by, ownerId: v.owner || null });
+        const r = await saveIdentity(i?.id ?? null, { email: v.email, provider: v.provider, kind: v.kind, controlled: v.controlled === "yes", mfa: v.mfa === "yes", recovery: v.recovery === "yes", controlledById: v.byId || null, controlledByName: v.by, ownerId: v.owner || null });
         if (!r.ok) return r.error;
         toast("Saved");
         router.refresh();

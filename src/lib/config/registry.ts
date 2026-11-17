@@ -5368,6 +5368,24 @@ export const SETTINGS = [
     default: false,
   },
   {
+    key: "erp.orders.duplicateCheck",
+    type: "boolean",
+    category: "erp",
+    label: "Warn when an order may already be punched",
+    description:
+      "On: saving a new order on the ERP form, a TeleCRM call or the Salesman App first looks for an order punched the same day with the same billing party, the same delivery party and the same items. The person punching chooses Same order (nothing is created and whoever punched the first is told) or Different order (with a reason). An order from a handset with no signal is created and marked \"Possible duplicate\" for Accounts. Off: no check.",
+    default: true,
+  },
+  {
+    key: "erp.orders.duplicateAiModel",
+    type: "text",
+    category: "erp",
+    label: "Duplicate check · AI model",
+    description:
+      "The OpenAI model that writes the one-line comparison on the duplicate warning (for example \"Same items, same parties, 2 h 40 m apart\"). The match itself is decided by the rules; without a key the line is written from them.",
+    default: "gpt-5-mini",
+  },
+  {
     key: "erp.orders.partySheet",
     type: "boolean",
     category: "erp",
@@ -7151,6 +7169,8 @@ export type Config = {
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
   "erp.orders.partySheet": boolean;
+  "erp.orders.duplicateCheck": boolean;
+  "erp.orders.duplicateAiModel": string;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.receiptTolerancePercent": number;
   "erp.purchase.poWatiTemplate": string;

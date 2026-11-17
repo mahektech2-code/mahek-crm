@@ -2,12 +2,13 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpOrderIntakeLines, erpOrderIntakes, erpOrderReviews, erpOrders, orders, users } from "@/db/schema";
+import { erpOrderIntakeLines, erpOrderIntakes, erpOrderReviews, erpOrders, orders, products, users } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
-import { err, ok, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { erpId, nextNumber } from "./server";
 import { erpLink } from "./registry";
-import { bothChecked, intakeEditable, nextCheck, CHECK_LABEL, type Checker, type CheckKind } from "./engines/order-hub";
+import { bothChecked, decisionRefusal, duplicateLine, intakeEditable, nextCheck, sameOrder, CHECK_LABEL, type Checker, type CheckKind, type DuplicateDecision } from "./engines/order-hub";
+import { getConfig } from "@/lib/config/store";
 
 /* ---------------------------------------------------------------------------
  * THE ORDER HUB: every order is a TEMPORARY ORDER (a TO number) until the
@@ -88,11 +89,46 @@ async function writeLines(tx: Tx, intakeId: string, lines: IntakeLineInput[]) {
  * OPENS A TO. The number is the ERP's `tempOrder` series. Whoever checks a TO
  * is told one is waiting; nothing else in MahekOne sees it yet.
  */
-export async function createIntake(userId: string, input: IntakeInput, outer?: Tx): Promise<{ id: string; toNo: number }> {
+export async function createIntake(
+  userId: string,
+  input: IntakeInput,
+  outer?: Tx,
+  opts: {
+    /** What the person punching said about a duplicate they were shown. */
+    duplicate?: DuplicateDecision | null;
+    /**
+     * `ask` (the ERP form): a duplicate nobody has answered stops the save with
+     * a DuplicateFoundError, so the screen can ask. `flag` (TeleCRM inside its
+     * call transaction, the Salesman App): the TO is made and marked a POSSIBLE
+     * duplicate for Accounts — an order is never lost to the check.
+     */
+    onDuplicate?: "ask" | "flag";
+  } = {},
+): Promise<{ id: string; toNo: number; duplicateOf: string | null }> {
   if (!input.lines.length) throw new Error("A TO needs at least one line.");
   const id = erpId("to");
   let toNo = 0;
+  let duplicateOf: string | null = null;
+  const checking = await duplicateCheckOn();
   const write = async (tx: Tx) => {
+    let dupFields: Partial<typeof erpOrderIntakes.$inferInsert> = {};
+    if (checking) {
+      /* One customer at a time, so two people saving the same order in the
+         same minute cannot both get through without being asked. */
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`to-dup:${input.billingId}`}))`);
+      const found = await sameOrdersFor(tx, { billingId: input.billingId, deliveryId: input.deliveryId ?? null, date: input.orderDate, lines: input.lines });
+      if (found.length) {
+        const d = opts.duplicate;
+        if (d && !decisionRefusal(d, found.map((f) => f.id))) {
+          dupFields = { duplicateOfId: d.ofId, duplicateState: "different", duplicateReason: d.reason.trim(), duplicateDecidedById: userId, duplicateDecidedAt: new Date() };
+        } else if ((opts.onDuplicate ?? "flag") === "ask") {
+          throw new DuplicateFoundError(found[0], input.lines);
+        } else {
+          dupFields = { duplicateOfId: found[0].id, duplicateState: "possible" };
+        }
+        duplicateOf = (dupFields.duplicateOfId as string) ?? null;
+      }
+    }
     toNo = await nextNumber(tx, "tempOrder");
     await tx.insert(erpOrderIntakes).values({
       id,
@@ -111,13 +147,206 @@ export async function createIntake(userId: string, input: IntakeInput, outer?: T
       takenById: input.takenById,
       createdById: userId,
       updatedById: userId,
+      ...dupFields,
     });
     await writeLines(tx, id, input.lines);
   };
   if (outer) await write(outer);
   else await db.transaction(write);
   if (!outer) await tellNewIntake(toNo);
-  return { id, toNo };
+  return { id, toNo, duplicateOf };
+}
+
+/* ============================================================ duplicates */
+
+export type SameOrderMatch = {
+  id: string;
+  toNo: number;
+  orderNo: number | null;
+  status: string;
+  origin: string;
+  orderSource: string | null;
+  takenById: string | null;
+  takenBy: string | null;
+  takenAt: string;
+  billingName: string;
+  deliveryName: string;
+  lines: { skuId: string; name: string; qtyCans: number }[];
+};
+
+/** What a duplicate warning shows: the order already punched beside the one being punched, and the comparison line. */
+export type DuplicateFound = {
+  match: SameOrderMatch;
+  newLines: { skuId: string; name: string; qtyCans: number }[];
+  line: string;
+  ai: boolean;
+};
+
+/** Thrown by `createIntake` in `ask` mode: the save stops so the screen can ask. */
+export class DuplicateFoundError extends Error {
+  constructor(
+    public match: SameOrderMatch,
+    public newLines: { skuId: string; qtyCans: number }[],
+  ) {
+    super(`This order may already be punched as TO-${match.toNo}.`);
+  }
+}
+
+export async function duplicateCheckOn(): Promise<boolean> {
+  try {
+    return (await getConfig())["erp.orders.duplicateCheck"] !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Every TO punched for the same parties on the same day with exactly the same
+ * items (`sameOrder`), whatever happened to it since — waiting, sent back,
+ * held or already given its order number — except cancelled and declined ones.
+ */
+export async function sameOrdersFor(
+  q: Tx | typeof db,
+  shape: { billingId: string; deliveryId: string | null; date: string; lines: { skuId: string; qtyCans: number }[] },
+  excludeId?: string,
+): Promise<SameOrderMatch[]> {
+  const rows = (await q.execute(sql`
+    select i.id, i.to_no as "toNo", i.order_no as "orderNo", i.status, i.origin, i.order_source as "orderSource",
+           i.taken_by_id as "takenById", u.name as "takenBy", i.created_at as "takenAt",
+           i.delivery_customer_id as "deliveryId", b.name as "billingName", coalesce(d.name, b.name) as "deliveryName",
+           l.sku_id as "skuId", p.name as "skuName", l.qty_cans as "qtyCans"
+      from erp_order_intakes i
+      join customers b on b.id = i.billing_customer_id
+      left join customers d on d.id = i.delivery_customer_id
+      left join users u on u.id = i.taken_by_id
+      join erp_order_intake_lines l on l.intake_id = i.id
+      join products p on p.id = l.sku_id
+     where i.billing_customer_id = ${shape.billingId}
+       and i.order_date = ${shape.date}
+       and i.status not in ('cancelled', 'declined')
+       ${excludeId ? sql`and i.id <> ${excludeId}` : sql``}
+     order by i.created_at asc, l.position asc
+  `)) as unknown as {
+    id: string;
+    toNo: number;
+    orderNo: number | null;
+    status: string;
+    origin: string;
+    orderSource: string | null;
+    takenById: string | null;
+    takenBy: string | null;
+    takenAt: Date | string;
+    deliveryId: string | null;
+    billingName: string;
+    deliveryName: string;
+    skuId: string;
+    skuName: string;
+    qtyCans: number;
+  }[];
+  const byId = new Map<string, SameOrderMatch & { deliveryId: string | null }>();
+  for (const r of rows) {
+    let m = byId.get(r.id);
+    if (!m) {
+      m = {
+        id: r.id,
+        toNo: Number(r.toNo),
+        orderNo: r.orderNo == null ? null : Number(r.orderNo),
+        status: r.status,
+        origin: r.origin,
+        orderSource: r.orderSource,
+        takenById: r.takenById,
+        takenBy: r.takenBy,
+        takenAt: new Date(r.takenAt).toISOString(),
+        billingName: r.billingName,
+        deliveryName: r.deliveryName,
+        deliveryId: r.deliveryId,
+        lines: [],
+      };
+      byId.set(r.id, m);
+    }
+    m.lines.push({ skuId: r.skuId, name: r.skuName, qtyCans: Number(r.qtyCans) });
+  }
+  const me = { key: "new", billingId: shape.billingId, deliveryId: shape.deliveryId, date: shape.date, lines: shape.lines };
+  return [...byId.values()]
+    .filter((m) => sameOrder(me, { key: m.id, billingId: shape.billingId, deliveryId: m.deliveryId, date: shape.date, lines: m.lines }))
+    .map((m) => {
+      const { deliveryId, ...rest } = m;
+      void deliveryId;
+      return rest;
+    });
+}
+
+/** "Priya (ERP)" — who punched it, and where. */
+export function takenWhere(m: Pick<SameOrderMatch, "takenBy" | "origin" | "orderSource">): string {
+  const where = m.origin === "crm" ? "TeleCRM" : m.origin === "mbos" ? "Salesman App" : "ERP";
+  return `${m.takenBy ?? "Someone"} (${where})`;
+}
+
+/**
+ * The warning a screen draws. The match is the rules'; the one line under it
+ * is written by a model where one is set up, and by the rules where not — so
+ * the warning never waits on, or depends on, a provider.
+ */
+export async function describeDuplicate(match: SameOrderMatch, newLines: { skuId: string; qtyCans: number }[], nowMs = Date.now()): Promise<DuplicateFound> {
+  const names = new Map(match.lines.map((l) => [l.skuId, l.name]));
+  const missing = newLines.filter((l) => !names.has(l.skuId)).map((l) => l.skuId);
+  if (missing.length) {
+    const rows = await db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, missing));
+    for (const r of rows) names.set(r.id, r.name);
+  }
+  const gap = Math.abs(nowMs - new Date(match.takenAt).getTime());
+  const fallback = duplicateLine(gap);
+  let line = fallback;
+  let ai = false;
+  try {
+    const cfg = await getConfig();
+    const { write } = await import("@/lib/writing-model");
+    const out = await write({
+      system:
+        "You compare two paint-thinner orders punched by two people for one customer on one day. Answer in ONE short line of plain English, at most 12 words, no full stop, no quotes, that says why they look like the same order (items, parties, time apart). Never invent facts.",
+      prompt: JSON.stringify({
+        first: { by: takenWhere(match), at: match.takenAt, billing: match.billingName, delivery: match.deliveryName, items: match.lines.map((l) => `${l.name} x ${l.qtyCans}`) },
+        second: { at: new Date(nowMs).toISOString(), items: newLines.map((l) => `${names.get(l.skuId) ?? l.skuId} x ${l.qtyCans}`) },
+        rulesSay: fallback,
+      }),
+      openaiModel: String(cfg["erp.orders.duplicateAiModel"] || "gpt-5-mini"),
+      providers: ["openai"],
+      timeoutMs: 5_000,
+    });
+    if (out.ok && out.text.length <= 120 && !/\n/.test(out.text)) {
+      line = out.text.replace(/[."“”]+$/g, "").trim() || fallback;
+      ai = line !== fallback;
+    }
+  } catch {
+    /* The rules' line stands. */
+  }
+  return { match, newLines: newLines.map((l) => ({ skuId: l.skuId, name: names.get(l.skuId) ?? l.skuId, qtyCans: l.qtyCans })), line, ai };
+}
+
+/**
+ * THE PRE-CHECK a screen asks before it saves (TeleCRM asks it before its call
+ * transaction opens, because a refusal inside that transaction would lose the
+ * call). Null where nothing matches or the check is off.
+ */
+export async function checkForDuplicate(shape: { billingId: string; deliveryId: string | null; date: string; lines: { skuId: string; qtyCans: number }[] }): Promise<DuplicateFound | null> {
+  if (!shape.lines.length || !(await duplicateCheckOn())) return null;
+  const found = await sameOrdersFor(db, shape);
+  return found.length ? describeDuplicate(found[0], shape.lines) : null;
+}
+
+/**
+ * SAME ORDER: nothing is created, and whoever punched the first one is told
+ * somebody tried to punch it again — the WhatsApp group sent it to two people.
+ */
+export async function tellSameOrder(matchId: string, byUserId: string): Promise<void> {
+  const [m] = (await db.execute(sql`
+    select i.to_no as "toNo", i.taken_by_id as "takenById", c.name as party, u.name as "byName"
+      from erp_order_intakes i join customers c on c.id = i.billing_customer_id
+      left join users u on u.id = ${byUserId}
+     where i.id = ${matchId}
+  `)) as unknown as { toNo: number; takenById: string | null; party: string; byName: string | null }[];
+  if (!m || !m.takenById || m.takenById === byUserId) return;
+  await tell([m.takenById], `Same order not punched again · TO-${m.toNo}`, `${m.byName ?? "Someone"} tried to punch the same order for ${m.party} and chose not to create it.`, "/crm/my-orders");
 }
 
 /** After a TO is opened inside somebody else's transaction: the checkers are told. */
@@ -127,8 +356,21 @@ export async function tellNewIntake(toNo: number): Promise<void> {
     .from(erpOrderIntakes)
     .where(eq(erpOrderIntakes.toNo, toNo));
   if (!i) return;
-  const to = [...(await holdersOf("verifyOrders")), ...(await holdersOf("productionCheck"))];
-  await tell(to, `New order to check · TO-${toNo}`, `${i.name}${i.source ? ` · ${i.source}` : ""}. The back office and the Production Head check it; the second check makes the order number.`, erpLink("orderHub"));
+  await tell(await accountsApproverIds(), `New order to approve · TO-${toNo}`, `${i.name}${i.source ? ` · ${i.source}` : ""}. Approve it in Accounts › Order approvals; approving makes the order number.`, ACCOUNTS_APPROVALS_HREF);
+}
+
+export const ACCOUNTS_APPROVALS_HREF = "/accounts/approvals";
+
+/** Everybody on the Accounts desk who can decide an order: a manager or admin of Accounts who holds Order approvals. */
+export async function accountsApproverIds(): Promise<string[]> {
+  const rows = (await db.execute(sql`
+    select distinct u.id from users u join app_access a on a.user_id = u.id and a.app = 'accounts'
+     where u.active and a.role in ('manager', 'admin')
+       and (a.role = 'admin'
+            or not exists (select 1 from app_module_access m where m.user_id = u.id and m.app = 'accounts')
+            or exists (select 1 from app_module_access m where m.user_id = u.id and m.app = 'accounts' and m.module = 'accounts.approvals'))
+  `)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
 }
 
 export async function intakeById(id: string): Promise<{ intake: Intake; lines: IntakeLine[] } | null> {
@@ -233,11 +475,13 @@ export async function checkIntake(who: Checker, id: string, note: string | null)
  * App already has its `orders` row in the book; that row is adopted under the
  * order number, so the order is counted once.
  */
-async function makeOrder(tx: Tx, intake: Intake, lines: IntakeLine[], userId: string): Promise<number> {
+async function makeOrder(tx: Tx, intake: Intake, lines: IntakeLine[], userId: string, approvedByAccounts = false): Promise<number> {
   const no = await nextNumber(tx, "order");
-  /* A Pending party (`partyStatus` in masters) is still marked, as the New order form always did. */
+  /* A Pending party (`partyStatus` in masters) is still marked, as the New order form always did —
+     unless Accounts approved the TO, which IS the approval ("Approved By Admin" is no separate step). */
   const [party] = (await tx.execute(sql`select coalesce(p.pending_activation, false) as pending from customers c left join erp_customer_profiles p on p.customer_id = c.id where c.id = ${intake.billingCustomerId}`)) as unknown as { pending: boolean }[];
   const pending = !!party?.pending;
+  const now = new Date();
   const by = intake.takenById ?? intake.createdById ?? userId;
   for (const l of lines)
     await tx.insert(erpOrders).values({
@@ -257,21 +501,26 @@ async function makeOrder(tx: Tx, intake: Intake, lines: IntakeLine[], userId: st
       rateSetAt: l.rateSetAt,
       discountAuthorisedById: l.discountAuthorisedById,
       remark: l.remark,
-      partyStatus: pending ? "Pending" : null,
+      partyStatus: pending ? (approvedByAccounts ? "Approved By Admin" : "Pending") : null,
       dispatchOn: intake.dispatchOn,
       orderSource: intake.orderSource,
       orderCheck: "Verified",
       orderCheckedById: userId,
       orderCheckedAt: new Date(),
       intakeId: intake.id,
-      accountsCheck: "Pending",
+      accountsCheck: approvedByAccounts ? "Approved" : "Pending",
+      ...(approvedByAccounts ? { accountsCheckedById: userId, accountsCheckedAt: now } : {}),
       productionCheck: "Pending",
       createdById: by,
       updatedById: userId,
     });
-  await tx.insert(erpOrderReviews).values({ id: erpId("orv"), orderNo: no, kind: "order", result: "verified", note: `TO-${intake.toNo} checked by the back office and the Production Head`, snapshot: { toNo: intake.toNo }, byId: userId });
-  await tx.update(erpOrderIntakes).set({ status: "verified", orderNo: no, updatedAt: new Date(), updatedById: userId }).where(eq(erpOrderIntakes.id, intake.id));
-  if (intake.originOrderId) await tx.update(orders).set({ externalRef: `ERP-${no}`, updatedAt: new Date() }).where(eq(orders.id, intake.originOrderId));
+  await tx.insert(erpOrderReviews).values({ id: erpId("orv"), orderNo: no, kind: "order", result: "verified", note: approvedByAccounts ? `TO-${intake.toNo} approved by Accounts` : `TO-${intake.toNo} checked by the back office and the Production Head`, snapshot: { toNo: intake.toNo }, byId: userId });
+  await tx.update(erpOrderIntakes).set({ status: "verified", orderNo: no, updatedAt: now, updatedById: userId }).where(eq(erpOrderIntakes.id, intake.id));
+  if (intake.originOrderId)
+    await tx
+      .update(orders)
+      .set({ externalRef: `ERP-${no}`, ...(approvedByAccounts ? { approvedById: userId, approvedAt: now } : {}), updatedAt: now })
+      .where(eq(orders.id, intake.originOrderId));
   return no;
 }
 
@@ -294,8 +543,8 @@ export async function sendBackIntake(userId: string, id: string, note: string): 
     .update(erpOrderIntakes)
     .set({ status: "correction", correctionNote: note.trim(), correctionById: userId, correctionAt: new Date(), backOfficeById: null, backOfficeAt: null, productionById: null, productionAt: null, updatedAt: new Date(), updatedById: userId })
     .where(and(eq(erpOrderIntakes.id, id), eq(erpOrderIntakes.status, "open")));
-  await tell([got.intake.takenById], `Correct TO-${got.intake.toNo}`, note.trim(), erpLink("hubCorrection"), "warn");
-  return okVoid(`TO-${got.intake.toNo} sent back for correction`);
+  await tellTaker(got.intake, userId, `TO-${got.intake.toNo} sent back by Accounts`, `Correct it and send it again. ${note.trim()}`, "warn");
+  return okVoid(`TO-${got.intake.toNo} sent back to whoever took it`);
 }
 
 /** Holds a TO at the hub (order verification). Releasing it asks both checks again. */
@@ -308,7 +557,7 @@ export async function holdIntake(userId: string, id: string, reason: string, not
     .update(erpOrderIntakes)
     .set({ status: "hold", holdReason: reason.trim(), holdNote: note?.trim() || null, heldById: userId, heldAt: new Date(), updatedAt: new Date(), updatedById: userId })
     .where(eq(erpOrderIntakes.id, id));
-  await tell([got.intake.takenById], `TO-${got.intake.toNo} is on hold`, `${reason}${note ? ` — ${note}` : ""}`, erpLink("toHold"), "warn");
+  await tellTaker(got.intake, userId, `TO-${got.intake.toNo} is on hold with Accounts`, `${reason}${note ? ` - ${note}` : ""}`, "warn");
   return okVoid(`TO-${got.intake.toNo} is on hold`);
 }
 
@@ -330,7 +579,7 @@ export async function releaseIntake(userId: string, id: string, note: string | n
     })
     .where(and(eq(erpOrderIntakes.id, id), eq(erpOrderIntakes.status, "hold")));
   await tellNewIntake(got.intake.toNo);
-  return okVoid(`TO-${got.intake.toNo} released · back to the Order Hub for both checks`);
+  return okVoid(`TO-${got.intake.toNo} released · back in Accounts > Order approvals`);
 }
 
 /** Cancels a TO. One taken on a call or the Salesman App takes its `orders` row with it. */
@@ -350,6 +599,148 @@ export async function cancelIntake(userId: string, id: string, reason: string): 
   }
   if (got.intake.takenById && got.intake.takenById !== userId) await tell([got.intake.takenById], `TO-${got.intake.toNo} cancelled`, reason.trim(), erpLink("orderHub"), "warn");
   return okVoid(`TO-${got.intake.toNo} cancelled`);
+}
+
+/* ======================================================= Accounts decide */
+
+/** Where the person who took a TO goes to act on it: TeleCRM, the handset, or the ERP. */
+function takerLinks(intake: Pick<Intake, "origin">): { href: string; mbosHref: string | null } {
+  if (intake.origin === "mbos") return { href: "/crm/my-orders", mbosHref: "/orders" };
+  if (intake.origin === "crm") return { href: "/crm/my-orders", mbosHref: null };
+  return { href: erpLink("orderHub"), mbosHref: null };
+}
+
+async function tellTaker(intake: Intake, byUserId: string, title: string, body: string, kind: "info" | "warn" = "info") {
+  if (!intake.takenById || intake.takenById === byUserId) return;
+  const { href, mbosHref } = takerLinks(intake);
+  await notifyUsers([{ userId: intake.takenById, title, body, href, mbosHref, kind }]).catch(() => undefined);
+}
+
+/** A line as Accounts may leave it: product, cans, rate, discount. Parties and godown are not theirs to change. */
+export type ApprovalLine = { skuId: string; qtyCans: number; ratePaise: number | null; discountBp: number | null };
+
+/** Why a set of lines cannot be approved, or null. */
+export function approvalLinesRefusal(lines: ApprovalLine[]): { index: number; field: "skuId" | "qtyCans" | "ratePaise" | "discountBp"; message: string } | { index: -1; field: "lines"; message: string } | null {
+  if (!lines.length) return { index: -1, field: "lines", message: "An order needs at least one line." };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.skuId) return { index: i, field: "skuId", message: "Pick the product" };
+    if (!Number.isInteger(l.qtyCans) || l.qtyCans <= 0) return { index: i, field: "qtyCans", message: "Cans must be a whole number above 0" };
+    if (l.ratePaise == null) return { index: i, field: "ratePaise", message: "No rate - add it to approve" };
+    if (!Number.isFinite(l.ratePaise) || l.ratePaise < 0) return { index: i, field: "ratePaise", message: "The rate cannot be below 0" };
+    if (l.discountBp != null && (l.discountBp < 0 || l.discountBp > 10000)) return { index: i, field: "discountBp", message: "Discount must be between 0 and 100" };
+  }
+  return null;
+}
+
+/**
+ * ACCOUNTS APPROVE A TO, and that makes the order number (Option A). The lines
+ * may be changed while reviewing — product, cans, rate, discount, a line added
+ * or taken off — for THIS order only; the parties and the godown are not
+ * Accounts' to change (they send it back instead). Every line must carry a
+ * rate. The order is born approved: the Production Head's MRP check is next.
+ */
+export async function approveIntake(userId: string, id: string, edited: ApprovalLine[] | null): Promise<Result<{ orderNo: number; toNo: number }>> {
+  const got = await intakeById(id);
+  if (!got) return err("That TO no longer exists.", "not_found");
+  const { intake } = got;
+  if (intake.status !== "open") return err(intake.status === "verified" ? `TO-${intake.toNo} is already approved as order ${intake.orderNo}.` : `TO-${intake.toNo} is not waiting for Accounts.`, "conflict");
+  if (!intake.godownId) return err(`TO-${intake.toNo} has no godown. Send it back so the godown is picked.`, "rule_violation");
+  const lines: IntakeLine[] = edited
+    ? edited.map((l, i) => {
+        /* The line it was, to keep who set a rate that did not move. */
+        const before = (got.lines[i]?.skuId === l.skuId ? got.lines[i] : got.lines.find((x) => x.skuId === l.skuId)) ?? null;
+        const rateMoved = !before || before.ratePaise !== l.ratePaise;
+        const discMoved = !before || (before.discountBp ?? null) !== (l.discountBp ?? null);
+        return {
+          id: erpId("toln"),
+          intakeId: id,
+          position: i,
+          skuId: l.skuId,
+          qtyCans: l.qtyCans,
+          ratePaise: l.ratePaise,
+          discountBp: l.discountBp,
+          listRatePaise: before?.listRatePaise ?? null,
+          rateSetById: rateMoved ? userId : (before?.rateSetById ?? null),
+          rateSetAt: rateMoved ? new Date() : (before?.rateSetAt ?? null),
+          discountAuthorisedById: discMoved && l.discountBp ? userId : (before?.discountAuthorisedById ?? null),
+          remark: before?.remark ?? null,
+        };
+      })
+    : got.lines;
+  const refusal = approvalLinesRefusal(lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qtyCans, ratePaise: l.ratePaise == null ? null : Number(l.ratePaise), discountBp: l.discountBp })));
+  if (refusal) return refusal.index < 0 ? err(refusal.message, "validation") : fieldErr(`l${refusal.index}.${refusal.field}`, refusal.message);
+  const after: Intake = { ...intake, backOfficeById: userId, backOfficeAt: new Date() };
+  let orderNo = 0;
+  const conflict = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(erpOrderIntakes)
+      .set({ backOfficeById: userId, backOfficeAt: new Date(), backOfficeNote: "Approved by Accounts", updatedAt: new Date(), updatedById: userId })
+      .where(and(eq(erpOrderIntakes.id, id), eq(erpOrderIntakes.status, "open")))
+      .returning({ id: erpOrderIntakes.id });
+    if (!row) return true;
+    if (edited) {
+      await tx.delete(erpOrderIntakeLines).where(eq(erpOrderIntakeLines.intakeId, id));
+      for (const l of lines) await tx.insert(erpOrderIntakeLines).values(l);
+    }
+    orderNo = await makeOrder(tx, after, lines, userId, true);
+    return false;
+  });
+  if (conflict) return err(`TO-${intake.toNo} changed while you were looking at it. Open it again.`, "conflict");
+  /* The book row (a TeleCRM or handset order is adopted under the order number) is rewritten from the approved lines. */
+  const { syncBookOrders } = await import("./book");
+  await syncBookOrders([orderNo]);
+  await (await import("./order-tracking")).syncOrderTracking([orderNo], { userId }).catch(() => undefined);
+  if (intake.inboxId) {
+    await db.execute(sql`update erp_order_inbox set status = 'Converted', order_no = ${orderNo}, decided_at = now() where id = ${intake.inboxId} and status = 'New'`).catch(() => undefined);
+  }
+  if (intake.originOrderId) {
+    const { recomputeBuyingCycle } = await import("@/lib/recompute");
+    await recomputeBuyingCycle(intake.billingCustomerId).catch(() => undefined);
+  }
+  const [party] = await db.execute(sql`select name from customers where id = ${intake.billingCustomerId}`) as unknown as { name: string }[];
+  await tellTaker(intake, userId, `Order ${orderNo} approved · was TO-${intake.toNo}`, `${party?.name ?? "The customer"}: Accounts approved it. It is with the Production Head for the MRP check.`);
+  await tell(await holdersOf("productionCheck"), `New order for the MRP check · Order ${orderNo}`, `${party?.name ?? "A customer"} · approved by Accounts.`, erpLink("mrpCheck"));
+  return ok({ orderNo, toNo: intake.toNo }, `Order ${orderNo} approved · it is with the Production Head for the MRP check`);
+}
+
+/**
+ * ACCOUNTS DECLINE A TO: no order number is made. The reason goes to whoever
+ * took it (they ring the customer) and onto the customer's timeline; a TO taken
+ * on a call or the handset declines its `orders` row with it, so the customer
+ * returns to the Call Log on their own cycle.
+ */
+export async function declineIntake(userId: string, id: string, reason: string): Promise<Result<unknown>> {
+  if (!reason.trim()) return fieldErr("reason", "Say why it is declined");
+  const got = await intakeById(id);
+  if (!got) return err("That TO no longer exists.", "not_found");
+  const { intake } = got;
+  if (!["open", "correction", "hold"].includes(intake.status)) return err(`TO-${intake.toNo} is not waiting for Accounts.`, "conflict");
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(erpOrderIntakes)
+      .set({ status: "declined", declineReason: reason.trim(), declinedById: userId, declinedAt: now, updatedAt: now, updatedById: userId })
+      .where(eq(erpOrderIntakes.id, id));
+    if (intake.originOrderId)
+      await tx.update(orders).set({ status: "declined", approvedById: userId, approvedAt: now, declineReason: reason.trim(), updatedAt: now }).where(eq(orders.id, intake.originOrderId));
+    const { writeTimelineEvent, CRM_EVENT } = await import("@/lib/timeline");
+    await writeTimelineEvent(tx, {
+      customerId: intake.billingCustomerId,
+      eventType: CRM_EVENT.order,
+      sourceApp: "crm",
+      sourceRecordId: `${intake.id}:declined`,
+      occurredAt: now,
+      actorUserId: userId,
+      summary: `TO-${intake.toNo} declined by Accounts: ${reason.trim()}`,
+    });
+  });
+  if (intake.originOrderId) {
+    const { recomputeBuyingCycle } = await import("@/lib/recompute");
+    await recomputeBuyingCycle(intake.billingCustomerId).catch(() => undefined);
+  }
+  await tellTaker(intake, userId, `TO-${intake.toNo} declined by Accounts`, `You will need to ring the customer back. Reason given: ${reason.trim()}`, "warn");
+  return okVoid(`TO-${intake.toNo} declined`);
 }
 
 /** The names of the people on a set of TOs, for the screens. */

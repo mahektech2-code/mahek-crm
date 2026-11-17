@@ -1078,18 +1078,31 @@ const PHOTO_COL: Record<string, keyof typeof erpTests.$inferInsert> = {
   video: "videoId",
 };
 
+/**
+ * The Tester picker offers PEOPLE: each option is an account id, labelled with
+ * the name it carries today, so the form sends who and never a name. The
+ * record's own tester stays on the list even if their account was switched
+ * off since, so an edit never blanks them.
+ */
+async function testerPick(keep: string | null): Promise<{ opts: string[]; optLabels: Record<string, string> }> {
+  const rows = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(keep ? or(eq(users.active, true), eq(users.id, keep)) : eq(users.active, true))
+    .orderBy(asc(users.name));
+  return { opts: rows.map((u) => u.id), optLabels: Object.fromEntries(rows.map((u) => [u.id, u.name])) };
+}
+
 async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | null> {
-  const testers = await db.select({ name: users.name }).from(users).where(eq(users.active, true)).orderBy(asc(users.name));
   const gds = await godownOptions(ctx, { lost: false });
   const evidence = (on: string) =>
     TEST_FIELDS.map(({ test, field }) => ({ ...field, when: { k: on, map: "testsOf", has: test } }) as FieldSpec);
 
   if (testId) {
     const [t] = await db
-      .select({ t: erpTests, item: erpRawMaterials.name, tester: users.name })
+      .select({ t: erpTests, item: erpRawMaterials.name })
       .from(erpTests)
       .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpTests.rawMaterialId))
-      .leftJoin(users, eq(users.id, erpTests.testerId))
       .where(eq(erpTests.id, testId));
     if (!t) return null;
     const line = `PR ${t.t.prNumber} · ${t.item}`;
@@ -1115,7 +1128,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
         densityPhoto: t.t.densityPhotoId ?? "",
         thermocol: t.t.thermocolPhotoId ?? "",
         video: t.t.videoId ?? "",
-        tester: t.tester ?? ctx.user.name,
+        tester: t.t.testerId ?? ctx.user.id,
         date: t.t.testingDate,
         remark: t.t.remark ?? "",
       },
@@ -1124,7 +1137,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
         { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
         ...evidence("line"),
         { k: "video", l: "Test video", t: "video" },
-        { k: "tester", l: "Tester", t: "select", req: true, opts: testers.map((u) => u.name) },
+        { k: "tester", l: "Tester", t: "select", req: true, ...(await testerPick(t.t.testerId)) },
         { k: "date", l: "Testing date", t: "date", req: true },
         { k: "remark", l: "Remark", t: "area", mic: true },
       ],
@@ -1152,13 +1165,13 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
     sub: "Only the evidence the item's tests need is asked for.",
     submit: "Save test",
     data: { testsOf, lineId },
-    init: { tester: ctx.user.name, date: today(), godown: ctx.workingGodown?.name ?? "" },
+    init: { tester: ctx.user.id, date: today(), godown: ctx.workingGodown?.name ?? "" },
     header: [
       { k: "line", l: "Inward line", t: "select", req: true, sec: "Lot", opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Lines needing a test arrive here as they are received on Purchases → Goods receipt (GRN)." },
       { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
       ...evidence("line").map((f, i) => (i === 0 ? { ...f, sec: "Readings" } : f)),
       { k: "video", l: "Test video", t: "video", when: { k: "line", notEmpty: true } },
-      { k: "tester", l: "Tester", t: "select", req: true, sec: "Recorded by", opts: testers.map((u) => u.name) },
+      { k: "tester", l: "Tester", t: "select", req: true, sec: "Recorded by", ...(await testerPick(ctx.user.id)) },
       { k: "date", l: "Testing date", t: "date", req: true },
       godownField(gds),
       { k: "remark", l: "Remark", t: "area", mic: true },
@@ -1441,14 +1454,22 @@ async function saveTest(
   const [mat] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, rawMaterialId));
   if (!mat) return err("The item no longer exists.", "not_found");
   const tests = from.existing?.tests ?? mat.testingList;
-  /* The tester box holds a name; turn it into a person through the directory
-     (any spelling they have carried), and the person saving when it is blank. */
-  const testerName = text(h.tester);
-  const { personDirectory } = await import("@/lib/services/person-identity-service");
-  const tester = testerName ? { id: (await personDirectory()).accountByName(testerName) } : { id: ctx.user.id };
-  /* A named tester nobody can be found for is refused, not quietly recorded
-     as whoever pressed Save. */
-  if (testerName && !tester.id) return fieldErr("tester", `Nobody with a MahekOne account answers to ${testerName}. Pick the tester from the list.`);
+  /* The Tester picker sends the person's account id; blank is whoever saves.
+     A tab opened before the picker sent ids still sends the name it showed,
+     and that is turned into ONE person through the directory or refused —
+     never quietly recorded as whoever pressed Save. */
+  const picked = text(h.tester);
+  let testerId: string = ctx.user.id;
+  if (picked) {
+    const [byId] = await db.select({ id: users.id }).from(users).where(eq(users.id, picked)).limit(1);
+    if (byId) testerId = byId.id;
+    else {
+      const { loadStaffResolver } = await import("@/lib/services/person-identity-service");
+      const m = (await loadStaffResolver())(picked);
+      if (!m.userId) return fieldErr("tester", "Pick the tester from the list.");
+      testerId = m.userId;
+    }
+  }
   const density = num(h.density);
   if (tests.includes("Density") && density != null && (density < 0.5 || density > 1.5)) return fieldErr("density", "Density must be between 0.5 and 1.5.");
   const photoIds: Record<string, string | null> = {};
@@ -1458,7 +1479,7 @@ async function saveTest(
     density: tests.includes("Density") ? density : null,
     phValue: tests.includes("PH") ? num(h.phValue) : null,
     ...photoIds,
-    testerId: tester?.id ?? ctx.user.id,
+    testerId,
     testingDate: text(h.date) ?? today(),
     remark: text(h.remark),
     updatedAt: new Date(),

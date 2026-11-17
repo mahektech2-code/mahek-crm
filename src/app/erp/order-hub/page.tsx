@@ -5,14 +5,13 @@ import { nowMs } from "@/lib/format";
 import { HubBoard, type HubTab } from "./hub-board";
 
 /**
- * THE ORDER HUB, drawn as its mockup: every TO waiting for its two checks,
- * with the checks named, how long it has waited and Verify beside each row.
- * The rows' actions are the hub list's own (`hubActions`), so who may verify,
- * send back, hold or edit is decided where it always was.
+ * THE ORDER HUB: every TO waiting for Accounts, how long it has waited, and
+ * Edit TO / Cancel TO behind each row (`hubActions`). Accounts approve a TO
+ * in Accounts > Order approvals, and that makes the order number.
  */
 export const dynamic = "force-dynamic";
 
-const VIEW_TAB: Record<string, HubTab> = { orderHub: "mine", hubCorrection: "correction", hubDone: "verified" };
+const VIEW_TAB: Record<string, HubTab> = { orderHub: "waiting", hubCorrection: "correction", hubDone: "verified" };
 
 export default async function OrderHubPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();

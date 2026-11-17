@@ -3,6 +3,8 @@ import { getConfig } from "@/lib/config/store";
 import { money, phoneDisplay, stampDate } from "@/lib/format";
 import { approvalBoard, pendingOrders } from "@/lib/services/order-approval-service";
 import { ApprovalBoard } from "./approval-board";
+import { accountsTos } from "@/lib/services/to-approval-service";
+import { ToApprovals } from "./to-approvals";
 import { erpLink } from "@/lib/erp/registry";
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
@@ -14,12 +16,13 @@ export default async function Page() {
   // App access is gated by the layout. This decides only whether the buttons
   // are live: seeing the queue and deciding on it are different things.
   const user = await requireUser();
-  const [{ allowed }, orders, config, board, apps] = await Promise.all([
+  const [{ allowed }, orders, config, board, apps, tos] = await Promise.all([
     checkCapability("order.approve"),
     pendingOrders(),
     getConfig(),
     approvalBoard(),
     listUserApps(user.id),
+    accountsTos(),
   ]);
 
   const rows: QueueRow[] = orders.map((o) => ({
@@ -58,13 +61,23 @@ export default async function Page() {
     overdueBills: o.overdueBills,
   }));
 
+  /* Option A: Accounts approve every TO, and that makes the order number. An
+     order that reached Accounts without a TO (numbered before TOs, or taken
+     while the ERP does not take the orders) keeps the board below, drawn only
+     while there are any. Numbered orders on hold are on Orders on hold. */
   return (
-    <ApprovalBoard
-      rows={board}
-      queueRows={rows}
-      canDecide={allowed}
-      staleHours={config["payments.confirmationAgeWarningHours"]}
-      erpOrdersHref={apps.includes("erp") ? erpLink("orders") : null}
-    />
+    <>
+      <ToApprovals waiting={tos.waiting} sentBack={tos.sentBack} held={tos.held} canDecide={allowed} />
+      {board.length ? (
+        <ApprovalBoard
+          title="Other orders waiting"
+          rows={board}
+          queueRows={rows}
+          canDecide={allowed}
+          staleHours={config["payments.confirmationAgeWarningHours"]}
+          erpOrdersHref={apps.includes("erp") ? erpLink("orders") : null}
+        />
+      ) : null}
+    </>
   );
 }

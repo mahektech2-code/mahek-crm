@@ -36,7 +36,8 @@ import { db } from "../src/db";
 import { appAccess, auditLog, taskEvents, taskRoutines, tasks, users } from "../src/db/schema";
 import { readTab } from "../src/lib/sheets";
 import { grantAppWithDefaultModules, rederiveAccountLevel } from "../src/lib/services/app-provisioning";
-import { mapTaskList, mapToDoList, norm, routineKey, todoAsTask } from "../src/lib/tasks/task-emp-import";
+import { loadPersonDirectory } from "../src/lib/services/person-identity-service";
+import { mapTaskList, mapToDoList, norm, personLookup, routineKey, todoAsTask, type PersonLookup } from "../src/lib/tasks/task-emp-import";
 import { writeRoutineTasks } from "../src/lib/tasks/routine-service";
 import { scheduleWords } from "../src/lib/tasks/routines";
 
@@ -56,9 +57,15 @@ async function main() {
   const dbName = new URL(process.env.DATABASE_URL ?? "postgres://x/none").pathname.slice(1);
   console.log(`${apply ? "APPLYING to" : "Dry run against"} database “${dbName}”`);
 
-  const accounts = await db.select({ id: users.id, name: users.name, active: users.active }).from(users);
-  // Only accounts that can sign in may hold a task.
-  const refs = accounts.filter((u) => u.active).map((u) => ({ id: u.id, code: "", name: u.name, active: true }));
+  const accounts = await db.select({ id: users.id, name: users.name, active: users.active, employeeId: users.employeeId }).from(users);
+  // The sheet's names become accounts through the person directory. Only an
+  // account that can sign in may hold a task, as before: a switched-off one
+  // is treated as no login at all.
+  const lookup = personLookup(await loadPersonDirectory(), accounts);
+  const refs: PersonLookup = (name) => {
+    const m = lookup(name);
+    return m.kind === "one" && !m.person.active ? { kind: "none" } : m;
+  };
   const nameOf = new Map(accounts.map((u) => [u.id, u.name]));
 
   const sheet = await readTab(SPREADSHEET_ID, "To Do List");

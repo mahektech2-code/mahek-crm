@@ -104,10 +104,14 @@ const files = [
   // Customer order tracking: one link per order, every step recorded once, holds, documents, messages.
   "src/lib/erp/erp-order-tracking.test.ts",
   "src/lib/erp/erp-money.test.ts",
+  // A name stored as text becomes an account id only through the person directory, and never by a guess.
+  "src/lib/person-ids-backfill.test.ts",
   // Accounts → Bank statement management: upload, import only what is new,
   // match each line to what explains it, and the PDF's seven days.
   "src/lib/bank-statements.test.ts",
   "src/lib/erp/erp-book.test.ts",
+  // The Order Hub, Option A: Accounts approve the TO, duplicates, editing until Bill it.
+  "src/lib/erp/order-hub-accounts.test.ts",
   "src/lib/erp/erp-scale.test.ts",
   "src/lib/erp/erp-ai.test.ts",
   "src/lib/erp/erp-ai-reading.test.ts",

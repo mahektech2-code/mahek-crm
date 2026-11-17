@@ -6,7 +6,8 @@ import { Button, Input, Th, Td, Tr, buttonClass, checkboxClass, cx } from "@/com
 import { fd, nf } from "@/lib/erp/ui";
 import type { MrpBoardOrder } from "@/lib/erp/screens/order-hub";
 import { clock } from "@/lib/format";
-import { BoardHeader, Pill } from "../_ui/board";
+import { BoardHeader, BoardTabs, Pill } from "../_ui/board";
+import type { ActionSpec } from "@/lib/erp/ui";
 import { useErpUi } from "../_ui/erp-ui";
 import { useKit } from "../_ui/kit";
 import { Eyebrow } from "../_ui/look";
@@ -14,20 +15,27 @@ import { Eyebrow } from "../_ui/look";
 /* ---------------------------------------------------------------------------
  * THE MRP CHECK BOARD: the orders waiting for the Production Head on the left,
  * the chosen one's answer on the right. Clear for production and Hold are the
- * MRP list's own actions on the server (`mrpActions`), so who may clear, and
- * that a held order is released in To Hold, are unchanged.
+ * MRP list's own actions on the server (`mrpActions`). The On hold tab lists
+ * the production holds, and Release clears an order straight to Under Process.
  * ------------------------------------------------------------------------- */
 
 const SCREEN = "mrpCheck";
 
+/** An order on the MRP check's On hold tab. Release clears it straight to Under Process. */
+export type MrpHoldRow = { id: string; title: string; reason: string; note: string | null; held: string; internal: boolean; release: ActionSpec | null };
+
 export function MrpBoard({
   orders,
+  holds,
+  initialTab,
   initialOpen,
   orderLinks,
   toHoldHref,
   readOnly,
 }: {
   orders: MrpBoardOrder[];
+  holds: MrpHoldRow[];
+  initialTab: "pending" | "hold";
   initialOpen: string | null;
   orderLinks: Record<number, string>;
   toHoldHref: string;
@@ -35,8 +43,22 @@ export function MrpBoard({
 }) {
   const [openId, setOpenId] = React.useState<string | null>(initialOpen ?? orders.find((o) => !o.held)?.id ?? orders[0]?.id ?? null);
   const open = orders.find((o) => o.id === openId) ?? null;
+  const [tab, setTab] = React.useState<"pending" | "hold">(initialTab);
+  const tabs = (
+    <BoardTabs<"pending" | "hold">
+      value={tab}
+      onChange={setTab}
+      tabs={[
+        { key: "pending", label: "Pending checks", count: orders.length },
+        { key: "hold", label: "On hold", count: holds.length },
+      ]}
+    />
+  );
+  if (tab === "hold") return <MrpHolds holds={holds} tabs={tabs} readOnly={readOnly} />;
   return (
-    <div className="flex min-h-full">
+    <div className="flex min-h-full flex-col">
+      <div className="px-6 pt-6">{tabs}</div>
+    <div className="flex min-h-0 flex-1">
       <aside className="w-[290px] flex-none border-r border-line bg-surface">
         <div className="px-4 pt-6 pb-3">
           <div role="heading" aria-level={1} className="text-lg leading-7 font-semibold text-ink">
@@ -74,6 +96,40 @@ export function MrpBoard({
       <div className="min-w-0 flex-1 px-6 pt-6 pb-10">
         {open ? <MrpDetail key={open.id} o={open} orderHref={orderLinks[open.orderNo]} toHoldHref={toHoldHref} readOnly={readOnly} /> : null}
       </div>
+    </div>
+    </div>
+  );
+}
+
+function MrpHolds({ holds, tabs, readOnly }: { holds: MrpHoldRow[]; tabs: React.ReactNode; readOnly: boolean }) {
+  const ui = useErpUi();
+  return (
+    <div className="px-6 pt-6 pb-10">
+      {tabs}
+      {holds.length ? (
+        <ul className="divide-y divide-divider rounded-card border border-line bg-surface">
+          {holds.map((h) => (
+            <li key={h.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-ink">{h.title}</span>
+                <span className="block text-meta text-body">
+                  {h.reason}
+                  {h.note ? ` · ${h.note}` : ""} · {h.held}
+                </span>
+              </span>
+              {h.internal ? <Pill tone="muted">Internal</Pill> : null}
+              {h.release && !readOnly ? (
+                <Button variant="success" size="sm" disabled={!!h.release.why} title={h.release.why || undefined} onClick={() => ui.act("mrpHold", h.release!, h.id)}>
+                  Release
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-card border border-line bg-surface px-5 py-10 text-center text-sm text-muted">Nothing on hold.</p>
+      )}
+      <p className="mt-3 text-meta text-muted">Release clears an order: it goes straight to Under Process, and the person who took it is told.</p>
     </div>
   );
 }
@@ -114,7 +170,7 @@ function MrpDetail({ o, orderHref, toHoldHref, readOnly }: { o: MrpBoardOrder; o
           On hold · {o.held.department}: {o.held.reason}
           {o.held.note ? ` — ${o.held.note}` : ""}.{" "}
           <Link href={toHoldHref} className="font-medium underline">
-            Release it in To Hold
+            Open To Hold
           </Link>
         </div>
       ) : null}
@@ -214,7 +270,7 @@ function MrpDetail({ o, orderHref, toHoldHref, readOnly }: { o: MrpBoardOrder; o
               ) : null}
               {clear ? (
                 <Button variant="success" disabled={busy || !capacity || !!clear.why} title={clear.why || (!capacity ? "Tick that the floor can make it first" : undefined)} onClick={doClear}>
-                  {busy ? "Clearing…" : "Clear for production"}
+                  {busy ? "Clearing…" : "Clear"}
                 </Button>
               ) : null}
             </span>

@@ -176,7 +176,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
       );
     }
     const rows = await advanceList();
-    const depts = new Map(kit.employees.map((e) => [e.name.toLowerCase(), e.dept]));
+    const depts = new Map(kit.employees.map((e) => [e.id, e.dept]));
     return shell(
       <Panel>
         <SubTabs tabs={tabs} />

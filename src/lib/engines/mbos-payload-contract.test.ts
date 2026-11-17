@@ -416,7 +416,7 @@ const ROUTES: Record<string, Route> = {
   "order/create": { schema: "orderSchema" },
   /* An update carrying lines is an edit (`orderEditSchema`); anything else is
      the order moving along (`orderProgressSchema`). `handleOrder` routes on it. */
-  "order/update": { schemas: ["orderProgressSchema", "orderEditSchema"] },
+  "order/update": { schemas: ["orderProgressSchema", "orderEditSchema", "toCancelSchema"] },
   "order_change_request/create": { schema: "orderChangeSchema" },
   "payment/create": { schema: "paymentSchema" },
   "payment/update": { schema: "paymentUpdateSchema" },

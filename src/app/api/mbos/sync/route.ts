@@ -3,6 +3,7 @@ import { authenticate, buildPull } from "@/lib/services/mbos-service";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { getConfig } from "@/lib/config/store";
 import { SYNC_ENTITY_TYPES, type SyncItem, type SyncResult } from "@/lib/mbos/types";
+import { syncTimingHeader, type SyncPhase } from "@/lib/mbos/sync-timing";
 
 /* ---------------------------------------------------------------------------
  * One round trip, both directions — PROTOCOL.md §4.
@@ -24,6 +25,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
+  /* Where this sync's time goes, for the Server-Timing header — see `sync-timing.ts`. */
+  const phases: SyncPhase[] = [];
+  let mark = performance.now();
+  const lap = (name: string) => {
+    const now = performance.now();
+    phases.push({ name, ms: now - mark });
+    mark = now;
+  };
+
   const auth = await authenticate(request);
   if (!auth.ok) {
     return NextResponse.json(
@@ -32,9 +42,11 @@ export async function POST(request: Request) {
     );
   }
 
+  lap("auth");
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
+    lap("read");
   } catch {
     return NextResponse.json(
       { ok: false, code: "validation", error: "The sync request was not readable JSON." },
@@ -150,7 +162,9 @@ export async function POST(request: Request) {
     });
   }
 
+  lap("check");
   const results = [...refusals, ...(await ingestSyncBatch(auth.principal, items))];
+  lap("ingest");
   /* Shops in his book the handset says it was never sent — see `buildPull`.
      Bounded and re-checked against his scope there; anything else is
      ignored rather than refused, because an older handset sends nothing. */
@@ -162,6 +176,16 @@ export async function POST(request: Request) {
     typeof body.cursor === "string" ? body.cursor : null,
     { missingIds },
   );
+  lap("pull");
 
-  return NextResponse.json({ results, pull });
+  /* Written once here rather than by NextResponse.json — the same bytes — so
+     the time it takes and the size it comes to can go in the header. */
+  const json = JSON.stringify({ results, pull });
+  lap("json");
+  return new NextResponse(json, {
+    headers: {
+      "Content-Type": "application/json",
+      "Server-Timing": syncTimingHeader(phases, { items: items.length, bytes: Buffer.byteLength(json), pull: pull as unknown as Record<string, unknown> }),
+    },
+  });
 }

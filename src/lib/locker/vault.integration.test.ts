@@ -197,6 +197,26 @@ describe("offboarding", () => {
     for (let i = 0; i < items.length; i++) if (i !== rotIdx) assert.ok((await ops.completeOffItem(admin, s.data.id, i, { done: true, to: admin.id })).ok);
     assert.ok((await ops.signOffOffboarding(admin, s.data.id)).ok);
   });
+
+  test("finds the leaver's own sign-in accounts and cards by account, through a rename, and nobody else's", async () => {
+    const mine = await ops.saveIdentity(admin, null, { email: "rahul.personal@gmail.com", provider: "Google (personal)", kind: "personal", controlled: false, mfa: false, recovery: false, controlledById: rahul.id, controlledByName: "", ownerId: null });
+    assert.ok(mine.ok, mine.ok ? "" : mine.error);
+    const [stored] = await db.execute<{ name: string; by: string }>(sql`select controlled_by_name as name, controlled_by_id as by from locker_identities where id = ${mine.data.id}`);
+    assert.deepEqual(stored, { name: "Rahul Lead", by: rahul.id }, "the person by account, his name beside it only as the label");
+    /* A consultant with the same name, typed: not staff, and not Rahul. */
+    const theirs = await ops.saveIdentity(admin, null, { email: "rahul.consultant@gmail.com", provider: "Google (personal)", kind: "personal", controlled: false, mfa: false, recovery: false, controlledById: null, controlledByName: "Rahul Lead", ownerId: null });
+    assert.ok(theirs.ok);
+    await db.execute(sql`insert into locker_payment_methods (id, label, last4, holder, holder_user_id, personal) values ('lkp_rahul', 'Rahul own card', '4242', 'Rahul Lead', ${rahul.id}, true), ('lkp_other', 'Consultant card', '1111', 'Rahul Lead', null, true)`);
+    /* HR renames him before he leaves. */
+    await db.update(users).set({ name: "Rahul Mehta" }).where(eq(users.id, rahul.id));
+
+    const s = await ops.startOffboarding(admin, rahul.id);
+    assert.ok(s.ok);
+    const [ob] = await db.execute<{ items: ops.OffItem[] }>(sql`select items from locker_offboarding where id = ${s.data.id}`);
+    const items = (ob as unknown as { items: ops.OffItem[] }).items;
+    assert.deepEqual(items.filter((i) => i.kind === "identity").map((i) => i.id), [mine.data.id], "his own account, not the consultant's with the same name");
+    assert.deepEqual(items.filter((i) => i.kind === "payment").map((i) => i.id), ["lkp_rahul"]);
+  });
 });
 
 describe("the audit chain", () => {

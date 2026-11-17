@@ -69,6 +69,12 @@ npm run jobs -- revert-sheet-paid --dry-run
                            # what a default-settled run wrote over the Payment
                            # Status tab's word, and what undoing it gives back
 npm run jobs -- revert-sheet-paid          # undo it, then rebuild the caches
+npm run jobs -- person-ids-backfill --dry-run
+                           # the account ids 0353 added (advances, old petty
+                           # cash, complaint salesmen, Locker holders) filled
+                           # from the names beside them, through the person
+                           # directory. Never guesses; counts what it leaves
+npm run jobs -- person-ids-backfill        # write them — idempotent
 npm run jobs -- customer-master-sync        # the EMP 2.0 shop master -> staging
 npm run jobs -- customer-master-project --dry-run
                            # what the shop master would create, writing nothing
@@ -9876,27 +9882,63 @@ delivered.
 
 ## The Order Hub — a TO number before the order number
 
-**EVERY ORDER STARTS AS A TO, WHEREVER IT WAS TAKEN, AND GETS ITS ORDER NUMBER
-FROM TWO PEOPLE.** While `erp.orders.live` is on, the ERP's New order form, a
-TeleCRM call and the Salesman App all write an `erp_order_intakes` row
+**EVERY ORDER STARTS AS A TO, AND ACCOUNTS' APPROVAL MAKES ITS ORDER NUMBER
+(Option A, Nov 2026).** While `erp.orders.live` is on, the ERP's New order
+form, a TeleCRM call and the Salesman App all write an `erp_order_intakes` row
 (`TO-<n>`, series `tempOrder`) through `createIntake` — never an `erp_orders`
-row. Sales › Order Hub lists them. The back office and the Production Head
-(`productionCheck` power) each verify; `nextCheck` in `engines/order-hub.ts`
-says which check a press makes, and the same person cannot make both (an ERP
-administrator excepted). The SECOND check calls `makeOrder` in the same
-transaction: the order number, the `erp_orders` lines (Verified, with
-`accounts_check` and `production_check` Pending) and the review row. "TO number"
-is the only new word — the order number is still the order number.
+row. It first shipped with two checks on the TO (the "back office" and the
+Production Head) and two more after the number (Accounts and the MRP check);
+the back office WAS Accounts, so each desk looked at every order twice. Now
+Accounts decide the TO on Accounts › Order approvals (`order.approve`, the
+Accounts manager's; `services/to-approval-service.ts` over `approveIntake`,
+`sendBackIntake`, `holdIntake`, `releaseIntake`, `declineIntake` in
+`lib/erp/order-hub.ts`): Approve calls `makeOrder` with `accounts_check`
+already Approved (a Pending customer's lines with it — no separate "Approved
+By Admin"), Send back goes to the taker with the reason, Hold uses the
+Accounts reasons and Release brings it back, Decline needs a reason, tells the
+taker, declines a TeleCRM/handset `orders` row with it and writes the
+customer's timeline. The Production Head's ONE check is the MRP check. The
+ERP Order Hub keeps the list, Edit TO and Cancel TO; its Verify buttons and
+`verifyOrders` are no longer part of the flow. A new TO tells the Accounts
+managers who hold Order approvals; approving tells the taker and the
+Production Head. The Accounts deadline covers TOs (`kind = 'to'`, `0350`).
 
-**A TO IS EDITED; AN ORDER IS NOT.** Editing a TO (`editIntake`, its taker or
-the hub) clears both checks. Once the order number exists its goods,
-quantities, parties, rates and discounts are fixed: Edit order, Edit this line,
-Add another, Move to a new order and Undo verification are gone, the edit form
-is Dispatch details only, the handset's edit is refused, and Accounts › Order
-changes is retired (drawn only while old requests remain). To change an order,
-cancel it and take a new one. Cancel, Delete, holds, Undo billing and Ready
-keep the rules they had. The customer's tracking page never had an edit and
-still has none.
+**ACCOUNTS CHANGE THE LINES, NEVER THE PARTIES.** In the review Accounts may
+change a line's product, cans, rate and discount, add or take off a line, for
+THIS order only (`approvalLinesRefusal`; a rate Accounts set is stamped
+`rate_set_by_id`). Every line needs a rate to approve — Accounts fill a missing
+one. The billing party, delivery party and godown are shown, not edited: a
+wrong one is sent back.
+
+**A DUPLICATE IS THE SAME ORDER PUNCHED TWICE (orders shared on WhatsApp groups
+are punched by more than one person).** The rule is `sameOrder` in
+`engines/order-hub.ts`, pure: the same day, the same billing party AND the same
+delivery party, exactly the same items (product and cans). A different delivery
+party is a different order. `createIntake` asks it under an advisory lock per
+billing party, so two people saving at once cannot both slip through: in `ask`
+mode (the ERP form) an unanswered match throws `DuplicateFoundError` and the
+form shows the popup; in `flag` mode (inside TeleCRM's call transaction, and the
+Salesman App, which may have had no signal) the TO is made and marked
+`duplicate_state = 'possible'` for Accounts — an order is never lost to the
+check. The popup's buttons are "Same order - don't create" (nothing is made; on
+TeleCRM the call still saves as Order received; `tellSameOrder` tells whoever
+punched the first) and "Different order - create it" (a reason, stored with who
+said it, `duplicate_state = 'different'`). The one line under the comparison is
+written by a model (`erp.orders.duplicateAiModel`) where a key exists and by the
+rules otherwise; the match itself is never the model's. `erp.orders.duplicateCheck`
+switches it off.
+
+**AN ORDER IS EDITED UNTIL BILL IT — by the Production Head in the ERP.** The
+lock at the order number is gone. Orders › Edit order (`productionCheck` power,
+or an ERP administrator) changes goods, cans, rates, discounts, the parties,
+the transporter and the dispatch day, adds or takes off a line, and nothing is
+approved again (`saveEditOrder` in `screens/sales.ts`). A line whose product
+changes, is taken off or whose cans drop gives its allocated lots and scanned
+boxes back to the shelf (`releaseLine`), and a Ready line the shelf no longer
+covers goes back to Under Process. Billed (or dispatched) is locked; Undo
+billing unlocks it. The taker edits a TO from TeleCRM › My orders or the
+Salesman App only until Accounts approve it. Cancel, Delete, holds, Undo billing
+and Ready keep the rules they had.
 
 **TWO GATES AFTER THE ORDER NUMBER, AND THE DEFAULTS ARE WHY NOTHING STOPPED.**
 `accounts_check` (Accounts approve, hold or decline — `afterBookDecision`
@@ -9914,13 +9956,17 @@ Until then it stays `pending_approval` — never `captured`, which counts as a
 sale — and `pendingOrders` leaves it out of the Accounts queue. An open TO
 still holds its customer off the Call Log (`recomputeErpOrderHolds`).
 
-**ONE TO HOLD, AND RELEASE SENDS IT BACK TO WHOEVER HELD IT.** A TO's hold is on
-the TO; an order's is an `erp_order_holds` row with a `department` (office,
-accounts, production). Sales › To Hold lists all of them; releasing a TO puts it
-back for both checks, an Accounts hold back in Order approvals, a production
-hold back at the MRP check, an office hold where its lines were — never past
-the desk that held it. Accounts hold and release from their own drawer
-(`holdOrderForAccounts`). The customer reads only the customer wording.
+**ONE TO HOLD, AND RELEASE SENDS IT BACK TO WHOEVER HELD IT — EXCEPT AT THE MRP
+CHECK, WHERE RELEASE CLEARS IT.** A TO's hold is on the TO; an order's is an
+`erp_order_holds` row with a `department` (office, accounts, production). A held
+TO is listed under Accounts › Order approvals (and Sales › To Hold) and
+releasing it brings it back to Order approvals; an Accounts hold on a numbered
+order goes back to Order approvals; an office hold goes back where its lines
+were. The MRP check is one screen with two tabs, Pending checks and On hold, and
+releasing a production hold CLEARS the order straight to Under Process with no
+second check. A hold can be kept internal (`erp_order_holds.customer_visible`,
+`0350`): the MRP Hold dialog's "Tell the customer" is off by default, and an
+internal hold never reaches the customer's tracking page or messages.
 
 **"WAITING ON ACCOUNTS" IS ONE FRAGMENT.** `awaitingAccountsSql` in
 `lib/order-status.ts` leaves out TOs and Accounts-held orders, and the approval
@@ -9944,19 +9990,22 @@ Cancel TO are the TAKER's, only while it is a TO (`actions/my-orders.ts`).
 **THE HUB'S SCREENS ARE DRAWN AS THEIR MOCKUPS, ON THE SAME ACTIONS.**
 `/erp/order-hub`, `/erp/mrp-check` and `/erp/to-hold` are pages of their own
 (static routes beside `[slug]`), not the generic list: figure cards, underlined
-tabs, a table with Verify / Release beside each row and the rest behind ⋯
+tabs, a table with the row's main button beside it and the rest behind ⋯
 (`app/erp/_ui/board.tsx`). Their rows come from `hubBoard`, `mrpBoard` and
 `holdBoard` in `screens/order-hub.ts`, and every button runs the list module's
 OWN action (`hubActions`, `mrpActions`, `holdActions`) through the ERP kit, so
-who may verify, clear, hold or release is decided where it always was. The ERP's
-header and sidebar are unchanged — only the page body follows the mockup. The
-New order form's review page is `FormSpec.review` (the order's few facts, its
-lines with amounts, a possible duplicate, the TO notice). Accounts' Order
-approvals is `approval-board.tsx` over `approvalBoard()`, with a Hold dialog that
-takes the customer's words and a look-again day, and Orders on hold has its own
-page. A call that takes an order shows "Order taken: TO-n"
-(`order-taken-dialog.tsx`, from `takenTo` on the save). The handset has
-`/order-sent` (the receipt after an order outside a visit) and `/order-detail`.
+who may clear, hold or release is decided where it always was. Under Option A
+the Order Hub verifies nothing (Edit TO and Cancel TO only); the MRP board has
+Pending checks and On hold tabs, and its Release is the `mrpHold` module's,
+which clears the order. The ERP's header and sidebar are unchanged. The New
+order form's review page is `FormSpec.review` (the order's few facts, its lines
+with amounts, the TO notice); a duplicate is the server's popup, not the review.
+Accounts' Order approvals is the TO queue (`to-approvals.tsx`); `approval-board.tsx`
+over `approvalBoard()` is drawn below it only for orders that reached Accounts
+without a TO, and Orders on hold has its own page. A call that takes an order
+shows "Order taken: TO-n" (`order-taken-dialog.tsx`, from `takenTo` on the
+save). The handset has `/order-sent` (the receipt after an order outside a
+visit) and `/order-detail`.
 
 **An edited TO rewrites its call's order.** `editIntake` calls
 `syncOriginOrderFromIntake` (`book.ts`), so the TeleCRM or handset `orders` row

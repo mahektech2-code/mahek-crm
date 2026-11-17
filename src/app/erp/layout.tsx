@@ -52,7 +52,9 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   const held = ERP_GROUPS.flatMap((g) => g.screens.filter((s) => s.built && ctx.screens.has(s.key)));
   /* A screen with tabs carries the work waiting on any of them: the Transport
      screen's badge is its Pending LR count. By href, which is what a nav row is. */
-  const badges = counts.then((c) => Object.fromEntries(held.map((s) => [erpHref(s), erpKeysOf(s).reduce((n, k) => n + (c[k] ?? 0), 0)])));
+  /* A held order is not work waiting: the MRP check's badge is its Pending checks alone (its On hold tab keeps its own count). */
+  const NOT_WAITING = new Set(["mrpHold"]);
+  const badges = counts.then((c) => Object.fromEntries(held.map((s) => [erpHref(s), erpKeysOf(s).filter((k) => !NOT_WAITING.has(k)).reduce((n, k) => n + (c[k] ?? 0), 0)])));
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
       .filter((s) => s.built && ctx.screens.has(s.key))

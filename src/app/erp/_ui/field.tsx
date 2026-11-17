@@ -246,15 +246,17 @@ function Control({
     );
   }
   if (f.t === "select") {
-    if ((opts.length > 12 || f.typed) && !f.readOnly) return <Combo value={value} opts={opts} error={error} onChange={onChange} placeholder={f.typed} />;
+    /* An option may be a key (a person's account id) with a name to show: the key is sent, only the name is seen. */
+    const say = (o: string) => f.optLabels?.[o] ?? o;
+    if ((opts.length > 12 || f.typed) && !f.readOnly) return <Combo value={value} opts={opts} label={f.optLabels ? say : undefined} error={error} onChange={onChange} placeholder={f.typed} />;
     /* A locked field offers nothing, so it draws no list: a fixed billing party was six thousand <option>s in the page. */
-    if (f.readOnly && opts.length > 12) return <input value={value} disabled readOnly className={control(error)} />;
+    if (f.readOnly && opts.length > 12) return <input value={say(value)} disabled readOnly className={control(error)} />;
     return (
       <select value={value} disabled={f.readOnly} onChange={(e) => onChange(e.target.value)} className={control(error, "cursor-pointer")}>
         <option value="">{opts.length ? "Choose…" : "Nothing available"}</option>
         {opts.map((o) => (
           <option key={o} value={o}>
-            {o}
+            {say(o)}
           </option>
         ))}
       </select>
@@ -351,16 +353,33 @@ function Control({
 }
 
 /** A select with more than twelve options becomes a search box. */
-function Combo({ value, opts, error, onChange, placeholder }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void; placeholder?: string }) {
+function Combo({
+  value,
+  opts,
+  label,
+  error,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  opts: string[];
+  /** Where an option is a key, its name: searched and shown in its place. */
+  label?: (o: string) => string;
+  error: boolean;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState(PAGE);
-  const m = matchOptions(opts, q);
+  const say = label ?? ((o: string) => o);
+  const m = matchOptions(opts, q, say);
+  const shownValue = value ? say(value) : "";
   return (
     <span className="relative block">
       <input
-        value={open ? q : value}
-        placeholder={value || placeholder || `Search ${nf(opts.length)} options`}
+        value={open ? q : shownValue}
+        placeholder={shownValue || placeholder || `Search ${nf(opts.length)} options`}
         onFocus={() => {
           setOpen(true);
           setQ("");
@@ -396,7 +415,7 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
               }}
               className={cx("block min-h-8.5 w-full cursor-pointer px-3 py-[7px] text-left text-sm text-ink", x === value ? "bg-brand-soft" : "hover:bg-canvas")}
             >
-              {x}
+              {say(x)}
             </button>
           ))}
           {m.length > limit ? <span className="block border-t border-divider px-3 py-2 text-xs text-muted">Showing {nf(limit)} of {nf(m.length)} — scroll for more</span> : null}

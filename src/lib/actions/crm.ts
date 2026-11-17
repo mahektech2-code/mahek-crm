@@ -252,6 +252,10 @@ export type SaveInteractionActionInput = {
     | "ad_hoc";
   queuePosition?: number;
   idempotencyKey?: string;
+  /** "Same order - don't create": the TO this call's order already is. See the service. */
+  sameOrderAs?: string;
+  /** "Different order - create it", with the reason. See the service. */
+  duplicateDecision?: { decision: "different"; ofId: string; reason: string };
 };
 
 /**
@@ -302,6 +306,8 @@ export async function saveInteractionAction(
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),
       aiDraftId: raw.aiDraftId,
+      sameOrderAs: raw.sameOrderAs,
+      duplicateDecision: raw.duplicateDecision,
     });
     if (!result.ok) return result;
 

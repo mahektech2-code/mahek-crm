@@ -3971,6 +3971,8 @@ export const complaints = pgTable(
      * whoever logged it raised it.
      */
     salesmanName: text("salesman_name"),
+    /** That salesman, by account: who the complaint was raised FOR. The name above is only the label typed on the day. */
+    salesmanId: text("salesman_id").references(() => users.id, { onDelete: "set null" }),
     /** The date printed on the credit note, where it differs from the day it was recorded. */
     cnDate: date("cn_date"),
 
@@ -12915,7 +12917,7 @@ export const erpOrderIntakes = pgTable(
   {
     id: text("id").primaryKey(),
     toNo: integer("to_no").notNull(),
-    /** open | correction | hold | verified | cancelled. */
+    /** open | correction | hold | verified | cancelled | declined. */
     status: text("status").notNull().default("open"),
     /** Where it was taken: erp | crm | mbos. */
     origin: text("origin").notNull().default("erp"),
@@ -12949,6 +12951,21 @@ export const erpOrderIntakes = pgTable(
     cancelReason: text("cancel_reason"),
     cancelledById: text("cancelled_by_id").references(() => users.id),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    /** Accounts declined it (0350): the reason the taker is told, who and when. */
+    declineReason: text("decline_reason"),
+    declinedById: text("declined_by_id").references(() => users.id),
+    declinedAt: timestamp("declined_at", { withTimezone: true }),
+    /**
+     * The TO this one looks like (same billing and delivery party, same items,
+     * same day) — `possible` where nobody has said otherwise (an offline
+     * handset's order, checked when it synced), `different` where the person
+     * punching it said it is a different order, with the reason (0350).
+     */
+    duplicateOfId: text("duplicate_of_id").references((): AnyPgColumn => erpOrderIntakes.id, { onDelete: "set null" }),
+    duplicateState: text("duplicate_state"),
+    duplicateReason: text("duplicate_reason"),
+    duplicateDecidedById: text("duplicate_decided_by_id").references(() => users.id),
+    duplicateDecidedAt: timestamp("duplicate_decided_at", { withTimezone: true }),
     orderNo: integer("order_no"),
     createdById: text("created_by_id").references(() => users.id),
     updatedById: text("updated_by_id").references(() => users.id),
@@ -12959,7 +12976,8 @@ export const erpOrderIntakes = pgTable(
     uniqueIndex("erp_order_intakes_to_no_key").on(t.toNo),
     uniqueIndex("erp_order_intakes_order_no_key").on(t.orderNo).where(sql`${t.orderNo} is not null`),
     uniqueIndex("erp_order_intakes_origin_order_key").on(t.originOrderId).where(sql`${t.originOrderId} is not null`),
-    check("erp_order_intakes_status_check", sql`${t.status} in ('open','correction','hold','verified','cancelled')`),
+    check("erp_order_intakes_status_check", sql`${t.status} in ('open','correction','hold','verified','cancelled','declined')`),
+    index("erp_order_intakes_dup_day_idx").on(t.billingCustomerId, t.orderDate),
     check("erp_order_intakes_origin_check", sql`${t.origin} in ('erp','crm','mbos')`),
   ],
 );
@@ -13669,6 +13687,8 @@ export const erpOrderHolds = pgTable(
     lineStatuses: jsonb("line_statuses").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Which desk held it — office | accounts | production — so releasing sends it back there (0347). */
     department: text("department").notNull().default("office"),
+    /** False keeps the hold off the customer's tracking page and out of their messages (0350). */
+    customerVisible: boolean("customer_visible").notNull().default(true),
     raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
     raisedById: text("raised_by_id").references(() => users.id),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
@@ -13984,6 +14004,8 @@ export const erpRequests = pgTable(
     id: text("id").primaryKey(),
     raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
     salesmanName: text("salesman_name"),
+    /** The salesman by account, filled from the name by `person-ids-backfill`. */
+    salesmanId: text("salesman_id").references(() => users.id, { onDelete: "set null" }),
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id),
@@ -14038,6 +14060,8 @@ export const erpCredits = pgTable("erp_credits", {
     .notNull()
     .references(() => erpGodowns.id),
   employeeName: text("employee_name").notNull(),
+  /** Who was given it, by account: filled from the name by `person-ids-backfill`. */
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
   /** Bank Cash | Cash | Other. */
   mode: text("mode").notNull(),
   amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
@@ -14054,6 +14078,8 @@ export const erpExpenses = pgTable("erp_expenses", {
     .notNull()
     .references(() => erpGodowns.id),
   expenseBy: text("expense_by").notNull(),
+  /** Who spent it, by account: filled from the name by `person-ids-backfill`. */
+  expenseById: text("expense_by_id").references(() => users.id, { onDelete: "set null" }),
   category: text("category"),
   mode: text("mode").notNull(),
   particular: text("particular"),
@@ -14665,6 +14691,8 @@ export const erpAdvances = pgTable(
     advanceNo: integer("advance_no").notNull(),
     /** WHO holds it, by id — what "already holds an open advance" is asked of. Null on a name nobody could resolve. */
     employeeId: text("employee_id").references(() => employees.id, { onDelete: "set null" }),
+    /** WHO holds it, by account: what every decision asks. The picker sends it; older rows get it from `person-ids-backfill`. */
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
     /** The employee's name as it was typed on the day — a label, not the key. */
     employeeName: text("employee_name").notNull(),
     purpose: text("purpose"),
@@ -18150,7 +18178,10 @@ export const lockerPaymentMethods = pgTable("locker_payment_methods", {
   kind: text("kind").notNull().default("Credit card"),
   last4: text("last4").notNull().default(""),
   expiresOn: date("expires_on"),
+  /** In whose name: the label, and the only record of a holder who is not on the staff. */
   holder: text("holder").notNull().default(""),
+  /** The holder by account, where they are staff: what offboarding asks. */
+  holderUserId: text("holder_user_id").references(() => users.id, { onDelete: "set null" }),
   bank: text("bank").notNull().default(""),
   /** A card in somebody's own name paying a company bill — a risk, said as one. */
   personal: boolean("personal").notNull().default(false),
@@ -18267,7 +18298,10 @@ export const lockerIdentities = pgTable("locker_identities", {
   controlled: boolean("controlled").notNull().default(true),
   mfa: boolean("mfa").notNull().default(false),
   recovery: boolean("recovery").notNull().default(false),
+  /** Who controls a personal account: the label, and the only record of somebody not on the staff. */
   controlledByName: text("controlled_by_name"),
+  /** That person by account, where they are staff: what offboarding asks. */
+  controlledById: text("controlled_by_id").references(() => users.id, { onDelete: "set null" }),
   ownerId: text("owner_id").references(() => users.id),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -18471,7 +18505,7 @@ export const accountsSlaBreaches = pgTable(
   "accounts_sla_breaches",
   {
     id: text("id").primaryKey(),
-    /** order · payment · credit_note · order_change (`SLA_KINDS`). */
+    /** order · payment · credit_note · order_change · to (`SLA_KINDS`). */
     kind: text("kind").notNull(),
     recordId: text("record_id").notNull(),
     waitingSince: timestamp("waiting_since", { withTimezone: true }).notNull(),

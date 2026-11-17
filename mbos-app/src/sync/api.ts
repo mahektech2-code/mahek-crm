@@ -1055,6 +1055,58 @@ export async function orderProducts(customerId: string): Promise<
   }
 }
 
+/* ------------------------------------------------------ duplicate orders */
+
+/** The TO the office already holds for the same parties, day and items - the office's own `DuplicateFound`. */
+export type OrderDuplicate = {
+  match: {
+    id: string;
+    toNo: number;
+    orderNo: number | null;
+    status: string;
+    origin: string;
+    takenBy: string | null;
+    takenAt: string;
+    billingName: string;
+    deliveryName: string;
+    lines: { skuId: string; name: string; qtyCans: number }[];
+  };
+  newLines: { skuId: string; name: string; qtyCans: number }[];
+  line: string;
+  ai: boolean;
+};
+
+export type OrderDuplicateShape = {
+  customerId: string;
+  deliveryCustomerId: string | null;
+  orderedAt: number;
+  lines: { productId: string; quantityCans: number }[];
+};
+
+/**
+ * BEFORE A NEW ORDER IS SENT, WHILE THERE IS SIGNAL: has this order already
+ * been punched today? NOT QUEUED, and short: a check that cannot answer never
+ * holds an order back - it goes, and the office checks it again when it syncs.
+ */
+export async function orderDuplicateCheck(
+  shape: OrderDuplicateShape,
+): Promise<{ ok: true; found: OrderDuplicate | null } | { ok: false; error: string }> {
+  try {
+    return await request('/api/mbos/order-duplicate', { method: 'POST', body: JSON.stringify(shape), timeoutMs: 8_000 });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
+/** "Same order - don't create": nothing is sent, and whoever punched the first one is told. */
+export async function orderSameAsReport(shape: OrderDuplicateShape, toId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    return await request('/api/mbos/order-duplicate', { method: 'POST', body: JSON.stringify({ ...shape, same: toId }), timeoutMs: 15_000 });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
 /* -------------------------------------------------------- customer account */
 
 /**

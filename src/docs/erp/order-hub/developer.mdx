@@ -1,7 +1,9 @@
 ## Where it lives
 
-- **Rules, pure:** `src/lib/erp/engines/order-hub.ts` (who makes which check, when the order number is made, the gates, hold departments and reasons) and `src/lib/erp/engines/mrp.ts` (the MRP arithmetic). Tests beside each.
-- **Writes:** `src/lib/erp/order-hub.ts` — `createIntake`, `editIntake`, `checkIntake` (the second check calls `makeOrder` in the same transaction), `sendBackIntake`, `holdIntake`, `releaseIntake`, `cancelIntake`.
+- **Rules, pure:** `src/lib/erp/engines/order-hub.ts` (the duplicate rule `sameOrder`, the gates, hold departments and reasons) and `src/lib/erp/engines/mrp.ts` (the MRP arithmetic). Tests beside each.
+- **Writes:** `src/lib/erp/order-hub.ts` - `createIntake` (with the duplicate check: `ask` throws `DuplicateFoundError`, `flag` marks a possible duplicate), `checkForDuplicate`, `describeDuplicate`, `tellSameOrder`, `editIntake`, `approveIntake` (Accounts; calls `makeOrder` with the order approved), `declineIntake`, `sendBackIntake`, `holdIntake`, `releaseIntake`, `cancelIntake`.
+- **Accounts' TO queue:** `src/lib/services/to-approval-service.ts` (reads, and the four decisions behind `order.approve`), `src/lib/actions/to-approval.ts`, and the screen `src/app/accounts/approvals/to-approvals.tsx`.
+- **Editing until Bill it:** `editOrderForm` / `saveEditOrder` / `releaseLine` in `screens/sales.ts` (the Production Head).
 - **Screens:** `src/lib/erp/screens/order-hub.ts` — the Order Hub (`orderHub`, `hubCorrection`, `hubDone`), `mrpCheck`, `toHold`, and `holdOrder` / `releaseOrderHold` for a desk's hold.
 - **Accounts:** `holdOrderForAccounts`, `releaseOrderForAccounts` and `heldOrders` in `src/lib/services/order-approval-service.ts`; the queue leaves out TOs and held orders.
 - **The three doors:** the ERP's New order form (`saveOrder` in `screens/sales.ts`), the TeleCRM save (`interaction-service.ts`) and the Salesman App (`handleOrder` in `actions/mbos.ts`) all call `createIntake`.
@@ -12,7 +14,7 @@
 
 <DbTable name="erp_order_intake_lines" />
 
-On `erp_orders`: `intake_id`, `accounts_check` (Pending, Approved, Hold, Declined) and `production_check` (Pending, Cleared, Hold), both defaulting to the cleared value. On `erp_order_holds`: `department` (office, accounts, production). Migration `0347_order_hub`.
+On `erp_orders`: `intake_id`, `accounts_check` (Pending, Approved, Hold, Declined) and `production_check` (Pending, Cleared, Hold), both defaulting to the cleared value. On `erp_order_holds`: `department` (office, accounts, production) and `customer_visible`. Migrations `0347_order_hub` and `0353_order_hub_accounts` (declined TOs, the duplicate fields, internal holds, the `to` deadline kind).
 
 ## Counted once
 

@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, employees, erpCredits, erpExpenses, erpGodowns } from "@/db/schema";
+import { attachments, erpCredits, erpExpenses, erpGodowns, users } from "@/db/schema";
+import { staffChoices } from "@/lib/services/person-identity-service";
 import { getConfig } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
@@ -115,8 +116,10 @@ async function categories(): Promise<string[]> {
   return configured.length ? [...new Set([...configured, "Other"])] : DEFAULT_CATEGORIES;
 }
 
-async function activeEmployees(): Promise<string[]> {
-  return (await db.select({ name: employees.name }).from(employees).where(eq(employees.status, "active")).orderBy(asc(employees.name))).map((e) => e.name);
+/** Who an advance can be given to: PEOPLE, offered by account id and labelled with their name today. */
+async function staffPick(): Promise<{ opts: string[]; optLabels: Record<string, string> }> {
+  const people = await staffChoices();
+  return { opts: people.map((p) => p.id), optLabels: Object.fromEntries(people.map((p) => [p.id, p.name])) };
 }
 
 /** The papers on a set of transactions, by transaction. */
@@ -264,7 +267,7 @@ async function transferForm(t?: TxnRow): Promise<FormSpec> {
 }
 
 async function advanceForm(): Promise<FormSpec> {
-  const [people, cards, cfg] = await Promise.all([activeEmployees(), accountCards(), getConfig()]);
+  const [people, cards, cfg] = await Promise.all([staffPick(), accountCards(), getConfig()]);
   const petty = cards.find((c) => c.label.startsWith("Petty"))?.label ?? "";
   return {
     screen: "advances",
@@ -274,7 +277,7 @@ async function advanceForm(): Promise<FormSpec> {
     submit: "Give advance",
     init: { date: today(), billsDueOn: addDays(today(), cfg["erp.money.advanceBillsDays"]), from: petty, mode: "Cash" },
     header: [
-      { k: "employee", l: "Given to", t: "select", req: true, opts: people },
+      { k: "employee", l: "Given to", t: "select", req: true, ...people },
       { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
       { k: "date", l: "Given on", t: "date", req: true },
       { k: "purpose", l: "For", t: "text", hint: "e.g. Diesel and loading labour, Bhiwandi trip" },
@@ -719,7 +722,8 @@ const advances: ScreenModule = {
     const accounts = await accountNames();
     const billIds = rows.flatMap((a) => a.bills.map((b) => b.id));
     const papers = await filesOf(billIds);
-    const depts = new Map(((await db.execute(sql`select lower(name) as name, coalesce(department, position) as dept from employees`)) as unknown as { name: string; dept: string | null }[]).map((e) => [e.name, e.dept]));
+    /* The holder's department, read through their account's HRMS link — never by matching their name. */
+    const depts = new Map(((await db.execute(sql`select u.id, coalesce(e.department, e.position) as dept from users u join employees e on e.id = u.employee_id`)) as unknown as { id: string; dept: string | null }[]).map((e) => [e.id, e.dept]));
     const bills = new Map<string, FormSpec>();
     for (const a of rows) if (a.status === "open") bills.set(a.id, await billsForm(a));
     return {
@@ -802,7 +806,7 @@ const advances: ScreenModule = {
         ];
         return {
           id: a.id,
-          v: { no: a.label, employee: a.employee, dept: depts.get(a.employee.toLowerCase()) ?? null, date: a.issuedOn, from: a.issueTxn?.from ?? "—", given: p.given, approved: p.approved, review: p.toReview, withThem: p.withThem, state },
+          v: { no: a.label, employee: a.employee, dept: (a.userId ? depts.get(a.userId) : null) ?? null, date: a.issuedOn, from: a.issueTxn?.from ?? "—", given: p.given, approved: p.approved, review: p.toReview, withThem: p.withThem, state },
           flags: late ? ["late"] : p.withThem < 0 && a.status === "open" ? ["overspent"] : [],
           title: `${a.label} · ${a.employee} · ${inr(p.given)}`,
           header: `${state}${a.purpose ? ` · ${a.purpose}` : ""}`,
@@ -834,7 +838,7 @@ const advances: ScreenModule = {
   },
   forms: {
     async new(ctx, h) {
-      const r = await giveAdvance(actorOf(ctx), { employee: text(h.employee), amountPaise: paise(h.amount), date: text(h.date) ?? "", purpose: text(h.purpose), billsDueOn: text(h.billsDueOn), from: cardName(text(h.from)), mode: text(h.mode), reference: text(h.reference), note: text(h.note) });
+      const r = await giveAdvance(actorOf(ctx), { userId: text(h.employee), amountPaise: paise(h.amount), date: text(h.date) ?? "", purpose: text(h.purpose), billsDueOn: text(h.billsDueOn), from: cardName(text(h.from)), mode: text(h.mode), reference: text(h.reference), note: text(h.note) });
       return r.ok ? okVoid(r.message) : r;
     },
     async bills(ctx, _h, lines, recordId) {
@@ -1316,13 +1320,14 @@ const legacyPetty: ScreenModule = {
     const [credits, expenses] = wide
       ? [[], []]
       : await Promise.all([
-          db.select({ c: erpCredits, godown: erpGodowns.name }).from(erpCredits).innerJoin(erpGodowns, eq(erpGodowns.id, erpCredits.godownId)).where(inCredits),
-          db.select({ e: erpExpenses, godown: erpGodowns.name }).from(erpExpenses).innerJoin(erpGodowns, eq(erpGodowns.id, erpExpenses.godownId)).where(inExpenses),
+          db.select({ c: erpCredits, godown: erpGodowns.name, person: users.name }).from(erpCredits).innerJoin(erpGodowns, eq(erpGodowns.id, erpCredits.godownId)).leftJoin(users, eq(users.id, erpCredits.userId)).where(inCredits),
+          db.select({ e: erpExpenses, godown: erpGodowns.name, person: users.name }).from(erpExpenses).innerJoin(erpGodowns, eq(erpGodowns.id, erpExpenses.godownId)).leftJoin(users, eq(users.id, erpExpenses.expenseById)).where(inExpenses),
         ]);
-    /* The sheet's own words: money given in is a credit, an expense paid out is a debit. */
+    /* The sheet's own words: money given in is a credit, an expense paid out is a debit.
+       WHO is the person's name today where the row knows them by account, else the sheet's text. */
     const rows: ListRow[] = [
-      ...credits.map((r) => ({ id: r.c.id, v: { date: r.c.creditDate, kind: "Credit", who: r.c.employeeName, what: r.c.note, amount: r.c.amountPaise, mode: r.c.mode, godown: r.godown, status: "—" }, flags: [] })),
-      ...expenses.map((r) => ({ id: r.e.id, v: { date: r.e.expenseDate, kind: "Debit", who: r.e.expenseBy, what: [r.e.category, r.e.particular, r.e.note].filter(Boolean).join(" · "), amount: r.e.amountPaise, mode: r.e.mode, godown: r.godown, status: r.e.status === "Verify" ? "Verified" : r.e.status }, flags: [] })),
+      ...credits.map((r) => ({ id: r.c.id, v: { date: r.c.creditDate, kind: "Credit", who: r.person ?? r.c.employeeName, what: r.c.note, amount: r.c.amountPaise, mode: r.c.mode, godown: r.godown, status: "—" }, flags: [] })),
+      ...expenses.map((r) => ({ id: r.e.id, v: { date: r.e.expenseDate, kind: "Debit", who: r.person ?? r.e.expenseBy, what: [r.e.category, r.e.particular, r.e.note].filter(Boolean).join(" · "), amount: r.e.amountPaise, mode: r.e.mode, godown: r.godown, status: r.e.status === "Verify" ? "Verified" : r.e.status }, flags: [] })),
     ].sort((a, b) => String(b.v.date).localeCompare(String(a.v.date)));
     return {
       spec: {

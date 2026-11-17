@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { refValues } from "./refs";
+import { staffChoices } from "@/lib/services/person-identity-service";
 import { advanceLabel, invoiceKey, matchCandidates, statement, txnLabel, type MatchCandidate } from "./engines/money";
 import {
   accountBalanceMap,
@@ -171,22 +172,23 @@ export async function moneyKitData(day: string) {
     moneyAccounts(),
     accountBalanceMap(),
     refValues("expenseCategory"),
-    q<{ id: string; name: string; dept: string | null }>(sql`select id, name, department as dept from employees where status = 'active' order by name`),
+    staffChoices(),
     customerChoices(),
     cashSources("customer"),
     cashSources("withdrawal"),
     getConfig(),
     q<{ n: number }>(sql`select coalesce(max(txn_no), 0)::int + 1 as n from erp_money_txns`),
     q<{ n: number }>(sql`select coalesce(max(advance_no), 0)::int + 1 as n from erp_advances`),
-    q<{ id: string | null; name: string }>(sql`select employee_id as id, lower(employee_name) as name from erp_advances where status = 'open'`),
+    q<{ userId: string | null; employeeId: string | null }>(sql`select user_id as "userId", employee_id as "employeeId" from erp_advances where status = 'open'`),
   ]);
-  /* By id where the advance knows who holds it, so a rename does not hide it. */
-  const openIds = new Set(open.map((o) => o.id).filter(Boolean));
-  const openSet = new Set(open.filter((o) => !o.id).map((o) => o.name));
+  /* By id — the account, or for an advance older than the account id its
+     employee link — so a rename never hides an advance still outstanding. */
+  const openUsers = new Set(open.map((o) => o.userId).filter(Boolean));
+  const openEmployees = new Set(open.filter((o) => !o.userId).map((o) => o.employeeId).filter(Boolean));
   return {
     accounts: accounts.filter((a) => a.active).map((a) => ({ id: a.id, name: a.name, kind: a.kind, last4: a.last4, balance: bal.get(a.id) ?? 0 })),
     categories: configured.length ? [...new Set([...configured, "Other"])] : DEFAULT_CATEGORIES,
-    employees: emps.map((e) => ({ name: e.name, dept: e.dept, open: openIds.has(e.id) || openSet.has(e.name.toLowerCase()) })),
+    employees: emps.map((e) => ({ id: e.id, name: e.name, dept: e.dept, open: openUsers.has(e.id) || openEmployees.has(e.employeeId ?? "") })),
     customers,
     customerCash,
     withdrawals,

@@ -1300,6 +1300,7 @@ async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
       lineItems?: { product: string; productId?: string; quantity: number; unitPrice?: number; amount?: number }[] | null;
       toNo?: number | null; erpOrderNo?: number | null; journeyStatus?: string | null; journeyTone?: string | null;
       journeyBanner?: string | null; journeyEditable?: boolean | null; journeySteps?: unknown[] | null;
+      journeyState?: string | null; journeyReason?: string | null; duplicateOfToNo?: number | null;
     };
     const status = ORDER_STATUS[o.status] ?? o.status;
     const local = await one<{ id: string }>('SELECT id FROM orders WHERE id = ?', [o.id]);
@@ -1321,11 +1322,13 @@ async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
     if (o.journeyStatus) {
       await run(
         `UPDATE orders SET toNo = ?, erpOrderNo = ?, journeyStatus = ?, journeyTone = ?, journeyBanner = ?,
-                journeyEditable = ?, journeySteps = ? WHERE id = ?`,
+                journeyEditable = ?, journeySteps = ?, journeyState = ?, journeyReason = ?, duplicateOfToNo = ?
+          WHERE id = ?`,
         [
           o.toNo ?? null, o.erpOrderNo ?? null, o.journeyStatus, o.journeyTone ?? null, o.journeyBanner ?? null,
           o.journeyEditable == null ? null : o.journeyEditable ? 1 : 0,
-          Array.isArray(o.journeySteps) ? JSON.stringify(o.journeySteps) : null, o.id,
+          Array.isArray(o.journeySteps) ? JSON.stringify(o.journeySteps) : null,
+          o.journeyState ?? null, o.journeyReason ?? null, o.duplicateOfToNo ?? null, o.id,
         ],
       );
     }

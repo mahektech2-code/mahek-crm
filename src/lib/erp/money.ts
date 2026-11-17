@@ -158,7 +158,7 @@ export async function txnRows(where: SQL = sql`true`, ex: Ex = db): Promise<TxnR
            t.mode, t.reference, t.category, t.payee, t.invoice_no as "invoiceNo", t.description, t.petty, t.customer_id as "customerId",
            c.name as customer, t.payer, t.bills_text as "billsText", t.scrap_receipt_id as "scrapReceiptId",
            t.source_txn_id as "sourceTxnId", s.txn_no as "sourceNo", s.txn_date::text as "sourceDate",
-           t.advance_id as "advanceId", a.advance_no as "advanceNo", a.issued_on::text as "advanceOn", a.employee_name as "advanceEmployee",
+           t.advance_id as "advanceId", a.advance_no as "advanceNo", a.issued_on::text as "advanceOn", coalesce(au.name, a.employee_name) as "advanceEmployee",
            t.no_bill_reason as "noBillReason", t.review, t.review_note as "reviewNote", rv.name as "reviewedBy", t.reviewed_at::text as "reviewedAt",
            t.duplicate_override as "duplicateOverride", t.status, t.cancel_reason as "cancelReason", t.note,
            t.created_at::text as "createdAt", t.created_by_id as "createdById", u.name as by,
@@ -170,6 +170,7 @@ export async function txnRows(where: SQL = sql`true`, ex: Ex = db): Promise<TxnR
       left join customers c on c.id = t.customer_id
       left join erp_money_txns s on s.id = t.source_txn_id
       left join erp_advances a on a.id = t.advance_id
+      left join users au on au.id = a.user_id
       left join users u on u.id = t.created_by_id
       left join users rv on rv.id = t.reviewed_by_id
      where ${where}
@@ -539,6 +540,9 @@ export type AdvanceRow = {
   id: string;
   no: number;
   label: string;
+  /** Who holds it, by account — null only on an old row nobody could be matched to. */
+  userId: string | null;
+  /** Their name today, or what was typed on the day where nobody matched. */
   employee: string;
   purpose: string | null;
   issuedOn: string;
@@ -554,9 +558,9 @@ export type AdvanceRow = {
 
 export async function advanceRows(where: SQL = sql`true`): Promise<AdvanceRow[]> {
   const heads = await q<Record<string, unknown>>(db, sql`
-    select a.id, a.advance_no as no, a.employee_name as employee, a.purpose, a.issued_on::text as "issuedOn", a.bills_due_on::text as "billsDueOn", a.status,
+    select a.id, a.advance_no as no, a.user_id as "userId", coalesce(h.name, a.employee_name) as employee, a.purpose, a.issued_on::text as "issuedOn", a.bills_due_on::text as "billsDueOn", a.status,
            u.name as by, a.created_at::text as "createdAt"
-      from erp_advances a left join users u on u.id = a.created_by_id
+      from erp_advances a left join users u on u.id = a.created_by_id left join users h on h.id = a.user_id
      where ${where}
      order by a.issued_on desc, a.advance_no desc`);
   if (!heads.length) return [];
@@ -572,6 +576,7 @@ export async function advanceRows(where: SQL = sql`true`): Promise<AdvanceRow[]>
       id: h.id as string,
       no: Number(h.no),
       label: advanceLabel(Number(h.no), h.issuedOn as string),
+      userId: (h.userId as string) ?? null,
       employee: h.employee as string,
       purpose: (h.purpose as string) ?? null,
       issuedOn: h.issuedOn as string,
@@ -592,11 +597,12 @@ export async function advanceRows(where: SQL = sql`true`): Promise<AdvanceRow[]>
   });
 }
 
-export type AdvanceInput = { employee: string | null; amountPaise: number | null; date: string; purpose: string | null; billsDueOn: string | null; from: string | null; mode: string | null; reference: string | null; note: string | null };
+/** `userId` is the person it is given to — the account the picker offered, never a name. */
+export type AdvanceInput = { userId: string | null; amountPaise: number | null; date: string; purpose: string | null; billsDueOn: string | null; from: string | null; mode: string | null; reference: string | null; note: string | null };
 
 /** Gives an employee a lump sum: a transfer out of an account into their hands, not an expense. */
 export async function giveAdvance(actor: Actor, x: AdvanceInput): Promise<Result<{ id: string; label: string }>> {
-  if (!x.employee) return fieldErr("employee", "Who is it given to?");
+  if (!x.userId) return fieldErr("employee", "Who is it given to?");
   if (!(x.amountPaise && x.amountPaise > 0)) return fieldErr("amount", "Enter the amount given.");
   if (!x.date) return fieldErr("date", "When was it given?");
   if (x.date > today()) return fieldErr("date", "An advance cannot be dated in the future.");
@@ -604,26 +610,36 @@ export async function giveAdvance(actor: Actor, x: AdvanceInput): Promise<Result
   const from = await accountByName(db, x.from);
   if (!from) return fieldErr("from", "Choose the account it was given from.");
   if (!x.mode || !(PAY_MODES as readonly string[]).includes(x.mode)) return fieldErr("mode", "Choose how it was handed over.");
-  /* WHO, by id: the picker sends the name it showed, and the person directory
-     turns it into the employee — today's name or one they used to carry. The
-     open-advance check then asks by that id, so a rename in HRMS cannot hide
-     an advance still outstanding. A name nobody can resolve keeps the old
-     by-name check. */
-  const { personDirectory } = await import("@/lib/services/person-identity-service");
-  const employeeId = (await personDirectory()).employeeByName(x.employee);
+  /* WHO, by account: the picker sends the person, never their name, and every
+     question after this — "do they already hold an open advance" — is asked
+     of that id, so a rename in HRMS cannot hide an advance still outstanding.
+     The name stored beside it is only the label as it read on the day. */
+  const [person] = await q<{ id: string; name: string; active: boolean; employeeId: string | null }>(
+    db,
+    sql`select id, name, active, employee_id as "employeeId" from users where id = ${x.userId}`,
+  );
+  if (!person) return fieldErr("employee", "Choose who it is given to from the list.");
+  if (!person.active) return fieldErr("employee", `${person.name} no longer works here, so an advance cannot be given to them.`);
   const r = await inTx<{ id: string; label: string }>(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp-advance|" + (employeeId ?? x.employee!.toLowerCase())}))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp-advance|" + person.id}))`);
+    /* An advance from before the account id was stored is matched by its
+       employee link, and one with neither by the name it was given under —
+       until person-ids-backfill has filled it, refusing a second advance is
+       the safer mistake. */
     const [open] = await q<{ no: number; on: string; who: string }>(
       tx,
-      employeeId
-        ? sql`select advance_no as no, issued_on::text as on, employee_name as who from erp_advances
-               where status = 'open' and (employee_id = ${employeeId} or (employee_id is null and lower(employee_name) = ${x.employee!.toLowerCase()})) limit 1` // identity-ok: an old advance with no employee id
-        : sql`select advance_no as no, issued_on::text as on, employee_name as who from erp_advances where lower(employee_name) = ${x.employee!.toLowerCase()} and status = 'open' limit 1`, // identity-ok: a name nobody can resolve
+      sql`select a.advance_no as no, a.issued_on::text as on, coalesce(h.name, a.employee_name) as who
+            from erp_advances a left join users h on h.id = a.user_id
+           where a.status = 'open'
+             and (a.user_id = ${person.id}
+                  ${person.employeeId ? sql`or (a.user_id is null and a.employee_id = ${person.employeeId})` : sql``}
+                  or (a.user_id is null and a.employee_id is null and lower(btrim(a.employee_name)) = lower(btrim(${person.name})))) -- identity-ok: an old advance with no id to ask by
+           limit 1`,
     );
     if (open) return fieldErr("employee", `${open.who} still holds ${advanceLabel(Number(open.no), open.on)}. Settle it before giving another.`);
     const id = erpId("adv");
     const no = await nextNumber(tx, "advance");
-    await tx.insert(erpAdvances).values({ id, advanceNo: no, employeeId, employeeName: x.employee!, purpose: x.purpose, issuedOn: x.date, billsDueOn: x.billsDueOn, createdById: actor.id });
+    await tx.insert(erpAdvances).values({ id, advanceNo: no, userId: person.id, employeeId: person.employeeId, employeeName: person.name, purpose: x.purpose, issuedOn: x.date, billsDueOn: x.billsDueOn, createdById: actor.id });
     const tno = await nextNumber(tx, "moneyTxn");
     await tx.insert(erpMoneyTxns).values({ id: erpId("mtx"), txnNo: tno, txnDate: x.date, kind: "advance", amountPaise: x.amountPaise!, fromAccountId: from.id, mode: x.mode, reference: x.reference, advanceId: id, description: x.purpose, note: x.note, createdById: actor.id });
     return ok({ id, label: advanceLabel(no, x.date) });
@@ -631,7 +647,7 @@ export async function giveAdvance(actor: Actor, x: AdvanceInput): Promise<Result
   if (!r.ok) return r;
   await audit(actor, "erp.money.advance.give", r.data.id, x);
   const bal = (await accountBalanceMap()).get(from.id) ?? 0;
-  return ok(r.data, `${r.data.label}: ${inr(x.amountPaise)} given to ${x.employee} · ${from.name} now ${inr(bal)}`);
+  return ok(r.data, `${r.data.label}: ${inr(x.amountPaise)} given to ${person.name} · ${from.name} now ${inr(bal)}`);
 }
 
 export type BillInput = { date: string | null; category: string | null; payee: string | null; invoiceNo: string | null; amountPaise: number | null; noBillReason: string | null; description: string | null; photo: string | null };

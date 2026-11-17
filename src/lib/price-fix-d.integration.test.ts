@@ -244,11 +244,11 @@ describe("B9 · the ERP order form holds discounts and typed rates to the ceilin
     assert.equal(line.listRatePaise, 10_000);
   });
 
-  test("once an order has its order number its discount cannot be moved", async () => {
+  test("once an order has its order number its discount is changed only with Edit order", async () => {
     const { ctx } = await erpUser("associate");
     assert.equal(reason(await newOrder(ctx, {})), "ok");
     const [line] = await db.select().from(erpOrders);
     const edit = await screenModule("orders")!.forms!.edit(ctx, { status: "Under Process", delivery: "Sai Paint Depot", qty: "2", rate: "100", discount: "3", transport: "0" }, [], line.id);
-    assert.match(reason(edit), /order number/);
+    assert.match(reason(edit), /Edit order/);
   });
 });

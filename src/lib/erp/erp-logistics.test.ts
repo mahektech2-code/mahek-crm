@@ -535,13 +535,14 @@ describe("complaints and credit notes are the CRM's complaints", () => {
     await db.insert(bills).values({ id: "bil_mmi1", customerId: "cus_shree", billNo: "MMI/26-27/1", billDate: "2026-08-02", amount: 354000, paymentPosition: "stated" });
     const c = await as(clerk);
     assert.equal(msg(await mod("requests").forms!.new(c, { customer: "Shree Paints", description: "Two cans leaked", cn: "Yes", bill: "NOPE" }, [])), "That is not one of this customer's bills");
-    assert.ok((await mod("requests").forms!.new(c, { salesman: "Ravi Sales", customer: "Shree Paints", type: "Leakage / Packaging", description: "Two cans leaked", cn: "Yes", bill: "MMI/26-27/1", goods: SKU }, [])).ok);
+    assert.ok((await mod("requests").forms!.new(c, { salesman: clerk.id, customer: "Shree Paints", type: "Leakage / Packaging", description: "Two cans leaked", cn: "Yes", bill: "MMI/26-27/1", goods: SKU }, [])).ok);
     const [r] = await db.select().from(complaints);
     assert.equal(r.customerId, "cus_shree");
     assert.equal(r.category, "product_quality", "the ERP raises product quality complaints only, whatever type is posted");
     assert.equal(r.requestCn, true);
     assert.equal(r.billId, "bil_mmi1");
-    assert.equal(r.salesmanName, "Ravi Sales");
+    assert.equal(r.salesmanId, clerk.id, "the salesman is stored as the person, by account");
+    assert.equal(r.salesmanName, "Ravi Sales", "and his name beside it as the label");
     assert.equal(r.status, "open");
     assert.ok(r.slaDueAt, "it carries the CRM's SLA like any complaint");
     assert.equal((await db.select().from(complaintStatusHistory).where(eq(complaintStatusHistory.complaintId, r.id))).length, 1);

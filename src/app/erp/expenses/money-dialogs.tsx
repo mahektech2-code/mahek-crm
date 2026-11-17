@@ -738,7 +738,8 @@ export function TransferDialog({ kit, onClose }: { kit: MoneyKit; onClose: () =>
 
 export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => void }) {
   const { busy, errs, save } = useSave(onClose);
-  const [employee, setEmployee] = React.useState("");
+  /* The person, by account id: the name is only what the list shows. */
+  const [personId, setPersonId] = React.useState("");
   const [amount, setAmount] = React.useState<number | null>(null);
   const [date, setDate] = React.useState(kit.today);
   const [purpose, setPurpose] = React.useState("");
@@ -760,13 +761,14 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
   const accName = isCustomer ? (cash?.name ?? "") : from;
   const fromAcc = accountByName(kit, accName);
   const mode = fromAcc?.kind === "bank" ? (handed === "Cash" ? "UPI" : handed) : "Cash";
-  const emp = kit.employees.find((x) => x.name === employee);
+  const emp = kit.employees.find((x) => x.id === personId);
+  const employee = emp?.name ?? "";
   const first = employee.split(" ")[0] || "They";
   const e = errs;
   const submit = () =>
     save(() =>
       erpMoneyAdvance({
-        employee,
+        userId: personId || null,
         amountPaise: amount,
         date,
         purpose,
@@ -785,10 +787,10 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
           <div className="grid grid-cols-3 gap-x-4 gap-y-4">
             <MField label="Given to" req error={e.employee}>
               <MSelect
-                value={employee}
-                onChange={setEmployee}
+                value={personId}
+                onChange={setPersonId}
                 placeholder="Choose…"
-                options={kit.employees.map((x) => ({ v: x.name, l: `${x.name}${x.dept ? ` · ${x.dept}` : ""}${x.open ? " — holds an open advance" : ""}` }))}
+                options={kit.employees.map((x) => ({ v: x.id, l: `${x.name}${x.dept ? ` · ${x.dept}` : ""}${x.open ? " — holds an open advance" : ""}` }))}
                 invalid={!!e.employee}
               />
             </MField>

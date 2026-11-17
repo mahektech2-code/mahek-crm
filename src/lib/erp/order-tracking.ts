@@ -487,7 +487,7 @@ export async function holdSentences(kind: "hold" | "delay"): Promise<{ labels: s
 export async function recordHold(
   ctx: Pick<ErpContext, "user"> & Partial<ErpContext>,
   orderNo: number,
-  input: HoldInput & { notify?: boolean; transportIds?: string[]; lineStatuses?: Record<string, string>; department?: "office" | "accounts" | "production" },
+  input: HoldInput & { notify?: boolean; transportIds?: string[]; lineStatuses?: Record<string, string>; department?: "office" | "accounts" | "production"; customerVisible?: boolean },
   tx: typeof db = db,
 ): Promise<Result<{ holdId: string }>> {
   const refusal = holdRefusal(input, today());
@@ -507,17 +507,18 @@ export async function recordHold(
     transportIds: input.transportIds ?? [],
     lineStatuses: input.lineStatuses ?? {},
     department: input.department ?? "office",
+    customerVisible: input.customerVisible ?? true,
     raisedById: ctx.user.id,
   });
   return ok({ holdId: id });
 }
 
-/** After the hold's transaction: the customer's message, where asked and allowed. */
+/** After the hold's transaction: the customer's message, where asked and allowed. An internal hold sends nothing, ever. */
 export async function tellHold(holdId: string, userId: string | null, notify: boolean): Promise<TrackSendOutcome | null> {
   if (!notify) return null;
   const cfg = await getConfig();
   const [h] = await db.select().from(erpOrderHolds).where(eq(erpOrderHolds.id, holdId));
-  if (!h) return null;
+  if (!h || !h.customerVisible) return null;
   const resolved = !!h.resolvedAt;
   if ((cfg["erp.tracking.notify"] ?? {})[resolved ? "resolved" : "hold"] === false) return null;
   const o = (await readOrders([h.orderNo])).get(h.orderNo);
@@ -692,6 +693,7 @@ async function viewOf(t: Tracking, view: "full" | "delivery", token: string): Pr
       revisedDeliveryOn: h.revisedDeliveryOn,
       resolvedAt: h.resolvedAt ? h.resolvedAt.toISOString() : null,
       resolutionText: h.resolutionText,
+      customerVisible: h.customerVisible,
     }));
   const rec: Recorded[] = recorded.map((r) => ({ step: r.step as Step, at: r.at.toISOString(), note: r.note }));
   const ownVehicle = ts.length > 0 && ts.every((x) => x.ownVehicle);
@@ -831,7 +833,7 @@ export type TrackingPanel = {
   backfilled: boolean;
   preview: OrderTrackingView | null;
   hold: (OpenHold & { reasonLabel: string }) | null;
-  history: { kind: string; label: string; at: string; reason: string; customerText: string; internalNote: string | null; resolvedAt: string | null; resolutionText: string | null }[];
+  history: { kind: string; label: string; at: string; reason: string; customerText: string; internalNote: string | null; resolvedAt: string | null; resolutionText: string | null; customerVisible: boolean }[];
   messages: { id: string; kind: string; label: string; customer: string; phone: string | null; status: string; why: string | null; body: string; at: string; waLink: string | null }[];
   confirmationText: string | null;
   invoiceFile: { id: string; filename: string } | null;
@@ -889,7 +891,7 @@ export async function trackingPanel(orderNo: number): Promise<TrackingPanel> {
     hold: open ? { ...open, reasonLabel: reasonLabel(open.reason) } : null,
     history: holds
       .sort((a, b) => b.raisedAt.getTime() - a.raisedAt.getTime())
-      .map((h) => ({ kind: h.kind, label: holdTitle(h.kind as "hold" | "delay"), at: h.raisedAt.toISOString(), reason: reasonLabel(h.reason), customerText: h.customerText, internalNote: h.internalNote, resolvedAt: h.resolvedAt ? h.resolvedAt.toISOString() : null, resolutionText: h.resolutionText })),
+      .map((h) => ({ kind: h.kind, label: holdTitle(h.kind as "hold" | "delay"), at: h.raisedAt.toISOString(), reason: reasonLabel(h.reason), customerText: h.customerText, internalNote: h.internalNote, resolvedAt: h.resolvedAt ? h.resolvedAt.toISOString() : null, resolutionText: h.resolutionText, customerVisible: h.customerVisible })),
     messages: msgs.map((m) => ({
       id: String(m.id),
       kind: String(m.kind),

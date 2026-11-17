@@ -49,6 +49,7 @@ export const SLA_MODULE: Record<SlaKind, string> = {
   payment: "accounts.payments",
   credit_note: "accounts.credits",
   order_change: "accounts.order-changes",
+  to: "accounts.approvals",
 };
 
 export const SLA_HREF: Record<SlaKind, string> = {
@@ -56,6 +57,7 @@ export const SLA_HREF: Record<SlaKind, string> = {
   payment: "/accounts/payments",
   credit_note: "/accounts/credits",
   order_change: "/accounts/order-changes",
+  to: "/accounts/approvals",
 };
 
 export const FOUNDER_DEADLINES_HREF = "/founder/accounts-deadlines";
@@ -65,6 +67,11 @@ type Pending = SlaCandidate & {
   amountPaise: number | null;
   reference: string | null;
 };
+
+/** A TO's value: its lines at their rates, after discount; a line with no rate adds nothing. */
+const TO_VALUE_SQL = sql.raw(
+  `(select coalesce(sum(round(coalesce(il.rate_paise, 0) * il.qty_cans * (1 - coalesce(il.discount_bp, 0) / 10000.0))), 0)::bigint from erp_order_intake_lines il where il.intake_id = i.id)`,
+);
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -128,6 +135,11 @@ async function pendingItems(includeHeld: boolean): Promise<Pending[]> {
       join customers c on c.id = q.customer_id
       join orders o on o.id = q.order_id
      where q.status = 'pending'
+    union all
+    select 'to', i.id, (extract(epoch from i.created_at) * 1000)::float8,
+           c.name, ${TO_VALUE_SQL}::text, 'TO-' || i.to_no
+      from erp_order_intakes i join customers c on c.id = i.billing_customer_id
+     where i.status = 'open'
   `);
   return rows.map((r) => ({
     kind: r.kind,
@@ -499,6 +511,7 @@ async function recordNames(refs: { kind: SlaKind; id: string }[]) {
   await q("payment", (l) => sql`select r.id, c.name, r.amount::text as amount, null as ref from payment_receipts r join customers c on c.id = r.customer_id where r.id in ${l}`);
   await q("credit_note", (l) => sql`select k.id, c.name, k.cn_amount::text as amount, null as ref from complaints k join customers c on c.id = k.customer_id where k.id in ${l}`);
   await q("order_change", (l) => sql`select q.id, c.name, q.total_amount_paise::text as amount, o.order_no as ref from order_change_requests q join customers c on c.id = q.customer_id join orders o on o.id = q.order_id where q.id in ${l}`);
+  await q("to", (l) => sql`select i.id, c.name, ${TO_VALUE_SQL}::text as amount, 'TO-' || i.to_no as ref from erp_order_intakes i join customers c on c.id = i.billing_customer_id where i.id in ${l}`);
   return out;
 }
 

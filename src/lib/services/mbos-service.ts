@@ -1504,6 +1504,11 @@ async function myOrderStates(userId: string, sinceIso?: string) {
       journeyBanner: j.banner,
       journeyEditable: j.editable,
       journeySteps: j.steps,
+      /* Where it is as a CODE, Accounts' words, and the TO it may duplicate -
+         what the handset keys its pill and its buttons on (0350, Option A). */
+      journeyState: j.state,
+      journeyReason: j.reason,
+      duplicateOfToNo: j.duplicateOfToNo,
     };
   });
 }

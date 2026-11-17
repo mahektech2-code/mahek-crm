@@ -8,23 +8,19 @@ import { calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "../access";
 import { erpLink } from "../registry";
 import { erpAudit, text, type ScreenModule } from "../server";
-import type { ActionSpec, ColSpec, FieldSpec, ListRow, RowField } from "../ui";
+import type { ActionSpec, ColSpec, FieldSpec, ListRow, PromptSpec, RowField } from "../ui";
+import { notifyUsers } from "@/lib/notify";
 import { newFormIn } from "../lazy-forms";
-import { cancelIntake, checkIntake, holdIntake, intakeById, releaseIntake, sendBackIntake } from "../order-hub";
+import { cancelIntake, intakeById, releaseIntake } from "../order-hub";
 import {
   ACCOUNTS_HOLD_REASONS,
-  CHECK_LABEL,
   DEPARTMENT_LABEL,
   HOLD_CUSTOMER_TEXT,
-  INTAKE_HOLD_REASONS,
   INTAKE_STATUS_LABEL,
   ORIGIN_SOURCE,
   PRODUCTION_HOLD_REASONS,
   RELEASE_TO,
-  duplicateOf,
   intakeEditable,
-  nextCheck,
-  type Checker,
   type HoldDepartment,
   type IntakeStatus,
 } from "../engines/order-hub";
@@ -36,13 +32,13 @@ import { placeNameSql } from "@/lib/services/place-filter-service";
 import { intakeForm, orderForm, saveOrder } from "./sales";
 
 /* ---------------------------------------------------------------------------
- * THE ORDER HUB'S SCREENS: the TOs waiting for their two checks (Order Hub),
- * the approved orders waiting for the Production Head's clearance (MRP check),
+ * THE ORDER HUB'S SCREENS: the TOs waiting for Accounts (Order Hub; Accounts
+ * decide them in the Accounts app), the approved orders waiting for the
+ * Production Head's one check and those he holds (MRP check, two tabs),
  * and every hold from every desk in one list (To Hold). The rules are in
  * `engines/order-hub.ts` and `engines/mrp.ts`; the writes in `order-hub.ts`.
  * ------------------------------------------------------------------------- */
 
-const checker = (ctx: ErpContext): Checker => ({ userId: ctx.user.id, backOffice: ctx.powers.has("verifyOrders"), production: ctx.powers.has("productionCheck"), admin: ctx.administrator });
 const plural = (n: number, one = "line") => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 export type IntakeRow = {
@@ -60,18 +56,20 @@ export type IntakeRow = {
   transporter: string | null;
   taken: string | null;
   takenById: string | null;
-  backOfficeById: string | null;
-  backOffice: string | null;
-  backOfficeAt: Date | null;
-  productionById: string | null;
-  production: string | null;
-  productionAt: Date | null;
   correctionNote: string | null;
   holdReason: string | null;
   holdNote: string | null;
   heldBy: string | null;
   heldAt: Date | null;
   cancelReason: string | null;
+  declineReason: string | null;
+  declinedBy: string | null;
+  declinedAt: Date | null;
+  duplicateState: string | null;
+  duplicateOfTo: number | null;
+  duplicateReason: string | null;
+  approvedBy: string | null;
+  approvedAt: Date | null;
   orderNo: number | null;
   createdAt: Date;
   updatedAt: Date;
@@ -91,10 +89,12 @@ export async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeR
     select i.id, i.to_no as "toNo", i.status, i.origin, i.order_source as "orderSource", i.order_date::text as "orderDate",
            i.billing_customer_id as "billingId", bc.name as billing, dc.name as delivery, i.godown_id as "godownId", g.name as godown,
            i.transporter, tu.name as taken, i.taken_by_id as "takenById",
-           i.back_office_by_id as "backOfficeById", bo.name as "backOffice", i.back_office_at as "backOfficeAt",
-           i.production_by_id as "productionById", pr.name as production, i.production_at as "productionAt",
            i.correction_note as "correctionNote", i.hold_reason as "holdReason", i.hold_note as "holdNote", hu.name as "heldBy", i.held_at as "heldAt",
-           i.cancel_reason as "cancelReason", i.order_no as "orderNo", i.created_at as "createdAt", i.updated_at as "updatedAt",
+           i.cancel_reason as "cancelReason", i.decline_reason as "declineReason", du.name as "declinedBy", i.declined_at as "declinedAt",
+           i.duplicate_state as "duplicateState", di.to_no as "duplicateOfTo", i.duplicate_reason as "duplicateReason",
+           (select u.name from erp_orders o join users u on u.id = o.accounts_checked_by_id where o.intake_id = i.id limit 1) as "approvedBy",
+           (select max(o.accounts_checked_at) from erp_orders o where o.intake_id = i.id) as "approvedAt",
+           i.order_no as "orderNo", i.created_at as "createdAt", i.updated_at as "updatedAt",
            ${placeNameSql("bc", "city", "city")} as city, i.back_office_note as "backOfficeNote", i.production_note as "productionNote", i.updated_by_id as "updatedById", uu.name as "updatedBy",
            cu.name as "correctionBy", i.correction_at as "correctionAt", i.remark,
            coalesce((select json_agg(json_build_object('sku', p.name, 'skuId', l.sku_id, 'qty', l.qty_cans, 'rate', l.rate_paise, 'discount', l.discount_bp,
@@ -108,16 +108,22 @@ export async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeR
       left join customers dc on dc.id = i.delivery_customer_id
       left join erp_godowns g on g.id = i.godown_id
       left join users tu on tu.id = i.taken_by_id
-      left join users bo on bo.id = i.back_office_by_id
-      left join users pr on pr.id = i.production_by_id
       left join users hu on hu.id = i.held_by_id
+      left join users du on du.id = i.declined_by_id
+      left join erp_order_intakes di on di.id = i.duplicate_of_id
       left join users uu on uu.id = i.updated_by_id
       left join users cu on cu.id = i.correction_by_id
      where ${where}
      order by i.created_at asc
      limit 1500
   `)) as unknown as IntakeRow[];
-  return rows.map((r) => ({ ...r, toNo: Number(r.toNo), orderNo: r.orderNo == null ? null : Number(r.orderNo), lines: (r.lines ?? []).map((l) => ({ ...l, qty: Number(l.qty), rate: l.rate == null ? null : Number(l.rate), discount: l.discount == null ? null : Number(l.discount), ml: l.ml == null ? null : Number(l.ml), cpb: Number(l.cpb) || 1, boxed: !!l.boxed, active: l.active !== false })) }));
+  return rows.map((r) => ({
+    ...r,
+    toNo: Number(r.toNo),
+    orderNo: r.orderNo == null ? null : Number(r.orderNo),
+    duplicateOfTo: r.duplicateOfTo == null ? null : Number(r.duplicateOfTo),
+    lines: (r.lines ?? []).map((l) => ({ ...l, qty: Number(l.qty), rate: l.rate == null ? null : Number(l.rate), discount: l.discount == null ? null : Number(l.discount), ml: l.ml == null ? null : Number(l.ml), cpb: Number(l.cpb) || 1, boxed: !!l.boxed, active: l.active !== false })),
+  }));
 }
 
 const valueOf = (r: IntakeRow) => r.lines.reduce((n, l) => n + (l.rate == null ? 0 : Math.round(l.rate * l.qty * (1 - (l.discount ?? 0) / 10000))), 0);
@@ -132,51 +138,35 @@ function ageWords(from: Date): string {
   return `${Math.floor(h / 24)} d ${h % 24} h`;
 }
 
-function checkWords(r: IntakeRow): string {
-  const back = r.backOfficeById ? `✓ Back office · ${r.backOffice ?? ""}` : "○ Back office";
-  const prod = r.productionById ? `✓ Production Head · ${r.production ?? ""}` : "○ Production Head";
-  return `${back}\n${prod}`;
+/** Where the TO stands with Accounts, in the words the Accounts column draws. */
+function accountsWords(r: IntakeRow): string {
+  const label = INTAKE_STATUS_LABEL[r.status as IntakeStatus] ?? r.status;
+  return r.status === "verified" && r.orderNo ? `${label} · Order ${r.orderNo}` : label;
 }
 
-/** What a TO on the hub offers: shared by the list and the Order Hub board. */
-export function hubActions(r: IntakeRow, next: ReturnType<typeof nextCheck>, dup: string | null, noRate: boolean): ActionSpec[] {
+/**
+ * What a TO on the hub offers: shared by the list and the Order Hub board.
+ * Option A: Accounts approve a TO in Accounts > Order approvals, so the hub
+ * verifies nothing. It edits or cancels a TO, and opens its order once made.
+ */
+export function hubActions(r: IntakeRow): ActionSpec[] {
   const actions: ActionSpec[] = [];
-  if (r.status === "open")
-    actions.push({
-      id: "verify",
-      l: next.ok ? `Verify (${CHECK_LABEL[next.check]})` : "Verify",
-      primary: true,
-      why: next.ok ? (noRate ? "Add the rate to every line first" : !r.godownId ? "Pick the godown first" : "") : next.why,
-      prompt: {
-        title: `Verify TO-${r.toNo}`,
-        sub: `${r.billing} · ${plural(r.lines.length)}${dup ? ` · ${dup} for this party today has exactly these goods` : ""}. ${next.ok && (next.check === "production" ? r.backOfficeById : r.productionById) ? "This is the second check: it makes the order number." : "The other check is still to come."}`,
-        submit: "Verify",
-        fields: [{ k: "note", l: "Note", t: "area", mic: true }],
-      },
-    });
   if (intakeEditable(r.status)) actions.push({ id: "editTo", l: "Edit TO", loadsForm: true });
-  if (r.status === "open") actions.push({ id: "correct", l: "Send back for correction", prompt: { title: `Send TO-${r.toNo} back`, sub: "It goes back to whoever took it, with your reason. Both checks start again after their edit.", submit: "Send back", fields: [{ k: "note", l: "What needs correcting", t: "area", req: true, mic: true }] } });
-  if (intakeEditable(r.status))
+  if (r.status === "open" || r.status === "correction" || r.status === "hold")
     actions.push({
-      id: "hold",
-      l: "Put on hold",
-      prompt: {
-        title: `Hold TO-${r.toNo}`,
-        sub: "It moves to To Hold as Order verification. Releasing it brings it back here for both checks.",
-        submit: "Put on hold",
-        fields: [
-          { k: "reason", l: "Reason", t: "select", req: true, opts: [...INTAKE_HOLD_REASONS] },
-          { k: "note", l: "Remarks", t: "area", mic: true },
-        ],
-      },
+      id: "cancel",
+      l: "Cancel TO",
+      prompt: { title: `Cancel TO-${r.toNo}`, sub: r.origin !== "erp" ? "The order taken on the call or the Salesman App is cancelled with it." : undefined, submit: "Cancel TO", fields: [{ k: "reason", l: "Why", t: "area", req: true, mic: true }] },
     });
-  if (r.status !== "verified" && r.status !== "cancelled")
-    actions.push({ id: "cancel", l: "Cancel TO", prompt: { title: `Cancel TO-${r.toNo}`, sub: r.origin !== "erp" ? "The order taken on the call or the Salesman App is cancelled with it." : undefined, submit: "Cancel TO", fields: [{ k: "reason", l: "Why", t: "area", req: true, mic: true }] } });
   if (r.orderNo) actions.push({ id: "open", l: `Open order ${r.orderNo}`, primary: true, href: erpLink("orders", { fl: `Order ${r.orderNo}` }) });
   return actions;
 }
 
 /* ============================================================== Order Hub */
+
+/* Accounts approve, send back, hold and decline a TO in the Accounts app
+   (Accounts › Order approvals); approving makes the order number. The hub
+   lists the TOs and lets whoever took one edit or cancel it. */
 
 const HUB_COLS = (money: boolean): ColSpec[] => [
   { k: "to", l: "TO", t: "b" },
@@ -184,46 +174,46 @@ const HUB_COLS = (money: boolean): ColSpec[] => [
   { k: "taken", l: "Taken by", t: "t" },
   { k: "goods", l: "Goods", t: "t", w: 260 },
   ...(money ? [{ k: "value", l: "Value", t: "m" } as ColSpec] : []),
-  { k: "checks", l: "Checks", t: "t" },
+  { k: "status", l: "Accounts", t: "s" },
   { k: "waiting", l: "Waiting", t: "t" },
-  { k: "status", l: "Status", t: "s" },
 ];
 
 function hubModule(key: "orderHub" | "hubCorrection" | "hubDone"): ScreenModule {
   const where =
-    key === "orderHub" ? sql`i.status = 'open'` : key === "hubCorrection" ? sql`i.status = 'correction'` : sql`i.status in ('verified', 'cancelled') and i.updated_at > now() - interval '14 days'`;
+    key === "orderHub"
+      ? sql`i.status = 'open'`
+      : key === "hubCorrection"
+        ? sql`i.status = 'correction'`
+        : sql`i.status in ('verified', 'cancelled', 'declined') and i.updated_at > now() - interval '14 days'`;
   return {
     key,
     async load(ctx, scope) {
       const rows = await intakeRows(where);
       const seeMoney = ctx.powers.has("viewSalesAmounts");
-      const who = checker(ctx);
-      /* A possible duplicate, among the TOs on this list: same party, day and goods. */
-      const shapes = rows.map((r) => ({ key: `TO-${r.toNo}`, billingId: r.billingId, date: r.orderDate, lines: r.lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qty })) }));
       return {
         spec: {
           screen: key,
           cols: HUB_COLS(seeMoney),
           hidden: [],
           sortDefault: ["to", key === "hubDone" ? -1 : 1],
-          stats: [{ l: key === "orderHub" ? "Waiting for checks" : key === "hubCorrection" ? "Sent back" : "Checked in 14 days" }],
+          stats: [{ l: key === "orderHub" ? "Waiting for Accounts" : key === "hubCorrection" ? "Sent back" : "Decided in 14 days" }],
           filters: ["taken", "status"],
-          noDataLine: key === "orderHub" ? "Nothing waiting. A new order lands here as a TO number." : key === "hubCorrection" ? "Nothing sent back." : "Nothing checked in the last 14 days.",
+          noDataLine: key === "orderHub" ? "Nothing waiting. A new order lands here as a TO number." : key === "hubCorrection" ? "Nothing sent back." : "Nothing decided in the last 14 days.",
           ...(key === "orderHub" ? await newFormIn(scope, async () => ({ ...(await orderForm(ctx)), screen: key })) : {}),
           ...(key === "orderHub" ? { newLabel: "New order" } : {}),
         },
         rows: rows.map((r): ListRow => {
-          const dup = r.status === "open" ? duplicateOf(shapes.find((s) => s.key === `TO-${r.toNo}`)!, shapes) : null;
-          const next = nextCheck(r, who);
+          const live = r.status === "open" || r.status === "correction" || r.status === "hold";
+          const possibleDup = live && r.duplicateState === "possible" && r.duplicateOfTo != null;
           const noRate = r.lines.some((l) => l.rate == null);
           const flags = [
             ...(r.status === "open" ? ["hubWaiting"] : []),
-            ...(dup ? ["hubDuplicate"] : []),
+            ...(possibleDup ? ["hubDuplicate"] : []),
             ...(noRate && intakeEditable(r.status) ? ["hubNoRate"] : []),
             ...(!r.godownId && intakeEditable(r.status) ? ["hubNoGodown"] : []),
           ];
-          const goods = r.lines.map((l) => `${l.sku} × ${l.qty}`).join(", ");
-          const actions = hubActions(r, next, dup, noRate);
+          const goods = `${r.lines.map((l) => `${l.sku} × ${l.qty}`).join(", ")} · ${litresOf(r)} L`;
+          const actions = hubActions(r);
           const fields: RowField[] = [
             { l: "Source", v: `${sourceOf(r)}${r.taken ? ` · ${r.taken}` : ""}` },
             { l: "Order date", v: r.orderDate },
@@ -231,27 +221,36 @@ function hubModule(key: "orderHub" | "hubCorrection" | "hubDone"): ScreenModule 
             { l: "Delivery party", v: r.delivery ?? r.billing },
             { l: "Transporter", v: r.transporter ?? "The delivery party's" },
             { l: "Lines", v: r.lines.map((l) => `${l.sku} × ${l.qty} cans${l.rate == null ? " · no rate" : seeMoney ? ` · ${money(l.rate)}` : ""}`).join("\n") },
-            { l: "Back office", v: r.backOfficeById ? `${r.backOffice ?? ""} · ${stamp(r.backOfficeAt!)}` : "Not yet" },
-            { l: "Production Head", v: r.productionById ? `${r.production ?? ""} · ${stamp(r.productionAt!)}` : "Not yet" },
+            ...(possibleDup ? [{ l: "Possible duplicate", v: `Possible duplicate of TO-${r.duplicateOfTo}` }] : []),
+            ...(r.duplicateState === "different" && r.duplicateOfTo != null ? [{ l: "Different order", v: `Different order from TO-${r.duplicateOfTo}: ${r.duplicateReason ?? ""}` }] : []),
+            ...(r.approvedAt ? [{ l: "Approved by Accounts", v: `${r.approvedBy ?? ""} · ${stamp(r.approvedAt)}` }] : []),
             ...(r.correctionNote ? [{ l: "Sent back", v: r.correctionNote }] : []),
+            ...(r.status === "hold" && r.holdReason ? [{ l: "On hold", v: `${r.holdReason}${r.holdNote ? ` - ${r.holdNote}` : ""}${r.heldBy ? ` · ${r.heldBy}` : ""}` }] : []),
+            ...(r.declineReason ? [{ l: "Declined", v: `${r.declineReason}${r.declinedBy ? ` · ${r.declinedBy}` : ""}${r.declinedAt ? ` · ${stamp(r.declinedAt)}` : ""}` }] : []),
             ...(r.cancelReason ? [{ l: "Cancelled", v: r.cancelReason }] : []),
-            ...(r.orderNo ? [{ l: "Order number", v: String(r.orderNo) }] : []),
           ];
+          const header =
+            r.status === "correction" && r.correctionNote
+              ? `Sent back: ${r.correctionNote}`
+              : r.status === "declined" && r.declineReason
+                ? `Declined: ${r.declineReason}`
+                : possibleDup
+                  ? `Possible duplicate of TO-${r.duplicateOfTo}`
+                  : `${accountsWords(r)} · ${plural(r.lines.length)} · ${litresOf(r)} L`;
           return {
             id: r.id,
             v: {
               to: `TO-${r.toNo}`,
               party: r.billing,
               taken: `${sourceOf(r)}${r.taken ? ` · ${r.taken}` : ""}`,
-              goods: `${goods} · ${litresOf(r)} L`,
+              goods: r.status === "declined" && r.declineReason ? `${goods}\nDeclined: ${r.declineReason}` : goods,
               ...(seeMoney ? { value: valueOf(r) } : {}),
-              checks: checkWords(r),
+              status: accountsWords(r),
               waiting: ageWords(r.createdAt),
-              status: r.orderNo ? `${INTAKE_STATUS_LABEL[r.status as IntakeStatus]} · ${r.orderNo}` : INTAKE_STATUS_LABEL[r.status as IntakeStatus] ?? r.status,
             },
             flags,
             title: `TO-${r.toNo} · ${r.billing}`,
-            header: r.correctionNote && r.status === "correction" ? `Sent back: ${r.correctionNote}` : `${INTAKE_STATUS_LABEL[r.status as IntakeStatus]} · ${plural(r.lines.length)} · ${litresOf(r)} L`,
+            header,
             fields,
             actions,
           };
@@ -259,27 +258,6 @@ function hubModule(key: "orderHub" | "hubCorrection" | "hubDone"): ScreenModule 
       };
     },
     actions: {
-      async verify(ctx, id, v) {
-        const res = await checkIntake(checker(ctx), id, text(v.note));
-        if (!res.ok) return res;
-        await erpAudit(ctx, "erp.intake.check", "erp_order_intake", id, null, { check: res.data.check, orderNo: res.data.orderNo });
-        return okVoid(res.data.orderNo ? `TO-${res.data.toNo} → order ${res.data.orderNo} · with Accounts for approval` : `TO-${res.data.toNo} · ${CHECK_LABEL[res.data.check]} check done · waiting for the other`);
-      },
-      async correct(ctx, id, v) {
-        const note = text(v.note);
-        if (!note) return fieldErr("note", "Say what needs correcting");
-        if (!ctx.powers.has("verifyOrders") && !ctx.powers.has("productionCheck") && !ctx.administrator) return err("Only the back office or the Production Head sends a TO back.", "not_permitted");
-        const res = await sendBackIntake(ctx.user.id, id, note);
-        if (res.ok) await erpAudit(ctx, "erp.intake.correct", "erp_order_intake", id, null, { note });
-        return res;
-      },
-      async hold(ctx, id, v) {
-        const reason = text(v.reason);
-        if (!reason) return fieldErr("reason", "Pick the reason");
-        const res = await holdIntake(ctx.user.id, id, reason, text(v.note));
-        if (res.ok) await erpAudit(ctx, "erp.intake.hold", "erp_order_intake", id, null, { reason, note: text(v.note) });
-        return res;
-      },
       async cancel(ctx, id, v) {
         const reason = text(v.reason);
         if (!reason) return fieldErr("reason", "Say why");
@@ -309,6 +287,11 @@ function hubModule(key: "orderHub" | "hubCorrection" | "hubDone"): ScreenModule 
 
 /* ============================================================== MRP check */
 
+/* ONE screen, two tabs: Pending checks (`mrpCheck`) — approved by Accounts,
+   waiting for the Production Head's one check — and On hold (`mrpHold`), the
+   production holds. Releasing a production hold IS the check: it clears the
+   order straight to Under Process. */
+
 type GateLine = {
   id: string;
   orderNo: number;
@@ -329,6 +312,7 @@ type GateLine = {
   canMaterial: string | null;
   productionCheck: string;
   accountsCheckedAt: Date | null;
+  accountsBy: string | null;
   dispatchOn: string | null;
   toNo: number | null;
 };
@@ -340,7 +324,7 @@ async function waitingForMrp(): Promise<GateLine[]> {
            coalesce(p.cans_per_box, 1) as cpb, coalesce(pk.box_type, '') <> '' as boxed,
            p.finished_good_id as "finishedGoodId", fg.formulation_id as "formulationId", f.name as formulation,
            pk.can_use_material_id as "canMaterialId", rm.name as "canMaterial",
-           o.production_check as "productionCheck", o.accounts_checked_at as "accountsCheckedAt", o.dispatch_on::text as "dispatchOn",
+           o.production_check as "productionCheck", o.accounts_checked_at as "accountsCheckedAt", au.name as "accountsBy", o.dispatch_on::text as "dispatchOn",
            i.to_no as "toNo"
       from erp_orders o
       join erp_godowns g on g.id = o.godown_id
@@ -351,7 +335,8 @@ async function waitingForMrp(): Promise<GateLine[]> {
       left join erp_product_packing pk on pk.product_id = p.id
       left join erp_raw_materials rm on rm.id = pk.can_use_material_id
       left join erp_order_intakes i on i.id = o.intake_id
-     where o.status <> 'Cancel' and o.source = 'erp' and o.accounts_check = 'Approved' and o.production_check in ('Pending', 'Hold')
+      left join users au on au.id = o.accounts_checked_by_id
+     where o.status <> 'Cancel' and o.source = 'erp' and o.accounts_check = 'Approved' and o.production_check = 'Pending'
      order by o.accounts_checked_at nulls last, o.order_no, o.created_at
      limit 3000
   `)) as unknown as GateLine[];
@@ -398,42 +383,53 @@ async function stockAt(godownIds: string[]): Promise<Map<string, MrpStock>> {
   return out;
 }
 
+const isProductionHead = (ctx: ErpContext) => ctx.powers.has("productionCheck") || ctx.administrator;
+
+/** The reason a production hold was given, in the MRP check's own words. */
+const productionReason = (code: string) => PRODUCTION_HOLD_REASONS.find((r) => r.code === code)?.label ?? reasonLabel(code);
+
+/** The MRP check's hold: the reason, staff remarks, and - only where ticked - what the customer reads. */
+const TELL_CUSTOMER = "Tell the customer (shown on their tracking page)";
+const holdPrompt = (no: number): PromptSpec => ({
+  title: `Hold order ${no}`,
+  sub: "It moves to the On hold tab. Release clears it.",
+  submit: "Put on hold",
+  fields: [
+    { k: "reason", l: "Reason", t: "select", req: true, opts: PRODUCTION_HOLD_REASONS.map((r) => r.label) },
+    { k: "note", l: "Remarks", t: "area", mic: true, hint: "Staff only. Never reaches the customer." },
+    { k: "tell", l: "Customer", t: "multi", untagged: true, opts: [TELL_CUSTOMER] },
+    {
+      k: "customerText",
+      l: "What the customer reads",
+      t: "area",
+      when: { k: "tell", notEmpty: true },
+      fillBy: { by: ["reason"], map: Object.fromEntries(PRODUCTION_HOLD_REASONS.map((r) => [r.label, HOLD_CUSTOMER_TEXT[r.code] ?? HOLD_CUSTOMER_TEXT.other])) },
+    },
+  ],
+});
+
 /** What an order on the MRP check offers: shared by the list and the MRP board. */
 function mrpActions(no: number, short: boolean, sentence: string, held: boolean, decider: boolean): ActionSpec[] {
   return held
-          ? [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
-          : [
-              {
-                id: "clear",
-                l: "Clear for production",
-                primary: true,
-                why: decider ? "" : "Only the Production Head clears an order",
-                prompt: {
-                  title: `Clear order ${no} for production`,
-                  sub: short ? `${sentence}. Clear it only if you know the material will arrive in time; that is recorded.` : "It joins Under Process and the day's production plan.",
-                  submit: "Clear for production",
-                  fields: [
-                    { k: "capacity", l: "The floor can make it in time", t: "select", req: true, opts: ["Yes"] },
-                    { k: "note", l: "Note", t: "area", mic: true },
-                  ],
-                },
-              },
-              {
-                id: "hold",
-                l: "Put on hold",
-                why: decider ? "" : "Only the Production Head holds an order here",
-                prompt: {
-                  title: `Hold order ${no}`,
-                  sub: "It moves to To Hold as Production. Releasing it brings it back to this check with the stock as it is then.",
-                  submit: "Put on hold",
-                  fields: [
-                    { k: "reason", l: "Reason", t: "select", req: true, opts: PRODUCTION_HOLD_REASONS.map((r) => r.label) },
-                    { k: "note", l: "Remarks (staff only)", t: "area", mic: true },
-                    { k: "customerText", l: "What the customer reads", t: "area", hint: "Filled from the reason when left blank. Remarks never reach the customer." },
-                  ],
-                },
-              },
-            ];
+    ? [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
+    : [
+        {
+          id: "clear",
+          l: "Clear",
+          primary: true,
+          why: decider ? "" : "Only the Production Head clears an order",
+          prompt: {
+            title: `Clear order ${no}`,
+            sub: short ? `${sentence}. Clear it only if you know the material will arrive in time; that is recorded.` : "It goes to Under Process and the day's production plan.",
+            submit: "Clear",
+            fields: [
+              { k: "capacity", l: "Capacity", t: "select", req: true, opts: ["OK"], hint: "The floor can make it in time." },
+              { k: "note", l: "Note", t: "area", mic: true },
+            ],
+          },
+        },
+        { id: "hold", l: "Hold", why: decider ? "" : "Only the Production Head holds an order here", prompt: holdPrompt(no) },
+      ];
 }
 
 export const mrpCheckScreen: ScreenModule = {
@@ -444,7 +440,7 @@ export const mrpCheckScreen: ScreenModule = {
     for (const l of lines) byOrder.set(l.orderNo, [...(byOrder.get(l.orderNo) ?? []), l]);
     const stock = await stockAt([...new Set(lines.map((l) => l.godownId))]);
     const holds = await openHolds([...byOrder.keys()]);
-    const decider = ctx.powers.has("productionCheck") || ctx.administrator;
+    const decider = isProductionHead(ctx);
     const rows: ListRow[] = [];
     for (const [no, ls] of byOrder) {
       const head = ls[0];
@@ -467,43 +463,41 @@ export const mrpCheckScreen: ScreenModule = {
         ),
         stock.get(head.godownId)!,
       );
-      const h = holds.get(no);
       /* ANY open hold makes the order held here, not only the MRP check's own.
          An order held from the Office (the orders list, To Hold) kept its
          production check "Pending", so it sat on this list as waiting with a
          "Put on hold" that could only be refused — "already on hold, resolve
          that first" — and read as the button not working (2026-11-17,
          order 10254). It is shown held, and To Hold is where it is released. */
-      const held = ls.some((l) => l.productionCheck === "Hold") || !!h;
+      const h = holds.get(no);
       const fields: RowField[] = [
         ...answer.lines.map((a) => ({ l: a.sku, v: `${a.cans} cans needed · ${a.onShelfCans} on the shelf · ${a.toMakeCans ? `${a.toMakeCans} cans (${a.toMakeLitres} L) to make` : "nothing to make"}${a.boxesToPack ? ` · ${a.boxesToPack} boxes to pack` : ""}` })),
         ...answer.bases.map((b) => ({
           l: `Base · ${b.formulation}`,
-          v: `${b.needLitres} L needed · ${b.inTank} L approved in the tank${b.shortLitres ? ` · ${b.shortLitres} L to mix (${b.batches} batch${b.batches === 1 ? "" : "es"}${b.batchGuessed ? ", size not known" : ""})` : ""}${b.materials.length ? `\n${b.materials.map((m) => `${m.name}: ${m.need} needed, ${m.stock} in stock${m.short ? ` — short ${m.short}` : ""}`).join("\n")}` : ""}`,
+          v: `${b.needLitres} L needed · ${b.inTank} L approved in the tank${b.shortLitres ? ` · ${b.shortLitres} L to mix (${b.batches} batch${b.batches === 1 ? "" : "es"}${b.batchGuessed ? ", size not known" : ""})` : ""}${b.materials.length ? `\n${b.materials.map((m) => `${m.name}: ${m.need} needed, ${m.stock} in stock${m.short ? ` - short ${m.short}` : ""}`).join("\n")}` : ""}`,
         })),
-        ...answer.cans.map((c) => ({ l: c.name, v: `${c.need} needed · ${c.stock} in stock${c.short ? ` — short ${c.short}` : ""}` })),
+        ...answer.cans.map((c) => ({ l: c.name, v: `${c.need} needed · ${c.stock} in stock${c.short ? ` - short ${c.short}` : ""}` })),
         ...(answer.unknown.length ? [{ l: "Not known", v: `${answer.unknown.join(", ")}: the product names no base, so its making cannot be checked.` }] : []),
-        { l: "Capacity", v: "Your call: MahekOne does not know the floor's capacity." },
-        ...(h ? [{ l: h.department === "production" ? "On hold" : `On hold · ${DEPARTMENT_LABEL[h.department as HoldDepartment] ?? h.department}`, v: `${reasonLabel(h.reason)}${h.internalNote ? ` — ${h.internalNote}` : ""}` }] : []),
+        { l: "Capacity", v: "Your call: MahekOne does not know the floor's capacity. Confirm it when you clear." },
+        ...(h ? [{ l: `On hold · ${DEPARTMENT_LABEL[h.department as HoldDepartment] ?? h.department}`, v: `${reasonLabel(h.reason)}${h.internalNote ? ` - ${h.internalNote}` : ""}` }] : []),
       ];
-      const sentence = answer.short.length ? `Short: ${answer.short.join("; ")}` : "Everything it needs is in stock now";
+      const sentence = answer.short.length ? `Short: ${answer.short.join("; ")}` : "All in stock";
       rows.push({
         id: head.id,
         v: {
           order: `Order ${no}`,
-          to: head.toNo ? `TO-${head.toNo}` : "",
           party: head.billing,
           godown: head.godown,
-          goods: ls.map((l) => `${l.sku} × ${l.qty}`).join(", "),
-          dispatch: head.dispatchOn,
+          goods: ls.map((l) => `${l.sku} × ${l.qty}`).join("\n"),
           answer: sentence,
-          status: held ? "On hold" : "Waiting for MRP check",
+          approved: head.accountsCheckedAt ? `${stamp(head.accountsCheckedAt)}${head.accountsBy ? ` · ${head.accountsBy}` : ""}` : (head.accountsBy ?? ""),
+          status: h ? "On hold" : "Waiting for MRP check",
         },
-        flags: [held ? "mrpHold" : "mrpPending", ...(answer.short.length ? ["mrpShort"] : [])],
-        title: `Order ${no} · ${head.billing}`,
+        flags: [h ? "mrpHold" : "mrpPending", ...(answer.short.length ? ["mrpShort"] : [])],
+        title: `Order ${no} · ${head.billing}${head.toNo ? ` · TO-${head.toNo}` : ""}`,
         header: sentence,
         fields,
-        actions: mrpActions(no, answer.short.length > 0, sentence, held, decider),
+        actions: mrpActions(no, answer.short.length > 0, sentence, !!h, decider),
       });
     }
     return {
@@ -511,11 +505,10 @@ export const mrpCheckScreen: ScreenModule = {
         screen: "mrpCheck",
         cols: [
           { k: "order", l: "Order", t: "b" },
-          { k: "to", l: "TO", t: "t" },
           { k: "party", l: "Party", t: "t" },
           { k: "goods", l: "Goods", t: "t", w: 240 },
           { k: "answer", l: "Materials", t: "t", w: 260 },
-          { k: "dispatch", l: "Dispatch on", t: "d" },
+          { k: "approved", l: "Approved", t: "t" },
           { k: "status", l: "Status", t: "s" },
         ],
         hidden: [],
@@ -528,8 +521,9 @@ export const mrpCheckScreen: ScreenModule = {
   },
   actions: {
     async clear(ctx, id, v) {
-      if (!ctx.powers.has("productionCheck") && !ctx.administrator) return err("Only the Production Head clears an order.", "not_permitted");
-      if (text(v.capacity) !== "Yes") return fieldErr("capacity", "Confirm the floor can make it");
+      if (!isProductionHead(ctx)) return err("Only the Production Head clears an order.", "not_permitted");
+      const capacity = text(v.capacity);
+      if (capacity !== "OK" && capacity !== "Yes") return fieldErr("capacity", "Confirm the floor can make it");
       const [l] = await db.select({ no: erpOrders.orderNo }).from(erpOrders).where(eq(erpOrders.id, id));
       if (!l) return err("That order no longer exists.", "not_found");
       const open = (await openHolds([l.no])).get(l.no);
@@ -546,25 +540,125 @@ export const mrpCheckScreen: ScreenModule = {
       return okVoid(`Order ${l.no} cleared · it is in Under Process and the day's plan`);
     },
     async hold(ctx, id, v) {
-      if (!ctx.powers.has("productionCheck") && !ctx.administrator) return err("Only the Production Head holds an order here.", "not_permitted");
+      if (!isProductionHead(ctx)) return err("Only the Production Head holds an order here.", "not_permitted");
       const reason = PRODUCTION_HOLD_REASONS.find((r) => r.label === text(v.reason));
       if (!reason) return fieldErr("reason", "Pick the reason");
       const [l] = await db.select({ no: erpOrders.orderNo }).from(erpOrders).where(eq(erpOrders.id, id));
       if (!l) return err("That order no longer exists.", "not_found");
-      return holdOrder(ctx.user.id, l.no, "production", reason.code, text(v.note), text(v.customerText), ctx);
+      const tell = !!text(v.tell);
+      return holdOrder(ctx.user.id, l.no, "production", reason.code, text(v.note), tell ? text(v.customerText) : null, ctx, { customerVisible: tell });
     },
   },
 };
+
+/** The open production holds, one row per order, for the On hold tab and its badge. */
+async function productionHolds(): Promise<{ id: string; orderNo: number; reason: string; note: string | null; customerText: string; customerVisible: boolean; at: Date; by: string | null; party: string | null; goods: string | null; lineId: string | null }[]> {
+  const rows = (await db.execute(sql`
+    select h.id, h.order_no as "orderNo", h.reason, h.internal_note as note, h.customer_text as "customerText", h.customer_visible as "customerVisible",
+           h.raised_at as at, u.name as by,
+           (select c.name from erp_orders o join customers c on c.id = o.billing_customer_id where o.order_no = h.order_no limit 1) as party,
+           (select string_agg(p.name || ' × ' || o.qty_cans, E'\n' order by o.created_at) from erp_orders o join products p on p.id = o.sku_id
+             where o.order_no = h.order_no and o.status <> 'Cancel') as goods,
+           (select o.id from erp_orders o where o.order_no = h.order_no order by o.created_at limit 1) as "lineId"
+      from erp_order_holds h left join users u on u.id = h.raised_by_id
+     where h.resolved_at is null and h.kind = 'hold' and h.department = 'production'
+     order by h.raised_at
+  `)) as unknown as { id: string; orderNo: number; reason: string; note: string | null; customerText: string; customerVisible: boolean; at: Date; by: string | null; party: string | null; goods: string | null; lineId: string | null }[];
+  return rows.map((r) => ({ ...r, orderNo: Number(r.orderNo) }));
+}
+
+export const mrpHoldScreen: ScreenModule = {
+  key: "mrpHold",
+  async load(ctx) {
+    const holds = await productionHolds();
+    const decider = isProductionHead(ctx);
+    return {
+      spec: {
+        screen: "mrpHold",
+        cols: [
+          { k: "order", l: "Order", t: "b" },
+          { k: "party", l: "Party", t: "t" },
+          { k: "goods", l: "Goods", t: "t", w: 240 },
+          { k: "reason", l: "Reason", t: "s" },
+          { k: "note", l: "Remarks", t: "t", w: 220 },
+          { k: "held", l: "Held", t: "t" },
+        ],
+        hidden: [],
+        stats: [{ l: "On hold" }],
+        filters: ["reason"],
+        noDataLine: "Nothing on hold. Release clears an order: it goes straight to Under Process, and the person who took it is told.",
+      },
+      rows: holds.map(
+        (h): ListRow => ({
+          id: h.id,
+          v: { order: `Order ${h.orderNo}`, party: h.party ?? "", goods: h.goods ?? "", reason: productionReason(h.reason), note: h.note, held: `${stamp(new Date(h.at))} · ${ageWords(new Date(h.at))}` },
+          flags: h.customerVisible ? [] : ["mrpInternal"],
+          title: `Order ${h.orderNo} · ${h.party ?? ""}`,
+          header: productionReason(h.reason),
+          fields: [
+            { l: "Held by", v: `${h.by ?? "-"} · ${stamp(new Date(h.at))}` },
+            ...(h.note ? [{ l: "Remarks", v: h.note }] : []),
+            { l: "The customer reads", v: h.customerVisible ? h.customerText : "Internal - not shown to the customer" },
+          ],
+          actions: [
+            {
+              id: "release",
+              l: "Release",
+              primary: true,
+              why: decider ? "" : "The Production Head releases it",
+              prompt: { title: `Release order ${h.orderNo}`, sub: "Release clears it: it goes straight to Under Process, and the person who took it is told.", submit: "Release", fields: [{ k: "resolution", l: "Note", t: "area", mic: true }] },
+            },
+            ...(h.lineId ? [{ id: "open", l: `Open order ${h.orderNo}`, href: erpLink("orders", { fl: `Order ${h.orderNo}` }) }] : []),
+          ],
+        }),
+      ),
+    };
+  },
+  actions: {
+    async release(ctx, id, v) {
+      if (!isProductionHead(ctx)) return err("The Production Head releases it.", "not_permitted");
+      const [h] = (await db.execute(sql`select order_no as "orderNo" from erp_order_holds where id = ${id} and department = 'production'`)) as unknown as { orderNo: number }[];
+      if (!h) return err("That hold is gone.", "not_found");
+      const resolution = text(v.resolution);
+      const res = await releaseOrderHold(ctx.user.id, Number(h.orderNo), "production", resolution);
+      if (res.ok) await erpAudit(ctx, "erp.order.deskRelease", "erp_order", String(h.orderNo), null, { department: "production", resolution });
+      return res;
+    },
+  },
+};
+
+/** Who took the order, to be told what the MRP check did with it: the order's author, or the TO's taker. */
+async function tellTaker(orderNo: number, byUserId: string, title: string, body: string): Promise<void> {
+  const [t] = (await db.execute(sql`
+    select coalesce(i.taken_by_id, o.created_by_id) as "userId", i.origin
+      from erp_orders o left join erp_order_intakes i on i.id = o.intake_id
+     where o.order_no = ${orderNo} order by o.created_at limit 1
+  `)) as unknown as { userId: string | null; origin: string | null }[];
+  if (!t?.userId || t.userId === byUserId) return;
+  const where = t.origin === "mbos" ? { mbosHref: "/orders" } : { href: t.origin === "crm" ? "/crm/my-orders" : erpLink("orders", { fl: `Order ${orderNo}` }) };
+  await notifyUsers([{ userId: t.userId, title, body, kind: "info", ...where }]).catch(() => undefined);
+}
 
 /**
  * HOLDS AN ORDER AT A DESK (Accounts or the MRP check): one `erp_order_holds`
  * row with its department, and the lines' own check moved to Hold so the
  * order leaves that desk's queue. The lines' status is not touched — they were
  * never in production. The customer is not messaged: an order is confirmed to
- * them only once Accounts approve it.
+ * them only once Accounts approve it. `customerVisible: false` keeps the hold
+ * off the customer's tracking page altogether (an internal hold).
  */
-export async function holdOrder(userId: string, orderNo: number, department: "accounts" | "production", reason: string, note: string | null, customerText: string | null, ctx?: ErpContext, nextUpdateOn?: string | null): Promise<Result<unknown>> {
+export async function holdOrder(
+  userId: string,
+  orderNo: number,
+  department: "accounts" | "production",
+  reason: string,
+  note: string | null,
+  customerText: string | null,
+  ctx?: ErpContext,
+  opts: { customerVisible?: boolean; nextUpdateOn?: string | null } = {},
+): Promise<Result<unknown>> {
   const sentence = customerText?.trim() || HOLD_CUSTOMER_TEXT[reason] || HOLD_CUSTOMER_TEXT.other;
+  const customerVisible = opts.customerVisible ?? true;
   const column = department === "accounts" ? erpOrders.accountsCheck : erpOrders.productionCheck;
   try {
     await db.transaction(async (tx) => {
@@ -574,20 +668,27 @@ export async function holdOrder(userId: string, orderNo: number, department: "ac
         .where(and(eq(erpOrders.orderNo, orderNo), eq(column, "Pending"), sql`${erpOrders.status} <> 'Cancel'`))
         .returning({ id: erpOrders.id });
       if (!moved.length) throw new Stop(err(`Order ${orderNo} is not waiting at ${department === "accounts" ? "Accounts" : "the MRP check"}.`, "conflict"));
-      const r = await recordHold({ user: { id: userId } } as unknown as Pick<ErpContext, "user">, orderNo, { kind: "hold", reason, customerText: sentence, internalNote: note, department, nextUpdateOn: nextUpdateOn || null }, tx as unknown as typeof db);
+      const r = await recordHold({ user: { id: userId } } as unknown as Pick<ErpContext, "user">, orderNo, { kind: "hold", reason, customerText: sentence, internalNote: note, department, customerVisible, nextUpdateOn: opts.nextUpdateOn || null }, tx as unknown as typeof db);
       if (!r.ok) throw new Stop(r);
     });
   } catch (e) {
     if (e instanceof Stop) return e.result;
     throw e;
   }
-  if (ctx) await erpAudit(ctx, "erp.order.deskHold", "erp_order", String(orderNo), null, { department, reason, note });
+  if (ctx) await erpAudit(ctx, "erp.order.deskHold", "erp_order", String(orderNo), null, { department, reason, note, customerVisible });
   const { syncBookOrders } = await import("../book");
   await syncBookOrders([orderNo]);
+  if (department === "production")
+    await tellTaker(orderNo, userId, `Order ${orderNo} on hold · MRP check`, `${productionReason(reason)}${note ? ` - ${note}` : ""}. It goes to Under Process once the Production Head releases it.`);
   return okVoid(`Order ${orderNo} is on hold · ${DEPARTMENT_LABEL[department]}`);
 }
 
-/** Releases a desk's hold: the order goes back to that desk's queue, never past it. */
+/**
+ * Releases a desk's hold. An Accounts hold goes back to Accounts › Order
+ * approvals; a production hold is the MRP check's own answer, so releasing it
+ * CLEARS the check (by the releaser) and the order goes straight to Under
+ * Process with no second check. The person who took the order is told.
+ */
 export async function releaseOrderHold(userId: string, orderNo: number, department: "accounts" | "production", resolution: string | null): Promise<Result<unknown>> {
   const h = (await openHolds([orderNo])).get(orderNo);
   if (!h || h.department !== department) return err(`Order ${orderNo} is not on hold with ${DEPARTMENT_LABEL[department]}.`, "rule_violation");
@@ -596,14 +697,23 @@ export async function releaseOrderHold(userId: string, orderNo: number, departme
     const c = await closeHold(userId, h.id, resolution, tx as unknown as typeof db);
     if (!c.ok) return;
     closed = true;
+    const now = new Date();
     await tx
       .update(erpOrders)
-      .set(department === "accounts" ? { accountsCheck: "Pending", updatedAt: new Date(), updatedById: userId } : { productionCheck: "Pending", updatedAt: new Date(), updatedById: userId })
+      .set(
+        department === "accounts"
+          ? { accountsCheck: "Pending", updatedAt: now, updatedById: userId }
+          : { productionCheck: "Cleared", productionCheckedById: userId, productionCheckedAt: now, productionNote: resolution, updatedAt: now, updatedById: userId },
+      )
       .where(and(eq(erpOrders.orderNo, orderNo), eq(department === "accounts" ? erpOrders.accountsCheck : erpOrders.productionCheck, "Hold")));
   });
   if (!closed) return err(`The hold on order ${orderNo} is already resolved.`, "conflict");
   const { syncBookOrders } = await import("../book");
   await syncBookOrders([orderNo]);
+  if (department === "production") {
+    await tellTaker(orderNo, userId, `Order ${orderNo} released · Under Process`, `The Production Head released the hold${resolution ? `: ${resolution}` : ""}. It is in Under Process.`);
+    return okVoid(`Order ${orderNo} released and cleared · it is in Under Process`);
+  }
   return okVoid(`Order ${orderNo} released · ${RELEASE_TO[department]}`);
 }
 
@@ -619,6 +729,8 @@ type HoldRow = {
   reason: string;
   note: string | null;
   customerText: string | null;
+  /** False for an internal hold, which the customer never sees. */
+  customerVisible: boolean;
   by: string | null;
   at: Date;
   orderNo: number | null;
@@ -633,7 +745,7 @@ type HoldRow = {
 async function allHolds(): Promise<HoldRow[]> {
   const tos = await intakeRows(sql`i.status = 'hold'`);
   const holds = (await db.execute(sql`
-    select h.id, h.order_no as "orderNo", h.department, h.reason, h.internal_note as note, h.customer_text as "customerText", h.raised_at as at, u.name as by,
+    select h.id, h.order_no as "orderNo", h.department, h.reason, h.internal_note as note, h.customer_text as "customerText", h.customer_visible as "customerVisible", h.raised_at as at, u.name as by,
            h.next_update_on::text as "nextUpdateOn",
            (select o.billing_customer_id from erp_orders o where o.order_no = h.order_no limit 1) as "customerId",
            (select tu.name from erp_order_intakes i join users tu on tu.id = i.taken_by_id where i.order_no = h.order_no) as taker,
@@ -643,10 +755,10 @@ async function allHolds(): Promise<HoldRow[]> {
       from erp_order_holds h left join users u on u.id = h.raised_by_id
      where h.resolved_at is null and h.kind = 'hold'
      order by h.raised_at
-  `)) as unknown as { id: string; orderNo: number; department: string; reason: string; note: string | null; customerText: string; at: Date; by: string | null; lineId: string | null; party: string | null; toNo: number | null; nextUpdateOn: string | null; customerId: string | null; taker: string | null }[];
+  `)) as unknown as { id: string; orderNo: number; department: string; reason: string; note: string | null; customerText: string; customerVisible: boolean; at: Date; by: string | null; lineId: string | null; party: string | null; toNo: number | null; nextUpdateOn: string | null; customerId: string | null; taker: string | null }[];
   return [
     ...tos.map(
-      (t): HoldRow => ({ key: `to:${t.id}`, kind: "to", number: `TO-${t.toNo}`, sub: "No order number yet", party: t.billing, department: "verification", reason: t.holdReason ?? "", note: t.holdNote, customerText: null, by: t.heldBy, at: t.heldAt ?? t.updatedAt, orderNo: null, lineId: null, intakeId: t.id, holdId: null, nextUpdateOn: null, customerId: t.billingId, taker: t.taken }),
+      (t): HoldRow => ({ key: `to:${t.id}`, kind: "to", number: `TO-${t.toNo}`, sub: "No order number yet", party: t.billing, department: "verification", reason: t.holdReason ?? "", note: t.holdNote, customerText: null, customerVisible: true, by: t.heldBy, at: t.heldAt ?? t.updatedAt, orderNo: null, lineId: null, intakeId: t.id, holdId: null, nextUpdateOn: null, customerId: t.billingId, taker: t.taken }),
     ),
     ...holds.map(
       (h): HoldRow => ({
@@ -656,9 +768,10 @@ async function allHolds(): Promise<HoldRow[]> {
         sub: h.toNo ? `TO-${h.toNo}` : "",
         party: h.party ?? "",
         department: (h.department as HoldDepartment) ?? "office",
-        reason: reasonLabel(h.reason),
+        reason: h.department === "production" ? productionReason(h.reason) : reasonLabel(h.reason),
         note: h.note,
         customerText: h.customerText,
+        customerVisible: h.customerVisible !== false,
         by: h.by,
         at: h.at,
         orderNo: Number(h.orderNo),
@@ -675,7 +788,7 @@ async function allHolds(): Promise<HoldRow[]> {
 
 function mayRelease(ctx: ErpContext, d: HoldDepartment): string {
   if (ctx.administrator) return "";
-  if (d === "verification") return ctx.powers.has("verifyOrders") || ctx.powers.has("productionCheck") ? "" : "The back office or the Production Head releases it";
+  if (d === "verification") return ctx.powers.has("verifyOrders") || ctx.powers.has("productionCheck") ? "" : "Accounts release it, from Order approvals";
   if (d === "production") return ctx.powers.has("productionCheck") ? "" : "The Production Head releases it";
   if (d === "accounts") return "Accounts release it, from Order approvals";
   return "";
@@ -702,8 +815,8 @@ function holdActions(ctx: ErpContext, r: HoldRow): ActionSpec[] {
         sub: `It goes ${RELEASE_TO[r.department]}.`,
         submit: "Release",
         fields: [
-          { k: "resolution", l: "What changed", t: "area", req: r.department !== "verification", mic: true },
-          ...(r.kind === "order" ? ([{ k: "notify", l: "Tell the customer the hold is over", t: "select", opts: ["Yes"] }] as FieldSpec[]) : []),
+          { k: "resolution", l: "What changed", t: "area", req: r.department === "accounts" || r.department === "office", mic: true },
+          ...(r.kind === "order" && r.customerVisible ? ([{ k: "notify", l: "Tell the customer the hold is over", t: "select", opts: ["Yes"] }] as FieldSpec[]) : []),
         ],
       },
     },
@@ -757,7 +870,7 @@ export const toHoldScreen: ScreenModule = {
         chips: "department",
         stats: [
           { l: "On hold" },
-          { l: "Order verification", where: { k: "department", in: [DEPARTMENT_LABEL.verification] } },
+          { l: "TOs with Accounts", where: { k: "department", in: [DEPARTMENT_LABEL.verification] } },
           { l: "Accounts", where: { k: "department", in: [DEPARTMENT_LABEL.accounts] } },
           { l: "Production", where: { k: "department", in: [DEPARTMENT_LABEL.production] } },
         ],
@@ -768,13 +881,13 @@ export const toHoldScreen: ScreenModule = {
         return {
           id: holdRowId(r),
           v: { number: r.sub ? `${r.number} · ${r.sub}` : r.number, party: r.party, department: DEPARTMENT_LABEL[r.department], reason: r.reason, note: r.note, by: r.by, at: calendarDate(new Date(r.at)) },
-          flags: [],
+          flags: r.customerVisible ? [] : ["mrpInternal"],
           title: `${r.number} · ${r.party}`,
           header: `${DEPARTMENT_LABEL[r.department]} · ${r.reason}`,
           fields: [
             { l: "Held by", v: `${r.by ?? "—"} · ${stamp(new Date(r.at))}` },
             ...(r.note ? [{ l: "Remarks", v: r.note }] : []),
-            ...(r.customerText ? [{ l: "The customer reads", v: r.customerText }] : []),
+            ...(r.customerText ? [{ l: "The customer reads", v: r.customerVisible ? r.customerText : "Internal - not shown to the customer" }] : []),
             { l: "Releasing sends it", v: RELEASE_TO[r.department] },
           ],
           actions: holdActions(ctx, r),
@@ -796,7 +909,7 @@ export const toHoldScreen: ScreenModule = {
       const why = mayRelease(ctx, department);
       if (why) return err(`${why}.`, "not_permitted");
       const resolution = text(v.resolution);
-      if (!resolution) return fieldErr("resolution", "Say what changed");
+      if (!resolution && department === "accounts") return fieldErr("resolution", "Say what changed");
       const was = (await openHolds([Number(no)])).get(Number(no));
       const res = await releaseOrderHold(ctx.user.id, Number(no), department, resolution);
       if (res.ok) {
@@ -864,10 +977,11 @@ class Stop extends Error {
 
 /**
  * The sidebar's badges for the hub's screens, read by `erpNavCounts`. Each is
- * the count its own list draws: TOs waiting for a check, TOs sent back,
- * orders waiting at the MRP check, and everything on To Hold.
+ * the count its own list draws: TOs waiting for Accounts, TOs sent back,
+ * orders waiting at the MRP check (not held), the MRP check's own holds,
+ * and everything on To Hold.
  */
-export async function orderHubCounts(): Promise<{ orderHub: number; hubCorrection: number; mrpCheck: number; toHold: number }> {
+export async function orderHubCounts(): Promise<{ orderHub: number; hubCorrection: number; mrpCheck: number; mrpHold: number; toHold: number }> {
   const [byStatus, mrp, holds] = await Promise.all([
     db.execute(sql`select status, count(*)::int as n from erp_order_intakes where status in ('open', 'correction') group by status`) as unknown as Promise<{ status: string; n: number }[]>,
     waitingForMrp(),
@@ -881,11 +995,12 @@ export async function orderHubCounts(): Promise<{ orderHub: number; hubCorrectio
       const heldNos = new Set(holds.map((h) => h.orderNo).filter((n): n is number => n != null));
       return new Set(mrp.filter((l) => l.productionCheck === "Pending" && !heldNos.has(l.orderNo)).map((l) => l.orderNo)).size;
     })(),
+    mrpHold: holds.filter((h) => h.kind === "order" && h.department === "production").length,
     toHold: holds.length,
   };
 }
 
-export const ORDER_HUB_SCREENS: ScreenModule[] = [hubModule("orderHub"), hubModule("hubCorrection"), hubModule("hubDone"), mrpCheckScreen, toHoldScreen];
+export const ORDER_HUB_SCREENS: ScreenModule[] = [hubModule("orderHub"), hubModule("hubCorrection"), hubModule("hubDone"), mrpCheckScreen, mrpHoldScreen, toHoldScreen];
 
 /* The Accounts app's hold dialog offers these. */
 export { ACCOUNTS_HOLD_REASONS };
@@ -894,10 +1009,10 @@ export { ACCOUNTS_HOLD_REASONS };
 
 /**
  * THE ORDER HUB AS ITS OWN PAGE (`app/erp/order-hub`): every TO open, sent
- * back, on hold or verified in the last two days, with the facts the board and
- * the Verify dialog draw — who checked it and when, how long it has waited,
- * a possible duplicate, an edit by its taker, and the Production Head's
- * checklist (duplicate, active products, whole boxes, quantity against the
+ * back, on hold or approved in the last two days, with the facts the board and
+ * its TO dialog draw — how long it has waited, a possible duplicate (the
+ * duplicate check's stored answer), an edit by its taker, and a checklist of
+ * what Accounts will see (active products, whole boxes, quantity against the
  * party's usual order). Its actions are `hubActions`, the list's own.
  */
 export type HubCheckItem = { tone: "ok" | "warn"; text: string };
@@ -951,17 +1066,14 @@ async function usualLitres(partyIds: string[]): Promise<Map<string, number>> {
 export async function hubBoard(ctx: ErpContext): Promise<{ rows: HubBoardRow[]; seeMoney: boolean }> {
   const rows = await intakeRows(sql`i.status in ('open', 'correction', 'hold') or (i.status = 'verified' and i.updated_at > now() - interval '2 days')`);
   const seeMoney = ctx.powers.has("viewSalesAmounts");
-  const who = checker(ctx);
   const today = calendarDate(new Date());
   const usual = await usualLitres([...new Set(rows.filter((r) => r.status === "open").map((r) => r.billingId))]);
-  const open = rows.filter((r) => r.status === "open" || r.status === "correction" || r.status === "hold");
-  const shapes = open.map((r) => ({ key: `TO-${r.toNo}`, billingId: r.billingId, date: r.orderDate, lines: r.lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qty })) }));
   const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
   return {
     seeMoney,
     rows: rows.map((r): HubBoardRow => {
-      const dup = r.status === "open" ? duplicateOf(shapes.find((s) => s.key === `TO-${r.toNo}`)!, shapes) : null;
-      const next = nextCheck(r, who);
+      /* The duplicate check's own answer, stored when the TO was made. */
+      const dup = r.status === "open" && r.duplicateState === "possible" && r.duplicateOfTo != null ? `TO-${r.duplicateOfTo}` : null;
       const noRate = r.lines.filter((l) => l.rate == null);
       const litres = litresOf(r);
       const lines = r.lines.map((l) => {
@@ -996,7 +1108,7 @@ export async function hubBoard(ctx: ErpContext): Promise<{ rows: HubBoardRow[]; 
       if (u && litres > 0)
         checklist.push(
           litres >= u * 1.5
-            ? { tone: "warn", text: `Quantity is ${Math.round((litres / u) * 10) / 10}× their usual order of about ${u} L. Check before verifying.` }
+            ? { tone: "warn", text: `Quantity is ${Math.round((litres / u) * 10) / 10}× their usual order of about ${u} L. Accounts should confirm it.` }
             : { tone: "ok", text: `Quantity is in line with their usual order of about ${u} L` },
         );
       const editedLater = r.updatedById && r.updatedById === r.takenById && new Date(r.updatedAt).getTime() - new Date(r.createdAt).getTime() > 60_000 && r.status === "open";
@@ -1017,8 +1129,9 @@ export async function hubBoard(ctx: ErpContext): Promise<{ rows: HubBoardRow[]; 
         lines,
         litres,
         value: seeMoney ? valueOf(r) : null,
-        back: r.backOfficeById ? { by: r.backOffice, at: iso(r.backOfficeAt)!, note: r.backOfficeNote } : null,
-        prod: r.productionById ? { by: r.production, at: iso(r.productionAt)!, note: r.productionNote } : null,
+        /* Option A: no back office or Production Head check on a TO. */
+        back: null,
+        prod: null,
         createdAt: iso(r.createdAt)!,
         dup,
         edited: editedLater ? { by: r.updatedBy, at: iso(r.updatedAt)! } : null,
@@ -1027,10 +1140,10 @@ export async function hubBoard(ctx: ErpContext): Promise<{ rows: HubBoardRow[]; 
         cancelReason: r.cancelReason,
         orderNo: r.orderNo,
         verifiedToday: r.status === "verified" && calendarDate(new Date(r.updatedAt)) === today,
-        myCheck: r.status === "open" && next.ok ? next.check : null,
-        second: next.ok ? !!(next.check === "production" ? r.backOfficeById : r.productionById) : false,
+        myCheck: null,
+        second: false,
         checklist,
-        actions: hubActions(r, next, dup, noRate.length > 0),
+        actions: hubActions(r),
       };
     }),
   };

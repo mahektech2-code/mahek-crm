@@ -49,18 +49,35 @@ async function need(actor: User, key: string, what: string): Promise<string | nu
 
 /* ---------------------------------------------------------- sign-in accounts */
 
-export type IdentityInput = { email: string; provider: string; kind: string; controlled: boolean; mfa: boolean; recovery: boolean; controlledByName: string; ownerId: string | null };
+/**
+ * `controlledById` is the person, where they are staff — what offboarding
+ * asks. `controlledByName` is typed only for somebody NOT on the staff; for a
+ * staff member it is stored as their name today, a label and nothing more.
+ */
+export type IdentityInput = { email: string; provider: string; kind: string; controlled: boolean; mfa: boolean; recovery: boolean; controlledById?: string | null; controlledByName: string; ownerId: string | null };
 
 export async function saveIdentity(actor: User, id: string | null, i: IdentityInput): Promise<Result<{ id: string }>> {
   const a = await lockerAccess(actor.id);
   if (!a.has("locker.identities") && !a.vault) return err(NO("Sign-in accounts"), "not_permitted");
   if (!i.email.trim() || !i.provider.trim()) return err("Give the account and its provider.");
   if (!["organisational", "shared", "personal", "service"].includes(i.kind)) return err("Choose what kind of account it is.");
-  if (!i.controlled && !i.controlledByName.trim()) return err("A personal account is controlled by somebody — name them.");
+  const controller = !i.controlled && i.controlledById ? (await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, i.controlledById)).limit(1))[0] : null;
+  if (!i.controlled && i.controlledById && !controller) return err("Choose who controls it from the list, or name somebody not on the staff.");
+  if (!i.controlled && !controller && !i.controlledByName.trim()) return err("A personal account is controlled by somebody — name them.");
   const rowId = id ?? nid("lki");
   try {
     await db.transaction(async (tx) => {
-      const values = { email: i.email.trim(), provider: i.provider.trim(), kind: i.kind, controlled: i.controlled, mfa: i.mfa, recovery: i.recovery, controlledByName: i.controlled ? null : i.controlledByName.trim(), ownerId: i.ownerId };
+      const values = {
+        email: i.email.trim(),
+        provider: i.provider.trim(),
+        kind: i.kind,
+        controlled: i.controlled,
+        mfa: i.mfa,
+        recovery: i.recovery,
+        controlledById: i.controlled ? null : (controller?.id ?? null),
+        controlledByName: i.controlled ? null : (controller?.name ?? i.controlledByName.trim()),
+        ownerId: i.ownerId,
+      };
       if (id) await tx.update(lockerIdentities).set(values).where(eq(lockerIdentities.id, id));
       else await tx.insert(lockerIdentities).values({ id: rowId, ...values });
       await lockerAuditTx(tx, { actorId: actor.id, actorName: actor.name, action: "locker.identity.saved", entityType: "identity", entityId: rowId, entityTitle: values.email, summary: `${id ? "Changed" : "Added"} sign-in account ${values.email}${values.controlled ? "" : " (personal)"}`, security: !values.controlled });
@@ -116,8 +133,12 @@ export async function startOffboarding(actor: User, userId: string): Promise<Res
     db.select({ id: lockerAssets.id, title: lockerAssets.title, ownerId: lockerAssets.ownerId }).from(lockerAssets).where(and(or(eq(lockerAssets.ownerId, userId), eq(lockerAssets.backupId, userId)), sql`${lockerAssets.stage} is distinct from 'superseded' and ${lockerAssets.stage} is distinct from 'cancelled'`)),
     db.select({ id: lockerCredentials.id, title: lockerCredentials.title }).from(lockerCredentials).where(and(eq(lockerCredentials.active, true), or(eq(lockerCredentials.ownerId, userId), eq(lockerCredentials.backupOwnerId, userId)))),
     db.selectDistinct({ id: lockerCredentials.id, title: lockerCredentials.title }).from(lockerReveals).innerJoin(lockerCredentials, eq(lockerCredentials.id, lockerReveals.credentialId)).where(and(eq(lockerReveals.userId, userId), eq(lockerReveals.state, "revealed"), gte(lockerReveals.revealedAt, since))),
-    db.select({ id: lockerIdentities.id, email: lockerIdentities.email, controlled: lockerIdentities.controlled }).from(lockerIdentities).where(and(eq(lockerIdentities.active, true), or(eq(lockerIdentities.ownerId, userId), sql`lower(${lockerIdentities.controlledByName}) = lower(${person.name})`))),
-    db.select({ id: lockerPaymentMethods.id, label: lockerPaymentMethods.label, last4: lockerPaymentMethods.last4 }).from(lockerPaymentMethods).where(and(eq(lockerPaymentMethods.active, true), sql`lower(${lockerPaymentMethods.holder}) = lower(${person.name})`)),
+    /* The leaver's own sign-in accounts and cards, by account id — never by
+       their name, which HR may have changed and somebody else may share. A
+       row naming a person in text only is matched to them by
+       person-ids-backfill first. */
+    db.select({ id: lockerIdentities.id, email: lockerIdentities.email, controlled: lockerIdentities.controlled }).from(lockerIdentities).where(and(eq(lockerIdentities.active, true), or(eq(lockerIdentities.ownerId, userId), eq(lockerIdentities.controlledById, userId)))),
+    db.select({ id: lockerPaymentMethods.id, label: lockerPaymentMethods.label, last4: lockerPaymentMethods.last4 }).from(lockerPaymentMethods).where(and(eq(lockerPaymentMethods.active, true), eq(lockerPaymentMethods.holderUserId, userId))),
   ]);
   const items: OffItem[] = [];
   for (const a of assets) items.push({ kind: "asset", id: a.id, title: a.title, action: a.ownerId === userId ? "Reassign the primary owner" : "Reassign the backup owner", done: false, to: null });
