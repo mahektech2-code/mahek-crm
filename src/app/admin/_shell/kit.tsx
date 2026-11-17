@@ -152,7 +152,7 @@ export function BtnLink({ href, children, kind = "plain", size = "md" }: { href:
 
 /* --------------------------------------------------------------------- tabs */
 
-export type TabItem = { slug: string; label: string; href: string; count?: number | null };
+export type TabItem = { slug: string; label: string; href: string; count?: number | null; /** A red chip: the count is work owed. */ urgent?: boolean };
 
 /** Tabs that are links: 26px apart, the live one inked with a brand underline, a count chip beside. */
 export function Tabs({ items, active }: { items: readonly TabItem[]; active: string }) {
@@ -172,7 +172,7 @@ export function Tabs({ items, active }: { items: readonly TabItem[]; active: str
           >
             {t.label}
             {t.count != null ? (
-              <span className="rounded-full bg-[#eef1f6] px-[7px] py-px text-[11px] font-semibold text-[#4a5670]">{t.count}</span>
+              <span className={cx("rounded-full px-[7px] py-px text-[11px] font-semibold", t.urgent && t.count ? "bg-danger text-white" : "bg-[#eef1f6] text-[#4a5670]")}>{t.count}</span>
             ) : null}
           </Link>
         );

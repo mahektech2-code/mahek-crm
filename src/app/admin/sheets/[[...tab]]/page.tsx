@@ -59,7 +59,7 @@ export default async function SheetsPage({
   const cutover = config["fieldActivity.cutoverDate"];
 
   const tabs = [
-    { slug: "conflicts", label: "Conflicts", count: conflicts.total || null, href: ADMIN.sheets() },
+    { slug: "conflicts", label: "Conflicts", count: conflicts.total || null, urgent: true, href: ADMIN.sheets() },
     { slug: "issues", label: "Needs attention", href: ADMIN.sheets("issues") },
     { slug: "lines", label: "Order lines", href: ADMIN.sheets("lines") },
     { slug: "orders", label: "Orders", href: ADMIN.sheets("orders") },

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ADMIN, ADMIN_TABS, tabIndexOf } from "@/lib/admin-routes";
 import { APP_TIMEZONE } from "@/lib/business-date";
+import { today } from "@/lib/queries";
 import {
   liveSessions,
   onboardingRows,
@@ -107,7 +108,7 @@ export default async function SignInsPage({
     );
   }
 
-  const log = await signInLog({ q: sp.q, day: sp.day });
+  const [log, day] = await Promise.all([signInLog({ q: sp.q, day: sp.day }), today()]);
   return (
     <SecurityFrame active="log">
       <div
@@ -127,7 +128,7 @@ export default async function SignInsPage({
             <input
               type="date"
               name="day"
-              defaultValue={sp.day ?? ""}
+              defaultValue={sp.day ?? day}
               aria-label="Day"
               className="h-[38px] rounded-control border border-line-strong bg-surface px-3 text-[13px] font-semibold text-ink"
             />
@@ -138,7 +139,7 @@ export default async function SignInsPage({
               Filters
             </button>
             <span className="flex-1" />
-            <span className="text-muted">{sp.day ? sp.day : "Today"}</span>
+            <span className="text-muted">{!sp.day || sp.day === day ? "Today" : sp.day}</span>
           </form>
           <Table head={["When", "Person", "Result", "How", "From"]}>
             {log.length === 0 ? (

@@ -85,7 +85,7 @@ export async function SecurityFrame({
           tone: f.codesRefusedToday ? "warn" : undefined,
           href: tabs[3].href,
         },
-        { label: "Admin sign-ins as others · 7 d", value: f.impersonations7d },
+        { label: "Signed in as others · 7 d", value: f.impersonations7d },
       ]}
       tabs={{
         items: tabs,

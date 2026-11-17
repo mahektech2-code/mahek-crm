@@ -25,7 +25,7 @@ export function AdminPage({
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
-  tabs?: { items: readonly (AdminTab & { count?: number | null })[]; active: string; href: (slug: string) => string };
+  tabs?: { items: readonly (AdminTab & { count?: number | null; urgent?: boolean })[]; active: string; href: (slug: string) => string };
   /** Figure cards above the page (older pages' shape — a tone colours the figure). */
   metrics?: Metric[];
   /** Figure cards, the canvas's way: dots, the navy card, links. */

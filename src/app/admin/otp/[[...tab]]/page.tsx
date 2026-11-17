@@ -30,7 +30,7 @@ import {
   type OtpHistoryFilters,
   type OtpHistoryRow,
 } from "@/lib/services/otp-history-service";
-import { Tabs } from "../../_shell/kit";
+import { Figures } from "../../_shell/kit";
 import { SecurityFrame } from "../../sign-ins/security-frame";
 import { requirePlatformAdmin } from "../../_shell/context";
 
@@ -108,26 +108,28 @@ export default async function OtpHistoryPage({
 
   return (
     <SecurityFrame active="codes">
-      <Tabs
-        items={[
-          {
-            slug: "requests",
-            label: "Every request",
-            href: hrefWith({ page: undefined }, "requests"),
-            count: s.total,
-          },
-          {
-            slug: "people",
-            label: "By person",
-            href: hrefWith({ page: undefined }, "people"),
-            count: s.people,
-          },
-        ]}
-        active={slug}
-      />
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            { slug: "requests", label: `Every request · ${s.total}` },
+            { slug: "people", label: `By person · ${s.people}` },
+          ] as const
+        ).map((t) => (
+          <Link
+            key={t.slug}
+            href={hrefWith({ page: undefined }, t.slug)}
+            className={
+              "inline-flex h-[34px] items-center rounded-full border px-3 text-[13px] font-semibold whitespace-nowrap no-underline hover:no-underline " +
+              (slug === t.slug ? "border-ink bg-ink text-white" : "border-line bg-surface text-ink hover:border-line-strong")
+            }
+          >
+            {t.label}
+          </Link>
+        ))}
+      </div>
       <div>
-        <MetricStrip
-          metrics={[
+        <Figures
+          items={[
             {
               label: "Requests",
               value: s.total.toLocaleString("en-IN"),
