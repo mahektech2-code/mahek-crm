@@ -2,6 +2,8 @@ import { checkCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { money, phoneDisplay, stampDate } from "@/lib/format";
 import { heldOrders, pendingOrders } from "@/lib/services/order-approval-service";
+import { accountsTos } from "@/lib/services/to-approval-service";
+import { ToApprovals } from "./to-approvals";
 import { QueueScreen } from "../queue-screen";
 import { reasonLabel } from "@/lib/erp/engines/order-tracking";
 import { HeldOrders } from "./held-orders";
@@ -12,11 +14,12 @@ export const metadata = { title: "Order approvals — Accounts — MahekOne" };
 export default async function Page() {
   // App access is gated by the layout. This decides only whether the buttons
   // are live: seeing the queue and deciding on it are different things.
-  const [{ allowed }, orders, config, held] = await Promise.all([
+  const [{ allowed }, orders, config, held, tos] = await Promise.all([
     checkCapability("order.approve"),
     pendingOrders(),
     getConfig(),
     heldOrders(),
+    accountsTos(),
   ]);
 
   const rows: QueueRow[] = orders.map((o) => ({
@@ -55,15 +58,23 @@ export default async function Page() {
     overdueBills: o.overdueBills,
   }));
 
+  /* The TO queue first (Option A: Accounts approve every TO, and that makes the
+     order number). Orders that reached Accounts another way — numbered before
+     TOs, or taken while the ERP does not yet take the orders — keep the queue
+     they always had, below, only while there are any. */
   return (
     <>
+      <ToApprovals waiting={tos.waiting} sentBack={tos.sentBack} held={tos.held} canDecide={allowed} />
+      {rows.length ? (
       <QueueScreen
+        title="Other orders waiting"
         kind="orders"
         rows={rows}
         canDecide={allowed}
         staleHours={config["payments.confirmationAgeWarningHours"]}
         quietDays={config["payments.reportedQuietDays"]}
       />
+      ) : null}
       <HeldOrders
         canDecide={allowed}
         rows={held.map((h) => ({ ...h, reason: reasonLabel(h.reason), heldAt: h.heldAt.toISOString() }))}

@@ -108,6 +108,8 @@ const files = [
   // match each line to what explains it, and the PDF's seven days.
   "src/lib/bank-statements.test.ts",
   "src/lib/erp/erp-book.test.ts",
+  // The Order Hub, Option A: Accounts approve the TO, duplicates, editing until Bill it.
+  "src/lib/erp/order-hub-accounts.test.ts",
   "src/lib/erp/erp-scale.test.ts",
   "src/lib/erp/erp-ai.test.ts",
   "src/lib/erp/erp-ai-reading.test.ts",

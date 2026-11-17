@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpOrderIntakeLines, erpOrderIntakes, erpOrderReviews, erpOrders, orders, products, users } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
-import { err, ok, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { erpId, nextNumber } from "./server";
 import { erpLink } from "./registry";
 import { bothChecked, decisionRefusal, duplicateLine, intakeEditable, nextCheck, sameOrder, CHECK_LABEL, type Checker, type CheckKind, type DuplicateDecision } from "./engines/order-hub";
@@ -471,11 +471,13 @@ export async function checkIntake(who: Checker, id: string, note: string | null)
  * App already has its `orders` row in the book; that row is adopted under the
  * order number, so the order is counted once.
  */
-async function makeOrder(tx: Tx, intake: Intake, lines: IntakeLine[], userId: string): Promise<number> {
+async function makeOrder(tx: Tx, intake: Intake, lines: IntakeLine[], userId: string, approvedByAccounts = false): Promise<number> {
   const no = await nextNumber(tx, "order");
-  /* A Pending party (`partyStatus` in masters) is still marked, as the New order form always did. */
+  /* A Pending party (`partyStatus` in masters) is still marked, as the New order form always did —
+     unless Accounts approved the TO, which IS the approval ("Approved By Admin" is no separate step). */
   const [party] = (await tx.execute(sql`select coalesce(p.pending_activation, false) as pending from customers c left join erp_customer_profiles p on p.customer_id = c.id where c.id = ${intake.billingCustomerId}`)) as unknown as { pending: boolean }[];
   const pending = !!party?.pending;
+  const now = new Date();
   const by = intake.takenById ?? intake.createdById ?? userId;
   for (const l of lines)
     await tx.insert(erpOrders).values({
@@ -495,21 +497,26 @@ async function makeOrder(tx: Tx, intake: Intake, lines: IntakeLine[], userId: st
       rateSetAt: l.rateSetAt,
       discountAuthorisedById: l.discountAuthorisedById,
       remark: l.remark,
-      partyStatus: pending ? "Pending" : null,
+      partyStatus: pending ? (approvedByAccounts ? "Approved By Admin" : "Pending") : null,
       dispatchOn: intake.dispatchOn,
       orderSource: intake.orderSource,
       orderCheck: "Verified",
       orderCheckedById: userId,
       orderCheckedAt: new Date(),
       intakeId: intake.id,
-      accountsCheck: "Pending",
+      accountsCheck: approvedByAccounts ? "Approved" : "Pending",
+      ...(approvedByAccounts ? { accountsCheckedById: userId, accountsCheckedAt: now } : {}),
       productionCheck: "Pending",
       createdById: by,
       updatedById: userId,
     });
-  await tx.insert(erpOrderReviews).values({ id: erpId("orv"), orderNo: no, kind: "order", result: "verified", note: `TO-${intake.toNo} checked by the back office and the Production Head`, snapshot: { toNo: intake.toNo }, byId: userId });
-  await tx.update(erpOrderIntakes).set({ status: "verified", orderNo: no, updatedAt: new Date(), updatedById: userId }).where(eq(erpOrderIntakes.id, intake.id));
-  if (intake.originOrderId) await tx.update(orders).set({ externalRef: `ERP-${no}`, updatedAt: new Date() }).where(eq(orders.id, intake.originOrderId));
+  await tx.insert(erpOrderReviews).values({ id: erpId("orv"), orderNo: no, kind: "order", result: "verified", note: approvedByAccounts ? `TO-${intake.toNo} approved by Accounts` : `TO-${intake.toNo} checked by the back office and the Production Head`, snapshot: { toNo: intake.toNo }, byId: userId });
+  await tx.update(erpOrderIntakes).set({ status: "verified", orderNo: no, updatedAt: now, updatedById: userId }).where(eq(erpOrderIntakes.id, intake.id));
+  if (intake.originOrderId)
+    await tx
+      .update(orders)
+      .set({ externalRef: `ERP-${no}`, ...(approvedByAccounts ? { approvedById: userId, approvedAt: now } : {}), updatedAt: now })
+      .where(eq(orders.id, intake.originOrderId));
   return no;
 }
 
@@ -532,8 +539,8 @@ export async function sendBackIntake(userId: string, id: string, note: string): 
     .update(erpOrderIntakes)
     .set({ status: "correction", correctionNote: note.trim(), correctionById: userId, correctionAt: new Date(), backOfficeById: null, backOfficeAt: null, productionById: null, productionAt: null, updatedAt: new Date(), updatedById: userId })
     .where(and(eq(erpOrderIntakes.id, id), eq(erpOrderIntakes.status, "open")));
-  await tell([got.intake.takenById], `Correct TO-${got.intake.toNo}`, note.trim(), erpLink("hubCorrection"), "warn");
-  return okVoid(`TO-${got.intake.toNo} sent back for correction`);
+  await tellTaker(got.intake, userId, `TO-${got.intake.toNo} sent back by Accounts`, `Correct it and send it again. ${note.trim()}`, "warn");
+  return okVoid(`TO-${got.intake.toNo} sent back to whoever took it`);
 }
 
 /** Holds a TO at the hub (order verification). Releasing it asks both checks again. */
@@ -546,7 +553,7 @@ export async function holdIntake(userId: string, id: string, reason: string, not
     .update(erpOrderIntakes)
     .set({ status: "hold", holdReason: reason.trim(), holdNote: note?.trim() || null, heldById: userId, heldAt: new Date(), updatedAt: new Date(), updatedById: userId })
     .where(eq(erpOrderIntakes.id, id));
-  await tell([got.intake.takenById], `TO-${got.intake.toNo} is on hold`, `${reason}${note ? ` — ${note}` : ""}`, erpLink("toHold"), "warn");
+  await tellTaker(got.intake, userId, `TO-${got.intake.toNo} is on hold with Accounts`, `${reason}${note ? ` - ${note}` : ""}`, "warn");
   return okVoid(`TO-${got.intake.toNo} is on hold`);
 }
 
@@ -568,7 +575,7 @@ export async function releaseIntake(userId: string, id: string, note: string | n
     })
     .where(and(eq(erpOrderIntakes.id, id), eq(erpOrderIntakes.status, "hold")));
   await tellNewIntake(got.intake.toNo);
-  return okVoid(`TO-${got.intake.toNo} released · back to the Order Hub for both checks`);
+  return okVoid(`TO-${got.intake.toNo} released · back in Accounts > Order approvals`);
 }
 
 /** Cancels a TO. One taken on a call or the Salesman App takes its `orders` row with it. */
@@ -588,6 +595,148 @@ export async function cancelIntake(userId: string, id: string, reason: string): 
   }
   if (got.intake.takenById && got.intake.takenById !== userId) await tell([got.intake.takenById], `TO-${got.intake.toNo} cancelled`, reason.trim(), erpLink("orderHub"), "warn");
   return okVoid(`TO-${got.intake.toNo} cancelled`);
+}
+
+/* ======================================================= Accounts decide */
+
+/** Where the person who took a TO goes to act on it: TeleCRM, the handset, or the ERP. */
+function takerLinks(intake: Pick<Intake, "origin">): { href: string; mbosHref: string | null } {
+  if (intake.origin === "mbos") return { href: "/crm/my-orders", mbosHref: "/orders" };
+  if (intake.origin === "crm") return { href: "/crm/my-orders", mbosHref: null };
+  return { href: erpLink("orderHub"), mbosHref: null };
+}
+
+async function tellTaker(intake: Intake, byUserId: string, title: string, body: string, kind: "info" | "warn" = "info") {
+  if (!intake.takenById || intake.takenById === byUserId) return;
+  const { href, mbosHref } = takerLinks(intake);
+  await notifyUsers([{ userId: intake.takenById, title, body, href, mbosHref, kind }]).catch(() => undefined);
+}
+
+/** A line as Accounts may leave it: product, cans, rate, discount. Parties and godown are not theirs to change. */
+export type ApprovalLine = { skuId: string; qtyCans: number; ratePaise: number | null; discountBp: number | null };
+
+/** Why a set of lines cannot be approved, or null. */
+export function approvalLinesRefusal(lines: ApprovalLine[]): { index: number; field: "skuId" | "qtyCans" | "ratePaise" | "discountBp"; message: string } | { index: -1; field: "lines"; message: string } | null {
+  if (!lines.length) return { index: -1, field: "lines", message: "An order needs at least one line." };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.skuId) return { index: i, field: "skuId", message: "Pick the product" };
+    if (!Number.isInteger(l.qtyCans) || l.qtyCans <= 0) return { index: i, field: "qtyCans", message: "Cans must be a whole number above 0" };
+    if (l.ratePaise == null) return { index: i, field: "ratePaise", message: "No rate - add it to approve" };
+    if (!Number.isFinite(l.ratePaise) || l.ratePaise < 0) return { index: i, field: "ratePaise", message: "The rate cannot be below 0" };
+    if (l.discountBp != null && (l.discountBp < 0 || l.discountBp > 10000)) return { index: i, field: "discountBp", message: "Discount must be between 0 and 100" };
+  }
+  return null;
+}
+
+/**
+ * ACCOUNTS APPROVE A TO, and that makes the order number (Option A). The lines
+ * may be changed while reviewing — product, cans, rate, discount, a line added
+ * or taken off — for THIS order only; the parties and the godown are not
+ * Accounts' to change (they send it back instead). Every line must carry a
+ * rate. The order is born approved: the Production Head's MRP check is next.
+ */
+export async function approveIntake(userId: string, id: string, edited: ApprovalLine[] | null): Promise<Result<{ orderNo: number; toNo: number }>> {
+  const got = await intakeById(id);
+  if (!got) return err("That TO no longer exists.", "not_found");
+  const { intake } = got;
+  if (intake.status !== "open") return err(intake.status === "verified" ? `TO-${intake.toNo} is already approved as order ${intake.orderNo}.` : `TO-${intake.toNo} is not waiting for Accounts.`, "conflict");
+  if (!intake.godownId) return err(`TO-${intake.toNo} has no godown. Send it back so the godown is picked.`, "rule_violation");
+  const lines: IntakeLine[] = edited
+    ? edited.map((l, i) => {
+        /* The line it was, to keep who set a rate that did not move. */
+        const before = (got.lines[i]?.skuId === l.skuId ? got.lines[i] : got.lines.find((x) => x.skuId === l.skuId)) ?? null;
+        const rateMoved = !before || before.ratePaise !== l.ratePaise;
+        const discMoved = !before || (before.discountBp ?? null) !== (l.discountBp ?? null);
+        return {
+          id: erpId("toln"),
+          intakeId: id,
+          position: i,
+          skuId: l.skuId,
+          qtyCans: l.qtyCans,
+          ratePaise: l.ratePaise,
+          discountBp: l.discountBp,
+          listRatePaise: before?.listRatePaise ?? null,
+          rateSetById: rateMoved ? userId : (before?.rateSetById ?? null),
+          rateSetAt: rateMoved ? new Date() : (before?.rateSetAt ?? null),
+          discountAuthorisedById: discMoved && l.discountBp ? userId : (before?.discountAuthorisedById ?? null),
+          remark: before?.remark ?? null,
+        };
+      })
+    : got.lines;
+  const refusal = approvalLinesRefusal(lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qtyCans, ratePaise: l.ratePaise == null ? null : Number(l.ratePaise), discountBp: l.discountBp })));
+  if (refusal) return refusal.index < 0 ? err(refusal.message, "validation") : fieldErr(`l${refusal.index}.${refusal.field}`, refusal.message);
+  const after: Intake = { ...intake, backOfficeById: userId, backOfficeAt: new Date() };
+  let orderNo = 0;
+  const conflict = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(erpOrderIntakes)
+      .set({ backOfficeById: userId, backOfficeAt: new Date(), backOfficeNote: "Approved by Accounts", updatedAt: new Date(), updatedById: userId })
+      .where(and(eq(erpOrderIntakes.id, id), eq(erpOrderIntakes.status, "open")))
+      .returning({ id: erpOrderIntakes.id });
+    if (!row) return true;
+    if (edited) {
+      await tx.delete(erpOrderIntakeLines).where(eq(erpOrderIntakeLines.intakeId, id));
+      for (const l of lines) await tx.insert(erpOrderIntakeLines).values(l);
+    }
+    orderNo = await makeOrder(tx, after, lines, userId, true);
+    return false;
+  });
+  if (conflict) return err(`TO-${intake.toNo} changed while you were looking at it. Open it again.`, "conflict");
+  /* The book row (a TeleCRM or handset order is adopted under the order number) is rewritten from the approved lines. */
+  const { syncBookOrders } = await import("./book");
+  await syncBookOrders([orderNo]);
+  await (await import("./order-tracking")).syncOrderTracking([orderNo], { userId }).catch(() => undefined);
+  if (intake.inboxId) {
+    await db.execute(sql`update erp_order_inbox set status = 'Converted', order_no = ${orderNo}, decided_at = now() where id = ${intake.inboxId} and status = 'New'`).catch(() => undefined);
+  }
+  if (intake.originOrderId) {
+    const { recomputeBuyingCycle } = await import("@/lib/recompute");
+    await recomputeBuyingCycle(intake.billingCustomerId).catch(() => undefined);
+  }
+  const [party] = await db.execute(sql`select name from customers where id = ${intake.billingCustomerId}`) as unknown as { name: string }[];
+  await tellTaker(intake, userId, `Order ${orderNo} approved · was TO-${intake.toNo}`, `${party?.name ?? "The customer"}: Accounts approved it. It is with the Production Head for the MRP check.`);
+  await tell(await holdersOf("productionCheck"), `New order for the MRP check · Order ${orderNo}`, `${party?.name ?? "A customer"} · approved by Accounts.`, erpLink("mrpCheck"));
+  return ok({ orderNo, toNo: intake.toNo }, `Order ${orderNo} approved · it is with the Production Head for the MRP check`);
+}
+
+/**
+ * ACCOUNTS DECLINE A TO: no order number is made. The reason goes to whoever
+ * took it (they ring the customer) and onto the customer's timeline; a TO taken
+ * on a call or the handset declines its `orders` row with it, so the customer
+ * returns to the Call Log on their own cycle.
+ */
+export async function declineIntake(userId: string, id: string, reason: string): Promise<Result<unknown>> {
+  if (!reason.trim()) return fieldErr("reason", "Say why it is declined");
+  const got = await intakeById(id);
+  if (!got) return err("That TO no longer exists.", "not_found");
+  const { intake } = got;
+  if (!["open", "correction", "hold"].includes(intake.status)) return err(`TO-${intake.toNo} is not waiting for Accounts.`, "conflict");
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(erpOrderIntakes)
+      .set({ status: "declined", declineReason: reason.trim(), declinedById: userId, declinedAt: now, updatedAt: now, updatedById: userId })
+      .where(eq(erpOrderIntakes.id, id));
+    if (intake.originOrderId)
+      await tx.update(orders).set({ status: "declined", approvedById: userId, approvedAt: now, declineReason: reason.trim(), updatedAt: now }).where(eq(orders.id, intake.originOrderId));
+    const { writeTimelineEvent, CRM_EVENT } = await import("@/lib/timeline");
+    await writeTimelineEvent(tx, {
+      customerId: intake.billingCustomerId,
+      eventType: CRM_EVENT.order,
+      sourceApp: "crm",
+      sourceRecordId: `${intake.id}:declined`,
+      occurredAt: now,
+      actorUserId: userId,
+      summary: `TO-${intake.toNo} declined by Accounts: ${reason.trim()}`,
+    });
+  });
+  if (intake.originOrderId) {
+    const { recomputeBuyingCycle } = await import("@/lib/recompute");
+    await recomputeBuyingCycle(intake.billingCustomerId).catch(() => undefined);
+  }
+  await tellTaker(intake, userId, `TO-${intake.toNo} declined by Accounts`, `You will need to ring the customer back. Reason given: ${reason.trim()}`, "warn");
+  return okVoid(`TO-${intake.toNo} declined`);
 }
 
 /** The names of the people on a set of TOs, for the screens. */

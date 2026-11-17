@@ -243,7 +243,7 @@ async function tellTheAuthor(
 /** A TO still waiting for its two checks has no order number: Accounts decide it only after. */
 async function stillATo(orderId: string): Promise<string | null> {
   const rows = (await db.execute(sql`select to_no as "toNo" from erp_order_intakes where origin_order_id = ${orderId} and status <> 'verified'`)) as unknown as { toNo: number }[];
-  return rows[0] ? `It is still TO-${rows[0].toNo}: the back office and the Production Head check it before Accounts do.` : null;
+  return rows[0] ? `It is still TO-${rows[0].toNo}: decide it in the TO list at the top of Order approvals.` : null;
 }
 
 export async function approveOrder(orderId: string): Promise<Result> {
@@ -398,7 +398,10 @@ export async function declineOrder(
 /** For the launcher tile and the header badge. */
 export async function pendingOrderCount(): Promise<number> {
   const rows = await db.execute<{ n: number }>(
-    sql`select count(*)::int as n from orders o where o.status = 'pending_approval'`,
+    /* What the screen draws: the TOs waiting for Accounts and any other order
+       waiting for them — `awaitingAccountsSql` leaves out the book rows that
+       are still TOs, so no order is counted twice. */
+    sql`select ((select count(*) from orders o where ${awaitingAccountsSql("o")}) + (select count(*) from erp_order_intakes where status = 'open'))::int as n`,
   );
   return Number(rows[0]?.n ?? 0);
 }
