@@ -81,9 +81,8 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         <table className="pp-table">
           <colgroup>
             <col style={{ width: "6%" }} />
-            <col style={{ width: "42%" }} />
+            <col style={{ width: "50%" }} />
             <col style={{ width: "10%" }} />
-            <col style={{ width: "9%" }} />
             <col style={{ width: "11%" }} />
             <col />
           </colgroup>
@@ -91,7 +90,6 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
             <tr>
               <Th className="pp-n">#</Th>
               <Th>Product</Th>
-              <Th>Size</Th>
               <Th className="pp-r">Qty</Th>
               <Th>Unit</Th>
               <Th>Remarks</Th>
@@ -103,7 +101,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
               if (!mine.length) return null;
               return [
                 <tr key={`h-${c.key}`} className="pp-cat">
-                  <Td colSpan={6}>
+                  <Td colSpan={5}>
                     {c.label}
                     <span>{categoryTotals(mine)}</span>
                   </Td>
@@ -118,7 +116,6 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                         {r.mark ? "★ " : ""}
                         <U>{r.productName}</U>
                       </Td>
-                      <Td>{r.size ?? "—"}</Td>
                       <Td className="pp-qty">
                         <U>{nf(r.quantity)}</U>
                       </Td>
