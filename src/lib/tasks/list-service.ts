@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { TASK_APPS, TASK_APP_LABEL, plusDays, type TaskApp } from "./rules";
 import { TASK_TABS, groupKeyOf, likePattern, pageWindow, type TaskGroup, type TaskListQuery, type TaskTab } from "./list-query";
-import { TASK_COLUMNS, TASK_FROM, idList, teamInSql, teamOf, toRow, type Raw, type TaskRow, type Viewer } from "./service";
+import { TASK_COLUMNS, TASK_FROM, idList, inGraceSql, teamInSql, teamOf, toRow, type Raw, type TaskRow, type Viewer } from "./service";
 
 /* ---------------------------------------------------------------------------
  * EVERY TASKS SCREEN READS ONE PAGE, AND EVERY FIGURE ON IT COMES FROM SQL.
@@ -97,6 +97,8 @@ export function tabSql(tab: TaskTab, today: string): SQL {
       return sql`${OPEN} and t.due_date = ${today}::date`;
     case "late":
       return sql`${OPEN} and t.due_date < ${today}::date`;
+    case "grace":
+      return inGraceSql;
     case "upcoming":
       return sql`${OPEN} and t.due_date > ${today}::date`;
     case "doing":
@@ -165,7 +167,8 @@ function orderSql(group: TaskGroup, tab: TaskTab, today: string): SQL {
             : sql``;
   // Finished work reads newest first; open work reads in the order it is due.
   if (group === "day" || tab === "done" || tab === "missed") return sql`order by ${groupRank} t.closed_at desc nulls last, t.id desc`;
-  return sql`order by ${groupRank} (t.status in ('done','missed')), t.due_date, t.due_time nulls last, ${PRIORITY_POS}, t.created_at, t.id`;
+  /* A task in its grace time first: it is the one about to be missed. */
+  return sql`order by ${groupRank} (t.status in ('done','missed')), (case when ${inGraceSql} then 0 else 1 end), t.due_date, t.due_time nulls last, ${PRIORITY_POS}, t.created_at, t.id`;
 }
 
 export type TaskListPage = {

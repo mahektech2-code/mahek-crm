@@ -3,14 +3,13 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { taskEvents, taskRoutines, taskTransfers, tasks, users } from "@/db/schema";
-import { APP_TIMEZONE } from "@/lib/business-date";
 import { alias } from "drizzle-orm/pg-core";
 import { occurrenceOn, windowWords, type RoutineFrequency } from "./routines";
 import { audienceWords, readAudience, type Audience } from "./audience";
 import { resolveFor } from "./audience-service";
 import { MISSED_FROM, missedRemark, routineMissed, type TaskApp, type TaskPriority } from "./rules";
 import { appClock } from "./clock";
-import { teamOf } from "./service";
+import { routineDeadlineSql, routineGraceMinutes, teamOf } from "./service";
 
 /* ---------------------------------------------------------------------------
  * ROUTINES: who sees which, and the tasks they write.
@@ -148,6 +147,7 @@ const person = alias(users, "person");
 export async function writeRoutineTasks(day: string, opts: { assigneeId?: string; routineId?: string; skipPast?: boolean } = {}): Promise<number> {
   /* A routine made or changed after today's due time does not write a task that is missed the moment it exists. */
   const clock = opts.skipPast ? appClock() : null;
+  const grace = clock ? await routineGraceMinutes() : 0;
   const routines = (
     await db
       .select({ r: taskRoutines, creatorActive: creator.active, creatorRole: creator.role, assigneeActive: person.active })
@@ -161,7 +161,7 @@ export async function writeRoutineTasks(day: string, opts: { assigneeId?: string
   for (const { r, creatorActive, creatorRole } of routines) {
     const at = occurrenceOn({ ...r, frequency: r.frequency as RoutineFrequency }, day);
     if (!at) continue;
-    if (clock && routineMissed({ routineId: r.id, status: "todo", dueDate: at.dueDate, dueTime: r.dueTime }, clock.day, clock.hm)) continue;
+    if (clock && routineMissed({ routineId: r.id, status: "todo", dueDate: at.dueDate, dueTime: r.dueTime }, clock.day, clock.hm, grace)) continue;
     let people: string[];
     if (r.assigneeId) people = [r.assigneeId];
     else {
@@ -217,14 +217,14 @@ export async function writeRoutineTasks(day: string, opts: { assigneeId?: string
  * ------------------------------------------------------------------------- */
 
 /** The instant a routine task's time runs out, as SQL: its due day at its due time, else at midnight after it. */
-export const routineDeadlineSql = sql`((t.due_date + coalesce(t.due_time, '24:00')::time) at time zone ${APP_TIMEZONE})`;
-
 export async function markMissedRoutineTasks(opts: { assigneeId?: string; ids?: string[] } = {}): Promise<number> {
+  /* Missed once the grace time after the due moment has run out; closed AT the due moment, which is what it missed. */
+  const grace = await routineGraceMinutes();
   const due = (await db.execute(sql`
     select t.id, t.due_date::text as "dueDate", t.due_time as "dueTime", least(${routineDeadlineSql}, now()) as deadline
       from tasks t
      where t.routine_id is not null and t.status <> 'done' and t.status <> 'missed'
-       and ${routineDeadlineSql} <= now()
+       and ${routineDeadlineSql} + make_interval(mins => ${grace}) <= now()
        and t.due_date >= ${MISSED_FROM}::date
        ${opts.assigneeId ? sql`and t.assignee_id = ${opts.assigneeId}` : sql``}
        ${opts.ids ? (opts.ids.length ? sql`and t.id in ${opts.ids}` : sql`and false`) : sql``}

@@ -136,6 +136,7 @@ const RULES: Rule[] = [
   { test: /^auth\.(password|console)\./, page: "platform", tab: "sign-in", group: "Passwords and the console" },
   { test: /^auth\./, page: "platform", tab: "sign-in", group: "The code itself" },
   { test: /^workingDay\./, page: "platform", tab: "workday" },
+  { test: /^tasks\.routineGraceMinutes$/, page: "platform", tab: "workday", group: "Tasks" },
   { test: /^studio\./, page: "platform", tab: "attachments", group: "Studio" },
   { test: /^attachments\.maxPerFeedback$/, page: "platform", tab: "attachments", group: "Limits" },
   { test: /^attachments\./, page: "platform", tab: "attachments" },

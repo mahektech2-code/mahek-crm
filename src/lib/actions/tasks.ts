@@ -30,7 +30,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "@/lib/tasks/rules";
-import { canReceive, getTaskRow, peopleForApp, taskDetail, teamOf, teamPeople, viewerManagesBoth } from "@/lib/tasks/service";
+import { canReceive, getTaskRow, peopleForApp, routineGraceMinutes, taskDetail, teamOf, teamPeople, viewerManagesBoth } from "@/lib/tasks/service";
 import { audienceProblems, audienceWords, type Audience } from "@/lib/tasks/audience";
 import { appClock } from "@/lib/tasks/clock";
 import { markMissedRoutineTasks } from "@/lib/tasks/routine-service";
@@ -316,7 +316,7 @@ export async function closeTask(id: string, input: CloseTaskInput): Promise<Resu
   if (d.task.status === "missed") return err(`This was missed — ${d.task.closeRemark ?? "not done by its due time."} The next one comes with its own day.`, "conflict");
   {
     const clock = appClock();
-    if (routineMissed(d.task, clock.day, clock.hm)) {
+    if (routineMissed(d.task, clock.day, clock.hm, await routineGraceMinutes())) {
       await markMissedRoutineTasks({ ids: [id] });
       refresh();
       return err(`Too late — ${missedRemark(d.task.dueDate, d.task.dueTime)} It is marked missed; the next one comes with its own day.`, "conflict");
