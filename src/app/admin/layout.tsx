@@ -1,3 +1,6 @@
+import { asc } from "drizzle-orm";
+import { db } from "@/db";
+import { users } from "@/db/schema";
 import { webApps } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
@@ -27,11 +30,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // otherwise the app whose settings they configure — the Admin app's would
   // read "No role" on somebody who holds none of it.
   const via = ctx.isPlatformAdmin ? "admin" : (ctx.settingsPages[0].owners.find((a) => ctx.apps.includes(a)) ?? "admin");
-  const [hat, notifications, attention, feedback] = await Promise.all([
+  const [hat, notifications, attention, feedback, people] = await Promise.all([
     hatForHeader(ctx.user, via),
     listNotifications(ctx.user.id),
     attentionItems(),
     feedbackCounts(),
+    /* People are searchable from the header — the platform administrator's
+       directory; a settings manager searches screens and settings only. */
+    ctx.isPlatformAdmin
+      ? db
+          .select({ id: users.id, name: users.name, email: users.email, phone: users.phone })
+          .from(users)
+          .orderBy(asc(users.name))
+      : Promise.resolve([] as Array<{ id: string; name: string; email: string | null; phone: string | null }>),
   ]);
 
   const may = (item: AdminNavItem) =>
@@ -44,26 +55,36 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     match: item.match,
   });
 
-  const settingsItems: NavRowItem[] = [
-    { href: ADMIN.settings, label: "All settings", icon: "grid", exact: true },
-    ...ctx.settingsPages.map((p) => ({ href: ADMIN.settingsFor(p.id), label: p.label, icon: p.icon })),
-  ];
-
   const pinned = ADMIN_PINNED.filter(may).map(row);
   const groups: NavRowGroup[] = ADMIN_GROUPS.map((g) => ({
     label: g.label,
     icon: g.icon,
-    items: g.label === "Settings" ? settingsItems : g.items.filter(may).map(row),
+    items: g.items.filter(may).map(row),
   })).filter((g) => g.items.length > 0);
 
-  // Counts the sidebar draws. Every one is a query, and a zero is not drawn.
-  const attentionAt = (href: string) => attention.find((a) => a.href === href)?.n ?? 0;
-  const counts: Record<string, number> = {
-    [ADMIN.home]: attention.filter((a) => a.tone === "danger").length,
-    [ADMIN.feedback()]: feedback.reply,
-    [ADMIN.catalogue()]: attentionAt(ADMIN.catalogue("duplicates")),
-    [ADMIN.sheets()]: attentionAt(ADMIN.sheets("issues")),
+  /* Counts the sidebar draws, read off the same attention list Home draws:
+     each item is counted on the row whose address it opens. Zero is not drawn. */
+  const rows = [...pinned, ...groups.flatMap((g) => g.items)];
+  const rowFor = (href: string) => {
+    const path = href.split(/[?#]/)[0];
+    let best: string | null = null;
+    for (const r of rows) {
+      for (const pre of [r.href, ...(r.match ?? [])]) {
+        if ((path === pre || path.startsWith(pre + "/")) && pre !== ADMIN.home && (!best || pre.length > best.length)) best = r.href;
+      }
+    }
+    return best;
   };
+  const counts: Record<string, { n: number; urgent?: boolean }> = {};
+  for (const a of attention) {
+    const at = rowFor(a.href);
+    if (!at) continue;
+    const c = (counts[at] ??= { n: 0 });
+    c.n += a.n;
+    if (a.tone === "danger") c.urgent = true;
+  }
+  counts[ADMIN.home] = { n: attention.length, urgent: attention.some((a) => a.tone === "danger") };
+  counts[ADMIN.feedback()] = { n: feedback.reply, urgent: feedback.reply > 5 };
 
   /* The console's "Live now": the platform's state in two lines, read off the
      same attention list Home draws, so the two cannot disagree. */
@@ -77,6 +98,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         : { tone: "ok", title: "All systems normal", line: "Nothing waiting" };
 
   const search: SearchEntry[] = [
+    ...people.map((p) => ({ label: p.name, hint: p.email ?? p.phone ?? "Person", href: ADMIN.person(p.id) })),
     ...pinned.map((i) => ({ label: i.label, hint: "Screen", href: i.href })),
     ...groups.flatMap((g) => g.items.map((i) => ({ label: i.label, hint: g.label, href: i.href }))),
     ...ctx.settingsPages.flatMap((p) =>

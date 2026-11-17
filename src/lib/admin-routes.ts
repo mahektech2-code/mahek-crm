@@ -165,14 +165,14 @@ export type AdminNavGroup = { label: string; icon: string; items: AdminNavItem[]
 
 /** Above the groups: where you start, and the one inbox. */
 export const ADMIN_PINNED: AdminNavItem[] = [
-  { href: ADMIN.home, label: "Home", icon: "dashboard", exact: true, platform: true, badge: "attention" },
-  { href: ADMIN.feedback(), label: "Inbox", icon: "mail", badge: "feedback" },
+  { href: ADMIN.home, label: "Home", icon: "home", exact: true, platform: true, badge: "attention" },
+  { href: ADMIN.feedback(), label: "Inbox", icon: "inbox", badge: "feedback" },
 ];
 
 /**
- * The groups, by the job somebody came here to do. The settings group is
- * filled in by the layout from `SETTINGS_PAGES`, because which apps somebody
- * may configure is theirs.
+ * The groups, by the job somebody came here to do — the canvas's sidebar.
+ * `icon` names a path in the shell's own set (`_shell/nav-icons.ts`), the
+ * mockup's glyphs. Settings is ONE row: its pages are tabs on the screen.
  */
 export const ADMIN_GROUPS: AdminNavGroup[] = [
   {
@@ -180,28 +180,36 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     icon: "people",
     items: [
       { href: ADMIN.access, label: "People & access", icon: "people", platform: true },
-      { href: ADMIN.roles(), label: "Roles & permissions", icon: "grid", platform: true },
-      { href: ADMIN.powers(), label: "Powers & screens", icon: "lock", platform: true },
+      { href: ADMIN.roles(), label: "Roles & permissions", icon: "matrix", platform: true },
+      { href: ADMIN.powers(), label: "Powers & screens", icon: "key", platform: true },
       { href: ADMIN.designations, label: "ERP designations", icon: "book", platform: true },
       {
         href: ADMIN.signIns(),
         label: "Security & sign-ins",
-        icon: "lock",
+        icon: "shield",
         platform: true,
         match: ["/admin/otp", "/admin/security"],
       },
     ],
   },
-  { label: "Settings", icon: "settings", items: [] },
+  {
+    label: "Configuration",
+    icon: "sliders",
+    items: [
+      { href: ADMIN.settings, label: "Settings", icon: "sliders", match: ["/admin/settings"] },
+      { href: ADMIN.changes, label: "Change history", icon: "history", platform: true },
+      { href: ADMIN.integrations, label: "Integrations & keys", icon: "plug", platform: true },
+      { href: ADMIN.expensePolicy(), label: "Expense policy", icon: "wallet" },
+    ],
+  },
   {
     label: "Business data",
-    icon: "book",
+    icon: "box",
     items: [
-      { href: ADMIN.catalogue(), label: "Catalogue", icon: "book", badge: "catalogue" },
-      { href: ADMIN.expensePolicy(), label: "Expense policy", icon: "wallet" },
-      { href: ADMIN.sheets(), label: "Sheets & imports", icon: "doc", badge: "sheets" },
-      { href: ADMIN.health, label: "Data health", icon: "checkCircle", platform: true },
-      { href: ADMIN.deletedLeads, label: "Recycle bin", icon: "history", platform: true },
+      { href: ADMIN.catalogue(), label: "Catalogue", icon: "box", badge: "catalogue" },
+      { href: ADMIN.sheets(), label: "Sheets & imports", icon: "sheet", badge: "sheets" },
+      { href: ADMIN.health, label: "Data health", icon: "pulse", platform: true },
+      { href: ADMIN.deletedLeads, label: "Recycle bin", icon: "trash", platform: true },
     ],
   },
   {
@@ -209,19 +217,17 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     icon: "phone",
     items: [
       { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true, match: ["/admin/factory-handsets"] },
-      { href: ADMIN.mbosControl, label: "MBOS control", icon: "settings", platform: true },
-      { href: ADMIN.releases, label: "App releases", icon: "repeat", platform: true },
+      { href: ADMIN.mbosControl, label: "MBOS control", icon: "sliders", platform: true },
+      { href: ADMIN.releases, label: "App releases", icon: "release", platform: true },
     ],
   },
   {
     label: "System",
-    icon: "grid",
+    icon: "clock",
     items: [
-      { href: ADMIN.integrations, label: "Integrations & keys", icon: "bolt", platform: true },
       { href: ADMIN.jobs, label: "Jobs & schedules", icon: "clock", platform: true },
       { href: ADMIN.notifications, label: "Notifications", icon: "bell", platform: true },
-      { href: ADMIN.storage, label: "Storage & files", icon: "image", platform: true },
-      { href: ADMIN.changes, label: "Change history", icon: "history", platform: true },
+      { href: ADMIN.storage, label: "Storage & files", icon: "db", platform: true },
       { href: ADMIN.audit(), label: "Audit log", icon: "eye", platform: true },
     ],
   },

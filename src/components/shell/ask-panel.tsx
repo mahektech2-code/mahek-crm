@@ -81,7 +81,7 @@ export type AskEvent =
   | { type: "done"; queries: number; dbQueries: number; cached: boolean; ms: number }
   | { type: "error"; message: string };
 
-export function AskPanel({ setup }: { setup: AskSetup }) {
+export function AskPanel({ setup, boxed = false }: { setup: AskSetup; /** The v4 console's white, 34px trigger. */ boxed?: boolean }) {
   /* Each opening is a fresh drawer: `n` changes its key, `initial` is the
      question it opens on (null when opened from the button). */
   const [open, setOpen] = React.useState<{ n: number; initial: string | null } | null>(null);
@@ -107,7 +107,7 @@ export function AskPanel({ setup }: { setup: AskSetup }) {
         type="button"
         onClick={() => setOpen((o) => ({ n: (o?.n ?? 0) + 1, initial: null }))}
         title={`${setup.title} — or type a question into the search box`}
-        className="inline-flex h-8 flex-none cursor-pointer items-center gap-[7px] rounded-[4px] border border-brand-softer bg-brand-soft px-3 text-[13px] font-medium text-[#5223E0] transition-colors duration-100 hover:bg-brand-softer"
+        className={boxed ? "inline-flex h-[34px] flex-none cursor-pointer items-center gap-1.5 rounded-control border border-brand-softer bg-surface px-3 text-[13px] font-semibold text-[#343e96] transition-colors duration-100 hover:bg-canvas" : "inline-flex h-8 flex-none cursor-pointer items-center gap-[7px] rounded-[4px] border border-brand-softer bg-brand-soft px-3 text-[13px] font-medium text-[#5223E0] transition-colors duration-100 hover:bg-brand-softer"}
       >
         <SalesIcon name="spark" size={14} />
         {setup.button ?? "Ask AI"}

@@ -35,6 +35,7 @@ export function AccountMenu({
   hat,
   collapsed = false,
   nameFromXl = false,
+  pill = false,
 }: {
   user: {
     name: string;
@@ -68,6 +69,8 @@ export function AccountMenu({
   collapsed?: boolean;
   /** Header only: below 1280px draw the avatar alone, for a header that has to fit a tablet. */
   nameFromXl?: boolean;
+  /** Header only: the v4 console's pill — round navy avatar, the name, the level as a chip. */
+  pill?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   /*
@@ -120,9 +123,29 @@ export function AccountMenu({
     </span>
   );
 
+  const trigger = pill ? (
+    <button
+      type="button"
+      onClick={() => setOpen((o) => !o)}
+      title={hat.sentence}
+      aria-label="My account"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      className="flex h-[34px] cursor-pointer items-center gap-2 rounded-full border border-brand-softer bg-surface pr-2 pl-1 text-[13px] font-medium text-ink hover:bg-canvas"
+    >
+      <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-full bg-ink text-[11px] font-bold text-brand-lime">
+        {user.initials}
+      </span>
+      <span className={cx("max-w-[140px] truncate", nameFromXl && "hidden xl:inline")}>{user.name.split(" ")[0]}</span>
+      <span className={cx("inline-flex h-[18px] items-center rounded-full bg-brand-soft px-1.5 text-[11px] font-semibold text-brand-deep", nameFromXl && "hidden xl:inline-flex")}>
+        {hat.label}
+      </span>
+    </button>
+  ) : null;
+
   return (
     <div ref={boxRef} className={cx("relative flex-none", variant === "sidebar" && "w-full")}>
-      <button
+      {trigger ?? <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         title="My account"
@@ -160,7 +183,7 @@ export function AccountMenu({
             />
           </>
         )}
-      </button>
+      </button>}
 
       {open ? (
         <div

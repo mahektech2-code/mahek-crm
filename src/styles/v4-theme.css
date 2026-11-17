@@ -217,12 +217,12 @@
 
 /* The Admin Console wears it too since its redraw (Nov 2026). */
 
-:root:has([data-v4-app="admin"]) .uppercase:not(th):not(th *) {
+:root:has([data-v4-app="admin"]) .uppercase:not(th):not(th *):not([data-nav-group]) {
   text-transform: none;
   letter-spacing: 0;
 }
 
-:root:has([data-v4-app="admin"]) .uppercase.text-\[11px\]:not(th):not(th *),
+:root:has([data-v4-app="admin"]) .uppercase.text-\[11px\]:not(th):not(th *):not([data-nav-group]),
 :root:has([data-v4-app="admin"]) .uppercase.text-\[10px\]:not(th):not(th *),
 :root:has([data-v4-app="admin"]) .uppercase.text-\[10\.5px\]:not(th):not(th *) {
   font-size: 12px;
@@ -534,6 +534,29 @@
 :root:has([data-v4]) [data-v4-header] button[aria-label="Switch app"][aria-expanded="true"] {
   background: #e4dbff;
   border-color: transparent;
+}
+
+/* THE ADMIN CONSOLE'S HEADER IS THE CANVAS'S (Nov 2026): every control on it is
+   a white, lavender-edged 34px box — the switcher with its name, Ask AI, the
+   bell — and the account is a pill with the name and the level beside a round
+   navy avatar. The quieter header above stays the other apps'. */
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] :is(button, a).bg-surface,
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] button[aria-label="Switch app"],
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] button[aria-label^="Notifications"] {
+  background: #ffffff;
+  border-color: #dcd1fc;
+  color: #0f1b33;
+}
+
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] :is(button, a).bg-surface:hover,
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] button[aria-label="Switch app"]:hover,
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] button[aria-label^="Notifications"]:hover {
+  background: #f7f5ff;
+  color: #0f1b33;
+}
+
+:root:has([data-v4-app="admin"]) [data-v4-app="admin"] [data-v4-header] button.text-\[\#343e96\] {
+  color: #343e96;
 }
 
 /* ---------------------------------------------------------------- printing

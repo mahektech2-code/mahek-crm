@@ -31,6 +31,8 @@ export function HeaderLead({
   label,
   wordmark = true,
   toggleIcon,
+  switcherLabel,
+  toggle = true,
 }: {
   /** Every web app this person opens — what the switcher lists. */
   apps: AppDefinition[];
@@ -46,10 +48,15 @@ export function HeaderLead({
   wordmark?: boolean;
   /** The sidebar toggle's glyph, where an app draws its own (the ERP's panel icon). */
   toggleIcon?: React.ReactNode;
+  /** The switcher as a labelled button — the Admin Console's "Admin Console ⌄". */
+  switcherLabel?: string;
+  /** False where the sidebar does not fold — the Admin Console's mockup has no rail. */
+  toggle?: boolean;
 }) {
   return (
     <div className="flex flex-none items-center gap-2">
-      <AppSwitcher apps={apps} current={current} />
+      <AppSwitcher apps={apps} current={current} label={switcherLabel} />
+      {toggle ? (
       <button
         type="button"
         onClick={onToggleSidebar}
@@ -60,6 +67,7 @@ export function HeaderLead({
       >
         {toggleIcon ?? <Icon name="menu" size={18} />}
       </button>
+      ) : null}
       {wordmark ? (
       <Link href={href} className="flex min-w-0 items-center gap-2 no-underline hover:no-underline">
         <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">

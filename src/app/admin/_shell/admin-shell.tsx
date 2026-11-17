@@ -2,18 +2,19 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
-import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/shell/collapsible-nav";
-import { FeedbackButton } from "@/components/shell/feedback-button";
+import type { NavRowGroup, NavRowItem } from "@/components/shell/collapsible-nav";
+import { AskPanel } from "@/components/shell/ask-panel";
+import { ADMIN_ASK } from "@/components/shell/ask-setups";
 import { HeaderLead } from "@/components/shell/header-lead";
-import { Icon } from "@/components/shell/icons";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Notification } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
+import { NAV_ICON } from "./nav-icons";
 
 /* ---------------------------------------------------------------------------
  * The Admin Console's frame: the same header and the same collapsible sidebar
@@ -42,9 +43,9 @@ export function AdminShell({
 }: {
   pinned: NavRowItem[];
   groups: NavRowGroup[];
-  /** href → what is waiting there. Only non-zero entries are drawn. */
-  counts: Record<string, number>;
-  /** Every screen and every setting this person can open. */
+  /** href → what is waiting there, and whether it is urgent. Only non-zero entries are drawn. */
+  counts: Record<string, { n: number; urgent?: boolean }>;
+  /** Every screen, setting and person this person can open. */
   search: SearchEntry[];
   user: { name: string; email: string | null; phone: string | null; initials: string; role: string };
   hat: { label: string; sentence: string };
@@ -53,7 +54,9 @@ export function AdminShell({
   status: ConsoleStatus;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = React.useState(false);
+  const pathname = usePathname() ?? "/admin";
+  const here = activeItem(pathname, pinned, groups);
+  const crumb = here ? (here.group ? `${here.group} › ${here.item.label}` : here.item.label) : "Admin Console";
 
   return (
     <ToastProvider>
@@ -65,67 +68,42 @@ export function AdminShell({
           header={
             <header
               data-v4-header
-              className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3"
+              className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-4"
             >
-              <div className="flex flex-none items-center">
-                <HeaderLead
-                  apps={apps}
-                  current="admin"
-                  collapsed={collapsed}
-                  onToggleSidebar={() => setCollapsed((c) => !c)}
-                  href="/admin"
-                  label="MAHEK ADMIN"
-                  wordmark={false}
-                  toggleIcon={
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M4 5h16v14H4zM9 5v14" />
-                    </svg>
-                  }
-                />
-              </div>
-              <span className="min-w-0 flex-initial truncate text-[13px] font-medium text-[#5a4e8c]">{hat.label}</span>
+              <HeaderLead
+                apps={apps}
+                current="admin"
+                collapsed={false}
+                onToggleSidebar={() => {}}
+                href="/admin"
+                label="MAHEK ADMIN"
+                wordmark={false}
+                switcherLabel="Admin Console"
+                toggle={false}
+              />
+              <span className="min-w-0 flex-initial truncate text-[13px] font-medium text-[#5a4e8c]">{crumb}</span>
               <span className="flex-1" />
               <ConsoleSearch entries={search} />
-              <div className="flex flex-none items-center gap-2">
-                <FeedbackButton />
-                <NotificationBell notifications={notifications} />
-                <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
-              </div>
+              <AskPanel setup={ADMIN_ASK} boxed />
+              <NotificationBell notifications={notifications} boxed />
+              <AccountMenu user={user} hat={hat} variant="header" pill nameFromXl />
             </header>
           }
           sidebar={
-            <aside
-              className={cx(
-                "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
-                collapsed ? "w-16" : "w-[232px]",
-              )}
-            >
+            <aside className="flex w-[232px] flex-none flex-col border-r border-line bg-surface">
               <Link
                 href="/admin"
                 title="MahekOne Admin"
-                className={cx(
-                  "flex h-14 flex-none items-center gap-2.5 no-underline hover:no-underline",
-                  collapsed ? "justify-center" : "px-4",
-                )}
+                className="flex h-14 flex-none items-center gap-2.5 border-b border-divider px-4 no-underline hover:no-underline"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
-                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
-                {collapsed ? null : (
-                  <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
-                    MahekOne <span className="font-medium text-faint">Admin</span>
-                  </span>
-                )}
+                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-[30px] w-[30px] flex-none rounded-full bg-surface object-contain" />
+                <span className="text-[15px] font-bold tracking-[-0.01em] whitespace-nowrap text-ink">
+                  MahekOne <span className="font-medium text-muted">Admin</span>
+                </span>
               </Link>
-              <CollapsibleNav
-                storageKey="admin.nav.open"
-                ariaLabel="Admin Console sections"
-                pinned={pinned}
-                groups={groups}
-                countFor={(item) => counts[item.href] ?? 0}
-                railed={collapsed}
-                renderIcon={(name, size) => <Icon name={name} size={size} className="flex-none" />}
-              />
-              <SystemStatus status={status} collapsed={collapsed} />
+              <ConsoleNav pinned={pinned} groups={groups} counts={counts} active={here?.item.href ?? null} />
+              <SystemStatus status={status} />
             </aside>
           }
         >
@@ -136,32 +114,140 @@ export function AdminShell({
   );
 }
 
+type Here = { item: NavRowItem; group: string | null };
+
+/** The row lit for this address: the longest href or `match` prefix that fits. */
+function activeItem(pathname: string, pinned: NavRowItem[], groups: NavRowGroup[]): Here | null {
+  let best: Here | null = null;
+  let bestLen = -1;
+  const consider = (item: NavRowItem, group: string | null) => {
+    const prefixes = [item.href, ...(item.match ?? [])];
+    for (const pre of prefixes) {
+      const hit = item.exact && pre === item.href ? pathname === pre : pathname === pre || pathname.startsWith(pre + "/") || pathname.startsWith(pre + "?");
+      if (hit && pre.length > bestLen) {
+        best = { item, group };
+        bestLen = pre.length;
+      }
+    }
+  };
+  pinned.forEach((i) => consider(i, null));
+  groups.forEach((g) => g.items.forEach((i) => consider(i, g.label)));
+  return best;
+}
+
+const FOLD_KEY = "admin.nav.folded";
+
+/** The canvas's sidebar: uppercase groups that fold, 34px rows, counts only where something waits. */
+function ConsoleNav({
+  pinned,
+  groups,
+  counts,
+  active,
+}: {
+  pinned: NavRowItem[];
+  groups: NavRowGroup[];
+  counts: Record<string, { n: number; urgent?: boolean }>;
+  active: string | null;
+}) {
+  const [folded, setFolded] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(FOLD_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from the browser after mount
+      if (raw) setFolded(JSON.parse(raw) as string[]);
+    } catch {
+      /* private window: every group open */
+    }
+  }, []);
+  const toggle = (label: string) =>
+    setFolded((f) => {
+      const next = f.includes(label) ? f.filter((x) => x !== label) : [...f, label];
+      try {
+        window.localStorage.setItem(FOLD_KEY, JSON.stringify(next));
+      } catch {
+        /* not remembered, still folds */
+      }
+      return next;
+    });
+
+  const row = (item: NavRowItem) => {
+    const on = item.href === active;
+    const c = counts[item.href];
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        aria-current={on ? "page" : undefined}
+        className={cx(
+          "flex h-[34px] items-center gap-2.5 rounded-control px-2.5 text-[13px] no-underline hover:no-underline",
+          on ? "bg-brand-soft font-semibold text-brand-deep" : "font-medium text-body hover:bg-canvas",
+        )}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={cx("flex-none", on ? "text-brand-deep" : "text-muted")} aria-hidden>
+          <path d={NAV_ICON[item.icon] ?? ""} />
+        </svg>
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        {c && c.n > 0 ? (
+          <span
+            className={cx(
+              "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[11px] font-bold",
+              c.urgent || c.n > 5 ? "bg-danger text-white" : "bg-warn-soft text-warn-ink",
+            )}
+          >
+            {c.n > 99 ? "99+" : c.n}
+          </span>
+        ) : null}
+      </Link>
+    );
+  };
+
+  return (
+    <nav aria-label="Admin Console sections" className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2.5 pt-2.5 pb-3">
+      {pinned.map(row)}
+      {groups.map((g) => {
+        const shut = folded.includes(g.label);
+        return (
+          <div key={g.label} className="flex flex-col gap-px">
+            <button
+              type="button"
+              onClick={() => toggle(g.label)}
+              aria-expanded={!shut}
+              data-nav-group
+              className="flex cursor-pointer items-center justify-between px-2.5 pt-3.5 pb-[5px] text-[11px] font-semibold tracking-[0.05em] text-muted uppercase"
+            >
+              {g.label}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cx("transition-transform duration-100", shut && "-rotate-90")} aria-hidden>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            {shut ? null : g.items.map(row)}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
 /** The console's "Live now": how the platform stands, always at the foot. */
 export type ConsoleStatus = { tone: "ok" | "warn" | "danger"; title: string; line: string };
 
-function SystemStatus({ status, collapsed }: { status: ConsoleStatus; collapsed: boolean }) {
+function SystemStatus({ status }: { status: ConsoleStatus }) {
   const dot = status.tone === "ok" ? "bg-success" : status.tone === "warn" ? "bg-warn" : "bg-danger";
-  if (collapsed) {
-    return (
-      <div className="flex flex-none justify-center border-t border-divider py-3" title={`${status.title} — ${status.line}`}>
-        <span className={cx("block h-[7px] w-[7px] rounded-full", dot)} />
-      </div>
-    );
-  }
   const box =
     status.tone === "ok"
-      ? "border-success/25 bg-success-soft text-success"
+      ? "border-[#bfe0cb] bg-success-soft"
       : status.tone === "warn"
-        ? "border-warn-line bg-warn-soft text-warn-ink"
-        : "border-danger/25 bg-danger-soft text-danger";
+        ? "border-warn-line bg-warn-soft"
+        : "border-danger/25 bg-danger-soft";
+  const head = status.tone === "ok" ? "text-success" : status.tone === "warn" ? "text-warn-ink" : "text-danger";
   return (
-    <div className={cx("m-2 flex-none rounded-card border px-3 py-2.5", box)}>
-      <div className="flex items-center gap-2 text-xs font-semibold">
+    <div className={cx("m-2.5 flex-none rounded-card border px-3 py-2.5", box)}>
+      <div className={cx("flex items-center gap-2 text-xs font-semibold", head)}>
         <span className={cx("block h-[7px] w-[7px] flex-none rounded-full", dot)} />
         System status
       </div>
       <div className="mt-1 text-[13px] font-medium text-ink">{status.title}</div>
-      <div className="text-xs text-body">{status.line}</div>
+      <div className="mt-0.5 text-xs text-body">{status.line}</div>
     </div>
   );
 }
@@ -178,6 +264,19 @@ function ConsoleSearch({ entries }: { entries: SearchEntry[] }) {
   const [q, setQ] = React.useState("");
   const [active, setActive] = React.useState(0);
   const wrapRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  /* ⌘K / Ctrl+K puts the cursor in the box from anywhere in the console. */
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -200,9 +299,14 @@ function ConsoleSearch({ entries }: { entries: SearchEntry[] }) {
   }
 
   return (
-    <div ref={wrapRef} className="relative w-[340px] min-w-0 flex-initial">
+    <div ref={wrapRef} className="relative w-[340px] max-w-[40%] min-w-0 flex-initial">
       <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted">
-        <Icon name="search" size={16} />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4" />
+        </svg>
+      </span>
+      <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 rounded-[4px] border border-line px-[5px] py-px text-[11px] font-semibold text-muted">
+        ⌘K
       </span>
       <input
         value={q}
@@ -216,9 +320,10 @@ function ConsoleSearch({ entries }: { entries: SearchEntry[] }) {
           if (e.key === "Enter" && hits[active]) go(hits[active].href);
           if (e.key === "Escape") setQ("");
         }}
-        placeholder="Find a screen, a setting or a key"
-        aria-label="Find a screen or a setting"
-        className="h-9 w-full rounded-control border border-brand-softer bg-surface pr-3 pl-8 text-sm text-ink placeholder:text-muted focus:border-brand focus:bg-surface focus:outline-none"
+        ref={inputRef}
+        placeholder="Search people, settings, jobs, screens"
+        aria-label="Search people, settings, jobs and screens"
+        className="h-[34px] w-full rounded-control border border-brand-softer bg-surface pr-12 pl-[30px] text-[13px] text-ink placeholder:text-muted focus:border-brand focus:bg-surface focus:outline-none"
       />
       {needle ? (
         <div className="absolute top-10 left-0 z-50 w-[460px] overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
