@@ -42,7 +42,7 @@ export default async function IntegrationsPage() {
 
   return (
     <AdminPage
-      title="Integrations"
+      title="Integrations & keys"
       subtitle="Every outside service MahekOne talks to, whether it is connected, and the keys it uses. Keys are set here so a deploy nobody has shell access to can still be connected."
     >
       <IntegrationsTab data={{ integrations }} />

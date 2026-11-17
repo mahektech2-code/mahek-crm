@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Badge, Button, Card, CardHeader, EmptyState, Input, MetricStrip, Select } from "@/components/ui/primitives";
-import { ADMIN, ADMIN_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";
+import { ADMIN, ADMIN_TABS, SECURITY_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";
 import { stamp } from "@/lib/format";
 import {
   OTP_ATTEMPT_LABELS,
@@ -16,7 +16,7 @@ import {
   numberForReading,
 } from "@/lib/otp-history";
 import { otpByPerson, otpHistory, type OtpHistoryFilters, type OtpHistoryRow } from "@/lib/services/otp-history-service";
-import { AdminPage } from "../../_shell/admin-page";
+import { AdminPage, routeTabs } from "../../_shell/admin-page";
 import { requirePlatformAdmin } from "../../_shell/context";
 
 /**
@@ -81,9 +81,9 @@ export default async function OtpHistoryPage({
 
   return (
     <AdminPage
-      title="OTP history"
-      subtitle="Every one-time code sent through MiniMoth or Wati, and every request turned down: who asked, from where, to which number, how many times, and what became of each code."
-      tabs={{ items: ADMIN_TABS.otp, active: slug, href: (t) => hrefWith({ page: undefined }, t as TabsOf<"otp">) }}
+      title="Security & sign-ins"
+      subtitle="Every one-time code sent through MiniMoth or Wati, and every request turned down."
+      tabs={routeTabs(SECURITY_TABS, slug === "people" ? "codes-people" : "codes")}
     >
       <div className="mt-5">
         <MetricStrip

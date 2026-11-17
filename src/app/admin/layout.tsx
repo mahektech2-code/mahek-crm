@@ -8,7 +8,9 @@ import { attentionItems } from "@/lib/services/admin-platform-service";
 import { feedbackCounts } from "@/lib/services/feedback-service";
 import type { NavRowGroup, NavRowItem } from "@/components/shell/collapsible-nav";
 import { adminContext } from "./_shell/context";
-import { AdminShell, type SearchEntry } from "./_shell/admin-shell";
+import { AdminShell, type ConsoleStatus, type SearchEntry } from "./_shell/admin-shell";
+// The ERP's look, shared — see styles/v4-theme.css. The shell carries the marker.
+import "@/styles/v4-theme.css";
 
 export const metadata = { title: "Admin Console · MahekOne" };
 
@@ -34,7 +36,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const may = (item: AdminNavItem) =>
     (!item.platform || ctx.isPlatformAdmin) && (item.href !== ADMIN.feedback() || ctx.canTriage);
-  const row = (item: AdminNavItem): NavRowItem => ({ href: item.href, label: item.label, icon: item.icon, exact: item.exact });
+  const row = (item: AdminNavItem): NavRowItem => ({
+    href: item.href,
+    label: item.label,
+    icon: item.icon,
+    exact: item.exact,
+    match: item.match,
+  });
 
   const settingsItems: NavRowItem[] = [
     { href: ADMIN.settings, label: "All settings", icon: "grid", exact: true },
@@ -56,6 +64,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     [ADMIN.catalogue()]: attentionAt(ADMIN.catalogue("duplicates")),
     [ADMIN.sheets()]: attentionAt(ADMIN.sheets("issues")),
   };
+
+  /* The console's "Live now": the platform's state in two lines, read off the
+     same attention list Home draws, so the two cannot disagree. */
+  const urgent = attention.filter((a) => a.tone === "danger").length;
+  const toTidy = attention.length - urgent;
+  const status: ConsoleStatus =
+    urgent > 0
+      ? { tone: "danger", title: `${urgent} need${urgent === 1 ? "s" : ""} an admin`, line: toTidy ? `${toTidy} more to tidy` : "Open Home" }
+      : toTidy > 0
+        ? { tone: "warn", title: "Running normally", line: `${toTidy} to tidy` }
+        : { tone: "ok", title: "All systems normal", line: "Nothing waiting" };
 
   const search: SearchEntry[] = [
     ...pinned.map((i) => ({ label: i.label, hint: "Screen", href: i.href })),
@@ -90,6 +109,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       hat={ctx.isPlatformAdmin ? { ...hat, label: "Platform admin" } : hat}
       notifications={notifications}
       apps={webApps(ctx.apps)}
+      status={status}
     >
       {children}
     </AdminShell>

@@ -19,8 +19,8 @@ export default async function DeletedLeadsPage({
   const canRestore = await canFor(ctx.user, "lead.restore");
   return (
     <AdminPage
-      title="Deleted leads"
-      subtitle="Leads deleted from Lead Management. Off every screen until restored here — with their owner, stage and every call and note intact."
+      title="Recycle bin"
+      subtitle="Leads deleted from Lead Management. Restored with their owner, stage and every call and note intact."
     >
       {canRestore ? (
         <TrashSection

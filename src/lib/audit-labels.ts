@@ -954,6 +954,7 @@ const DESCRIBE: Record<string, Describer> = {
   },
   "expense_policy.set.assign": () => ({ says: ["changed which expense policy salesmen are on"], changes: false }),
   "job.run": (c) => ({ says: ["ran the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? ""))], changes: false }),
+  "job.rebuild": (c) => ({ says: ["rebuilt", strong(words(str(c.e.entityId) ?? "a derived figure"))], changes: false }),
   "job.dry_run": (c) => ({ says: ["tried the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? "")), "without saving anything"], changes: false }),
 
   /* ---- sign-ins */

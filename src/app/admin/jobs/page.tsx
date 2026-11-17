@@ -7,10 +7,17 @@ import { JobsTab } from "../platform-real";
 export default async function JobsPage() {
   await requirePlatformAdmin();
   const [jobs, queues] = await Promise.all([jobHealth(), queueOwners(await today())]);
+  const failing = jobs.filter((j) => !j.ok).length;
   return (
     <AdminPage
-      title="Jobs"
+      title="Jobs & schedules"
       subtitle="Scheduled work and how it has gone, the one-off jobs somebody runs by hand, and rebuilding a Call Log that is older than the release."
+      metrics={[
+        { label: "Jobs", value: String(jobs.length) },
+        { label: "Last run failed", value: String(failing), tone: failing ? "danger" : "success" },
+        { label: "Runs · 7 days", value: String(jobs.reduce((n, j) => n + j.runs, 0)) },
+        { label: "Failures · 7 days", value: String(jobs.reduce((n, j) => n + j.failures, 0)) },
+      ]}
     >
       <JobsTab data={{ jobs, queues }} />
     </AdminPage>
