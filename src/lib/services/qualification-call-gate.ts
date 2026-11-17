@@ -48,6 +48,34 @@ export function callAllowed(input: {
 }
 
 /**
+ * Has the Sales Manager saved the ONE review of this Prospect? The call is offered
+ * after that save in the one-review flow just as it is at Qualification, but it is
+ * not refused before it: at Prospect a call is still the alternative way of
+ * verifying, and nothing here may block the doors that use it.
+ */
+export async function combinedReviewSaved(customerId: string): Promise<boolean> {
+  const [entered] = await db
+    .select({ at: leadStageTransitions.at })
+    .from(leadStageTransitions)
+    .where(and(eq(leadStageTransitions.customerId, customerId), eq(leadStageTransitions.toStage, "prospect")))
+    .orderBy(desc(leadStageTransitions.at))
+    .limit(1);
+  const rows = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.entityType, "customer"),
+        eq(auditLog.entityId, customerId),
+        eq(auditLog.action, REVIEW_SAVED_ACTION),
+        ...(entered ? [gte(auditLog.at, entered.at)] : []),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
  * Null where a verification call may be recorded on this lead; otherwise the
  * sentence to refuse with.
  */
