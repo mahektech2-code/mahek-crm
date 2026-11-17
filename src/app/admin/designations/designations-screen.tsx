@@ -31,6 +31,7 @@ function newSinceSaved(d: ErpDesignationDef): { screens: string[]; powers: strin
 import { describeDiff, grantableModules, type ErpLevel } from "@/lib/erp/designations";
 import { DEPARTMENT_SEATS, SEAT_LABEL, departmentsOf, isDepartmentSeat, type ErpDepartmentSeat } from "@/lib/erp/departments";
 import { deleteErpDesignation, saveErpDesignation } from "@/lib/actions/erp-designations";
+import { syncDesignation } from "@/lib/actions/access-bulk";
 import { erpStartViewAs } from "@/lib/actions/erp";
 import type { DesignationWithMembers } from "@/lib/services/erp-designation-service";
 import { ADMIN } from "@/lib/admin-routes";
@@ -69,6 +70,16 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
     void erpStartViewAs({ kind: "designation", id }).then((r) => {
       if (r.ok) router.push("/erp");
       else push(r.error, "error");
+    });
+
+  /* An edit moves only the holders who still match; this brings the
+     customised ones up to it too, adding and never taking away. */
+  const syncAll = (d: DesignationWithMembers) =>
+    void syncDesignation(d.id).then((r) => {
+      if (!r.ok) return push(r.error, "error");
+      const { moved } = r.data;
+      push(moved.length ? `${moved.length} brought up to ${d.name}: ${moved.map((m) => m.name).join(", ")}` : `Everybody holding ${d.name} already has all of it.`);
+      router.refresh();
     });
 
   return (
@@ -199,6 +210,13 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
                               label: "Preview the ERP as this",
                               title: "Opens the ERP read-only, exactly as somebody holding this designation sees it",
                               onSelect: () => viewAs(d.id),
+                            },
+                            {
+                              label: "Bring every holder up to it",
+                              title: d.members.some((m) => !m.matches)
+                                ? "Adds the designation's screens, level and powers to every holder — customised ones too. Nothing extra they hold is taken away."
+                                : "Everybody holding it already matches it",
+                              onSelect: () => syncAll(d),
                             },
                             { label: "Delete", destructive: true, onSelect: () => setDeleting(d) },
                           ]}

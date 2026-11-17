@@ -2395,6 +2395,13 @@
       "when": 1794865500000,
       "tag": "0347_order_hub",
       "breakpoints": true
+    },
+    {
+      "idx": 343,
+      "version": "7",
+      "when": 1794865600000,
+      "tag": "0348_access_templates",
+      "breakpoints": true
     }
   ]
 }

@@ -892,6 +892,24 @@ const DESCRIBE: Record<string, Describer> = {
   "issue-credential": (c) => ({ says: ["issued a sign-in password to", c.user(c.e.entityId)], note: null, changes: false }),
   "link-employee": (c) => ({ says: ["linked", c.user(c.e.entityId), "to their HR record"], changes: false }),
   "unlink-employee": (c) => ({ says: ["unlinked", c.user(c.e.entityId), "from their HR record"], changes: false }),
+  /* The account's reporting line (`setReportsTo`), not the HRMS org chart —
+     that one is `employee.reporting_*` above. */
+  "access.reports_to": (c) => ({
+    says: c.a.reportsToId
+      ? ["made", c.user(c.e.entityId), "report to", c.user(c.a.reportsToId), ...(c.b.reportsToId ? ["instead of", c.user(c.b.reportsToId)] : [])]
+      : [c.user(c.e.entityId), "no longer reports to", c.user(c.b.reportsToId)],
+    changes: false,
+  }),
+  /* Powers & screens and job templates (`actions/access-bulk.ts`). Each
+     person a bulk change moved also has their own `set-app-access` line. */
+  "access.bulk": (c) => ({
+    says: ["changed access for", strong(`${Number(c.a.moved ?? 0)} ${Number(c.a.moved ?? 0) === 1 ? "person" : "people"}`), "at once", ...(str(c.a.label) ? ["—", str(c.a.label)!] : [])],
+    note: Array.isArray(c.a.people) && c.a.people.length ? (c.a.people as string[]).join("; ") : null,
+    changes: false,
+  }),
+  "access.template.create": (c) => ({ says: ["made the job template", strong(str(c.a.name) ?? "")], changes: false }),
+  "access.template.save": (c) => ({ says: ["edited the job template", strong(str(c.a.name) ?? "")], changes: false }),
+  "access.template.delete": (c) => ({ says: ["deleted the job template", strong(str(c.b.name) ?? "")], changes: false }),
   "deactivate-user": (c) => ({ says: ["switched off the sign-in of", c.user(c.e.entityId)], changes: false }),
   "reactivate-user": (c) => ({ says: ["switched the sign-in of", c.user(c.e.entityId), "back on"], changes: false }),
   "update-user": (c) => ({ says: ["edited the account of", c.user(c.e.entityId)], changes: false }),

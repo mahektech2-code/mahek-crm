@@ -109,8 +109,8 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
     source: "Accept or reject complaints and credit-note requests (admin and the CEO in the source).",
   },
   employeeAdmin: {
-    label: "Administer the ERP: godowns and ERP powers",
-    source: "Registering godowns and their staff, and giving ERP powers on the Access dialog (admin in the source, who also kept the employee directory).",
+    label: "Administer the ERP's godowns and their staff",
+    source: "Registering godowns and the staff who work at each (admin in the source, who also kept the employee directory). Giving ERP powers is NOT part of it: only a platform administrator changes access, on the Admin Console.",
   },
   approveSfgQc: {
     label: "Approve or reject SFG QC",
