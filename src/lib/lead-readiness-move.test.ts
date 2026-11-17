@@ -200,11 +200,10 @@ describe("nothing is fabricated", () => {
   });
 });
 
-describe("a trial's two approvals can never be overridden", () => {
+describe("a trial's approval (the Sales Manager's review of the Qualification) can never be overridden", () => {
   const cases: [string, Partial<typeof customers.$inferInsert>, RegExp[], RegExp[]][] = [
-    ["neither approval given", {}, [/GST number has not been validated/, /not been reviewed and approved/], []],
-    ["only GST validated", { gstVerified: true, gstVerifiedAt: new Date(), gstVerifiedById: "" }, [/not been reviewed and approved/], [/GST number has not been validated/]],
-    ["only the review approved", { leadQualificationReview: "verified" }, [/GST number has not been validated/], [/not been reviewed and approved/]],
+    /* GST is verified BEFORE Qualification now and is no longer asked at this gate. */
+    ["no review given", {}, [/not been reviewed and approved/], [/GST number has not been validated/]],
   ];
   for (const [name, over, says, notSays] of cases) {
     test(`${name}: blocked even for a verifier holding lead.override with the setting on`, async () => {

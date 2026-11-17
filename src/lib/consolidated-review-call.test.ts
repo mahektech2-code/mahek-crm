@@ -150,13 +150,13 @@ after(async () => {
 /* ============================================================ ONE CONSOLIDATED REVIEW */
 
 describe("the consolidated review shows each question once, with the answers already saved", () => {
-  test("20 unique rows, no stored answer boxed twice, and the repeats are gone", async () => {
+  test("19 unique rows, no stored answer boxed twice, and the repeats are gone", async () => {
     const lead = await qualificationLead();
     const m = await loadQualificationReview(lead.id, approver);
     assert.ok(m);
     assert.equal(m.kind, "qualification");
-    assert.equal(m.rows.length, 20);
-    assert.equal(m.tally.total, 20);
+    assert.equal(m.rows.length, 19);
+    assert.equal(m.tally.total, 19);
     const boxes = m.rows.flatMap((r) => r.fields.map((f) => f.id));
     assert.equal(new Set(boxes).size, boxes.length, "a box is drawn twice");
     for (const gone of ["prospect:gstin", "prospect:customer_type", "prospect:monthly_litres", "prospect:competitor", "prospect:required_product", "qualification:gst_verified", "qualification:application_understood"]) {
