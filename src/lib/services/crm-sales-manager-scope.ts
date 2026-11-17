@@ -4,7 +4,7 @@ import { eq, sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { managerNameByEmployeeName } from "./org-service";
+import { personDirectory } from "./person-identity-service";
 
 import { CRM_SALES_MANAGER_WORKSPACE, WORKSPACE_HEADER } from "@/proxy";
 import type { ManagerScope } from "./sales-service";
@@ -136,8 +136,8 @@ export const teamOwnerIdsFor = cache(async function teamOwnerIdsFor(
   userName: string,
 ): Promise<string[]> {
   const mine = userName.trim().toLowerCase();
-  const [managerNameOf, accounts, sheet] = await Promise.all([
-    managerNameByEmployeeName(),
+  const [dir, accounts, sheet] = await Promise.all([
+    personDirectory(),
     db
       .select({ id: users.id, name: users.name, reportsToId: users.reportsToId })
       .from(users)
@@ -152,7 +152,7 @@ export const teamOwnerIdsFor = cache(async function teamOwnerIdsFor(
     const n = a.name.trim().toLowerCase();
     if (
       a.reportsToId === userId ||
-      managerNameOf.get(n)?.trim().toLowerCase() === mine ||
+      dir.managerOfAccount(a.id)?.userId === userId ||
       sheetNames.has(n)
     ) {
       ids.add(a.id);

@@ -1,9 +1,10 @@
 import "server-only";
+import { personDirectory } from "@/lib/services/person-identity-service";
 import { eq, sql } from "drizzle-orm";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { db } from "@/db";
 import { randomUUID } from "node:crypto";
-import { customers, sheetPartyRows, syncConflicts, users } from "@/db/schema";
+import { customers, sheetPartyRows, syncConflicts } from "@/db/schema";
 import { sheetKeys } from "@/lib/customer-rename";
 import {
   customersWithDecidedContacts,
@@ -74,8 +75,6 @@ export type PartyProjectionOptions = {
  * Kept as a marker so a later sync can reopen what it shut, and only that.
  */
 const DEACTIVATED_BY_MASTER = "Marked Deactive on the customer master";
-
-const normal = (s: string | null) => (s ? s.trim().toLowerCase() : null);
 
 /**
  * The Sales Party tab's `Payment type` as the resolution engine reads it.
@@ -175,9 +174,13 @@ export async function projectParties(
    */
   const contactsDecided = await customersWithDecidedContacts();
 
-  // People named on the sheet, matched to accounts by name where one exists.
-  const team = await db.select({ id: users.id, name: users.name }).from(users);
-  const userByName = new Map(team.map((u) => [normal(u.name)!, u.id]));
+  /* People named on the sheet, turned into accounts through the person
+     directory: today's name, the HRMS employee's name, or any spelling that
+     person has carried — and only where exactly one person answers. A plain
+     name-to-name match lost everybody HR renamed, and handed a shared name to
+     whichever account came back first. */
+  const dir = await personDirectory();
+  const accountFor = (text: string) => dir.accountByName(text) ?? undefined;
 
   /*
    * Where a kept decision and the sheet disagree, so it can be reconciled.
@@ -226,10 +229,10 @@ export async function projectParties(
     report.matched++;
 
     const salesId = party.salesPersonName
-      ? userByName.get(normal(party.salesPersonName)!)
+      ? accountFor(party.salesPersonName)
       : undefined;
     const backId = party.backOfficeName
-      ? userByName.get(normal(party.backOfficeName)!)
+      ? accountFor(party.backOfficeName)
       : undefined;
     if (party.salesPersonName && !salesId) unlinked.add(party.salesPersonName);
     if (party.backOfficeName && !backId) unlinked.add(party.backOfficeName);

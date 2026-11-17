@@ -750,10 +750,20 @@ const employeesScreen: HrmsScreenModule = {
       if (!e) return err("That employee no longer exists.", "not_found");
       const read = await readEmployee(ctx, h, e);
       if (!read.ok) return read.res;
-      await db
-        .update(employees)
-        .set({ ...read.cols, hrmsDecidedAt: new Date(), updatedAt: new Date() })
-        .where(eq(employees.id, e.id));
+      await db.transaction(async (tx) => {
+        await tx
+          .update(employees)
+          .set({ ...read.cols, hrmsDecidedAt: new Date(), updatedAt: new Date() })
+          .where(eq(employees.id, e.id));
+        /* ONE NAME. HRMS is where a person's name lives: their login account,
+           and the names stored on the customers they hold a seat on, follow it
+           here rather than going on saying the old one. See
+           `services/person-identity-service`. */
+        if (read.cols.name && read.cols.name !== e.name) {
+          const { renameEmployee } = await import("@/lib/services/person-identity-service");
+          await renameEmployee(tx, { employeeId: e.id, oldName: e.name, newName: read.cols.name, actorId: ctx.user.id, source: "rename" });
+        }
+      });
       // The audit trail names what changed, never the full numbers.
       const logged = { ...read.cols };
       delete logged.aadhaarNumber;

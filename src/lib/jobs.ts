@@ -103,6 +103,7 @@ export type JobName =
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
+  | "align-person-names"
   | "self-raised-verifier-seats"
   | "recompute-inactivity"
   | "recompute-followups"
@@ -437,6 +438,20 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
    * through `assignSalesManager`, is off limits here exactly the way a
    * reassignment is off limits to `recomputeSalesPeople` above it.
    */
+  /*
+   * ONE NAME: every account linked to an HRMS record carries that record's
+   * name. A rename made anywhere HRMS reads from reaches the account, the
+   * customers' seat names and the spellings the sheets are resolved against.
+   * Before the seat pass below, so it reads today's names.
+   */
+  results.push(
+    await run("align-person-names", async () => {
+      const { alignAccountNames } = await import("./services/person-identity-service");
+      const n = await alignAccountNames();
+      return { recordsAffected: n, detail: `${n} accounts renamed to match HRMS` };
+    }, triggeredById).catch((e) => ({ job: "align-person-names" as const, recordsAffected: 0, detail: String(e) })),
+  );
+
   results.push(
     await run("recompute-sales-managers", async () => {
       const n = await recomputeSalesManagers();

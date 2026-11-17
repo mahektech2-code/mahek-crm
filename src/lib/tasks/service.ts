@@ -88,13 +88,12 @@ export const orgManagerMap = cache(async (): Promise<Map<string, string>> => {
       join employees m on m.id = r.manager_id
   `);
   const userByEmployee = new Map<string, string>();
-  const userByName = new Map<string, string>();
   for (const p of people) {
     if (p.employee_id) userByEmployee.set(p.employee_id, p.id);
-    userByName.set(p.name.trim().toLowerCase(), p.id);
   }
   const managerEmployee = new Map(links.map((l) => [l.employee_id, l.manager_id]));
-  const managerByName = new Map(links.map((l) => [l.employee_name.trim().toLowerCase(), l.manager_name.trim().toLowerCase()]));
+  const { personDirectory } = await import("@/lib/services/person-identity-service");
+  const dir = await personDirectory();
 
   const out = new Map<string, string>();
   for (const p of people) {
@@ -104,8 +103,9 @@ export const orgManagerMap = cache(async (): Promise<Map<string, string>> => {
       if (me) manager = userByEmployee.get(me);
     }
     if (!manager) {
-      const mn = managerByName.get(p.name.trim().toLowerCase());
-      if (mn) manager = userByName.get(mn);
+      /* An account nobody has linked to HRMS: the directory's unique strong
+         match, by id — never a comparison of names. */
+      manager = dir.managerOfAccount(p.id)?.userId ?? undefined;
     }
     if (manager && manager !== p.id) out.set(p.id, manager);
   }

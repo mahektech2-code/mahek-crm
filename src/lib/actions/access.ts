@@ -1171,6 +1171,78 @@ export async function candidatesForGrant(): Promise<Result<Candidate[]>> {
 /* ------------------------------------------------------- the payroll link */
 
 /**
+ * RENAME A PERSON — once, and everywhere.
+ *
+ * A name lives in ONE place. For somebody linked to an HRMS record that place
+ * is HRMS: the employee is renamed, and the account, the customers' seat names
+ * and the spellings the sheets are resolved against follow it
+ * (`renameEmployee`). Where HR still keeps the row in the Employee Details
+ * sheet this refuses, and says so — the next sheet pass would put the old name
+ * back, and a rename that quietly undoes itself overnight is worse than none.
+ * An account with no HRMS record is renamed on its own, with the seats it
+ * holds. Nothing anywhere is matched on the name: who sees what is by id.
+ */
+export async function renamePerson(input: { userId: string; name: string }): Promise<Result<null>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  const name = input.name.trim().replace(/\s+/g, " ");
+  if (name.length < 2) return fieldErr("name", "Enter their full name");
+  if (name.length > 120) return fieldErr("name", "That is too long for a name");
+
+  const [person] = await db
+    .select({ id: users.id, name: users.name, employeeId: users.employeeId })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+  if (!person) return fail("That account no longer exists.", "not_found");
+
+  const { renameEmployee, renameUnlinkedAccount } = await import("@/lib/services/person-identity-service");
+
+  if (person.employeeId) {
+    const [e] = await db
+      .select({ id: employees.id, name: employees.name, source: employees.source, decided: employees.hrmsDecidedAt })
+      .from(employees)
+      .where(eq(employees.id, person.employeeId))
+      .limit(1);
+    if (e) {
+      if (e.name === name && person.name === name) return ok(null, `${name} is already their name.`);
+      if (e.source !== "hrms" && !e.decided) {
+        return fail(
+          `HR keeps ${e.name}'s name in the Employee Details sheet, so change it there — or edit them in HRMS → People, which takes the record over from the sheet. The account, HRMS and every customer follow on the next sync.`,
+          "rule_violation",
+        );
+      }
+      await db.transaction(async (tx) => {
+        await tx.update(employees).set({ name, updatedAt: new Date() }).where(eq(employees.id, e.id));
+        await renameEmployee(tx, { employeeId: e.id, oldName: e.name, newName: name, actorId: me.id, source: "account-rename" });
+      });
+      refresh();
+      return ok(null, `Renamed to ${name} — in HRMS, on their account and on every customer that names them.`);
+    }
+  }
+
+  if (person.name === name) return ok(null, `${name} is already their name.`);
+  const seats = await db.transaction((tx) => renameUnlinkedAccount(tx, { userId: person.id, oldName: person.name, newName: name }));
+  await db.insert(auditLog).values({
+    id: newId("aud"),
+    actorId: me.id,
+    action: "person.renamed",
+    entityType: "user",
+    entityId: person.id,
+    actorRole: "admin",
+    actorApp: "admin",
+    beforeState: { name: person.name },
+    afterState: { name, source: "account-rename" },
+  });
+  refresh();
+  return ok(null, `Renamed to ${name}${seats ? ` — and on ${seats} customer seat${seats === 1 ? "" : "s"}` : ""}.`);
+}
+
+/**
  * Say which HRMS employee an account is, or take the answer back.
  *
  * The one door onto `users.employeeId` that does not require a terminal. On a

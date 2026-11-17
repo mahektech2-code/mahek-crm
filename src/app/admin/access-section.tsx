@@ -43,6 +43,7 @@ import {
   employeesToLink,
   issueCredential,
   linkEmployee,
+  renamePerson,
   setAccess,
   type IssuedCredential,
 } from "@/lib/actions/access";
@@ -249,6 +250,8 @@ export function AccessSection({
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
   /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
   const [linking, setLinking] = React.useState<AccessRow | null>(null);
+  /** Renaming somebody — once, carried to HRMS and every customer. */
+  const [renaming, setRenaming] = React.useState<AccessRow | null>(null);
   /* THE SECOND DOOR ONTO A PASSWORD. The grant flow offers one at the moment
      an account is set up, which is the moment most of them are needed — but
      somebody set up in March who cannot get in today is not going to be given
@@ -646,6 +649,7 @@ export function AccessSection({
                               onSwitch={() => setSwitching(r)}
                               onOpen={() => onOpenUser(r.userId)}
                               onLinkEmployee={() => setLinking(r)}
+                              onRename={() => setRenaming(r)}
                               onCredential={() => setCrediting(r)}
                               onGotLink={setLinkFor}
                             />
@@ -831,6 +835,18 @@ export function AccessSection({
       {/* Which payroll row this account is. Keyed on the person for the same
           reason the access dialog is: fresh initial state on a remount beats an
           effect resetting it when a prop changes. */}
+      {renaming ? (
+        <RenameDialog
+          key={renaming.userId}
+          row={renaming}
+          onClose={() => setRenaming(null)}
+          onDone={(r) => {
+            say(r);
+            setRenaming(null);
+          }}
+        />
+      ) : null}
+
       {linking ? (
         <EmployeeLinkDialog
           key={linking.userId}
@@ -1102,6 +1118,7 @@ function PersonMenu({
   onSwitch,
   onOpen,
   onLinkEmployee,
+  onRename,
   onCredential,
   onGotLink,
 }: {
@@ -1111,6 +1128,7 @@ function PersonMenu({
   onSwitch: () => void;
   onOpen: () => void;
   onLinkEmployee: () => void;
+  onRename: () => void;
   onCredential: () => void;
   onGotLink: (link: { name: string; url: string; expiresInMinutes: number }) => void;
 }) {
@@ -1129,6 +1147,7 @@ function PersonMenu({
           onSelect: onSwitch,
         },
         { label: "Open their record", onSelect: onOpen },
+        { label: "Rename", onSelect: onRename },
         {
           /* Not hidden where a row was already guessed: a guess is exactly what
              somebody would come here to confirm or correct. */
@@ -3067,6 +3086,70 @@ function ReviewStep({
  * hunting for an employee they cannot find would otherwise conclude the search
  * is broken when the answer is that a colleague linked it last week.
  */
+/**
+ * One name, changed once. The server decides where it lives (HRMS for a linked
+ * person, the account otherwise) and carries it everywhere — see `renamePerson`.
+ */
+function RenameDialog({
+  row,
+  onClose,
+  onDone,
+}: {
+  row: AccessRow;
+  onClose: () => void;
+  onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
+}) {
+  const [name, setName] = React.useState(row.name);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const unchanged = name.trim().replace(/\s+/g, " ") === row.name;
+  const save = () => {
+    setSaving(true);
+    setError(null);
+    void renamePerson({ userId: row.userId, name }).then((r) => {
+      setSaving(false);
+      if (r.ok) onDone(r);
+      else setError(r.fieldErrors?.[0]?.message ?? r.error ?? "The name could not be changed.");
+    });
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Rename ${row.name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={saving || unchanged || name.trim().length < 2}
+            title={unchanged ? "Type the new name first" : undefined}
+            onClick={save}
+          >
+            {saving ? "Saving…" : "Rename"}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm leading-[21px] text-body">
+        <p>
+          The new name shows everywhere at once — HRMS, their account, the CRM and
+          every customer they look after. Nothing they can see or do changes:
+          who works which customer is kept by their account, not their name.
+        </p>
+        <div className="mt-3">
+          <Field label="Full name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={120} />
+          </Field>
+        </div>
+        {error ? <p className="mt-2 text-danger">{error}</p> : null}
+      </div>
+    </Modal>
+  );
+}
+
 function EmployeeLinkDialog({
   row,
   onClose,

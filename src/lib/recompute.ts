@@ -19,11 +19,11 @@ import {
   sheetCustomerMasterRows,
   sheetPartyRows,
   sheetTakenOrderRows,
-  users,
   waMessages,
+  employeeReporting,
 } from "@/db/schema";
 import { getConfig } from "./config/store";
-import { managerNameByEmployeeName } from "./services/org-service";
+import { personDirectory } from "./services/person-identity-service";
 import type { Config } from "./config/registry";
 import { buyingCycle, typicalOrderValue } from "./engines/buying-cycle";
 import {
@@ -1427,8 +1427,8 @@ export async function recomputeSalesPeople(): Promise<number> {
  * A LEAD is resolved through its OWNER, a customer through its salesperson —
  * `salesPersonName` first, the linked account second, the same fallback
  * `SALES_AM_NAME_SQL` already uses. Both are matched to the org chart by
- * NAME, through `managerNameByEmployeeName()`, because nothing links a
- * `users` account back to the employee record it may have come from.
+ * employee id through `personDirectory()` — `users.employee_id` for an
+ * account, every remembered spelling for a sheet's salesperson text.
  *
  * `sales_manager_decided_at` is what makes this safe to run nightly: a
  * customer a person has ever set this on is skipped entirely, so their own
@@ -1436,7 +1436,15 @@ export async function recomputeSalesPeople(): Promise<number> {
  * survives the sheet sync.
  */
 export async function recomputeSalesManagers(): Promise<number> {
-  const managerNameOf = await managerNameByEmployeeName();
+  /* BY ID. The person on the seat is turned into their employee once — an
+     account through `users.employee_id`, a sheet's salesperson text through
+     every spelling that person has carried — and their manager read off
+     `employee_reporting`. It used to compare name strings at both ends, so a
+     rename in HRMS quietly blanked or moved the seat on every undecided
+     customer the next night. */
+  const dir = await personDirectory();
+  const [{ links }] = (await db.select({ links: sql<number>`count(*)::int` }).from(employeeReporting)) as { links: number }[];
+  const chartEmpty = !links;
 
   /* THE FIELD VERIFIER'S LEADS: a lead a Salesman raised or holds is seated under
      the person set to verify those (`leads.fieldVerifierEmail`), not under
@@ -1449,9 +1457,9 @@ export async function recomputeSalesManagers(): Promise<number> {
   // Nothing on the org chart yet is not the same as nobody having a sales
   // manager. A pass with an empty map would blank every undecided customer's
   // seat rather than leave it as it was.
-  if (!managerNameOf.size && !fieldOn) return 0;
+  if (chartEmpty && !fieldOn) return 0;
 
-  const [rows, activeUsers] = await Promise.all([
+  const [rows] = await Promise.all([
     db
       .select({
         id: customers.id,
@@ -1465,13 +1473,9 @@ export async function recomputeSalesManagers(): Promise<number> {
       })
       .from(customers)
       .where(isNull(customers.salesManagerDecidedAt)),
-    db.select({ id: users.id, name: users.name }).from(users).where(eq(users.active, true)),
   ]);
 
   if (!rows.length) return 0;
-
-  const userNameById = new Map(activeUsers.map((u) => [u.id, u.name]));
-  const userIdByName = new Map(activeUsers.map((u) => [u.name.trim().toLowerCase(), u.id]));
 
   /* Which leads are the field verifier's — two queries for the whole book, never
      one per lead. */
@@ -1520,19 +1524,21 @@ export async function recomputeSalesManagers(): Promise<number> {
     } else {
       /* An empty org chart must not blank a seat — see the guard above, which
          is only lifted for the field verifier's own leads. */
-      if (!managerNameOf.size) continue;
+      if (chartEmpty) continue;
 
-      const assignedName =
+      /* The same fallback chain as before — the owner on a lead, the sheet's
+         salesperson on a customer, else its sales account — read by id. */
+      const manager =
         c.kind === "lead"
-          ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
-          : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+          ? (c.ownerId ? dir.managerOfAccount(c.ownerId) : null)
+          : c.salesPersonName
+            ? dir.managerOfName(c.salesPersonName)
+            : c.salesAmId
+              ? dir.managerOfAccount(c.salesAmId)
+              : null;
 
-      const managerName = assignedName
-        ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
-        : null;
-
-      nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
-      nextName = managerName && !nextId ? managerName : null;
+      nextId = manager?.userId ?? null;
+      nextName = manager && !manager.userId ? manager.name : null;
     }
 
     if (nextId === c.salesManagerId && nextName === c.salesManagerPersonName) continue;
@@ -1608,27 +1614,11 @@ export async function salesManagerForOwner(
     }
   }
 
-  /* Switch off only: the name-based answer this has always given. In org-chart
-     mode every owner was answered above, by id. */
-  const managerNameOf = await managerNameByEmployeeName();
-  if (!managerNameOf.size) return null;
-
-  const [owner] = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(eq(users.id, ownerUserId))
-    .limit(1);
-  if (!owner) return null;
-
-  const managerName = managerNameOf.get(owner.name.trim().toLowerCase()) ?? null;
-  if (!managerName) return null;
-
-  const [manager] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.active, true), sql`lower(trim(${users.name})) = ${managerName.trim().toLowerCase()}`))
-    .limit(1);
-  return manager ? { id: manager.id, personName: null } : { id: null, personName: managerName };
+  /* The org chart, by id: the owner's employee, their manager, and that
+     manager's account — or their current name where they hold none. */
+  const manager = (await personDirectory()).managerOfAccount(ownerUserId);
+  if (!manager) return null;
+  return manager.userId ? { id: manager.userId, personName: null } : { id: null, personName: manager.name };
 }
 /* ----------------------------------------------------------- full rebuild */
 

@@ -5639,6 +5639,32 @@ export const employeeReporting = pgTable(
 );
 
 /**
+ * Every spelling a person has carried, pointing at the employee they are —
+ * see `lib/engines/person-directory.ts`. A rename writes the old name here so
+ * a sheet still using it resolves to the same person rather than to nobody.
+ */
+export const personNameAliases = pgTable(
+  "person_name_aliases",
+  {
+    id: text("id").primaryKey(),
+    /** `personKey(name)`: trimmed, whitespace collapsed, uppercase. */
+    nameKey: text("name_key").notNull(),
+    name: text("name").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** What wrote it: "rename", "sheet-rename", "account-rename". */
+    source: text("source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    uniqueIndex("person_name_aliases_key_employee").on(t.nameKey, t.employeeId),
+    index("person_name_aliases_employee_idx").on(t.employeeId),
+  ],
+);
+
+/**
  * The Payment Status tab: one row per ORDER, not per line and not per bill.
  *
  * It is a separate table rather than columns on `sheet_order_rows` because the
