@@ -408,8 +408,14 @@ export const mrpCheckScreen: ScreenModule = {
         ),
         stock.get(head.godownId)!,
       );
-      const held = ls.some((l) => l.productionCheck === "Hold");
       const h = holds.get(no);
+      /* ANY open hold makes the order held here, not only the MRP check's own.
+         An order held from the Office (the orders list, To Hold) kept its
+         production check "Pending", so it sat on this list as waiting with a
+         "Put on hold" that could only be refused — "already on hold, resolve
+         that first" — and read as the button not working (2026-11-17,
+         order 10254). It is shown held, and To Hold is where it is released. */
+      const held = ls.some((l) => l.productionCheck === "Hold") || !!h;
       const fields: RowField[] = [
         ...answer.lines.map((a) => ({ l: a.sku, v: `${a.cans} cans needed · ${a.onShelfCans} on the shelf · ${a.toMakeCans ? `${a.toMakeCans} cans (${a.toMakeLitres} L) to make` : "nothing to make"}${a.boxesToPack ? ` · ${a.boxesToPack} boxes to pack` : ""}` })),
         ...answer.bases.map((b) => ({
@@ -419,7 +425,7 @@ export const mrpCheckScreen: ScreenModule = {
         ...answer.cans.map((c) => ({ l: c.name, v: `${c.need} needed · ${c.stock} in stock${c.short ? ` — short ${c.short}` : ""}` })),
         ...(answer.unknown.length ? [{ l: "Not known", v: `${answer.unknown.join(", ")}: the product names no base, so its making cannot be checked.` }] : []),
         { l: "Capacity", v: "Your call: MahekOne does not know the floor's capacity." },
-        ...(h && h.department === "production" ? [{ l: "On hold", v: `${reasonLabel(h.reason)}${h.internalNote ? ` — ${h.internalNote}` : ""}` }] : []),
+        ...(h ? [{ l: h.department === "production" ? "On hold" : `On hold · ${DEPARTMENT_LABEL[h.department as HoldDepartment] ?? h.department}`, v: `${reasonLabel(h.reason)}${h.internalNote ? ` — ${h.internalNote}` : ""}` }] : []),
       ];
       const sentence = answer.short.length ? `Short: ${answer.short.join("; ")}` : "Everything it needs is in stock now";
       rows.push({
@@ -500,6 +506,8 @@ export const mrpCheckScreen: ScreenModule = {
       if (text(v.capacity) !== "Yes") return fieldErr("capacity", "Confirm the floor can make it");
       const [l] = await db.select({ no: erpOrders.orderNo }).from(erpOrders).where(eq(erpOrders.id, id));
       if (!l) return err("That order no longer exists.", "not_found");
+      const open = (await openHolds([l.no])).get(l.no);
+      if (open) return err(`Order ${l.no} is on hold (${reasonLabel(open.reason)}). Release it in To Hold first.`, "conflict");
       const done = await db
         .update(erpOrders)
         .set({ productionCheck: "Cleared", productionCheckedById: ctx.user.id, productionCheckedAt: new Date(), productionNote: text(v.note), updatedAt: new Date(), updatedById: ctx.user.id })
@@ -745,7 +753,10 @@ export async function orderHubCounts(): Promise<{ orderHub: number; hubCorrectio
   return {
     orderHub: n("open"),
     hubCorrection: n("correction"),
-    mrpCheck: new Set(mrp.filter((l) => l.productionCheck === "Pending").map((l) => l.orderNo)).size,
+    mrpCheck: (() => {
+      const heldNos = new Set(holds.map((h) => h.orderNo).filter((n): n is number => n != null));
+      return new Set(mrp.filter((l) => l.productionCheck === "Pending" && !heldNos.has(l.orderNo)).map((l) => l.orderNo)).size;
+    })(),
     toHold: holds.length,
   };
 }

@@ -477,6 +477,17 @@ describe("the Order Hub's gates after the order number", () => {
     assert.ok((await mod("toHold").actions!.releaseDesk(adminCtx, held!.id, { resolution: "Xylene arrived" })).ok);
     assert.ok((await mod("mrpCheck").load(adminCtx)).rows.some((x) => x.id === row!.id), "released, it is back at the MRP check");
 
+    /* Held from the Office instead (order 10254, 2026-11-17): the production
+       check stays Pending, so the MRP check must still call it held — not
+       offer a hold that can only be refused, nor a clear that skips it. */
+    assert.ok((await mod("orders").actions!.hold(adminCtx, o.id, { reason: "Material shortage", customerText: "Your order is waiting for a material." })).ok);
+    const officeHeld = (await mod("mrpCheck").load(adminCtx)).rows.find((x) => x.id === o.id);
+    assert.equal(officeHeld?.v.status, "On hold", "an office hold reads as held at the MRP check");
+    assert.deepEqual(officeHeld?.actions?.map((a) => a.id), ["toHold"], "no hold or clear on an order already held");
+    assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, o.id, { capacity: "Yes" })), /on hold/);
+    assert.ok((await mod("orders").actions!.resolveHold(adminCtx, o.id, { resolution: "Material arrived.", notify: "No" })).ok);
+    assert.equal((await mod("mrpCheck").load(adminCtx)).rows.find((x) => x.id === o.id)?.v.status, "Waiting for MRP check");
+
     /* Cleared with the capacity tick, the line may go Ready. */
     assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, row!.id, {})), /capacity|floor|required/i);
     assert.ok((await mod("mrpCheck").actions!.clear(adminCtx, row!.id, { capacity: "Yes" })).ok);
