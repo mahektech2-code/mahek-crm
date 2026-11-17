@@ -177,10 +177,10 @@ function cssText(s: string): string {
  */
 function sheetCss({ runningHead, footLines }: { runningHead: string; footLines: string[] }): string {
   const ink = "rgb(20 20 20)";
-  /* Every line on the sheet is pure black and at least 1pt: a grey or hairline rule prints faint, or not at all. */
+  /* Everything printed is pure black, and every line at least 1pt: grey text and hairline rules print faint on the floor's printers. Size and weight carry the hierarchy. */
   const rule = "rgb(0 0 0)";
-  const soft = "rgb(95 95 95)";
-  const faint = "rgb(138 138 138)";
+  const soft = "rgb(0 0 0)";
+  const faint = "rgb(0 0 0)";
   const hair = "rgb(218 218 218)";
   const band = "rgb(238 240 247)";
   const blue = "rgb(31 47 179)";
