@@ -2017,15 +2017,29 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
     };
   }
   if (order.status !== "pending_approval" && order.status !== "captured") {
+    const live = (await getConfig())["erp.orders.live"] === true;
     return {
       kind: "rejected",
       value: reject(
         "not_permitted",
-        `Order ${order.orderNo ?? ""} for ${customer.name} was ${STATUS_WORDS[order.status] ?? order.status} before this edit arrived, so it was not changed. ${
-          order.status === "confirmed"
-            ? "Send a change request from the order instead — accounts will accept or decline it."
-            : "Ring accounts if it still needs to change."
-        }`,
+        `Order ${order.orderNo ?? ""} for ${customer.name} was ${STATUS_WORDS[order.status] ?? order.status} before this edit arrived, so it was not changed. ${live ? "An order with its order number cannot be changed; ask the office to cancel it and take a new one." : "Send it as a change request instead."}`,
+      ),
+    };
+  }
+  /* THE ORDER HUB: an order is edited only while it is a TO. Once both checks
+     made its order number, it is not changed — whatever the handset thinks. */
+  const { intakeByOriginOrder } = await import("../erp/order-hub");
+  const asTo = await intakeByOriginOrder(order.id);
+  if (asTo && asTo.status !== "open" && asTo.status !== "correction") {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        asTo.status === "verified"
+          ? `TO-${asTo.toNo} for ${customer.name} has its order number ${asTo.orderNo}, so it can no longer be changed. Ask the office to cancel it and take a new one.`
+          : asTo.status === "hold"
+            ? `TO-${asTo.toNo} for ${customer.name} is on hold at the office. The edit was not made; ring them.`
+            : `TO-${asTo.toNo} for ${customer.name} is cancelled.`,
       ),
     };
   }
@@ -2075,6 +2089,20 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
       decidedMeanwhile = true;
       return;
     }
+    if (asTo) {
+      const { editIntake } = await import("../erp/order-hub");
+      const edited = await editIntake(
+        principal.user.id,
+        asTo.id,
+        {},
+        p.lines.map((l) => ({ skuId: l.productId, qtyCans: l.quantityCans, ratePaise: l.ratePaise ?? null, discountBp: null })),
+        { syncOrigin: false },
+      );
+      if (!edited.ok) {
+        decidedMeanwhile = true;
+        tx.rollback();
+      }
+    }
 
     await writeTimeline(tx, {
       customerId: customer.id,
@@ -2119,6 +2147,14 @@ async function handleOrderChangeRequest(principal: MbosPrincipal, item: SyncItem
   const parsed = orderChangeSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
+  /* THE ORDER HUB: an order with its order number is not changed, so there is
+     nothing to request. An older handset still sends these; it is told why. */
+  if ((await getConfig())["erp.orders.live"] === true) {
+    return {
+      kind: "rejected",
+      value: reject("not_permitted", "An order with its order number can no longer be changed. Ask the office to cancel it, and take a new order."),
+    };
+  }
 
   const order = await authoredOrder(principal, p.orderId);
   if (!order) {
@@ -2741,6 +2777,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const unvalued = Boolean(p.valueUnavailable) || p.totalAmountPaise === 0;
 
   let serverNumber = "";
+  let toNumber: number | null = null;
   await db.transaction(async (tx) => {
     serverNumber = await allocateNumber(tx, prefix, fy, "orders");
 
@@ -2774,6 +2811,32 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       createdById: principal.user.id,
       updatedById: principal.user.id,
     });
+
+    /* THE ORDER HUB: with the ERP taking the orders, a field order is a TO in
+       the hub until the back office and the Production Head have checked it;
+       its order number then adopts this row (`order-hub.ts`). */
+    if (config["erp.orders.live"] === true) {
+      const { createIntake } = await import("../erp/order-hub");
+      const made = await createIntake(
+        principal.user.id,
+        {
+          origin: "mbos",
+          originOrderId: item.entityId,
+          orderSource: "Salesman App",
+          orderDate: orderDay,
+          godownId: null,
+          billingId: customer.id,
+          deliveryId: deliveryCustomerId ?? customer.id,
+          takenById: principal.user.id,
+          lines: p.lines.map((l) => ({ skuId: l.productId, qtyCans: l.quantityCans, ratePaise: l.ratePaise ?? null, discountBp: null })),
+        },
+        tx as never,
+      );
+      toNumber = made.toNo;
+      /* What he sees until the order number exists is the TO number. */
+      serverNumber = `TO-${made.toNo}`;
+      await tx.update(orders).set({ orderNo: serverNumber }).where(eq(orders.id, item.entityId));
+    }
 
     /*
      * AND IF THIS WAS A LEAD, IT IS A CUSTOMER NOW.
@@ -2878,6 +2941,10 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     }
   });
 
+  if (toNumber != null) {
+    const { tellNewIntake } = await import("../erp/order-hub");
+    await tellNewIntake(toNumber).catch(() => undefined);
+  }
   return { kind: "accepted", value: { serverId: item.entityId, serverNumber } };
 }
 

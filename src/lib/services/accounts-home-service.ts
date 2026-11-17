@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { moneyArrivingSql } from "@/lib/money-arriving";
@@ -110,13 +111,13 @@ export async function accountsHome(): Promise<AccountsHome> {
     on_account: number;
   }>(sql`
     select
-      (select count(*)::int from orders where status = 'pending_approval') as orders_count,
+      (select count(*)::int from orders where ${awaitingAccountsSql("orders")}) as orders_count,
       (select coalesce(sum(total_amount), 0)::bigint from orders
-        where status = 'pending_approval') as orders_value,
+        where ${awaitingAccountsSql("orders")}) as orders_value,
       (select coalesce(max(extract(epoch from (now() - ordered_at)) / 3600), 0)::int
-         from orders where status = 'pending_approval') as orders_oldest,
+         from orders where ${awaitingAccountsSql("orders")}) as orders_oldest,
       (select count(*)::int from orders
-        where status = 'pending_approval'
+        where ${awaitingAccountsSql("orders")}
           and extract(epoch from (now() - ordered_at)) / 3600 > ${staleHours}) as orders_stale,
 
       -- UNDECIDED money is reported AND held, and this card has to count both

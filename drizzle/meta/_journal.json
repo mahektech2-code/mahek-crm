@@ -2381,6 +2381,20 @@
       "when": 1793801300000,
       "tag": "0345_transporter_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 341,
+      "version": "7",
+      "when": 1794865423163,
+      "tag": "0346_mbos_remote",
+      "breakpoints": true
+    },
+    {
+      "idx": 342,
+      "version": "7",
+      "when": 1794865500000,
+      "tag": "0347_order_hub",
+      "breakpoints": true
     }
   ]
 }

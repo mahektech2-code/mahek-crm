@@ -1678,6 +1678,15 @@ export async function recordLeadValidationCall(
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
+    /* THE CALL COMES AFTER THE REVIEW IS SAVED. In Qualification a verification
+       call is recorded only once the designated approver has saved the review;
+       it stays optional and nothing downstream waits for it. Enforced here, in
+       the one action every web door records a call through, so a hidden button
+       and a direct request cannot disagree. */
+    const { callRefusalFor } = await import("../services/qualification-call-gate");
+    const tooEarly = await callRefusalFor(customerId);
+    if (tooEarly) return err(tooEarly, "rule_violation");
+
     /* A CALL THAT VERIFIES IS HELD TO THE REVIEW'S RULES. Verifying opens
        Qualification, so it asks what the review's Confirm asks: only the lead's
        designated verifier (never a bare `lead.verify` holder), and only with every

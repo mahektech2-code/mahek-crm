@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -109,7 +110,7 @@ async function pendingItems(includeHeld: boolean): Promise<Pending[]> {
            (extract(epoch from o.created_at) * 1000)::float8 as since_ms,
            c.name as customer_name, o.total_amount::text as amount, o.order_no as reference
       from orders o join customers c on c.id = o.customer_id
-     where o.status = 'pending_approval'
+     where ${awaitingAccountsSql("o")}
     union all
     select 'payment', r.id, (extract(epoch from r.created_at) * 1000)::float8,
            c.name, r.amount::text, null

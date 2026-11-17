@@ -9,6 +9,7 @@
  *
  * Needs `mahekone_test` (npm run test:db). It truncates what it touches.
  */
+import { clearGates, placeOrder } from "./test-orders";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -71,7 +72,8 @@ let admin: typeof users.$inferSelect;
 
 async function takeOrder(qty: number, extra: Record<string, string> = {}) {
   const ctx = await as(admin);
-  const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", ...extra }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+  /* Through the Order Hub to its order number, waiting for Accounts — the moment the customer is told is theirs. */
+  const r = await placeOrder(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", ...extra }, [{ sku: SKU, qty: String(qty), rate: "300" }], { gates: false });
   assert.ok(r.ok, JSON.stringify(r));
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = ${qty} and ${erpOrders.skuId} = (select id from products where name = ${SKU})`);
   return o;
@@ -118,13 +120,13 @@ describe("customer order tracking", () => {
     const o = await takeOrder(4);
     const no = o.orderNo;
 
-    /* Taken is not confirmed: no link, nothing told. */
+    /* Numbered is not confirmed: no link, nothing told, until Accounts approve. */
     await T.syncOrderTracking([no]);
     assert.equal(await tokenOf(no), undefined);
     assert.deepEqual(await steps(no), []);
 
-    /* The back office verifies: the link is made and the confirmation written — once. */
-    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
+    /* Accounts approve: the link is made and the confirmation written — once. */
+    await clearGates(no);
     const t = await tokenOf(no);
     assert.ok(t, "a link exists once the order is confirmed");
     assert.equal(t.backfilled, false);
@@ -262,10 +264,9 @@ describe("customer order tracking", () => {
   });
 
   test("a delivery party that is not the billing party gets its own link, which never shows the invoice", async () => {
-    const ctx = await as(admin);
     const o = await takeOrder(6, { delivery: "Ganesh Hardware" });
+    await clearGates(o.orderNo);
     assert.equal(o.deliveryCustomerId, "cus_shop");
-    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
     const t = await tokenOf(o.orderNo);
     assert.ok(t.deliveryToken);
     const shop = (await T.publicOrderTracking(t.deliveryToken!))!;
@@ -278,25 +279,21 @@ describe("customer order tracking", () => {
     assert.deepEqual(out.map((m) => m.customerId), ["cus_shree"]);
   });
 
-  test("verification taken back withdraws the step; nothing is deleted", async () => {
-    const ctx = await as(admin);
+  test("an order is confirmed when Accounts approve it, not when the Order Hub numbers it", async () => {
     const o = await takeOrder(8);
-    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
-    assert.ok((await mod("orders").actions!.unverifyOrder(ctx, o.id, {})).ok);
+    assert.equal(o.orderCheck, "Verified");
+    assert.equal(o.accountsCheck, "Pending");
+    await T.syncOrderTracking([o.orderNo]);
     assert.deepEqual(await steps(o.orderNo), []);
-    const all = await db.select().from(erpOrderMilestones).where(eq(erpOrderMilestones.orderNo, o.orderNo));
-    assert.equal(all.length, 2, "the withdrawn rows are kept");
-    const page = (await T.publicOrderTracking((await tokenOf(o.orderNo)).token))!;
-    assert.equal(page.status.label, "Order received — being checked");
-    /* Verified again: the steps come back, and the confirmation is not sent twice. */
-    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
+    await clearGates(o.orderNo);
     assert.deepEqual(await steps(o.orderNo), ["confirmed", "preparing"]);
-    assert.equal((await orderMessages(o.orderNo)).filter((m) => m.kind === "confirmed").length, 1);
+    await T.syncOrderTracking([o.orderNo]);
+    assert.equal((await orderMessages(o.orderNo)).filter((m) => m.kind === "confirmed").length, 1, "never told twice");
   });
 
   test("an order already under way is backfilled quietly — a link and its steps, nobody messaged", async () => {
     const o = await takeOrder(9);
-    await db.execute(sql`update erp_orders set order_check = 'Verified', order_checked_at = now() - interval '3 days' where order_no = ${o.orderNo}`);
+    await db.execute(sql`update erp_orders set order_check = 'Verified', order_checked_at = now() - interval '3 days', accounts_check = 'Approved', accounts_checked_at = now() - interval '3 days' where order_no = ${o.orderNo}`);
     const r = await T.backfillOrderTracking();
     assert.ok(r.links >= 1);
     const t = await tokenOf(o.orderNo);

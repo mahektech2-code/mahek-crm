@@ -45,6 +45,7 @@ import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 import { TIMELINE_PAGE } from "@/lib/timeline-kinds";
 import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
+import { customerOrderThreads } from "@/lib/services/order-journey-service";
 import { listCustomerContacts } from "@/lib/services/customer-contact-service";
 
 export async function generateMetadata({
@@ -211,7 +212,7 @@ export default async function CustomerRecordPage({
   // Everything the record itself is made of. Its own round trip rather than a
   // join onto the customer read: these are six independent lists and one of
   // them being slow should not hold the others up.
-  const detail = await customerRecordDetail(id, day);
+  const [detail, orderThreads] = await Promise.all([customerRecordDetail(id, day), customerOrderThreads(id, 8)]);
 
   /*
    * The open complaint the banner shouts about, read from the COMPLAINTS
@@ -418,6 +419,8 @@ export default async function CustomerRecordPage({
       searchEnabled={config["products.searchOnOrderForms"]}
       searchMinChars={config["products.searchMinChars"]}
       userName={user.name}
+      orderThreads={orderThreads}
+      viewerId={user.id}
       products={productRows.map((p) => ({
         id: p.productId,
         name: p.name,

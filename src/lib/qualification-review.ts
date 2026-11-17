@@ -179,6 +179,14 @@ export function diffAnswers(
 /** The audit action every approver edit is filed under. */
 export const REVIEW_EDIT_ACTION = "lead.qualificationReview.edit";
 
+/**
+ * The audit action written each time the approver SAVES the Qualification review
+ * (with changes or without). It is a mark that the review has been read and
+ * saved — never a verdict, and nothing that approves or moves a lead reads it.
+ * Only the verification call's availability does.
+ */
+export const REVIEW_SAVED_ACTION = "lead.qualificationReview.saved";
+
 /* ------------------------------------------------------------ the boxes */
 
 export type ReviewKind = "text" | "long" | "litres" | "days" | "choice" | "product" | "yesno" | "date" | "info";
@@ -339,6 +347,40 @@ export type ReviewContext = {
   editable: boolean;
   /** Where the CRM keeps Qualification answers for the collector, the sentence to say so. */
   collectorOnlyReason: string | null;
+  /**
+   * Which decision this review is for. Before Qualification opens (`"prospect"`)
+   * the Qualification questions are not asked yet, so they are not built at
+   * all. Absent means `"qualification"`, the whole review.
+   */
+  kind?: "prospect" | "qualification";
+};
+
+/**
+ * THE PROSPECT QUESTIONS THAT ARE A SUSPECT QUESTION ASKED AGAIN, by the desk
+ * key whose row now carries them. Each pair is ONE stored answer (the same lead
+ * column), so the review draws it once: on the Suspect row, which takes over the
+ * Prospect question's "required" and its gate verdict. The gate lists themselves
+ * are untouched — the handset reads the same ones — so a Prospect is held for
+ * exactly the answers it was held for.
+ */
+const PROSPECT_AS_DESK: Readonly<Record<string, DeskFieldKey>> = {
+  customer_type: "customerType",
+  monthly_litres: "monthlyLitres",
+  competitor: "competitor",
+  required_product: "requiredProductId",
+  gstin: "gstin",
+};
+
+/**
+ * THE QUALIFICATION CONDITIONS WHOSE ONLY ANSWER IS ALREADY A SUSPECT ROW: the
+ * GST number (and whether the Sales Manager has validated it) and the
+ * application. They add no box of their own, so their row is not drawn; the
+ * Suspect row takes over their gate verdict instead, which is what keeps "GST
+ * not yet validated" visible on the one place the number is shown.
+ */
+const QUALIFICATION_AS_DESK: Readonly<Record<string, DeskFieldKey>> = {
+  gst_verified: "gstin",
+  application_understood: "application",
 };
 
 const NOT_APPROVER = "Only the lead's designated approver can change an answer here.";
@@ -354,10 +396,13 @@ const ANSWER_DISPLAY: Record<string, string> = { yes: "Yes", no: "No" };
  * Qualification question, each with the answers already saved, in the order the
  * lead met them.
  *
- * ONE STORED ANSWER IS EDITED IN ONE PLACE. The Calling Desk's "Product" and the
- * Prospect's "Which of our products do they need?" are the same column; a box on
- * each would let two edits disagree before either is saved. The later box still
- * shows the answer and says where it is edited.
+ * ONE STORED ANSWER IS DRAWN, AND EDITED, IN ONE PLACE. The Calling Desk's
+ * "Product" and the Prospect's "Which of our products do they need?" are the
+ * same column, and so are the GST number, the application, the decision maker,
+ * the buyer and the credit days wherever Qualification asks them again. The
+ * Suspect row carries each once (with the gate's verdict on it); the repeats are
+ * not drawn. A Qualification question that asks something ELSE as well keeps its
+ * row, with only the part nothing above has asked.
  *
  * AND NOTHING IS OFFERED THAT THE CRM WOULD REFUSE. The Sales Manager reviews a
  * Qualification, the Salesman collects it: `saveProspectFields` and
@@ -368,6 +413,8 @@ const ANSWER_DISPLAY: Record<string, string> = { yes: "Yes", no: "No" };
 export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRow[] {
   const rows: ReviewRow[] = [];
   const editedAt = new Map<string, string>();
+  /** The Suspect rows by desk key, so a repeated question can fold into the one that already carries its answer. */
+  const deskRows = new Map<DeskFieldKey, ReviewRow>();
 
   /** Decide one box's editability, once, for every section. */
   const settle = (id: string, label: string): Pick<ReviewField, "editKey" | "readOnlyReason" | "sameAs"> => {
@@ -424,7 +471,7 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
     const base: Pick<ReviewField, "editKey" | "readOnlyReason" | "sameAs"> = wants
       ? settle(wants, f.label)
       : { editKey: null, readOnlyReason: "Edited from the Calling Desk, not from the review." };
-    rows.push({
+    const deskRow: ReviewRow = {
       key: `suspect:${f.key}`,
       section: "suspect",
       id: f.key,
@@ -442,7 +489,9 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
           ...base,
         },
       ],
-    });
+    };
+    rows.push(deskRow);
+    deskRows.set(f.key, deskRow);
   }
 
   /* PROSPECT — the seven conditions the Sales Manager verifies. */
@@ -458,6 +507,14 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
     const answered = !src.unmetProspect.has(c.id);
     /* Optional conditions (who to ask for, why it is worth following up) are drawn and
        editable like the rest, but are not "required" and never read as a blocker. */
+    /* A question the Suspect list already asked is not drawn a second time: the
+       Suspect row carries the one answer and now also the gate's verdict on it. */
+    const asDesk = PROSPECT_AS_DESK[c.id] ? deskRows.get(PROSPECT_AS_DESK[c.id]) : undefined;
+    if (asDesk) {
+      asDesk.required = asDesk.required || !c.optional;
+      asDesk.answered = asDesk.answered && answered;
+      continue;
+    }
     const head = { key: `prospect:${c.id}`, section: "prospect" as const, id: c.id, label: c.says, answered, required: !c.optional };
     if (c.id === "next_action") {
       const text = src.nextAction?.trim();
@@ -499,6 +556,9 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
     });
   }
 
+  /* BEFORE QUALIFICATION OPENS its questions are not asked yet. */
+  if (ctx.kind === "prospect") return rows;
+
   /* QUALIFICATION — the checklist for this lead's sales type. */
   const conditions = checklistFor(src.salesType, "qualification");
   if (src.salesType === "distributor") {
@@ -526,6 +586,18 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
 
   for (const c of conditions) {
     const specs = QUALIFICATION_FIELDS[c.id] ?? [];
+    /* A box whose answer is already drawn above is not drawn again — the Suspect
+       row holds the one answer (decision maker, buyer, credit days, GST,
+       application). What is left is what only Qualification asks. */
+    const fresh = specs.filter((s) => !editedAt.has(s.id));
+    if (!fresh.length) {
+      const asDesk = QUALIFICATION_AS_DESK[c.id] ? deskRows.get(QUALIFICATION_AS_DESK[c.id]) : undefined;
+      if (asDesk) {
+        asDesk.required = true;
+        asDesk.answered = asDesk.answered && !src.unmetQualification.has(c.id);
+        continue;
+      }
+    }
     rows.push({
       key: `qualification:${c.id}`,
       section: "qualification",
@@ -533,7 +605,7 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
       label: c.says,
       answered: !src.unmetQualification.has(c.id),
       required: true,
-      fields: specs.map((s) => {
+      fields: fresh.map((s) => {
         const v = columnValue(s.id);
         return {
           id: s.id,

@@ -315,6 +315,8 @@ const files = [
   "src/lib/lead-readiness-move.test.ts",
   // Qualification: the Salesman collects, the Sales Manager validates GST and reviews.
   "src/lib/qualification-flow.test.ts",
+  // The consolidated Qualification review (each question once) and the optional verification call that follows its save.
+  "src/lib/consolidated-review-call.test.ts",
   // A lead the Sales Manager raised herself is approved by the person Mahek designates.
   "src/lib/self-raised-approver.test.ts",
   // Who verifies a Prospect on each of the three workflows, kept apart: a Telecaller's lead,

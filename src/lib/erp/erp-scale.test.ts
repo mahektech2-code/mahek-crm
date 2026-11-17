@@ -311,7 +311,7 @@ describe("a page costs what it draws", () => {
       assert.ok(res.rows.length > 0);
       const row = res.rows.find((r) => r.id === OLD_OPEN)!;
       /* Read, the drawer is all there. */
-      assert.ok(row.actions!.some((a) => a.id === "editOrder"));
+      assert.ok(row.actions!.some((a) => a.id === "edit"), "Dispatch details — the order itself is not edited once it has its number");
       assert.ok(row.fields!.some((f) => f.l === "Order"));
     } finally {
       client.unsafe = unsafe;

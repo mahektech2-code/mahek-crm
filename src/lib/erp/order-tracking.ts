@@ -84,6 +84,7 @@ async function readOrders(orderNos: number[]): Promise<Map<number, OrderBasics>>
   const rows = (await db.execute(sql`
     select o.id, o.order_no as "orderNo", o.order_date::text as "orderDate", o.status, o.order_check as "orderCheck",
            o.order_checked_at as "orderCheckedAt", o.party_status as "partyStatus", o.created_at as "createdAt", o.updated_at as "updatedAt",
+           o.accounts_check as "accountsCheck", o.accounts_checked_at as "accountsCheckedAt",
            o.billing_customer_id as "billingId", o.delivery_customer_id as "deliveryId", bc.name as "billingName", dc.name as "deliveryName",
            dc.city as "deliveryCity", o.qty_cans as "qtyCans", o.tally_bill_no as "invoiceNo", o.invoice_date::text as "invoiceDate",
            p.name as sku, fg.name as good, p.millilitres_per_can as ml, p.cans_per_box as cpb, coalesce(pk.box_type, '') as "boxType",
@@ -128,6 +129,8 @@ async function readOrders(orderNos: number[]): Promise<Map<number, OrderBasics>>
       orderCheck: String(r.orderCheck),
       orderCheckedAt: iso(r.orderCheckedAt),
       partyStatus: str(r.partyStatus),
+      accountsCheck: str(r.accountsCheck),
+      accountsCheckedAt: iso(r.accountsCheckedAt),
       createdAt: iso(r.createdAt)!,
       updatedAt: iso(r.updatedAt)!,
       billed: !!r.billed,
@@ -484,7 +487,7 @@ export async function holdSentences(kind: "hold" | "delay"): Promise<{ labels: s
 export async function recordHold(
   ctx: Pick<ErpContext, "user"> & Partial<ErpContext>,
   orderNo: number,
-  input: HoldInput & { notify?: boolean; transportIds?: string[]; lineStatuses?: Record<string, string> },
+  input: HoldInput & { notify?: boolean; transportIds?: string[]; lineStatuses?: Record<string, string>; department?: "office" | "accounts" | "production" },
   tx: typeof db = db,
 ): Promise<Result<{ holdId: string }>> {
   const refusal = holdRefusal(input, today());
@@ -503,6 +506,7 @@ export async function recordHold(
     revisedDeliveryOn: input.revisedDeliveryOn || null,
     transportIds: input.transportIds ?? [],
     lineStatuses: input.lineStatuses ?? {},
+    department: input.department ?? "office",
     raisedById: ctx.user.id,
   });
   return ok({ holdId: id });

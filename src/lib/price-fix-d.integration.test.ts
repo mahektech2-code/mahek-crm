@@ -14,6 +14,7 @@
  * Driven through `ingestSyncBatch` and the ERP screen module, nothing stubbed.
  * Needs `mahekone_test` (npm run test:db); it truncates what it touches.
  */
+import { placeOrder } from "./erp/test-orders";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -212,7 +213,7 @@ describe("B9 · the ERP order form holds discounts and typed rates to the ceilin
   }
   const head = { source: "Phone", date: "2026-10-01", godown: "Bhiwandi", billing: "Sai Paint Depot" };
   const newOrder = async (ctx: Awaited<ReturnType<typeof erpContext>>, line: Record<string, string>) =>
-    screenModule("orders")!.forms!.new(ctx, head, [{ sku: skuAName, qty: "2", ...line }]);
+    placeOrder(ctx, head, [{ sku: skuAName, qty: "2", ...line }]);
   const reason = (r: { ok: boolean; fieldErrors?: { field: string; message: string }[]; error?: string }) =>
     r.ok ? "ok" : `${r.fieldErrors?.[0]?.field ?? ""}: ${r.fieldErrors?.[0]?.message ?? r.error}`;
 
@@ -243,13 +244,11 @@ describe("B9 · the ERP order form holds discounts and typed rates to the ceilin
     assert.equal(line.listRatePaise, 10_000);
   });
 
-  test("an edit that moves the discount is decided again", async () => {
+  test("once an order has its order number its discount cannot be moved", async () => {
     const { ctx } = await erpUser("associate");
     assert.equal(reason(await newOrder(ctx, {})), "ok");
     const [line] = await db.select().from(erpOrders);
     const edit = await screenModule("orders")!.forms!.edit(ctx, { status: "Under Process", delivery: "Sai Paint Depot", qty: "2", rate: "100", discount: "3", transport: "0" }, [], line.id);
-    assert.match(reason(edit), /discount/);
-    const quantity = await screenModule("orders")!.forms!.edit(ctx, { status: "Under Process", delivery: "Sai Paint Depot", qty: "3", rate: "100", transport: "0" }, [], line.id);
-    assert.equal(reason(quantity), "ok", "a line whose price did not move is not re-decided");
+    assert.match(reason(edit), /order number/);
   });
 });

@@ -69,15 +69,19 @@ export function hms(min: number): string {
 
 export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string): DayFigures {
   const qr = r.method === "qr";
-  const grace = qr ? cfg.qrGraceMinutes : cfg.graceMinutes;
   const inM = tmin(r.checkIn);
   const outM = tmin(r.checkOut);
   const offIn = tmin(r.officialIn);
   const durationMin = inM != null && outM != null ? outM - inM : null;
   const workedMin = durationMin == null ? null : durationMin - (r.stoppageMin || 0);
-  const lateMin = inM != null && offIn != null ? inM - offIn : null;
-  const lateOrEarlyMin = inM != null && offIn != null ? offIn + grace - inM : null;
-  const lateBeyondGrace = lateOrEarlyMin != null && lateOrEarlyMin < 0;
+  /* NO LATE, NO GRACE (Nov 2026). People punch in whenever they choose: a
+     day is never marked late, and nothing downstream (the monthly report,
+     performance, the payroll late-mark deduction) has a lateness to count.
+     The fields stay, always empty, so every reader keeps working; the office
+     start time is still shown where "Late 12 min" used to be. */
+  const lateMin = null;
+  const lateOrEarlyMin = null;
+  const lateBeyondGrace = false;
   const target = r.targetMin ?? null;
   const pct = workedMin != null && target ? Math.round((workedMin * 100) / target) : null;
   let workDay: DayFigures["workDay"] = "";
@@ -98,7 +102,7 @@ export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string):
     lateMin,
     lateOrEarlyMin,
     lateBeyondGrace,
-    lateTxt: lateMin == null ? "No timing set" : lateMin > 0 ? `Late ${lateMin} min` : lateMin < 0 ? `Early ${-lateMin} min` : "On time",
+    lateTxt: offIn != null ? `Office from ${hhmm(offIn)}` : "",
     pct,
     workDay,
     current,
@@ -157,22 +161,16 @@ export type CheckInDecision = { ok: true } | { ok: false; reason: CheckInRefusal
  * person is shown to be at the office.
  */
 /**
- * Whether a punch-in stands. LOCATION IS NOT A GATE (Nov 2026): a desktop has
- * no GPS and the browser guesses from the network, kilometres out, so a
- * geofence refused people sitting in the office. The distance is still read
- * and stored on the day when there is one; only "already in" and "late" refuse.
+ * Whether a punch-in stands. NOTHING BUT "ALREADY IN" REFUSES (Nov 2026).
+ * Location is not a gate: a desktop has no GPS and the browser guesses from
+ * the network, kilometres out, so a geofence refused people sitting in the
+ * office. Lateness is not a gate either: with the workday lock on, refusing a
+ * late punch-in locked that person out of every app for the day, and the
+ * owner's rule is that people may punch in at any time. How late they were is
+ * still worked out and shown on the day (`dayFigures`), never refused.
  */
 export function decideCheckIn(x: CheckInInput): CheckInDecision {
   if (x.alreadyToday) return { ok: false, reason: "already", message: "You have already checked in today", detail: "Check out at the end of the day." };
-  const offIn = tmin(x.officialIn);
-  const nowM = tmin(x.now);
-  if (!x.privileged && offIn != null && nowM != null && nowM > offIn + x.graceMinutes)
-    return {
-      ok: false,
-      reason: "late",
-      message: "Too late to check in: today counts as unpaid leave",
-      detail: `It is more than ${x.graceMinutes} minutes past your ${hhmm(offIn)} start. Send an “I am late today” request, and the person who resolves help requests will decide.`,
-    };
   return { ok: true };
 }
 

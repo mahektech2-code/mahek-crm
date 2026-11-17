@@ -7,6 +7,7 @@
  *
  *   npm run test:integration
  */
+import { placeOrder } from "./test-orders";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -203,7 +204,8 @@ describe("orders from messages (AI-2)", () => {
     const base = await orderForm(a);
     const form = (await draftForm(base, r.ok ? r.data.id : ""))!;
     assert.equal(form.init?.billing, "Shree Paints");
-    await ok(mod("orders").forms!.new(a, { ...form.init, godown: "Bhiwandi", date: "2026-09-20" } as Record<string, string>, form.initLines!));
+    /* The hub gives an order its number only once every line has a rate; this book has no price list, so the person adds it. */
+    await ok(placeOrder(a, { ...form.init, godown: "Bhiwandi", date: "2026-09-20" } as Record<string, string>, form.initLines!.map((l) => ({ ...l, rate: l.rate || "300" }))));
     const [inbox] = await db.select().from(erpOrderInbox).where(eq(erpOrderInbox.id, r.ok ? r.data.id : ""));
     assert.equal(inbox.status, "Converted");
     assert.ok(inbox.orderNo);

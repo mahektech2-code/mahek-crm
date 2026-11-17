@@ -1,5 +1,7 @@
 import { canVerifyLeadById } from "@/lib/services/lead-verifier";
-import { type LeadWorkspace } from "@/lib/lead-workspace";
+import Link from "next/link";
+import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
+import { callRefusalFor } from "@/lib/services/qualification-call-gate";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { money } from "@/lib/format";
@@ -53,6 +55,25 @@ export async function Body({
   /* Null is both "no such lead" and "not in this manager's territory", and the
      two are one answer on purpose — see the record page. */
   if (!record) notFound();
+
+  /* THE CALL COMES AFTER THE QUALIFICATION REVIEW IS SAVED. A bookmark or a typed
+     address gets the same answer as the button: not yet, and where to go. The
+     action refuses too — this page is only the courteous half. */
+  const tooEarly = await callRefusalFor(id);
+  if (tooEarly) {
+    return (
+      <div className="mx-auto max-w-[640px] px-5 py-10" data-testid="call-not-open">
+        <h1 className="text-[18px] font-semibold text-ink">The verification call is not open yet</h1>
+        <p className="mt-2 text-[14px] text-body">{tooEarly}</p>
+        <Link
+          href={leadHref(workspace, `leads/${id}/review`)}
+          className="mt-4 inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-ink no-underline hover:no-underline"
+        >
+          Go to the review
+        </Link>
+      </div>
+    );
+  }
 
   const calls = await managerCalls(id);
 

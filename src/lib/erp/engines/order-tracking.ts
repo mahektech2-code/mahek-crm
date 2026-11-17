@@ -72,6 +72,9 @@ export type LineFacts = {
   orderCheck: string;
   orderCheckedAt: string | null;
   partyStatus: string | null;
+  /** Accounts' check of an order the Order Hub made; absent or Approved on every older line. */
+  accountsCheck?: string | null;
+  accountsCheckedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   billed: boolean;
@@ -126,7 +129,7 @@ const max = (xs: (string | null | undefined)[]): string | null => xs.filter((x):
 
 /** True from "confirmed" onward: the back office verified every live line and no line waits on a pending party. */
 export function isConfirmed(lines: LineFacts[]): boolean {
-  return lines.length > 0 && lines.every((l) => l.orderCheck === "Verified" && l.partyStatus !== "Pending");
+  return lines.length > 0 && lines.every((l) => l.orderCheck === "Verified" && l.partyStatus !== "Pending" && (l.accountsCheck == null || l.accountsCheck === "Approved"));
 }
 
 /**
@@ -153,7 +156,7 @@ export function deriveSteps(f: OrderFacts): Map<Step, string | null> {
   /* Confirmed is the LATER of the back office's check and Accounts' approval of a
      pending party — the approval leaves no time of its own, so the line's last
      change stands for it. */
-  const confirmedAt = max([...live.map((l) => l.orderCheckedAt), ...live.filter((l) => l.partyStatus === "Approved By Admin").map((l) => l.updatedAt)]);
+  const confirmedAt = max([...live.map((l) => l.orderCheckedAt), ...live.map((l) => l.accountsCheckedAt), ...live.filter((l) => l.partyStatus === "Approved By Admin").map((l) => l.updatedAt)]);
   out.set("confirmed", confirmedAt);
   out.set("preparing", confirmedAt);
 
@@ -306,7 +309,7 @@ export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLa
 
 /* ============================================================ holds */
 
-export type HoldReason = { code: string; label: string; kind: "hold" | "delay" | "both"; sentence: string };
+export type HoldReason = { code: string; label: string; kind: "hold" | "delay" | "both"; sentence: string; desk?: "accounts" | "production" };
 
 /** PRD §7's reasons, with the sentence the customer reads. Admins may reword a sentence (`erp.tracking.holdMessages`). */
 export const HOLD_REASONS: HoldReason[] = [
@@ -319,10 +322,15 @@ export const HOLD_REASONS: HoldReason[] = [
   { code: "route_delay", label: "Road block / route delay", kind: "delay", sentence: "Delivery is delayed due to a route disruption. We will share an update when more information is available." },
   { code: "vehicle_breakdown", label: "Vehicle breakdown", kind: "delay", sentence: "Delivery is delayed because the vehicle carrying your goods broke down. We will update you when it is moving again." },
   { code: "other", label: "Other", kind: "both", sentence: "" },
+  /* Reasons only a desk of the Order Hub raises (Accounts, the MRP check); never offered on Orders' own hold. */
+  { code: "over_credit_limit", label: "Over credit limit", kind: "hold", desk: "accounts", sentence: "Your order is waiting for a payment to be confirmed. We will update you as soon as it moves." },
+  { code: "overdue_bills", label: "Bills past credit days", kind: "hold", desk: "accounts", sentence: "Your order is waiting for a payment to be confirmed. We will update you as soon as it moves." },
+  { code: "packing_shortage", label: "Packing material short", kind: "hold", desk: "production", sentence: "Your order is delayed because one or more required materials are currently unavailable. We will update you when preparation can continue." },
+  { code: "capacity", label: "No capacity", kind: "hold", desk: "production", sentence: "Preparation of your order is taking longer than planned. We will update you when it is ready." },
 ];
 
 export function reasonsFor(kind: "hold" | "delay"): HoldReason[] {
-  return HOLD_REASONS.filter((r) => r.kind === kind || r.kind === "both");
+  return HOLD_REASONS.filter((r) => !r.desk && (r.kind === kind || r.kind === "both"));
 }
 
 export function reasonLabel(code: string): string {

@@ -26,6 +26,7 @@ export const ERP_POWERS = [
   "customerStatus",
   "approveParty",
   "verifyOrders",
+  "productionCheck",
   "checkInvoices",
   "decideRequests",
   "employeeAdmin",
@@ -94,6 +95,10 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   verifyOrders: {
     label: "Verify orders (back office)",
     source: "Checks an entered order against what the customer asked for — Verified, or sent back for correction with a reason — before production can mark it Ready. Told when an order's goods are Ready to bill (new in MahekOne: Order-to-Delivery PRD step 2).",
+  },
+  productionCheck: {
+    label: "Production Head checks (Order Hub and MRP)",
+    source: "Makes the Production Head's check of a new TO — duplicate, product, quantity — and clears an approved order for production against materials and capacity, or holds it (new in MahekOne: the Order Hub).",
   },
   checkInvoices: {
     label: "Check invoices before dispatch",

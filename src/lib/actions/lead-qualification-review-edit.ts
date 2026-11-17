@@ -14,6 +14,7 @@ import {
   isCollectorEdit,
   PROSPECT_EDIT_KEYS,
   REVIEW_EDIT_ACTION,
+  REVIEW_SAVED_ACTION,
   splitEdits,
 } from "@/lib/qualification-review";
 import { saveLeadQualification, saveProspectFields } from "@/lib/actions/leads";
@@ -106,11 +107,17 @@ export async function saveQualificationReviewEdits(
     }
     const fieldKeys = Object.keys(split.fields);
     const answerKeys = Object.keys(split.answers);
-    if (!fieldKeys.length && !answerKeys.length) return err("There is nothing to save.", "validation");
+    const nothingChanged = !fieldKeys.length && !answerKeys.length;
 
     const before = await leadRow(customerId);
     if (!before || !before.leadStage) return err("That lead is not on MahekOne.", "not_found");
     await assertLeadInScope(customerId, before);
+    /* A save with no edits is only meaningful once Qualification is open: it is
+       the approver saying "I have read this, nothing to correct", and it is what
+       opens the optional verification call. Before that there is nothing to save. */
+    if (nothingChanged && !qualificationAccess(before.leadStage).writable) {
+      return err("There is nothing to save.", "validation");
+    }
 
     /* WHICH DECISION THIS IS decides who may edit. Before Qualification opens the
        lead is with its designated VERIFIER (the Prospect review); once it is open
@@ -223,9 +230,32 @@ export async function saveQualificationReviewEdits(
     }
 
     if (answersNote) return err(answersNote, "rule_violation");
+
+    /* THE REVIEW IS SAVED. This is a mark and nothing else: it approves nothing,
+       moves nothing and is read by no gate. It is what makes the optional
+       verification call available (`callRefusalFor`), and it is written only at
+       Qualification, only by the designated approver (asked above), and only
+       after every write above succeeded. */
+    if (qualificationAccess(before.leadStage).writable) {
+      await db.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: ctx.user.id,
+        action: REVIEW_SAVED_ACTION,
+        entityType: "customer",
+        entityId: customerId,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        beforeState: null,
+        afterState: { changed: changes.length },
+      });
+    }
     return ok(
       { changed: changes.length },
-      changes.length ? `Saved ${changes.length} change${changes.length === 1 ? "" : "s"}.` : "Nothing was different, so nothing changed.",
+      changes.length
+        ? `Saved ${changes.length} change${changes.length === 1 ? "" : "s"}.`
+        : qualificationAccess(before.leadStage).writable
+          ? "Review saved — nothing needed changing."
+          : "Nothing was different, so nothing changed.",
     );
   } catch (e) {
     return fromThrown(e);

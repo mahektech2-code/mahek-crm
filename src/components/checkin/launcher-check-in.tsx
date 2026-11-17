@@ -32,7 +32,8 @@ const EXEMPT_WORDS: Record<string, string> = {
     "You are a platform administrator, so MahekOne is never locked for you (HRMS settings → Workday clock).",
 };
 
-export function LauncherCheckIn() {
+/** `quiet`: the launcher draws the card only, never the notes about why the clock does not apply. */
+export function LauncherCheckIn({ quiet = false }: { quiet?: boolean } = {}) {
   const w = useWorkday();
   const [sheet, setSheet] = React.useState<null | "break" | "out">(null);
   const [res, setRes] = React.useState<OpResult | null>(null);
@@ -41,10 +42,11 @@ export function LauncherCheckIn() {
 
   if (!state.subject) {
     const why = state.exempt ? EXEMPT_WORDS[state.exempt] : null;
-    if (!why) return null;
+    if (!why || quiet) return null;
     return <Note>{why}</Note>;
   }
   if (state.onHandset) {
+    if (quiet) return null;
     return <Note>You punched in on the field app today, so you punch out there too.</Note>;
   }
 
@@ -180,7 +182,7 @@ export function LauncherCheckIn() {
           {res.detail ? ` — ${res.detail}` : ""}
         </div>
       ) : null}
-      {exemptLine ? <div className="border-t border-divider bg-canvas px-[22px] py-2.5 text-[12.5px] text-muted">{exemptLine}</div> : null}
+      {exemptLine && !quiet ? <div className="border-t border-divider bg-canvas px-[22px] py-2.5 text-[12.5px] text-muted">{exemptLine}</div> : null}
 
       {sheet === "break" ? <BreakDialog onClose={() => setSheet(null)} /> : null}
       {sheet === "out" ? <PunchOutDialog withLocation={withLocation} onClose={() => setSheet(null)} /> : null}

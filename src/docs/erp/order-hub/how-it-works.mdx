@@ -1,0 +1,26 @@
+## Why two checks, and why no edits after them
+
+An order used to get its number the moment it was typed, and the back office verified it afterwards. Production could start, and the order could be edited, while nobody had looked at it. Now nothing downstream sees an order until two people have: the TO lives in its own tables and is invisible to stock, the production plan, the order book and the customer.
+
+The two checks are two **people**. Whoever made one cannot make the other, so an order never gets its number on one person's say-so. An ERP administrator is the one exception, as with the invoice check.
+
+Once the order number exists, the order is what was checked and what Accounts approve. Changing it afterwards would mean Accounts approved one order and the floor made another, so the content is fixed and the only way to change it is to cancel it and take a new one.
+
+## The gates after the order number
+
+Every order the hub makes carries two checks on its lines:
+
+- **Accounts** — Pending until Accounts approve it. The order waits in their approval queue.
+- **Production** — Pending until the Production Head clears it at the MRP check.
+
+A line reaches Under Process, the day's plan, Ready and billing only when both are cleared. Every order from before the hub carries both as cleared, so nothing that was already moving stopped.
+
+The MRP check reads stock as it is now. It is shared with every other order, so it says what is there, not what is promised elsewhere. MahekOne does not know the floor's capacity, so capacity is the Production Head's tick.
+
+## The settings it depends on
+
+The hub runs with the ERP as the order book: <Setting k="erp.orders.live" />. With it off, TeleCRM and Salesman App orders go to Accounts the old way and do not enter the hub.
+
+## Holds
+
+A TO's hold is kept on the TO. An order's hold is a row in the order holds, with the **department** that held it. Releasing sends the order back to that desk, never past it. The customer reads only the customer wording, never a staff remark, and is not messaged about a hold before Accounts have confirmed the order.
