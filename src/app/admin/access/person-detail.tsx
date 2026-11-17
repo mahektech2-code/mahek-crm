@@ -128,7 +128,7 @@ export function PersonDetail({
   const history = audit.entries.filter((e) => e.group === "access").slice(0, 4);
 
   return (
-    <div className="flex w-full max-w-[1240px] flex-col gap-5 px-7 pt-6 pb-10 text-[13px] leading-[1.45]">
+    <div className="flex w-full min-w-0 flex-col gap-5 px-6 pt-6 pb-10 text-[13px] leading-[1.45]">
       <div className="flex flex-wrap items-center gap-4">
         <span
           aria-hidden

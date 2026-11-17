@@ -34,7 +34,7 @@ export function FleetFrame({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex w-full max-w-[1240px] flex-col gap-[18px] px-7 pt-6 pb-10 text-[13px] leading-[1.45]">
+    <div className="flex w-full min-w-0 flex-col gap-4 px-6 pt-6 pb-10 text-[13px] leading-[1.45]">
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 text-[22px] leading-7 font-bold tracking-[-0.02em] text-ink">{title}</h1>
         <span className="flex-1" />

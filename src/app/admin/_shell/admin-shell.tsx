@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
 import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/shell/collapsible-nav";
@@ -77,9 +77,6 @@ export function AdminShell({
   status: ConsoleStatus;
   children: React.ReactNode;
 }) {
-  const pathname = usePathname() ?? "/admin";
-  const here = activeItem(pathname, pinned, groups);
-  const crumb = here ? (here.group && here.group !== here.item.label ? `${here.group} › ${here.item.label}` : here.item.label) : "Admin Console";
 
   /* The rail follows the window: narrow starts railed, widening opens it.
      The button overrides it until the window crosses the line again. */
@@ -114,7 +111,6 @@ export function AdminShell({
                   href="/admin"
                   label="MAHEK ADMIN"
                   wordmark={false}
-                  switcherLabel="Admin Console"
                   toggleIcon={
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                       <path d="M4 5h16v14H4zM9 5v14" />
@@ -122,7 +118,6 @@ export function AdminShell({
                   }
                 />
               </div>
-              <span className="hidden min-w-0 flex-initial truncate text-[13px] font-medium text-[#5a4e8c] lg:inline">{crumb}</span>
               <ConsoleSearch entries={search} />
               <span className="flex-1" />
               <div className="flex flex-none items-center gap-2">
@@ -172,27 +167,6 @@ export function AdminShell({
       </div>
     </ToastProvider>
   );
-}
-
-type Here = { item: NavRowItem; group: string | null };
-
-/** The row lit for this address: the longest href or `match` prefix that fits. */
-function activeItem(pathname: string, pinned: NavRowItem[], groups: NavRowGroup[]): Here | null {
-  let best: Here | null = null;
-  let bestLen = -1;
-  const consider = (item: NavRowItem, group: string | null) => {
-    const prefixes = [item.href, ...(item.match ?? [])];
-    for (const pre of prefixes) {
-      const hit = item.exact && pre === item.href ? pathname === pre : pathname === pre || pathname.startsWith(pre + "/") || pathname.startsWith(pre + "?");
-      if (hit && pre.length > bestLen) {
-        best = { item, group };
-        bestLen = pre.length;
-      }
-    }
-  };
-  pinned.forEach((i) => consider(i, null));
-  groups.forEach((g) => g.items.forEach((i) => consider(i, g.label)));
-  return best;
 }
 
 /** The console's "Live now": how the platform stands, always at the foot. */
@@ -266,7 +240,7 @@ function ConsoleSearch({ entries }: { entries: SearchEntry[] }) {
   }
 
   return (
-    <div ref={wrapRef} className="relative w-[340px] max-w-[40%] min-w-[140px] flex-initial">
+    <div ref={wrapRef} className="relative max-w-[520px] min-w-[140px] flex-1">
       <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4" />
