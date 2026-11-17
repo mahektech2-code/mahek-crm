@@ -4,9 +4,9 @@ import { planPrint, planView } from "@/lib/erp/production-plan";
 import { PLAN_CATEGORIES, printMarks } from "@/lib/erp/engines/production-plan";
 import { erpPlanHref } from "@/lib/erp/trace-links";
 import { fdLong, nf } from "@/lib/erp/ui";
-import { stamp, stampDate } from "@/lib/format";
+import { clock, stamp, stampDate } from "@/lib/format";
 import { calendarDate } from "@/lib/business-date";
-import { cx, Td, Th } from "@/components/ui/primitives";
+import { Td, Th } from "@/components/ui/primitives";
 import { linkClass } from "../../../_ui/look";
 import { PrintButton } from "../../../po/[id]/print-button";
 
@@ -41,10 +41,18 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
   const marked = rows.some((r) => r.mark) || removed.length > 0;
   /* A sheet printed on a later day than the one it plans says so, or it reads as a fresh sheet for that day. */
   const printedLate = calendarDate(new Date(print.current.printedAt)) !== plan.planDate;
+  const weekday = WEEKDAYS[new Date(`${plan.planDate}T00:00:00Z`).getUTCDay()] ?? "";
+  const printedLine = `Created by ${plan.createdBy ?? "—"} · Printed ${stampDate(print.current.printedAt)}, ${clock(new Date(print.current.printedAt))}`;
+  const changeLine = !print.previous
+    ? "First print of the day"
+    : marked
+      ? `★ underlined = new or changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)})`
+      : `Nothing changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)}) — the same work as that sheet.`;
+  const runningHead = `PLAN-${plan.planNo} · ${fdLong(plan.planDate)} · Print ${print.current.printNo}`;
 
   return (
     <div className="mx-auto grid w-full max-w-[640px] gap-4 p-6">
-      <style>{`@page { size: A5 portrait; margin: 8mm 8mm 12mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 8pt sans-serif; } } @media print { body * { visibility: hidden; } .plan-paper, .plan-paper * { visibility: visible; } .plan-paper { position: absolute; inset: 0 auto auto 0; width: 100%; border: 0 !important; box-shadow: none !important; padding: 0 !important; } .plan-paper u { text-decoration-thickness: 1.5px; } } .plan-paper th { background: white !important; color: black !important; border-bottom: 1px solid black !important; }`}</style>
+      <style>{sheetCss({ runningHead, printedLine })}</style>
       <div className="flex items-center justify-between gap-3 print:hidden">
         <a href={erpPlanHref(id)} className={linkClass("brand", "text-sm")}>
           ← Back to PLAN-{plan.planNo}
@@ -52,45 +60,61 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         <PrintButton />
       </div>
       <p className="text-meta text-muted print:hidden">
-        A5 portrait. Print {print.current.printNo} of {plan.prints.length}
+        A5 portrait, margins Default. Print {print.current.printNo} of {plan.prints.length}
         {print.current.printNo < plan.prints.length ? " — an earlier sheet, exactly as it was handed out." : "."}
       </p>
 
-      <article className="plan-paper grid gap-3 border border-line bg-white p-6 text-meta text-ink shadow-pop">
-        <header className="flex items-start justify-between gap-4 border-b-2 border-ink pb-2">
-          <div className="flex items-center gap-2.5">
-            {/* eslint-disable-next-line @next/next/no-img-element -- a print page: the plain image prints where next/image may lazy-load */}
-            <img src="/brand/mahek-logo.png" alt="Mahek" className="h-10 w-auto" />
-            <div>
-              <div className="text-base font-bold">MAHEK – DAILY PRODUCTION PLAN</div>
-              <div className="text-body">Mahek Marketing India</div>
-            </div>
+      <article className="pp-paper">
+        <header className="pp-hd">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a print page: the plain image prints where next/image may lazy-load */}
+          <img src="/brand/mahek-logo.png" alt="Mahek" className="pp-logo" />
+          <div>
+            <div className="pp-ttl">Daily Production Plan</div>
+            <div className="pp-co">Mahek Marketing India</div>
           </div>
-          <div className="text-right leading-5">
-            <div>
-              Plan <b>PLAN-{plan.planNo}</b>
-            </div>
-            <div>
-              Date <b>{fdLong(plan.planDate)}</b>
-            </div>
-            <div>Created by {plan.createdBy ?? "—"}</div>
-            <div className="mt-1 inline-block border border-ink px-1.5 font-bold">
-              PRINT {print.current.printNo} · {stamp(print.current.printedAt)}
-            </div>
-            {printedLate ? <div className="mt-1 text-2xs font-bold">Printed on {stampDate(print.current.printedAt)}, not on the plan&apos;s day</div> : null}
+          <div className="pp-when">
+            <div className="pp-date">{fdLong(plan.planDate)}</div>
+            <div className="pp-day">{weekday}</div>
           </div>
         </header>
 
-        <table className="w-full border-collapse">
+        <div className="pp-facts">
+          <div>
+            <span>Plan</span>
+            <b>PLAN-{plan.planNo}</b>
+          </div>
+          <div>
+            <span>Godown</span>
+            <b>{plan.godown ?? "All"}</b>
+          </div>
+          <div>
+            <span>Lines</span>
+            <b>{rows.length}</b>
+          </div>
+          <div className="pp-print">
+            <span>Print</span>
+            <b>{print.current.printNo}</b>
+          </div>
+        </div>
+        {printedLate ? <div className="pp-late">Printed on {stampDate(print.current.printedAt)}, not on the plan&apos;s day</div> : null}
+
+        <table className="pp-table">
+          <colgroup>
+            <col style={{ width: "6%" }} />
+            <col style={{ width: "42%" }} />
+            <col style={{ width: "10%" }} />
+            <col style={{ width: "9%" }} />
+            <col style={{ width: "11%" }} />
+            <col />
+          </colgroup>
           <thead>
-            <tr className="border-b border-ink">
-              <Th className="static w-[40%] bg-white px-1 text-ink">Product</Th>
-              <Th className="static bg-white px-1 text-ink">Size</Th>
-              <Th align="right" className="static bg-white px-1 text-ink">
-                Qty
-              </Th>
-              <Th className="static bg-white px-1 text-ink">Unit</Th>
-              <Th className="static bg-white px-1 text-ink">Remarks</Th>
+            <tr>
+              <Th className="pp-n">#</Th>
+              <Th>Product</Th>
+              <Th>Size</Th>
+              <Th className="pp-r">Qty</Th>
+              <Th>Unit</Th>
+              <Th>Remarks</Th>
             </tr>
           </thead>
           <tbody>
@@ -98,30 +122,30 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
               const mine = rows.filter((r) => r.category === c.key);
               if (!mine.length) return null;
               return [
-                <tr key={`h-${c.key}`} className="bg-canvas">
-                  <Td colSpan={5} className="px-1 py-1 text-2xs font-bold">
+                <tr key={`h-${c.key}`} className="pp-cat">
+                  <Td colSpan={6}>
                     {c.label}
+                    <span>{categoryTotals(mine)}</span>
                   </Td>
                 </tr>,
                 ...mine.map((r) => {
                   const U = ({ children }: { children: React.ReactNode }) => (r.mark ? <u>{children}</u> : <>{children}</>);
+                  const remark = [r.remarks, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ");
                   return (
-                    <tr key={r.id} className="border-b border-divider align-top">
-                      <Td className={cx("px-1 py-1 whitespace-normal", r.mark && "font-bold")}>
+                    <tr key={r.id} className={r.mark ? "pp-chg" : undefined}>
+                      <Td className="pp-n">{r.sr}</Td>
+                      <Td>
                         {r.mark ? "★ " : ""}
                         <U>{r.productName}</U>
-                        {r.productCode ? <span className="block font-mono text-2xs font-normal text-muted">{r.productCode}</span> : null}
                       </Td>
-                      <Td className="px-1 py-1">{r.size ?? "—"}</Td>
-                      <Td align="right" className="px-1 py-1 font-bold tabular-nums">
+                      <Td>{r.size ?? "—"}</Td>
+                      <Td className="pp-qty">
                         <U>{nf(r.quantity)}</U>
                       </Td>
-                      <Td className="px-1 py-1">
+                      <Td>
                         <U>{r.unit}</U>
                       </Td>
-                      <Td className="px-1 py-1 whitespace-normal">
-                        <U>{[r.remarks, r.orderRefs ? `Orders ${r.orderRefs}` : null, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ")}</U>
-                      </Td>
+                      <Td className="pp-rem">{remark ? <U>{remark}</U> : null}</Td>
                     </tr>
                   );
                 }),
@@ -131,21 +155,93 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         </table>
 
         {removed.length ? (
-          <div className="border border-dashed border-ink px-2 py-1.5">
+          <div className="pp-removed">
             <b>Removed since Print {print.previous?.printNo}:</b> {removed.map((r) => `${r.productName}${r.size ? " " + r.size : ""} · ${nf(r.quantity)} ${r.unit}`).join("; ")}. Do not make these.
           </div>
         ) : null}
 
-        <footer className="mt-2 flex justify-between gap-4 border-t border-divider pt-1.5 text-2xs text-muted">
-          <span>
-            {!print.previous
-              ? `First print · ${stamp(print.current.printedAt)}`
-              : marked
-                ? `★ underlined = new or changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)})`
-                : `Nothing changed since Print ${print.previous.printNo} (${stamp(print.previous.printedAt)}) — the same work as that sheet.`}
-          </span>
-        </footer>
+        <footer className="pp-ft">{changeLine}</footer>
+        {/* On paper this line and the page number sit in the page's own bottom margin, on every page. */}
+        <div className="pp-ft2 print:hidden">{printedLine}</div>
       </article>
     </div>
   );
+}
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "8 lines · 32 cans", "4 lines · 11 boxes, 6 cans" — what one section of the sheet adds up to. */
+function categoryTotals(lines: { quantity: number; unit: string }[]): string {
+  const by = new Map<string, number>();
+  for (const l of lines) by.set(l.unit.toLowerCase(), (by.get(l.unit.toLowerCase()) ?? 0) + l.quantity);
+  const sums = [...by].map(([u, q]) => `${nf(q)} ${u}`).join(", ");
+  return `${lines.length} ${lines.length === 1 ? "line" : "lines"}${sums ? ` · ${sums}` : ""}`;
+}
+
+/** A CSS string: what is printed in a page-margin box is plain text, so quotes and backslashes are escaped. */
+function cssText(s: string): string {
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ")}"`;
+}
+
+/**
+ * The sheet's own styles. It is paper, so it is drawn in millimetres and
+ * points, and it reads in black on white whatever the screen's theme: the
+ * section band and the blue are the only colour, and the sheet stays legible
+ * when "Background graphics" is off and the band does not print.
+ *
+ * The page's own margin holds 10 mm on the sides and top and 12 mm at the
+ * bottom, where the page number and who printed it repeat on every page; the
+ * second page and after carry the plan, date and print at the top. Choose
+ * "Default" margins in the print dialog — "None" overrides all of this. A row
+ * never splits across pages, and a section heading never ends a page.
+ */
+function sheetCss({ runningHead, printedLine }: { runningHead: string; printedLine: string }): string {
+  const ink = "rgb(20 20 20)";
+  const soft = "rgb(95 95 95)";
+  const faint = "rgb(138 138 138)";
+  const hair = "rgb(218 218 218)";
+  const band = "rgb(238 240 247)";
+  const blue = "rgb(31 47 179)";
+  return `
+@page { size: A5 portrait; margin: 10mm 10mm 12mm;
+  @bottom-left { content: ${cssText(printedLine)}; font: 6.5pt sans-serif; color: ${faint}; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 6.5pt sans-serif; color: ${soft}; }
+  @top-left { content: ${cssText(runningHead)}; font: 7pt sans-serif; color: ${soft}; } }
+@page :first { @top-left { content: none; } }
+@media print {
+  body * { visibility: hidden; }
+  .pp-paper, .pp-paper * { visibility: visible; }
+  .pp-paper { position: absolute; inset: 0 auto auto 0; width: 100%; box-shadow: none !important; padding: 0 !important; min-height: 0 !important; }
+}
+.pp-paper { background: white; color: ${ink}; box-shadow: 0 1px 2px rgb(0 0 0 / .2), 0 10px 28px rgb(0 0 0 / .14); padding: 10mm 10mm 9mm; min-height: 210mm; font-size: 8.4pt; line-height: 1.3; display: flex; flex-direction: column; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pp-hd { display: grid; grid-template-columns: auto 1fr auto; gap: 3mm; align-items: center; }
+.pp-logo { width: 15mm; height: 15mm; display: block; }
+.pp-ttl { font-weight: 700; font-size: 14pt; line-height: 1.1; text-transform: uppercase; }
+.pp-co { color: ${soft}; font-size: 8pt; margin-top: 0.6mm; }
+.pp-when { text-align: right; }
+.pp-date { font-weight: 700; font-size: 12.5pt; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pp-day { color: ${soft}; font-size: 7.8pt; }
+.pp-facts { display: grid; grid-template-columns: repeat(4, 1fr); margin: 3mm 0; border-top: 2px solid ${ink}; border-bottom: 1px solid ${ink}; }
+.pp-facts div { padding: 1.4mm 1.5mm; border-left: 1px solid ${hair}; display: grid; }
+.pp-facts div:first-child { border-left: 0; padding-left: 0; }
+.pp-facts span { font-size: 6.3pt; text-transform: uppercase; letter-spacing: .08em; color: ${soft}; font-weight: 600; }
+.pp-facts b { font-size: 9pt; font-weight: 600; overflow-wrap: anywhere; }
+.pp-facts .pp-print b { justify-self: start; border: 1.5px solid ${ink}; padding: 0 1.2mm; }
+.pp-late { font-size: 7pt; font-weight: 700; margin: -1.5mm 0 2mm; }
+.pp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.pp-table th { position: static; white-space: normal; text-align: left; font-size: 6.3pt; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: ${soft}; padding: 0 1mm 1.2mm; border-bottom: 1px solid ${ink}; background: white; }
+.pp-table td { white-space: normal; padding: 1.6mm 1mm; border-bottom: 1px solid ${hair}; vertical-align: top; overflow-wrap: anywhere; }
+.pp-table tr { break-inside: avoid; }
+.pp-table .pp-n { text-align: center; color: ${faint}; font-variant-numeric: tabular-nums; font-size: 7.2pt; }
+.pp-table .pp-r { text-align: right; }
+.pp-table .pp-qty { text-align: right; font-weight: 600; font-size: 9.8pt; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.pp-table .pp-rem { font-size: 7.4pt; }
+.pp-table tr.pp-cat td { background: ${band}; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4pt; padding: 1.3mm 1.5mm; border-bottom: 1px solid ${ink}; color: ${blue}; }
+.pp-table tr.pp-cat { break-after: avoid; }
+.pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
+.pp-table tr.pp-chg u { text-decoration-thickness: 1.5px; }
+.pp-removed { margin-top: 3mm; border: 1px dashed ${ink}; padding: 1.6mm 2mm; font-size: 7.4pt; break-inside: avoid; }
+.pp-ft { margin-top: auto; padding-top: 3mm; font-size: 6.6pt; color: ${soft}; }
+.pp-ft2 { font-size: 6pt; color: ${faint}; margin-top: 0.6mm; border-top: 1px solid ${hair}; padding-top: 1.5mm; }
+`;
 }
