@@ -224,7 +224,14 @@ export type HoldRecord = {
   revisedDeliveryOn: string | null;
   resolvedAt: string | null;
   resolutionText: string | null;
+  /** False for an INTERNAL hold (the MRP check's, unless the Production Head ticked "Tell the customer"): never on the customer's page. Absent reads as true. */
+  customerVisible?: boolean;
 };
+
+/** The holds a customer may read: an internal one is dropped whatever else asks for it. */
+export function customerHolds<T extends { customerVisible?: boolean | null }>(holds: T[]): T[] {
+  return holds.filter((h) => h.customerVisible !== false);
+}
 
 export type JourneyEntry =
   | { type: "step"; step: Step; label: string; state: "done" | "current" | "pending"; at: string | null; words: string | null; optional: boolean }
@@ -254,7 +261,8 @@ export function holdTitle(kind: "hold" | "delay"): string {
  * resolutions among them by time, the current step marked, and what is still
  * to come as pending. Nothing is ticked that was not recorded.
  */
-export function buildJourney(recorded: Recorded[], holds: HoldRecord[], reasonLabel: (code: string) => string = (c) => c, opts: { ownVehicle?: boolean } = {}): TrackingView {
+export function buildJourney(recorded: Recorded[], allHolds: HoldRecord[], reasonLabel: (code: string) => string = (c) => c, opts: { ownVehicle?: boolean } = {}): TrackingView {
+  const holds = customerHolds(allHolds);
   const byStep = new Map<Step, Recorded>();
   for (const r of recorded) if (!byStep.has(r.step) || byStep.get(r.step)!.at > r.at) byStep.set(r.step, r);
   const reachedStages = STAGES.filter((s) => byStep.has(s));

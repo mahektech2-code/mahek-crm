@@ -126,7 +126,7 @@ function Body({ orderNo }: { orderNo: number }) {
         {data.hold ? (
           <div className={cx("grid gap-1", insetClass)}>
             <SectionLabel>{data.hold.kind === "hold" ? "On hold" : "Delivery delayed"} · {data.hold.reasonLabel}</SectionLabel>
-            <span className="text-sm text-ink">{data.hold.customerText}</span>
+            {data.hold.customerVisible === false ? <span className="text-meta font-medium text-warn-ink">Internal - not shown to the customer</span> : <span className="text-sm text-ink">{data.hold.customerText}</span>}
             {data.hold.internalNote ? <span className="text-meta text-warn-ink">Internal: {data.hold.internalNote}</span> : null}
             <span className="text-meta text-muted">
               Since {stamp(data.hold.raisedAt)}
@@ -153,7 +153,8 @@ function Body({ orderNo }: { orderNo: number }) {
             <SectionLabel>Holds and delays</SectionLabel>
             {data.history.map((h, i) => (
               <div key={i} className="text-meta text-body">
-                <span className="font-medium text-ink">{h.label} · {h.reason}</span> — {stamp(h.at)}
+                <span className="font-medium text-ink">{h.label} · {h.reason}</span>
+                {h.customerVisible === false ? <span className="text-warn-ink"> · Internal - not shown to the customer</span> : null} — {stamp(h.at)}
                 {h.resolvedAt ? ` · resolved ${stamp(h.resolvedAt)}${h.resolutionText ? `: ${h.resolutionText}` : ""}` : " · open"}
               </div>
             ))}

@@ -3,22 +3,24 @@
  * questions and the tests need no database.
  *
  * An order starts as a TEMPORARY ORDER (a TO number) wherever it was taken.
- * Two checks — the back office and the Production Head — and the SECOND one
- * makes the order number. After it, two gates before production: Accounts
- * approve the order, and the Production Head clears it against materials and
- * capacity (the MRP check). Nothing about the order may be edited once it has
- * its order number; cancelling, holding and the rest keep the rules they had.
+ * Accounts approve the TO in the Accounts app, and approving makes the order
+ * number (option A, Nov 2026 - the hub's "back office" check was Accounts, so
+ * an order used to be checked by Accounts twice). The Production Head's one
+ * check is then the MRP check: materials and capacity before production.
+ * Nothing about the order may be edited once it has its order number;
+ * cancelling, holding and the rest keep the rules they had.
  * ------------------------------------------------------------------------- */
 
-export const INTAKE_STATUSES = ["open", "correction", "hold", "verified", "cancelled"] as const;
+export const INTAKE_STATUSES = ["open", "correction", "hold", "verified", "cancelled", "declined"] as const;
 export type IntakeStatus = (typeof INTAKE_STATUSES)[number];
 
 export const INTAKE_STATUS_LABEL: Record<IntakeStatus, string> = {
-  open: "Waiting for checks",
-  correction: "Sent back for correction",
-  hold: "On hold",
-  verified: "Order number made",
+  open: "Waiting for Accounts",
+  correction: "Sent back by Accounts",
+  hold: "On hold with Accounts",
+  verified: "Approved",
   cancelled: "Cancelled",
+  declined: "Declined",
 };
 
 /** Where a TO came from, as the hub shows it. ERP orders keep the source typed on the form. */
@@ -117,17 +119,21 @@ export const HOLD_DEPARTMENTS = ["verification", "accounts", "production", "offi
 export type HoldDepartment = (typeof HOLD_DEPARTMENTS)[number];
 
 export const DEPARTMENT_LABEL: Record<HoldDepartment, string> = {
-  verification: "Order verification",
+  verification: "TO with Accounts",
   accounts: "Accounts",
   production: "Production (MRP)",
   office: "Office",
 };
 
-/** Where releasing a hold sends the order, in words — it is checked again there, never skipped ahead. */
+/**
+ * Where releasing a hold sends the order, in words. Accounts' holds go back to
+ * be checked again; a production hold is the MRP check's own answer, so
+ * releasing it clears the check and the order goes straight to Under Process.
+ */
 export const RELEASE_TO: Record<HoldDepartment, string> = {
-  verification: "back to the Order Hub; both checks are asked again",
+  verification: "back to Accounts › Order approvals, to be approved again",
   accounts: "back to Accounts › Order approvals",
-  production: "back to the MRP check",
+  production: "straight to Under Process; releasing clears the MRP check",
   office: "back to where its lines were before the hold",
 };
 

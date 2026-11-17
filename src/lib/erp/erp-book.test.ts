@@ -472,13 +472,6 @@ describe("the Order Hub's gates after the order number", () => {
     assert.ok(((await erpNavCounts(adminCtx)).mrpCheck ?? 0) >= 1);
     assert.match(msg(await mod("orders").actions!.ready(adminCtx, o.id, {})), /MRP|Production Head/i);
 
-    /* A production hold, released from To Hold, comes back to the MRP check. */
-    assert.ok((await mod("mrpCheck").actions!.hold(adminCtx, row!.id, { reason: PRODUCTION_HOLD_REASONS[0].label, note: "Xylene short" })).ok);
-    const held = (await mod("toHold").load(adminCtx)).rows.find((x) => String(x.id).startsWith(`production:${o.orderNo}`));
-    assert.ok(held, "the production hold is on To Hold");
-    assert.ok((await mod("toHold").actions!.releaseDesk(adminCtx, held!.id, { resolution: "Xylene arrived" })).ok);
-    assert.ok((await mod("mrpCheck").load(adminCtx)).rows.some((x) => x.id === row!.id), "released, it is back at the MRP check");
-
     /* Held from the Office instead (order 10254, 2026-11-17): the production
        check stays Pending, so the MRP check must still call it held — not
        offer a hold that can only be refused, nor a clear that skips it. */
@@ -486,16 +479,27 @@ describe("the Order Hub's gates after the order number", () => {
     const officeHeld = (await mod("mrpCheck").load(adminCtx)).rows.find((x) => x.id === o.id);
     assert.equal(officeHeld?.v.status, "On hold", "an office hold reads as held at the MRP check");
     assert.deepEqual(officeHeld?.actions?.map((a) => a.id), ["toHold"], "no hold or clear on an order already held");
-    assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, o.id, { capacity: "Yes" })), /on hold/);
+    assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, o.id, { capacity: "OK" })), /on hold/);
     assert.ok((await mod("orders").actions!.resolveHold(adminCtx, o.id, { resolution: "Material arrived.", notify: "No" })).ok);
     assert.equal((await mod("mrpCheck").load(adminCtx)).rows.find((x) => x.id === o.id)?.v.status, "Waiting for MRP check");
 
-    /* Cleared with the capacity tick, the line may go Ready. */
+    /* Clearing asks for the capacity tick. */
     assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, row!.id, {})), /capacity|floor|required/i);
-    assert.ok((await mod("mrpCheck").actions!.clear(adminCtx, row!.id, { capacity: "Yes" })).ok);
+
+    /* A production hold moves it to the On hold tab, kept off the customer's
+       page unless ticked; releasing it CLEARS the check, straight to Under Process. */
+    assert.ok((await mod("mrpCheck").actions!.hold(adminCtx, row!.id, { reason: PRODUCTION_HOLD_REASONS[0].label, note: "Xylene short" })).ok);
+    assert.ok(!(await mod("mrpCheck").load(adminCtx)).rows.some((x) => x.id === row!.id), "held, it leaves Pending checks");
+    const onHold = (await mod("mrpHold").load(adminCtx)).rows.find((x) => x.v.order === `Order ${o.orderNo}`);
+    assert.ok(onHold, "the production hold is on the On hold tab");
+    assert.deepEqual(onHold!.flags, ["mrpInternal"], "not ticked: an internal hold");
+    assert.ok(((await erpNavCounts(adminCtx)).mrpHold ?? 0) >= 1);
+    assert.ok((await mod("toHold").load(adminCtx)).rows.some((x) => String(x.id).startsWith(`production:${o.orderNo}`)), "and on To Hold");
+    assert.ok((await mod("mrpHold").actions!.release(adminCtx, onHold!.id, {})).ok);
     const [cleared] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
     assert.equal(cleared.accountsCheck, "Approved");
-    assert.equal(cleared.productionCheck, "Cleared");
+    assert.equal(cleared.productionCheck, "Cleared", "released, it is cleared with no second check");
+    assert.ok(!(await mod("mrpCheck").load(adminCtx)).rows.some((x) => x.id === row!.id));
     assert.ok((await underProcessLines(null)).some((l) => l.orderNo === o.orderNo), "cleared, it joins the day's plan");
     assert.ok((await mod("orders").actions!.ready(adminCtx, o.id, {})).ok);
     await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
