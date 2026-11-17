@@ -21,6 +21,7 @@ import { hrmsContext, requireHrmsWrite, HrmsNotPermitted } from "@/lib/hrms/acce
 import { hrmsScreenModule } from "@/lib/hrms/screens";
 import { hrmsSearch } from "@/lib/actions/hrms-screens";
 import { setManager } from "@/lib/actions/org";
+import { placeByTitles } from "@/lib/services/person-identity-service";
 import { LEAVE_WAITING, HELP } from "@/lib/hrms/values";
 import { today } from "@/lib/hrms/server";
 import { addDaysISO } from "@/lib/hrms/time";
@@ -98,6 +99,12 @@ before(async () => {
   teamEmp = await person("Tara Team", { office: "Pune", position: "Salesman", type: "Sales", reportsTo: "Sales Head" });
   officeEmp = await person("Omkar Office", { office: "Andheri", position: "Field Boy", type: "Field" });
   strangerEmp = await person("Sana Stranger", { office: "Nagpur", position: "Salesman", type: "Sales" });
+  /* Tara's Report To says "Sales Head", and exactly one person holds that
+     title: the sheet sync, an HRMS save and the nightly pass turn that into a
+     real org-chart link ONCE — nothing works a team out from titles on every
+     request any more. Done here the way production does it. */
+  const placed = await placeByTitles();
+  assert.equal(placed.placed, 1, "Tara is placed under the one Sales Head");
   head = await account("Ravi Head", headEmp);
   staff = await account("Sana Stranger", strangerEmp);
   hr = await account("Hema HR", null, "associate");
@@ -352,10 +359,12 @@ describe("org chart", () => {
   });
 });
 
-describe("my team is the org chart, with the job title as the fallback", () => {
+describe("my team is the org chart, by id — a job title is never asked", () => {
   test("placing somebody on the chart under another manager takes them out of the head's team", async () => {
     const other = await person("Mira Manager", { office: "Pune", position: "Area Manager", type: "Sales" });
-    await db.insert(employeeReporting).values({ id: id("rep"), employeeId: teamEmp.id, managerId: other.id });
+    // Tara was placed under Ravi from her title; HR moves her to Mira. Her
+    // Report To still says "Sales Head" — and that no longer matters.
+    await db.update(employeeReporting).set({ managerId: other.id }).where(eq(employeeReporting.employeeId, teamEmp.id));
     await db.insert(employeeReporting).values({ id: id("rep"), employeeId: strangerEmp.id, managerId: headEmp.id });
     const ctx = await as(head);
     assert.ok(!ctx.team.has(teamEmp.id), "the chart says Tara reports to Mira");
