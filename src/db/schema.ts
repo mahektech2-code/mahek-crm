@@ -12883,7 +12883,7 @@ export const erpOrderIntakes = pgTable(
   {
     id: text("id").primaryKey(),
     toNo: integer("to_no").notNull(),
-    /** open | correction | hold | verified | cancelled. */
+    /** open | correction | hold | verified | cancelled | declined. */
     status: text("status").notNull().default("open"),
     /** Where it was taken: erp | crm | mbos. */
     origin: text("origin").notNull().default("erp"),
@@ -12917,6 +12917,21 @@ export const erpOrderIntakes = pgTable(
     cancelReason: text("cancel_reason"),
     cancelledById: text("cancelled_by_id").references(() => users.id),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    /** Accounts declined it (0350): the reason the taker is told, who and when. */
+    declineReason: text("decline_reason"),
+    declinedById: text("declined_by_id").references(() => users.id),
+    declinedAt: timestamp("declined_at", { withTimezone: true }),
+    /**
+     * The TO this one looks like (same billing and delivery party, same items,
+     * same day) — `possible` where nobody has said otherwise (an offline
+     * handset's order, checked when it synced), `different` where the person
+     * punching it said it is a different order, with the reason (0350).
+     */
+    duplicateOfId: text("duplicate_of_id").references((): AnyPgColumn => erpOrderIntakes.id, { onDelete: "set null" }),
+    duplicateState: text("duplicate_state"),
+    duplicateReason: text("duplicate_reason"),
+    duplicateDecidedById: text("duplicate_decided_by_id").references(() => users.id),
+    duplicateDecidedAt: timestamp("duplicate_decided_at", { withTimezone: true }),
     orderNo: integer("order_no"),
     createdById: text("created_by_id").references(() => users.id),
     updatedById: text("updated_by_id").references(() => users.id),
@@ -12927,7 +12942,8 @@ export const erpOrderIntakes = pgTable(
     uniqueIndex("erp_order_intakes_to_no_key").on(t.toNo),
     uniqueIndex("erp_order_intakes_order_no_key").on(t.orderNo).where(sql`${t.orderNo} is not null`),
     uniqueIndex("erp_order_intakes_origin_order_key").on(t.originOrderId).where(sql`${t.originOrderId} is not null`),
-    check("erp_order_intakes_status_check", sql`${t.status} in ('open','correction','hold','verified','cancelled')`),
+    check("erp_order_intakes_status_check", sql`${t.status} in ('open','correction','hold','verified','cancelled','declined')`),
+    index("erp_order_intakes_dup_day_idx").on(t.billingCustomerId, t.orderDate),
     check("erp_order_intakes_origin_check", sql`${t.origin} in ('erp','crm','mbos')`),
   ],
 );
@@ -13637,6 +13653,8 @@ export const erpOrderHolds = pgTable(
     lineStatuses: jsonb("line_statuses").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Which desk held it — office | accounts | production — so releasing sends it back there (0347). */
     department: text("department").notNull().default("office"),
+    /** False keeps the hold off the customer's tracking page and out of their messages (0350). */
+    customerVisible: boolean("customer_visible").notNull().default(true),
     raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
     raisedById: text("raised_by_id").references(() => users.id),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
@@ -18437,7 +18455,7 @@ export const accountsSlaBreaches = pgTable(
   "accounts_sla_breaches",
   {
     id: text("id").primaryKey(),
-    /** order · payment · credit_note · order_change (`SLA_KINDS`). */
+    /** order · payment · credit_note · order_change · to (`SLA_KINDS`). */
     kind: text("kind").notNull(),
     recordId: text("record_id").notNull(),
     waitingSince: timestamp("waiting_since", { withTimezone: true }).notNull(),

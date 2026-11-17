@@ -163,16 +163,63 @@ export const HOLD_CUSTOMER_TEXT: Record<string, string> = {
 
 /* ------------------------------------------------------------- duplicates */
 
-export type DupShape = { key: string; billingId: string; date: string; lines: { skuId: string; qtyCans: number }[] };
+/**
+ * A DUPLICATE is the same order punched twice, which happens because an order
+ * shared on a WhatsApp group is punched by more than one person. It is decided
+ * by rules alone: the same day, the same billing party AND the same delivery
+ * party, and exactly the same items (product and cans, in any order). A
+ * different delivery party is a different order even for one billing party —
+ * a distributor ordering for two shops.
+ */
+export type DupShape = { key: string; billingId: string; deliveryId?: string | null; date: string; lines: { skuId: string; qtyCans: number }[] };
 
-/** Another TO or order for the same party on the same day with exactly the same goods. */
+/** The items as one comparable string: product and cans, order ignored. */
+export function itemsSignature(lines: DupShape["lines"]): string {
+  return lines
+    .map((l) => `${l.skuId}:${l.qtyCans}`)
+    .sort()
+    .join("|");
+}
+
+/** True where two orders are the same order by the rule above. */
+export function sameOrder(a: DupShape, b: DupShape): boolean {
+  return (
+    a.key !== b.key &&
+    a.billingId === b.billingId &&
+    (a.deliveryId || a.billingId) === (b.deliveryId || b.billingId) &&
+    a.date === b.date &&
+    a.lines.length > 0 &&
+    itemsSignature(a.lines) === itemsSignature(b.lines)
+  );
+}
+
+/** Another TO or order for the same parties on the same day with exactly the same goods. */
 export function duplicateOf(me: DupShape, others: DupShape[]): string | null {
-  const sig = (ls: DupShape["lines"]) =>
-    ls
-      .map((l) => `${l.skuId}:${l.qtyCans}`)
-      .sort()
-      .join("|");
-  const mine = sig(me.lines);
-  const hit = others.find((o) => o.key !== me.key && o.billingId === me.billingId && o.date === me.date && sig(o.lines) === mine);
-  return hit?.key ?? null;
+  return others.find((o) => sameOrder(me, o))?.key ?? null;
+}
+
+/** "2 h 40 m apart" — the gap between the two punches, for the warning. */
+export function gapWords(aMs: number, bMs: number): string {
+  const min = Math.round(Math.abs(aMs - bMs) / 60_000);
+  if (min < 1) return "punched within the same minute";
+  if (min < 60) return `${min} m apart`;
+  const h = Math.floor(min / 60);
+  return `${h} h${min % 60 ? ` ${min % 60} m` : ""} apart`;
+}
+
+/** The comparison line the rules write, used where no model can. */
+export function duplicateLine(gapMs: number | null): string {
+  return `Same items, same parties${gapMs == null ? "" : `, ${gapWords(0, gapMs)}`}`;
+}
+
+/** What the person punching chose. `different` must carry a reason. */
+export type DuplicateDecision = { decision: "different"; ofId: string; reason: string };
+
+/** Why a decision cannot stand, or null. */
+export function decisionRefusal(d: DuplicateDecision | null | undefined, foundIds: string[]): string | null {
+  if (!d) return null;
+  if (!d.reason?.trim()) return "Say why it is a different order";
+  if (d.reason.trim().length > 300) return "Keep the reason under 300 characters";
+  if (!foundIds.includes(d.ofId)) return "The order it looked like has changed. Check again";
+  return null;
 }

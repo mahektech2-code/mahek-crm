@@ -2,12 +2,13 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpOrderIntakeLines, erpOrderIntakes, erpOrderReviews, erpOrders, orders, users } from "@/db/schema";
+import { erpOrderIntakeLines, erpOrderIntakes, erpOrderReviews, erpOrders, orders, products, users } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
 import { err, ok, okVoid, type Result } from "@/lib/result";
 import { erpId, nextNumber } from "./server";
 import { erpLink } from "./registry";
-import { bothChecked, intakeEditable, nextCheck, CHECK_LABEL, type Checker, type CheckKind } from "./engines/order-hub";
+import { bothChecked, decisionRefusal, duplicateLine, intakeEditable, nextCheck, sameOrder, CHECK_LABEL, type Checker, type CheckKind, type DuplicateDecision } from "./engines/order-hub";
+import { getConfig } from "@/lib/config/store";
 
 /* ---------------------------------------------------------------------------
  * THE ORDER HUB: every order is a TEMPORARY ORDER (a TO number) until the
@@ -88,11 +89,46 @@ async function writeLines(tx: Tx, intakeId: string, lines: IntakeLineInput[]) {
  * OPENS A TO. The number is the ERP's `tempOrder` series. Whoever checks a TO
  * is told one is waiting; nothing else in MahekOne sees it yet.
  */
-export async function createIntake(userId: string, input: IntakeInput, outer?: Tx): Promise<{ id: string; toNo: number }> {
+export async function createIntake(
+  userId: string,
+  input: IntakeInput,
+  outer?: Tx,
+  opts: {
+    /** What the person punching said about a duplicate they were shown. */
+    duplicate?: DuplicateDecision | null;
+    /**
+     * `ask` (the ERP form): a duplicate nobody has answered stops the save with
+     * a DuplicateFoundError, so the screen can ask. `flag` (TeleCRM inside its
+     * call transaction, the Salesman App): the TO is made and marked a POSSIBLE
+     * duplicate for Accounts — an order is never lost to the check.
+     */
+    onDuplicate?: "ask" | "flag";
+  } = {},
+): Promise<{ id: string; toNo: number; duplicateOf: string | null }> {
   if (!input.lines.length) throw new Error("A TO needs at least one line.");
   const id = erpId("to");
   let toNo = 0;
+  let duplicateOf: string | null = null;
+  const checking = await duplicateCheckOn();
   const write = async (tx: Tx) => {
+    let dupFields: Partial<typeof erpOrderIntakes.$inferInsert> = {};
+    if (checking) {
+      /* One customer at a time, so two people saving the same order in the
+         same minute cannot both get through without being asked. */
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`to-dup:${input.billingId}`}))`);
+      const found = await sameOrdersFor(tx, { billingId: input.billingId, deliveryId: input.deliveryId ?? null, date: input.orderDate, lines: input.lines });
+      if (found.length) {
+        const d = opts.duplicate;
+        if (d && !decisionRefusal(d, found.map((f) => f.id))) {
+          dupFields = { duplicateOfId: d.ofId, duplicateState: "different", duplicateReason: d.reason.trim(), duplicateDecidedById: userId, duplicateDecidedAt: new Date() };
+        } else if ((opts.onDuplicate ?? "flag") === "ask") {
+          throw new DuplicateFoundError(found[0], input.lines);
+        } else {
+          dupFields = { duplicateOfId: found[0].id, duplicateState: "possible" };
+        }
+        duplicateOf = (dupFields.duplicateOfId as string) ?? null;
+      }
+    }
     toNo = await nextNumber(tx, "tempOrder");
     await tx.insert(erpOrderIntakes).values({
       id,
@@ -111,13 +147,202 @@ export async function createIntake(userId: string, input: IntakeInput, outer?: T
       takenById: input.takenById,
       createdById: userId,
       updatedById: userId,
+      ...dupFields,
     });
     await writeLines(tx, id, input.lines);
   };
   if (outer) await write(outer);
   else await db.transaction(write);
   if (!outer) await tellNewIntake(toNo);
-  return { id, toNo };
+  return { id, toNo, duplicateOf };
+}
+
+/* ============================================================ duplicates */
+
+export type SameOrderMatch = {
+  id: string;
+  toNo: number;
+  orderNo: number | null;
+  status: string;
+  origin: string;
+  orderSource: string | null;
+  takenById: string | null;
+  takenBy: string | null;
+  takenAt: string;
+  billingName: string;
+  deliveryName: string;
+  lines: { skuId: string; name: string; qtyCans: number }[];
+};
+
+/** What a duplicate warning shows: the order already punched beside the one being punched, and the comparison line. */
+export type DuplicateFound = {
+  match: SameOrderMatch;
+  newLines: { skuId: string; name: string; qtyCans: number }[];
+  line: string;
+  ai: boolean;
+};
+
+/** Thrown by `createIntake` in `ask` mode: the save stops so the screen can ask. */
+export class DuplicateFoundError extends Error {
+  constructor(
+    public match: SameOrderMatch,
+    public newLines: { skuId: string; qtyCans: number }[],
+  ) {
+    super(`This order may already be punched as TO-${match.toNo}.`);
+  }
+}
+
+export async function duplicateCheckOn(): Promise<boolean> {
+  try {
+    return (await getConfig())["erp.orders.duplicateCheck"] !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Every TO punched for the same parties on the same day with exactly the same
+ * items (`sameOrder`), whatever happened to it since — waiting, sent back,
+ * held or already given its order number — except cancelled and declined ones.
+ */
+export async function sameOrdersFor(
+  q: Tx | typeof db,
+  shape: { billingId: string; deliveryId: string | null; date: string; lines: { skuId: string; qtyCans: number }[] },
+  excludeId?: string,
+): Promise<SameOrderMatch[]> {
+  const rows = (await q.execute(sql`
+    select i.id, i.to_no as "toNo", i.order_no as "orderNo", i.status, i.origin, i.order_source as "orderSource",
+           i.taken_by_id as "takenById", u.name as "takenBy", i.created_at as "takenAt",
+           i.delivery_customer_id as "deliveryId", b.name as "billingName", coalesce(d.name, b.name) as "deliveryName",
+           l.sku_id as "skuId", p.name as "skuName", l.qty_cans as "qtyCans"
+      from erp_order_intakes i
+      join customers b on b.id = i.billing_customer_id
+      left join customers d on d.id = i.delivery_customer_id
+      left join users u on u.id = i.taken_by_id
+      join erp_order_intake_lines l on l.intake_id = i.id
+      join products p on p.id = l.sku_id
+     where i.billing_customer_id = ${shape.billingId}
+       and i.order_date = ${shape.date}
+       and i.status not in ('cancelled', 'declined')
+       ${excludeId ? sql`and i.id <> ${excludeId}` : sql``}
+     order by i.created_at asc, l.position asc
+  `)) as unknown as {
+    id: string;
+    toNo: number;
+    orderNo: number | null;
+    status: string;
+    origin: string;
+    orderSource: string | null;
+    takenById: string | null;
+    takenBy: string | null;
+    takenAt: Date | string;
+    deliveryId: string | null;
+    billingName: string;
+    deliveryName: string;
+    skuId: string;
+    skuName: string;
+    qtyCans: number;
+  }[];
+  const byId = new Map<string, SameOrderMatch & { deliveryId: string | null }>();
+  for (const r of rows) {
+    let m = byId.get(r.id);
+    if (!m) {
+      m = {
+        id: r.id,
+        toNo: Number(r.toNo),
+        orderNo: r.orderNo == null ? null : Number(r.orderNo),
+        status: r.status,
+        origin: r.origin,
+        orderSource: r.orderSource,
+        takenById: r.takenById,
+        takenBy: r.takenBy,
+        takenAt: new Date(r.takenAt).toISOString(),
+        billingName: r.billingName,
+        deliveryName: r.deliveryName,
+        deliveryId: r.deliveryId,
+        lines: [],
+      };
+      byId.set(r.id, m);
+    }
+    m.lines.push({ skuId: r.skuId, name: r.skuName, qtyCans: Number(r.qtyCans) });
+  }
+  const me = { key: "new", billingId: shape.billingId, deliveryId: shape.deliveryId, date: shape.date, lines: shape.lines };
+  return [...byId.values()]
+    .filter((m) => sameOrder(me, { key: m.id, billingId: shape.billingId, deliveryId: m.deliveryId, date: shape.date, lines: m.lines }))
+    .map(({ deliveryId: _d, ...m }) => m);
+}
+
+/** "Priya (ERP)" — who punched it, and where. */
+export function takenWhere(m: Pick<SameOrderMatch, "takenBy" | "origin" | "orderSource">): string {
+  const where = m.origin === "crm" ? "TeleCRM" : m.origin === "mbos" ? "Salesman App" : "ERP";
+  return `${m.takenBy ?? "Someone"} (${where})`;
+}
+
+/**
+ * The warning a screen draws. The match is the rules'; the one line under it
+ * is written by a model where one is set up, and by the rules where not — so
+ * the warning never waits on, or depends on, a provider.
+ */
+export async function describeDuplicate(match: SameOrderMatch, newLines: { skuId: string; qtyCans: number }[], nowMs = Date.now()): Promise<DuplicateFound> {
+  const names = new Map(match.lines.map((l) => [l.skuId, l.name]));
+  const missing = newLines.filter((l) => !names.has(l.skuId)).map((l) => l.skuId);
+  if (missing.length) {
+    const rows = await db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, missing));
+    for (const r of rows) names.set(r.id, r.name);
+  }
+  const gap = Math.abs(nowMs - new Date(match.takenAt).getTime());
+  const fallback = duplicateLine(gap);
+  let line = fallback;
+  let ai = false;
+  try {
+    const cfg = await getConfig();
+    const { write } = await import("@/lib/writing-model");
+    const out = await write({
+      system:
+        "You compare two paint-thinner orders punched by two people for one customer on one day. Answer in ONE short line of plain English, at most 12 words, no full stop, no quotes, that says why they look like the same order (items, parties, time apart). Never invent facts.",
+      prompt: JSON.stringify({
+        first: { by: takenWhere(match), at: match.takenAt, billing: match.billingName, delivery: match.deliveryName, items: match.lines.map((l) => `${l.name} x ${l.qtyCans}`) },
+        second: { at: new Date(nowMs).toISOString(), items: newLines.map((l) => `${names.get(l.skuId) ?? l.skuId} x ${l.qtyCans}`) },
+        rulesSay: fallback,
+      }),
+      openaiModel: String(cfg["erp.orders.duplicateAiModel"] || "gpt-5-mini"),
+      providers: ["openai"],
+      timeoutMs: 5_000,
+    });
+    if (out.ok && out.text.length <= 120 && !/\n/.test(out.text)) {
+      line = out.text.replace(/[."“”]+$/g, "").trim() || fallback;
+      ai = line !== fallback;
+    }
+  } catch {
+    /* The rules' line stands. */
+  }
+  return { match, newLines: newLines.map((l) => ({ skuId: l.skuId, name: names.get(l.skuId) ?? l.skuId, qtyCans: l.qtyCans })), line, ai };
+}
+
+/**
+ * THE PRE-CHECK a screen asks before it saves (TeleCRM asks it before its call
+ * transaction opens, because a refusal inside that transaction would lose the
+ * call). Null where nothing matches or the check is off.
+ */
+export async function checkForDuplicate(shape: { billingId: string; deliveryId: string | null; date: string; lines: { skuId: string; qtyCans: number }[] }): Promise<DuplicateFound | null> {
+  if (!shape.lines.length || !(await duplicateCheckOn())) return null;
+  const found = await sameOrdersFor(db, shape);
+  return found.length ? describeDuplicate(found[0], shape.lines) : null;
+}
+
+/**
+ * SAME ORDER: nothing is created, and whoever punched the first one is told
+ * somebody tried to punch it again — the WhatsApp group sent it to two people.
+ */
+export async function tellSameOrder(matchId: string, byUserId: string): Promise<void> {
+  const [m] = (await db.execute(sql`
+    select i.to_no as "toNo", i.taken_by_id as "takenById", c.name as party, u.name as "byName"
+      from erp_order_intakes i join customers c on c.id = i.billing_customer_id
+      left join users u on u.id = ${byUserId}
+     where i.id = ${matchId}
+  `)) as unknown as { toNo: number; takenById: string | null; party: string; byName: string | null }[];
+  if (!m || !m.takenById || m.takenById === byUserId) return;
+  await tell([m.takenById], `Same order not punched again · TO-${m.toNo}`, `${m.byName ?? "Someone"} tried to punch the same order for ${m.party} and chose not to create it.`, "/crm/my-orders");
 }
 
 /** After a TO is opened inside somebody else's transaction: the checkers are told. */
@@ -127,8 +352,21 @@ export async function tellNewIntake(toNo: number): Promise<void> {
     .from(erpOrderIntakes)
     .where(eq(erpOrderIntakes.toNo, toNo));
   if (!i) return;
-  const to = [...(await holdersOf("verifyOrders")), ...(await holdersOf("productionCheck"))];
-  await tell(to, `New order to check · TO-${toNo}`, `${i.name}${i.source ? ` · ${i.source}` : ""}. The back office and the Production Head check it; the second check makes the order number.`, erpLink("orderHub"));
+  await tell(await accountsApproverIds(), `New order to approve · TO-${toNo}`, `${i.name}${i.source ? ` · ${i.source}` : ""}. Approve it in Accounts › Order approvals; approving makes the order number.`, ACCOUNTS_APPROVALS_HREF);
+}
+
+export const ACCOUNTS_APPROVALS_HREF = "/accounts/approvals";
+
+/** Everybody on the Accounts desk who can decide an order: a manager or admin of Accounts who holds Order approvals. */
+export async function accountsApproverIds(): Promise<string[]> {
+  const rows = (await db.execute(sql`
+    select distinct u.id from users u join app_access a on a.user_id = u.id and a.app = 'accounts'
+     where u.active and a.role in ('manager', 'admin')
+       and (a.role = 'admin'
+            or not exists (select 1 from app_module_access m where m.user_id = u.id and m.app = 'accounts')
+            or exists (select 1 from app_module_access m where m.user_id = u.id and m.app = 'accounts' and m.module = 'accounts.approvals'))
+  `)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
 }
 
 export async function intakeById(id: string): Promise<{ intake: Intake; lines: IntakeLine[] } | null> {
