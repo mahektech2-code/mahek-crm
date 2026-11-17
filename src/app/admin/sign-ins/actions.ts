@@ -2,9 +2,9 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { ne } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, sessions } from "@/db/schema";
+import { auditLog, sessions, signInFailures } from "@/db/schema";
 import { requirePlatformAdminUser } from "@/lib/access-control";
 import { currentSessionId } from "@/lib/auth";
 import { ADMIN } from "@/lib/admin-routes";
@@ -59,4 +59,30 @@ export async function endEverySession(
     { ended: gone.length },
     `${gone.length} session${gone.length === 1 ? "" : "s"} ended. Everybody else signs in again.`,
   );
+}
+
+/**
+ * Lift a wrong-password pause by hand: the account's counted failures are
+ * cleared, so its next attempt is judged afresh. The person still needs the
+ * right password; nothing about the account itself changes.
+ */
+export async function liftPause(account: string): Promise<Result<null>> {
+  let actor;
+  try {
+    actor = await admin();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  if (!account.startsWith("user:")) return fail("That pause is not on an account.");
+  const cleared = await db.delete(signInFailures).where(eq(signInFailures.account, account)).returning({ id: signInFailures.id });
+  await db.insert(auditLog).values({
+    id: `aud_${randomUUID().slice(0, 12)}`,
+    actorId: actor.id,
+    action: "sign-in.pause.lift",
+    entityType: "user",
+    entityId: account.slice("user:".length),
+    afterState: { cleared: cleared.length } as never,
+  });
+  revalidatePath(ADMIN.signIns(), "page");
+  return ok(null, "Pause lifted. They can try their password again now.");
 }

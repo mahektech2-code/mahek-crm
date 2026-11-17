@@ -1,4 +1,5 @@
 import { and, count, desc, eq, isNotNull } from "drizzle-orm";
+import { CardGrid } from "@/components/ui/card-grid";
 import Link from "next/link";
 import { db } from "@/db";
 import { waReplies, waTemplates } from "@/db/schema";
@@ -155,7 +156,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
         active={tab}
       />
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
+      <CardGrid min={340} gap="gap-4">
         {show("ola") ? (
           <Service
             logo="OM"
@@ -296,7 +297,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
             </KeyRow>
           </Service>
         ) : null}
-      </div>
+      </CardGrid>
 
       <IntegrationsTab data={{ integrations }} />
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CardGrid } from "@/components/ui/card-grid";
 import { cx } from "@/components/ui/primitives";
 
 /* ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ export type Figure = {
 /** Figure cards above a screen: as many as fit at 170px, then they wrap. */
 export function Figures({ items, min = 170 }: { items: Figure[]; min?: number }) {
   return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))` }}>
+    <CardGrid min={min} gap="gap-3">
       {items.map((f) => {
         const body = (
           <>
@@ -98,7 +99,7 @@ export function Figures({ items, min = 170 }: { items: Figure[]; min?: number })
           </div>
         );
       })}
-    </div>
+    </CardGrid>
   );
 }
 

@@ -6,7 +6,6 @@ import {
   CardHeader,
   EmptyState,
   Input,
-  MetricStrip,
   Select,
 } from "@/components/ui/primitives";
 import { ADMIN, ADMIN_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";

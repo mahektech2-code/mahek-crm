@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { and, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { ADMIN } from "@/lib/admin-routes";
 import { db } from "@/db";
 import { auditLog, syncConflicts } from "@/db/schema";
 import { canFor, isPlatformAdmin } from "@/lib/access-control";
@@ -56,7 +57,7 @@ export async function resolveConflicts(ids: string[] | "all"): Promise<Result<{ 
       }
       return rows.length;
     });
-    revalidatePath("/admin/sheets", "layout");
+    revalidatePath(ADMIN.sheets(), "layout");
     return ok({ resolved: done }, done === 1 ? "Marked as seen." : `${done} marked as seen.`);
   } catch (e) {
     return fromThrown(e);
@@ -71,7 +72,7 @@ export async function reparseOrderSheet(): Promise<Result<{ detail: string }>> {
     if (retired) return err(retired, "rule_violation");
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob("sheet-reparse", user.id);
-    revalidatePath("/admin/sheets", "layout");
+    revalidatePath(ADMIN.sheets(), "layout");
     const detail = results.map((r) => r.detail).join(" · ");
     return ok({ detail }, `Reparse finished — ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`);
   } catch (e) {

@@ -109,7 +109,7 @@ export default async function RolesPage({
     .filter((p) => p.clashes.length > 0 && !p.platform);
 
   const hatShort = (h: HeldHat) =>
-    `${short(h.app)} ${LEVEL_SHORT[(h.role as Level) ?? "associate"] ?? "A"}`;
+    `${short(h.app ?? "")} ${LEVEL_SHORT[(h.role as Level) ?? "associate"] ?? "A"}`;
   const capHref = (c: Capability) =>
     `${ADMIN.roles()}?${new URLSearchParams({ ...(q ? { q } : {}), cap: c }).toString()}`;
 

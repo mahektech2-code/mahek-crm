@@ -1,4 +1,5 @@
 import { jobHealth, queueOwners, type JobRow } from "@/lib/services/admin-platform-service";
+import { CardGrid } from "@/components/ui/card-grid";
 import { today } from "@/lib/queries";
 import { AdminPage } from "../_shell/admin-page";
 import { requirePlatformAdmin } from "../_shell/context";
@@ -39,7 +40,7 @@ function when(iso: string, now: number) {
 
 function CadenceLanes({ jobs, now }: { jobs: JobRow[]; now: number }) {
   return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+    <CardGrid min={200} gap="gap-3">
       {LANES.map((l) => {
         const j = jobs.find((x) => x.job === l.job);
         const started = j ? new Date(j.startedAt).getTime() : null;
@@ -69,7 +70,7 @@ function CadenceLanes({ jobs, now }: { jobs: JobRow[]; now: number }) {
           </div>
         );
       })}
-    </div>
+    </CardGrid>
   );
 }
 

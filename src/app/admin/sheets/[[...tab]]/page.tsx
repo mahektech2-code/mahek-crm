@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CardGrid } from "@/components/ui/card-grid";
 import { ADMIN, ADMIN_TABS, tabIndexOf } from "@/lib/admin-routes";
 import { canFor, isPlatformAdmin } from "@/lib/access-control";
 import { nowMs } from "@/lib/format";
@@ -127,7 +128,7 @@ function SourceCards({
 }) {
   const today = new Date(now).toISOString().slice(0, 10);
   return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+    <CardGrid min={260} gap="gap-3">
       {cards.map((c) => {
         const pastOnly = c.key === "field_activity" && cutover <= today;
         const quiet = c.state === "retired" || pastOnly;
@@ -170,7 +171,7 @@ function SourceCards({
           </div>
         );
       })}
-    </div>
+    </CardGrid>
   );
 }
 

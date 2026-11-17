@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CardGrid } from "@/components/ui/card-grid";
 import { ADMIN } from "@/lib/admin-routes";
 import { nowMs, stamp } from "@/lib/format";
 import { attentionItems, jobHealth } from "@/lib/services/admin-platform-service";
@@ -130,7 +131,7 @@ export default async function AdminHome() {
 
           <Card>
             <CardHead title="Apps" />
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
+            <CardGrid min={200} gap="gap-0">
               {shown.map((a) => {
                 const pill: [Tone, string] = !a.built
                   ? ["muted", "Not built"]
@@ -168,7 +169,7 @@ export default async function AdminHome() {
                   <div className="truncate text-[13px] text-muted">{rest.reduce((n, a) => n + a.people, 0)} people</div>
                 </Link>
               ) : null}
-            </div>
+            </CardGrid>
           </Card>
         </div>
 

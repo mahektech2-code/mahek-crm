@@ -1,3 +1,4 @@
+import { s3Config } from "@/lib/storage";
 import { getConfig } from "@/lib/config/store";
 import { definition } from "@/lib/config/registry";
 import { sizeLine, storageSummary } from "@/lib/services/admin-console-service";
@@ -67,7 +68,7 @@ export default async function StoragePage() {
       title={
         <span className="inline-flex items-center gap-2.5">
           Storage &amp; files
-          <Pill tone="muted">{process.env.BLOB_READ_WRITE_TOKEN ? "Blob" : "Postgres"}</Pill>
+          <Pill tone="muted">{s3Config() ? "Bucket (R2)" : "Postgres"}</Pill>
         </span>
       }
       actions={<SweepButton />}

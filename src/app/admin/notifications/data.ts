@@ -1,4 +1,5 @@
 import "server-only";
+import { ADMIN } from "@/lib/admin-routes";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "@/lib/business-date";
@@ -116,7 +117,7 @@ export async function channels(): Promise<Channel[]> {
       name: "WhatsApp",
       on: wa.active && wati,
       line: !wati ? "No Wati key" : wa.active ? "Switched on by the founder" : "Switched off on the Founder Dashboard",
-      setHref: wati ? undefined : "/admin/integrations",
+      setHref: wati ? undefined : ADMIN.integrations,
     },
   ];
 }

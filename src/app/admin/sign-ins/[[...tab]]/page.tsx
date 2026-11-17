@@ -12,6 +12,7 @@ import {
   type SignInEvent,
 } from "@/lib/services/admin-security-view-service";
 import { requirePlatformAdmin } from "../../_shell/context";
+import { LiftPauseButton } from "../lift-pause-button";
 import { Card, Mono, Pill, type Tone } from "../../_shell/kit";
 import { OnboardingTab, SessionsTab } from "../../platform-real";
 import {
@@ -66,9 +67,9 @@ export default async function SignInsPage({
     return (
       <SecurityFrame active="paused">
         <Card>
-          <Table head={["Person", "Wrong passwords", "Last try", "From"]}>
+          <Table head={["Person", "Wrong passwords", "Last try", "From", ""]}>
             {paused.length === 0 ? (
-              <Empty cols={4}>No account is paused right now.</Empty>
+              <Empty cols={5}>No account is paused right now.</Empty>
             ) : (
               paused.map((p) => (
                 <tr key={p.account}>
@@ -95,13 +96,15 @@ export default async function SignInsPage({
                       <span className="text-muted">—</span>
                     )}
                   </Td>
+                  <Td className="text-right">{p.userId ? <LiftPauseButton account={p.account} /> : null}</Td>
                 </tr>
               ))
             )}
           </Table>
           <div className="border-t border-divider px-[18px] py-3 text-muted">
-            A pause ends on its own when the counting window passes, or the
-            moment they sign in with a WhatsApp code or reset their password.
+            A pause ends on its own when the counting window passes, the
+            moment they sign in with a WhatsApp code or reset their password,
+            or when you lift it here.
           </div>
         </Card>
       </SecurityFrame>
