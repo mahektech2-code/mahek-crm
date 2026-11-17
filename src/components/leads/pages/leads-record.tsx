@@ -1,5 +1,5 @@
 import { leadCallHistory, leadUpcomingFollowUps } from "@/lib/services/lead-followup-service";
-import { canVerifyLeadById, gstValidatorRefusalById } from "@/lib/services/lead-verifier";
+import { canVerifyLeadById, gstValidatorRefusalById, qualificationCollectorRefusalById } from "@/lib/services/lead-verifier";
 import { callRefusalFor } from "@/lib/services/qualification-call-gate";
 import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
 import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
@@ -365,6 +365,7 @@ export async function Body({
       canVerify={await canVerifyLeadById(user, id, { designated: true })}
       callLockedReason={await callRefusalFor(id)}
       canWork={await canLead(user, "lead.work")}
+      qualifyBarred={await qualificationCollectorRefusalById(user, id)}
       canTrash={await canFor(user, "lead.trash")}
       /* §22 — naming who RUNS the relationship, which moves no revenue and no
          target and is therefore a manager's. Moving the sales seat is the

@@ -1430,7 +1430,7 @@ function Resubmit({ customerId }: { customerId: string }) {
  * decision are always saved and audited, and where a move is not allowed the
  * dialog says what is still needed instead of moving anything.
  * ------------------------------------------------------------------------- */
-function CompleteQualificationDialog({
+export function CompleteQualificationDialog({
   customerId,
   leadName,
   detail,

@@ -69,14 +69,34 @@ export function PrimaryGateAction({
   base,
   facts,
   canVerify,
+  onCompleteQualification,
 }: {
   workspace: LeadWorkspace;
   base: string;
   facts: LeadGateActionFacts;
   canVerify: boolean;
+  /**
+   * Where the Qualification is the rung's work and this person may write it, the
+   * button opens the Complete Qualification dialog right here instead of sending
+   * them to another screen. Absent, it is the link it always was.
+   */
+  onCompleteQualification?: () => void;
 }) {
   const action = gateAction(facts);
   if (action.control === "none" || action.control === "advance") return null;
+  if (action.control === "qualify" && action.label === "Complete qualification" && onCompleteQualification) {
+    return (
+      <button
+        type="button"
+        onClick={onCompleteQualification}
+        title={action.says}
+        data-testid="complete-qualification"
+        className="inline-flex h-9 cursor-pointer items-center rounded-[6px] border border-brand bg-brand px-4 text-sm font-medium whitespace-nowrap text-white hover:bg-brand-hover"
+      >
+        {action.label}
+      </button>
+    );
+  }
   const dest = destinationFor(action.control, workspace, base);
   const off = action.control === "verify" && !canVerify;
   return (
