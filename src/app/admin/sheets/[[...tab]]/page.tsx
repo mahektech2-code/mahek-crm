@@ -42,7 +42,7 @@ export default async function SheetsPage({
 
   return (
     <AdminPage
-      title="Sheets"
+      title="Sheets &amp; imports"
       subtitle={SHEET_SUBTITLE}
       tabs={{ items: ADMIN_TABS.sheets, active: slug, href: (s) => ADMIN.sheets(s as TabsOf<"sheets">) }}
     >

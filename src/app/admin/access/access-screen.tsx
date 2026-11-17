@@ -27,8 +27,22 @@ export function AccessScreen({
   const [enabling, setEnabling] = React.useState(false);
   return (
     <AdminPage
-      title="Access"
+      title="People & access"
       subtitle="Who can open which app, and how far into it. People come from the employee master, so access starts with somebody who actually works here."
+      metrics={[
+        { label: "People", value: String(rows.length) },
+        { label: "Signing in", value: String(rows.filter((r) => r.active).length) },
+        { label: "Disabled", value: String(rows.filter((r) => !r.active).length) },
+        {
+          label: "Platform admins",
+          value: String(rows.filter((r) => r.grants.some((g) => g.app === "admin" && g.role === "admin")).length),
+        },
+        {
+          label: "Hats that clash",
+          value: String(rows.filter((r) => r.conflicts.length > 0).length),
+          tone: rows.some((r) => r.conflicts.length > 0) ? "warn" : undefined,
+        },
+      ]}
       actions={
         isPlatformAdmin ? (
           <Button variant="primary" onClick={() => setEnabling(true)}>

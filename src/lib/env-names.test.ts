@@ -75,6 +75,7 @@ const NOT_IN_PRODUCTION_ENV: Record<string, string> = {
   DATABASE_URL: "built by docker-compose from POSTGRES_PASSWORD",
   // Set by Node and by the runtime, never by us.
   NODE_ENV: "set by the runtime",
+  NEXT_RUNTIME: "set by Next.js — which runtime instrumentation.ts is running in",
   // Developer machines only: two scripts resolve a path under ~.
   HOME: "developer machines only — scripts/parse-catalogue.mjs, apply-receivables.ts",
   // The link crawler's target, which is localhost in CI and a laptop in dev.

@@ -6425,6 +6425,41 @@ each redirect's destination, against the `page.tsx` files on disk, and fails
 on any `/admin/…` literal written elsewhere. Old addresses are permanent
 redirects in `lib/admin-redirects.ts`.
 
+**THE CONSOLE WEARS THE V4 LOOK (Nov 2026), AND ITS SIDEBAR IS BY JOB.** Its
+shell carries `data-v4 data-v4-app="admin"` — the ERP's frame, the lavender
+header, the Mahek mark atop the sidebar and a System status card at its foot,
+read off the same `attentionItems` Home draws. The groups are People & access,
+Settings, Business data, Devices and System. `AdminPage` takes `metrics` (the
+figure cards) and `routeTabs`, for a screen that is several routes: Security &
+sign-ins is `/admin/sign-ins`, `/admin/otp` and `/admin/security` (the `auth.*`
+settings, found in the schemas by key) under one `SECURITY_TABS` strip, and
+Handsets is the two handset routes under `HANDSET_TABS`; a nav row's `match`
+lights it on all of them. Five screens were added, each reading what is already
+stored (`services/admin-console-service.ts`): Roles & permissions (the matrix,
+read-only, lowest level per app), Change history (the `config.update` audit
+rows; Restore goes through `updateConfigSetting` and only on a setting's newest
+change), Data health (counts, plus a rebuild per derived figure —
+`rebuildDerived`, platform admin, audited `job.rebuild`), App releases (builds
+reported by `mbos_devices` and `factory_devices`) and Storage & files.
+
+**AND THE REST OF THE REDRAW (Nov 2026).** Settings rows put their help
+behind ⓘ, show the key, mark a changed value with its default, and filter to
+"Changed only"; unsaved work turns the foot bar navy. People & access selects
+rows for bulk reset links, ended sessions and a CSV. Jobs opens on four
+cadence lanes (late at twice the interval) and each job shows its last runs.
+Integrations draws a card per service with **Test connection**
+(`testConnection`, one read-only request with the stored key) and **requests
+this month**, counted by `lib/integration-usage.ts` off Node's
+`undici:request:*` diagnostics channel — started in `src/instrumentation.ts`,
+so every outbound call is counted whichever library made it, flushed once a
+minute into `integration_usage`. A count, never rupees. **The recycle bin holds
+files, documents and announcements too**: `removeAttachment` keeps
+`removed_parent_*` and the orphan sweep leaves such a file for
+`attachments.removedRetentionDays` (90) before purging (`purged_at`); an HRMS
+announcement is soft-deleted (`deleted_at`) and restoring sends it again. App
+releases reads `releases.*MinimumVersion` and marks phones below it — a floor
+the console reads; no handset acts on it until a build reads it.
+
 **One home per screen.** The app registry was drawn twice (Apps → Registry,
 Overview → Health), credentials lived in three places (Voice, Maps, Overview →
 Integrations, which listed neither of the other two), sheet sync history in

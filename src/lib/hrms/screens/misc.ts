@@ -723,7 +723,12 @@ const notifications: HrmsScreenModule = {
     const admin = has(ctx, "admin");
     const { scope, options } = privateScope(q, admin);
     const me = ctx.employee?.id ?? null;
-    const all = await db.select().from(hrmsNotifications).orderBy(desc(hrmsNotifications.createdAt));
+    /* A deleted announcement is kept for the Admin Console's recycle bin and is on no list here. */
+    const all = await db
+      .select()
+      .from(hrmsNotifications)
+      .where(isNull(hrmsNotifications.deletedAt))
+      .orderBy(desc(hrmsNotifications.createdAt));
     /* Who it went to is the recipient list; rows from before it existed are read the old way. */
     const toMe = (n: NoteRow) => (n.recipientUserIds.length ? n.recipientUserIds.includes(ctx.user.id) : n.toEmployeeId == null || (!!me && n.toEmployeeId === me));
     const fromMe = (n: NoteRow) => n.createdById === ctx.user.id || (!!me && n.fromEmployeeId === me);
@@ -836,7 +841,10 @@ const notifications: HrmsScreenModule = {
       if (!sender && !has(ctx, "admin")) return err("Only the sender can delete a notification. Deleting anyone else’s needs the HRMS administration power.", "not_permitted");
       const refusal = await confirmImpact("hrms-announcement", id, readConfirmation(values));
       if (refusal) return refusal;
-      await db.delete(hrmsNotifications).where(eq(hrmsNotifications.id, id));
+      await db
+        .update(hrmsNotifications)
+        .set({ deletedAt: new Date(), deletedById: ctx.user.id, updatedAt: new Date() })
+        .where(eq(hrmsNotifications.id, id));
       await withdrawAnnouncement(n.bellIds);
       await hrmsAudit(ctx, "hrms.notification.delete", "hrms_notifications", id, n, null);
       return okVoid("Announcement deleted, and taken out of the bell");

@@ -56,6 +56,8 @@ export type SettingCategory =
   | "people"
   /** The sign-in code sent to a work number, and its provider. */
   | "auth"
+  /** The oldest handset build the office still accepts as current. */
+  | "releases"
   /* ---- MBOS, the field sales app. Same rule: no threshold is a constant. ---- */
   | "mbos-location"
   /**
@@ -2045,6 +2047,35 @@ export const SETTINGS = [
     default: 3,
     min: 0,
     max: 20,
+  },
+  {
+    key: "attachments.removedRetentionDays",
+    type: "integer",
+    category: "attachments",
+    label: "Keep a removed file for",
+    description:
+      "A file somebody takes off a record is kept this many days, so the Admin Console's recycle bin can put it back. After that its bytes are deleted and it cannot come back.",
+    default: 90,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "releases.salesmanMinimumVersion",
+    type: "text",
+    category: "releases",
+    label: "Salesman App: ask to update below",
+    description:
+      "Phones on a build older than this are marked behind on App releases and Handsets. Blank asks nobody. It is the office's floor, read by the console; a handset acts on it only from a build that reads it.",
+    default: "",
+  },
+  {
+    key: "releases.factoryMinimumVersion",
+    type: "text",
+    category: "releases",
+    label: "Factory app: ask to update below",
+    description:
+      "Phones on a build older than this are marked behind on App releases and Handsets. Blank asks nobody.",
+    default: "",
   },
   {
     key: "attachments.orphanCleanupHours",
@@ -7015,6 +7046,9 @@ export type Config = {
   "attachments.maxPerComplaint": number;
   "attachments.maxPerFollowUp": number;
   "attachments.maxPerFeedback": number;
+  "attachments.removedRetentionDays": number;
+  "releases.salesmanMinimumVersion": string;
+  "releases.factoryMinimumVersion": string;
   "attachments.orphanCleanupHours": number;
   "attachments.retentionDays": number;
 

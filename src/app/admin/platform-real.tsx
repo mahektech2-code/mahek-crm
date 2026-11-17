@@ -536,7 +536,7 @@ export function JobsTab({ data }: { data: Pick<PlatformData, "jobs" | "queues"> 
                 <Th>Last run</Th>
                 <Th>Outcome</Th>
                 <Th>Records</Th>
-                <Th>Past 7 days</Th>
+                <Th>Last runs</Th>
                 <Th>Detail</Th>
               </tr>
             </thead>
@@ -550,8 +550,16 @@ export function JobsTab({ data }: { data: Pick<PlatformData, "jobs" | "queues"> 
                   </Td>
                   <Td>{j.records}</Td>
                   <Td>
-                    {j.runs} run{j.runs === 1 ? "" : "s"}
-                    {j.failures ? `, ${j.failures} failed` : ""}
+                    <span
+                      className="inline-flex items-end gap-[3px]"
+                      role="img"
+                      aria-label={`${j.runs} runs in 7 days${j.failures ? `, ${j.failures} failed` : ""}`}
+                      title={`${j.runs} run${j.runs === 1 ? "" : "s"} in 7 days${j.failures ? `, ${j.failures} failed` : ""}`}
+                    >
+                      {j.recent.map((ok, k) => (
+                        <span key={k} className={cx("block h-3.5 w-2 rounded-[2px]", ok ? "bg-success" : "bg-danger")} />
+                      ))}
+                    </span>
                   </Td>
                   <Td className="max-w-[420px] truncate whitespace-normal text-muted">
                     {j.detail ?? "—"}

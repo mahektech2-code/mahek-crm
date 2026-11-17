@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { HintTip } from "@/components/ui/hint-tip";
 import { usePathname, useRouter } from "next/navigation";
 import { Button, cx } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -154,8 +155,15 @@ export function FeedbackSection({
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-start gap-4">
-        <section className="min-w-0 flex-[1_1_320px] overflow-hidden rounded-[8px] border border-line bg-surface xl:max-w-[400px]">
+      <div className="flex flex-wrap items-start gap-4 lg:flex-nowrap">
+        <section className="flex min-w-0 flex-[1_1_320px] flex-col overflow-hidden rounded-card border border-line bg-surface lg:sticky lg:top-4 lg:max-h-[calc(100vh-200px)] lg:max-w-[380px]">
+          <div className="flex flex-none items-center gap-2 border-b border-divider px-3.5 py-2.5">
+            <span className="flex-1 text-sm font-semibold text-ink">
+              {rows.length} {rows.length === 1 ? "report" : "reports"}
+            </span>
+            <HintTip text="Red bar: can't work. Amber: slows them down. Age turns red past a day without an answer." />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
           {rows.length === 0 ? (
             <div className="px-5 py-10 text-center">
               <div className="text-sm font-semibold text-ink">
@@ -209,8 +217,6 @@ export function FeedbackSection({
               </Link>
             ))
           )}
-          <div className="px-3.5 py-2.5 text-[11px] leading-4 text-muted">
-            Red bar: can&apos;t work. Amber: slows them down. Age turns red past a day without an answer.
           </div>
         </section>
 

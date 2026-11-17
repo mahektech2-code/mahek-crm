@@ -47,6 +47,7 @@ export const PAGE_TABS: Record<string, Array<{ slug: string; label: string }>> =
     { slug: "attachments", label: "Attachments" },
     { slug: "people", label: "People & names" },
     { slug: "maps", label: "Map keys" },
+    { slug: "releases", label: "App releases" },
   ],
   // The CRM's own tabs, as `presentation.ts` declares them, less the four that
   // moved to the page that owns what they decide.
@@ -138,6 +139,7 @@ const RULES: Rule[] = [
   { test: /^studio\./, page: "platform", tab: "attachments", group: "Studio" },
   { test: /^attachments\.maxPerFeedback$/, page: "platform", tab: "attachments", group: "Limits" },
   { test: /^attachments\./, page: "platform", tab: "attachments" },
+  { test: /^releases\./, page: "platform", tab: "releases", group: "Ask to update" },
   { test: /^people\./, page: "platform", tab: "people", group: "People" },
   { test: /^maps\./, page: "platform", tab: "maps", group: "The Ola Maps key pool" },
 
