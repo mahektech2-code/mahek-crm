@@ -734,6 +734,35 @@ export async function setAccess(
     return fieldErr("grants", `${describe(retired)} is retired and cannot be granted.`);
   }
 
+  /* WHO IS THIS, BY ID, before they are given a book or a team. The Salesman
+     App and HRMS answer "whose shops", "whose leave" and "who is my manager"
+     through the account's HRMS record; an account with none falls back to a
+     guess. A record the data proves (a unique email or mobile) is linked here
+     on the spot; anything less is refused with the two ways forward. */
+  const needsRecord = granted.filter((a) => a === "field" || a === "hrms");
+  if (needsRecord.length) {
+    const [acct] = await db
+      .select({ name: users.name, employeeId: users.employeeId, notEmployee: users.notEmployee })
+      .from(users)
+      .where(eq(users.id, userId!))
+      .limit(1);
+    if (acct && !acct.employeeId && !acct.notEmployee) {
+      const { loadPersonDirectory } = await import("@/lib/services/person-identity-service");
+      const dir = await loadPersonDirectory();
+      const how = dir.howLinked(userId!);
+      const employeeId = dir.employeeOfAccount(userId!);
+      if ((how === "email" || how === "mobile") && employeeId) {
+        await db.update(users).set({ employeeId }).where(and(eq(users.id, userId!), isNull(users.employeeId)));
+        await audit(me.id, "link-employee", userId!, `${acct.name} · linked to their HRMS record by ${how} while granting ${describe(needsRecord)}`);
+      } else {
+        return fieldErr(
+          "grants",
+          `${acct.name} is not linked to an HRMS record. ${describe(needsRecord)} works out their team, manager and book from it — use “Link an HRMS record” first, or “Not an employee” if they genuinely have none.`,
+        );
+      }
+    }
+  }
+
   /* THE LEVEL ALONE CAN CHANGE. This used to be invisible to the diff: a save
      that only moved a telecaller from associate to manager answered "No
      change." and wrote nothing, and the dialog agreed by disabling Save. */
@@ -1171,6 +1200,121 @@ export async function candidatesForGrant(): Promise<Result<Candidate[]>> {
 /* ------------------------------------------------------- the payroll link */
 
 /**
+ * RENAME A PERSON — once, and everywhere.
+ *
+ * A name lives in ONE place. For somebody linked to an HRMS record that place
+ * is HRMS: the employee is renamed, and the account, the customers' seat names
+ * and the spellings the sheets are resolved against follow it
+ * (`renameEmployee`). Where HR still keeps the row in the Employee Details
+ * sheet this refuses, and says so — the next sheet pass would put the old name
+ * back, and a rename that quietly undoes itself overnight is worse than none.
+ * An account with no HRMS record is renamed on its own, with the seats it
+ * holds. Nothing anywhere is matched on the name: who sees what is by id.
+ */
+export async function renamePerson(input: { userId: string; name: string }): Promise<Result<null>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  const name = input.name.trim().replace(/\s+/g, " ");
+  if (name.length < 2) return fieldErr("name", "Enter their full name");
+  if (name.length > 120) return fieldErr("name", "That is too long for a name");
+
+  const [person] = await db
+    .select({ id: users.id, name: users.name, employeeId: users.employeeId })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+  if (!person) return fail("That account no longer exists.", "not_found");
+
+  const { renameEmployee, renameUnlinkedAccount, spellingTakenByOthers } = await import("@/lib/services/person-identity-service");
+
+  /* A name somebody else answers to — today, or as a name they used to carry
+     — is refused: it would make everything that names either of them belong
+     to nobody. */
+  if (name.toLowerCase() !== person.name.toLowerCase()) {
+    const others = await spellingTakenByOthers(db, person.employeeId, name);
+    const [sameAccount] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(and(sql`lower(btrim(${users.name})) = ${name.toLowerCase()}`, ne(users.id, person.id))) // identity-ok: refusing a duplicate name, not a lookup
+      .limit(1);
+    const clash = others[0] ?? sameAccount?.name;
+    if (clash) return fieldErr("name", `${clash} already answers to ${name}. Add something to the name that tells the two apart.`);
+  }
+
+  if (person.employeeId) {
+    const [e] = await db
+      .select({ id: employees.id, name: employees.name, source: employees.source, decided: employees.hrmsDecidedAt })
+      .from(employees)
+      .where(eq(employees.id, person.employeeId))
+      .limit(1);
+    if (e) {
+      if (e.name === name && person.name === name) return ok(null, `${name} is already their name.`);
+      if (e.source !== "hrms" && !e.decided) {
+        return fail(
+          `HR keeps ${e.name}'s name in the Employee Details sheet, so change it there — or edit them in HRMS → People, which takes the record over from the sheet. The account, HRMS and every customer follow on the next sync.`,
+          "rule_violation",
+        );
+      }
+      await db.transaction(async (tx) => {
+        await tx.update(employees).set({ name, updatedAt: new Date() }).where(eq(employees.id, e.id));
+        await renameEmployee(tx, { employeeId: e.id, oldName: e.name, newName: name, actorId: me.id, source: "account-rename" });
+      });
+      refresh();
+      return ok(null, `Renamed to ${name} — in HRMS, on their account and on every customer that names them.`);
+    }
+  }
+
+  if (person.name === name) return ok(null, `${name} is already their name.`);
+  const seats = await db.transaction((tx) => renameUnlinkedAccount(tx, { userId: person.id, oldName: person.name, newName: name }));
+  await db.insert(auditLog).values({
+    id: newId("aud"),
+    actorId: me.id,
+    action: "person.renamed",
+    entityType: "user",
+    entityId: person.id,
+    actorRole: "admin",
+    actorApp: "admin",
+    beforeState: { name: person.name },
+    afterState: { name, source: "account-rename" },
+  });
+  refresh();
+  return ok(null, `Renamed to ${name}${seats ? ` — and on ${seats} customer seat${seats === 1 ? "" : "s"}` : ""}.`);
+}
+
+/**
+ * "This account is not an employee" — a shared desk login, an outside
+ * accountant. It leaves the "Not linked to HRMS" list, is never guessed onto
+ * a payroll row, and may then be given the Salesman App or HRMS without one.
+ * Setting it clears any stored link; clearing it changes nothing else.
+ */
+export async function setNotEmployee(input: { userId: string; notEmployee: boolean }): Promise<Result<null>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  const [person] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, input.userId)).limit(1);
+  if (!person) return fail("That account no longer exists.", "not_found");
+  await db
+    .update(users)
+    .set({ notEmployee: input.notEmployee, ...(input.notEmployee ? { employeeId: null } : {}), updatedAt: new Date() })
+    .where(eq(users.id, person.id));
+  await audit(me.id, input.notEmployee ? "access.not_employee" : "access.is_employee", person.id, person.name);
+  refresh();
+  return ok(
+    null,
+    input.notEmployee
+      ? `${person.name} is marked as not an employee — no HRMS record will be matched to them.`
+      : `${person.name} can be linked to an HRMS record again.`,
+  );
+}
+
+/**
  * Say which HRMS employee an account is, or take the answer back.
  *
  * The one door onto `users.employeeId` that does not require a terminal. On a
@@ -1205,8 +1349,13 @@ export async function linkEmployee(input: {
     .limit(1);
   if (!person) return fail("That account no longer exists.", "not_found");
 
+  const { forgetAccountSpellings, renameEmployee } = await import("@/lib/services/person-identity-service");
   if (input.employeeId === null) {
-    await db.update(users).set({ employeeId: null }).where(eq(users.id, person.id));
+    await db.transaction(async (tx) => {
+      await tx.update(users).set({ employeeId: null }).where(eq(users.id, person.id));
+      // What this account's own name taught the old record is wrong now.
+      await forgetAccountSpellings(tx, person.id);
+    });
     await audit(me.id, "unlink-employee", person.id, `${person.name} · unlinked from payroll`);
     refresh();
     return ok(
@@ -1247,7 +1396,13 @@ export async function linkEmployee(input: {
     );
   }
 
-  await db.update(users).set({ employeeId: employee.id }).where(eq(users.id, person.id));
+  /* ONE NAME, from the moment of linking: the account takes the HRMS record's
+     name now — said in the message below — rather than silently overnight. */
+  await db.transaction(async (tx) => {
+    await tx.update(users).set({ employeeId: employee.id }).where(eq(users.id, person.id));
+    await forgetAccountSpellings(tx, person.id);
+    await renameEmployee(tx, { employeeId: employee.id, oldName: null, newName: employee.name, actorId: me.id, source: "link" });
+  });
   await audit(
     me.id,
     "link-employee",
@@ -1257,7 +1412,7 @@ export async function linkEmployee(input: {
   refresh();
   return ok(
     { employeeCode: employee.code },
-    `${person.name} is ${employee.code} ${employee.name}. Their salary, days worked and reimbursements now read off that record.`,
+    `${person.name} is ${employee.code} ${employee.name}. Their salary, days worked and reimbursements now read off that record${person.name === employee.name ? "" : `, and their account is now called ${employee.name}, as HRMS has it`}.`,
   );
 }
 

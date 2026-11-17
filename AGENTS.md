@@ -3271,6 +3271,19 @@ record sits in is `ASSIGNED_TO_SQL`, so naming the owner puts a call against
 somebody it was reassigned away from. Unassigned is said in words rather than
 left blank — a call nobody owns is the one a manager most needs to see.
 
+**A person is an id; a name is a label.** Allocation, reporting lines, books
+and seats never hang off a name string, because names change — HR renames
+somebody and every comparison of names silently gives a different answer.
+Who-is-whose goes through `users.id`, `users.employee_id` and
+`employee_reporting`; a piece of TEXT (a sheet's "Sales Person", a CSV owner)
+becomes a person only through `personDirectory()` in
+`lib/services/person-identity-service.ts`, which also accepts every spelling
+the person has carried (`person_name_aliases`) and refuses a name two people
+share. A name lives in ONE place — HRMS for a linked person — and
+`renameEmployee`/`alignAccountNames` carry it to the account and the name
+copies on customers' seats. Admin → Manage access → Rename is the account-side
+door. `identity-by-id.test.ts` fails the build on a name-keyed lookup.
+
 **Manager-only actions are checked server-side** in the action, not just
 disabled in the UI. Disabled buttons always carry a `title` saying why.
 

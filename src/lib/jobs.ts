@@ -103,6 +103,7 @@ export type JobName =
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
+  | "align-person-names"
   | "self-raised-verifier-seats"
   | "recompute-inactivity"
   | "recompute-followups"
@@ -437,6 +438,31 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
    * through `assignSalesManager`, is off limits here exactly the way a
    * reassignment is off limits to `recomputeSalesPeople` above it.
    */
+  /*
+   * ONE NAME: every account linked to an HRMS record carries that record's
+   * name. A rename made anywhere HRMS reads from reaches the account, the
+   * customers' seat names and the spellings the sheets are resolved against.
+   * Before the seat pass below, so it reads today's names.
+   */
+  results.push(
+    await run("align-person-names", async () => {
+      const { alignAccountNames, autoLinkAccounts, placeByTitles } = await import("./services/person-identity-service");
+      /* Proven account ↔ HRMS links first, then the chart links the sheet's
+         titles prove, then the names — so a newly linked account takes its
+         HRMS name the same night. */
+      const linked = await autoLinkAccounts();
+      const chart = await placeByTitles();
+      const n = await alignAccountNames();
+      const toPlace = chart.ambiguous.length + chart.unknown.length;
+      return {
+        recordsAffected: linked + chart.placed + n,
+        detail:
+          `${linked} accounts linked to HRMS, ${chart.placed} placed on the org chart from their title, ${n} accounts renamed to match HRMS` +
+          (toPlace ? `; ${toPlace} still to place on the org chart by hand` : ""),
+      };
+    }, triggeredById).catch((e) => ({ job: "align-person-names" as const, recordsAffected: 0, detail: String(e) })),
+  );
+
   results.push(
     await run("recompute-sales-managers", async () => {
       const n = await recomputeSalesManagers();
@@ -1371,6 +1397,42 @@ export async function runJob(
           triggeredById,
         ),
       ];
+    case "align-person-names":
+      /*
+       * ONE NAME, by hand — and with `--dry-run`, the list of every linked
+       * account whose login name would change to its HRMS name, and every
+       * account the data proves is somebody, WITHOUT writing anything. Run that
+       * against prod before the first nightly pass does it for real.
+       */
+      return [
+        await run(
+          "align-person-names",
+          async () => {
+            const svc = await import("./services/person-identity-service");
+            if (options.dryRun) {
+              const drift = await svc.accountNameDrift();
+              const dir = await svc.loadPersonDirectory();
+              const open = await db
+                .select({ id: users.id, name: users.name })
+                .from(users)
+                .where(sql`${users.employeeId} is null and ${users.notEmployee} = false`);
+              const linkable = open.filter((u) => ["email", "mobile"].includes(dir.howLinked(u.id) ?? ""));
+              const lines = [
+                ...drift.map((d) => `rename: ${d.accountName} -> ${d.employeeName}`),
+                ...linkable.map((u) => `link: ${u.name} -> ${dir.employeeName(dir.employeeOfAccount(u.id)!)} (${dir.howLinked(u.id)})`),
+              ];
+              for (const l of lines) console.log(l);
+              return { recordsAffected: 0, detail: `dry run: ${drift.length} renames, ${linkable.length} links — nothing written` };
+            }
+            const linked = await svc.autoLinkAccounts();
+            const chart = await svc.placeByTitles();
+            const n = await svc.alignAccountNames(triggeredById ?? null);
+            return { recordsAffected: linked + chart.placed + n, detail: `${linked} linked, ${chart.placed} placed on the org chart, ${n} renamed` };
+          },
+          triggeredById,
+        ),
+      ];
+
     case "recompute-sales-managers":
       /*
        * Hand-triggerable on its own, not only bundled in the nightly — the

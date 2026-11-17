@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employeeReporting, employees } from "@/db/schema";
 
@@ -145,40 +145,8 @@ export async function orgChart(includeLeavers = false): Promise<OrgChart> {
   };
 }
 
-/**
- * Employee NAME → their manager's NAME, for everybody with one.
- *
- * The shared primitive behind every "who does this salesperson answer to"
- * question — `salesManagerSuggestions()` in queries.ts (the add/edit form's
- * live suggestion) and `recomputeSalesManagers()` in recompute.ts (the
- * nightly pass that keeps it current) both resolve a person to their manager
- * through this map rather than each reading `employee_reporting` its own way,
- * which is exactly how the two would end up disagreeing.
- *
- * Keyed on the NAME because nothing links a `users` account back to the
- * employee row it may have come from — creating one from HRMS never wrote an
- * id back — so a salesperson recorded on a customer as a name or an account
- * has to be matched to the org chart the same way either time.
- */
-export async function managerNameByEmployeeName(): Promise<Map<string, string>> {
-  const links = await db
-    .select({ employeeId: employeeReporting.employeeId, managerId: employeeReporting.managerId })
-    .from(employeeReporting);
-  if (!links.length) return new Map();
-
-  const people = await db
-    .select({ id: employees.id, name: employees.name })
-    .from(employees)
-    .where(eq(employees.status, "active"));
-  const nameById = new Map(people.map((p) => [p.id, p.name]));
-
-  const map = new Map<string, string>();
-  for (const link of links) {
-    const personName = nameById.get(link.employeeId);
-    const managerName = nameById.get(link.managerId);
-    if (personName && managerName) {
-      map.set(personName.trim().toLowerCase(), managerName);
-    }
-  }
-  return map;
-}
+/* `managerNameByEmployeeName` lived here: employee NAME → manager NAME, and
+ * every "who does this person answer to" question matched names at both ends.
+ * It is gone on purpose. Ask `personDirectory()` (services/person-identity-
+ * service), which answers by id; `identity-by-id.test.ts` fails the build if a
+ * name-keyed manager map comes back. */

@@ -2,7 +2,9 @@ import "server-only";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  employees,
   fieldActivityCustomerDecisions,
+  personNameAliases,
   sheetFieldActivityRows,
   sheetSyncRuns,
   timelineEvents,
@@ -82,6 +84,28 @@ export type FieldActivitySyncOptions = {
   reader?: SheetReader;
 };
 
+/**
+ * Every account, under every name it can be written as: its own, the name of
+ * the HRMS employee it is linked to, and every spelling that employee has
+ * carried. The activity tab was typed years ago and goes on spelling people
+ * the way it did, so a rename in HRMS must not cut a salesman off from his own
+ * history. A spelling two different people answer to stays ambiguous.
+ */
+export async function salesmanCandidates(): Promise<{ id: string; name: string }[]> {
+  const [accounts, linked, aliases] = await Promise.all([
+    db.select({ id: users.id, name: users.name }).from(users),
+    db
+      .select({ id: users.id, name: employees.name })
+      .from(users)
+      .innerJoin(employees, eq(employees.id, users.employeeId)),
+    db
+      .select({ id: users.id, name: personNameAliases.name })
+      .from(users)
+      .innerJoin(personNameAliases, eq(personNameAliases.employeeId, users.employeeId)),
+  ]);
+  return [...accounts, ...linked, ...aliases];
+}
+
 export async function syncFieldActivitySheet(
   options: FieldActivitySyncOptions,
 ): Promise<SyncOutcome> {
@@ -94,7 +118,7 @@ export async function syncFieldActivitySheet(
     );
   }
 
-  const salesmen = await db.select({ id: users.id, name: users.name }).from(users);
+  const salesmen = await salesmanCandidates();
   const matcher = await shopNameMatcher();
 
   return runSync(
@@ -406,7 +430,7 @@ export async function rematchFieldActivitySalesmen(): Promise<{
   ambiguous: number;
   stillUnmatched: number;
 }> {
-  const salesmen = await db.select({ id: users.id, name: users.name }).from(users);
+  const salesmen = await salesmanCandidates();
 
   const rows = await db
     .select({

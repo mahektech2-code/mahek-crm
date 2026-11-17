@@ -162,21 +162,21 @@ async function buildContext(withTeam: boolean): Promise<HrmsSelf | HrmsContext> 
   return { ...self, team };
 }
 
-/** Direct reports on the org chart, and — for people the chart has not placed — those whose Report To is my job title. */
+/**
+ * Direct reports on the org chart — by id, and nothing else.
+ *
+ * It used to add, for anybody the chart had not placed, everyone whose Report
+ * To text equalled my job title: rename a title and a team vanished, give two
+ * heads one title and both saw both teams. That title is now read ONCE, into
+ * a real chart link, by `placeByTitles` (sheet sync, HRMS save, nightly);
+ * whoever it cannot place is listed on the Org chart for HR.
+ */
 async function teamOf(me: HrmsEmployeeRef): Promise<Set<string>> {
-  const [chart, placed] = await Promise.all([
-    db.select({ id: employeeReporting.employeeId }).from(employeeReporting).where(eq(employeeReporting.managerId, me.id)),
-    db.select({ id: employeeReporting.employeeId }).from(employeeReporting),
-  ]);
+  const chart = await db
+    .select({ id: employeeReporting.employeeId })
+    .from(employeeReporting)
+    .where(eq(employeeReporting.managerId, me.id));
   const ids = new Set(chart.map((r) => r.id));
-  if (me.position) {
-    const onChart = new Set(placed.map((r) => r.id));
-    const byTitle = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(sql`lower(trim(${employees.reportsTo})) = ${me.position.trim().toLowerCase()}`);
-    for (const r of byTitle) if (!onChart.has(r.id)) ids.add(r.id);
-  }
   ids.delete(me.id);
   return ids;
 }

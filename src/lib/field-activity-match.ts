@@ -33,7 +33,10 @@ export function matchSalesmanName(
   if (!name) return { status: "unmatched", matchedId: null, note: null };
 
   const key = partyNameKey(name);
-  const hits = candidates.filter((c) => partyNameKey(c.name) === key);
+  /* One account may appear under several spellings (its name, its HRMS
+     name, a name it carried before a rename) — those are one hit, not an
+     ambiguity. */
+  const hits = [...new Map(candidates.filter((c) => partyNameKey(c.name) === key).map((c) => [c.id, c])).values()];
 
   if (hits.length === 0) return { status: "unmatched", matchedId: null, note: null };
   if (hits.length === 1) return { status: "matched", matchedId: hits[0].id, note: null };
