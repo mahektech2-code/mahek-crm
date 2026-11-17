@@ -16,6 +16,8 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { NextStepDialog } from "@/components/crm/next-step-dialog";
+import { OrderTakenDialog } from "@/components/crm/order-taken-dialog";
+import type { TakenTo } from "@/lib/order-journey";
 import { CallAssistant, type AssistantApply } from "@/components/crm/call-assistant";
 import {
   holdOtherReasonsUntilReminder,
@@ -472,6 +474,8 @@ type LoggedCall = {
    * already changed by then: the row just worked has dropped off it.
    */
   canAdvance: boolean;
+  /** The TO number the order on this call became, for the "Order taken" dialog. */
+  takenTo: TakenTo | null;
 };
 
 /**
@@ -532,7 +536,18 @@ export function CallPanel(props: CallPanelProps) {
         />
       ) : null}
 
-      {logged ? (
+      {logged?.takenTo ? (
+        <OrderTakenDialog
+          key={logSeq}
+          open={nextStepOpen}
+          taken={logged.takenTo}
+          step={logged.step}
+          customerName={logged.customerName}
+          defaultNext={logged.wantsNext}
+          onNext={logged.canAdvance ? () => dismiss(true) : null}
+          onStay={() => dismiss(false)}
+        />
+      ) : logged ? (
         <NextStepDialog
           key={logSeq}
           open={nextStepOpen}
@@ -1605,6 +1620,7 @@ function CallPanelForm({
           step: result.data.nextStep,
           wantsNext: advance,
           canAdvance: Boolean(onSaved),
+          takenTo: result.data.takenTo ?? null,
         });
       } else if (result.fieldErrors?.length) {
         // The server names the field, so the message lands next to it — on
