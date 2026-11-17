@@ -1592,6 +1592,14 @@ export async function recordLeadValidationCall(
      * of a manager's words end up in a column nobody reads.
      */
     followUpNote?: string;
+    /**
+     * THE CALL IS MADE FOR THE SALES MANAGER'S REVIEW, so recording it decides
+     * nothing: no verification, no promotion, no Qualification opened. She checks
+     * the recorded answers against it and then confirms or rejects. Only ever
+     * narrows what a call does, so it is safe to accept from the client; the other
+     * doors (the queue, the desk's Verify) do not send it and verify as before.
+     */
+    forReview?: boolean;
     /** §26's code, required by the move rather than by this schema. */
     lostReasonCode?: string;
     /** §8 — what the call FOUND. Required on `not_qualified`; the loss code is
@@ -1633,6 +1641,7 @@ export async function recordLeadValidationCall(
         answers: z.record(z.string(), z.string().trim().max(1000)),
         outcome: z.enum(["verified", "follow_up", "not_qualified"]),
         followUpNote: z.string().trim().max(2000).optional(),
+        forReview: z.boolean().optional(),
         lostReasonCode: z.string().trim().max(80).optional(),
         /**
          * §8 — WHAT THE CALL ACTUALLY FOUND, and it is a second question from
@@ -1973,7 +1982,7 @@ export async function recordLeadValidationCall(
         leadLastActivityDate: day,
         updatedAt: new Date(),
       };
-      if (c.outcome === "verified") {
+      if (c.outcome === "verified" && !c.forReview) {
         set.leadVerifiedAt = new Date();
         set.leadVerifiedById = ctx.user.id;
       }
@@ -2102,6 +2111,10 @@ export async function recordLeadValidationCall(
      * it. Loaded lazily: that service imports this file for the move it makes, and
      * a static import back would be a cycle.
      */
+    if (c.forReview && c.outcome === "verified") {
+      refresh(customerId);
+      return ok(null, "Call recorded. Check the answers against it, then confirm or reject the verification.");
+    }
     const { settleProspectRequest } = await import("../services/lead-prospect-request-service");
     const settled = await settleProspectRequest(customerId, c.outcome);
     if (!settled.ok) {

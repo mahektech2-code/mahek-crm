@@ -17,6 +17,7 @@ import { leadGateInput, leadRow } from "@/lib/services/lead-service";
 import { answersMissing, requireProspectVerifier } from "@/lib/services/prospect-verifier";
 import { openQualificationAfterVerification } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf, settleProspectRequest } from "@/lib/services/lead-prospect-request-service";
+import { reviewCallStatus } from "@/lib/services/qualification-call-gate";
 import { returnProspectRequest } from "@/lib/actions/lead-calling-desk";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 
@@ -117,6 +118,20 @@ export async function confirmProspectReview(input: z.input<typeof confirmSchema>
     const missing = answersMissing(verdict.missing);
     if (missing.length) {
       return err(`Not ready to confirm: ${missing.map((c) => c.says).join("; ")}.`, "rule_violation");
+    }
+
+    /* THE CALL COMES FIRST, and it has to have checked out. She confirms only on a
+       call made for this round of the review that found every answer as recorded;
+       a call that found one wrong is a reason to reject, not to confirm. */
+    const call = await reviewCallStatus(customerId);
+    if (!call.made) {
+      return err("Make the verification call first. Confirm opens once a call to the customer has been recorded.", "rule_violation");
+    }
+    if (call.corrections > 0) {
+      return err(
+        `The call found ${call.corrections} answer${call.corrections === 1 ? "" : "s"} different from what the customer said. Reject the verification so the owner corrects ${call.corrections === 1 ? "it" : "them"}.`,
+        "rule_violation",
+      );
     }
 
     const now = new Date();

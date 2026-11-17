@@ -7,6 +7,7 @@ import { appAccess, auditLog, customers, leadStageTransitions, mbosLeadValidatio
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
+import { saveQualificationReviewEdits } from "@/lib/actions/lead-qualification-review-edit";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { confirmProspectReview, resubmitProspectForReview, returnProspectForCorrection } from "@/lib/actions/prospect-review";
 import { loadQualificationReview } from "@/lib/services/lead-qualification-review-service";
@@ -81,6 +82,14 @@ const prospect = async (over: Partial<typeof customers.$inferInsert> = {}) =>
   )[0];
 
 const row = async (leadId: string) => (await db.select().from(customers).where(eq(customers.id, leadId)))[0];
+/** STEP 1: the Sales Manager rings the customer FIRST. A call made for the review decides nothing. */
+const callFirst = (leadId: string, over: { corrections?: never[] | Record<string, unknown>[] } = {}) =>
+  recordLeadValidationCall(leadId, {
+    answers: { current_product: "Asian Paints PU" },
+    outcome: "verified",
+    forReview: true,
+    ...(over.corrections ? { corrections: over.corrections as never } : {}),
+  });
 const auditCount = async (leadId: string, action: string) =>
   (await db.select().from(auditLog).where(and(eq(auditLog.entityId, leadId), eq(auditLog.action, action)))).length;
 
@@ -120,24 +129,81 @@ describe("the review shows Suspect and Prospect answers only", () => {
     assert.ok(model.rows.length > 0);
     assert.ok(model.rows.every((r) => r.section !== "qualification"), "a Qualification row leaked in");
     assert.equal(model.tally.total, model.rows.length);
+    assert.equal(model.rows.length, 14, "exactly the fourteen items");
+  });
+
+  test("every answer is read-only: the Sales Manager checks, the owner corrects", async () => {
+    const lead = await prospect();
+    const model = await loadQualificationReview(lead.id, mgr);
+    assert.ok(model);
+    assert.equal(model.rows.flatMap((r) => r.fields).filter((f) => f.editKey).length, 0);
+    assert.deepEqual(model.verification, { callMade: false, corrections: 0, calledAt: null });
+    assert.ok(model.blockers.some((b) => /Make the verification call first/.test(b)), "Confirm is held until the call");
+  });
+
+  test("she cannot change an answer by posting an edit either", async () => {
+    const lead = await prospect();
+    const r = await saveQualificationReviewEdits({ customerId: lead.id, edits: { fields: { competitor: "Berger" } } });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /does not change them/);
+    assert.equal((await row(lead.id)).leadCompetitor, "Local thinner");
   });
 });
 
 describe("Confirm", () => {
-  test("verifies a complete Prospect and opens Qualification, with no call", async () => {
+  test("is refused until the call has been made, and nothing changes", async () => {
     const lead = await prospect();
+    const r = await confirmProspectReview({ customerId: lead.id });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /Make the verification call first/);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.leadVerifiedAt, null);
+  });
+
+  test("the call made for the review decides nothing; Confirm then opens Qualification — not Sample / trial", async () => {
+    const lead = await prospect();
+    const call = await callFirst(lead.id);
+    assert.equal(call.ok, true, call.ok ? "" : call.error);
+    const mid = await row(lead.id);
+    assert.equal(mid.leadStage, "prospect", "the call does not verify or move the lead");
+    assert.equal(mid.leadVerifiedAt, null);
+    assert.deepEqual((await loadQualificationReview(lead.id, mgr))!.verification?.callMade, true);
+
     const r = await confirmProspectReview({ customerId: lead.id });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     const after = await row(lead.id);
-    assert.equal(after.leadStage, "qualification");
+    assert.equal(after.leadStage, "qualification", "on to the existing Qualification step");
     assert.equal(after.leadVerifiedById, mgr.id);
     assert.ok(after.leadVerifiedAt);
-    assert.equal(
-      (await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id))).length,
-      0,
-      "no call was needed",
-    );
+    assert.equal(after.leadQualificationReview, null, "nothing has been approved at Qualification yet");
+    assert.equal((await db.select().from(mbosLeadValidations).where(eq(mbosLeadValidations.customerId, lead.id))).length, 1);
     assert.equal(await auditCount(lead.id, PROSPECT_REVIEW_AUDIT.confirm), 1);
+  });
+
+  test("a call that found an answer wrong cannot be confirmed — she rejects instead", async () => {
+    const lead = await prospect();
+    const call = await callFirst(lead.id, {
+      corrections: [{ field: "competitor", verdict: "corrected", original: "Local thinner", corrected: "Berger", reason: "The shop said Berger" }],
+    });
+    assert.equal(call.ok, true, call.ok ? "" : call.error);
+    const m = (await loadQualificationReview(lead.id, mgr))!;
+    assert.equal(m.verification?.corrections, 1);
+    assert.ok(m.blockers.some((b) => /reject the verification/.test(b)));
+    const r = await confirmProspectReview({ customerId: lead.id });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /Reject the verification/);
+    assert.equal((await row(lead.id)).leadStage, "prospect");
+    assert.equal((await row(lead.id)).leadCompetitor, "Local thinner", "her answer is not rewritten by the call");
+  });
+
+  test("a call that did not reach the shop does not count as the call", async () => {
+    const lead = await prospect();
+    const c = await recordLeadValidationCall(lead.id, { answers: {}, outcome: "follow_up", followUpNote: "Not reachable" });
+    assert.equal(c.ok, true, c.ok ? "" : c.error);
+    const r = await confirmProspectReview({ customerId: lead.id });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /Make the verification call first/);
   });
 
   test("is refused while a required Prospect answer is missing, and nothing changes", async () => {
@@ -205,6 +271,11 @@ describe("Return and Resubmit", () => {
     assert.equal(await auditCount(lead.id, PROSPECT_REVIEW_AUDIT.resubmit), 1);
 
     setTestUser(mgr);
+    /* A rejection starts a new round, and the answers it was about have changed: the
+       call made before it does not stand in for a call about the corrected answers. */
+    const stale = await confirmProspectReview({ customerId: lead.id });
+    assert.equal(stale.ok, false);
+    assert.equal((await callFirst(lead.id)).ok, true);
     const done = await confirmProspectReview({ customerId: lead.id });
     assert.equal(done.ok, true, done.ok ? "" : done.error);
     assert.equal((await row(lead.id)).leadStage, "qualification");
@@ -222,6 +293,7 @@ describe("Return and Resubmit", () => {
 describe("Qualification onward is untouched", () => {
   test("confirming does not answer the Qualification questions or review them", async () => {
     const lead = await prospect();
+    await callFirst(lead.id);
     await confirmProspectReview({ customerId: lead.id });
     const after = await row(lead.id);
     assert.equal(after.leadStage, "qualification");

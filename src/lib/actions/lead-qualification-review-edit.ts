@@ -156,10 +156,14 @@ export async function saveQualificationReviewEdits(
       /* The one gate the verification call asks — the org chart's designated
          verifier — asked unchanged. */
       ctx = await requireProspectVerifier(customerId);
-      /* Qualification has not opened: its answers are collected there, not here. */
-      if ([...fieldKeys, ...answerKeys].some(isCollectorEdit)) {
-        return err(`${access.reason} Nothing was saved.`, "rule_violation");
-      }
+      /* THE SALES MANAGER CHECKS THE ANSWERS AND NEVER CHANGES THEM. She rings the
+         customer, compares, and either confirms or rejects; a rejection sends it
+         back and the OWNER corrects. An edit here would be the manager rewriting
+         the evidence she is checking. */
+      return err(
+        "The Sales Manager checks these answers and does not change them. Reject the verification and the owner corrects them. Nothing was saved.",
+        "rule_violation",
+      );
     }
 
     const wasSnapshot = snapshot(before);

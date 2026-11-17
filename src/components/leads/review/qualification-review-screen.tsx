@@ -68,6 +68,9 @@ export function QualificationReviewScreen({
   const router = useRouter();
   const toast = useToast();
   const canEdit = model.viewer.canDecide;
+  /* BEFORE QUALIFICATION OPENS the Sales Manager only CHECKS the answers against the
+     call: nothing here is hers to change, so there is nothing to save. */
+  const checksOnly = model.kind === "prospect";
 
   const editable = React.useMemo(
     () => model.rows.flatMap((r) => r.fields).filter((f) => f.editKey),
@@ -221,11 +224,11 @@ export function QualificationReviewScreen({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-5">
           <Banner
             tone={copy.tone}
-            title={model.state === "prospect_pending" && model.viewer.canDecide ? "Your decision — confirm to open Qualification, or return it" : copy.title}
+            title={model.state === "prospect_pending" && model.viewer.canDecide ? "Your decision — confirm to open Qualification, or reject the verification" : copy.title}
             body={
               model.state === "prospect_pending"
                 ? model.viewer.canDecide
-                  ? "Read every Suspect and Prospect answer below. Confirming opens Qualification; returning sends it back to its owner with your reason."
+                  ? "Ring the customer first, then check each answer below against what they said. If every answer is right, confirm: Qualification opens. If any is wrong, reject the verification and the owner corrects it."
                   : "Submitted for Qualification. Its designated verifier reads these answers, then confirms it or returns it."
                 : model.state === "prospect_returned"
                   ? model.viewer.canResubmit
@@ -355,6 +358,42 @@ export function QualificationReviewScreen({
             );
           })}
 
+          {model.verification && canEdit ? (
+            <section
+              className="mt-4 rounded-[6px] border border-line bg-surface px-5 py-4"
+              data-testid="verification-panel"
+              data-call-made={model.verification.callMade ? "yes" : "no"}
+            >
+              <h2 className="text-[15px] font-semibold text-ink">Verification call — make it first</h2>
+              {model.verification.callMade ? (
+                model.verification.corrections > 0 ? (
+                  <p className="mt-1 text-[13px] text-warn-ink" data-testid="call-found-differences">
+                    The call found {model.verification.corrections} answer{model.verification.corrections === 1 ? "" : "s"} different
+                    from what the customer said. Reject the verification so the owner corrects {model.verification.corrections === 1 ? "it" : "them"}.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-[13px] text-muted" data-testid="call-all-right">
+                    The call is recorded{model.verification.calledAt ? ` (${stamp(model.verification.calledAt)})` : ""} and every answer stood.
+                    Check them above, then confirm.
+                  </p>
+                )
+              ) : (
+                <p className="mt-1 text-[13px] text-muted" data-testid="call-needed">
+                  Ring the customer and record the call. Confirm opens once it is recorded.
+                </p>
+              )}
+              <div className="mt-3">
+                <Link
+                  href={leadHref(workspace, `leads/${model.customerId}/verify?review=1`)}
+                  data-testid="make-call"
+                  className="inline-flex h-8.5 items-center rounded-[4px] bg-brand px-3 text-[13px] font-medium text-white no-underline hover:no-underline"
+                >
+                  {model.verification.callMade ? "Call again" : "Make the call"}
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
           {canEdit ? (
             <section className="mt-4 rounded-[6px] border border-line bg-surface px-5 py-4" data-testid="decision-panel">
               <h2 className="text-[15px] font-semibold text-ink">Your decision</h2>
@@ -411,13 +450,13 @@ export function QualificationReviewScreen({
                   onClick={() => decide(model.kind === "prospect" ? "incomplete" : rejectKind)}
                 >
                   {busy === "incomplete" || busy === "clarification"
-                    ? model.kind === "prospect" ? "Returning…" : "Rejecting…"
-                    : model.kind === "prospect" ? "Return for correction" : "Reject and send back"}
+                    ? "Rejecting…"
+                    : model.kind === "prospect" ? "Reject verification" : "Reject and send back"}
                 </Button>
               </div>
               <p className="mt-2 text-[12px] text-muted">
                 {model.kind === "prospect"
-                  ? "Returning keeps every answer and tells the owner why; they correct it and send it back. A verification call is optional — record one after this decision from the lead's record."
+                  ? "Rejecting keeps every answer and tells the owner why. The owner corrects them and sends it back, and you ring the customer again."
                   : "Rejecting keeps every answer, holds the lead at Qualification, and tells the owner why."}
               </p>
             </section>
@@ -509,9 +548,11 @@ export function QualificationReviewScreen({
 
         <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3">
           <span className="max-w-[230px] text-[11px] leading-[15px] text-muted">
-            {canEdit
-              ? "Every change you save is recorded with your name, the time, and the before and after."
-              : "Read only — only the lead's designated approver can change or decide."}
+            {canEdit && checksOnly
+              ? "Read only — you check these answers against the call. If any is wrong, reject the verification."
+              : canEdit
+                ? "Every change you save is recorded with your name, the time, and the before and after."
+                : "Read only — only the lead's designated approver can change or decide."}
           </span>
           <div className="flex items-center gap-2">
             <Link
@@ -525,7 +566,7 @@ export function QualificationReviewScreen({
                 {busy === "resubmit" ? "Sending…" : "Resubmit for review"}
               </Button>
             ) : null}
-            {canEdit ? (
+            {canEdit && !checksOnly ? (
               <>
                 {dirty ? (
                   <Button tone="quiet" disabled={busy !== null} onClick={() => setDraft(initial)}>

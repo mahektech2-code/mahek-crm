@@ -347,6 +347,8 @@ export type ReviewContext = {
   editable: boolean;
   /** Where the CRM keeps Qualification answers for the collector, the sentence to say so. */
   collectorOnlyReason: string | null;
+  /** The sentence for a box that is read-only because the whole review is, rather than because the viewer may not decide. */
+  readOnlyReason?: string;
   /**
    * Which decision this review is for. Before Qualification opens (`"prospect"`)
    * the Qualification questions are not asked yet, so they are not built at
@@ -421,7 +423,7 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
     const earlier = editedAt.get(id);
     if (earlier) return { editKey: null, sameAs: earlier, readOnlyReason: `Same answer as “${earlier}” — change it there.` };
     editedAt.set(id, label);
-    if (!ctx.editable) return { editKey: null, readOnlyReason: NOT_APPROVER };
+    if (!ctx.editable) return { editKey: null, readOnlyReason: ctx.readOnlyReason ?? NOT_APPROVER };
     if (isCollectorEdit(id) && ctx.collectorOnlyReason) {
       return { editKey: null, readOnlyReason: ctx.collectorOnlyReason };
     }

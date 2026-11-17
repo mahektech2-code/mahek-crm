@@ -9275,6 +9275,27 @@ review or by the call, a lead past Qualification is not held, and a distributor'
 checklist (not edited from the review) is left alone. The handset records its
 verifications through its own handler and is untouched.
 
+**THE SALES MANAGER'S VERIFICATION OF A PROSPECT IS STEP 1, AND IT ONLY CHECKS.**
+Before Qualification opens, the designated verifier's review is exactly the fourteen
+items — the eleven Suspect answers and the three Prospect-only ones — and every one
+of them is READ-ONLY. She does not edit or correct anything (`saveQualificationReviewEdits`
+refuses at Prospect, and the boxes say why). The order is: she makes the verification
+call FIRST (a call recorded with `forReview`, which records what the customer said
+and decides nothing — no verification, no promotion, no Qualification opened); she
+checks the recorded answers against it; then she CONFIRMS, which opens the existing
+Qualification step, or REJECTS with a reason, which sends it back to the owner to
+correct and resubmit. `reviewCallStatus` is the one question "has a call been made
+for THIS round": Confirm is refused until one has, and refused while the latest call
+found an answer wrong (`lead_verification_corrections`, verdict `corrected`). A
+rejection starts a new round, so a corrected lead needs a new call. The other doors
+(the verification queue, the Sales Manager desk's Verify) do not send `forReview` and
+verify by a call exactly as before.
+
+Step 2 is the Qualification page that already exists (the Telecaller answers its
+questions there, the Sales Manager reviews them, and only then may a lead move to
+Sample / Trial). Step 1 does NOT move a lead to Sample / Trial, and nothing here
+changes that page or the gate rules mirrored onto the handset.
+
 **GST IS THE TELECALLER'S END TO END.** They enter it and they validate it; the
 self-check that refused the lead's owner is gone, and what keeps that honest is
 that a validation belongs to the number it was made against — changing the GSTIN

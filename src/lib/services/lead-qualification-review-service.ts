@@ -18,7 +18,7 @@ import { PROSPECT_REVIEW_AUDIT, prospectReviewStateOf } from "@/lib/prospect-rev
 import { gateTo } from "@/lib/engines/lead-gates";
 import { requestOf } from "./lead-prospect-request-service";
 import { leadGateInput, leadRow } from "./lead-service";
-import { callRefusalFor } from "./qualification-call-gate";
+import { callRefusalFor, reviewCallStatus } from "./qualification-call-gate";
 import { canVerifyLeadById, creatorFactsFor, qualificationCollectorRefusal } from "./lead-verifier";
 import { answersMissing, canDecideProspect } from "./prospect-verifier";
 import { assertDesignatedQualificationApprover, designatedQualificationApprover } from "./qualification-approver";
@@ -99,6 +99,14 @@ export type QualificationReviewModel = {
    * decide, a distributor). It is never a condition of anything.
    */
   call: { saved: boolean } | null;
+  /**
+   * STEP 1 OF THE MANAGER'S VERIFICATION (the Prospect review, before Qualification
+   * opens): the call is made FIRST and the answers are read-only. `callMade` is
+   * whether a call that reached the shop has been recorded for this round,
+   * `corrections` how many answers it found different from what the customer said.
+   * Null on the Qualification review.
+   */
+  verification: { callMade: boolean; corrections: number; calledAt: string | null } | null;
 };
 
 async function nameMap(ids: (string | null | undefined)[]): Promise<Map<string, string>> {
@@ -222,7 +230,17 @@ export async function loadQualificationReview(
       unmetProspect,
       unmetQualification,
     },
-    { editable: canDecide, collectorOnlyReason, kind: kind === "prospect" ? "prospect" : "qualification" },
+    /* At Prospect the Sales Manager only CHECKS: nothing in the 14 is hers to change, so
+       every box is read-only and the sentence says what to do instead. */
+    {
+      editable: kind === "prospect" ? false : canDecide,
+      collectorOnlyReason,
+      readOnlyReason:
+        kind === "prospect"
+          ? "You check this answer against the call. If it is wrong, reject the verification and the owner corrects it."
+          : undefined,
+      kind: kind === "prospect" ? "prospect" : "qualification",
+    },
   );
 
   /* BEFORE QUALIFICATION OPENS the review is of the Suspect and Prospect answers
@@ -232,10 +250,18 @@ export async function loadQualificationReview(
 
   /* What holds Confirm: the Prospect gate's own words before Qualification opens,
      the Qualification gate's after. */
+  const verification = kind === "prospect" ? await reviewCallStatus(customerId) : null;
   const blockers = !gate
     ? []
     : kind === "prospect"
-      ? answersMissing(gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing).map((c) => c.says)
+      ? [
+          ...answersMissing(gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing).map((c) => c.says),
+          /* The call comes first, and it has to have checked out. */
+          ...(verification && !verification.made ? ["Make the verification call first"] : []),
+          ...(verification && verification.corrections > 0
+            ? [`The call found ${verification.corrections} answer${verification.corrections === 1 ? "" : "s"} different from what the customer said — reject the verification`]
+            : []),
+        ]
       : confirmBlockers(gate);
 
   /* History: approver edits, verdicts and resubmissions, newest first. */
@@ -346,6 +372,9 @@ export async function loadQualificationReview(
   const verifierNames = approverId && !names.has(approverId) ? await nameMap([approverId]) : names;
 
   const callApplies = kind === "qualification" && canDecide && lead.leadSalesType !== "distributor";
+  const verificationModel = verification
+    ? { callMade: verification.made, corrections: verification.corrections, calledAt: verification.at ? verification.at.toISOString() : null }
+    : null;
   const call = callApplies ? { saved: (await callRefusalFor(customerId)) === null } : null;
 
   return {
@@ -355,6 +384,7 @@ export async function loadQualificationReview(
     salesType: lead.leadSalesType,
     state,
     kind,
+    verification: verificationModel,
     people: {
       creatorName: creator.actorUserId ? (names.get(creator.actorUserId) ?? null) : null,
       ownerName: lead.ownerId ? (names.get(lead.ownerId) ?? null) : null,
