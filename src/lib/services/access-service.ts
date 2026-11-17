@@ -425,6 +425,13 @@ export type Candidate = {
   employeeStatus: "active" | "inactive" | "unknown" | null;
   /** True where the account exists and is not deactivated. */
   accountActive: boolean;
+  /**
+   * Whether their account is in use: it holds an app, has a way to sign in, or
+   * has been signed into. False for the account every employee is given
+   * automatically until somebody sets it up — the dialog then asks for a work
+   * number or email and the apps, and the server gives them to THAT account.
+   */
+  setUp: boolean;
   /** Apps they already hold, so the dialog can say "they already have this". */
   apps: AppId[];
   /**
@@ -454,6 +461,7 @@ export async function listCandidates(): Promise<Candidate[]> {
         phone: users.phone,
         active: users.active,
         employeeId: users.employeeId,
+        lastLoginAt: users.lastLoginAt,
       })
       .from(users)
       .orderBy(asc(users.name)),
@@ -529,6 +537,14 @@ export async function listCandidates(): Promise<Candidate[]> {
 
   for (const e of staff) {
     const account = accountFor.get(e.id) ?? null;
+    /* Every employee has an account (`ensureEmployeeAccounts`), most of them
+       made automatically and never used: no apps, no way in. That one is SET
+       UP here, not replaced — so it counts as "not set up yet", not as
+       somebody's account in use, and a switched-off one belongs to a
+       rejoiner rather than refusing them. */
+    const setUp = !!account && (
+      (appsByUser.get(account.id)?.length ?? 0) > 0 || !!account.email || !!account.phone || !!account.lastLoginAt
+    );
 
     // Only an active employee gets access. A leaver whose row is still in the
     // sheet, and somebody whose status cell nobody filled in, are both refused
@@ -540,7 +556,7 @@ export async function listCandidates(): Promise<Candidate[]> {
         ? "Not active in HRMS."
         : e.status === "unknown"
           ? "HRMS does not say whether they are active."
-          : account && !account.active
+          : account && setUp && !account.active
             ? "Their MahekOne account is deactivated."
             : null;
 
@@ -556,6 +572,7 @@ export async function listCandidates(): Promise<Candidate[]> {
       office: e.officeName,
       employeeStatus: e.status,
       accountActive: account?.active ?? false,
+      setUp,
       apps: account ? (appsByUser.get(account.id) ?? []) : [],
       blocked,
     });

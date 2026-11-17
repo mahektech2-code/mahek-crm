@@ -762,6 +762,12 @@ const employeesScreen: HrmsScreenModule = {
       if (res.ok) await hrmsAudit(ctx, "hrms.employee.signUp", "employees", id, null, { code, name: read.cols.name });
       /* On the org chart now, where their Reports To names exactly one person. */
       if (res.ok) await placeOnChart();
+      /* And their one account, made now: Manage access then sets THIS one up
+         rather than making another. */
+      if (res.ok) {
+        const { ensureEmployeeAccounts } = await import("@/lib/services/person-identity-service");
+        await ensureEmployeeAccounts().catch((e) => console.warn("[hrms] account not made", e));
+      }
       return res;
     },
     async edit(ctx, h, _lines, recordId) {

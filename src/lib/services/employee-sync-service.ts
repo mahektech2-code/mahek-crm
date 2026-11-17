@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, sheetSyncRuns } from "@/db/schema";
-import { alignAccountNames, placeByTitles, rememberSheetRenames } from "@/lib/services/person-identity-service";
+import { alignAccountNames, ensureEmployeeAccounts, placeByTitles, rememberSheetRenames } from "@/lib/services/person-identity-service";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
 import {
   HR_FIRST_DATA_ROW,
@@ -199,6 +199,10 @@ async function pullFromSheet(
        every time somebody asks who approves their leave. */
     await placeByTitles();
     renamed = await alignAccountNames();
+    /* A new joiner gets their account now — one, linked, opening nothing
+       until it is set up — so the first record that names them has an id
+       to hold. */
+    await ensureEmployeeAccounts();
   } catch (e) {
     console.warn("[employee-sync] account names not aligned", e);
   }

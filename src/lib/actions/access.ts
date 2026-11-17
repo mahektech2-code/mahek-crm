@@ -556,13 +556,57 @@ export async function setAccess(
     // `users_phone_key` say the same thing at the database; this checks first
     // so the refusal can name which box to fix rather than surfacing as a
     // constraint violation naming neither.
+    /*
+     * ONE PERSON, ONE ACCOUNT — checked here, on the server, and not only by
+     * the picker. Every employee already HAS an account
+     * (`ensureEmployeeAccounts`): made for them, opening nothing. Setting
+     * somebody up gives THAT account its apps and its way in. Making another
+     * is how Pranavi ended up with an empty login while Poonam's held her
+     * whole book, so it never happens: an account somebody already uses is
+     * changed on their own page, and an unlinked login that looks like this
+     * person is linked, not duplicated.
+     */
+    const [own] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        phone: users.phone,
+        lastLoginAt: users.lastLoginAt,
+        apps: sql<number>`(select count(*)::int from ${appAccess} where ${appAccess.userId} = ${users.id})`,
+      })
+      .from(users)
+      .where(eq(users.employeeId, employee.id))
+      .limit(1);
+    if (own && (Number(own.apps) > 0 || own.email || own.phone || own.lastLoginAt)) {
+      return fail(
+        `${employee.name} already has a MahekOne account. Change their access on their own page rather than making another.`,
+        "conflict",
+      );
+    }
+    if (!own) {
+      const { loadPersonDirectory } = await import("@/lib/services/person-identity-service");
+      const dir = await loadPersonDirectory();
+      const unlinked = await db
+        .select({ id: users.id, name: users.name, email: users.email, phone: users.phone })
+        .from(users)
+        .where(and(isNull(users.employeeId), eq(users.notEmployee, false)));
+      const lookalike = unlinked.find((u) => dir.employeeOfAccount(u.id) === employee.id);
+      if (lookalike) {
+        const signsIn = lookalike.phone ?? lookalike.email;
+        return fail(
+          `There is already a login that looks like ${employee.name}: "${lookalike.name}"${signsIn ? `, signing in with ${signsIn}` : ""}. Link it to ${employee.name} on Manage access rather than making a second account.`,
+          "conflict",
+        );
+      }
+    }
+
     const clash = await db
       .select({ id: users.id, email: users.email, phone: users.phone })
       .from(users);
-    if (email && clash.some((c) => c.email === email)) {
+    if (email && clash.some((c) => c.email === email && c.id !== own?.id)) {
       return fieldErr("email", "An account already uses that email.");
     }
-    if (phone && clash.some((c) => c.phone === phone)) {
+    if (phone && clash.some((c) => c.phone === phone && c.id !== own?.id)) {
       return fieldErr("phone", "An account already uses that work number.");
     }
 
@@ -573,7 +617,8 @@ export async function setAccess(
     const newPlace = wantedFactoryPlace(input, wanted.has("factory"), null, wantedRoles.get("factory") ?? "associate");
     if (newPlace.error) return fieldErr("factoryPlace", newPlace.error);
 
-    userId = newId("usr");
+    /* The account HRMS already gave them, where there is one — never another. */
+    userId = own?.id ?? newId("usr");
     personName = employee.name;
     created = true;
 
@@ -594,41 +639,62 @@ export async function setAccess(
     const passwordHash = await hashPassword(randomUUID() + randomUUID());
     const apps = [...wanted.keys()];
 
-    await db.transaction(async (tx) => {
-      await tx.insert(users).values({
-        id: userId!,
-        name: employee.name,
-        email,
-        phone,
-        /* DERIVED, never typed. The dialog used to carry an account-level
-           select beside the per-app ones, so "Admin" there and "Associate" on
-           every app produced a platform administrator nobody had meant. */
-        role: widestRole([...wantedRoles].map(([app, role]) => ({ app, role }))),
-        initials: initialsOf(employee.name),
-        passwordHash,
-        active: true,
-        /* WHICH employee this account is, recorded at the one moment it is
-           known for certain: somebody has just picked them out of the master
-           by hand. Everything downstream that needs pay, days worked or
-           reimbursements reads this rather than guessing from an email the
-           sheet mostly does not carry — see `users.employeeId`. An account
-           created any other way keeps the old guess, and `npm run
-           employee:link` is what settles those. */
-        employeeId: employee.id,
+    class SetUpMeanwhile extends Error {}
+    try {
+      await db.transaction(async (tx) => {
+        const values = {
+          id: userId!,
+          name: employee.name,
+          email,
+          phone,
+          /* DERIVED, never typed. The dialog used to carry an account-level
+             select beside the per-app ones, so "Admin" there and "Associate" on
+             every app produced a platform administrator nobody had meant. */
+          role: widestRole([...wantedRoles].map(([app, role]) => ({ app, role }))),
+          initials: initialsOf(employee.name),
+          passwordHash,
+          active: true,
+          /* WHICH employee this account is, recorded at the one moment it is
+             known for certain: somebody has just picked them out of the master
+             by hand. Everything downstream that needs pay, days worked or
+             reimbursements reads this rather than guessing from an email the
+             sheet mostly does not carry — see `users.employeeId`. An account
+             created any other way keeps the old guess, and `npm run
+             employee:link` is what settles those. */
+          employeeId: employee.id,
+        };
+        if (own) {
+          /* Setting up the account they already have. Guarded on it still having
+             no way in, so two people setting the same person up at once cannot
+             both write: the second finds it set up and stops. */
+          const done = await tx
+            .update(users)
+            .set({ ...values, id: own.id, updatedAt: new Date() })
+            .where(and(eq(users.id, own.id), isNull(users.email), isNull(users.phone)))
+            .returning({ id: users.id });
+          if (!done.length) throw new SetUpMeanwhile();
+        } else {
+          await tx.insert(users).values(values);
+        }
+        await tx.insert(appAccess).values(
+          apps.map((app) => ({
+            id: newId("acc"),
+            userId: userId!,
+            app,
+            role: wantedRoles.get(app) ?? "associate",
+            grantedById: me.id,
+          })),
+        );
+        for (const [app, modules] of wanted) {
+          await writeModules(tx, userId!, app, modules, me.id);
+        }
       });
-      await tx.insert(appAccess).values(
-        apps.map((app) => ({
-          id: newId("acc"),
-          userId: userId!,
-          app,
-          role: wantedRoles.get(app) ?? "associate",
-          grantedById: me.id,
-        })),
-      );
-      for (const [app, modules] of wanted) {
-        await writeModules(tx, userId!, app, modules, me.id);
+    } catch (e) {
+      if (e instanceof SetUpMeanwhile) {
+        return fail(`${employee.name} was set up by somebody else just now. Reopen their page to see what they hold.`, "conflict");
       }
-    });
+      throw e;
+    }
     const newPowers = wantedErpPowers(input, wanted.has("erp"), []);
     if (newPowers?.length) await writeErpPowers(userId!, newPowers, me.id);
     const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);

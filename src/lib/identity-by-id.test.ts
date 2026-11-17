@@ -84,3 +84,41 @@ test("the MBOS book reads remembered spellings through the account's employee li
   const mbos = readFileSync(join(ROOT, "lib/services/mbos-service.ts"), "utf8");
   assert.match(mbos, /person_name_aliases a on a\.employee_id = u\.employee_id/);
 });
+
+/* ---------------------------------------------------------------------------
+ * ONE PERSON, ONE ACCOUNT (owner, 2026-11-18).
+ *
+ * Every employee is given exactly one account (`ensureEmployeeAccounts`), and
+ * every path that makes one first looks for the account the person already
+ * has. Pranavi's second, empty login came from a path that did not. So the
+ * places allowed to INSERT a user are listed here, each with the check it
+ * makes, and a new one fails the build until somebody adds it on purpose.
+ * ------------------------------------------------------------------------- */
+const MAY_CREATE_ACCOUNTS: Record<string, string> = {
+  "src/lib/services/person-identity-service.ts": "ensureEmployeeAccounts — only for an employee with no linked account and no look-alike",
+  "src/lib/actions/access.ts": "Add user — sets up the employee's existing account; refuses an account in use or a look-alike login",
+  "src/lib/hire/services/provision.ts": "Hire — finds the account by phone or through the HRMS record first",
+  "src/lib/services/team-service.ts": "provisionBackOffice — resolves the name through the directory first",
+  "scripts/create-accounts-users.ts": "skips an employee who already has an account, links the one it makes",
+  "src/db/seed.ts": "dev seed",
+  "src/lib/hire/seed/seed.ts": "dev seed",
+  "src/lib/factory/demo-seed.ts": "dev seed",
+};
+
+test("only the listed places create accounts", () => {
+  const hits: string[] = [];
+  for (const file of [...walk(ROOT), ...walk(SCRIPTS)]) {
+    const rel = file.slice(process.cwd().length + 1);
+    if (/\/integration\//.test(rel) || MAY_CREATE_ACCOUNTS[rel]) continue;
+    if (/insert\(\s*users\s*\)/.test(readFileSync(file, "utf8"))) hits.push(rel);
+  }
+  assert.deepEqual(hits, [], `\nThese create accounts without going through the one-account checks:\n${hits.join("\n")}`);
+});
+
+test("Add user sets up the existing account rather than making another", () => {
+  const access = readFileSync(join(ROOT, "lib/actions/access.ts"), "utf8");
+  assert.match(access, /eq\(users\.employeeId, employee\.id\)/, "Add user must look for the employee's own account");
+  assert.match(access, /userId = own\?\.id \?\? newId\("usr"\)/, "and use it");
+  const nightly = readFileSync(join(ROOT, "lib/jobs.ts"), "utf8");
+  assert.match(nightly, /ensureEmployeeAccounts\(\)/, "nightly must give every employee an account");
+});

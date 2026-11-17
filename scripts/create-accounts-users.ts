@@ -50,6 +50,7 @@ async function main() {
   const team = (
     await db
       .select({
+        id: employees.id,
         code: employees.employeeCode,
         name: employees.name,
         position: employees.position,
@@ -66,7 +67,10 @@ async function main() {
     return;
   }
 
-  const existing = await db.select({ email: users.email, phone: users.phone }).from(users);
+  const existing = await db.select({ email: users.email, phone: users.phone, employeeId: users.employeeId }).from(users);
+  /* One person, one account: an employee who already has one is set up on
+     Admin → Manage access, never given a second here. */
+  const hasAccount = new Set(existing.map((u) => u.employeeId).filter(Boolean) as string[]);
   const takenEmail = new Set(existing.map((u) => u.email));
   const takenPhone = new Set(existing.map((u) => u.phone).filter(Boolean) as string[]);
 
@@ -75,6 +79,10 @@ async function main() {
     const email = e.email?.trim().toLowerCase() ?? "";
     const phone = e.personalMobile?.trim() ?? "";
 
+    if (hasAccount.has(e.id)) {
+      console.log(`SKIP  ${label} — already has a MahekOne account; set it up on Admin → Manage access.`);
+      continue;
+    }
     if (!email) {
       console.log(`SKIP  ${label} — the sheet has no email for them, and that is how they sign in.`);
       continue;
@@ -109,6 +117,7 @@ async function main() {
         initials: initialsOf(e.name),
         passwordHash,
         active: true,
+        employeeId: e.id,
       });
       await tx.insert(appAccess).values({
         id: newId("acc"),

@@ -94,6 +94,7 @@ export const WEIGHTS = {
   "src/lib/change-password.test.ts": 3,
   "src/lib/otp.test.ts": 6,
   "src/lib/either-identifier.test.ts": 4,
+  "src/lib/one-account-per-employee.test.ts": 4,
   "src/lib/website-access-save.test.ts": 3,
   "src/lib/access-candidates.test.ts": 1,
   "src/lib/storage-fallback.test.ts": 1,

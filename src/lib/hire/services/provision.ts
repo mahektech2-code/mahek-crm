@@ -52,6 +52,23 @@ export async function provisionPlan(b: AppBundle): Promise<ProvisionPlan> {
   const phone = last10(b.candidate.primaryPhone);
   const email = b.candidate.email?.trim().toLowerCase() || null;
   const [byPhone] = await db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(or(eq(users.phone, phone), eq(users.phone, b.candidate.primaryPhone))).limit(1);
+  /* ONE PERSON, ONE ACCOUNT. Somebody already in HRMS already HAS an account
+     (every employee is given one, with no number on it until it is set up),
+     so a phone search alone would miss it and make a second. Their HRMS
+     record is found by the number instead — on exactly one employee, or not
+     at all — and its account is the one this hire sets up. */
+  const byEmployee = byPhone
+    ? []
+    : ((await db.execute(sql`
+        select u.id, u.name
+          from employees e
+          join users u on u.employee_id = e.id
+         where coalesce(e.sheet_status, 'present') <> 'withdrawn'
+           and ${phone} in (
+                 right(regexp_replace(coalesce(e.company_mobile, ''), '[^0-9]', '', 'g'), 10),
+                 right(regexp_replace(coalesce(e.personal_mobile, ''), '[^0-9]', '', 'g'), 10))
+      `)) as unknown as { id: string; name: string }[]);
+  const existing = byPhone ?? (byEmployee.length === 1 ? byEmployee[0] : null);
   const [byEmail] = email ? await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`).limit(1) : [];
   return {
     apps,
@@ -59,10 +76,10 @@ export async function provisionPlan(b: AppBundle): Promise<ProvisionPlan> {
     level: p.level,
     roleLabel: p.roleLabel,
     device: p.device,
-    existingUser: byPhone ? { id: byPhone.id, name: byPhone.name } : null,
+    existingUser: existing ? { id: existing.id, name: existing.name } : null,
     phone,
     email,
-    emailTaken: Boolean(byEmail && byEmail.id !== byPhone?.id),
+    emailTaken: Boolean(byEmail && byEmail.id !== existing?.id),
     blockers: b.app.status === "hired" ? [] : await provisionBlockers(b),
   };
 }
@@ -106,6 +123,7 @@ export async function provision(ctx: HireContext, applicationId: string, note: s
   let userId = plan.existingUser?.id ?? null;
   let created = false;
   const emailUsed = plan.email && !plan.emailTaken && !plan.existingUser ? plan.email : null;
+  const emailFree = plan.email && !plan.emailTaken ? plan.email : null;
   const granted: string[] = [];
   const alreadyHeld: string[] = [];
 
@@ -124,6 +142,24 @@ export async function provision(ctx: HireContext, applicationId: string, note: s
         initials: initialsOf(b.candidate.fullName),
         active: true,
       });
+    } else {
+      /* The account they already had — set up now: switched on, and given the
+         number and email they were hired with where it carries none, so the
+         way in this screen promises is real. Never overwrites one it has. */
+      await tx
+        .update(users)
+        .set({ active: true, updatedAt: now })
+        .where(eq(users.id, userId));
+      await tx
+        .update(users)
+        .set({ phone: plan.phone })
+        .where(and(eq(users.id, userId), isNull(users.phone), sql`not exists (select 1 from users o where o.phone = ${plan.phone})`));
+      if (emailFree) {
+        await tx
+          .update(users)
+          .set({ email: emailFree })
+          .where(and(eq(users.id, userId), isNull(users.email)));
+      }
     }
     const held = await tx.select({ app: appAccess.app }).from(appAccess).where(eq(appAccess.userId, userId));
     for (const a of plan.apps) {
