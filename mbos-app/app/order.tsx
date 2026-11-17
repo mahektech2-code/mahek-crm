@@ -9,6 +9,8 @@ import { Icon } from '../src/components/ui/Icon';
 import { Appear, CountUp, FillBar, Presence, animateLayout } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 import { isOnline } from '../src/sync/engine';
+import { orderDuplicateCheck, orderSameAsReport, type OrderDuplicate, type OrderDuplicateShape } from '../src/sync/api';
+import { DuplicateSheet } from '../src/components/duplicate-sheet';
 import { SkuChip } from '../src/components/ui/sku';
 import { color as C, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
@@ -194,6 +196,8 @@ export default function OrderScreen() {
    * the customer is billed for both.
    */
   const [busy, setBusy] = React.useState(false);
+  /* The duplicate warning, while he decides; nothing is written until he does. */
+  const [dup, setDup] = React.useState<{ found: OrderDuplicate; shape: OrderDuplicateShape } | null>(null);
   /* The lock itself. `busy` is read from the closure of the render that drew
      the button — the render where it was still false — so a second fast tap
      ran the whole handler again. A ref is set synchronously; `busy` is only
@@ -450,7 +454,37 @@ export default function OrderScreen() {
     );
   };
 
-  const submit = async () => {
+  const dupShape = (): OrderDuplicateShape => ({
+    customerId: biller?.id ?? c.id,
+    deliveryCustomerId: deliverTo?.id ?? null,
+    orderedAt: Date.now(),
+    lines: inCart.map((l) => ({ productId: l.productId, quantityCans: l.cans })),
+  });
+
+  /* "Same order - don't create": nothing is sent, the cart is cleared, and
+     whoever punched the first one is told. */
+  const sameOrder = async () => {
+    if (!dup) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const r = await orderSameAsReport(dup.shape, dup.found.match.id);
+      if (!r.ok && r.error) {
+        notify(r.error, 'error');
+        setDup(null);
+        return;
+      }
+      setDup(null);
+      set({ cart: {} });
+      notify('Not sent. It is the same order as TO-' + dup.found.match.toNo + '.' + (dup.found.match.takenBy ? ' ' + dup.found.match.takenBy + ' is told.' : ''));
+      back.go();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const submit = async (dupAnswer?: { decision: 'different'; ofId: string; reason: string }) => {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
@@ -505,6 +539,30 @@ export default function OrderScreen() {
     const forVisit =
       !!inVisit && (c.id === inVisit.customerId || biller.id === inVisit.customerId);
 
+    /*
+     * HAS THIS ORDER ALREADY BEEN PUNCHED TODAY? Asked only with signal and
+     * before anything is written: the office answers a TO for the same
+     * billing and delivery party, the same day and the same items, and he
+     * says whether this is that order. No signal, or no answer, is never a
+     * reason to hold an order back - it goes, and the office marks it a
+     * possible duplicate for Accounts when it syncs.
+     */
+    if (!dupAnswer && (await isOnline())) {
+      busyRef.current = true;
+      setBusy(true);
+      try {
+        const shape = dupShape();
+        const check = await orderDuplicateCheck(shape);
+        if (check.ok && check.found) {
+          setDup({ found: check.found, shape });
+          return;
+        }
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    }
+
     busyRef.current = true;
     setBusy(true);
     try {
@@ -518,7 +576,9 @@ export default function OrderScreen() {
         visitId: forVisit ? inVisit?.visitId ?? null : null,
         lines: inCart,
         assessment,
+        duplicate: dupAnswer ?? null,
       });
+      setDup(null);
 
       if (forVisit) {
         const linked = useStore.getState().visitLinked;
@@ -722,7 +782,7 @@ export default function OrderScreen() {
 
       <DockButton
         label={submitLabel}
-        onPress={submit}
+        onPress={() => void submit()}
         disabled={!canSubmit || busy}
         whyDisabled={whyOff}
         warn={needsApproval}
@@ -1333,6 +1393,14 @@ export default function OrderScreen() {
         </>
       ) : null}
       <View style={{ height: 8 }} />
+      <DuplicateSheet
+        key={dup?.found.match.id ?? 'none'}
+        found={dup?.found ?? null}
+        busy={busy}
+        onClose={() => setDup(null)}
+        onSame={() => void sameOrder()}
+        onDifferent={(reason) => dup && void submit({ decision: 'different', ofId: dup.found.match.id, reason })}
+      />
     </AppFrame>
   );
 }

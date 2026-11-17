@@ -522,7 +522,7 @@ describe("a TeleCRM TO, from the call to the order number", () => {
 
     let [row] = await customerOrderThreads("cus_shree");
     assert.equal(row.journey.title, `TO-${made.toNo}`);
-    assert.equal(row.journey.status, "Order check");
+    assert.equal(row.journey.status, "Waiting for Accounts");
     assert.equal(row.journey.editable, true);
     assert.ok((await ordersTakenBy(admin.id)).some((r) => r.id === orderId));
 
@@ -539,7 +539,7 @@ describe("a TeleCRM TO, from the call to the order number", () => {
     assert.match(row.journey.title, /^Order \d+$/);
     assert.equal(row.journey.toNo, made.toNo);
     assert.equal(row.journey.editable, false);
-    assert.equal(row.journey.status, "With accounts");
+    assert.match(row.journey.status, /^Approved/, "the TO Accounts approved is approved");
     assert.ok(!(await editIntake(admin.id, made.id, {}, [{ skuId, qtyCans: 2, ratePaise: 30000, discountBp: null }])).ok, "an order with its order number is not changed");
     await live(false);
   });
