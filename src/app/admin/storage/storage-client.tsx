@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { updateConfigSettings } from "@/lib/actions/crm";
 import { btnClass, Pill } from "../_shell/kit";
 import { sweepStorageNow } from "./actions";
+import { checkAttachmentStorage } from "@/lib/actions/expenses";
 
 /** "Sweep now", in the title row: says how many files it took. */
 export function SweepButton() {
@@ -27,6 +28,45 @@ export function SweepButton() {
         }}
       >
         {busy ? "Sweeping…" : "Sweep now"}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * "Check the store": writes a ten-byte file, reads it back, compares and
+ * deletes it — the round trip a bill photograph makes — and says the answer
+ * beside the button. A backend that is configured is not the same as one that
+ * works, and this deployment has no shell to find out from.
+ */
+export function StoreCheckButton() {
+  const [busy, setBusy] = React.useState(false);
+  const [said, setSaid] = React.useState<{ text: string; bad: boolean; detail?: string } | null>(null);
+  return (
+    <span className="inline-flex items-center gap-2.5">
+      {said ? (
+        <span className={said.bad ? "text-xs font-semibold text-danger" : "text-xs text-muted"} title={said.detail}>
+          {said.text}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        disabled={busy}
+        className={btnClass("plain")}
+        onClick={async () => {
+          setBusy(true);
+          const r = await checkAttachmentStorage();
+          setBusy(false);
+          if (!r.ok) return setSaid({ text: r.error, bad: true });
+          const failed = r.data.steps.find((st) => !st.ok);
+          setSaid({
+            text: r.data.ok ? "The store round-trips" : `Not working: ${failed?.step ?? "the check failed"}`,
+            bad: !r.data.ok,
+            detail: [...r.data.steps.map((st) => `${st.ok ? "✓" : "✗"} ${st.step} — ${st.detail}`), r.data.advice ?? ""].filter(Boolean).join("\n"),
+          });
+        }}
+      >
+        {busy ? "Checking…" : "Check the store"}
       </button>
     </span>
   );

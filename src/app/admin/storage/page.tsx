@@ -6,7 +6,7 @@ import { AdminPage } from "../_shell/admin-page";
 import { requirePlatformAdmin } from "../_shell/context";
 import { Card, CardHead, Pill } from "../_shell/kit";
 import { storageExtras } from "./data";
-import { KeptFor, SweepButton, type KeepRow } from "./storage-client";
+import { KeptFor, StoreCheckButton, SweepButton, type KeepRow } from "./storage-client";
 
 /**
  * STORAGE & FILES — what the attachment store holds, by kind, and how long
@@ -71,7 +71,12 @@ export default async function StoragePage() {
           <Pill tone="muted">{s3Config() ? "Bucket (R2)" : "Postgres"}</Pill>
         </span>
       }
-      actions={<SweepButton />}
+      actions={
+        <>
+          <StoreCheckButton />
+          <SweepButton />
+        </>
+      }
       figures={[
         { label: "Database", value: sizeLine(extra.databaseBytes), navy: true },
         { label: "Files", value: nf.format(s.files) },

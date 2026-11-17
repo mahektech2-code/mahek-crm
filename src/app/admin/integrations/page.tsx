@@ -21,7 +21,6 @@ import { AdminPage } from "../_shell/admin-page";
 import { Pill, Tabs, btnClass } from "../_shell/kit";
 import { SecretCredentialRow } from "../secret-credential-row";
 import { requirePlatformAdmin } from "../_shell/context";
-import { IntegrationsTab } from "../platform-real";
 import { MapsSection } from "../maps-section";
 import { VoiceSection } from "../voice-section";
 
@@ -298,8 +297,6 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           </Service>
         ) : null}
       </CardGrid>
-
-      <IntegrationsTab data={{ integrations }} />
 
       <div id="keys" className="mt-4 scroll-mt-6">
         <h2 className="m-0 text-[18px] leading-6 font-bold text-ink">Set or change a key</h2>
