@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Badge, Card, EmptyState, Input, Select, Td, Th } from "@/components/ui/primitives";
+import { Badge } from "@/components/ui/primitives";
+import { Card } from "./_shell/kit";
+import { FleetFrame } from "./handsets/fleet-frame";
 import { phoneDisplay, stamp } from "@/lib/format";
 import { ago, presence, type Presence } from "@/lib/handset-versions";
 import {
@@ -36,7 +38,7 @@ const FILTER_LABEL: Record<Filter, string> = { all: "All", problems: "With a pro
 const ORDER: Record<OtaStatus, number> = { apk: 0, ota: 1, unknown: 2, latest: 3, none: 4 };
 const AREA: Record<string, string> = { head: "Production Head", mixing: "Mixing", filling: "Filling", packing: "Packing", dispatch: "Dispatch", qc: "QC" };
 
-export function FactoryHandsetsSection() {
+export function FactoryHandsetsSection({ tabCounts }: { tabCounts: { field: number; factory: number } }) {
   const [data, setData] = React.useState<FactoryHandsetsPayload | null>(null);
   const [failed, setFailed] = React.useState<string | null>(null);
   const [now, setNow] = React.useState<number | null>(null);
@@ -112,78 +114,52 @@ export function FactoryHandsetsSection() {
   const newest = data?.newest;
 
   return (
-    <div className="mt-5 flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3 text-[13px] text-muted">
-        {failed ? (
-          <span className="inline-flex h-7 items-center gap-2 rounded-full border border-danger/30 bg-danger-soft px-3 text-[12px] font-medium text-danger">Not updating — retrying</span>
-        ) : (
-          <span className="inline-flex h-7 items-center gap-2 rounded-full border border-success/25 bg-success-soft px-3 text-[12px] font-medium text-success">
-            <span className="h-2 w-2 rounded-full bg-success" />
-            Live · every 15 seconds
-          </span>
-        )}
-        {newest?.version ? (
-          <span>
-            Newest app <span className="font-mono font-medium text-ink">{newest.version}</span>
-            {newest.updateCreatedAt ? (
-              <>
-                {" "}· update <span className="font-mono text-ink">{newest.updateId?.slice(0, 8)}</span> of {stamp(newest.updateCreatedAt)}
-              </>
-            ) : (
-              " · no over-the-air update on it yet"
-            )}
-            {" "}· the newest any phone runs
-          </span>
-        ) : data ? (
-          <span>No phone has reported yet. Phones report once they have the update that adds this page.</span>
-        ) : null}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Tile label="On the latest" value={counts.latest} sub={`of ${phones} ${phones === 1 ? "phone" : "phones"}`} tone="success" active={filter === "latest"} onClick={() => setFilter(filter === "latest" ? "all" : "latest")} />
-        <Tile label="Update waiting" value={counts.ota} sub="applies when the app is reopened" tone={counts.ota ? "warn" : "neutral"} active={filter === "ota"} onClick={() => setFilter(filter === "ota" ? "all" : "ota")} />
-        <Tile label="Needs the new APK" value={counts.apk} sub="an older app version" tone={counts.apk ? "danger" : "neutral"} active={filter === "apk"} onClick={() => setFilter(filter === "apk" ? "all" : "apk")} />
-        <Tile label="With a problem" value={counts.problems} sub="camera, stuck work, clock…" tone={counts.problems ? "danger" : "neutral"} active={filter === "problems"} onClick={() => setFilter(filter === "problems" ? "all" : "problems")} />
-        <Tile label="No phone yet" value={counts.none} sub="factory workers never reported" tone="neutral" active={filter === "none"} onClick={() => setFilter(filter === "none" ? "all" : "none")} />
-      </div>
-
-      <Card className="overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <div className="flex flex-wrap items-end gap-2.5 border-b border-line px-4 py-3">
-          <div className="w-[260px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Search</div>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, phone model, version, godown" className="h-8" />
-          </div>
-          <div className="w-[200px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Show</div>
-            <Select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="h-8">
-              {(Object.keys(FILTER_LABEL) as Filter[]).map((k) => (
-                <option key={k} value={k}>
-                  {FILTER_LABEL[k]} · {k === "all" ? rows.length : counts[k]}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <span className="flex-1" />
-          <span className="pb-1.5 text-[13px] text-muted">{data ? `${shown.length} of ${rows.length}` : ""}</span>
-        </div>
-
+    <FleetFrame
+      tab="factory"
+      counts={tabCounts}
+      search={{ value: q, onChange: setQ, placeholder: "Person, phone or version" }}
+      filters={{
+        on: filter !== "all" ? 1 : 0,
+        groups: [
+          {
+            label: "Show",
+            value: filter,
+            onChange: (v) => setFilter(v as Filter),
+            options: (Object.keys(FILTER_LABEL) as Filter[]).map((k) => ({
+              value: k,
+              label: FILTER_LABEL[k],
+              count: k === "all" ? rows.length : counts[k],
+            })),
+          },
+        ],
+      }}
+      figures={[
+        { label: "Phones", value: data ? phones : "—", sub: failed ? "Not updating — retrying" : newest?.version ? `Newest ${newest.version}` : undefined },
+        { label: "On the latest", value: data ? counts.latest : "—" },
+        { label: "Update waiting", value: data ? counts.ota : "—", tone: counts.ota ? "warn" : undefined },
+        { label: "Needs the new APK", value: data ? counts.apk : "—", tone: counts.apk ? "danger" : undefined },
+        { label: "With a problem", value: data ? counts.problems : "—", tone: counts.problems ? "danger" : undefined },
+        { label: "No phone yet", value: data ? counts.none : "—" },
+      ]}
+    >
+      <Card>
         {failed && !data ? (
           <div className="px-5 py-8 text-center text-[13px] text-danger">{failed}</div>
         ) : !data ? (
           <div className="px-5 py-10 text-center text-[13px] text-muted">Reading every factory phone…</div>
         ) : shown.length === 0 ? (
-          <EmptyState title={rows.length ? "Nothing matches" : "No factory workers yet"} body={rows.length ? "Try another filter or a shorter search." : "Give somebody a floor profile in HRMS or the Factory app in Access, and they are listed here."} />
+          <div className="px-5 py-10 text-center text-[13px] text-muted">{rows.length ? "Nothing matches." : "No factory workers yet."}</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <Th>Person</Th>
-                  <Th>Handset</Th>
-                  <Th>App</Th>
-                  <Th>Network and work waiting</Th>
-                  <Th align="right">Scans today</Th>
-                  <Th align="right">Last seen</Th>
+                  <FTH>Person</FTH>
+                  <FTH>Handset</FTH>
+                  <FTH>App</FTH>
+                  <FTH>Network and work waiting</FTH>
+                  <FTH right>Scans today</FTH>
+                  <FTH right>Last seen</FTH>
                 </tr>
               </thead>
               <tbody>
@@ -200,29 +176,17 @@ export function FactoryHandsetsSection() {
             </table>
           </div>
         )}
-        <div className="border-t border-line px-4 py-2.5 text-[12px] text-muted">
-          A phone reports every five minutes while somebody is signed in, and when the app is opened. An over-the-air update downloads on one launch and applies on the next. Click a phone for everything it reported.
-        </div>
       </Card>
-    </div>
+    </FleetFrame>
   );
 }
 
-const TONES = { success: "text-success", warn: "text-warn-ink", danger: "text-danger", neutral: "text-ink" } as const;
+function FTH({ children, right }: { children: React.ReactNode; right?: boolean }) {
+  return <th className={`bg-ink px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap text-white normal-case ${right ? "text-right" : "text-left"}`}>{children}</th>;
+}
 
-function Tile({ label, value, sub, tone, active, onClick }: { label: string; value: number; sub: string; tone: keyof typeof TONES; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`cursor-pointer rounded-[6px] border bg-surface px-4 py-3 text-left shadow-[0_1px_2px_rgba(22,22,22,0.06)] transition-colors hover:border-line-strong ${active ? "border-brand ring-2 ring-brand-soft" : "border-line"}`}
-    >
-      <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{label}</div>
-      <div className={`mt-1 text-[26px] leading-8 font-semibold tabular-nums ${TONES[tone]}`}>{value}</div>
-      <div className="text-[12px] text-muted">{sub}</div>
-    </button>
-  );
+function Td({ children, className, align }: { children?: React.ReactNode; className?: string; align?: "right" }) {
+  return <td className={`border-b border-divider px-3.5 ${align === "right" ? "text-right" : ""} ${className ?? ""}`}>{children}</td>;
 }
 
 const PRESENCE: Record<Presence, string> = { online: "bg-success", recent: "bg-warn", quiet: "bg-line-strong", never: "bg-line-strong" };
@@ -234,7 +198,7 @@ function Line({ row, status, issues, now, open, onToggle }: { row: FactoryHandse
   return (
     <tr onClick={row.deviceId ? onToggle : undefined} className={`${row.deviceId ? "cursor-pointer" : ""} ${open ? "bg-canvas" : "hover:bg-canvas"} align-top`}>
       <Td className="py-3">
-        <div className="text-sm font-medium text-ink">{row.name}</div>
+        <div className="font-semibold text-ink">{row.name}</div>
         <div className="text-[12px] text-muted">
           {[row.area ? (AREA[row.area] ?? row.area) : null, row.roleLabel, row.phone ? phoneDisplay(row.phone) : null].filter(Boolean).join(" · ") || "—"}
         </div>

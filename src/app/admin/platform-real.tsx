@@ -342,7 +342,7 @@ function IntegrationsTable({ data }: { data: Pick<PlatformData, "integrations"> 
  * terminal is not a fallback, it is the only door and it is locked. A job that
  * can only be run from a laptop is a job that does not get run.
  */
-function RunByHand() {
+export function RunByHand() {
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState<string | null>(null);
@@ -410,7 +410,7 @@ function RunByHand() {
  * single list that looks wrong is usually one person's. Offering only "all"
  * would make the small fix cost everybody their afternoon's order.
  */
-function RebuildQueues({ queues }: { queues: QueueOwner[] }) {
+export function RebuildQueues({ queues }: { queues: QueueOwner[] }) {
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);

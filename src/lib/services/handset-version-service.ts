@@ -42,7 +42,15 @@ export async function listHandsets(): Promise<HandsetsPayload> {
              greatest(d.last_request_at, d.last_seen_at, d.bound_at) as "lastHeardAt",
              d.bound_at as "boundAt",
              d.notification_permission as "notificationPermission",
-             (d.push_token is not null) as "hasPushToken"
+             (d.push_token is not null) as "hasPushToken",
+             d.battery_percent as "batteryPercent",
+             d.battery_charging as "batteryCharging",
+             d.device_state_at as "deviceStateAt",
+             d.location_permission as "locationPermission",
+             d.location_services_enabled as "locationServicesEnabled",
+             d.tracker_stalled_at as "trackerStalledAt",
+             d.queued_positions as "queuedPositions",
+             exists (select 1 from mbos_user_territories t where t.user_id = u.id and t.kind <> 'region') as "hasArea"
         from users u
         join app_access a on a.user_id = u.id and a.app = 'field'
         left join lateral (
@@ -74,6 +82,14 @@ export async function listHandsets(): Promise<HandsetsPayload> {
     appVersionChangedAt: iso(r.appVersionChangedAt as string | Date | null),
     lastHeardAt: iso(r.lastHeardAt as string | Date | null),
     boundAt: iso(r.boundAt as string | Date | null),
+    batteryPercent: (r.batteryPercent as number | null) ?? null,
+    batteryCharging: (r.batteryCharging as boolean | null) ?? null,
+    deviceStateAt: iso(r.deviceStateAt as string | Date | null),
+    locationPermission: (r.locationPermission as string | null) ?? null,
+    locationServicesEnabled: (r.locationServicesEnabled as boolean | null) ?? null,
+    trackerStalledAt: iso(r.trackerStalledAt as string | Date | null),
+    queuedPositions: (r.queuedPositions as number | null) ?? null,
+    hasArea: r.hasArea === true,
   }));
 
   /* The build everybody should be on: the one somebody named in Settings, or
@@ -84,6 +100,7 @@ export async function listHandsets(): Promise<HandsetsPayload> {
     rows: list,
     reference: named || newest,
     referenceSource: named ? "setting" : newest ? "newest" : null,
+    lowBatteryPercent: Number(config["mbos.location.lowBatteryPercent"] ?? 20),
     at: new Date().toISOString(),
   };
 }

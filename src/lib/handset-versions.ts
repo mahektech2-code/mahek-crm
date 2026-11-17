@@ -29,6 +29,19 @@ export type HandsetRow = {
   notificationPermission: string | null;
   /** Whether the office can actually push to it. The token itself never leaves the server. */
   hasPushToken: boolean;
+  /** Battery as last reported, and when the phone said it. Null: never reported. */
+  batteryPercent?: number | null;
+  batteryCharging?: boolean | null;
+  deviceStateAt?: string | null;
+  /** The OS's own answer: always, while using, refused… Null: never reported. */
+  locationPermission?: string | null;
+  locationServicesEnabled?: boolean | null;
+  /** When the recorder last said the trail stopped. Null: running, or never said. */
+  trackerStalledAt?: string | null;
+  /** Fixes the phone holds and has not delivered, as it last said. */
+  queuedPositions?: number | null;
+  /** Whether the office has allocated him any place to work. */
+  hasArea?: boolean;
 };
 
 export type HandsetsPayload = {
@@ -36,6 +49,8 @@ export type HandsetsPayload = {
   /** The build every phone should be on, and where that answer came from. */
   reference: string | null;
   referenceSource: "setting" | "newest" | null;
+  /** Below this a battery is drawn as low — `mbos.location.lowBatteryPercent`. */
+  lowBatteryPercent?: number;
   /** When the server read it — the table's own "as of". */
   at: string;
 };

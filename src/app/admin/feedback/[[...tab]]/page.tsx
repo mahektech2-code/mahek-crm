@@ -19,7 +19,7 @@ import {
 import { getFix, githubConnected } from "@/lib/services/feedback-fix-service";
 import { AdminPage } from "../../_shell/admin-page";
 import { adminContext, firstPageFor } from "../../_shell/context";
-import { FeedbackOverviewScreen, FeedbackSection } from "../../feedback-section";
+import { FeedbackOverviewScreen, FeedbackSection, InboxTabs, InboxToolbar } from "../../feedback-section";
 
 /**
  * The console's Feedback: the triage inbox, one tab per queue, and an
@@ -41,14 +41,15 @@ export default async function FeedbackPage({
 
   const items = ADMIN_TABS.feedback.map((t) => {
     const n = t.slug === "all" ? counts.total : t.slug === "overview" ? null : counts[t.slug as keyof typeof counts];
-    return { slug: t.slug, label: n === null || n === undefined ? t.label : `${t.label} · ${n}` };
+    return { slug: t.slug, label: t.label, href: ADMIN.feedback(t.slug as TabsOf<"feedback">), count: n ?? null };
   });
-  const tabs = { items, active: slug, href: (s: string) => ADMIN.feedback(s as TabsOf<"feedback">) };
+  const tabs = <InboxTabs items={items} active={slug} />;
 
   if (slug === "overview") {
     const period = one("p") === "90" ? 90 : 30;
     return (
-      <AdminPage title="Inbox" tabs={tabs}>
+      <AdminPage title="Inbox">
+        {tabs}
         <FeedbackOverviewScreen overview={await feedbackOverview(period)} />
       </AdminPage>
     );
@@ -80,14 +81,17 @@ export default async function FeedbackPage({
     selected = hit?.duplicateOfId ? await getFeedback(hit.duplicateOfId) : hit;
   }
 
+  const filters = { app: one("app") ?? "", kind: kind ?? "", impact: impact ?? "", who: who ?? "", q: one("q") ?? "" };
+  const apps = [...new Set(rows.map((r) => r.app).filter((a): a is string => !!a))];
   const [fix, connected] = await Promise.all([selected ? getFix(selected.id) : null, githubConnected()]);
 
   return (
-    <AdminPage title="Inbox" tabs={tabs}>
+    <AdminPage title="Inbox" actions={<InboxToolbar filters={filters} apps={apps} assignees={assignees} />}>
+      {tabs}
       <FeedbackSection
         rows={rows}
         selected={selected}
-        filters={{ app: one("app") ?? "", kind: kind ?? "", impact: impact ?? "", who: who ?? "", q: one("q") ?? "" }}
+        filters={filters}
         assignees={assignees}
         viewerId={ctx.user.id}
         maxImages={config["attachments.maxPerFeedback"]}

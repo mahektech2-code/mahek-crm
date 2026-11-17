@@ -26,7 +26,8 @@ import {
 import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
- * "Fix it" — the side card on an open report.
+ * "Fix it" — the bar under an open report's heading, the canvas's
+ * "AI read · what it needs" row.
  *
  * First what it NEEDS (the AI reads every new report; anybody triaging can
  * change the answer). A code change is the only need that reaches GitHub:
@@ -55,7 +56,10 @@ export function FixCard({
   platformAdmin,
   connected,
   aiEnabled,
+  extra,
 }: {
+  /** More buttons at the bar's end — the report's own "Copy for developer". */
+  extra?: React.ReactNode;
   reportId: string;
   reportRef: string;
   fix: FixView | null;
@@ -87,53 +91,26 @@ export function FixCard({
   const acts = fixActions(fix, { platformAdmin, connected });
   const unsure = d && !fix?.needByPerson && d.confidence < UNSURE_BELOW;
 
+  const sm = "inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-control border px-2.5 text-xs font-semibold whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50";
+  const plain = cx(sm, "border-line-strong bg-surface text-ink hover:bg-[#f7f9fc]");
+  const dark = cx(sm, "border-ink bg-ink text-white hover:bg-[#1c2a47]");
+  const why = [need ? NEED_HINTS[need] : null, d?.summary].filter(Boolean).join(" — ");
+
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-2">
-        <span className="flex-1 text-xs font-semibold text-ink">Fix it</span>
-        <span className={cx("rounded-full px-2 py-px text-[11px] font-semibold whitespace-nowrap", STAGE_TONE[stage])}>
-          {FIX_STAGE_LABELS[stage]}
+      <div className="flex flex-wrap items-center gap-3 border-b border-divider bg-[#fbfaff] px-4 py-3">
+        <span className="inline-flex h-[22px] items-center rounded-full bg-[#eef0fb] px-2 text-xs font-semibold whitespace-nowrap text-[#343e96]">
+          {fix?.needByPerson ? "Chosen by a person" : d ? `AI read · ${Math.round(d.confidence)}% sure` : "AI read · what it needs"}
         </span>
-      </div>
-
-      {need ? (
-        <div className="rounded-[7px] border border-line bg-surface px-2.5 py-2">
-          <div className="text-[13px] font-semibold text-ink">{NEED_LABELS[need]}</div>
-          <div className="mt-0.5 text-xs leading-[17px] text-muted">{NEED_HINTS[need]}</div>
-          {d?.summary ? <div className="mt-1.5 text-xs leading-[17px] text-body">{d.summary}</div> : null}
-          <div className="mt-1 text-[11px] text-muted">
-            {fix?.needByPerson ? "Chosen by a person" : d ? `AI read · ${Math.round(d.confidence)}% sure` : ""}
-            {unsure ? <span className="font-semibold text-warn-ink"> · check before acting</span> : null}
-          </div>
-        </div>
-      ) : (
-        <div className="text-xs leading-[17px] text-muted">
-          {aiEnabled
-            ? "Not read yet. Check whether this needs the code changed or something the team can do itself."
-            : "Choose what it needs. The AI check is switched off."}
-        </div>
-      )}
-
-      <div className="mt-2 flex flex-col gap-1.5">
-        {aiEnabled ? (
-          <Button
-            size="sm"
-            variant={need ? "secondary" : "primary"}
-            disabled={!!busy}
-            onClick={() => run("read", () => checkWhatItNeeds(reportId))}
-          >
-            {busy === "read" ? "Reading…" : need ? "Read it again" : "Check what it needs"}
-          </Button>
-        ) : null}
-        <label className="flex h-8 items-center gap-1 rounded-[7px] border border-line bg-surface pl-2.5 text-[13px]">
-          <span className="text-muted">{need ? "Change:" : "It needs:"}</span>
+        <label className="flex items-center gap-1">
+          <span className="sr-only">What it needs</span>
           <select
             value={need ?? ""}
             disabled={!!busy}
             onChange={(e) => e.target.value && run("need", () => chooseWhatItNeeds(reportId, e.target.value as FixNeed))}
-            className="min-w-0 flex-1 cursor-pointer bg-transparent py-1 pr-1 font-medium text-ink outline-none"
+            className="max-w-[220px] cursor-pointer bg-transparent text-[13px] font-bold text-ink outline-none"
           >
-            {need ? null : <option value="">Choose…</option>}
+            {need ? null : <option value="">{aiEnabled ? "Not read yet" : "Choose what it needs"}</option>}
             {FIX_NEEDS.map((n) => (
               <option key={n} value={n}>
                 {NEED_LABELS[n]}
@@ -141,80 +118,93 @@ export function FixCard({
             ))}
           </select>
         </label>
-
+        {why ? (
+          <button
+            type="button"
+            title={why}
+            aria-label={`Why: ${why}`}
+            className="h-5 w-5 flex-none cursor-help rounded-full border border-line-strong bg-surface p-0 text-[11px] font-semibold text-muted"
+          >
+            i
+          </button>
+        ) : null}
+        {unsure ? <span className="text-xs font-semibold text-warn-ink">Check before acting</span> : null}
+        {stage !== "none" && stage !== "read" ? (
+          <span className={cx("rounded-full px-2 py-px text-[11px] font-semibold whitespace-nowrap", STAGE_TONE[stage])}>
+            {FIX_STAGE_LABELS[stage]}
+          </span>
+        ) : null}
+        <span className="flex-1" />
+        {aiEnabled ? (
+          <button type="button" className={plain} disabled={!!busy} onClick={() => run("read", () => checkWhatItNeeds(reportId))}>
+            {busy === "read" ? "Reading…" : need ? "Read it again" : "Check what it needs"}
+          </button>
+        ) : null}
         {need && !needsCode(need) ? (
-          <Button size="sm" variant="primary" onClick={() => setHowTo(true)}>
+          <button type="button" className={dark} onClick={() => setHowTo(true)}>
             How the team can fix it
-          </Button>
+          </button>
         ) : null}
-
-        {needsCode(need) ? (
-          <>
-            {!connected ? (
-              <div className="text-xs leading-[17px] text-muted">
-                GitHub is not connected.{" "}
-                <a href={`${ADMIN.integrations}#github`} className="font-medium">
-                  Connect it
-                </a>{" "}
-                to send this to the developer, or use Copy for developer below.
-              </div>
-            ) : null}
-            {acts.sendToDeveloper ? (
-              <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => run("issue", () => sendToDeveloper(reportId))}>
-                {busy === "issue" ? "Sending…" : "Send to developer"}
-              </Button>
-            ) : null}
-            {acts.askClaude ? (
-              <Button size="sm" variant="primary" disabled={!!busy} onClick={() => setConfirmClaude(true)}>
-                Ask Claude to fix
-              </Button>
-            ) : acts.askClaudeWhyNot && connected ? (
-              <Button size="sm" variant="secondary" disabled title={acts.askClaudeWhyNot}>
-                Ask Claude to fix
-              </Button>
-            ) : null}
-          </>
+        {needsCode(need) && acts.sendToDeveloper ? (
+          <button type="button" className={plain} disabled={!!busy} onClick={() => run("issue", () => sendToDeveloper(reportId))}>
+            {busy === "issue" ? "Sending…" : "Send to developer"}
+          </button>
         ) : null}
-
-        {fix?.issueUrl ? (
-          <div className="rounded-[7px] bg-canvas px-2.5 py-2 text-xs leading-[18px] text-body">
-            <a href={fix.issueUrl} target="_blank" rel="noreferrer" className="font-medium">
-              Issue #{fix.issueNumber} ↗
-            </a>
-            {fix.aiFixRequestedAt ? (
-              <div>Claude asked{fix.aiFixRequestedByName ? ` by ${fix.aiFixRequestedByName}` : ""}.</div>
-            ) : null}
-            {fix.prUrl ? (
-              <div>
-                <a href={fix.prUrl} target="_blank" rel="noreferrer" className="font-medium">
-                  Pull request #{fix.prNumber} ↗
-                </a>{" "}
-                · {fix.prState === "merged" ? "merged" : fix.prState === "open" ? "waiting for review" : "closed without merging"}
-              </div>
-            ) : (
-              <div className="text-muted">No pull request yet.</div>
-            )}
-            {fix.deployedAt ? (
-              <div className="font-medium text-success">Live — the report closed itself.</div>
-            ) : (
-              <div className="text-muted">Closes itself once the fix is merged and live.</div>
-            )}
-            {!fix.deployedAt ? (
-              <button
-                type="button"
-                disabled={!!busy}
-                onClick={() => run("check", () => checkFixesNow())}
-                className="mt-1 text-xs font-medium text-brand hover:underline disabled:text-muted"
-              >
-                {busy === "check" ? "Checking…" : "Check now"}
-              </button>
-            ) : null}
-          </div>
+        {needsCode(need) && acts.askClaude ? (
+          <button type="button" className={dark} disabled={!!busy} onClick={() => setConfirmClaude(true)}>
+            Ask Claude to fix
+          </button>
+        ) : needsCode(need) && acts.askClaudeWhyNot && connected ? (
+          <button type="button" className={dark} disabled title={acts.askClaudeWhyNot}>
+            Ask Claude to fix
+          </button>
         ) : null}
+        {extra}
       </div>
 
+      {needsCode(need) && !connected ? (
+        <div className="border-b border-divider px-4 py-2 text-xs text-muted">
+          GitHub is not connected.{" "}
+          <a href={`${ADMIN.integrations}#github`} className="font-medium">
+            Connect it
+          </a>{" "}
+          to send this to the developer, or use Copy for developer.
+        </div>
+      ) : null}
+
+      {fix?.issueUrl ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-divider px-4 py-2 text-xs text-body">
+          <a href={fix.issueUrl} target="_blank" rel="noreferrer" className="font-medium">
+            Issue #{fix.issueNumber} ↗
+          </a>
+          {fix.aiFixRequestedAt ? <span>Claude asked{fix.aiFixRequestedByName ? ` by ${fix.aiFixRequestedByName}` : ""}</span> : null}
+          {fix.prUrl ? (
+            <span>
+              <a href={fix.prUrl} target="_blank" rel="noreferrer" className="font-medium">
+                Pull request #{fix.prNumber} ↗
+              </a>{" "}
+              · {fix.prState === "merged" ? "merged" : fix.prState === "open" ? "waiting for review" : "closed without merging"}
+            </span>
+          ) : (
+            <span className="text-muted">No pull request yet</span>
+          )}
+          {fix.deployedAt ? (
+            <span className="font-medium text-success">Live — the report closed itself</span>
+          ) : (
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={() => run("check", () => checkFixesNow())}
+              className="cursor-pointer text-xs font-medium text-brand hover:underline disabled:text-muted"
+            >
+              {busy === "check" ? "Checking…" : "Check now"}
+            </button>
+          )}
+        </div>
+      ) : null}
+
       {note ? (
-        <div className={cx("mt-1.5 text-xs leading-[17px]", note.ok ? "text-success" : "text-danger")} role="status">
+        <div className={cx("border-b border-divider px-4 py-2 text-xs", note.ok ? "text-success" : "text-danger")} role="status">
           {note.text}
         </div>
       ) : null}

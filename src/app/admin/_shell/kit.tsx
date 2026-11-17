@@ -74,7 +74,7 @@ export function Figures({ items, min = 170 }: { items: Figure[]; min?: number })
             </span>
             <span
               className={cx(
-                "truncate text-[22px] leading-[30px] font-bold tracking-[-0.02em] tabular-nums",
+                "truncate text-[22px] leading-8 font-bold tracking-[-0.02em] tabular-nums",
                 f.navy ? "text-white" : f.tone === "warn" ? "text-warn-ink" : f.tone === "danger" ? "text-danger" : f.tone === "ok" ? "text-success" : "text-ink",
               )}
             >

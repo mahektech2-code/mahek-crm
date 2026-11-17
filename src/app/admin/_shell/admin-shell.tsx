@@ -213,6 +213,7 @@ function ConsoleNav({
               onClick={() => toggle(g.label)}
               aria-expanded={!shut}
               data-nav-group
+              style={{ fontSize: 11, letterSpacing: "0.05em", lineHeight: "16px" }}
               className="flex cursor-pointer items-center justify-between px-2.5 pt-3.5 pb-[5px] text-[11px] font-semibold tracking-[0.05em] text-muted uppercase"
             >
               {g.label}
