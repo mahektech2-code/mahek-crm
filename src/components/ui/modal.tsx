@@ -87,7 +87,8 @@ export function Modal({
 }: {
   open: boolean;
   onClose: () => void;
-  title: React.ReactNode;
+  /** Null draws no title bar: the body carries its own heading. */
+  title: React.ReactNode | null;
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: number;
@@ -121,10 +122,12 @@ export function Modal({
            */
           className="ui-dialog max-h-[88vh] overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
         >
-          <div className="ui-dialog-title border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
-            {title}
-          </div>
-          <div className="max-h-[62vh] overflow-y-auto px-5 py-4">{children}</div>
+          {title != null ? (
+            <div className="ui-dialog-title border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
+              {title}
+            </div>
+          ) : null}
+          <div className={title != null ? "max-h-[62vh] overflow-y-auto px-5 py-4" : "max-h-[80vh] overflow-y-auto px-6 py-5"}>{children}</div>
           {footer ? (
             <div className="flex justify-end gap-2.5 border-t border-divider px-5 py-3">
               {footer}

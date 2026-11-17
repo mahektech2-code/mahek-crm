@@ -47,6 +47,8 @@ export type NavCounts = {
   paymentsUrgent: boolean;
   credits: number;
   orderChanges: number;
+  /** Orders Accounts hold (the Order Hub's accounts hold). */
+  ordersHeld: number;
   /** Vendor payouts planned for a day that has gone and still not paid. */
   payoutsOverdue: number;
   /** Bank lines nobody has matched, marked or set aside. */
@@ -123,9 +125,11 @@ export function AccountsShell({
           href: "/accounts/approvals",
           label: "Order approvals",
           icon: "approve",
+          exact: true,
           badge: counts.orders,
           urgent: counts.ordersUrgent,
         },
+        { href: "/accounts/approvals/held", label: "Orders on hold", icon: "approve", badge: counts.ordersHeld, urgent: counts.ordersHeld > 0 },
         /* RETIRED by the Order Hub: an order with its order number is not
            changed, so nothing new arrives here. Shown only while requests
            sent before it are still waiting to be decided. */
@@ -243,7 +247,8 @@ export function AccountsShell({
 
   const permitted = new Set(allowed);
   const groups = all
-    .map((g) => ({ ...g, items: g.items.filter((i) => permitted.has(i.href)) }))
+    /* Orders on hold is a page of Order approvals: holding that module opens it. */
+    .map((g) => ({ ...g, items: g.items.filter((i) => permitted.has(i.href) || (i.href === "/accounts/approvals/held" && permitted.has("/accounts/approvals"))) }))
     .filter((g) => g.items.length > 0);
 
   return (

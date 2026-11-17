@@ -62,7 +62,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         {print.current.printNo < plan.prints.length ? " — an earlier sheet, exactly as it was handed out." : "."}
       </p>
 
-      <article className="pp-paper">
+      <article className="pp-paper pp-sheet">
         <header className="pp-hd">
           {/* eslint-disable-next-line @next/next/no-img-element -- a print page: the plain image prints where next/image may lazy-load */}
           <img src="/brand/mahek-logo.png" alt="Mahek" className="pp-logo" />
@@ -135,7 +135,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
 
         {removed.length ? (
           <div className="pp-removed">
-            <b>Removed since Print {print.previous?.printNo}:</b> {removed.map((r) => `${r.productName}${r.size ? " " + r.size : ""} · ${nf(r.quantity)} ${r.unit}`).join("; ")}. Do not make these.
+            <b>Removed since Print {print.previous?.printNo}:</b> {removed.map((r) => `${r.productName} · ${nf(r.quantity)} ${r.unit}`).join("; ")}. Do not make these.
           </div>
         ) : null}
 
@@ -206,19 +206,19 @@ function sheetCss({ runningHead, footLines }: { runningHead: string; footLines: 
 .pp-date { font-weight: 700; font-size: 12.5pt; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pp-day { color: ${soft}; font-size: 7.8pt; }
 .pp-late { font-size: 7pt; font-weight: 700; margin: -1mm 0 2mm; }
-.pp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.pp-table th { position: static; white-space: normal; text-align: left; font-size: 6.3pt; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: ${soft}; padding: 0 1mm 1.2mm; border-bottom: 1.25pt solid ${rule}; background: white; }
-.pp-table td { white-space: normal; padding: 1.6mm 1mm; border-bottom: 1pt solid ${rule}; vertical-align: top; overflow-wrap: anywhere; }
-.pp-table tr { break-inside: avoid; }
-.pp-table .pp-n { text-align: center; color: ${faint}; font-variant-numeric: tabular-nums; font-size: 7.2pt; }
-.pp-table .pp-r { text-align: right; }
-.pp-table .pp-qty { text-align: right; font-weight: 600; font-size: 9.8pt; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.pp-table .pp-rem { font-size: 7.4pt; }
-.pp-table .pp-was { font-size: 6.4pt; font-weight: 500; color: ${soft}; margin-top: 0.4mm; }
-.pp-table tr.pp-cat td { background: ${band}; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4pt; padding: 1.3mm 1.5mm; border-bottom: 1.25pt solid ${rule}; color: ${blue}; }
-.pp-table tr.pp-cat { break-after: avoid; }
-.pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
-.pp-table tr.pp-chg u { text-decoration-thickness: 1.5px; }
+html body .pp-sheet .pp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+html body .pp-sheet .pp-table th { position: static; border-radius: 0 !important; height: auto; line-height: 1.3; white-space: normal; text-align: left; font-size: 6.3pt; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: ${soft}; padding: 0 1mm 1.2mm; border-bottom: 1.25pt solid ${rule}; background: white; }
+html body .pp-sheet .pp-table td { height: auto; color: ${ink}; font-size: 8.4pt; line-height: 1.3; white-space: normal; padding: 1.6mm 1mm; border-bottom: 1pt solid ${rule}; vertical-align: top; overflow-wrap: anywhere; }
+html body .pp-sheet .pp-table tr { break-inside: avoid; }
+html body .pp-sheet .pp-table .pp-n { text-align: center; color: ${faint}; font-variant-numeric: tabular-nums; font-size: 7.2pt; }
+html body .pp-sheet .pp-table .pp-r { text-align: right; }
+html body .pp-sheet .pp-table .pp-qty { text-align: right; font-weight: 600; font-size: 9.8pt; line-height: 1.1; font-variant-numeric: tabular-nums; }
+html body .pp-sheet .pp-table .pp-rem { font-size: 7.4pt; }
+html body .pp-sheet .pp-table .pp-was { font-size: 6.4pt; font-weight: 500; color: ${soft}; margin-top: 0.4mm; }
+html body .pp-sheet .pp-table tr.pp-cat td { background: ${band}; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4pt; padding: 1.3mm 1.5mm; border-bottom: 1.25pt solid ${rule}; color: ${blue}; }
+html body .pp-sheet .pp-table tr.pp-cat { break-after: avoid; }
+html body .pp-sheet .pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
+html body .pp-sheet .pp-table tr.pp-chg u { text-decoration-thickness: 1.5px; }
 .pp-removed { margin-top: 3mm; border: 1pt dashed ${rule}; padding: 1.6mm 2mm; font-size: 7.4pt; break-inside: avoid; }
 .pp-ft { margin-top: auto; padding-top: 3mm; font-size: 6.6pt; color: ${soft}; }
 .pp-ft2 { font-size: 6pt; color: ${faint}; margin-top: 0.6mm; border-top: 1px solid ${hair}; padding-top: 1.5mm; }
