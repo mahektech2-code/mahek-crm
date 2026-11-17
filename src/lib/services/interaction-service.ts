@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import type { TakenTo } from "@/lib/order-journey";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -351,7 +352,28 @@ export type SaveInteractionResult = {
    * inventing something.
    */
   nextStep: NextStep | null;
+  /** The TO number an order on this call became, with what it holds — the
+      "Order taken" dialog. Null where no order went to the Order Hub. */
+  takenTo: TakenTo | null;
 };
+
+export type { TakenTo } from "@/lib/order-journey";
+
+/** What the "Order taken" dialog lists: each line's product, cans and litres. */
+async function takenToFor(toNo: number, intakeId: string, takenBy: string): Promise<TakenTo> {
+  const rows = (await db.execute(sql`
+    select p.name as product, l.qty_cans as cans,
+           l.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres
+      from erp_order_intake_lines l join products p on p.id = l.sku_id
+      left join finished_goods fg on fg.id = p.finished_good_id
+     where l.intake_id = ${intakeId} order by l.position`)) as unknown as { product: string; cans: number; litres: number | null }[];
+  return {
+    toNo,
+    intakeId,
+    takenBy,
+    lines: rows.map((r) => ({ product: r.product, cans: Number(r.cans), litres: r.litres == null ? null : Math.round(Number(r.litres)) })),
+  };
+}
 
 function fieldError(field: string, message: string): Result<never> {
   return err(message, "validation", [{ field, message }]);
@@ -998,6 +1020,7 @@ export async function saveInteraction(
         // same screen as the first click — this is precisely what keeping the
         // sentence on the row buys.
         nextStep: storedNextStep(existing),
+        takenTo: null,
       },
       "Already logged",
     );
@@ -1069,6 +1092,7 @@ export async function saveInteraction(
   /* Whether orders go through the ERP's Order Hub: only once the ERP is the order book. */
   const hubLive = config["erp.orders.live"] === true;
   let toNumber: number | null = null;
+  let toIntakeId: string | null = null;
   await db.transaction(async (tx) => {
     /* ------------------------------------------------------------- order */
     if (isOrderReceived || input.outcome === "order_taken") {
@@ -1825,6 +1849,7 @@ export async function saveInteraction(
         tx as never,
       );
       toNumber = made.toNo;
+      toIntakeId = made.id;
       await tx.update(orders).set({ orderNo: `TO-${made.toNo}` }).where(eq(orders.id, orderId));
     }
 
@@ -2065,6 +2090,7 @@ export async function saveInteraction(
       complaintUpdated,
       remindersClosed,
       nextStep: step,
+      takenTo: toNumber != null && toIntakeId ? await takenToFor(toNumber, toIntakeId, ctx.user.name).catch(() => null) : null,
     },
     /*
      * SAID OUT LOUD, because a promise disappearing off a list without a word

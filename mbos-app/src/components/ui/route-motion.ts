@@ -23,6 +23,8 @@ export const ROUTE_MOTION: Record<string, ScreenMotion> = {
   customer: 'deeper',
   visit: 'deeper',
   order: 'deeper',
+  'order-sent': 'deeper',
+  'order-detail': 'deeper',
   orders: 'deeper',
   pay: 'deeper',
   collections: 'deeper',

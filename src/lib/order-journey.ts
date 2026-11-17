@@ -59,7 +59,16 @@ export type JourneyFacts = { intake: IntakeFacts | null; order: ErpOrderFacts | 
 
 export type JourneyEvent = { at: string; text: string; tone: JourneyTone; where?: string };
 export type StepState = "done" | "current" | "hold" | "todo";
-export type JourneyStep = { key: string; label: string; state: StepState; at: string | null; note?: string };
+export type JourneyStep = {
+  key: string;
+  label: string;
+  state: StepState;
+  at: string | null;
+  note?: string;
+  /** On the "checked" rung: which of the two checks are done, for the handset's receipt. */
+  backOffice?: boolean;
+  production?: boolean;
+};
 
 export type Journey = {
   /** "TO-1042" until the order number exists, then "Order 5821". */
@@ -179,7 +188,7 @@ export function journeyOf(f: JourneyFacts): Journey {
   steps.push({ key: "taken", label: "Taken", state: "done", at: intake?.takenAt ?? book?.at ?? null, note: toNo != null ? `TO-${toNo}` : undefined });
   if (intake) {
     const st: StepState = checked ? "done" : intake.status === "hold" || intake.status === "correction" ? "hold" : intake.status === "cancelled" ? "todo" : "current";
-    steps.push({ key: "checked", label: checked ? `Order checked, order number ${orderNo}` : "Order check · back office and Production Head", state: st, at: intake.productionAt ?? intake.backOfficeAt });
+    steps.push({ key: "checked", label: checked ? `Order checked, order number ${orderNo}` : "Order check · back office and Production Head", state: st, at: intake.productionAt ?? intake.backOfficeAt, backOffice: checked || !!intake.backOfficeAt, production: checked || !!intake.productionAt });
   }
   const acc = order?.accountsCheck ?? (book ? (book.status === "declined" ? "Declined" : book.approvedAt ? "Approved" : "Pending") : "Pending");
   const accHold = openHold?.department === "accounts" || acc === "Hold";
@@ -221,3 +230,11 @@ export const MY_ORDERS_TABS: { key: MyOrdersTab; label: string }[] = [
   { key: "moving", label: "In production and on the way" },
   { key: "done", label: "Delivered or closed" },
 ];
+
+/** An order taken on a call that became a TO — the "Order taken" dialog. */
+export type TakenTo = {
+  toNo: number;
+  intakeId: string;
+  lines: { product: string; cans: number; litres: number | null }[];
+  takenBy: string;
+};

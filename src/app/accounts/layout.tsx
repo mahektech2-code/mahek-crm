@@ -7,7 +7,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { getConfig } from "@/lib/config/store";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { pendingOrderCount } from "@/lib/services/order-approval-service";
+import { heldOrders, pendingOrderCount } from "@/lib/services/order-approval-service";
 import { pendingReceiptCount } from "@/lib/services/receipt-service";
 import { pendingCreditNoteCount } from "@/lib/services/credit-note-service";
 import { pendingOrderChangeCount } from "@/lib/services/order-change-service";
@@ -45,7 +45,7 @@ export default async function OrdersLayout({
   const modules = await listUserModules(user.id, "accounts");
   if (modules.length === 0) redirect("/apps");
 
-  const [orderCount, paymentCount, creditCount, urgency, config, changeCount, payoutsOverdue, bankToDo] = await Promise.all([
+  const [orderCount, paymentCount, creditCount, urgency, config, changeCount, payoutsOverdue, bankToDo, held] = await Promise.all([
     pendingOrderCount(),
     pendingReceiptCount(),
     pendingCreditNoteCount(),
@@ -55,6 +55,7 @@ export default async function OrdersLayout({
     // Only somebody who can open the screen is shown its badge.
     modules.some((m) => m.key === "accounts.cash-flow") ? overduePayoutCount() : Promise.resolve(0),
     modules.some((m) => m.key === "accounts.bank-reconcile") ? bankToDoCount() : Promise.resolve(0),
+    modules.some((m) => m.key === "accounts.approvals") ? heldOrders().then((h) => h.length).catch(() => 0) : Promise.resolve(0),
   ]);
   const staleHours = config["payments.confirmationAgeWarningHours"];
 
@@ -89,6 +90,7 @@ export default async function OrdersLayout({
           paymentsUrgent: urgency.oldestReceiptHours > staleHours,
           credits: creditCount,
           orderChanges: changeCount,
+          ordersHeld: held,
           payoutsOverdue,
           bankToDo,
         }}

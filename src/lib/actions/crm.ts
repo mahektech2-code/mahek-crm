@@ -48,6 +48,7 @@ import {
   updateSettings,
 } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import type { TakenTo } from "@/lib/order-journey";
 import { setOpportunityStatus } from "@/lib/services/opportunity-service";
 import { canOpenModule } from "@/lib/access";
 import type { CallDetailView } from "@/lib/call-detail";
@@ -264,6 +265,7 @@ export async function saveInteractionAction(
     produced: string[];
     complaintUpdated: boolean;
     nextStep: NextStep | null;
+    takenTo: TakenTo | null;
   }>
 > {
   try {
@@ -316,6 +318,7 @@ export async function saveInteractionAction(
         produced: result.data.produced,
         complaintUpdated: result.data.complaintUpdated,
         nextStep: result.data.nextStep,
+        takenTo: result.data.takenTo,
       },
       attachmentNote(attached)
         ? `Call saved — ${attachmentNote(attached)}`

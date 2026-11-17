@@ -217,6 +217,26 @@ export type FormSpec = {
   flow?: "grn";
   /** What an AI reading was read from, shown beside the proposed values. */
   evidence?: { images?: string[]; text?: string; flags?: { tone: Tone; text: string }[]; note?: string };
+  /**
+   * A compact Review page: the header fields named in `fields` in one row, the
+   * lines as a table of `lineCols` (and an Amount where `amount` names the
+   * quantity, rate in rupees and discount %), then a duplicate warning and a
+   * notice. `dup` lists the open documents this one might repeat: same party,
+   * same date and exactly the same items and quantities.
+   */
+  review?: {
+    fields?: string[];
+    lineCols?: string[];
+    amount?: { qty: string; rate: string; discount?: string };
+    notice?: string;
+    dup?: {
+      party: string;
+      date: string;
+      item: string;
+      qty: string;
+      against: { label: string; party: string; date: string; lines: [string, number][] }[];
+    };
+  };
 };
 
 /* ---------------------------------------------------------------- actions */

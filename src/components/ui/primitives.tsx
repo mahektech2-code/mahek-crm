@@ -30,7 +30,7 @@ export function says(className: string | undefined, prop: "mb" | "h" | "w" | "di
 
 /* ---------------------------------------------------------------- buttons */
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark" | "whatsapp";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark" | "whatsapp" | "success" | "dangerOutline";
 type ButtonSize = "sm" | "md";
 
 const BUTTON_BASE =
@@ -53,6 +53,10 @@ const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
   dark: "border border-body bg-transparent text-white hover:bg-white/10",
   /* Opens a WhatsApp chat — WhatsApp's own green, so it reads as leaving for WhatsApp. */
   whatsapp: "border border-whatsapp bg-whatsapp text-white hover:brightness-95 disabled:bg-line-strong disabled:border-line-strong",
+  /* The act that passes something on: Verify, Approve, Clear for production. */
+  success: "border border-success bg-success text-white hover:brightness-110 disabled:bg-line-strong disabled:border-line-strong",
+  /* Hold beside it: a stop, drawn quieter than a delete. */
+  dangerOutline: "border border-danger bg-surface text-danger hover:bg-danger-soft disabled:text-line-strong disabled:border-line-strong",
 };
 
 const BUTTON_SIZES: Record<ButtonSize, string> = {
