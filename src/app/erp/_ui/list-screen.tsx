@@ -8,7 +8,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { eyebrowClass, IconButton, LinkButton, linkClass } from "./look";
@@ -363,7 +363,7 @@ export function ListScreen({
   const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false, fx: {}, cf: {} });
   /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
   const [pending, startTransition] = useTransition();
-  /* The search box answers as it is typed; the server is asked once the typing pauses. */
+  /* The search box answers as it is typed; the server is asked once the typing pauses, and never for one character (`searchWorthAsking`). */
   const [qInput, setQInput] = useState(server?.query.q ?? "");
   const query: ListQuery = server ? { ...server.query, q: qInput } : local;
   const go = (next: ListQuery, extra?: (p: URLSearchParams) => void) => {
@@ -381,8 +381,8 @@ export function ListScreen({
   };
   const serverQ = server?.query.q;
   useEffect(() => {
-    if (serverQ === undefined || qInput === serverQ) return;
-    const t = setTimeout(() => go({ ...server!.query, q: qInput, page: 1 }), 300);
+    if (serverQ === undefined || qInput === serverQ || !searchWorthAsking(qInput)) return;
+    const t = setTimeout(() => go({ ...server!.query, q: qInput, page: 1 }), SEARCH_PAUSE_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the typed text starts a search
   }, [qInput, serverQ]);
