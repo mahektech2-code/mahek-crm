@@ -536,9 +536,6 @@ function LineDialog({
             <ComboBox value={query} options={options.map((o) => o.name)} onChange={pickProduct} label="Product" placeholder="Type to search" emptyHint="Nothing on this list matches" />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Product code">
-              <Input value={item?.code ?? (item ? "None recorded" : "")} readOnly disabled />
-            </Field>
             {spec.sizeLabel ? (
               <Field label={spec.sizeLabel} required>
                 <Input value={item?.size ?? ""} readOnly disabled placeholder="From the product" />
