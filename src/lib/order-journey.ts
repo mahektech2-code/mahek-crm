@@ -5,9 +5,10 @@
  * words on the sync, never left to work them out). Pure and client-safe: the
  * facts are read by `services/order-journey-service.ts`.
  *
- * Every step is a fact somebody already recorded — the TO's two checks, the
- * order number, Accounts' and the Production Head's checks on the order's
- * lines, a hold on its desk, and the customer-tracking milestones. Nothing is
+ * Every step is a fact somebody already recorded — Accounts approving the TO
+ * (which makes its order number), sending it back or declining it, the
+ * Production Head's MRP check on the order's lines, a hold on its desk, and
+ * the customer-tracking milestones. Nothing is
  * typed here and nothing is guessed: a step with no fact behind it is not
  * done.
  */
@@ -16,7 +17,7 @@ export type JourneyTone = "info" | "good" | "warn" | "bad" | "muted";
 
 export type IntakeFacts = {
   toNo: number;
-  /** open | correction | hold | verified | cancelled */
+  /** open | correction | hold | verified | cancelled | declined */
   status: string;
   takenAt: string;
   takenBy: string | null;
@@ -30,6 +31,16 @@ export type IntakeFacts = {
   holdReason: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
+  /** Accounts declined it, and why. */
+  declinedAt?: string | null;
+  declineReason?: string | null;
+  declinedBy?: string | null;
+  /** It looks like another TO: `possible` where nobody said otherwise, `different` where the taker did. */
+  duplicateState?: string | null;
+  duplicateOfToNo?: number | null;
+  duplicateReason?: string | null;
+  /** erp | crm | mbos */
+  origin?: string | null;
   orderNo: number | null;
 };
 
@@ -61,6 +72,14 @@ export type JourneyEvent = { at: string; text: string; tone: JourneyTone; where?
 export type StepState = "done" | "current" | "hold" | "todo";
 export type JourneyStep = { key: string; label: string; state: StepState; at: string | null; note?: string };
 
+/**
+ * Where the order is, as a CODE - what a screen keys its buttons and its
+ * short words on, so the handset need not read a sentence back. `approved`
+ * is anything with its order number that is not cancelled, declined or
+ * delivered; `book` is an order that never went through the hub.
+ */
+export type JourneyState = "open" | "possible_duplicate" | "correction" | "hold" | "declined" | "cancelled" | "approved" | "delivered" | "book";
+
 export type Journey = {
   /** "TO-1042" until the order number exists, then "Order 5821". */
   title: string;
@@ -72,6 +91,11 @@ export type Journey = {
   editable: boolean;
   /** A sentence for the handset's banner, where there is something to say. */
   banner: string | null;
+  state: JourneyState;
+  /** Accounts' words where they sent it back, held or declined it. */
+  reason: string | null;
+  /** The TO it may duplicate, while that is still a question for Accounts. */
+  duplicateOfToNo: number | null;
   events: JourneyEvent[];
   steps: JourneyStep[];
 };
@@ -111,16 +135,27 @@ export function journeyOf(f: JourneyFacts): Journey {
 
   if (intake) {
     events.push({ at: intake.takenAt, text: `Order taken${intake.takenBy ? ` by ${intake.takenBy}` : ""}`, tone: "info", where: `TO-${intake.toNo}` });
-    if (intake.correctionAt) events.push({ at: intake.correctionAt, text: `Sent back for correction${intake.correctionNote ? `: ${intake.correctionNote}` : ""}`, tone: "warn", where: "Order Hub" });
-    if (intake.backOfficeAt) events.push({ at: intake.backOfficeAt, text: `Checked by the back office${by(intake.backOfficeBy)}`, tone: "info", where: "Order Hub" });
-    if (intake.productionAt) events.push({ at: intake.productionAt, text: `Checked by the Production Head${by(intake.productionBy)}${intake.orderNo != null ? `. Order number ${intake.orderNo} made.` : ""}`, tone: "info", where: "Order Hub" });
-    if (intake.heldAt && intake.status === "hold") events.push({ at: intake.heldAt, text: `On hold at the office${intake.holdReason ? `: ${intake.holdReason}` : ""}`, tone: "bad", where: "To Hold" });
+    if (intake.duplicateState === "possible" && intake.duplicateOfToNo != null)
+      events.push({ at: intake.takenAt, text: `Possible duplicate of TO-${intake.duplicateOfToNo}. Accounts check it`, tone: "warn", where: "Order approvals" });
+    if (intake.duplicateState === "different" && intake.duplicateOfToNo != null)
+      events.push({ at: intake.takenAt, text: `Looked like TO-${intake.duplicateOfToNo}; marked a different order${intake.duplicateReason ? `: ${intake.duplicateReason}` : ""}`, tone: "info" });
+    if (intake.correctionAt) events.push({ at: intake.correctionAt, text: `Sent back by Accounts${intake.correctionNote ? `: ${intake.correctionNote}` : ""}`, tone: "warn", where: "Order approvals" });
+    if (intake.orderNo != null) {
+      /* Accounts approving the TO is what makes its order number. Read off the
+         order's own Accounts check where it has one, else the TO's stamps. */
+      const approvedAt = order?.accountsAt ?? intake.productionAt ?? intake.backOfficeAt ?? intake.takenAt;
+      const approver = order?.accountsBy ?? intake.backOfficeBy ?? intake.productionBy;
+      events.push({ at: approvedAt, text: `Approved by Accounts${by(approver)}. Order number ${intake.orderNo} made.`, tone: "good", where: "Order approvals" });
+    }
+    if (intake.heldAt && intake.status === "hold") events.push({ at: intake.heldAt, text: `On hold with Accounts${intake.holdReason ? `: ${intake.holdReason}` : ""}`, tone: "bad", where: "To Hold" });
+    if (intake.declinedAt) events.push({ at: intake.declinedAt, text: `Declined by Accounts${by(intake.declinedBy ?? null)}${intake.declineReason ? `: ${intake.declineReason}` : ""}`, tone: "bad", where: "Order approvals" });
     if (intake.cancelledAt) events.push({ at: intake.cancelledAt, text: `Cancelled${intake.cancelReason ? `: ${intake.cancelReason}` : ""}`, tone: "bad" });
   } else if (book) {
     events.push({ at: book.at, text: "Order taken", tone: "info" });
   }
   if (order) {
-    if (order.accountsAt && order.accountsCheck === "Approved") events.push({ at: order.accountsAt, text: `Approved by accounts${by(order.accountsBy)}`, tone: "good", where: "Order approvals" });
+    /* A TO's approval is said once, above, with its order number. */
+    if (!intake && order.accountsAt && order.accountsCheck === "Approved") events.push({ at: order.accountsAt, text: `Approved by accounts${by(order.accountsBy)}`, tone: "good", where: "Order approvals" });
     if (order.accountsAt && order.accountsCheck === "Declined") events.push({ at: order.accountsAt, text: `Declined by accounts${by(order.accountsBy)}`, tone: "bad", where: "Order approvals" });
     for (const h of order.holds) {
       events.push({ at: h.at, text: `On hold · ${DEPT[h.department] ?? h.department}: ${h.text}`, tone: "bad", where: "To Hold" });
@@ -137,28 +172,48 @@ export function journeyOf(f: JourneyFacts): Journey {
   let status = "Order taken";
   let tone: JourneyTone = "info";
   let banner: string | null = null;
+  let state: JourneyState = "book";
+  let reason: string | null = null;
+  let duplicateOfToNo: number | null = null;
   const openHold = order?.holds.find((h) => !h.resolvedAt) ?? null;
   const reached = order ? furthest(order.milestones) : null;
   if (intake && intake.status !== "verified") {
-    if (intake.status === "open") [status, tone] = ["Order check", "info"];
-    else if (intake.status === "correction") {
-      [status, tone] = ["Sent back", "warn"];
-      banner = `Sent back for correction${intake.correctionNote ? `: "${intake.correctionNote}"` : ""}. Change it and send it again.`;
+    if (intake.status === "open") {
+      if (intake.duplicateState === "possible" && intake.duplicateOfToNo != null) {
+        [status, tone, state] = ["Possible duplicate", "warn", "possible_duplicate"];
+        duplicateOfToNo = intake.duplicateOfToNo;
+        banner = `${intake.origin === "mbos" ? "Sent with no signal. " : ""}Matches TO-${intake.duplicateOfToNo}; Accounts will check it.`;
+      } else [status, tone, state] = ["Waiting for Accounts", "warn", "open"];
+    } else if (intake.status === "correction") {
+      [status, tone, state] = ["Sent back by Accounts", "info", "correction"];
+      reason = intake.correctionNote ?? null;
+      banner = `Sent back by Accounts${intake.correctionNote ? `: "${intake.correctionNote}"` : ""}. Correct it and send it again.`;
     } else if (intake.status === "hold") {
-      [status, tone] = ["On hold · office", "bad"];
-      banner = `On hold at the office${intake.holdReason ? `: ${intake.holdReason}` : ""}.`;
-    } else if (intake.status === "cancelled") [status, tone] = ["Cancelled", "muted"];
+      [status, tone, state] = ["On hold · Accounts", "bad", "hold"];
+      reason = intake.holdReason ?? null;
+      banner = `On hold with Accounts${intake.holdReason ? `: ${intake.holdReason}` : ""}.`;
+    } else if (intake.status === "declined") {
+      [status, tone, state] = ["Declined", "bad", "declined"];
+      reason = intake.declineReason ?? null;
+      banner = `Declined by Accounts${intake.declineReason ? `: "${intake.declineReason}"` : ""}.`;
+    } else if (intake.status === "cancelled") {
+      [status, tone, state] = ["Cancelled", "muted", "cancelled"];
+      reason = intake.cancelReason ?? null;
+    }
   } else if (order) {
-    if (order.cancelled) [status, tone] = ["Cancelled", "muted"];
-    else if (reached === "delivered") [status, tone] = ["Delivered", "good"];
+    state = "approved";
+    if (order.cancelled) [status, tone, state] = ["Cancelled", "muted", "cancelled"];
+    else if (reached === "delivered") [status, tone, state] = ["Delivered", "good", "delivered"];
     else if (openHold) {
       [status, tone] = [`On hold · ${DEPT[openHold.department] ?? openHold.department}`, "bad"];
+      reason = openHold.text;
       banner = `${openHold.department === "accounts" ? "Accounts" : openHold.department === "production" ? "Production" : "The office"}: "${openHold.text}"`;
-    } else if (order.accountsCheck === "Declined") [status, tone] = ["Declined by accounts", "bad"];
+    } else if (order.accountsCheck === "Declined") [status, tone, state] = ["Declined by accounts", "bad", "declined"];
     else if (reached) [status, tone] = [DONE_MILESTONE[reached], "good"];
-    else if (order.accountsCheck !== "Approved") [status, tone] = ["With accounts", "info"];
-    else if (order.productionCheck !== "Cleared") [status, tone] = ["Production check", "info"];
-    else [status, tone] = ["In production", "good"];
+    /* A TO Accounts approved is approved: that approval made its order number. */
+    else if (order.accountsCheck !== "Approved" && !intake) [status, tone] = ["With accounts", "info"];
+    else if (order.productionCheck !== "Cleared") [status, tone] = ["Approved · MRP check", "good"];
+    else [status, tone] = ["Approved · MRP cleared", "good"];
   } else if (book) {
     const w: Record<string, [string, JourneyTone]> = {
       pending_approval: ["With accounts", "info"],
@@ -177,22 +232,38 @@ export function journeyOf(f: JourneyFacts): Journey {
   const steps: JourneyStep[] = [];
   const checked = orderNo != null;
   steps.push({ key: "taken", label: "Taken", state: "done", at: intake?.takenAt ?? book?.at ?? null, note: toNo != null ? `TO-${toNo}` : undefined });
-  if (intake) {
-    const st: StepState = checked ? "done" : intake.status === "hold" || intake.status === "correction" ? "hold" : intake.status === "cancelled" ? "todo" : "current";
-    steps.push({ key: "checked", label: checked ? `Order checked, order number ${orderNo}` : "Order check · back office and Production Head", state: st, at: intake.productionAt ?? intake.backOfficeAt });
-  }
   const acc = order?.accountsCheck ?? (book ? (book.status === "declined" ? "Declined" : book.approvedAt ? "Approved" : "Pending") : "Pending");
   const accHold = openHold?.department === "accounts" || acc === "Hold";
-  steps.push({
-    key: "accounts",
-    label: accHold ? "With accounts · on hold" : acc === "Declined" ? "Declined by accounts" : "Accounts",
-    state: !checked && intake ? "todo" : acc === "Approved" ? "done" : accHold || acc === "Declined" ? "hold" : "current",
-    at: order?.accountsAt ?? book?.approvedAt ?? (accHold ? openHold?.at ?? null : null),
-  });
+  if (intake && !checked) {
+    /* A TO: Accounts approve it, and approving makes the order number. */
+    const st: StepState =
+      intake.status === "hold" || intake.status === "correction" || intake.status === "declined" ? "hold" : intake.status === "cancelled" ? "todo" : "current";
+    const label =
+      intake.status === "correction"
+        ? "Accounts · sent back"
+        : intake.status === "hold"
+          ? "Accounts · on hold"
+          : intake.status === "declined"
+            ? "Declined by Accounts"
+            : "Accounts approve it · makes the order number";
+    steps.push({ key: "accounts", label, state: st, at: intake.declinedAt ?? intake.correctionAt ?? intake.heldAt ?? null });
+  } else {
+    steps.push({
+      key: "accounts",
+      label: accHold ? "With accounts · on hold" : acc === "Declined" ? "Declined by accounts" : intake ? `Approved by Accounts, order number ${orderNo}` : "Accounts",
+      state: intake ? (acc === "Declined" || accHold ? "hold" : "done") : acc === "Approved" ? "done" : accHold || acc === "Declined" ? "hold" : "current",
+      at: order?.accountsAt ?? book?.approvedAt ?? intake?.productionAt ?? intake?.backOfficeAt ?? (accHold ? (openHold?.at ?? null) : null),
+    });
+  }
   if (order || intake) {
     const prodHold = openHold?.department === "production" || order?.productionCheck === "Hold";
     const pDone = order?.productionCheck === "Cleared";
-    steps.push({ key: "production", label: prodHold ? "Production check · on hold" : "Production check", state: pDone ? "done" : prodHold ? "hold" : acc === "Approved" && order ? "current" : "todo", at: order?.productionAt ?? null });
+    steps.push({
+      key: "production",
+      label: prodHold ? "MRP check · on hold" : "MRP check",
+      state: pDone ? "done" : prodHold ? "hold" : order && (acc === "Approved" || (!!intake && checked && acc !== "Declined")) ? "current" : "todo",
+      at: order?.productionAt ?? null,
+    });
   }
   const ms = order?.milestones ?? [];
   const billedAt = at(ms, "invoice");
@@ -201,21 +272,34 @@ export function journeyOf(f: JourneyFacts): Journey {
   const dispatchedAt = at(ms, "dispatched");
   steps.push({ key: "dispatched", label: "Dispatched, delivered", state: deliveredAt ? "done" : dispatchedAt ? "current" : "todo", at: deliveredAt ?? dispatchedAt });
 
-  return { title, toNo, orderNo, status, tone, editable: !!intake && (intake.status === "open" || intake.status === "correction"), banner, events, steps };
+  return {
+    title,
+    toNo,
+    orderNo,
+    status,
+    tone,
+    editable: !!intake && (intake.status === "open" || intake.status === "correction"),
+    banner,
+    state,
+    reason,
+    duplicateOfToNo,
+    events,
+    steps,
+  };
 }
 
 /** The tab a row of My orders belongs to. */
 export type MyOrdersTab = "to" | "accounts" | "hold" | "moving" | "done";
 export function tabOf(j: Journey): MyOrdersTab {
-  if (j.status === "Cancelled" || j.status === "Delivered" || j.status.startsWith("Declined")) return "done";
-  if (j.status.startsWith("On hold") || j.status === "Sent back") return "hold";
+  if (j.state === "cancelled" || j.state === "delivered" || j.state === "declined" || j.status === "Cancelled" || j.status === "Delivered" || j.status.startsWith("Declined")) return "done";
+  if (j.status.startsWith("On hold") || j.state === "correction") return "hold";
   if (j.orderNo == null && j.toNo != null) return "to";
   if (j.status === "With accounts") return "accounts";
   return "moving";
 }
 
 export const MY_ORDERS_TABS: { key: MyOrdersTab; label: string }[] = [
-  { key: "to", label: "TO · being checked" },
+  { key: "to", label: "TO · waiting for Accounts" },
   { key: "hold", label: "On hold or sent back" },
   { key: "accounts", label: "With accounts" },
   { key: "moving", label: "In production and on the way" },

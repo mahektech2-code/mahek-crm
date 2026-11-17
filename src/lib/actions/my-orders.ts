@@ -12,10 +12,11 @@ import { orders, products } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
 
 /* ---------------------------------------------------------------------------
- * A TELECALLER CHANGES HER OWN TO, and nothing else. Only while it is a TO —
- * open, or sent back — and only the person who took it (the TO's taker, or
- * the `orders` row's author). Both checks start again on any change, which is
- * `editIntake`'s rule; once the order number exists nothing here applies.
+ * A TELECALLER CHANGES HER OWN TO, and nothing else. Only while it is a TO
+ * waiting for Accounts, or sent back by them - and only the person who took it
+ * (the TO's taker, or the `orders` row's author). A change sends it to
+ * Accounts again, which is `editIntake`'s rule; once Accounts approve it (that
+ * makes its order number) nothing here applies.
  * A line kept keeps the rate it was taken at; a product added is priced from
  * the shop's own list, as on the call, and a line with no list rate is left
  * for the back office to price before its check.
@@ -37,7 +38,7 @@ async function mine(userId: string, intakeId: string) {
     const [o] = await db.select({ userId: orders.userId }).from(orders).where(eq(orders.id, got.intake.originOrderId));
     author = o?.userId ?? null;
   }
-  if (got.intake.takenById !== userId && author !== userId) return { error: err("Only the person who took this order can change it here. Ask the Order Hub.", "not_permitted") } as const;
+  if (got.intake.takenById !== userId && author !== userId) return { error: err("Only the person who took this order can change it here. Ask Accounts.", "not_permitted") } as const;
   return { got } as const;
 }
 
@@ -87,7 +88,8 @@ export async function editMyToAction(input: z.input<typeof editSchema>): Promise
     if (!res.ok) return res;
     refresh();
     const unpriced = lines.filter((l) => l.ratePaise == null).length;
-    return okVoid(`TO-${intake.toNo} changed · both checks start again${unpriced ? ` · ${unpriced} without a rate: the back office prices it` : ""}`);
+    const sent = intake.status === "correction" ? "corrected and sent to Accounts" : "changed · Accounts check it again";
+    return okVoid(`TO-${intake.toNo} ${sent}${unpriced ? ` · ${unpriced} without a rate: Accounts price it` : ""}`);
   } catch (e) {
     return fromThrown(e);
   }

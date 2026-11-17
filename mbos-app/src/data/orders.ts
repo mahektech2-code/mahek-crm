@@ -259,6 +259,12 @@ export async function saveOrder(args: {
   lines: CartLine[];
   assessment: OrderAssessment;
   paymentTermDays?: number | null;
+  /**
+   * What he answered the duplicate warning, where the phone could ask it:
+   * "Different order - create it", the TO it looked like, and why. The TO
+   * carries it for Accounts. Absent offline, where the office checks at sync.
+   */
+  duplicate?: { decision: 'different'; ofId: string; reason: string } | null;
 }): Promise<{ orderId: string; needsApproval: boolean }> {
   const base = await stamp('order');
   const needsApproval = args.assessment.decision === 'needs_approval';
@@ -378,6 +384,7 @@ export async function saveOrder(args: {
         quantityCans: p.cans,
         ratePaise: p.ratePaise ?? undefined,
       })),
+      duplicate: args.duplicate ?? undefined,
       deviceId: base.deviceId,
       clientCreatedAt: base.clientCreatedAt,
     },
@@ -451,6 +458,10 @@ export type PunchedOrder = {
   journeyBanner: string | null;
   journeyEditable: number | null;
   journeySteps: string | null;
+  /** `lib/order-journey.ts`'s JourneyState, Accounts' words, and the TO it may duplicate. */
+  journeyState: string | null;
+  journeyReason: string | null;
+  duplicateOfToNo: number | null;
 };
 
 /** One rung of the ladder the office sent (`lib/order-journey.ts`). */
@@ -491,7 +502,7 @@ export async function listOrders(customerId?: string): Promise<PunchedOrder[]> {
                          o.deliveryDate, o.status, o.netTotalPaise, o.valueUnavailable,
                          o.cancelReason, o.syncState, o.syncMessage,
                          o.toNo, o.erpOrderNo, o.journeyStatus, o.journeyTone, o.journeyBanner,
-                         o.journeyEditable, o.journeySteps
+                         o.journeyEditable, o.journeySteps, o.journeyState, o.journeyReason, o.duplicateOfToNo
                     FROM orders o LEFT JOIN customers c ON c.id = o.customerId`;
   return customerId
     ? all<PunchedOrder>(
@@ -614,6 +625,40 @@ export async function editOrder(args: {
       })),
     },
     dependsOn,
+  });
+  return { ok: true };
+}
+
+/**
+ * CANCEL A TO HE TOOK, while Accounts have not approved it. The office
+ * cancels it only while it is still a TO waiting for Accounts or sent back by
+ * them, and refuses it otherwise - whatever this phone believed - so the
+ * local row says cancelled at once and the pull puts it right if it was not.
+ */
+export async function cancelTo(orderId: string, reason: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const why = reason.trim();
+  if (!why) return { ok: false, message: 'Say why it is cancelled.' };
+  const order = await one<{ status: string; journeyEditable: number | null; netTotalPaise: number | null; customerId: string }>(
+    'SELECT status, journeyEditable, netTotalPaise, customerId FROM orders WHERE id = ?',
+    [orderId],
+  );
+  if (!order) return { ok: false, message: 'That order is not on this phone.' };
+  if (order.journeyEditable !== 1) {
+    return { ok: false, message: 'Accounts have already approved or decided it. Ask the office to change it.' };
+  }
+  const dependsOn = await waitBehindOrder(orderId);
+  await run('UPDATE customers SET submittedNotInvoicedPaise = MAX(0, submittedNotInvoicedPaise - ?) WHERE id = ?', [
+    order.netTotalPaise ?? 0,
+    order.customerId,
+  ]);
+  await updateAndQueue({
+    table: 'orders',
+    entityType: 'order',
+    id: orderId,
+    patch: { status: 'cancelled', cancelReason: why, journeyEditable: 0 },
+    payloadExtras: { cancelTo: true },
+    dependsOn,
+    location: false,
   });
   return { ok: true };
 }
