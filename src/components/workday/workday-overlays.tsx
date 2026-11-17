@@ -5,7 +5,7 @@ import { signOut } from "@/lib/actions/auth";
 import { cx } from "@/components/ui/primitives";
 import { useWorkday, type OpResult } from "./workday-context";
 import { at, dayDate, greeting, hmOf, msOf, VERDICT_WORDS } from "./format";
-import { ampm, DayTimeline } from "./day-parts";
+import { DayTimeline } from "./day-parts";
 import { VerdictPill, withLocation } from "./workday-shared";
 
 export { VerdictPill, withLocation };
@@ -68,8 +68,9 @@ function LockScreen() {
     >
       <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-brand-softer bg-brand-soft px-7 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 items-center justify-center rounded-[9px] bg-brand text-[16px] font-extrabold text-brand-lime">M</span>
-          <span className="text-[15px] font-bold">MahekOne</span>
+          {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+          <img src="/brand/mahek-logo.png" alt="Mahek" width={32} height={32} className="size-8 flex-none rounded-full bg-surface object-contain" />
+          <span className="text-[16px] font-bold tracking-tight">MahekOne</span>
           <span className={cx("ml-2 inline-flex h-[26px] items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold", pill.cls)}>
             <LockGlyph />
             {pill.text}
@@ -117,7 +118,7 @@ function LockScreen() {
         </section>
       </main>
 
-      <footer className="px-7 pt-[18px] pb-6 text-center text-[13px] text-muted">{footerFor(state)}</footer>
+      {footerFor(state) ? <footer className="px-7 pt-[18px] pb-6 text-center text-[13px] text-muted">{footerFor(state)}</footer> : null}
     </div>
   );
 }
@@ -133,8 +134,8 @@ function initials(name: string): string {
 
 function footerFor(state: NonNullable<ReturnType<typeof useWorkday>>["state"]): string {
   const firstIn = state.sessions[0]?.in;
-  if (state.phase === "none")
-    return `${state.officialIn && state.officialOut ? `Office hours today ${ampm(state.officialIn)} – ${ampm(state.officialOut)} · ` : ""}breaks and time away are not counted as work`;
+  /* Nothing under the card before punch-in: the screen asks one thing. */
+  if (state.phase === "none") return "";
   if (state.phase === "break" || state.phase === "auto_break") return `${dayDate(state.date)} · punched in at ${at(firstIn)}`;
   if (state.phase === "auto_out") return "Punching in again checks your office location, like the morning punch-in";
   return "Punching in again adds to today · the time in between is recorded as away";
