@@ -10,7 +10,7 @@ import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar
 import { pageOfError, planPages, plural } from "./form-pages";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
-import { fillOf, impactPart, resolveField, whenHolds } from "@/lib/erp/ui";
+import { fd, fillOf, impactPart, inr, inrRate, resolveField, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
@@ -812,7 +812,9 @@ function FormDialog({
   );
 
   /** What will be saved, page by page — each heading goes back to its page. */
-  const review = (
+  const review = spec.review?.fields ? (
+    <CompactReview spec={spec} h={h} lines={filledLines()} header={shownHeader} />
+  ) : (
     <div className="grid gap-3">
       {pages.map((p, pi) => {
         if (p.kind === "review") return null;
@@ -927,6 +929,93 @@ function FormDialog({
         />
       ) : null}
     </ErpDialog>
+  );
+}
+
+/** The review a form asked to be drawn compact (`FormSpec.review`): the order's few facts, its lines with their amounts, a possible duplicate and a notice. */
+function CompactReview({ spec, h, lines, header }: { spec: FormSpec; h: Record<string, string>; lines: Record<string, string>[]; header: FieldSpec[] }) {
+  const r = spec.review!;
+  const fields = (r.fields ?? []).map((k) => header.find((f) => f.k === k)).filter((f): f is FieldSpec => !!f);
+  const cols = (r.lineCols ?? []).map((k) => (spec.line ?? []).find((f) => f.k === k)).filter((f): f is FieldSpec => !!f);
+  const num = (v: string | undefined) => {
+    const n = Number(String(v ?? "").replace(/,/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const amountOf = (l: Record<string, string>) => {
+    if (!r.amount) return null;
+    const q = num(l[r.amount.qty]);
+    const rate = num(l[r.amount.rate]);
+    if (!Number.isFinite(q) || !Number.isFinite(rate) || !l[r.amount.rate]) return null;
+    const d = r.amount.discount ? num(l[r.amount.discount]) || 0 : 0;
+    return Math.round(q * rate * 100 * (1 - d / 100));
+  };
+  const dup = r.dup
+    ? (() => {
+        const d = r.dup;
+        const mine = new Map<string, number>();
+        for (const l of lines) if (l[d.item]) mine.set(l[d.item], (mine.get(l[d.item]) ?? 0) + (num(l[d.qty]) || 0));
+        return (
+          d.against.find(
+            (a) => a.party === h[d.party] && a.date === h[d.date] && a.lines.length === mine.size && a.lines.every(([item, q]) => mine.get(item) === q),
+          ) ?? null
+        );
+      })()
+    : null;
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(1, fields.length)}, minmax(0, 1fr))` }}>
+        {fields.map((f) => (
+          <label key={f.k} className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-sm font-medium text-ink">{f.l}</span>
+            <span className="truncate rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink">{reviewValue(f, h[f.k] ?? "") || "—"}</span>
+          </label>
+        ))}
+      </div>
+      <div className="overflow-hidden rounded-card border border-line">
+        <table className="w-full">
+          <thead>
+            <tr>
+              {cols.map((c, i) => (
+                <Th key={c.k} align={i === 0 ? "left" : "right"}>
+                  {c.l.replace(/\s*\(.*\)$/, "")}
+                </Th>
+              ))}
+              {r.amount ? <Th align="right">Amount</Th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l, i) => {
+              const a = amountOf(l);
+              return (
+                <Tr key={i}>
+                  {cols.map((c, ci) => (
+                    <Td key={c.k} align={ci === 0 ? "left" : "right"} className="text-ink tabular-nums">
+                      {c.k === r.amount?.rate && l[c.k] ? inrRate(Math.round(num(l[c.k]) * 100)) : l[c.k] || "—"}
+                    </Td>
+                  ))}
+                  {r.amount ? (
+                    <Td align="right" className="text-ink tabular-nums">
+                      {a != null ? inr(a) : "—"}
+                    </Td>
+                  ) : null}
+                </Tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {dup ? (
+        <div className="rounded-card border border-warn-line bg-warn-soft px-4 py-3 text-sm text-ink">
+          <b className="font-semibold">Possible duplicate.</b> {dup.label} for {dup.party} on {fd(dup.date)} has the same goods. Save anyway only if this is a separate order.
+        </div>
+      ) : null}
+      {r.notice ? (
+        <div className="rounded-card bg-info-soft px-4 py-3 text-sm text-info">
+          <span className="mr-2 rounded bg-brand-soft px-1.5 py-0.5 text-2xs font-bold text-brand">NEW</span>
+          {r.notice}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

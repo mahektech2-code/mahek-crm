@@ -91,13 +91,10 @@ export async function planSeatsFromNames(
   const staff = await db
     .select({ id: users.id, name: users.name, active: users.active })
     .from(users);
-
-  const byName = new Map<string, string[]>();
-  for (const u of staff) {
-    if (!u.active) continue;
-    const key = u.name.trim().toLowerCase();
-    byName.set(key, [...(byName.get(key) ?? []), u.id]);
-  }
+  /* Text becomes a person through the directory: any spelling they answer
+     to, and a name two people share resolves to nobody. */
+  const { loadPersonDirectory } = await import("./person-identity-service");
+  const dir = await loadPersonDirectory();
   const nameOf = new Map(staff.map((u) => [u.id, u.name]));
 
   const moves: SeatMove[] = [];
@@ -108,7 +105,8 @@ export async function planSeatsFromNames(
     if (only !== "all" && (only === "lead") !== (row.kind === "lead")) continue;
     const wants = row.salesPersonName?.trim();
     if (!wants) continue;
-    const matches = byName.get(wants.toLowerCase()) ?? [];
+    const hit = dir.accountByName(wants);
+    const matches = hit ? [hit] : [];
     if (matches.length !== 1) {
       unresolved.set(wants, (unresolved.get(wants) ?? 0) + 1);
       continue;

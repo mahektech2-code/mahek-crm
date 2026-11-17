@@ -43,7 +43,9 @@ import {
   employeesToLink,
   issueCredential,
   linkEmployee,
+  renamePerson,
   setAccess,
+  setNotEmployee,
   type IssuedCredential,
 } from "@/lib/actions/access";
 import {
@@ -126,10 +128,17 @@ function levelOptionLabel(level: RoleId, app: AppId, appName: string): string {
 /** Every module of an app that its holders reach whatever is ticked. */
 const ALWAYS_OF = (app: AppId) => modulesForApp(app).filter((m) => isAlwaysOpen(m.key)).map((m) => m.key);
 
+/**
+ * An account nobody has said WHICH employee it is — and nobody has said it is
+ * not one. Who is on whose team, whose book, whose leave all read the HRMS
+ * record by id, so this list is meant to be worked down to empty.
+ */
+const needsHrmsLink = (r: AccessRow) => r.employeeMatch !== "linked" && !r.notEmployee;
+
 const TABS = [
   { key: "everybody", label: "Everybody" },
   { key: "admins", label: "Platform admins" },
-  { key: "not-hrms", label: "Not in HRMS" },
+  { key: "not-hrms", label: "Not linked to HRMS" },
   { key: "no-account", label: "In HRMS, no account" },
   { key: "disabled", label: "Disabled" },
 ] as const;
@@ -249,6 +258,8 @@ export function AccessSection({
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
   /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
   const [linking, setLinking] = React.useState<AccessRow | null>(null);
+  /** Renaming somebody — once, carried to HRMS and every customer. */
+  const [renaming, setRenaming] = React.useState<AccessRow | null>(null);
   /* THE SECOND DOOR ONTO A PASSWORD. The grant flow offers one at the moment
      an account is set up, which is the moment most of them are needed — but
      somebody set up in March who cannot get in today is not going to be given
@@ -311,7 +322,7 @@ export function AccessSection({
   const tabCount: Record<Tab, number> = {
     everybody: rows.length,
     admins: rows.filter(isPlatformAdminRow).length,
-    "not-hrms": rows.filter((r) => !r.employeeCode).length,
+    "not-hrms": rows.filter(needsHrmsLink).length,
     "no-account": view_.noAccount.length,
     disabled: rows.filter((r) => !r.active).length,
   };
@@ -320,7 +331,7 @@ export function AccessSection({
     .filter((r) => {
       if (tab === "disabled") return !r.active;
       if (tab === "admins") return isPlatformAdminRow(r);
-      if (tab === "not-hrms") return !r.employeeCode;
+      if (tab === "not-hrms") return needsHrmsLink(r);
       return true;
     })
     .filter((r) => {
@@ -603,7 +614,7 @@ export function AccessSection({
                           className="m-0 h-4 w-4 align-middle accent-brand"
                         />
                       </AccTd>
-                      <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} position={ex?.position ?? null} />
+                      <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} position={ex?.position ?? null} say={say} />
                       <AccTd>
                         <AppChips row={r} />
                       </AccTd>
@@ -646,6 +657,7 @@ export function AccessSection({
                               onSwitch={() => setSwitching(r)}
                               onOpen={() => onOpenUser(r.userId)}
                               onLinkEmployee={() => setLinking(r)}
+                              onRename={() => setRenaming(r)}
                               onCredential={() => setCrediting(r)}
                               onGotLink={setLinkFor}
                             />
@@ -831,6 +843,18 @@ export function AccessSection({
       {/* Which payroll row this account is. Keyed on the person for the same
           reason the access dialog is: fresh initial state on a remount beats an
           effect resetting it when a prop changes. */}
+      {renaming ? (
+        <RenameDialog
+          key={renaming.userId}
+          row={renaming}
+          onClose={() => setRenaming(null)}
+          onDone={(r) => {
+            say(r);
+            setRenaming(null);
+          }}
+        />
+      ) : null}
+
       {linking ? (
         <EmployeeLinkDialog
           key={linking.userId}
@@ -889,8 +913,52 @@ export function AccessSection({
   );
 }
 
-function PersonCells({ row, onOpen, position }: { row: AccessRow; onOpen: () => void; position: string | null }) {
+function PersonCells({
+  row,
+  onOpen,
+  position,
+  say,
+}: {
+  row: AccessRow;
+  onOpen: () => void;
+  position: string | null;
+  say: (r: { ok: boolean; message?: string; error?: string }) => void;
+}) {
   const admin = isPlatformAdminRow(row);
+  const [busy, setBusy] = React.useState(false);
+  const act = (p: Promise<{ ok: boolean; message?: string; error?: string }>) => {
+    setBusy(true);
+    void p.then((r) => {
+      setBusy(false);
+      say(r);
+    });
+  };
+  /* One click each way on "Not linked to HRMS": confirm the record the
+     directory suggests, or say this account is not an employee at all. */
+  const review = !row.notEmployee && row.employeeMatch !== "linked" ? (
+    <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px]">
+      {row.suggestion ? (
+        <button
+          type="button"
+          disabled={busy}
+          className="cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 py-0.5 font-medium text-ink hover:bg-canvas disabled:cursor-not-allowed"
+          title={`Suggested because the ${row.suggestion.on === "name" ? "name" : row.suggestion.on === "email" ? "email" : "mobile number"} matches`}
+          onClick={() => act(linkEmployee({ userId: row.userId, employeeId: row.suggestion!.employeeId }))}
+        >
+          Link {row.suggestion.employeeCode} {row.suggestion.name}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        disabled={busy}
+        className="cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 py-0.5 text-muted hover:bg-canvas disabled:cursor-not-allowed"
+        title="A shared login or an outside person — never matched to a payroll row"
+        onClick={() => act(setNotEmployee({ userId: row.userId, notEmployee: true }))}
+      >
+        Not an employee
+      </button>
+    </span>
+  ) : null;
   return (
     <>
       <AccTd>
@@ -921,9 +989,12 @@ function PersonCells({ row, onOpen, position }: { row: AccessRow; onOpen: () => 
               </Pill>
             ) : null}
           </span>
+        ) : row.notEmployee ? (
+          <span className="text-muted">Not an employee</span>
         ) : (
-          <span className="text-muted">Not in HRMS</span>
+          <span className="text-muted">Not linked to HRMS</span>
         )}
+        {review}
       </AccTd>
     </>
   );
@@ -1102,6 +1173,7 @@ function PersonMenu({
   onSwitch,
   onOpen,
   onLinkEmployee,
+  onRename,
   onCredential,
   onGotLink,
 }: {
@@ -1111,6 +1183,7 @@ function PersonMenu({
   onSwitch: () => void;
   onOpen: () => void;
   onLinkEmployee: () => void;
+  onRename: () => void;
   onCredential: () => void;
   onGotLink: (link: { name: string; url: string; expiresInMinutes: number }) => void;
 }) {
@@ -1129,6 +1202,10 @@ function PersonMenu({
           onSelect: onSwitch,
         },
         { label: "Open their record", onSelect: onOpen },
+        { label: "Rename", onSelect: onRename },
+        ...(row.notEmployee
+          ? [{ label: "They are an employee after all", onSelect: () => void setNotEmployee({ userId: row.userId, notEmployee: false }).then(say) }]
+          : []),
         {
           /* Not hidden where a row was already guessed: a guess is exactly what
              somebody would come here to confirm or correct. */
@@ -3067,6 +3144,70 @@ function ReviewStep({
  * hunting for an employee they cannot find would otherwise conclude the search
  * is broken when the answer is that a colleague linked it last week.
  */
+/**
+ * One name, changed once. The server decides where it lives (HRMS for a linked
+ * person, the account otherwise) and carries it everywhere — see `renamePerson`.
+ */
+function RenameDialog({
+  row,
+  onClose,
+  onDone,
+}: {
+  row: AccessRow;
+  onClose: () => void;
+  onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
+}) {
+  const [name, setName] = React.useState(row.name);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const unchanged = name.trim().replace(/\s+/g, " ") === row.name;
+  const save = () => {
+    setSaving(true);
+    setError(null);
+    void renamePerson({ userId: row.userId, name }).then((r) => {
+      setSaving(false);
+      if (r.ok) onDone(r);
+      else setError(r.fieldErrors?.[0]?.message ?? r.error ?? "The name could not be changed.");
+    });
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Rename ${row.name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={saving || unchanged || name.trim().length < 2}
+            title={unchanged ? "Type the new name first" : undefined}
+            onClick={save}
+          >
+            {saving ? "Saving…" : "Rename"}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm leading-[21px] text-body">
+        <p>
+          The new name shows everywhere at once — HRMS, their account, the CRM and
+          every customer they look after. Nothing they can see or do changes:
+          who works which customer is kept by their account, not their name.
+        </p>
+        <div className="mt-3">
+          <Field label="Full name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={120} />
+          </Field>
+        </div>
+        {error ? <p className="mt-2 text-danger">{error}</p> : null}
+      </div>
+    </Modal>
+  );
+}
+
 function EmployeeLinkDialog({
   row,
   onClose,
@@ -3157,7 +3298,8 @@ function EmployeeLinkDialog({
         <p>
           This is what their salary, days worked and reimbursements are read
           from — on the Sales Dashboard and on their handset, from the same
-          record, so the two cannot disagree.
+          record, so the two cannot disagree. Their account also takes the
+          name HRMS has for them, and keeps it in step from then on.
         </p>
         {current ? (
           <p className="mt-2">

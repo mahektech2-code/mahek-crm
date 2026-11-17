@@ -1,14 +1,14 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpOrders } from "@/db/schema";
+import { erpOrderHolds, erpOrderIntakes, erpOrders } from "@/db/schema";
 import { err, fieldErr, okVoid, type Err, type Result } from "@/lib/result";
 import { money, stamp } from "@/lib/format";
 import { calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "../access";
 import { erpLink } from "../registry";
 import { erpAudit, text, type ScreenModule } from "../server";
-import type { ActionSpec, ColSpec, ListRow, PromptSpec, RowField } from "../ui";
+import type { ActionSpec, ColSpec, FieldSpec, ListRow, PromptSpec, RowField } from "../ui";
 import { notifyUsers } from "@/lib/notify";
 import { newFormIn } from "../lazy-forms";
 import { cancelIntake, intakeById, releaseIntake } from "../order-hub";
@@ -25,9 +25,10 @@ import {
   type IntakeStatus,
 } from "../engines/order-hub";
 import { mrpCheck, type MrpLine, type MrpStock } from "../engines/mrp";
-import { closeHold, openHolds, recordHold } from "../order-tracking";
+import { closeHold, openHolds, recordHold, tellHold } from "../order-tracking";
 import { reasonLabel } from "../engines/order-tracking";
 import { fgLots, packLots, rmLots, sfgLots } from "../stock";
+import { placeNameSql } from "@/lib/services/place-filter-service";
 import { intakeForm, orderForm, saveOrder } from "./sales";
 
 /* ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ import { intakeForm, orderForm, saveOrder } from "./sales";
 
 const plural = (n: number, one = "line") => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-type IntakeRow = {
+export type IntakeRow = {
   id: string;
   toNo: number;
   status: string;
@@ -72,10 +73,18 @@ type IntakeRow = {
   orderNo: number | null;
   createdAt: Date;
   updatedAt: Date;
-  lines: { sku: string; skuId: string; qty: number; rate: number | null; discount: number | null; ml: number | null }[];
+  city: string | null;
+  backOfficeNote: string | null;
+  productionNote: string | null;
+  updatedById: string | null;
+  updatedBy: string | null;
+  correctionBy: string | null;
+  correctionAt: Date | null;
+  remark: string | null;
+  lines: { sku: string; skuId: string; qty: number; rate: number | null; discount: number | null; ml: number | null; cpb: number; boxed: boolean; active: boolean }[];
 };
 
-async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeRow[]> {
+export async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeRow[]> {
   const rows = (await db.execute(sql`
     select i.id, i.to_no as "toNo", i.status, i.origin, i.order_source as "orderSource", i.order_date::text as "orderDate",
            i.billing_customer_id as "billingId", bc.name as billing, dc.name as delivery, i.godown_id as "godownId", g.name as godown,
@@ -86,9 +95,13 @@ async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeRow[]> {
            (select u.name from erp_orders o join users u on u.id = o.accounts_checked_by_id where o.intake_id = i.id limit 1) as "approvedBy",
            (select max(o.accounts_checked_at) from erp_orders o where o.intake_id = i.id) as "approvedAt",
            i.order_no as "orderNo", i.created_at as "createdAt", i.updated_at as "updatedAt",
+           ${placeNameSql("bc", "city", "city")} as city, i.back_office_note as "backOfficeNote", i.production_note as "productionNote", i.updated_by_id as "updatedById", uu.name as "updatedBy",
+           cu.name as "correctionBy", i.correction_at as "correctionAt", i.remark,
            coalesce((select json_agg(json_build_object('sku', p.name, 'skuId', l.sku_id, 'qty', l.qty_cans, 'rate', l.rate_paise, 'discount', l.discount_bp,
-                    'ml', coalesce(p.millilitres_per_can, fg.millilitres)) order by l.position)
+                    'ml', coalesce(p.millilitres_per_can, fg.millilitres), 'cpb', coalesce(p.cans_per_box, 1),
+                    'boxed', coalesce(pk.box_type, '') <> '', 'active', p.active) order by l.position)
               from erp_order_intake_lines l join products p on p.id = l.sku_id left join finished_goods fg on fg.id = p.finished_good_id
+              left join erp_product_packing pk on pk.product_id = p.id
              where l.intake_id = i.id), '[]'::json) as lines
       from erp_order_intakes i
       join customers bc on bc.id = i.billing_customer_id
@@ -98,6 +111,8 @@ async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeRow[]> {
       left join users hu on hu.id = i.held_by_id
       left join users du on du.id = i.declined_by_id
       left join erp_order_intakes di on di.id = i.duplicate_of_id
+      left join users uu on uu.id = i.updated_by_id
+      left join users cu on cu.id = i.correction_by_id
      where ${where}
      order by i.created_at asc
      limit 1500
@@ -107,7 +122,7 @@ async function intakeRows(where: ReturnType<typeof sql>): Promise<IntakeRow[]> {
     toNo: Number(r.toNo),
     orderNo: r.orderNo == null ? null : Number(r.orderNo),
     duplicateOfTo: r.duplicateOfTo == null ? null : Number(r.duplicateOfTo),
-    lines: (r.lines ?? []).map((l) => ({ ...l, qty: Number(l.qty), rate: l.rate == null ? null : Number(l.rate), discount: l.discount == null ? null : Number(l.discount), ml: l.ml == null ? null : Number(l.ml) })),
+    lines: (r.lines ?? []).map((l) => ({ ...l, qty: Number(l.qty), rate: l.rate == null ? null : Number(l.rate), discount: l.discount == null ? null : Number(l.discount), ml: l.ml == null ? null : Number(l.ml), cpb: Number(l.cpb) || 1, boxed: !!l.boxed, active: l.active !== false })),
   }));
 }
 
@@ -127,6 +142,24 @@ function ageWords(from: Date): string {
 function accountsWords(r: IntakeRow): string {
   const label = INTAKE_STATUS_LABEL[r.status as IntakeStatus] ?? r.status;
   return r.status === "verified" && r.orderNo ? `${label} · Order ${r.orderNo}` : label;
+}
+
+/**
+ * What a TO on the hub offers: shared by the list and the Order Hub board.
+ * Option A: Accounts approve a TO in Accounts > Order approvals, so the hub
+ * verifies nothing. It edits or cancels a TO, and opens its order once made.
+ */
+export function hubActions(r: IntakeRow): ActionSpec[] {
+  const actions: ActionSpec[] = [];
+  if (intakeEditable(r.status)) actions.push({ id: "editTo", l: "Edit TO", loadsForm: true });
+  if (r.status === "open" || r.status === "correction" || r.status === "hold")
+    actions.push({
+      id: "cancel",
+      l: "Cancel TO",
+      prompt: { title: `Cancel TO-${r.toNo}`, sub: r.origin !== "erp" ? "The order taken on the call or the Salesman App is cancelled with it." : undefined, submit: "Cancel TO", fields: [{ k: "reason", l: "Why", t: "area", req: true, mic: true }] },
+    });
+  if (r.orderNo) actions.push({ id: "open", l: `Open order ${r.orderNo}`, primary: true, href: erpLink("orders", { fl: `Order ${r.orderNo}` }) });
+  return actions;
 }
 
 /* ============================================================== Order Hub */
@@ -180,15 +213,7 @@ function hubModule(key: "orderHub" | "hubCorrection" | "hubDone"): ScreenModule 
             ...(!r.godownId && intakeEditable(r.status) ? ["hubNoGodown"] : []),
           ];
           const goods = `${r.lines.map((l) => `${l.sku} × ${l.qty}`).join(", ")} · ${litresOf(r)} L`;
-          const actions: ActionSpec[] = [];
-          if (intakeEditable(r.status)) actions.push({ id: "editTo", l: "Edit TO", loadsForm: true });
-          if (live)
-            actions.push({
-              id: "cancel",
-              l: "Cancel TO",
-              prompt: { title: `Cancel TO-${r.toNo}`, sub: r.origin !== "erp" ? "The order taken on the call or the Salesman App is cancelled with it." : undefined, submit: "Cancel TO", fields: [{ k: "reason", l: "Why", t: "area", req: true, mic: true }] },
-            });
-          if (r.orderNo) actions.push({ id: "open", l: `Open order ${r.orderNo}`, primary: true, href: erpLink("orders", { fl: `Order ${r.orderNo}` }) });
+          const actions = hubActions(r);
           const fields: RowField[] = [
             { l: "Source", v: `${sourceOf(r)}${r.taken ? ` · ${r.taken}` : ""}` },
             { l: "Order date", v: r.orderDate },
@@ -383,6 +408,30 @@ const holdPrompt = (no: number): PromptSpec => ({
   ],
 });
 
+/** What an order on the MRP check offers: shared by the list and the MRP board. */
+function mrpActions(no: number, short: boolean, sentence: string, held: boolean, decider: boolean): ActionSpec[] {
+  return held
+    ? [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
+    : [
+        {
+          id: "clear",
+          l: "Clear",
+          primary: true,
+          why: decider ? "" : "Only the Production Head clears an order",
+          prompt: {
+            title: `Clear order ${no}`,
+            sub: short ? `${sentence}. Clear it only if you know the material will arrive in time; that is recorded.` : "It goes to Under Process and the day's production plan.",
+            submit: "Clear",
+            fields: [
+              { k: "capacity", l: "Capacity", t: "select", req: true, opts: ["OK"], hint: "The floor can make it in time." },
+              { k: "note", l: "Note", t: "area", mic: true },
+            ],
+          },
+        },
+        { id: "hold", l: "Hold", why: decider ? "" : "Only the Production Head holds an order here", prompt: holdPrompt(no) },
+      ];
+}
+
 export const mrpCheckScreen: ScreenModule = {
   key: "mrpCheck",
   async load(ctx) {
@@ -448,26 +497,7 @@ export const mrpCheckScreen: ScreenModule = {
         title: `Order ${no} · ${head.billing}${head.toNo ? ` · TO-${head.toNo}` : ""}`,
         header: sentence,
         fields,
-        actions: h
-          ? [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
-          : [
-              {
-                id: "clear",
-                l: "Clear",
-                primary: true,
-                why: decider ? "" : "Only the Production Head clears an order",
-                prompt: {
-                  title: `Clear order ${no}`,
-                  sub: answer.short.length ? `${sentence}. Clear it only if you know the material will arrive in time; that is recorded.` : "It goes to Under Process and the day's production plan.",
-                  submit: "Clear",
-                  fields: [
-                    { k: "capacity", l: "Capacity", t: "select", req: true, opts: ["OK"], hint: "The floor can make it in time." },
-                    { k: "note", l: "Note", t: "area", mic: true },
-                  ],
-                },
-              },
-              { id: "hold", l: "Hold", why: decider ? "" : "Only the Production Head holds an order here", prompt: holdPrompt(no) },
-            ],
+        actions: mrpActions(no, answer.short.length > 0, sentence, !!h, decider),
       });
     }
     return {
@@ -625,7 +655,7 @@ export async function holdOrder(
   note: string | null,
   customerText: string | null,
   ctx?: ErpContext,
-  opts: { customerVisible?: boolean } = {},
+  opts: { customerVisible?: boolean; nextUpdateOn?: string | null } = {},
 ): Promise<Result<unknown>> {
   const sentence = customerText?.trim() || HOLD_CUSTOMER_TEXT[reason] || HOLD_CUSTOMER_TEXT.other;
   const customerVisible = opts.customerVisible ?? true;
@@ -638,7 +668,7 @@ export async function holdOrder(
         .where(and(eq(erpOrders.orderNo, orderNo), eq(column, "Pending"), sql`${erpOrders.status} <> 'Cancel'`))
         .returning({ id: erpOrders.id });
       if (!moved.length) throw new Stop(err(`Order ${orderNo} is not waiting at ${department === "accounts" ? "Accounts" : "the MRP check"}.`, "conflict"));
-      const r = await recordHold({ user: { id: userId } } as unknown as Pick<ErpContext, "user">, orderNo, { kind: "hold", reason, customerText: sentence, internalNote: note, department, customerVisible }, tx as unknown as typeof db);
+      const r = await recordHold({ user: { id: userId } } as unknown as Pick<ErpContext, "user">, orderNo, { kind: "hold", reason, customerText: sentence, internalNote: note, department, customerVisible, nextUpdateOn: opts.nextUpdateOn || null }, tx as unknown as typeof db);
       if (!r.ok) throw new Stop(r);
     });
   } catch (e) {
@@ -706,22 +736,29 @@ type HoldRow = {
   orderNo: number | null;
   lineId: string | null;
   intakeId: string | null;
+  holdId: string | null;
+  nextUpdateOn: string | null;
+  customerId: string | null;
+  taker: string | null;
 };
 
 async function allHolds(): Promise<HoldRow[]> {
   const tos = await intakeRows(sql`i.status = 'hold'`);
   const holds = (await db.execute(sql`
     select h.id, h.order_no as "orderNo", h.department, h.reason, h.internal_note as note, h.customer_text as "customerText", h.customer_visible as "customerVisible", h.raised_at as at, u.name as by,
+           h.next_update_on::text as "nextUpdateOn",
+           (select o.billing_customer_id from erp_orders o where o.order_no = h.order_no limit 1) as "customerId",
+           (select tu.name from erp_order_intakes i join users tu on tu.id = i.taken_by_id where i.order_no = h.order_no) as taker,
            (select o.id from erp_orders o where o.order_no = h.order_no order by o.created_at limit 1) as "lineId",
            (select c.name from erp_orders o join customers c on c.id = o.billing_customer_id where o.order_no = h.order_no limit 1) as party,
            (select i.to_no from erp_order_intakes i where i.order_no = h.order_no) as "toNo"
       from erp_order_holds h left join users u on u.id = h.raised_by_id
      where h.resolved_at is null and h.kind = 'hold'
      order by h.raised_at
-  `)) as unknown as { id: string; orderNo: number; department: string; reason: string; note: string | null; customerText: string; customerVisible: boolean; at: Date; by: string | null; lineId: string | null; party: string | null; toNo: number | null }[];
+  `)) as unknown as { id: string; orderNo: number; department: string; reason: string; note: string | null; customerText: string; customerVisible: boolean; at: Date; by: string | null; lineId: string | null; party: string | null; toNo: number | null; nextUpdateOn: string | null; customerId: string | null; taker: string | null }[];
   return [
     ...tos.map(
-      (t): HoldRow => ({ key: `to:${t.id}`, kind: "to", number: `TO-${t.toNo}`, sub: "No order number yet", party: t.billing, department: "verification", reason: t.holdReason ?? "", note: t.holdNote, customerText: null, customerVisible: true, by: t.heldBy, at: t.heldAt ?? t.updatedAt, orderNo: null, lineId: null, intakeId: t.id }),
+      (t): HoldRow => ({ key: `to:${t.id}`, kind: "to", number: `TO-${t.toNo}`, sub: "No order number yet", party: t.billing, department: "verification", reason: t.holdReason ?? "", note: t.holdNote, customerText: null, customerVisible: true, by: t.heldBy, at: t.heldAt ?? t.updatedAt, orderNo: null, lineId: null, intakeId: t.id, holdId: null, nextUpdateOn: null, customerId: t.billingId, taker: t.taken }),
     ),
     ...holds.map(
       (h): HoldRow => ({
@@ -740,6 +777,10 @@ async function allHolds(): Promise<HoldRow[]> {
         orderNo: Number(h.orderNo),
         lineId: h.lineId,
         intakeId: null,
+        holdId: h.id,
+        nextUpdateOn: h.nextUpdateOn,
+        customerId: h.customerId,
+        taker: h.taker,
       }),
     ),
   ];
@@ -751,6 +792,62 @@ function mayRelease(ctx: ErpContext, d: HoldDepartment): string {
   if (d === "production") return ctx.powers.has("productionCheck") ? "" : "The Production Head releases it";
   if (d === "accounts") return "Accounts release it, from Order approvals";
   return "";
+}
+
+/** The id a hold row is acted on by: the TO, or `department:order:line`. */
+function holdRowId(r: HoldRow): string {
+  return r.kind === "to" ? r.intakeId! : `${r.department}:${r.orderNo}:${r.lineId ?? ""}`;
+}
+
+/** What a row on To Hold offers: shared by the list and the To Hold board. */
+function holdActions(ctx: ErpContext, r: HoldRow): ActionSpec[] {
+  const why = mayRelease(ctx, r.department);
+  const releaseId = r.kind === "to" ? "releaseTo" : r.department === "office" ? "releaseOffice" : "releaseDesk";
+  const editWhy = r.department === "accounts" && !ctx.administrator ? "Accounts edit their own hold, from Order approvals" : why;
+  return [
+    {
+      id: releaseId,
+      l: "Release",
+      primary: true,
+      why,
+      prompt: {
+        title: `Release ${r.number}`,
+        sub: `It goes ${RELEASE_TO[r.department]}.`,
+        submit: "Release",
+        fields: [
+          { k: "resolution", l: "What changed", t: "area", req: r.department === "accounts" || r.department === "office", mic: true },
+          ...(r.kind === "order" && r.customerVisible ? ([{ k: "notify", l: "Tell the customer the hold is over", t: "select", opts: ["Yes"] }] as FieldSpec[]) : []),
+        ],
+      },
+    },
+    {
+      id: "editHold",
+      l: "Edit hold",
+      why: editWhy,
+      prompt: {
+        title: `Edit the hold on ${r.number}`,
+        submit: "Save",
+        fields: [
+          { k: "note", l: "Remarks (staff only)", t: "area", mic: true },
+          ...(r.kind === "order"
+            ? ([
+                { k: "customerText", l: "What the customer sees on the tracking link", t: "area" },
+                { k: "nextUpdateOn", l: "Look at it again on", t: "date" },
+              ] as FieldSpec[])
+            : []),
+        ],
+      },
+    },
+    ...(r.kind === "to"
+      ? [{ id: "open", l: "Open the Order Hub", href: erpLink("orderHub", { open: r.intakeId }) }]
+      : r.orderNo
+        ? [
+            { id: "editOrder", l: "Edit order", href: erpLink("orders", { fl: `Order ${r.orderNo}` }) },
+            { id: "open", l: `Open order ${r.orderNo}`, href: erpLink("orders", { fl: `Order ${r.orderNo}` }) },
+            { id: "cancelOrder", l: "Cancel order…", href: erpLink("orders", { fl: `Order ${r.orderNo}` }) },
+          ]
+        : []),
+  ];
 }
 
 export const toHoldScreen: ScreenModule = {
@@ -781,10 +878,8 @@ export const toHoldScreen: ScreenModule = {
         noDataLine: "Nothing on hold. A hold from any desk lands here.",
       },
       rows: rows.map((r): ListRow => {
-        const why = mayRelease(ctx, r.department);
-        const releaseId = r.kind === "to" ? "releaseTo" : r.department === "office" ? "releaseOffice" : "releaseDesk";
         return {
-          id: r.kind === "to" ? r.intakeId! : `${r.department}:${r.orderNo}:${r.lineId ?? ""}`,
+          id: holdRowId(r),
           v: { number: r.sub ? `${r.number} · ${r.sub}` : r.number, party: r.party, department: DEPARTMENT_LABEL[r.department], reason: r.reason, note: r.note, by: r.by, at: calendarDate(new Date(r.at)) },
           flags: r.customerVisible ? [] : ["mrpInternal"],
           title: `${r.number} · ${r.party}`,
@@ -795,16 +890,7 @@ export const toHoldScreen: ScreenModule = {
             ...(r.customerText ? [{ l: "The customer reads", v: r.customerVisible ? r.customerText : "Internal - not shown to the customer" }] : []),
             { l: "Releasing sends it", v: RELEASE_TO[r.department] },
           ],
-          actions: [
-            {
-              id: releaseId,
-              l: "Release",
-              primary: true,
-              why,
-              prompt: { title: `Release ${r.number}`, sub: `It goes ${RELEASE_TO[r.department]}.`, submit: "Release", fields: [{ k: "resolution", l: "What changed", t: "area", req: r.department === "accounts" || r.department === "office", mic: true }] },
-            },
-            ...(r.kind === "to" ? [{ id: "open", l: "Open the Order Hub", href: erpLink("orderHub") }] : r.orderNo ? [{ id: "open", l: `Open order ${r.orderNo}`, href: erpLink("orders", { fl: `Order ${r.orderNo}` }) }] : []),
-          ],
+          actions: holdActions(ctx, r),
         };
       }),
     };
@@ -824,8 +910,29 @@ export const toHoldScreen: ScreenModule = {
       if (why) return err(`${why}.`, "not_permitted");
       const resolution = text(v.resolution);
       if (!resolution && department === "accounts") return fieldErr("resolution", "Say what changed");
+      const was = (await openHolds([Number(no)])).get(Number(no));
       const res = await releaseOrderHold(ctx.user.id, Number(no), department, resolution);
-      if (res.ok) await erpAudit(ctx, "erp.order.deskRelease", "erp_order", no, null, { department, resolution });
+      if (res.ok) {
+        await erpAudit(ctx, "erp.order.deskRelease", "erp_order", no, null, { department, resolution });
+        if (was && text(v.notify) === "Yes") await tellHold(was.id, ctx.user.id, true).catch(() => null);
+      }
+      return res;
+    },
+    async editHold(ctx, id, v) {
+      if (!id.includes(":")) {
+        if (mayRelease(ctx, "verification")) return err(`${mayRelease(ctx, "verification")}.`, "not_permitted");
+        const res = await editIntakeHold(ctx.user.id, id, text(v.note));
+        if (res.ok) await erpAudit(ctx, "erp.intake.holdEdit", "erp_order_intake", id, null, { note: text(v.note) });
+        return res;
+      }
+      const [department, no] = id.split(":") as [HoldDepartment, string];
+      if (department === "accounts" && !ctx.administrator) return err("Accounts edit their own hold, from Order approvals.", "not_permitted");
+      const why = mayRelease(ctx, department);
+      if (why) return err(`${why}.`, "not_permitted");
+      const h = (await openHolds([Number(no)])).get(Number(no));
+      if (!h) return err(`Order ${no} is not on hold.`, "conflict");
+      const res = await updateHoldWords(h.id, { note: text(v.note), customerText: text(v.customerText), nextUpdateOn: text(v.nextUpdateOn) });
+      if (res.ok) await erpAudit(ctx, "erp.order.holdEdit", "erp_order", no, null, { note: text(v.note), customerText: text(v.customerText), nextUpdateOn: text(v.nextUpdateOn) });
       return res;
     },
     async releaseOffice(ctx, id, v) {
@@ -835,10 +942,31 @@ export const toHoldScreen: ScreenModule = {
       const orders = SALES_SCREENS.find((m) => m.key === "pendingOrders");
       const handler = orders?.actions?.resolveHold;
       if (!handler) return err("The release could not be run.", "conflict");
-      return handler(ctx, lineId, { resolution: text(v.resolution) ?? "", notify: "" });
+      return handler(ctx, lineId, { resolution: text(v.resolution) ?? "", notify: v.notify === "No" ? "No" : v.notify === "Yes" ? "Yes" : "" });
     },
   },
 };
+
+/** A hold's words changed in place: the staff remark, what the customer reads, when to look again. Blank keeps what was there. */
+async function updateHoldWords(holdId: string, v: { note: string | null; customerText: string | null; nextUpdateOn: string | null }): Promise<Result<unknown>> {
+  const set: Partial<typeof erpOrderHolds.$inferInsert> = {};
+  if (v.note != null) set.internalNote = v.note;
+  if (v.customerText != null) set.customerText = v.customerText;
+  if (v.nextUpdateOn != null) set.nextUpdateOn = v.nextUpdateOn;
+  if (!Object.keys(set).length) return fieldErr("note", "Change something first");
+  const done = await db.update(erpOrderHolds).set(set).where(and(eq(erpOrderHolds.id, holdId), sql`${erpOrderHolds.resolvedAt} is null`)).returning({ id: erpOrderHolds.id });
+  return done.length ? okVoid("Hold updated") : err("That hold is already resolved.", "conflict");
+}
+
+/** A TO's hold remark, changed in place. */
+async function editIntakeHold(userId: string, intakeId: string, note: string | null): Promise<Result<unknown>> {
+  const done = await db
+    .update(erpOrderIntakes)
+    .set({ holdNote: note, updatedAt: new Date(), updatedById: userId })
+    .where(and(eq(erpOrderIntakes.id, intakeId), eq(erpOrderIntakes.status, "hold")))
+    .returning({ id: erpOrderIntakes.id });
+  return done.length ? okVoid("Hold updated") : err("That TO is not on hold.", "conflict");
+}
 
 /** Rolls a transaction back carrying the answer to give. */
 class Stop extends Error {
@@ -876,3 +1004,344 @@ export const ORDER_HUB_SCREENS: ScreenModule[] = [hubModule("orderHub"), hubModu
 
 /* The Accounts app's hold dialog offers these. */
 export { ACCOUNTS_HOLD_REASONS };
+
+/* ============================================================== Order Hub board */
+
+/**
+ * THE ORDER HUB AS ITS OWN PAGE (`app/erp/order-hub`): every TO open, sent
+ * back, on hold or approved in the last two days, with the facts the board and
+ * its TO dialog draw — how long it has waited, a possible duplicate (the
+ * duplicate check's stored answer), an edit by its taker, and a checklist of
+ * what Accounts will see (active products, whole boxes, quantity against the
+ * party's usual order). Its actions are `hubActions`, the list's own.
+ */
+export type HubCheckItem = { tone: "ok" | "warn"; text: string };
+export type HubBoardRow = {
+  id: string;
+  toNo: number;
+  status: string;
+  party: string;
+  billingId: string;
+  city: string | null;
+  source: string;
+  takenBy: string | null;
+  orderDate: string;
+  godown: string | null;
+  delivery: string;
+  transporter: string | null;
+  remark: string | null;
+  lines: { sku: string; qty: number; boxes: number | null; litres: number | null; rate: number | null; amount: number | null; active: boolean }[];
+  litres: number;
+  value: number | null;
+  back: { by: string | null; at: string; note: string | null } | null;
+  prod: { by: string | null; at: string; note: string | null } | null;
+  createdAt: string;
+  dup: string | null;
+  edited: { by: string | null; at: string } | null;
+  correction: { note: string; by: string | null; at: string | null } | null;
+  held: { reason: string; note: string | null; by: string | null; at: string | null } | null;
+  cancelReason: string | null;
+  orderNo: number | null;
+  verifiedToday: boolean;
+  myCheck: "backOffice" | "production" | null;
+  second: boolean;
+  checklist: HubCheckItem[];
+  actions: ActionSpec[];
+};
+
+async function usualLitres(partyIds: string[]): Promise<Map<string, number>> {
+  if (!partyIds.length) return new Map();
+  const rows = (await db.execute(sql`
+    select id, percentile_cont(0.5) within group (order by l) as usual from (
+      select o.billing_customer_id as id, o.order_no,
+             sum(o.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres, 0))::float8 / 1000 as l,
+             row_number() over (partition by o.billing_customer_id order by max(o.order_date) desc) as rn
+        from erp_orders o join products p on p.id = o.sku_id left join finished_goods fg on fg.id = p.finished_good_id
+       where o.billing_customer_id in (${sql.join(partyIds.map((x) => sql`${x}`), sql`, `)}) and o.status <> 'Cancel'
+       group by o.billing_customer_id, o.order_no) x
+     where rn <= 10 and l > 0 group by id`)) as unknown as { id: string; usual: number }[];
+  return new Map(rows.map((r) => [r.id, Math.round(Number(r.usual))]));
+}
+
+export async function hubBoard(ctx: ErpContext): Promise<{ rows: HubBoardRow[]; seeMoney: boolean }> {
+  const rows = await intakeRows(sql`i.status in ('open', 'correction', 'hold') or (i.status = 'verified' and i.updated_at > now() - interval '2 days')`);
+  const seeMoney = ctx.powers.has("viewSalesAmounts");
+  const today = calendarDate(new Date());
+  const usual = await usualLitres([...new Set(rows.filter((r) => r.status === "open").map((r) => r.billingId))]);
+  const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
+  return {
+    seeMoney,
+    rows: rows.map((r): HubBoardRow => {
+      /* The duplicate check's own answer, stored when the TO was made. */
+      const dup = r.status === "open" && r.duplicateState === "possible" && r.duplicateOfTo != null ? `TO-${r.duplicateOfTo}` : null;
+      const noRate = r.lines.filter((l) => l.rate == null);
+      const litres = litresOf(r);
+      const lines = r.lines.map((l) => {
+        const amount = l.rate == null ? null : Math.round(l.rate * l.qty * (1 - (l.discount ?? 0) / 10000));
+        return {
+          sku: l.sku,
+          qty: l.qty,
+          boxes: l.boxed && l.cpb > 1 && l.qty % l.cpb === 0 ? l.qty / l.cpb : null,
+          litres: l.ml == null ? null : Math.round((l.ml * l.qty) / 1000),
+          rate: seeMoney ? l.rate : null,
+          amount: seeMoney ? amount : null,
+          active: l.active,
+        };
+      });
+      const checklist: HubCheckItem[] = [];
+      checklist.push(dup ? { tone: "warn", text: `Possibly the same as ${dup}: same party, day and goods.` } : { tone: "ok", text: "No other open order for this party with these goods" });
+      const inactive = r.lines.filter((l) => !l.active);
+      checklist.push(
+        inactive.length
+          ? { tone: "warn", text: `${inactive.map((l) => l.sku).join(", ")} ${inactive.length === 1 ? "is" : "are"} no longer active.` }
+          : { tone: "ok", text: `Every product is active${r.godown ? ` and made at ${r.godown}` : ""}` },
+      );
+      if (!r.godownId) checklist.push({ tone: "warn", text: "No godown picked yet. Edit the TO to pick one." });
+      for (const l of r.lines.filter((x) => x.boxed && x.cpb > 1))
+        checklist.push(
+          l.qty % l.cpb === 0
+            ? { tone: "ok", text: `${l.sku} is in whole boxes (${l.qty} cans = ${l.qty / l.cpb} boxes)` }
+            : { tone: "warn", text: `${l.sku}: ${l.qty} cans is not whole boxes of ${l.cpb}.` },
+        );
+      if (noRate.length) checklist.push({ tone: "warn", text: `${noRate.length} line${noRate.length === 1 ? " has" : "s have"} no rate yet. Edit the TO to add it.` });
+      const u = usual.get(r.billingId);
+      if (u && litres > 0)
+        checklist.push(
+          litres >= u * 1.5
+            ? { tone: "warn", text: `Quantity is ${Math.round((litres / u) * 10) / 10}× their usual order of about ${u} L. Accounts should confirm it.` }
+            : { tone: "ok", text: `Quantity is in line with their usual order of about ${u} L` },
+        );
+      const editedLater = r.updatedById && r.updatedById === r.takenById && new Date(r.updatedAt).getTime() - new Date(r.createdAt).getTime() > 60_000 && r.status === "open";
+      return {
+        id: r.id,
+        toNo: r.toNo,
+        status: r.status,
+        party: r.billing,
+        billingId: r.billingId,
+        city: r.city,
+        source: sourceOf(r),
+        takenBy: r.taken,
+        orderDate: r.orderDate,
+        godown: r.godown,
+        delivery: r.delivery ?? r.billing,
+        transporter: r.transporter,
+        remark: r.remark,
+        lines,
+        litres,
+        value: seeMoney ? valueOf(r) : null,
+        /* Option A: no back office or Production Head check on a TO. */
+        back: null,
+        prod: null,
+        createdAt: iso(r.createdAt)!,
+        dup,
+        edited: editedLater ? { by: r.updatedBy, at: iso(r.updatedAt)! } : null,
+        correction: r.correctionNote ? { note: r.correctionNote, by: r.correctionBy, at: iso(r.correctionAt) } : null,
+        held: r.status === "hold" ? { reason: r.holdReason ?? "", note: r.holdNote, by: r.heldBy, at: iso(r.heldAt) } : null,
+        cancelReason: r.cancelReason,
+        orderNo: r.orderNo,
+        verifiedToday: r.status === "verified" && calendarDate(new Date(r.updatedAt)) === today,
+        myCheck: null,
+        second: false,
+        checklist,
+        actions: hubActions(r),
+      };
+    }),
+  };
+}
+
+/* ============================================================== MRP board */
+
+/**
+ * THE MRP CHECK AS ITS OWN PAGE (`app/erp/mrp-check`): each approved order on
+ * the left, and the chosen one's answer on the right — its finished goods
+ * against the shelf and the tank, the materials a batch of its base takes by
+ * its recipe (with an open PO named where one is coming), the empty cans, and
+ * the capacity tick. The answer is `mrpCheck`'s, the actions `mrpActions`.
+ */
+export type MrpBoardOrder = {
+  id: string;
+  orderNo: number;
+  toNo: number | null;
+  party: string;
+  godown: string;
+  litres: number;
+  dispatchOn: string | null;
+  accountsAt: string | null;
+  verdict: { tone: "ok" | "short" | "make"; text: string };
+  held: { department: string; reason: string; note: string | null } | null;
+  goods: { sku: string; need: string; onShelf: string; toMake: string; base: { tone: "ok" | "short" | "muted"; text: string } }[];
+  materials: { name: string; need: string; stock: string; short: boolean; answer: string }[];
+  batchLine: string | null;
+  unknown: string[];
+  actions: ActionSpec[];
+};
+
+async function openPosFor(materialIds: string[]): Promise<Map<string, string>> {
+  if (!materialIds.length) return new Map();
+  const rows = (await db.execute(sql`
+    select distinct on (l.raw_material_id) l.raw_material_id as id, po.po_number as "poNumber", po.qm_po_no as "qmPoNo", po.delivery_date::text as due
+      from erp_po_lines l join erp_purchase_orders po on po.id = l.po_id
+     where l.raw_material_id in (${sql.join(materialIds.map((x) => sql`${x}`), sql`, `)}) and po.status in ('Approved', 'Sent', 'Partly received')
+     order by l.raw_material_id, po.delivery_date`)) as unknown as { id: string; poNumber: number; qmPoNo: string | null; due: string }[];
+  const { poName } = await import("../engines/purchase-flow");
+  const { fd } = await import("../ui");
+  return new Map(rows.map((r) => [r.id, `${poName({ poNumber: Number(r.poNumber), qmPoNo: r.qmPoNo })} due ${fd(r.due)}`]));
+}
+
+export async function mrpBoard(ctx: ErpContext): Promise<MrpBoardOrder[]> {
+  const lines = await waitingForMrp();
+  const byOrder = new Map<number, GateLine[]>();
+  for (const l of lines) byOrder.set(l.orderNo, [...(byOrder.get(l.orderNo) ?? []), l]);
+  const stock = await stockAt([...new Set(lines.map((l) => l.godownId))]);
+  const holds = await openHolds([...byOrder.keys()]);
+  const decider = ctx.powers.has("productionCheck") || ctx.administrator;
+  const answers = [...byOrder].map(([no, ls]) => {
+    const head = ls[0];
+    const answer = mrpCheck(
+      ls.map((l): MrpLine => ({ lineId: l.id, sku: l.sku, skuId: l.skuId, cans: l.qty, litresPerCan: (l.ml ?? 0) / 1000, boxed: l.boxed, cansPerBox: l.cpb, finishedGoodId: l.finishedGoodId, formulationId: l.formulationId, formulation: l.formulation, canMaterialId: l.canMaterialId, canMaterial: l.canMaterial })),
+      stock.get(head.godownId)!,
+    );
+    return { no, ls, head, answer };
+  });
+  const shortIds = answers.flatMap((a) => [...a.answer.bases.flatMap((b) => b.materials), ...a.answer.cans].filter((m) => m.short > 0).map((m) => m.id));
+  const pos = await openPosFor([...new Set(shortIds)]);
+  const qty = (n: number, unit: string) => `${Math.round(n * 100) / 100}${unit ? ` ${unit === "Litre" ? "L" : unit === "Kg" ? "kg" : unit === "Pcs" ? "" : unit}` : ""}`.trim();
+  return answers.map(({ no, ls, head, answer }) => {
+    const h = holds.get(no);
+    const held = ls.some((l) => l.productionCheck === "Hold") || !!h;
+    const baseOf = new Map(answer.bases.map((b) => [b.formulationId, b]));
+    const goods = answer.lines.map((a) => {
+      const l = ls.find((x) => x.id === a.lineId)!;
+      const boxed = l.boxed && l.cpb > 1 && a.cans % l.cpb === 0;
+      const as = (cans: number) => (boxed && cans % l.cpb === 0 ? `${cans / l.cpb} boxes` : `${cans} cans`);
+      const b = l.formulationId ? baseOf.get(l.formulationId) : undefined;
+      return {
+        sku: a.sku,
+        need: as(a.cans),
+        onShelf: as(a.onShelfCans),
+        toMake: a.toMakeCans ? `${a.toMakeCans} cans · ${Math.round(a.toMakeLitres)} L` : "—",
+        base: !a.toMakeCans
+          ? { tone: "ok" as const, text: "Not needed" }
+          : !b
+            ? { tone: "muted" as const, text: "No base named" }
+            : b.shortLitres > 0
+              ? { tone: "short" as const, text: `${Math.round(b.inTank)} L approved` }
+              : { tone: "ok" as const, text: `${Math.round(b.inTank)} L approved` },
+      };
+    });
+    const mats = [...answer.bases.flatMap((b) => b.materials), ...answer.cans];
+    const materials = mats.map((m) => ({
+      name: m.name,
+      need: qty(m.need, m.unit),
+      stock: qty(m.stock, m.unit),
+      short: m.short > 0,
+      answer: m.short > 0 ? `Short ${qty(m.short, m.unit)}${pos.get(m.id) ? ` · ${pos.get(m.id)}` : ""}` : "Enough",
+    }));
+    const making = answer.bases.filter((b) => b.shortLitres > 0);
+    const batchLine = making.length
+      ? `To make ${making.map((b) => `${Math.round(b.shortLitres)} L ${b.formulation}`).join(" and ")} (recipe, ${making.map((b) => `${b.batches} batch${b.batches === 1 ? "" : "es"}${b.batchGuessed ? ", size not known" : ""}`).join("; ")})`
+      : null;
+    const shortMats = materials.filter((m) => m.short);
+    const allShelf = answer.lines.every((a) => a.toMakeCans === 0);
+    const boxesShort = answer.cans.some((c) => c.short > 0) && !answer.bases.some((b) => b.materials.some((m) => m.short > 0));
+    const verdict = shortMats.length
+      ? { tone: "short" as const, text: boxesShort ? "Empty cans short" : `${shortMats.length} material${shortMats.length === 1 ? "" : "s"} short` }
+      : allShelf
+        ? { tone: "ok" as const, text: "All in stock" }
+        : { tone: "ok" as const, text: "Can be made" };
+    const litres = Math.round(ls.reduce((n, l) => n + ((l.ml ?? 0) * l.qty) / 1000, 0));
+    const sentence = answer.short.length ? `Short: ${answer.short.join("; ")}` : "Everything it needs is in stock now";
+    return {
+      id: head.id,
+      orderNo: no,
+      toNo: head.toNo,
+      party: head.billing,
+      godown: head.godown,
+      litres,
+      dispatchOn: head.dispatchOn,
+      accountsAt: head.accountsCheckedAt ? new Date(head.accountsCheckedAt).toISOString() : null,
+      verdict: held ? { tone: "short", text: "On hold" } : verdict,
+      held: h ? { department: DEPARTMENT_LABEL[h.department as HoldDepartment] ?? h.department, reason: reasonLabel(h.reason), note: h.internalNote } : held ? { department: "Production", reason: "On hold", note: null } : null,
+      goods,
+      materials,
+      batchLine,
+      unknown: answer.unknown,
+      actions: mrpActions(no, answer.short.length > 0, sentence, held, decider),
+    };
+  });
+}
+
+/* ============================================================== To Hold board */
+
+/**
+ * TO HOLD AS ITS OWN PAGE (`app/erp/to-hold`): every hold from every desk, and
+ * the holds released this week, with the history the Release dialog shows —
+ * the hold itself and the money confirmed for the party since. The actions are
+ * `holdActions`, the list's own.
+ */
+export type HoldBoardRow = {
+  id: string;
+  kind: "to" | "order";
+  number: string;
+  sub: string;
+  party: string;
+  department: HoldDepartment;
+  departmentLabel: string;
+  reason: string;
+  note: string | null;
+  customerText: string | null;
+  by: string | null;
+  at: string;
+  nextUpdateOn: string | null;
+  releaseTo: string;
+  history: { at: string; text: string; bold?: string }[];
+  actions: ActionSpec[];
+};
+
+export async function holdBoard(ctx: ErpContext): Promise<{ rows: HoldBoardRow[]; releasedThisWeek: number }> {
+  const [rows, released] = await Promise.all([
+    allHolds(),
+    db.execute(sql`
+      select (select count(*)::int from erp_order_holds where kind = 'hold' and resolved_at > now() - interval '7 days')
+           + (select count(*)::int from erp_order_intakes where status <> 'hold' and held_at is not null and updated_at > now() - interval '7 days' and updated_at > held_at) as n`) as unknown as Promise<{ n: number }[]>,
+  ]);
+  const parties = [...new Set(rows.map((r) => r.customerId).filter((x): x is string => !!x))];
+  const since = rows.length ? new Date(Math.min(...rows.map((r) => new Date(r.at).getTime()))).toISOString() : null;
+  const paid = parties.length && since
+    ? ((await db.execute(sql`
+        select r.customer_id as "customerId", r.amount, r.mode, r.reference, r.confirmed_at as at, u.name as by
+          from payment_receipts r left join users u on u.id = r.confirmed_by_id
+         where r.customer_id in (${sql.join(parties.map((x) => sql`${x}`), sql`, `)}) and r.status = 'confirmed' and r.confirmed_at >= ${since}
+         order by r.confirmed_at`)) as unknown as { customerId: string; amount: number; mode: string; reference: string | null; at: Date; by: string | null }[])
+    : [];
+  return {
+    releasedThisWeek: Number(released[0]?.n ?? 0),
+    rows: rows.map((r): HoldBoardRow => {
+      const atIso = new Date(r.at).toISOString();
+      const history: HoldBoardRow["history"] = [
+        { at: atIso, bold: `Held · ${r.reason}`, text: `${r.by ? ` by ${r.by}` : ""}${r.note ? `\n${r.note}` : ""}` },
+        ...paid
+          .filter((p) => p.customerId === r.customerId && new Date(p.at).getTime() >= new Date(r.at).getTime())
+          .map((p) => ({ at: new Date(p.at).toISOString(), text: `Payment ${money(Number(p.amount))} confirmed${p.by ? ` by ${p.by}` : ""} (${p.mode}${p.reference ? ` ${p.reference}` : ""})` })),
+      ];
+      return {
+        id: holdRowId(r),
+        kind: r.kind,
+        number: r.number,
+        sub: r.kind === "to" ? "No order number yet" : [r.sub, r.taker].filter(Boolean).join(" · "),
+        party: r.party,
+        department: r.department,
+        departmentLabel: DEPARTMENT_LABEL[r.department],
+        reason: r.reason,
+        note: r.note,
+        customerText: r.customerText,
+        by: r.by,
+        at: atIso,
+        nextUpdateOn: r.nextUpdateOn,
+        releaseTo: RELEASE_TO[r.department],
+        history,
+        actions: holdActions(ctx, r),
+      };
+    }),
+  };
+}

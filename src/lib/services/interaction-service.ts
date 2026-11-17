@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import type { TakenTo } from "@/lib/order-journey";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -368,7 +369,28 @@ export type SaveInteractionResult = {
    * inventing something.
    */
   nextStep: NextStep | null;
+  /** The TO number an order on this call became, with what it holds — the
+      "Order taken" dialog. Null where no order went to the Order Hub. */
+  takenTo: TakenTo | null;
 };
+
+export type { TakenTo } from "@/lib/order-journey";
+
+/** What the "Order taken" dialog lists: each line's product, cans and litres. */
+async function takenToFor(toNo: number, intakeId: string, takenBy: string): Promise<TakenTo> {
+  const rows = (await db.execute(sql`
+    select p.name as product, l.qty_cans as cans,
+           l.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres
+      from erp_order_intake_lines l join products p on p.id = l.sku_id
+      left join finished_goods fg on fg.id = p.finished_good_id
+     where l.intake_id = ${intakeId} order by l.position`)) as unknown as { product: string; cans: number; litres: number | null }[];
+  return {
+    toNo,
+    intakeId,
+    takenBy,
+    lines: rows.map((r) => ({ product: r.product, cans: Number(r.cans), litres: r.litres == null ? null : Math.round(Number(r.litres)) })),
+  };
+}
 
 function fieldError(field: string, message: string): Result<never> {
   return err(message, "validation", [{ field, message }]);
@@ -899,6 +921,15 @@ export async function saveInteraction(
     }
   }
 
+  /* 7b. An order says what was ordered, once the ERP takes the orders. An
+     order with no products cannot become a TO in the Order Hub, so it went
+     straight to Accounts as a ₹0 order they could only decline — and could
+     not hold, because a hold is the Order Hub's (2026-11-17: four of
+     Poonam's, ten more declined that week). */
+  if ((isOrderReceived || input.outcome === "order_taken") && config["erp.orders.live"] === true && !lines.length) {
+    return fieldError("productQuantities", "Add what they ordered — an order needs at least one product.");
+  }
+
   // 8. Products must be active.
   let productRows: Array<typeof products.$inferSelect> = [];
   if (lines.length) {
@@ -1015,6 +1046,7 @@ export async function saveInteraction(
         // same screen as the first click — this is precisely what keeping the
         // sentence on the row buys.
         nextStep: storedNextStep(existing),
+        takenTo: null,
       },
       "Already logged",
     );
@@ -1109,6 +1141,7 @@ export async function saveInteraction(
     }
     sameOrderToNo = match.toNo;
   }
+  let toIntakeId: string | null = null;
   await db.transaction(async (tx) => {
     /* ------------------------------------------------------------- order */
     if ((isOrderReceived || input.outcome === "order_taken") && sameOrderToNo == null) {
@@ -1869,6 +1902,7 @@ export async function saveInteraction(
         { duplicate: input.duplicateDecision ?? null, onDuplicate: "flag" },
       );
       toNumber = made.toNo;
+      toIntakeId = made.id;
       await tx.update(orders).set({ orderNo: `TO-${made.toNo}` }).where(eq(orders.id, orderId));
     }
 
@@ -2113,6 +2147,7 @@ export async function saveInteraction(
       complaintUpdated,
       remindersClosed,
       nextStep: step,
+      takenTo: toNumber != null && toIntakeId ? await takenToFor(toNumber, toIntakeId, ctx.user.name).catch(() => null) : null,
     },
     /*
      * SAID OUT LOUD, because a promise disappearing off a list without a word

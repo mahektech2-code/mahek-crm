@@ -465,7 +465,7 @@ export type PunchedOrder = {
 };
 
 /** One rung of the ladder the office sent (`lib/order-journey.ts`). */
-export type JourneyStep = { key: string; label: string; state: 'done' | 'current' | 'hold' | 'todo'; at: string | null; note?: string };
+export type JourneyStep = { key: string; label: string; state: 'done' | 'current' | 'hold' | 'todo'; at: string | null; note?: string; backOffice?: boolean; production?: boolean };
 
 export function journeyStepsOf(o: Pick<PunchedOrder, 'journeySteps'>): JourneyStep[] {
   if (!o.journeySteps) return [];
@@ -510,6 +510,37 @@ export async function listOrders(customerId?: string): Promise<PunchedOrder[]> {
         [customerId],
       )
     : all<PunchedOrder>(`${select} ORDER BY o.orderedAt DESC LIMIT 100`);
+}
+
+/** One of his orders, with the shop's town — the receipt after sending it and the order's own page. */
+export async function orderById(id: string): Promise<(PunchedOrder & { customerCity: string | null; lineCount: number }) | null> {
+  return one<PunchedOrder & { customerCity: string | null; lineCount: number }>(
+    `SELECT o.id, o.customerId, c.name AS customerName, c.city AS customerCity, o.orderNumber, o.orderedAt,
+            o.deliveryDate, o.status, o.netTotalPaise, o.valueUnavailable,
+            o.cancelReason, o.syncState, o.syncMessage,
+            o.toNo, o.erpOrderNo, o.journeyStatus, o.journeyTone, o.journeyBanner,
+            o.journeyEditable, o.journeySteps,
+            (SELECT COUNT(*) FROM order_lines ol WHERE ol.orderId = o.id) AS lineCount
+       FROM orders o LEFT JOIN customers c ON c.id = o.customerId
+      WHERE o.id = ?`,
+    [id],
+  );
+}
+
+/** The orders he took today, newest first — "My orders today" under the receipt. */
+export async function ordersTakenToday(): Promise<PunchedOrder[]> {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  return all<PunchedOrder>(
+    `SELECT o.id, o.customerId, c.name AS customerName, o.orderNumber, o.orderedAt,
+            o.deliveryDate, o.status, o.netTotalPaise, o.valueUnavailable,
+            o.cancelReason, o.syncState, o.syncMessage,
+            o.toNo, o.erpOrderNo, o.journeyStatus, o.journeyTone, o.journeyBanner,
+            o.journeyEditable, o.journeySteps
+       FROM orders o LEFT JOIN customers c ON c.id = o.customerId
+      WHERE o.orderedAt >= ? ORDER BY o.orderedAt DESC LIMIT 20`,
+    [start.getTime()],
+  );
 }
 
 export type PunchedLine = {

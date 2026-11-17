@@ -691,6 +691,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
   const pricing = seeRate || seeAmounts ? await priceFills(active, skuList) : null;
+  /* The open TOs this one could repeat: the review page warns before Save, as the server does after it. */
   /* "Add to order" opens with its party chosen, so its price list is filled now rather than on a pick that never comes. */
   return withFills({
     screen: "orders",
@@ -699,13 +700,23 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
     sub: fixed
       ? "One line per SKU."
       : "Saves as a TO number. Accounts approve it, and that makes the order number. The rate fills in from the price list the Accounts app applies to the billing party; type it where the list has none.",
-    submit: "Save order",
-    lineLabel: "SKU",
+    submit: fixed ? "Save order" : "Save as TO",
+    lineLabel: fixed ? "SKU" : "Line",
+    ...(fixed
+      ? {}
+      : {
+          review: {
+            fields: ["source", "billing", "transporter"],
+            lineCols: ["sku", "qty", ...(seeRate && pricing ? ["rate"] : [])],
+            ...(seeRate && pricing ? { amount: { qty: "qty", rate: "rate", ...(seeAmounts ? { discount: "discount" } : {}) } } : {}),
+            notice: "This saves as a TO number. It gets its order number once Accounts approve it, and you can change it until then.",
+          },
+        }),
     init: fixed
       ? { orderFixed: String(fixed.orderNo), date: fixed.date, godown: fixed.godown, billing: fixed.billing, delivery: fixed.delivery, transporter: isMahekVehicle(fixed.transporter) ? "" : fixed.transporter, deliveredBy: isMahekVehicle(fixed.transporter) ? MAHEK_VEHICLE : "Transporter", source: fixed.source }
       : { date: today(), godown: ctx.workingGodown?.name ?? "", deliveredBy: "Transporter" },
     data: { party, cpb, loose },
-    header: [
+    header: ([
       { k: "orderNo", l: "Number", t: "derived", calc: "order.no" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
       { k: "source", l: "Order received by", t: "select", req: true, opts: [...ORDER_SOURCES], readOnly: !!fixed && !!fixed.source, hint: "WhatsApp, a phone call or a Sales Order." },
@@ -729,7 +740,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       ...(pricing && seeAmounts
         ? ([{ k: "listTerms", l: "List discounts", t: "text", readOnly: true, untagged: true, wide: true, hint: "Each depends on how the party pays or how much it takes, so none is applied for you: type the discount on the line.", fillBy: { by: ["billing"], map: pricing.terms, otherwise: "" } }] as FieldSpec[])
         : []),
-    ],
+    ] as FieldSpec[]).map((f) => (fixed || f.sec ? f : { ...f, sec: "Party" })),
     line: [
       { k: "sku", l: "Description of goods", t: "select", req: true, opts: skuList.map((s) => s.name) },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1 },
@@ -743,6 +754,33 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
   });
 }
 
+
+/** "from TO-1042 · accounts approved by Deepa · MRP cleared by Ravi 18 Nov", per order — the group heading's last fact. */
+async function orderGateWords(orderNos: number[]): Promise<Map<number, string>> {
+  if (!orderNos.length) return new Map();
+  const rows = (await db.execute(sql`
+    select o.order_no as "orderNo", max(i.to_no) as "toNo",
+           max(au.name) as "accountsBy", bool_and(o.accounts_check = 'Approved') as approved,
+           max(pu.name) as "productionBy", max(o.production_checked_at) as "productionAt", bool_and(o.production_check = 'Cleared') as cleared
+      from erp_orders o
+      left join erp_order_intakes i on i.id = o.intake_id
+      left join users au on au.id = o.accounts_checked_by_id
+      left join users pu on pu.id = o.production_checked_by_id
+     where o.order_no in ${orderNos} and o.source = 'erp' and o.status <> 'Cancel'
+     group by o.order_no`)) as unknown as { orderNo: number; toNo: number | null; accountsBy: string | null; approved: boolean; productionBy: string | null; productionAt: Date | null; cleared: boolean }[];
+  return new Map(
+    rows.map((r) => [
+      Number(r.orderNo),
+      [
+        r.toNo ? `from TO-${r.toNo}` : null,
+        r.approved && r.accountsBy ? `accounts approved by ${r.accountsBy}` : null,
+        r.cleared && r.productionBy ? `MRP cleared by ${r.productionBy}${r.productionAt ? ` ${fd(calendarDate(new Date(r.productionAt)))}` : ""}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    ]),
+  );
+}
 
 /**
  * EDIT A TO: the New order form, filled with the TO. Only while it is a TO —
@@ -763,6 +801,7 @@ export async function intakeForm(ctx: ErpContext, intake: Intake, lines: IntakeL
     title: `Edit TO-${intake.toNo}`,
     sub: "Saving sends it back to Accounts for approval.",
     submit: "Save TO",
+    review: base.review ? { ...base.review, dup: undefined, notice: "Saving clears both checks. It stays a TO until both are done again." } : undefined,
     /* A TO taken on a call or on the Salesman App keeps where it was taken. */
     header: base.header
       .map((f) => (f.k === "source" && taken ? { ...f, opts: [intake.orderSource!], readOnly: true } : f)),
@@ -934,6 +973,8 @@ const ORDER_COL: Record<string, Col> = {
   transporter: { k: "transporter", l: "Transporter", t: "t" },
   area: { k: "area", l: "Area", t: "t" },
   city: { k: "city", l: "City", t: "t" },
+  /* Where the order came from and who let it through: "from TO-1042 · accounts approved by Deepa · MRP cleared by Ravi 18 Nov". */
+  gates: { k: "gates", l: "Checks", t: "t" },
   labels: { k: "labels", l: "Stickers", t: "n" },
   type: { k: "type", l: "Type", t: "s" },
   remark: { k: "remark", l: "Remark", t: "t" },
@@ -1199,6 +1240,7 @@ function orderList(scope: Scope): ScreenModule {
               /* The delivery party's city, named in each order's group heading
                  below — a heading only draws a column the list carries. */
               "city",
+              "gates",
               "labels",
               "godown",
               "f",
@@ -1254,13 +1296,14 @@ function orderList(scope: Scope): ScreenModule {
         const rows = (await db.execute(sql`select distinct order_no as n, linked_from_order_no as f from erp_orders where linked_from_order_no in ${orderNos}`)) as unknown as { n: number; f: number }[];
         for (const r of rows) continued.set(Number(r.f), [...(continued.get(Number(r.f)) ?? []), Number(r.n)]);
       }
-      const [prices, reviews, gates, holdsOpen, invoiceFiles] = await Promise.all([
+      const [prices, reviews, gates, holdsOpen, invoiceFiles, gateWords] = await Promise.all([
         /* Read for the lines drawn, not inside orderLines: the badges and the dashboard count lines and never price them. */
         priceBook(shown.map((l) => l.billing.id)),
         reviewsFor(orderNos),
         scanGateFor(db, shown.filter((l) => l.inDetails && !l.dispatched).map((l) => l.o.id)),
         openHolds(orderNos),
         invoiceFilesFor(orderNos),
+        labels ? Promise.resolve(new Map<number, string>()) : orderGateWords(orderNos),
       ]);
       return {
         spec: {
@@ -1270,7 +1313,7 @@ function orderList(scope: Scope): ScreenModule {
           stats: ORDER_STATS[scope],
           filters: labels ? ["transporter", "billing", "sku", "area"] : ["orderStatus", "production", "billingStatus", "dispatchStatus", "billing", "transporter", "city", "source", "qty", "weight"],
           groups: labels ? ["transporter"] : ["orderNo"],
-          groupHead: labels ? undefined : ["date", "billing", "delivery", "transporter", "city", "godown"],
+          groupHead: labels ? undefined : ["date", "billing", "delivery", "transporter", "city", "godown", "gates"],
           groupHeadStrong: ["delivery", "transporter", "city"],
           groupHeadUnlessSame: { delivery: "billing" },
           groupSel: !labels,
@@ -1283,6 +1326,8 @@ function orderList(scope: Scope): ScreenModule {
           ],
           godownKey: "godown",
           groupInvoice: labels ? undefined : "invoice",
+          /* The order's other acts sit behind ⋯ on each line; Ready stays a button beside it. */
+          rowMenu: labels ? undefined : ["hold", "customer", "trace", "labels", "cancel"],
           /* Stickers go on by the lorry: one print for every order a transporter takes. */
           groupPrint: labels ? { k: "orderNo", l: "Print stickers", href: erpLabelsHref({ orders: [] }) } : undefined,
           sortDefault: labels ? ["sku", 1] : undefined,
@@ -1413,6 +1458,7 @@ function orderList(scope: Scope): ScreenModule {
                 remark: l.o.remark,
                 area: l.delivery.area,
                 city: l.delivery.city,
+                gates: gateWords.get(l.o.orderNo) ?? "",
                 weight: l.weightKg,
                 godown: l.godown,
               },
@@ -1594,7 +1640,7 @@ function statusActions(l: OrderLine, hold?: { prompt: NonNullable<ActionSpec["pr
       out.push({ id: "hold", l: "Put order on hold", why: why || (hold.open ? `The order is already ${hold.open.kind === "hold" ? "on hold" : "marked delayed"}` : ""), prompt: hold.prompt } as ActionSpec);
       continue;
     }
-    out.push({ id: STATUS_ACTION[st], l: st, why, impact: st === "Cancel" ? { kind: "erp-order-cancel", id: l.o.id } : undefined } as ActionSpec);
+    out.push({ id: STATUS_ACTION[st], l: st === "Cancel" ? "Cancel line" : st, why, impact: st === "Cancel" ? { kind: "erp-order-cancel", id: l.o.id } : undefined } as ActionSpec);
   }
   return out;
 }

@@ -9,7 +9,6 @@ import {
 } from "@/db/schema";
 import { getConfig } from "../config/store";
 import { calendarDate, nextWorkingDay, type BusinessDate } from "../business-date";
-import { managerNameByEmployeeName } from "./org-service";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import { notifyUser } from "../notify";
 import { fieldRouteFor } from "./lead-verifier";
@@ -39,9 +38,9 @@ const gen = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
  * qualification assigns and the sales manager the nightly pass writes cannot
  * disagree about who somebody reports to.
  *
- * It resolves by NAME, because nothing links an `employees` row to a `users`
- * row: HR maintains the workbook and MahekOne maintains the accounts, and the
- * two were never joined. A manager with no MahekOne account resolves to null
+ * It resolves by ID — `users.employee_id` and `employee_reporting` — through
+ * `personDirectory`; it used to compare names, and a rename on either side
+ * silently left the lead with no reviewer. A manager with no MahekOne account resolves to null
  * here rather than to a name — unlike `sales_manager_person_name`, this seat
  * has to be somebody who can open the lead and make the call.
  */
@@ -51,24 +50,10 @@ export async function lineManagerFor(userId: string): Promise<string | null> {
   const { orgModeOn, chartManagerOfUser } = await import("./lead-verifier");
   if (await orgModeOn()) return chartManagerOfUser(userId);
 
-  const [person] = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  if (!person?.name) return null;
-
-  const managerNameOf = await managerNameByEmployeeName();
-  const managerName = managerNameOf.get(person.name.trim().toLowerCase());
-  if (!managerName) return null;
-
-  const [manager] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.name, managerName), eq(users.active, true)))
-    .limit(1);
-
-  return manager?.id ?? null;
+  /* By id: the account's employee, their manager on the org chart, and that
+     manager's account. A rename on either side changes nothing. */
+  const { personDirectory } = await import("./person-identity-service");
+  return (await personDirectory()).managerOfAccount(userId)?.userId ?? null;
 }
 
 /**

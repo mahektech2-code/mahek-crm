@@ -1,7 +1,7 @@
 import "server-only";
-import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, employeeReporting, employees, hrmsUserPowers, users } from "@/db/schema";
+import { appAccess, employeeReporting, hrmsUserPowers, users } from "@/db/schema";
 import { notifyUsers, type NotifyEntry, type NotifyMessage } from "@/lib/notify";
 import type { HrmsPower } from "../powers";
 
@@ -48,12 +48,10 @@ export async function powerHolderUserIds(power: HrmsPower): Promise<string[]> {
  */
 export async function managerUserIdsOf(employeeId: string): Promise<string[]> {
   const chart = await db.select({ id: employeeReporting.managerId }).from(employeeReporting).where(eq(employeeReporting.employeeId, employeeId));
-  let managerIds = chart.map((r) => r.id).filter((x): x is string => !!x);
-  if (!managerIds.length) {
-    const [me] = await db.select({ reportsTo: employees.reportsTo }).from(employees).where(eq(employees.id, employeeId)).limit(1);
-    const title = me?.reportsTo?.trim().toLowerCase();
-    if (title) managerIds = (await db.select({ id: employees.id }).from(employees).where(sql`lower(trim(${employees.position})) = ${title}`)).map((r) => r.id);
-  }
+  /* The org chart only. Report To titles become chart links once, through
+     `placeByTitles`; matching them here on every request gave a team two
+     approvers or none whenever a title was shared or renamed. */
+  const managerIds = chart.map((r) => r.id).filter((x): x is string => !!x);
   if (!managerIds.length) return [];
   const rows = await db
     .selectDistinct({ id: users.id })

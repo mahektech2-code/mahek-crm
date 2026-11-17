@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, sheetSyncRuns } from "@/db/schema";
+import { alignAccountNames, placeByTitles, rememberSheetRenames } from "@/lib/services/person-identity-service";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
 import {
   HR_FIRST_DATA_ROW,
@@ -189,10 +190,24 @@ async function pullFromSheet(
     withdrawn = result.length;
   }
 
+  /* ONE NAME: an account linked to somebody the sheet just renamed takes the
+     new name now, not whenever somebody notices. Never fails the sync. */
+  let renamed = 0;
+  try {
+    /* A new joiner from the sheet goes on the org chart now, where their
+       Report To title names exactly one person — not left to a title match
+       every time somebody asks who approves their leave. */
+    await placeByTitles();
+    renamed = await alignAccountNames();
+  } catch (e) {
+    console.warn("[employee-sync] account names not aligned", e);
+  }
+
   const detail =
     `${mode} from row ${startRow}: ${created} new, ${updated} changed, ` +
     `${unchanged} unchanged` +
     (withdrawn ? `, ${withdrawn} gone from the sheet` : "") +
+    (renamed ? `, ${renamed} account${renamed === 1 ? "" : "s"} renamed to match` : "") +
     (kept ? `, ${kept} kept as HRMS has them` : "") +
     (withIssues ? `, ${withIssues} with issues` : "");
 
@@ -246,6 +261,8 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
     // frequent reconcile cheap: matching rows are touched no further.
     const existing = await db
       .select({
+        id: employees.id,
+        name: employees.name,
         code: employees.employeeCode,
         rowHash: employees.rowHash,
         sheetStatus: employees.sheetStatus,
@@ -333,6 +350,14 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
     }
 
     if (changed.length) {
+      /* A rename in the sheet: remember the old spelling as this person's
+         before it is overwritten, so a party sheet still using it resolves to
+         them. The account follows in `alignAccountNames` after the pass. */
+      const nextByCode = new Map(changed.map((c) => [c.employeeCode, c.name]));
+      await rememberSheetRenames(
+        existing.filter((e) => !hrmsOwned.has(e.code)),
+        new Map(existing.map((e) => [e.id, nextByCode.get(e.code) ?? e.name])),
+      );
       await db
         .insert(employees)
         .values(changed)

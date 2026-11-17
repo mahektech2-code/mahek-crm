@@ -248,3 +248,75 @@ export function CancelToDialog({ intakeId, title, onClose }: { intakeId: string;
     </Modal>
   );
 }
+
+/**
+ * THE CUSTOMER RECORD'S ORDERS, as the mockup draws them: the order picked
+ * (the newest, until another is clicked) as a card with its whole thread, and
+ * every other order beneath as one line — its number, goods, status and day,
+ * with Edit beside a TO the viewer took.
+ */
+export function OrderThreads({ rows, viewerId }: { rows: OrderRow[]; viewerId: string }) {
+  const [pickedId, setPickedId] = React.useState(rows[0]?.id ?? null);
+  const [editing, setEditing] = React.useState<string | null>(null);
+  const picked = rows.find((r) => r.id === pickedId) ?? rows[0];
+  if (!picked) return null;
+  const j = picked.journey;
+  const others = rows.filter((r) => r.id !== picked.id);
+  return (
+    <div className="mb-3 flex flex-col gap-3">
+      <div className="rounded-card border border-line bg-surface px-5 py-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-lg font-semibold text-ink">{j.title}</span>
+          {j.orderNo != null && j.toNo != null ? <Badge tone="brand">from TO-{j.toNo}</Badge> : null}
+          <JourneyBadge journey={j} />
+          <span className="ml-auto text-[13px] text-muted">
+            {[picked.litres != null ? `${picked.litres} L` : null, picked.totalPaise ? money(picked.totalPaise) : null, `source ${sourceWord(picked.source)}`].filter(Boolean).join(" · ")}
+          </span>
+        </div>
+        {j.banner ? <div className="mb-2 rounded-control bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">{j.banner}</div> : null}
+        <JourneyEvents journey={j} />
+        {j.editable && picked.intakeId && picked.userId === viewerId ? (
+          <div className="mt-2 flex justify-end">
+            <Button size="sm" onClick={() => setEditing(picked.intakeId)}>
+              Change this TO
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      {others.length ? (
+        <ul className="divide-y divide-divider rounded-card border border-line bg-surface">
+          {others.map((r) => (
+            <li key={r.id} className="grid grid-cols-[130px_minmax(0,1fr)_150px_90px_70px] items-center gap-3 px-5 py-3 text-sm">
+              <button type="button" onClick={() => setPickedId(r.id)} className="cursor-pointer text-left font-semibold text-ink hover:text-brand">
+                {r.journey.title}
+              </button>
+              <span className="truncate text-body">{orderSummary(r)}</span>
+              <span>
+                <JourneyBadge journey={r.journey} />
+              </span>
+              <span className="text-[13px] text-muted">{shortDay(r.orderedAt)}</span>
+              <span className="text-right">
+                {r.journey.editable && r.intakeId && r.userId === viewerId ? (
+                  <Button size="sm" onClick={() => setEditing(r.intakeId)}>
+                    Edit
+                  </Button>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="text-[12px] text-muted">The same thread is on the Accounts customer account, the ERP order record and the Salesman App. Only a TO number can be edited. Once it has its order number, it cannot be changed.</p>
+      {editing ? <EditToDialog key={editing} intakeId={editing} onClose={() => setEditing(null)} /> : null}
+    </div>
+  );
+}
+
+function sourceWord(source: string): string {
+  return source === "crm" ? "TeleCRM" : source === "mbos" ? "Salesman App" : source === "erp" ? "ERP" : source === "external" ? "order sheet" : source;
+}
+
+/** "today 09:40", "10 Nov". */
+function shortDay(iso: string): string {
+  return stamp(iso);
+}

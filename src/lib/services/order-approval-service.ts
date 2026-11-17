@@ -3,7 +3,7 @@ import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, orders } from "@/db/schema";
+import { auditLog, customers, orders, users } from "@/db/schema";
 import { requireCapability } from "../access-control";
 import { calendarDate } from "../business-date";
 import { convertIfNowQualified } from "./lead-conversion-service";
@@ -420,21 +420,39 @@ function erpOrderNo(order: { source: string; externalRef: string | null }): numb
   return Number.isInteger(n) ? n : null;
 }
 
-export async function holdOrderForAccounts(orderId: string, reasonCode: string, note: string): Promise<Result> {
+export async function holdOrderForAccounts(orderId: string, reasonCode: string, note: string, opts: { customerText?: string | null; lookAgainOn?: string | null } = {}): Promise<Result> {
   const ctx = await requireCapability("order.approve");
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   if (!order) return err("That order no longer exists.", "not_found");
   if (order.status !== "pending_approval") return err("That order was already decided.", "conflict");
   const no = erpOrderNo(order);
-  if (no == null) return err("Only an order made through the Order Hub is held here. Approve or decline this one.", "rule_violation");
+  if (no == null) {
+    /* An order with no products never reached the Order Hub, so there is
+       nothing for a hold to sit on — say that, and what to do, rather than
+       naming the hub to somebody who has never seen it. */
+    const empty = !order.lineItems?.length;
+    if (empty) {
+      const [taker] = order.userId ? await db.select({ name: users.name }).from(users).where(eq(users.id, order.userId)) : [];
+      return err(
+        `This order has no products, so it never reached the Order Hub and cannot be held. Decline it and ask ${taker?.name ?? "whoever took it"} to log it again with the products.`,
+        "rule_violation",
+      );
+    }
+    return err("Only an order made through the Order Hub is held here. Approve or decline this one.", "rule_violation");
+  }
   if (!note.trim()) return err("Write the remark — what you are waiting for.", "validation", [{ field: "reason", message: "A remark is required." }]);
   const { holdOrder, ACCOUNTS_HOLD_REASONS } = await import("../erp/screens/order-hub");
   if (!ACCOUNTS_HOLD_REASONS.some((r) => r.code === reasonCode)) return err("Pick the reason.", "validation");
-  const res = await holdOrder(ctx.user.id, no, "accounts", reasonCode, note.trim(), null);
+  const lookAgain = opts.lookAgainOn && /^\d{4}-\d{2}-\d{2}$/.test(opts.lookAgainOn) ? opts.lookAgainOn : null;
+  const res = await holdOrder(ctx.user.id, no, "accounts", reasonCode, note.trim(), opts.customerText?.trim() || null, undefined, { nextUpdateOn: lookAgain });
   if (!res.ok) return res;
   await db.insert(auditLog).values({ id: id("aud"), actorId: ctx.user.id, actorRole: ctx.authorisedBy, actorApp: ctx.authorisedIn, action: "order.hold", entityType: "order", entityId: orderId, afterState: { reason: reasonCode, note } as never });
   if (order.userId)
     await notifyUser({ userId: order.userId, title: `Order ${no} is on hold with Accounts`, body: note.trim(), kind: "warn", general: true }).catch(() => undefined);
+  /* The sales manager on the account is told too: it is their customer's order waiting. */
+  const [c] = await db.select({ sm: customers.salesManagerId }).from(customers).where(eq(customers.id, order.customerId));
+  if (c?.sm && c.sm !== order.userId)
+    await notifyUser({ userId: c.sm, title: `Order ${no} is on hold with Accounts`, body: note.trim(), kind: "warn", general: true }).catch(() => undefined);
   return okVoid(`Order ${no} is on hold`);
 }
 
@@ -466,4 +484,81 @@ export async function heldOrders(): Promise<HeldOrder[]> {
      order by h.raised_at
   `)) as unknown as HeldOrder[];
   return rows.map((r) => ({ ...r, orderNo: Number(r.orderNo), amount: Number(r.amount), heldAt: new Date(r.heldAt) }));
+}
+
+/* ------------------------------------------------------------ the board */
+
+/**
+ * ORDER APPROVALS AS THE MOCKUP DRAWS THEM: each order waiting for Accounts
+ * with its order number and TO, who took it, the party's instructions, this
+ * order's value, what the party owes, how much of its credit limit this order
+ * would use, what is overdue and for how long, how long it has waited, and
+ * whether it is past the accounts deadline. Read from the same queue
+ * (`awaitingAccountsSql`) the rest of Accounts counts.
+ */
+export type ApprovalBoardRow = PendingOrder & {
+  orderNo: number | null;
+  toNo: number | null;
+  instructions: string | null;
+  creditLimit: number | null;
+  overdueAmount: number;
+  overdueDays: number;
+  pastDeadline: boolean;
+  /** Only an Order Hub order can be held here; the rest are approved or declined. */
+  holdable: boolean;
+  salesManager: string | null;
+};
+
+export async function approvalBoard(): Promise<ApprovalBoardRow[]> {
+  const base = await pendingOrders();
+  if (!base.length) return [];
+  const ids = base.map((b) => b.orderId);
+  const list = sql.join(ids.map((x) => sql`${x}`), sql`, `);
+  const extra = (await db.execute(sql`
+    select o.id as "orderId", o.source, o.external_ref as "externalRef",
+           (select i.to_no from erp_order_intakes i where i.origin_order_id = o.id or (o.external_ref like 'ERP-%' and i.order_no::text = substring(o.external_ref from 5)) limit 1) as "toNo",
+           (select tu.name from erp_order_intakes i join users tu on tu.id = i.taken_by_id where i.origin_order_id = o.id or (o.external_ref like 'ERP-%' and i.order_no::text = substring(o.external_ref from 5)) limit 1) as taker,
+           nullif(trim(coalesce(p.standing_instructions, '')), '') as instructions,
+           exists (select 1 from payment_receipts r where r.customer_id = c.id and r.status in ('reported', 'held')) as "paymentReported",
+           c.credit_limit_paise as "creditLimit",
+           coalesce((select sum(b.amount - b.paid_amount) from bills b where b.customer_id = c.id and b.payment_position = 'stated' and b.amount > b.paid_amount and b.due_date < current_date), 0) as "overdueAmount",
+           coalesce((select max(current_date - b.due_date) from bills b where b.customer_id = c.id and b.payment_position = 'stated' and b.amount > b.paid_amount and b.due_date < current_date), 0) as "overdueDays",
+           exists (select 1 from accounts_sla_breaches s where s.kind = 'order' and s.record_id = o.id and s.resolved_at is null) as "pastDeadline",
+           coalesce(sm.name, c.sales_manager_person_name) as "salesManager"
+      from orders o
+      join customers c on c.id = o.customer_id
+      left join erp_customer_profiles p on p.customer_id = c.id
+      left join users sm on sm.id = c.sales_manager_id
+     where o.id in (${list})`)) as unknown as {
+    orderId: string;
+    source: string;
+    externalRef: string | null;
+    toNo: number | null;
+    taker: string | null;
+    instructions: string | null;
+    paymentReported: boolean;
+    creditLimit: number | null;
+    overdueAmount: number;
+    overdueDays: number;
+    pastDeadline: boolean;
+    salesManager: string | null;
+  }[];
+  const by = new Map(extra.map((e) => [e.orderId, e]));
+  return base.map((b) => {
+    const e = by.get(b.orderId);
+    const orderNo = e ? erpOrderNo({ source: e.source, externalRef: e.externalRef }) : null;
+    return {
+      ...b,
+      takenByName: e?.taker ?? b.takenByName,
+      orderNo,
+      toNo: e?.toNo == null ? null : Number(e.toNo),
+      instructions: e?.instructions ?? (e?.paymentReported ? "Payment reported, unconfirmed" : null),
+      creditLimit: e?.creditLimit == null ? null : Number(e.creditLimit),
+      overdueAmount: Number(e?.overdueAmount ?? 0),
+      overdueDays: Number(e?.overdueDays ?? 0),
+      pastDeadline: !!e?.pastDeadline,
+      holdable: orderNo != null,
+      salesManager: e?.salesManager ?? null,
+    };
+  });
 }

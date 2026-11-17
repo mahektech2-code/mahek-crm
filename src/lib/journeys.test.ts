@@ -22,6 +22,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  appSettings,
   auditLog,
   bills,
   calls,
@@ -2461,6 +2462,34 @@ describe("Journey 8 - the interaction log", () => {
     });
     assert.equal(withAction.ok, false);
     assert.equal(withAction.fieldErrors?.[0].field, "nextActions");
+  });
+
+  test("once the ERP takes the orders, an order call with no products is refused", async () => {
+    /* An empty order cannot become a TO, so it reached Accounts as ₹0 that
+       they could only decline — and could not hold (2026-11-17). */
+    const setLive = async (on: boolean) => {
+      await db
+        .insert(appSettings)
+        .values({ key: "erp.orders.live", value: on, valueType: "boolean", category: "erp", label: "The ERP takes the orders" })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value: on } });
+      invalidateConfig();
+    };
+    await setLive(true);
+    try {
+      const customer = await makeCustomer(priya.id);
+      for (const call of [
+        { interactionType: "outbound_call" as const, outcome: "order_taken" as const },
+        { interactionType: "order_received" as const, orderDate: TODAY },
+      ]) {
+        const res = await saveInteraction({ customerId: customer.id, ...call, idempotencyKey: randomUUID() });
+        assert.equal(res.ok, false);
+        assert.equal(res.fieldErrors?.[0].field, "productQuantities");
+      }
+      const none = await db.select().from(orders).where(eq(orders.customerId, customer.id));
+      assert.equal(none.length, 0, "nothing reached Accounts");
+    } finally {
+      await setLive(false);
+    }
   });
 
   test("follow-up and pay promise with no date are dated by default and still write their reminder", async () => {

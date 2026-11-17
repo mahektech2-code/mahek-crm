@@ -804,12 +804,44 @@ function nameFold(column: SQL | AnyColumn) {
  * would give the manager and his salesman two different books.
  */
 function namedByUsers(ids: string[]) {
+  const inIds = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  /* Three ways the sheet's text can mean this salesman, all through his id:
+       • the sheet name somebody linked to his account (`users.sales_person_name`);
+       • the CURRENT name of the HRMS employee his account is linked to;
+       • any spelling that employee has carried before (`person_name_aliases`),
+         so a rename in HRMS does not empty his handset while the party sheet
+         still spells him the old way.
+     The last two only count where NO other employee answers to that spelling
+     — two "Pritesh Doshi"s must never see each other's shops. */
   return sql`${nameFold(customers.salesPersonName)} in (
     select ${nameFold(sql`u.sales_person_name`)}
       from users u
-     where u.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+     where u.id in ${inIds}
        and u.sales_person_name is not null
        and btrim(u.sales_person_name) <> ''
+    union
+    select ${nameFold(sql`e.name`)}
+      from users u
+      join employees e on e.id = u.employee_id
+     where u.id in ${inIds}
+       and btrim(e.name) <> ''
+       and not exists (
+         select 1 from employees e2
+          where e2.id <> e.id and ${nameFold(sql`e2.name`)} = ${nameFold(sql`e.name`)})
+       and not exists (
+         select 1 from person_name_aliases a2
+          where a2.employee_id <> e.id and a2.name_key = ${nameFold(sql`e.name`)})
+    union
+    select a.name_key
+      from users u
+      join person_name_aliases a on a.employee_id = u.employee_id
+     where u.id in ${inIds}
+       and not exists (
+         select 1 from person_name_aliases a2
+          where a2.employee_id <> a.employee_id and a2.name_key = a.name_key)
+       and not exists (
+         select 1 from employees e2
+          where e2.id <> a.employee_id and ${nameFold(sql`e2.name`)} = a.name_key)
   )`;
 }
 

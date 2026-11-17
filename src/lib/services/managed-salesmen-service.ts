@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { appAccess, users } from "@/db/schema";
-import { managerNameByEmployeeName } from "@/lib/services/org-service";
+import { personDirectory } from "@/lib/services/person-identity-service";
 
 /* ---------------------------------------------------------------------------
  * WHICH SALESMEN A PERSON MANAGES — one answer, from the reporting lines that
@@ -13,8 +13,7 @@ import { managerNameByEmployeeName } from "@/lib/services/org-service";
  *   • he reports to them — `users.reports_to_id`, the line the scope resolver
  *     reads for a manager's team;
  *   • the Org Chart names them as his manager — `employee_reporting`, read by
- *     name through `managerNameByEmployeeName`, the same map the nightly
- *     Sales Manager pass fills the seat from;
+ *     employee id through `personDirectory`, never by name;
  *   • he works a book that sits under their Sales Manager seat —
  *     `customers.sales_manager_id`, which is what the Sales Manager desk is
  *     drawn from.
@@ -47,11 +46,9 @@ export async function managedSalesmen(user: {
   for (const r of direct) ids.add(r.id);
 
   /* 2. The Org Chart names this person as their manager. */
-  const me = user.name.trim().toLowerCase();
-  const chart = await managerNameByEmployeeName();
+  const dir = await personDirectory();
   for (const f of field) {
-    const manager = chart.get(f.name.trim().toLowerCase());
-    if (manager && manager.trim().toLowerCase() === me) ids.add(f.id);
+    if (dir.managerOfAccount(f.id)?.userId === user.id) ids.add(f.id);
   }
 
   /* 3. They work a book under this person's Sales Manager seat. */

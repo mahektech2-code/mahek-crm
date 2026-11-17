@@ -171,20 +171,22 @@ export async function moneyKitData(day: string) {
     moneyAccounts(),
     accountBalanceMap(),
     refValues("expenseCategory"),
-    q<{ name: string; dept: string | null }>(sql`select name, department as dept from employees where status = 'active' order by name`),
+    q<{ id: string; name: string; dept: string | null }>(sql`select id, name, department as dept from employees where status = 'active' order by name`),
     customerChoices(),
     cashSources("customer"),
     cashSources("withdrawal"),
     getConfig(),
     q<{ n: number }>(sql`select coalesce(max(txn_no), 0)::int + 1 as n from erp_money_txns`),
     q<{ n: number }>(sql`select coalesce(max(advance_no), 0)::int + 1 as n from erp_advances`),
-    q<{ name: string }>(sql`select lower(employee_name) as name from erp_advances where status = 'open'`),
+    q<{ id: string | null; name: string }>(sql`select employee_id as id, lower(employee_name) as name from erp_advances where status = 'open'`),
   ]);
-  const openSet = new Set(open.map((o) => o.name));
+  /* By id where the advance knows who holds it, so a rename does not hide it. */
+  const openIds = new Set(open.map((o) => o.id).filter(Boolean));
+  const openSet = new Set(open.filter((o) => !o.id).map((o) => o.name));
   return {
     accounts: accounts.filter((a) => a.active).map((a) => ({ id: a.id, name: a.name, kind: a.kind, last4: a.last4, balance: bal.get(a.id) ?? 0 })),
     categories: configured.length ? [...new Set([...configured, "Other"])] : DEFAULT_CATEGORIES,
-    employees: emps.map((e) => ({ name: e.name, dept: e.dept, open: openSet.has(e.name.toLowerCase()) })),
+    employees: emps.map((e) => ({ name: e.name, dept: e.dept, open: openIds.has(e.id) || openSet.has(e.name.toLowerCase()) })),
     customers,
     customerCash,
     withdrawals,

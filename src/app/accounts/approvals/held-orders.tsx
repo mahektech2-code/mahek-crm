@@ -13,13 +13,21 @@ export type HeldRow = { orderId: string; orderNo: number; customerName: string; 
  * ORDERS ON HOLD WITH ACCOUNTS — the Order Hub's accounts hold. Releasing one
  * puts it back in the queue above, to be approved, held or declined again.
  */
-export function HeldOrders({ rows, canDecide }: { rows: HeldRow[]; canDecide: boolean }) {
+export function HeldOrders({ rows, canDecide, standalone = false }: { rows: HeldRow[]; canDecide: boolean; standalone?: boolean }) {
   const router = useRouter();
   const { run } = useToast();
   const [open, setOpen] = React.useState<string | null>(null);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  if (!rows.length) return null;
+  if (!rows.length)
+    return standalone ? (
+      <section className="mx-auto w-full max-w-(--container-measure) px-6 pt-6 pb-10">
+        <div role="heading" aria-level={1} className="mb-2 text-2xl font-semibold text-ink">
+          Orders on hold
+        </div>
+        <p className="text-sm text-muted">Nothing on hold with Accounts. An order you hold from Order approvals lands here.</p>
+      </section>
+    ) : null;
 
   async function release(orderId: string) {
     setBusy(true);
@@ -36,8 +44,8 @@ export function HeldOrders({ rows, canDecide }: { rows: HeldRow[]; canDecide: bo
   }
 
   return (
-    <section className="mx-auto mt-6 w-full max-w-(--container-measure) px-6 pb-10" aria-labelledby="held-orders">
-      <h2 id="held-orders" className="mb-1 font-display text-[18px] font-semibold text-ink">
+    <section className={`mx-auto w-full max-w-(--container-measure) px-6 pb-10 ${standalone ? "pt-6" : "mt-6"}`} aria-labelledby="held-orders">
+      <h2 id="held-orders" className={`mb-1 font-semibold text-ink ${standalone ? "text-2xl" : "text-lg"}`}>
         Orders on hold · {rows.length}
       </h2>
       <p className="mb-3 text-[13px] text-muted">Held by Accounts. Releasing one puts it back in the queue to be decided again.</p>

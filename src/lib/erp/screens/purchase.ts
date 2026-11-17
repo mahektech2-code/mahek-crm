@@ -1441,7 +1441,14 @@ async function saveTest(
   const [mat] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, rawMaterialId));
   if (!mat) return err("The item no longer exists.", "not_found");
   const tests = from.existing?.tests ?? mat.testingList;
-  const [tester] = await db.select({ id: users.id }).from(users).where(eq(users.name, text(h.tester) ?? ctx.user.name));
+  /* The tester box holds a name; turn it into a person through the directory
+     (any spelling they have carried), and the person saving when it is blank. */
+  const testerName = text(h.tester);
+  const { personDirectory } = await import("@/lib/services/person-identity-service");
+  const tester = testerName ? { id: (await personDirectory()).accountByName(testerName) } : { id: ctx.user.id };
+  /* A named tester nobody can be found for is refused, not quietly recorded
+     as whoever pressed Save. */
+  if (testerName && !tester.id) return fieldErr("tester", `Nobody with a MahekOne account answers to ${testerName}. Pick the tester from the list.`);
   const density = num(h.density);
   if (tests.includes("Density") && density != null && (density < 0.5 || density > 1.5)) return fieldErr("density", "Density must be between 0.5 and 1.5.");
   const photoIds: Record<string, string | null> = {};

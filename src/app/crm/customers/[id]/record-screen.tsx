@@ -1,7 +1,7 @@
 "use client";
 
 import { LedgerTab } from "./ledger-tab";
-import { OrderThread } from "@/components/orders/order-journey";
+import { OrderThreads } from "@/components/orders/order-journey";
 import type { OrderRow } from "@/lib/services/order-journey-service";
 import * as React from "react";
 import { placeLine } from "@/lib/place-tree";
@@ -911,14 +911,7 @@ export function RecordScreen({
             </div>
           ) : null}
 
-          {activeTab === "orders" && orderThreads.length ? (
-            <div className="mb-3 divide-y divide-divider rounded-card border border-line bg-surface">
-              {orderThreads.map((r, i) => (
-                <OrderThread key={r.id} row={r} canEdit={r.userId === viewerId} defaultOpen={i === 0} />
-              ))}
-              <p className="px-5 py-2 text-[12px] text-muted">Only a TO number can be changed, by the person who took it. Once it has its order number, it cannot be changed.</p>
-            </div>
-          ) : null}
+          {activeTab === "orders" && orderThreads.length ? <OrderThreads rows={orderThreads} viewerId={viewerId} /> : null}
           {activeTab === "orders" ? (
             <TabList
               count={detail.counts.orders}

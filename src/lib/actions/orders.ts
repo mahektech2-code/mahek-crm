@@ -49,9 +49,9 @@ export async function declineOrderAction(
 }
 
 /** Accounts hold an order made through the Order Hub: it leaves the queue until released. */
-export async function holdOrderAction(orderId: string, reasonCode: string, note: string): Promise<Result> {
+export async function holdOrderAction(orderId: string, reasonCode: string, note: string, opts: { customerText?: string | null; lookAgainOn?: string | null } = {}): Promise<Result> {
   try {
-    const r = await holdOrderForAccounts(orderId, reasonCode, note);
+    const r = await holdOrderForAccounts(orderId, reasonCode, note, opts);
     refresh();
     return r;
   } catch (e) {

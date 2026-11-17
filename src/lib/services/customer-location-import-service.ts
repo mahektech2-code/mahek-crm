@@ -1,7 +1,7 @@
 import "server-only";
 import { inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { fieldCustomerPins, users } from "@/db/schema";
+import { fieldCustomerPins } from "@/db/schema";
 import { parseCsv } from "@/lib/csv";
 import {
   isBlankCustomerLocationRow,
@@ -107,7 +107,10 @@ export async function importCustomerLocationsCsv(
   csvText: string,
 ): Promise<CustomerLocationImportOutcome> {
   const records = parseCsv(csvText).filter((cells) => !isBlankCustomerLocationRow(cells));
-  const salesmen = await db.select({ id: users.id, name: users.name }).from(users);
+  /* Every spelling each account answers to — its name, its HRMS name and the
+     names it carried before a rename — so an old file still finds them. */
+  const { salesmanCandidates } = await import("./field-activity-sync-service");
+  const salesmen = await salesmanCandidates();
   // Exact name or a person's decision only — a pin on the wrong shop is a
   // shop every later check-in is refused at.
   const matcher = await shopNameMatcher();

@@ -604,13 +604,26 @@ export async function giveAdvance(actor: Actor, x: AdvanceInput): Promise<Result
   const from = await accountByName(db, x.from);
   if (!from) return fieldErr("from", "Choose the account it was given from.");
   if (!x.mode || !(PAY_MODES as readonly string[]).includes(x.mode)) return fieldErr("mode", "Choose how it was handed over.");
+  /* WHO, by id: the picker sends the name it showed, and the person directory
+     turns it into the employee — today's name or one they used to carry. The
+     open-advance check then asks by that id, so a rename in HRMS cannot hide
+     an advance still outstanding. A name nobody can resolve keeps the old
+     by-name check. */
+  const { personDirectory } = await import("@/lib/services/person-identity-service");
+  const employeeId = (await personDirectory()).employeeByName(x.employee);
   const r = await inTx<{ id: string; label: string }>(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp-advance|" + x.employee!.toLowerCase()}))`);
-    const [open] = await q<{ no: number; on: string; who: string }>(tx, sql`select advance_no as no, issued_on::text as on, employee_name as who from erp_advances where lower(employee_name) = ${x.employee!.toLowerCase()} and status = 'open' limit 1`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp-advance|" + (employeeId ?? x.employee!.toLowerCase())}))`);
+    const [open] = await q<{ no: number; on: string; who: string }>(
+      tx,
+      employeeId
+        ? sql`select advance_no as no, issued_on::text as on, employee_name as who from erp_advances
+               where status = 'open' and (employee_id = ${employeeId} or (employee_id is null and lower(employee_name) = ${x.employee!.toLowerCase()})) limit 1` // identity-ok: an old advance with no employee id
+        : sql`select advance_no as no, issued_on::text as on, employee_name as who from erp_advances where lower(employee_name) = ${x.employee!.toLowerCase()} and status = 'open' limit 1`, // identity-ok: a name nobody can resolve
+    );
     if (open) return fieldErr("employee", `${open.who} still holds ${advanceLabel(Number(open.no), open.on)}. Settle it before giving another.`);
     const id = erpId("adv");
     const no = await nextNumber(tx, "advance");
-    await tx.insert(erpAdvances).values({ id, advanceNo: no, employeeName: x.employee!, purpose: x.purpose, issuedOn: x.date, billsDueOn: x.billsDueOn, createdById: actor.id });
+    await tx.insert(erpAdvances).values({ id, advanceNo: no, employeeId, employeeName: x.employee!, purpose: x.purpose, issuedOn: x.date, billsDueOn: x.billsDueOn, createdById: actor.id });
     const tno = await nextNumber(tx, "moneyTxn");
     await tx.insert(erpMoneyTxns).values({ id: erpId("mtx"), txnNo: tno, txnDate: x.date, kind: "advance", amountPaise: x.amountPaise!, fromAccountId: from.id, mode: x.mode, reference: x.reference, advanceId: id, description: x.purpose, note: x.note, createdById: actor.id });
     return ok({ id, label: advanceLabel(no, x.date) });

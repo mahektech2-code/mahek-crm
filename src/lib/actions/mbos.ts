@@ -1999,7 +1999,8 @@ const STATUS_WORDS: Record<string, string> = {
  * them - the same rule TeleCRM's My orders keeps. Once Accounts approve it
  * (that makes its order number), or hold or decline it, it is the office's.
  */
-const toCancelSchema = z.object({ cancelReason: z.string().trim().min(1, "Say why it is cancelled.").max(2000) });
+/** A TO cancelled from the handset: `cancelTo` routes it here from `handleOrder`. */
+const toCancelSchema = z.object({ cancelTo: z.literal(true), cancelReason: z.string().trim().min(1, "Say why it is cancelled.").max(2000) });
 
 async function handleToCancel(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = toCancelSchema.safeParse(item.payload);

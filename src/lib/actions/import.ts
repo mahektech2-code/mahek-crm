@@ -96,8 +96,11 @@ async function importCustomersInner(
   const user = await requireImporter();
   if (!rows.length) return fail("That file had no rows.");
 
-  const team = await db.query.users.findMany();
-  const ownerByName = new Map(team.map((t) => [t.name.toLowerCase(), t.id]));
+  /* A CSV names an owner as text — the one place a name has to become a
+     person. Through the directory, so an old spelling or an HRMS name still
+     finds them and a name two people share finds nobody. */
+  const { personDirectory } = await import("@/lib/services/person-identity-service");
+  const dir = await personDirectory();
 
   const existing = await db.query.customers.findMany({
     columns: { id: true, phone: true, ownerId: true },
@@ -122,7 +125,7 @@ async function importCustomersInner(
 
     const d = parsed.data;
     const ownerId =
-      (d.ownerName ? ownerByName.get(d.ownerName.toLowerCase()) : null) ??
+      (d.ownerName ? dir.accountByName(d.ownerName) : null) ??
       defaultOwnerId;
 
     const values = {

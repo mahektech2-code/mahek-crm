@@ -70,7 +70,16 @@ export type JourneyFacts = { intake: IntakeFacts | null; order: ErpOrderFacts | 
 
 export type JourneyEvent = { at: string; text: string; tone: JourneyTone; where?: string };
 export type StepState = "done" | "current" | "hold" | "todo";
-export type JourneyStep = { key: string; label: string; state: StepState; at: string | null; note?: string };
+export type JourneyStep = {
+  key: string;
+  label: string;
+  state: StepState;
+  at: string | null;
+  note?: string;
+  /** On the "checked" rung: which of the two checks are done, for the handset's receipt. */
+  backOffice?: boolean;
+  production?: boolean;
+};
 
 /**
  * Where the order is, as a CODE - what a screen keys its buttons and its
@@ -305,3 +314,11 @@ export const MY_ORDERS_TABS: { key: MyOrdersTab; label: string }[] = [
   { key: "moving", label: "In production and on the way" },
   { key: "done", label: "Delivered or closed" },
 ];
+
+/** An order taken on a call that became a TO — the "Order taken" dialog. */
+export type TakenTo = {
+  toNo: number;
+  intakeId: string;
+  lines: { product: string; cans: number; litres: number | null }[];
+  takenBy: string;
+};

@@ -30,7 +30,7 @@ import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
 import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
-import { managerNameByEmployeeName } from "./services/org-service";
+import { personDirectory } from "./services/person-identity-service";
 import { placeFilterOptions, placeFilterSql } from "./services/place-filter-service";
 import type { PlaceFilterOptions, PlaceFilterValues, PlaceNames } from "./place-filters";
 import { callDetailsFor } from "./services/call-detail-service";
@@ -313,13 +313,18 @@ export const listBackOfficeCandidates = cache(async function listBackOfficeCandi
   ]);
 
   const takenNames = new Set(accounts.map((a) => a.name.trim().toLowerCase()));
+  const dir = await personDirectory();
+  const accountIds = new Set(accounts.map((a) => a.id));
   return [
     ...accounts,
     // Somebody with both an account and an employee row is ONE person, and the
     // account is the better half of them — it can be given a queue. Offering
     // both spellings would make the list a puzzle about which Sunita to pick.
     ...staff
-      .filter((e) => !takenNames.has(e.name.trim().toLowerCase()))
+      .filter((e) => {
+        const acc = dir.accountOfEmployee(e.id);
+        return !(acc && accountIds.has(acc)) && !takenNames.has(e.name.trim().toLowerCase());
+      })
       .map((e) => ({ id: `emp:${e.id}`, name: e.name, role: "employee" })),
   ];
 });
@@ -331,32 +336,33 @@ export const listBackOfficeCandidates = cache(async function listBackOfficeCandi
  * or undefined out — so a form can set one field's value straight from the
  * other's without inventing a second id space.
  *
- * The org chart (`employee_reporting`) is keyed on EMPLOYEES, and a
- * candidate here may be a `users` account with no employee id stored against
- * it at all — nothing links the two directly, because creating an account
- * from HRMS never wrote one back. So each end is matched by NAME, the same
- * convention `openingSalesValue` already uses to reconcile a stored name
- * against the picker's own list. A name matched on neither end resolves to
- * nothing rather than a guess: an unrecognised manager is a blank field, not
- * a wrong one.
+ * The org chart (`employee_reporting`) is keyed on EMPLOYEES; a candidate
+ * account is turned into its employee through `personDirectory` (the stored
+ * `users.employee_id` first), and the manager back into a candidate the same
+ * way — by id end to end, so a rename changes no suggestion. Somebody the
+ * directory cannot place resolves to nothing rather than a guess.
  *
  * This is a SUGGESTION only. It only ever fills a field nobody has answered
  * yet — `salesManagerId` still means whatever a person chose or the sheet
  * never wrote, and this is not a source anything downstream may read.
  */
 export async function salesManagerSuggestions(): Promise<Record<string, string>> {
-  const managerNameOf = await managerNameByEmployeeName();
-  if (!managerNameOf.size) return {};
-
-  const candidates = await listBackOfficeCandidates();
-  const candidateIdByName = new Map(candidates.map((c) => [c.name.trim().toLowerCase(), c.id]));
-
+  const [dir, candidates] = await Promise.all([personDirectory(), listBackOfficeCandidates()]);
+  const ids = new Set(candidates.map((c) => c.id));
+  /* Candidate id → employee, and employee → candidate id: an account where the
+     person holds one, else their `emp:` row. By id end to end. */
+  const employeeOf = (cid: string) => (cid.startsWith("emp:") ? cid.slice(4) : dir.employeeOfAccount(cid));
+  const candidateOf = (employeeId: string) => {
+    const acc = dir.accountOfEmployee(employeeId);
+    if (acc && ids.has(acc)) return acc;
+    return ids.has(`emp:${employeeId}`) ? `emp:${employeeId}` : undefined;
+  };
   const suggestions: Record<string, string> = {};
-  for (const candidate of candidates) {
-    const managerName = managerNameOf.get(candidate.name.trim().toLowerCase());
-    if (!managerName) continue;
-    const managerCandidateId = candidateIdByName.get(managerName.trim().toLowerCase());
-    if (managerCandidateId) suggestions[candidate.id] = managerCandidateId;
+  for (const c of candidates) {
+    const emp = employeeOf(c.id);
+    const mgr = emp ? dir.managerOfEmployee(emp) : null;
+    const pick = mgr ? candidateOf(mgr) : undefined;
+    if (pick && pick !== c.id) suggestions[c.id] = pick;
   }
   return suggestions;
 }

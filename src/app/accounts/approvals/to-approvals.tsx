@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button, DecimalInput, PaiseInput, controlClass, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/modal";
+import { CardGrid } from "@/components/ui/card-grid";
 import { useToast } from "@/components/ui/toast";
 import { money, stamp } from "@/lib/format";
 import { approveToAction, declineToAction, holdToAction, loadToReviewAction, releaseToAction, sendBackToAction } from "@/lib/actions/to-approval";
@@ -86,14 +87,14 @@ export function ToApprovals({
   return (
     <section className="mx-auto w-full max-w-(--container-measure) px-6 pt-6" aria-labelledby="to-approvals">
       <ScreenHeader title={<span id="to-approvals">Order approvals</span>} />
-      <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
+      <CardGrid min={200} gap="gap-3" className="mb-4">
         {cards.map((c) => (
           <div key={c.label} className="rounded-card border border-line bg-surface px-4 py-3">
             <div className="text-[12px] text-muted">{c.label}</div>
             <div className={cx("text-[24px] font-semibold tabular-nums", c.tone ?? "text-ink")}>{c.value}</div>
           </div>
         ))}
-      </div>
+      </CardGrid>
       <div role="tablist" className="mb-3 flex gap-1 border-b border-line">
         {(
           [

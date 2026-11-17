@@ -894,6 +894,12 @@ export const users = pgTable(
      * and the `on delete set null`; Drizzle simply does not need to know.
      */
     employeeId: text("employee_id"),
+    /**
+     * An administrator said this account is NOT an employee — a shared desk
+     * login, an outside accountant. It leaves the "Not linked to HRMS" list
+     * and is never guessed onto a payroll row. See `person-directory.ts`.
+     */
+    notEmployee: boolean("not_employee").notNull().default(false),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -5635,6 +5641,32 @@ export const employeeReporting = pgTable(
     uniqueIndex("employee_reporting_employee_key").on(t.employeeId),
     // Drawing the tree asks "who reports to this person" once per node.
     index("employee_reporting_manager_idx").on(t.managerId),
+  ],
+);
+
+/**
+ * Every spelling a person has carried, pointing at the employee they are —
+ * see `lib/engines/person-directory.ts`. A rename writes the old name here so
+ * a sheet still using it resolves to the same person rather than to nobody.
+ */
+export const personNameAliases = pgTable(
+  "person_name_aliases",
+  {
+    id: text("id").primaryKey(),
+    /** `personKey(name)`: trimmed, whitespace collapsed, uppercase. */
+    nameKey: text("name_key").notNull(),
+    name: text("name").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** What wrote it: "rename", "sheet-rename", "account-rename". */
+    source: text("source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    uniqueIndex("person_name_aliases_key_employee").on(t.nameKey, t.employeeId),
+    index("person_name_aliases_employee_idx").on(t.employeeId),
   ],
 );
 
@@ -14649,7 +14681,9 @@ export const erpAdvances = pgTable(
   {
     id: text("id").primaryKey(),
     advanceNo: integer("advance_no").notNull(),
-    /** The employee, as HRMS names them. */
+    /** WHO holds it, by id — what "already holds an open advance" is asked of. Null on a name nobody could resolve. */
+    employeeId: text("employee_id").references(() => employees.id, { onDelete: "set null" }),
+    /** The employee's name as it was typed on the day — a label, not the key. */
     employeeName: text("employee_name").notNull(),
     purpose: text("purpose"),
     issuedOn: date("issued_on").notNull(),

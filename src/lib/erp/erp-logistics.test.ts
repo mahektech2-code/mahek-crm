@@ -399,6 +399,9 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(bills[0].dispatchOn, waiting?.dispatchOn);
     assert.equal(bills[0].lines, 1);
     assert.equal(bills[0].litres, 10);
+    assert.deepEqual(bills[0].orderIds, [vl.orderId], "a row carries its own order lines — entering its bill ticks those alone");
+    assert.ok(bills[0].goods.startsWith(`${vl.product} × `), "the row describes its goods with their cans");
+    assert.ok(bills[0].qty > 0 && bills[0].boxes > 0 && bills[0].boxes <= bills[0].qty, "order qty in cans, boxes no more than cans");
     const input = { lrNo: "88213", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 25000, orderIds: [vl.orderId] };
     const saved = await F.saveFreightBill(ctx, input);
     assert.ok(saved.ok, msg(saved));

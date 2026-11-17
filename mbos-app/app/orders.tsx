@@ -355,6 +355,7 @@ export default function OrdersScreen() {
                 {on ? (
                   <View style={{ marginHorizontal: 16, marginTop: 12, marginBottom: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.hairline, gap: 8 }}>
                     {journeyStepsOf(o).length ? <Ladder steps={journeyStepsOf(o)} /> : null}
+                    <RowAction label="Open the order" icon="forward" onPress={() => router.push(`/order-detail?id=${o.id}`)} />
                     {mine == null ? (
                       <T s="caption">Loading…</T>
                     ) : mine.length === 0 ? (
