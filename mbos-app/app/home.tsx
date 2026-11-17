@@ -9,6 +9,8 @@ import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
+import { RemoteBanners } from '../src/components/remote/RemoteBanners';
+import { copy, useRemote } from '../src/data/remote';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
@@ -316,6 +318,9 @@ export default function Home() {
      Nothing on the screen is drawn from it — see the note on `day` above. */
   const dayOrEmpty = day ?? EMPTY;
   const now = useTicker(dayOrEmpty.running ? 1000 : 60_000);
+  /* The office's sentences and banners — `data/remote.ts`. Every one falls
+     back to what is written here. */
+  const remote = useRemote();
   const workedSoFarMs = workedMs(dayOrEmpty.sessions, now);
 
   /*
@@ -1122,7 +1127,7 @@ export default function Home() {
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.onNavy }, weight(700)]}>
-          {greetingFor(today.getHours()) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
+          {copy(remote, 'text.home.greeting', greetingFor(today.getHours())) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
           <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted }, weight(400)]}>{dateLine}</Text>
@@ -1510,6 +1515,12 @@ export default function Home() {
           </View>
         </Card>
       ) : null}
+
+      {/* ---- what the office has put on this screen ----
+          Banners from Admin Console → MBOS control. Below everything about
+          starting the day, so an announcement never stands between him and
+          punching in; self-contained, so it cannot break what is around it. */}
+      <RemoteBanners screen="home" nowMs={now} />
 
       {/* ---- the six numbers ---- */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>

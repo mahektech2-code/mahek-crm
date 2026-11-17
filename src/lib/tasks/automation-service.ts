@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -119,7 +120,7 @@ const READERS: Record<string, () => Promise<WantedTask[]>> = {
       db.execute<Row>(sql`
         select o.id, o.order_no, o.total_amount, ${dayOf("o.created_at")} as due, c.id as customer_id, c.name as customer
           from orders o join customers c on c.id = o.customer_id
-         where o.status = 'pending_approval'`),
+         where ${awaitingAccountsSql("o")}`),
     ]);
     return rows.flatMap((r) =>
       people.map((who) => ({

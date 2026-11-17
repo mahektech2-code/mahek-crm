@@ -272,11 +272,6 @@ function salaryFields(s: HrmsSalary, f: StoredFigures, e: Person | undefined, ch
     { l: "Employer ESIC", v: money(f.employerEsicPaise), der: true },
     { l: "Cost to company (CTC)", v: money(f.ctcPaise), der: true },
     { l: "Advance deduction", v: money(f.advanceDeductionPaise) },
-    {
-      l: "Late deduction",
-      v: `${money(f.lateDeductionPaise)}${f.lateHalfDays ? ` · ${f.lateHalfDays} late half-day${f.lateHalfDays > 1 ? "s" : ""} for ${f.lateCount} late check-ins` : ""}`,
-      der: true,
-    },
     { l: "Total deductions", v: money(f.grossDeductionPaise), der: true },
     { l: "Other payment", v: `${money(f.otherPaymentPaise)} · paid beside salary in hand, not in it`, der: true },
     { l: "Salary in hand", v: money(f.inHandPaise), der: true },

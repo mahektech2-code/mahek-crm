@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { addMonths, endOfMonth as endOfMonthKey, type BusinessDate, type DateRange } from "@/lib/business-date";
@@ -651,7 +652,7 @@ async function recordsBehind(p: PeriodState, key: string): Promise<{ label: stri
     const rows = await db.execute<{ name: string; v: string; at: string }>(sql`
       select c.name, o.total_amount::text as v, to_char(o.created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as at
         from orders o join customers c on c.id = o.customer_id
-       where o.status = 'pending_approval' order by o.created_at limit 8
+       where ${awaitingAccountsSql("o")} order by o.created_at limit 8
     `);
     return { label: "Orders waiting on approval · oldest first", rows: rows.map((r) => ({ a: r.name, b: `Taken ${fmtDate(r.at)}`, c: crore(Number(r.v)) })) };
   }

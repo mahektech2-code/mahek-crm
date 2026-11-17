@@ -319,7 +319,7 @@ export async function underProcessLines(godownId: string | null): Promise<UnderP
   return (await db.execute(sql`
     select o.order_no as "orderNo", p.id as "skuId", p.name as "skuName", p.external_code as "skuCode",
            p.cans_per_box as "cansPerBox", coalesce(p.millilitres_per_can, fg.millilitres) as millilitres,
-           fg.id as "finishedGoodId", fg.name as "finishedGoodName", o.qty_cans as "qtyCans",
+           fg.id as "finishedGoodId", fg.name as "finishedGoodName", o.qty_cans as "qtyCans", o.remark,
            (select p2.external_code from products p2 where p2.finished_good_id = fg.id and p2.active and p2.cans_per_box = 1 order by p2.name limit 1) as "looseCode"
       from erp_orders o
       join products p on p.id = o.sku_id
@@ -348,11 +348,11 @@ export async function syncPlanFromOrders(planId: string): Promise<number> {
     for (const d of demand) {
       const l = byKey.get(d.key);
       byKey.delete(d.key);
-      const values = { category: d.category, itemId: d.itemId, productName: d.productName, productCode: d.productCode, size: d.size, quantity: d.quantity, unit: d.unit, orderRefs: d.orderRefs };
+      const values = { category: d.category, itemId: d.itemId, productName: d.productName, productCode: d.productCode, size: d.size, quantity: d.quantity, unit: d.unit, orderRefs: d.orderRefs, remarks: d.remarks };
       if (!l) {
         await tx.insert(erpProductionPlanLines).values({ id: erpId("eplnl"), planId, source: "order", sourceKey: d.key, sort: ++sort, ...values });
         moved++;
-      } else if (l.deletedAt || l.quantity !== d.quantity || l.unit !== d.unit || l.orderRefs !== d.orderRefs || l.productName !== d.productName || l.productCode !== d.productCode || l.size !== d.size) {
+      } else if (l.deletedAt || l.quantity !== d.quantity || l.unit !== d.unit || l.orderRefs !== d.orderRefs || (l.remarks ?? null) !== d.remarks || l.productName !== d.productName || l.productCode !== d.productCode || l.size !== d.size) {
         await tx.update(erpProductionPlanLines).set({ ...values, deletedAt: null, deletedById: null, updatedAt: now, updatedById: null }).where(eq(erpProductionPlanLines.id, l.id));
         moved++;
       }

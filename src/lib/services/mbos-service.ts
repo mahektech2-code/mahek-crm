@@ -20,6 +20,8 @@ import {
 import type { Role } from "../role-levels";
 import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
+import { remoteFor } from "./mbos-remote-service";
+import type { RemotePayload } from "../engines/mbos-remote";
 import { dictationAvailability } from "../dictation-requests";
 import { visitAssistAvailability } from "../visit-assist-availability";
 import { leadVoiceAvailability } from "../lead-voice-availability";
@@ -1122,6 +1124,8 @@ export type BootstrapPayload = {
   myTours: unknown[];
   myApprovals: unknown[];
   config: Record<string, unknown>;
+  /** Switches, sentences and banners — `mbos-remote-service.ts`. Null when it could not be read. */
+  remote: RemotePayload | null;
 };
 
 /** How many timeline events per customer the snapshot carries. */
@@ -1300,6 +1304,7 @@ export async function buildBootstrap(
     myTours: own.myTours,
     myApprovals: own.myApprovals,
     config,
+    remote: await remoteFor(principal),
   };
 }
 
@@ -1479,18 +1484,48 @@ async function customersForDevice(ids: string[]) {
  * bootstrap reaches back ninety days, the delta whatever moved since.
  */
 async function myOrderStates(userId: string, sinceIso?: string) {
-  return db.execute<Record<string, unknown>>(sql`
+  const rows = await db.execute<Record<string, unknown>>(sql`
     select o.id, o.status::text as status, o.decline_reason as "declineReason",
            o.order_no as "orderNo", o.total_amount::double precision as "totalAmountPaise",
            o.line_items as "lineItems",
            (extract(epoch from o.approved_at) * 1000)::double precision as "decidedAt"
       from orders o
      where o.user_id = ${userId}
-       and o.source = 'mbos'
-       and ${sinceIso ? sql`o.updated_at > ${sinceIso}` : sql`o.created_at > now() - interval '90 days'`}
+       /* A field order the Order Hub gave its order number is the ERP's row now, and still his. */
+       and (o.source = 'mbos' or exists (select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.origin = 'mbos'))
+       and ${
+         sinceIso
+           ? /* Where it IS moves without the row: a check on its TO, Accounts or
+                the MRP check on its lines, a hold, a step of its tracking. */
+             sql`(o.updated_at > ${sinceIso}
+               or exists (select 1 from erp_order_intakes i where i.origin_order_id = o.id and i.updated_at > ${sinceIso})
+               or (o.external_ref like 'ERP-%' and exists (
+                     select 1 from erp_orders e where e.order_no::text = substring(o.external_ref from 5) and e.source = 'erp' and e.updated_at > ${sinceIso}
+                     union all select 1 from erp_order_holds h where h.order_no::text = substring(o.external_ref from 5) and coalesce(h.resolved_at, h.raised_at) > ${sinceIso}
+                     union all select 1 from erp_order_milestones m where m.order_no::text = substring(o.external_ref from 5) and coalesce(m.withdrawn_at, m.created_at) > ${sinceIso})))`
+           : sql`o.created_at > now() - interval '90 days'`
+       }
      order by o.updated_at asc
      limit 500
   `);
+  const list = [...rows] as Record<string, unknown>[];
+  if (!list.length) return list;
+  const { journeysForOrders } = await import("./order-journey-service");
+  const journeys = await journeysForOrders(list.map((r) => String(r.id)));
+  return list.map((r) => {
+    const j = journeys.get(String(r.id))?.journey;
+    if (!j) return r;
+    return {
+      ...r,
+      toNo: j.toNo,
+      erpOrderNo: j.orderNo,
+      journeyStatus: j.status,
+      journeyTone: j.tone,
+      journeyBanner: j.banner,
+      journeyEditable: j.editable,
+      journeySteps: j.steps,
+    };
+  });
 }
 
 /** The changes he asked for on approved orders, and what accounts said. */
@@ -3593,6 +3628,7 @@ export async function buildPull(
       products: [],
       timeline: [],
       config: await mbosConfigPayload(),
+      remote: await remoteFor(principal),
       notifications: [],
       transcripts: [],
       journeyStops: [],
@@ -3942,6 +3978,7 @@ export async function buildPull(
     products: changedProducts as unknown[],
     timeline: [...newTimeline.rows, ...missingTimeline] as unknown[],
     config: await mbosConfigPayload(),
+    remote: await remoteFor(principal),
     notifications: notificationsForWire(freshNotifications) as unknown[],
     transcripts: newTranscripts as unknown[],
     journeyStops: journeyRows as unknown[],

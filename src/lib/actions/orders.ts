@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import {
   approveOrder,
   declineOrder,
+  holdOrderForAccounts,
+  releaseOrderForAccounts,
 } from "@/lib/services/order-approval-service";
 import { fromThrown, type Result } from "@/lib/result";
 
@@ -39,6 +41,28 @@ export async function declineOrderAction(
 ): Promise<Result> {
   try {
     const r = await declineOrder(orderId, reason);
+    refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Accounts hold an order made through the Order Hub: it leaves the queue until released. */
+export async function holdOrderAction(orderId: string, reasonCode: string, note: string): Promise<Result> {
+  try {
+    const r = await holdOrderForAccounts(orderId, reasonCode, note);
+    refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Releasing puts it back in the queue, to be decided again. */
+export async function releaseOrderAction(orderId: string, note: string): Promise<Result> {
+  try {
+    const r = await releaseOrderForAccounts(orderId, note);
     refresh();
     return r;
   } catch (e) {

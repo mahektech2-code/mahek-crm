@@ -196,3 +196,21 @@ export function billedInMonthSql(customerId: string, key: string) {
   const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
   return billedValueSql(customerId, `'${key}-01'::date`, `'${next}-01'::date`);
 }
+
+/**
+ * "Waiting on Accounts" — the ONE reading of the Accounts approval queue, for
+ * every screen, badge, deadline and task that counts it. A TeleCRM or handset
+ * order is still a TO in the Order Hub until both checks are made (Accounts
+ * have nothing to decide yet), and an order Accounts put on hold sits on their
+ * own held list until released. Counting either here would raise deadlines
+ * and approval tasks for orders the queue does not show. `alias` names the
+ * `orders` table in the caller's query.
+ */
+export function awaitingAccountsSql(alias: string) {
+  const o = sql.raw(alias);
+  return sql`(${o}.status = 'pending_approval'
+    and not exists (select 1 from erp_order_intakes i where i.origin_order_id = ${o}.id and i.status <> 'verified')
+    and not (${o}.source = 'erp' and ${o}.external_ref like 'ERP-%' and exists (
+      select 1 from erp_order_holds h
+       where h.order_no::text = substring(${o}.external_ref from 5) and h.department = 'accounts' and h.resolved_at is null)))`;
+}

@@ -443,7 +443,35 @@ export type PunchedOrder = {
   cancelReason: string | null;
   syncState: string;
   syncMessage: string | null;
+  /* The Order Hub's reading, from the office; null until it has sent one. */
+  toNo: number | null;
+  erpOrderNo: number | null;
+  journeyStatus: string | null;
+  journeyTone: string | null;
+  journeyBanner: string | null;
+  journeyEditable: number | null;
+  journeySteps: string | null;
 };
+
+/** One rung of the ladder the office sent (`lib/order-journey.ts`). */
+export type JourneyStep = { key: string; label: string; state: 'done' | 'current' | 'hold' | 'todo'; at: string | null; note?: string };
+
+export function journeyStepsOf(o: Pick<PunchedOrder, 'journeySteps'>): JourneyStep[] {
+  if (!o.journeySteps) return [];
+  try {
+    const v = JSON.parse(o.journeySteps) as unknown;
+    return Array.isArray(v) ? (v as JourneyStep[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** "TO-1043" until the order number exists, then "Order 5819"; null where the office has said neither. */
+export function orderTitle(o: Pick<PunchedOrder, 'toNo' | 'erpOrderNo'>): string | null {
+  if (o.erpOrderNo != null) return `Order ${o.erpOrderNo}`;
+  if (o.toNo != null) return `TO-${o.toNo}`;
+  return null;
+}
 
 /**
  * The orders he has taken, newest first.
@@ -461,7 +489,9 @@ export type PunchedOrder = {
 export async function listOrders(customerId?: string): Promise<PunchedOrder[]> {
   const select = `SELECT o.id, o.customerId, c.name AS customerName, o.orderNumber, o.orderedAt,
                          o.deliveryDate, o.status, o.netTotalPaise, o.valueUnavailable,
-                         o.cancelReason, o.syncState, o.syncMessage
+                         o.cancelReason, o.syncState, o.syncMessage,
+                         o.toNo, o.erpOrderNo, o.journeyStatus, o.journeyTone, o.journeyBanner,
+                         o.journeyEditable, o.journeySteps
                     FROM orders o LEFT JOIN customers c ON c.id = o.customerId`;
   return customerId
     ? all<PunchedOrder>(

@@ -4377,7 +4377,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Late check-in grace",
     description:
-      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused as too late, and the day counts as unpaid leave (spec §6.2).",
+      "Minutes after the official in-time that still count as on time for the late / early remark. It never refuses a punch-in: people may punch in at any time, and past it the day is only remarked as late.",
     default: 30,
     min: 0,
     max: 240,

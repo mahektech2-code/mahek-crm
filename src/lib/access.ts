@@ -6,8 +6,13 @@ import {
   appAccess,
   appModuleAccess,
   attendance,
+  erpDesignations,
+  erpUserDesignations,
+  hireUserRoles,
   type User,
 } from "@/db/schema";
+import { levelLabel } from "./hat-labels";
+import { ROLE_LABEL, type HireRole } from "./hire/roles";
 import { APPS, webApps, type AppDefinition, type AppId } from "./apps";
 import {
   WHATSAPP_MODULES,
@@ -404,6 +409,32 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
     out.push({ ...app, count, status });
   }
 
+  return out;
+}
+
+/**
+ * WHAT EACH APP CALLS THIS PERSON, for the launcher's role badges.
+ *
+ * The level on the grant (Associate, Manager, Admin), except where an app
+ * names the job itself: Hire's role row and the ERP's designation. Those are
+ * set beside the grant on the Access screen and are the words the person sees
+ * inside that app, so the launcher says the same thing.
+ */
+export async function launcherRoles(userId: string): Promise<Partial<Record<AppId, string>>> {
+  const [grants, hire, erp] = await Promise.all([
+    db.select({ app: appAccess.app, role: appAccess.role }).from(appAccess).where(eq(appAccess.userId, userId)),
+    db.select({ role: hireUserRoles.role }).from(hireUserRoles).where(eq(hireUserRoles.userId, userId)).limit(1),
+    db
+      .select({ name: erpDesignations.name })
+      .from(erpUserDesignations)
+      .innerJoin(erpDesignations, eq(erpDesignations.id, erpUserDesignations.designationId))
+      .where(eq(erpUserDesignations.userId, userId))
+      .limit(1),
+  ]);
+  const out: Partial<Record<AppId, string>> = {};
+  for (const g of grants) out[g.app as AppId] = levelLabel(g.role ?? "associate");
+  if (out.hire && hire[0]) out.hire = ROLE_LABEL[hire[0].role as HireRole] ?? out.hire;
+  if (out.erp && erp[0]) out.erp = erp[0].name;
   return out;
 }
 

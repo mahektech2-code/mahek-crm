@@ -10,6 +10,7 @@
  *
  * Needs `mahekone_test` (npm run test:db). It truncates what it touches.
  */
+import { placeOrder } from "./test-orders";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -153,11 +154,10 @@ describe("production makes boxes with ids", () => {
 describe("the dispatch desk", () => {
   test("an order for 3 boxes of Nano 1 L, Ready and allocated to FP1BH", async () => {
     const a = await as(admin);
-    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "12", rate: "100" }])).ok);
+    assert.ok((await placeOrder(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "12", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select id, order_no as no from erp_orders`)) as unknown as { id: string; no: number }[];
     orderNo = Number(o.no);
     lineId = o.id;
-    assert.ok((await mod("orders").actions!.verifyOrder(a, lineId, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, lineId, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(a, { lot: "FP1BH", qty: "3" }, [], lineId)).ok);
     assert.ok((await mod("orders").actions!.bill(a, lineId, { invoiceNo: "INV-261008-00456", invoiceDate: TODAY })).ok);
@@ -250,9 +250,8 @@ describe("a lot label at the desk (stock packed before box ids)", () => {
     assert.ok((await mod("packBatches").forms!.new(a, { date: TODAY, godown: "Bhiwandi", fg: FG1, sku: BOX1, boxes: "2", lot: "FG1BH" }, [])).ok);
     await db.execute(sql`delete from erp_unit_events where unit_id in (select id from erp_units where lot_code = 'FP5BH')`);
     await db.execute(sql`delete from erp_units where lot_code = 'FP5BH'`);
-    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
+    assert.ok((await placeOrder(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select id, order_no as no from erp_orders order by order_no desc limit 1`)) as unknown as { id: string; no: number }[];
-    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
 
     const c = await as(clerk);
@@ -394,9 +393,8 @@ describe("a loose order at the dispatch desk", () => {
     /* The list used to be built from boxed lines only, so a loose order's was
        always empty and its cans could only be scanned one by one. */
     const a = await as(admin);
-    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "2", rate: "100" }])).ok);
+    assert.ok((await placeOrder(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "2", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
-    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
 
     const board = await dispatchBoard(Number(o.no));
@@ -415,10 +413,9 @@ describe("confirming dispatch from the desk", () => {
     /* Order 10058 left with no lot code — the gate read "no lot" as "packed before box ids" — and once an
        administrator marked it not verified, the desk still offered Confirm and refused with "Bill it first". */
     const a = await as(admin);
-    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "1", rate: "100" }])).ok);
+    assert.ok((await placeOrder(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "1", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
     const no = Number(o.no);
-    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
     const billed = await mod("orders").actions!.bill(a, o.id, { invoiceNo: `MMI/T/${tag}`, invoiceDate: TODAY });
     assert.ok(billed.ok, msg(billed));

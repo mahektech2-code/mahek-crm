@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { cache } from "react";
@@ -80,7 +81,7 @@ async function rules(): Promise<Rule[]> {
     `)),
     one(db.execute<{ n: number; v: string; oldest: string | null }>(sql`
       select count(*)::int as n, coalesce(sum(total_amount), 0)::text as v, min(created_at)::text as oldest
-        from orders where status = 'pending_approval'
+        from orders where ${awaitingAccountsSql("orders")}
     `)),
     db.execute<{ id: string; name: string; ref: string | null; to: string; shops: number }>(sql`
       select l.id, l.name, l.ref_no as ref, l.effective_to::text as to, 0 as shops

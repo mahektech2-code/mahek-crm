@@ -126,12 +126,19 @@ export function AccountsShell({
           badge: counts.orders,
           urgent: counts.ordersUrgent,
         },
-        {
-          href: "/accounts/order-changes",
-          label: "Order changes",
-          icon: "approve",
-          badge: counts.orderChanges,
-        },
+        /* RETIRED by the Order Hub: an order with its order number is not
+           changed, so nothing new arrives here. Shown only while requests
+           sent before it are still waiting to be decided. */
+        ...(counts.orderChanges
+          ? [
+              {
+                href: "/accounts/order-changes",
+                label: "Order changes",
+                icon: "approve" as const,
+                badge: counts.orderChanges,
+              },
+            ]
+          : []),
         {
           href: "/accounts/payments",
           label: "Payments to confirm",

@@ -59,7 +59,7 @@ test("an order is billed whole: verified, every live line Ready, rates, an appro
   assert.deepEqual(orderBillBlockers([line({}), line({ id: "b", status: "Cancel", ratePaise: null })]), [], "a cancelled line does not hold the bill");
   assert.deepEqual(orderBillBlockers([line({ orderCheck: "Pending" })]), ["the back office to verify the order"]);
   const [why] = orderBillBlockers([line({}), line({ id: "b", label: "Astar 20 L", status: "Under Process" })]);
-  assert.match(why, /Astar 20 L to be Ready — or moved to a new order/);
+  assert.match(why, /Astar 20 L to be Ready — or cancelled/);
   assert.deepEqual(orderBillBlockers([line({ ratePaise: null })]), ["a rate on Nano 1 L"]);
   assert.deepEqual(orderBillBlockers([line({ billed: true })]), ["already billed"]);
 });

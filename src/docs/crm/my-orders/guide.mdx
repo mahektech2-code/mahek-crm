@@ -1,0 +1,34 @@
+**My orders** lists every order you took on a call, newest first, and says where each one is.
+
+An order taken on a call starts as a **TO number**, such as TO-1042. The back office and the Production Head check it. When both have, it gets its **order number** and goes to Accounts.
+
+<Wireframe url="/crm/my-orders" nav={["Dashboard", "#Daily calling", "Call Log", "Opportunities", "My orders"]} active="My orders" caption="My orders, on the TO tab">
+  <WfBar><WfTitle>My orders</WfTitle></WfBar>
+  <WfTabs items={["TO · being checked", "On hold or sent back", "With accounts", "In production and on the way", "Delivered or closed"]} active="TO · being checked" />
+  <WfTable columns={["Order", "Customer", "What", "Status", "Action"]} rows={[
+    [<b key="a">TO-1042</b>, "Customer A", "Nano Thinner 20 L × 6 · 120 L", <WfPill key="b" tone="brand">Order check</WfPill>, "Change · Cancel TO"],
+    [<b key="c">TO-1039</b>, "Customer B", "PU Thinner 5 L × 24", <WfPill key="d" tone="warn">Sent back</WfPill>, "Change · Cancel TO"],
+  ]} />
+</Wireframe>
+
+## The tabs
+
+- **TO · being checked**: not yet checked by both people. You can still change these.
+- **On hold or sent back**: held by a desk, or sent back to you to correct. The reason is on the row.
+- **With accounts**: it has its order number and waits for Accounts.
+- **In production and on the way**: approved, being made, billed or on the lorry.
+- **Delivered or closed**: delivered, cancelled or declined.
+
+Click the TO or order number to see every step with its time and who did it.
+
+## Changing a TO
+
+While it is a TO, the row has **Change** and **Cancel TO**:
+
+- **Change** lets you change the cans, remove a product or add one. A product you add is priced from the shop's price list. If the list has no rate, the back office adds it.
+- Any change clears both checks. The back office and the Production Head check it again.
+- **Cancel TO** asks why, and the order is cancelled.
+
+Once it has its order number, it cannot be changed. To change it, ask the office to cancel it and take a new one.
+
+The same steps show on the customer record's **Orders** tab, and on the Salesman App's order list.

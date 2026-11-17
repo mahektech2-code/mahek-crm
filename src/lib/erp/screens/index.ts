@@ -18,13 +18,14 @@ import { SCRAP_SCREENS } from "./scrap";
 import { RETURN_SCREENS } from "./returns";
 import { CAN_GROUP_SCREENS } from "./can-groups";
 import { MONEY_SCREENS } from "./money";
+import { ORDER_HUB_SCREENS } from "./order-hub";
 
 /* ---------------------------------------------------------------------------
  * Every built ERP screen's server module, by screen key. A key with no module
  * here is a screen the registry lists but that is not built yet.
  * ------------------------------------------------------------------------- */
 
-const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_FLOW_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen, ...UNIT_SCREENS, uomsScreen, ...STOCK_CHECK_SCREENS, ...SCRAP_SCREENS, ...RETURN_SCREENS, ...CAN_GROUP_SCREENS, ...MONEY_SCREENS];
+const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_FLOW_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen, ...UNIT_SCREENS, uomsScreen, ...STOCK_CHECK_SCREENS, ...SCRAP_SCREENS, ...RETURN_SCREENS, ...CAN_GROUP_SCREENS, ...MONEY_SCREENS, ...ORDER_HUB_SCREENS];
 
 const BY_KEY = new Map(ALL.map((m) => [m.key, m]));
 

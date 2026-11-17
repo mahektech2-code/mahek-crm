@@ -25,6 +25,14 @@ const NONE = new Set<string>();
 const ALL_PROSPECT = new Set(PROSPECT_CONDITIONS.map((c) => c.id));
 const ALL_QUAL = new Set(QUALIFICATION_CONDITIONS.map((c) => c.id));
 
+/* THE REPEATS: Prospect questions that are a Suspect question asked again, and
+   Qualification questions whose only answer is already a Suspect row. Each is
+   the same stored answer, so the review draws it once, on the Suspect row. */
+const PROSPECT_REPEATS = ["customer_type", "monthly_litres", "competitor", "required_product", "gstin"];
+const QUALIFICATION_REPEATS = ["gst_verified", "application_understood"];
+const PROSPECT_ONLY = PROSPECT_CONDITIONS.filter((c) => !PROSPECT_REPEATS.includes(c.id));
+const QUALIFICATION_ONLY = QUALIFICATION_CONDITIONS.filter((c) => !QUALIFICATION_REPEATS.includes(c.id));
+
 const EMPTY: ReviewSource = {
   salesType: "direct",
   customerType: null,
@@ -87,11 +95,16 @@ describe("every CURRENT question is on the review", () => {
   test("all the Calling Desk's fields, in the desk's order", () => {
     assert.deepEqual(rows.filter((r) => r.section === "suspect").map((r) => r.id), DESK_FIELDS.map((f) => f.key));
   });
-  test("all the Prospect questions", () => {
-    assert.deepEqual(rows.filter((r) => r.section === "prospect").map((r) => r.id), PROSPECT_CONDITIONS.map((c) => c.id));
+  test("the Prospect questions the Suspect list did not already ask", () => {
+    assert.deepEqual(rows.filter((r) => r.section === "prospect").map((r) => r.id), PROSPECT_ONLY.map((c) => c.id));
+    assert.deepEqual(PROSPECT_ONLY.map((c) => c.id), ["contact_person", "next_action", "prospect_reason"]);
   });
-  test("all eight Qualification questions", () => {
-    assert.deepEqual(rows.filter((r) => r.section === "qualification").map((r) => r.id), QUALIFICATION_CONDITIONS.map((c) => c.id));
+  test("the Qualification questions that add something the review has not already drawn", () => {
+    assert.deepEqual(rows.filter((r) => r.section === "qualification").map((r) => r.id), QUALIFICATION_ONLY.map((c) => c.id));
+  });
+  test("the whole review is 20 unique rows, the Prospect-stage one 14", () => {
+    assert.equal(rows.length, 20);
+    assert.equal(buildReviewRows(EMPTY, { ...READER, kind: "prospect" }).length, 14);
   });
   test("the counts are the current ones: 11, 8 (GST number added) and 8", () => {
     assert.equal(DESK_FIELDS.length, 11);
@@ -101,19 +114,51 @@ describe("every CURRENT question is on the review", () => {
   test("the two optional Prospect questions are drawn, but are not 'required'", () => {
     const rows = buildReviewRows(EMPTY, READER);
     for (const id of ["contact_person", "prospect_reason"]) assert.equal(rows.find((r) => r.key === `prospect:${id}`)!.required, false, id);
-    for (const id of ["gstin", "customer_type", "monthly_litres", "competitor", "required_product", "next_action"]) {
-      assert.equal(rows.find((r) => r.key === `prospect:${id}`)!.required, true, id);
+    assert.equal(rows.find((r) => r.key === "prospect:next_action")!.required, true);
+    /* The repeated ones are required where they are drawn now: on the Suspect row. */
+    for (const k of ["customerType", "monthlyLitres", "competitor", "requiredProductId", "gstin"]) {
+      assert.equal(rows.find((r) => r.key === `suspect:${k}`)!.required, true, k);
     }
   });
-  test("the Prospect GST question is the same stored answer as the Suspect one", () => {
-    const f = fieldOf(buildReviewRows(FULL, APPROVER), "prospect:gstin", "gstin");
-    assert.equal(f.editKey, null);
-    assert.ok(f.sameAs);
+  test("a repeated question is drawn once: the Prospect and Qualification copies are gone", () => {
+    const r = buildReviewRows(FULL, APPROVER);
+    for (const id of PROSPECT_REPEATS) assert.equal(r.some((x) => x.key === `prospect:${id}`), false, id);
+    for (const id of QUALIFICATION_REPEATS) assert.equal(r.some((x) => x.key === `qualification:${id}`), false, id);
+    /* …and its answer is still on the Suspect row, unchanged. */
+    assert.equal(fieldOf(r, "suspect:gstin", "gstin").value, "27ABCDE1234F1Z5");
+    assert.equal(fieldOf(r, "suspect:application", "application").value, "Wood polish");
+  });
+  test("no stored answer has two boxes anywhere on the review", () => {
+    const ids = buildReviewRows(FULL, APPROVER).flatMap((r) => r.fields.map((f) => f.id));
+    assert.equal(new Set(ids).size, ids.length, `a box is drawn twice: ${ids.join(", ")}`);
+    assert.ok(buildReviewRows(FULL, APPROVER).flatMap((r) => r.fields).every((f) => !f.sameAs));
+  });
+  test("Qualification keeps only the part of a shared question that nothing above asked", () => {
+    const r = buildReviewRows(FULL, APPROVER);
+    const boxes = (key: string) => r.find((x) => x.key === key)!.fields.map((f) => f.id);
+    assert.deepEqual(boxes("qualification:people_identified"), ["decision_maker_phone", "buyer_same", "buyer_phone", "payer", "payer_same", "payer_phone"]);
+    assert.deepEqual(boxes("qualification:price_and_credit"), ["price_range", "price_reaction"]);
+  });
+  test("before Qualification opens its questions are not built, and the Prospect review is 14 rows", () => {
+    const r = buildReviewRows(FULL, { ...APPROVER, kind: "prospect" });
+    assert.equal(r.some((x) => x.section === "qualification"), false);
+    assert.equal(r.length, 14);
+  });
+  test("a duplicate's gate verdict is kept on the one row: GST not yet validated reads as unanswered at Qualification only", () => {
+    const pending = { ...FULL, unmetQualification: new Set(["gst_verified"]) };
+    assert.equal(buildReviewRows(pending, APPROVER).find((x) => x.key === "suspect:gstin")!.answered, false);
+    assert.equal(buildReviewRows(pending, { ...APPROVER, kind: "prospect" }).find((x) => x.key === "suspect:gstin")!.answered, true);
+    const unmetApplication = { ...FULL, unmetQualification: new Set(["application_understood"]) };
+    assert.equal(buildReviewRows(unmetApplication, APPROVER).find((x) => x.key === "suspect:application")!.answered, false);
+  });
+  test("an unmet Prospect gate condition shows on the Suspect row that now carries it", () => {
+    const r = buildReviewRows({ ...FULL, unmetProspect: new Set(["monthly_litres"]) }, APPROVER);
+    assert.equal(r.find((x) => x.key === "suspect:monthlyLitres")!.answered, false);
   });
   test("labels are the existing definitions, not a second wording", () => {
     for (const f of DESK_FIELDS) assert.equal(rows.find((r) => r.key === `suspect:${f.key}`)?.label, f.label);
-    for (const c of PROSPECT_CONDITIONS) assert.equal(rows.find((r) => r.key === `prospect:${c.id}`)?.label, c.says);
-    for (const c of QUALIFICATION_CONDITIONS) assert.equal(rows.find((r) => r.key === `qualification:${c.id}`)?.label, c.says);
+    for (const c of PROSPECT_ONLY) assert.equal(rows.find((r) => r.key === `prospect:${c.id}`)?.label, c.says);
+    for (const c of QUALIFICATION_ONLY) assert.equal(rows.find((r) => r.key === `qualification:${c.id}`)?.label, c.says);
   });
   test("every Qualification answer key the gate stores has a box", () => {
     const boxed = new Set(Object.values(QUALIFICATION_FIELDS).flat().map((s) => s.id));
@@ -163,7 +208,9 @@ describe("answered is the GATE's verdict, and missing answers are flagged", () =
   });
   test("a blank lead shows every required answer as missing", () => {
     const t = reviewTally(buildReviewRows(EMPTY, APPROVER));
-    assert.ok(t.missingRequired >= PROSPECT_CONDITIONS.filter((c) => !c.optional).length + QUALIFICATION_CONDITIONS.length);
+    /* Six Suspect rows now carry a required question (customer type, litres, product,
+       competitor, GST, application), plus next action and the six Qualification rows. */
+    assert.equal(t.missingRequired, 13);
   });
 });
 
@@ -175,9 +222,7 @@ describe("what an approver may edit — and what the CRM keeps for the Salesman"
   test("one stored answer is edited in one place only", () => {
     const keys = buildReviewRows(FULL, APPROVER).flatMap((r) => r.fields).filter((f) => f.editKey).map((f) => f.editKey);
     assert.equal(new Set(keys).size, keys.length);
-    const second = fieldOf(buildReviewRows(FULL, APPROVER), "prospect:required_product", "requiredProductId");
-    assert.equal(second.editKey, null);
-    assert.ok(second.sameAs);
+    assert.ok(keys.includes("requiredProductId"));
   });
   test("the Calling Desk's address and email, next action and history are read only", () => {
     const rows = buildReviewRows(FULL, APPROVER);

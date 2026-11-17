@@ -107,3 +107,19 @@ test("an order's loose line carries the code a typed loose line would", async ()
   const [c] = orderDemand([{ ...base, skuId: "b1", skuName: "M126 (4 Can/Box)", skuCode: "BOX", looseCode: "M126-20L", cansPerBox: 4, qtyCans: 8 }]);
   assert.equal(c.productCode, "BOX");
 });
+
+test("an order line brings the customer's own remark, each said once", async () => {
+  const { orderDemand } = await import("./production-plan");
+  const base = { skuCode: null, millilitres: 20000, finishedGoodId: "fg20", finishedGoodName: "Nano Thinner 20 L", skuId: "l20", skuName: "NANO20 (Loose)", cansPerBox: 1, qtyCans: 2 };
+  const [a] = orderDemand([
+    { ...base, orderNo: 1, remark: "Deliver by Friday" },
+    { ...base, orderNo: 2, remark: "  deliver   by friday " },
+    { ...base, orderNo: 3, remark: "Blue cans only" },
+    { ...base, orderNo: 4, remark: null },
+  ]);
+  assert.equal(a.remarks, "Deliver by Friday · Blue cans only");
+  const [b] = orderDemand([{ ...base, orderNo: 5 }]);
+  assert.equal(b.remarks, null);
+  const [c] = orderDemand([{ ...base, orderNo: 6, remark: "x".repeat(400) }]);
+  assert.equal(c.remarks!.length, 300);
+});

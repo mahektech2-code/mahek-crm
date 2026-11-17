@@ -1,0 +1,33 @@
+Every order now starts as a **TO number** — a temporary order — wherever it was taken: on a TeleCRM call, on the Salesman App, or typed into the ERP from WhatsApp or a phone call. It gets its **order number** only after two people have checked it. After that, Accounts approve it and the Production Head clears it against materials before anything is made.
+
+## The flow
+
+1. **An order is taken.** It lands in **Sales › Order Hub** as a TO, with where it came from and who took it. Whoever took it can still change it.
+2. **Two checks.** The back office checks the party, products, quantities and rates; the Production Head checks for duplicates, the products and the quantities. Either can go first. The **second** check makes the order number, and from then on the order is not changed.
+3. **Accounts.** The order goes to **Accounts › Order approvals**. Accounts approve it, hold it, or decline it with a reason. Approving sends the customer "Order confirmed".
+4. **MRP check.** The Production Head sees what the order needs against what is on the shelf, in the tank and in the store, ticks that the floor can make it, and clears it — or holds it.
+5. **Production.** A cleared order joins Under Process and the day's plan, and goes on exactly as before: Ready, Bill it, invoice check, dispatch, Logistics.
+
+## The Order Hub
+
+- **Need checks** — every TO waiting. **Verify** makes your check; the button says which one.
+- **⋯** has **Edit TO**, **Send back for correction** (to whoever took it, with your reason), **Put on hold** and **Cancel TO**.
+- A TO with a line that has no rate, or no godown, cannot be verified until it is edited: once it has its order number it cannot be changed.
+- Editing a TO clears both checks.
+
+## After the order number
+
+There is no Edit order, no Edit this line, no Add another, no Move to a new order and no Undo verification. **Dispatch details** still sets the dispatch day, the transporter and the freight. Cancel, Delete, holds, Undo billing and the rest keep the rules they always had. To change an order, cancel it and take a new one.
+
+## To Hold
+
+**Sales › To Hold** lists every held TO and order from every desk: Order verification, Accounts, Production and the Office. Each row says who held it, why and when, and **Release** sends it back to the desk that held it, which checks it again:
+
+| Held by | Release sends it |
+|---|---|
+| Order verification | back to the Order Hub for both checks |
+| Accounts | back to Accounts › Order approvals |
+| Production (MRP) | back to the MRP check |
+| Office | back to where its lines were |
+
+Accounts release their own holds from **Order approvals › Orders on hold**.

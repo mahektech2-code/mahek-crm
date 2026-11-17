@@ -6441,6 +6441,24 @@ export const mbosPushReceipts = pgTable(
   ],
 );
 
+/**
+ * Switches, sentences and banners the office changes on salesmen's phones
+ * without a release — `lib/engines/mbos-remote.ts`. Keys are fenced to
+ * `feature.`/`menu.`/`text.`/`banner.` by a CHECK, so nothing here can shadow a
+ * configuration key, and none can name location or tracking (`0346_mbos_remote`).
+ */
+export const mbosRemoteItems = pgTable("mbos_remote_items", {
+  key: text("key").primaryKey(),
+  kind: text("kind").notNull(),
+  value: jsonb("value").notNull(),
+  audience: jsonb("audience").notNull().default({}),
+  enabled: boolean("enabled").notNull().default(true),
+  note: text("note").notNull().default(""),
+  version: integer("version").notNull().default(1),
+  updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const mbosDevices = pgTable(
   "mbos_devices",
   {
@@ -12811,6 +12829,18 @@ export const erpOrders = pgTable(
     rateSetById: text("rate_set_by_id").references(() => users.id),
     rateSetAt: timestamp("rate_set_at", { withTimezone: true }),
     discountAuthorisedById: text("discount_authorised_by_id").references(() => users.id),
+    /* ---- 0347: the Order Hub. See "The Order Hub" in AGENTS.md. ---- */
+    /** The TO this line was made from; null on every line from before the hub. */
+    intakeId: text("intake_id").references((): AnyPgColumn => erpOrderIntakes.id),
+    /** Pending | Approved | Hold | Declined — Accounts' check of the order. Defaults Approved so older lines move as before. */
+    accountsCheck: text("accounts_check").notNull().default("Approved"),
+    accountsCheckedById: text("accounts_checked_by_id").references(() => users.id),
+    accountsCheckedAt: timestamp("accounts_checked_at", { withTimezone: true }),
+    /** Pending | Cleared | Hold — the Production Head's MRP check. Defaults Cleared for the same reason. */
+    productionCheck: text("production_check").notNull().default("Cleared"),
+    productionCheckedById: text("production_checked_by_id").references(() => users.id),
+    productionCheckedAt: timestamp("production_checked_at", { withTimezone: true }),
+    productionNote: text("production_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -12822,6 +12852,90 @@ export const erpOrders = pgTable(
     uniqueIndex("erp_orders_source_ref_key").on(t.sourceRef).where(sql`${t.sourceRef} is not null`),
     check("erp_orders_source_check", sql`${t.source} in ('erp', 'sheet')`),
   ],
+);
+
+/**
+ * A TEMPORARY ORDER — the TO number. Every order starts here, from the ERP
+ * form, a TeleCRM call or the Salesman App, and nothing downstream sees it
+ * until the back office AND the Production Head have checked it; the second
+ * check makes the order number and writes `erp_orders`. Editable only while it
+ * is a TO. Rules: `lib/erp/engines/order-hub.ts`.
+ */
+export const erpOrderIntakes = pgTable(
+  "erp_order_intakes",
+  {
+    id: text("id").primaryKey(),
+    toNo: integer("to_no").notNull(),
+    /** open | correction | hold | verified | cancelled. */
+    status: text("status").notNull().default("open"),
+    /** Where it was taken: erp | crm | mbos. */
+    origin: text("origin").notNull().default("erp"),
+    /** The TeleCRM / Salesman App `orders` row this TO is; the book adopts it when the order number is made. */
+    originOrderId: text("origin_order_id").references(() => orders.id, { onDelete: "set null" }),
+    orderSource: text("order_source"),
+    orderDate: date("order_date").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    billingCustomerId: text("billing_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    deliveryCustomerId: text("delivery_customer_id").references(() => customers.id),
+    transporter: text("transporter"),
+    dispatchOn: date("dispatch_on"),
+    remark: text("remark"),
+    inboxId: text("inbox_id"),
+    takenById: text("taken_by_id").references(() => users.id),
+    backOfficeById: text("back_office_by_id").references(() => users.id),
+    backOfficeAt: timestamp("back_office_at", { withTimezone: true }),
+    backOfficeNote: text("back_office_note"),
+    productionById: text("production_by_id").references(() => users.id),
+    productionAt: timestamp("production_at", { withTimezone: true }),
+    productionNote: text("production_note"),
+    correctionNote: text("correction_note"),
+    correctionById: text("correction_by_id").references(() => users.id),
+    correctionAt: timestamp("correction_at", { withTimezone: true }),
+    holdReason: text("hold_reason"),
+    holdNote: text("hold_note"),
+    heldById: text("held_by_id").references(() => users.id),
+    heldAt: timestamp("held_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    orderNo: integer("order_no"),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_order_intakes_to_no_key").on(t.toNo),
+    uniqueIndex("erp_order_intakes_order_no_key").on(t.orderNo).where(sql`${t.orderNo} is not null`),
+    uniqueIndex("erp_order_intakes_origin_order_key").on(t.originOrderId).where(sql`${t.originOrderId} is not null`),
+    check("erp_order_intakes_status_check", sql`${t.status} in ('open','correction','hold','verified','cancelled')`),
+    check("erp_order_intakes_origin_check", sql`${t.origin} in ('erp','crm','mbos')`),
+  ],
+);
+
+export const erpOrderIntakeLines = pgTable(
+  "erp_order_intake_lines",
+  {
+    id: text("id").primaryKey(),
+    intakeId: text("intake_id")
+      .notNull()
+      .references(() => erpOrderIntakes.id, { onDelete: "cascade" }),
+    position: integer("position").notNull().default(0),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    qtyCans: integer("qty_cans").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    discountBp: integer("discount_bp"),
+    listRatePaise: bigint("list_rate_paise", { mode: "number" }),
+    rateSetById: text("rate_set_by_id").references(() => users.id),
+    rateSetAt: timestamp("rate_set_at", { withTimezone: true }),
+    discountAuthorisedById: text("discount_authorised_by_id").references(() => users.id),
+    remark: text("remark"),
+  },
+  (t) => [index("erp_order_intake_lines_intake_idx").on(t.intakeId, t.position)],
 );
 
 /** A lot allocated to an order line: it takes the stock the moment it is written (spec §11.4). */
@@ -13504,6 +13618,8 @@ export const erpOrderHolds = pgTable(
     transportIds: text("transport_ids").array().notNull().default(sql`'{}'::text[]`),
     /** Line id → its status before the hold, so resolving puts each back. */
     lineStatuses: jsonb("line_statuses").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    /** Which desk held it — office | accounts | production — so releasing sends it back there (0347). */
+    department: text("department").notNull().default("office"),
     raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
     raisedById: text("raised_by_id").references(() => users.id),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),

@@ -1,4 +1,5 @@
 import "server-only";
+import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -98,7 +99,7 @@ export async function pendingOrders(): Promise<PendingOrder[]> {
       from orders o
       join customers c on c.id = o.customer_id
       left join users u on u.id = o.user_id
-     where o.status = 'pending_approval'
+     where ${awaitingAccountsSql("o")}
      order by o.ordered_at asc
   `);
 
@@ -239,11 +240,19 @@ async function tellTheAuthor(
   });
 }
 
+/** A TO still waiting for its two checks has no order number: Accounts decide it only after. */
+async function stillATo(orderId: string): Promise<string | null> {
+  const rows = (await db.execute(sql`select to_no as "toNo" from erp_order_intakes where origin_order_id = ${orderId} and status <> 'verified'`)) as unknown as { toNo: number }[];
+  return rows[0] ? `It is still TO-${rows[0].toNo}: the back office and the Production Head check it before Accounts do.` : null;
+}
+
 export async function approveOrder(orderId: string): Promise<Result> {
   const ctx = await requireCapability("order.approve");
 
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   if (!order) return err("That order no longer exists.", "not_found");
+  const asTo = await stillATo(orderId);
+  if (asTo) return err(asTo, "rule_violation");
   if (order.status !== "pending_approval") {
     // Two people opened the same queue. Say which way it went rather than
     // silently overwriting somebody else's decision.
@@ -327,6 +336,8 @@ export async function declineOrder(
   reason: string,
 ): Promise<Result> {
   const ctx = await requireCapability("order.approve");
+  const asTo = await stillATo(orderId);
+  if (asTo) return err(asTo, "rule_violation");
 
   // A refusal the telecaller cannot read is a row nobody can act on — they
   // have to ring the customer back and say something.
@@ -390,4 +401,66 @@ export async function pendingOrderCount(): Promise<number> {
     sql`select count(*)::int as n from orders o where o.status = 'pending_approval'`,
   );
   return Number(rows[0]?.n ?? 0);
+}
+
+/* =========================================================== ACCOUNTS HOLD
+ * An order made through the Order Hub can be held by Accounts instead of
+ * approved or declined: it leaves the queue for "Orders on hold", and
+ * releasing it puts it back in the queue to be decided again. The hold itself
+ * is the ERP's (`erp_order_holds`, department accounts), so To Hold lists it
+ * beside every other desk's.
+ * ------------------------------------------------------------------------ */
+
+function erpOrderNo(order: { source: string; externalRef: string | null }): number | null {
+  if (order.source !== "erp" || !order.externalRef?.startsWith("ERP-")) return null;
+  const n = Number(order.externalRef.slice(4));
+  return Number.isInteger(n) ? n : null;
+}
+
+export async function holdOrderForAccounts(orderId: string, reasonCode: string, note: string): Promise<Result> {
+  const ctx = await requireCapability("order.approve");
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+  if (!order) return err("That order no longer exists.", "not_found");
+  if (order.status !== "pending_approval") return err("That order was already decided.", "conflict");
+  const no = erpOrderNo(order);
+  if (no == null) return err("Only an order made through the Order Hub is held here. Approve or decline this one.", "rule_violation");
+  if (!note.trim()) return err("Write the remark — what you are waiting for.", "validation", [{ field: "reason", message: "A remark is required." }]);
+  const { holdOrder, ACCOUNTS_HOLD_REASONS } = await import("../erp/screens/order-hub");
+  if (!ACCOUNTS_HOLD_REASONS.some((r) => r.code === reasonCode)) return err("Pick the reason.", "validation");
+  const res = await holdOrder(ctx.user.id, no, "accounts", reasonCode, note.trim(), null);
+  if (!res.ok) return res;
+  await db.insert(auditLog).values({ id: id("aud"), actorId: ctx.user.id, actorRole: ctx.authorisedBy, actorApp: ctx.authorisedIn, action: "order.hold", entityType: "order", entityId: orderId, afterState: { reason: reasonCode, note } as never });
+  if (order.userId)
+    await notifyUser({ userId: order.userId, title: `Order ${no} is on hold with Accounts`, body: note.trim(), kind: "warn", general: true }).catch(() => undefined);
+  return okVoid(`Order ${no} is on hold`);
+}
+
+export async function releaseOrderForAccounts(orderId: string, note: string): Promise<Result> {
+  const ctx = await requireCapability("order.approve");
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+  if (!order) return err("That order no longer exists.", "not_found");
+  const no = erpOrderNo(order);
+  if (no == null) return err("That order is not held here.", "rule_violation");
+  if (!note.trim()) return err("Say what changed.", "validation", [{ field: "reason", message: "Say what changed." }]);
+  const { releaseOrderHold } = await import("../erp/screens/order-hub");
+  const res = await releaseOrderHold(ctx.user.id, no, "accounts", note.trim());
+  if (!res.ok) return res;
+  await db.insert(auditLog).values({ id: id("aud"), actorId: ctx.user.id, actorRole: ctx.authorisedBy, actorApp: ctx.authorisedIn, action: "order.release", entityType: "order", entityId: orderId, afterState: { note } as never });
+  return okVoid(`Order ${no} is back in the queue`);
+}
+
+export type HeldOrder = { orderId: string; orderNo: number; customerName: string; amount: number; reason: string; note: string | null; heldBy: string | null; heldAt: Date };
+
+/** The orders Accounts hold, oldest first. */
+export async function heldOrders(): Promise<HeldOrder[]> {
+  const rows = (await db.execute(sql`
+    select o.id as "orderId", h.order_no as "orderNo", c.name as "customerName", o.total_amount as amount, h.reason, h.internal_note as note, u.name as "heldBy", h.raised_at as "heldAt"
+      from erp_order_holds h
+      join orders o on o.external_ref = 'ERP-' || h.order_no and o.source = 'erp'
+      join customers c on c.id = o.customer_id
+      left join users u on u.id = h.raised_by_id
+     where h.department = 'accounts' and h.resolved_at is null
+     order by h.raised_at
+  `)) as unknown as HeldOrder[];
+  return rows.map((r) => ({ ...r, orderNo: Number(r.orderNo), amount: Number(r.amount), heldAt: new Date(r.heldAt) }));
 }

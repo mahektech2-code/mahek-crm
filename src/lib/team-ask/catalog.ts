@@ -317,7 +317,7 @@ export const TABLES: TableSpec[] = [
   {
     table: "orders",
     about:
-      "Orders: customer_id, user_id (who took it; null for sheet orders), ordered_at, total_amount (paise, GST in), net_amount_paise (excl. GST), status (pending_approval/confirmed/dispatched/in_transit/delivered/declined/cancelled), line_items (jsonb), source. Counting sales: status in ('confirmed','dispatched','in_transit','delivered').",
+      "Orders: customer_id, user_id (who took it; null for sheet orders), ordered_at, total_amount (paise, GST in), net_amount_paise (excl. GST), status (pending_approval/confirmed/dispatched/in_transit/delivered/declined/cancelled), line_items (jsonb), source. Counting sales: status in ('confirmed','dispatched','in_transit','delivered'). A TeleCRM or handset order stays pending_approval while it is still a TO (temporary order) in the ERP's Order Hub; it is not yet waiting on Accounts.",
     modules: ["sales.orders", "sales.performance", "sales.today"],
     scope: { kind: "customer", col: "customer_id", orUser: ["user_id"] },
   },

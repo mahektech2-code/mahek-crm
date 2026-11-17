@@ -77,7 +77,6 @@ export async function TeamTodayView({ ctx, sp }: { ctx: HrmsContext; sp: Record<
         <Figure l="On a break" v={count("b")} tone="text-warn-ink" />
         <Figure l="Idle now" v={count("i")} tone="text-danger" />
         <Figure l="Not punched in" v={count("o")} />
-        <Figure l="Late today" v={people.filter((p) => p.late).length} />
       </CardGrid>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -112,7 +111,7 @@ export async function TeamTodayView({ ctx, sp }: { ctx: HrmsContext; sp: Record<
                       <span className={cx("rounded-full px-2.5 py-0.5 text-[12px] font-semibold whitespace-nowrap", NOW_CLS[p.kind] ?? NOW_CLS.o)}>{p.kind === "o" ? "Not punched in" : p.now || "Not punched in"}</span>
                     </td>
                     <td className="px-3 py-2.5 font-mono">
-                      {ampm(p.in)} {p.late ? <span className="ml-1 rounded bg-danger-soft px-1 text-[10px] font-bold text-danger">LATE</span> : null}
+                      {ampm(p.in)}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono">{p.worked ? dur(p.worked) : "—"}</td>
                     <td className="px-3 py-2.5 text-right font-mono">{p.breaks ? dur(p.breaks) : p.worked ? "0:00" : "—"}</td>
