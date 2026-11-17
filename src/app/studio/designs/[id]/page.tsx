@@ -30,7 +30,7 @@ export default async function DesignDraft({ params }: { params: Promise<{ id: st
   const published = row.status === "approved";
   const versions = row.status === "draft" ? [] : await designVersions(row.id);
   return (
-    <div className="mx-auto max-w-[1280px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <div className="mb-1 text-[13px] text-muted">
         <Link href={approver && row.createdById !== user.id ? "/studio/approvals" : "/studio/designs"}>{approver && row.createdById !== user.id ? "Approve designs" : "Designs"}</Link> / {row.name}
       </div>

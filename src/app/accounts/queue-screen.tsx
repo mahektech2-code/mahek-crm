@@ -111,7 +111,7 @@ export function QueueScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader title={copy.title} subtitle={copy.subtitle} />
 
         <MetricRow metrics={metrics} />

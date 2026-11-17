@@ -28,7 +28,7 @@ export default async function DatesPage({ searchParams }: { searchParams: Promis
     })
     .sort((a, b) => (a.daysUntil ?? 9999) - (b.daysUntil ?? 9999) || a.personName.localeCompare(b.personName));
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="Dates" subtitle="Festivals worth a poster, and the birthdays and anniversaries everybody in the Studio shares." />
       <Tabs
         items={[

@@ -33,7 +33,7 @@ export default async function Personalise({ params }: { params: Promise<{ custom
   );
   const inputs = designInputs(t);
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <div className="mb-1 text-[13px] text-muted">
         <Link href={`/studio/make?list=${r.list}`}>{LIST_LABEL[r.list]}</Link> / <Link href={`/studio/make/${encodeURIComponent(r.id)}`}>{r.company}</Link> / {card.name}
       </div>

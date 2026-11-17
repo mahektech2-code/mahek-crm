@@ -68,7 +68,7 @@ export function AuditScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title="Audit log"
           subtitle="Every approve, decline, confirm, reject and record, with who did it and what it changed. Nothing here can be edited or deleted, by anyone."

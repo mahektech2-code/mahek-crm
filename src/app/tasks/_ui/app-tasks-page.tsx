@@ -18,7 +18,7 @@ import { AppTasksScreen } from "./screens";
 export async function AppTasksPage({
   app,
   searchParams,
-  className = "max-w-[1200px] px-6 pt-6 pb-10",
+  className = "w-full min-w-0 px-6 pt-6 pb-10",
 }: {
   app: TaskApp;
   searchParams: Promise<Record<string, string | string[] | undefined>>;

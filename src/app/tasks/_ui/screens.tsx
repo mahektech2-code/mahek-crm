@@ -108,7 +108,7 @@ export function MyDayScreen({
   };
 
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <div className="mb-0.5 text-[13.5px] text-muted">{dateLine}</div>
       <PageHeader
         title={greeting}
@@ -228,7 +228,7 @@ export function AllTasksScreen({ page, query, today, viewerId, lockApp = null }:
   const title = !app ? "All my tasks" : app === "tasks" ? "Personal tasks" : `${TASK_APP_LABEL[app]} tasks`;
   const defaults = lockApp ? BY_APP_LIST : ALL_TASKS_LIST;
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader
         title={title}
         actions={
@@ -282,7 +282,7 @@ export function BoardScreen({ cols, apps, app, today }: Base & { cols: BoardColu
     if (r.ok) router.refresh();
   };
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader
         title="Board"
         subtitle="Drag a card to move it. Dropping one on Done asks you to close it."
@@ -387,7 +387,7 @@ export function TransfersScreen({ view, counts, today, viewerId }: Base & { view
     router.push(q ? `${pathname}?${q}` : pathname, { scroll: false });
   };
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader title="Transfers" subtitle="A colleague can hand you a task; it stays theirs until you accept. A manager above both people moves a task straight away." />
       <div className="mb-4 flex gap-5 border-b border-line">
         {tabs.map(([k, l, n]) => (
@@ -510,7 +510,7 @@ export function TeamScreen({
   if (person) keep.person = person;
   const t = workload.totals;
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader
         title="Team workload"
         subtitle="Everybody whose tasks you can see — below you on the org chart, or everyone if you hold the permission — and every task they have in every app."
@@ -680,7 +680,7 @@ export function AssignedScreen({
     router.push(s ? `${pathname}?${s}` : pathname, { scroll: false });
   };
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader
         title="Assigned by me"
         actions={

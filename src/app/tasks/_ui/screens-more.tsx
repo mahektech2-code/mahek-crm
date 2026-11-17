@@ -40,7 +40,7 @@ export function CalendarScreen({ data, days, today, week, rangeWords }: { data: 
   // Late open work sits on today, wherever it was due — it is today's to do. The server has already left it off its own day.
   const late = data.late;
   return (
-    <div className="mx-auto max-w-[1560px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <div className="mb-0.5 text-[13.5px] text-muted">{rangeWords}</div>
       <PageHeader
         title="Calendar"
@@ -117,7 +117,7 @@ export function CalendarScreen({ data, days, today, week, rangeWords }: { data: 
 /** Everything this person finished, newest first, grouped by the day it closed — a page at a time. */
 export function DoneScreen({ page, query, today, viewerId }: { page: TaskListPage; query: TaskListQuery; today: string; viewerId: string }) {
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader title="Done" />
       <TaskListView
         page={page}
@@ -154,7 +154,7 @@ export function AutomaticScreen({ rules, states, counts, canManage }: { rules: A
     if (res.ok) router.refresh();
   };
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader
         title="Automatic tasks"
         actions={

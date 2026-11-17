@@ -106,7 +106,7 @@ export function SalesShell({
       /*
        * THE ONE APP THAT BLEEDS. Live tracking and Territory are maps, and a
        * map is the case where wider genuinely is better — every other screen
-       * in the suite stops at `--container-measure` so its cards and its prose
+       * in the suite stopped at `--container-measure` (lifted 2026-11-17) so its cards and its prose
        * do not stretch across a 1920 monitor.
        */
       bleed

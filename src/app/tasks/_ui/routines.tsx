@@ -52,7 +52,7 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
   };
 
   return (
-    <div className="mx-auto max-w-[1440px] px-6 pt-6 pb-14">
+    <div className="mx-auto w-full min-w-0 px-6 pt-6 pb-14">
       <PageHeader
         title="Routines"
         actions={

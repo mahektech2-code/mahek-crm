@@ -198,7 +198,7 @@ export function RemindersScreen({
   const byPerson = overdueByPerson(buckets.overdue);
 
   return (
-    <div className="max-w-[1200px] px-6 pt-6 pb-10">
+    <div className="w-full min-w-0 px-6 pt-6 pb-10">
       <PageHeader
         title="Reminders"
         subtitle={`${scopeLabel} · ${

@@ -31,7 +31,7 @@ export default async function InterviewsPage({ searchParams }: { searchParams: P
   const tab = TABS.some((t) => t[0] === raw) ? raw! : "human";
 
   return (
-    <div className="max-w-[1280px]">
+    <div className="w-full min-w-0">
       <PageHead title="Interviews" sub="Human interviews, AI voice screens in progress, and how the AI interviewer is set up." />
       <div className="mb-5 flex gap-1 border-b border-line">
         {TABS.map(([k, l]) => (

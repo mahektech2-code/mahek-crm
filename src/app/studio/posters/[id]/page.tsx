@@ -47,7 +47,7 @@ export default async function PosterPage({ params }: { params: Promise<{ id: str
   const fileName = downloadFilename(poster.templateId, poster.recipient.company, poster.language, "png");
 
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <div className="mb-1 text-[13px] text-muted">
         <Link href="/studio/posters">My posters</Link> / {poster.recipient.company}
       </div>

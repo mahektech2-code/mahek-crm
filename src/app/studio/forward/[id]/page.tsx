@@ -19,7 +19,7 @@ export default async function ForwardPage({ params }: { params: Promise<{ id: st
   const imageUrl = imageUrlOf(forward.id);
   const rows = forward.status === "started" ? await forwardRecipients(forward.id) : [];
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <div className="mb-1 text-[13px] text-muted">
         <Link href="/studio/forward">Upload &amp; Bulk Forward</Link> / {forward.title}
       </div>

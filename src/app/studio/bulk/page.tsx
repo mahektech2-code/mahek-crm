@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function BulkPage() {
   const batches = await listBatches();
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="Bulk posters" subtitle="One design for many people at once." actions={<Link href="/studio/bulk/new" className={buttonClass({ variant: "primary" })}>New bulk run</Link>} />
       <Card>
         {batches.length ? (

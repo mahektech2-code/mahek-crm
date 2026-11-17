@@ -40,7 +40,7 @@ export function PCard({ className, children, ...rest }: React.HTMLAttributes<HTM
 /** `.page` — 1360 wide, 22/26 padding. */
 export function PPage({ children, narrow }: { children: React.ReactNode; narrow?: boolean }) {
   return (
-    <div className={cx("mx-auto w-full px-[26px] pt-[22px] pb-[60px]", narrow ? "max-w-[1080px]" : "max-w-[1360px]")}>
+    <div className={cx("mx-auto w-full px-[26px] pt-[22px] pb-[60px]", narrow ? "max-w-[1080px]" : "max-w-none")}>
       {children}
     </div>
   );

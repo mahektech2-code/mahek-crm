@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function Approvals() {
   const [waiting, done] = await Promise.all([draftsAwaitingApproval(), approvedUploads()]);
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="Approve designs" subtitle="Uploaded designs waiting to be published. Open one to preview it with sample values, then approve it or send it back with a note." />
       <Card>
         {waiting.length ? (

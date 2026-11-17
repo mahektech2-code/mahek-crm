@@ -142,7 +142,7 @@ export function PaymentHistoryScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title="Payment history"
           subtitle="Every payment recorded or decided on, newest first — the record a hectic day of collections is checked against. Read-only: open a row's customer to confirm, hold, reject or reverse."

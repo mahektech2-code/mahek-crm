@@ -27,7 +27,7 @@ export default async function MakePage({ searchParams }: { searchParams: Promise
     return `/studio/make?${p.toString()}`;
   };
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="Make a poster" subtitle="Pick who it is for. Only your own book is listed — your team's too, if you manage one." />
       <Tabs items={RECIPIENT_LISTS.map((l) => ({ href: href({ list: l, q: undefined }), label: LIST_LABEL[l], count: counts[l], active: l === list }))} />
       <p className="mb-3 text-[13px] text-muted">{HINT[list]}</p>

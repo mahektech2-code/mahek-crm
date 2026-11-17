@@ -82,7 +82,7 @@ export function TodayScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <div className="mb-5">
           <h1 className="text-[28px] leading-[34px] font-semibold text-ink">
             {greeting}, {userName.split(" ")[0]}
