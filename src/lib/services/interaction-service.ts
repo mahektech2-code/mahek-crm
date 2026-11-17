@@ -882,6 +882,15 @@ export async function saveInteraction(
     }
   }
 
+  /* 7b. An order says what was ordered, once the ERP takes the orders. An
+     order with no products cannot become a TO in the Order Hub, so it went
+     straight to Accounts as a ₹0 order they could only decline — and could
+     not hold, because a hold is the Order Hub's (2026-11-17: four of
+     Poonam's, ten more declined that week). */
+  if ((isOrderReceived || input.outcome === "order_taken") && config["erp.orders.live"] === true && !lines.length) {
+    return fieldError("productQuantities", "Add what they ordered — an order needs at least one product.");
+  }
+
   // 8. Products must be active.
   let productRows: Array<typeof products.$inferSelect> = [];
   if (lines.length) {

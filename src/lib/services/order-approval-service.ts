@@ -3,7 +3,7 @@ import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, orders } from "@/db/schema";
+import { auditLog, customers, orders, users } from "@/db/schema";
 import { requireCapability } from "../access-control";
 import { calendarDate } from "../business-date";
 import { convertIfNowQualified } from "./lead-conversion-service";
@@ -423,7 +423,20 @@ export async function holdOrderForAccounts(orderId: string, reasonCode: string, 
   if (!order) return err("That order no longer exists.", "not_found");
   if (order.status !== "pending_approval") return err("That order was already decided.", "conflict");
   const no = erpOrderNo(order);
-  if (no == null) return err("Only an order made through the Order Hub is held here. Approve or decline this one.", "rule_violation");
+  if (no == null) {
+    /* An order with no products never reached the Order Hub, so there is
+       nothing for a hold to sit on — say that, and what to do, rather than
+       naming the hub to somebody who has never seen it. */
+    const empty = !order.lineItems?.length;
+    if (empty) {
+      const [taker] = order.userId ? await db.select({ name: users.name }).from(users).where(eq(users.id, order.userId)) : [];
+      return err(
+        `This order has no products, so it never reached the Order Hub and cannot be held. Decline it and ask ${taker?.name ?? "whoever took it"} to log it again with the products.`,
+        "rule_violation",
+      );
+    }
+    return err("Only an order made through the Order Hub is held here. Approve or decline this one.", "rule_violation");
+  }
   if (!note.trim()) return err("Write the remark — what you are waiting for.", "validation", [{ field: "reason", message: "A remark is required." }]);
   const { holdOrder, ACCOUNTS_HOLD_REASONS } = await import("../erp/screens/order-hub");
   if (!ACCOUNTS_HOLD_REASONS.some((r) => r.code === reasonCode)) return err("Pick the reason.", "validation");
