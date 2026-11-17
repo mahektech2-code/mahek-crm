@@ -7,7 +7,8 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import type { useToast } from "@/components/ui/toast";
 import { cleanDecimal, longDate, money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { describeQuantity } from "@/lib/catalogue";
-import { approveOrderAction, declineOrderAction } from "@/lib/actions/orders";
+import { approveOrderAction, declineOrderAction, holdOrderAction } from "@/lib/actions/orders";
+import { ACCOUNTS_HOLD_REASONS } from "@/lib/erp/engines/order-hub";
 import {
   confirmReceiptAction,
   holdReceiptAction,
@@ -118,6 +119,9 @@ export function ReviewDrawer({
         : `Issue ${amountPaise > 0 ? money(amountPaise) : "a credit note"}`;
 
   const holding = kind === "payments" && reasonFor === "hold";
+  /* Accounts hold an ORDER too (the Order Hub): a reason from the list and a remark for staff. */
+  const holdingOrder = kind === "orders" && reasonFor === "hold";
+  const [holdCode, setHoldCode] = React.useState<string>(ACCOUNTS_HOLD_REASONS[0].code);
 
   const positiveBlocked =
     !canDecide
@@ -165,7 +169,9 @@ export function ReviewDrawer({
     try {
       const result =
         kind === "orders"
-          ? await run(declineOrderAction(row.id, reason))
+          ? reasonFor === "hold"
+            ? await run(holdOrderAction(row.id, holdCode, reason))
+            : await run(declineOrderAction(row.id, reason))
           : kind === "payments"
             ? // Hold and reject collect the same thing — a sentence somebody
               // downstream repeats — so they share the box and differ only in
@@ -229,8 +235,27 @@ export function ReviewDrawer({
 
         {reasoning ? (
           <div className="mt-5 border-t border-divider pt-4">
+            {holdingOrder ? (
+              <div className="mb-3">
+                <label htmlFor="order-hold-reason" className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Reason
+                </label>
+                <select
+                  id="order-hold-reason"
+                  value={holdCode}
+                  onChange={(e) => setHoldCode(e.target.value)}
+                  className="h-9 w-full rounded-md border border-line bg-surface px-2 text-[13px]"
+                >
+                  {ACCOUNTS_HOLD_REASONS.map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              {holding ? "What are you checking" : copy.reasonLabel}
+              {holdingOrder ? "Remarks (staff only)" : holding ? "What are you checking" : copy.reasonLabel}
             </div>
             <VoiceTextarea
               autoFocus
@@ -239,13 +264,17 @@ export function ReviewDrawer({
               onChange={(e) => setReason(e.target.value)}
               onDictate={setReason}
               placeholder={
-                holding
+                holdingOrder
+                  ? "₹46,000 is 52 days past due. Cheque promised for the 20th."
+                  : holding
                   ? "Looking for it in the August statement — nothing on the 12th yet."
                   : copy.reasonPlaceholder
               }
             />
             <p className="mt-1.5 text-[13px] text-pretty text-muted">
-              {holding
+              {holdingOrder
+                ? "It moves to Orders on hold and To Hold. The customer is not told; releasing it brings it back here to be decided."
+                : holding
                 ? `${row.customerName} comes off the collections list from now until you decide — no calls and no reminder messages. The telecaller sees this sentence and nothing else, so say what you are waiting for.`
                 : copy.reasonHint}
             </p>
@@ -264,18 +293,18 @@ export function ReviewDrawer({
               // Holding is not a refusal — it is a pause, and drawing it in the
               // same red as "this money never arrived" would make the safe
               // option look like the drastic one.
-              variant={holding ? "secondary" : "danger"}
+              variant={holding || holdingOrder ? "secondary" : "danger"}
               disabled={busy || !reason.trim()}
               title={
                 reason.trim()
                   ? undefined
-                  : holding
+                  : holding || holdingOrder
                     ? "Say what you are checking — the telecaller reads this"
                     : "Write a reason first — somebody has to repeat it to the customer"
               }
               onClick={decideNegative}
             >
-              {holding ? "Put it on hold" : copy.reasonButton}
+              {holding || holdingOrder ? "Put it on hold" : copy.reasonButton}
             </Button>
           </>
         ) : (
@@ -292,14 +321,16 @@ export function ReviewDrawer({
             {/* Only where there is still something to hold. A receipt already
                 on hold is here to be decided, and a second Hold on it would be
                 a button that does nothing. */}
-            {kind === "payments" && detail?.kind === "payments" && detail.status !== "held" ? (
+            {kind === "orders" || (kind === "payments" && detail?.kind === "payments" && detail.status !== "held") ? (
               <Button
                 variant="secondary"
                 disabled={!canDecide || busy}
                 title={
-                  canDecide
-                    ? "Stop chasing them while you look for the money — no calls and no messages until you decide"
-                    : "Only the accounts team can decide this"
+                  !canDecide
+                    ? "Only the accounts team can decide this"
+                    : kind === "orders"
+                      ? "Take it off the queue until something changes — it comes back when released"
+                      : "Stop chasing them while you look for the money — no calls and no messages until you decide"
                 }
                 onClick={() => openReason("hold")}
               >

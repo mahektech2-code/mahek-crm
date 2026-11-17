@@ -7,6 +7,7 @@
  *
  * Needs `mahekone_test` (npm run test:db). It truncates what it touches.
  */
+import { placeOrder } from "./test-orders";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -90,7 +91,7 @@ let clerk: typeof users.$inferSelect;
 /** Takes an order of `qty` cans on `date` all the way to dispatch-verified, through the real handlers. */
 async function dispatch(date: string, qty: number, bill: string, dispatched: string) {
   const ctx = await as(admin);
-  assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone" }, [{ sku: SKU, qty: String(qty), rate: "300" }])).ok);
+  assert.ok((await placeOrder(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone" }, [{ sku: SKU, qty: String(qty), rate: "300" }])).ok);
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date} and ${erpOrders.qtyCans} = ${qty}`);
   /* The back office's order check (0285) is the orders suite's subject; here it has simply passed. */
   await db.execute(sql`update erp_orders set order_check = 'Verified' where order_no = ${o.orderNo}`);
@@ -726,7 +727,7 @@ describe("every dispatch reaches Logistics (0279)", () => {
   /** An order of one line per quantity, every line allocated and billed — not yet verified. */
   async function billed(date: string, qtys: number[], bill: string) {
     const ctx = await as(admin);
-    assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone" }, qtys.map((q) => ({ sku: SKU, qty: String(q), rate: "300" })))).ok);
+    assert.ok((await placeOrder(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone" }, qtys.map((q) => ({ sku: SKU, qty: String(q), rate: "300" })))).ok);
     const ls = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date}`).orderBy(erpOrders.createdAt);
     /* The order check and the invoice check (0285) are the orders suite's subject; here both have passed. */
     await db.execute(sql`update erp_orders set order_check = 'Verified' where order_no = ${ls[0].orderNo}`);
@@ -978,7 +979,7 @@ describe("help videos", () => {
 describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Vehicle (0301)", () => {
   async function dispatchOwn(date: string, qty: number, bill: string, dispatched: string, verify: Record<string, string>) {
     const ctx = await as(admin);
-    const made = await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", deliveredBy: "Mahek Vehicle" }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+    const made = await placeOrder(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone", deliveredBy: "Mahek Vehicle" }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
     assert.ok(made.ok, msg(made));
     const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date} and ${erpOrders.qtyCans} = ${qty}`);
     assert.equal(o.transporter, "Mahek Vehicle", "Delivered by: Mahek Vehicle is the order's transporter");

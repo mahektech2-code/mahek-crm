@@ -299,6 +299,7 @@ export function powerRefusal(power: ErpPower): string {
     customerStatus: "Only an admin or the office changes a customer's status.",
     approveParty: "Only an admin approves orders from a pending customer.",
     verifyOrders: "Only the back office verifies an order.",
+    productionCheck: "Only the Production Head makes this check.",
     checkInvoices: "Only the invoice checker approves or rejects an invoice.",
     decideRequests: "Only the CEO or an admin decides a customer request.",
     employeeAdmin: "Only an ERP administrator manages godowns and ERP powers.",

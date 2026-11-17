@@ -1,0 +1,26 @@
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/my-orders/layout.tsx` | `requireModule(user.id, "crm.my-orders")` |
+| Page (server) | `src/app/crm/my-orders/page.tsx` | `ordersTakenBy(user.id)` |
+| Screen (client) | `src/app/crm/my-orders/my-orders-screen.tsx` | Tabs from `MY_ORDERS_TABS`, `tabOf` |
+| Shared UI | `src/components/orders/order-journey.tsx` | `OrderThread`, `JourneyEvents`, the Change and Cancel dialogs |
+| Engine (pure) | `src/lib/order-journey.ts` | `journeyOf` — status, tone, events, the handset's steps |
+| Service | `src/lib/services/order-journey-service.ts` | `ordersTakenBy`, `customerOrderThreads`, `journeysForOrders` |
+| Actions | `src/lib/actions/my-orders.ts` | `editMyToAction`, `cancelMyToAction`, `loadMyToAction` |
+| Write-back | `src/lib/erp/book.ts` | `syncOriginOrderFromIntake` — an edited TO rewrites its `orders` row |
+
+<Code file="src/lib/order-journey.ts" symbol="journeyOf" />
+
+## The unit is the `orders` row
+
+A list is a set of `orders` rows. Each row's TO is the intake whose `origin_order_id` names it, or, for a TO taken in the ERP, the intake whose `order_no` the row's `external_ref` (`ERP-<n>`) carries. The order's facts are read per order number from `erp_orders`, `erp_order_holds` (kind `hold`) and `erp_order_milestones` (not withdrawn).
+
+## The handset
+
+`myOrderStates` in `mbos-service.ts` adds `toNo`, `erpOrderNo`, `journeyStatus`, `journeyTone`, `journeyBanner`, `journeyEditable` and `journeySteps` to each row of `myOrders`. The delta also sends an order whose TO, ERP lines, hold or milestone moved since the cursor, because none of those moves the `orders` row. The phone stores them in handset migration columns on `orders` and draws them in `app/orders.tsx`.
+
+## Tests
+
+`src/lib/order-journey.test.ts` (engine) and "a TeleCRM TO, from the call to the order number" in `src/lib/erp/erp-book.test.ts` (the write-back and the journey through both checks).

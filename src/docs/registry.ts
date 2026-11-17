@@ -285,6 +285,15 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "my-orders",
+        title: "My orders",
+        summary: "The orders you took on a call, from the TO number to the shop's door.",
+        group: "Daily calling",
+        modules: ["crm.my-orders"],
+        screen: "/crm/my-orders",
+        written: ALL,
+      },
+      {
         slug: "payments",
         title: "Payment Follow-up",
         summary: "The collections worklist: who owes money, which stage the chase is at, and logging what they said.",
@@ -911,6 +920,14 @@ export const DOC_APPS: DocApp[] = [
         summary: "Raw-material levels planned from history, finished-goods minimums, and raising a requirement from a shortfall.",
         group: "Make and store",
         modules: ["erp.rmLevels", "erp.fgLevels"],
+        written: ALL,
+      },
+      {
+        slug: "order-hub",
+        title: "The Order Hub: TO numbers, checks, MRP and holds",
+        summary: "Every order starts as a TO number; the back office and the Production Head check it, Accounts approve it, the Production Head clears it against materials, and every hold sits on To Hold.",
+        group: "Sell and ship",
+        modules: ["erp.orderHub", "erp.mrpCheck", "erp.toHold"],
         written: ALL,
       },
       {

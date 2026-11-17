@@ -17,6 +17,12 @@
 
 export const ORDER_SOURCES = ["WhatsApp", "Phone", "Sales Order", "Other"] as const;
 export type OrderSource = (typeof ORDER_SOURCES)[number];
+/**
+ * Where a TO was TAKEN when it did not come in on the ERP's own form: a call
+ * on TeleCRM or the Salesman App. Never offered on the New order form; kept as
+ * it is when the hub edits such a TO, and carried onto its order lines.
+ */
+export const TAKEN_SOURCES = ["TeleCRM", "Salesman App"] as const;
 
 /** Pending | Verified | Correction — the back office's check of an entered order. */
 export type OrderCheck = "Pending" | "Verified" | "Correction";
@@ -113,7 +119,7 @@ export function orderBillBlockers(lines: BillLine[]): string[] {
   const miss: string[] = [];
   if (live.some((l) => l.orderCheck !== "Verified")) miss.push("the back office to verify the order");
   const notReady = live.filter((l) => l.status !== "Ready");
-  if (notReady.length) miss.push(`${notReady.map((l) => l.label).join(", ")} to be Ready — or moved to a new order to go later`);
+  if (notReady.length) miss.push(`${notReady.map((l) => l.label).join(", ")} to be Ready — or cancelled, to go later on a new order`);
   if (live.some((l) => l.partyPending)) miss.push("approval for this Pending customer");
   const noRate = live.filter((l) => l.ratePaise == null);
   if (noRate.length) miss.push(`a rate on ${noRate.map((l) => l.label).join(", ")}`);

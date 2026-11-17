@@ -7,6 +7,7 @@
  *
  *   npm run test:integration
  */
+import { placeOrder } from "./test-orders";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -84,7 +85,7 @@ let skuId: string;
 /** One ERP order of `qty` cans for `party`, through the real handlers. */
 async function take(party: string, qty: number) {
   const ctx = await as(admin);
-  const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+  const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
   assert.ok(r.ok, JSON.stringify(r));
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = ${qty}`);
   return o;
@@ -92,7 +93,6 @@ async function take(party: string, qty: number) {
 /** Ready → allocated → billed → dispatch-verified. */
 async function send(o: typeof erpOrders.$inferSelect, bill: string, date: string) {
   const ctx = await as(admin);
-  assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(o.qtyCans) }, [], o.id)).ok);
   const billed = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: date });
@@ -195,9 +195,9 @@ describe("an ERP order in the book", () => {
     await db.insert(customers).values({ id: "cus_round", name: "Round Figure Traders", city: "Pune", phone: "9876500009", kind: "customer" });
     await db.insert(erpCustomerProfiles).values({ customerId: "cus_round" });
     /* 17 cans at ₹299.37 with 18% GST is ₹6,005.36 exactly; the invoice says ₹6,005. */
-    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Round Figure Traders" }, [{ sku: SKU, qty: "17", rate: "299.37" }]);
+    const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Round Figure Traders" }, [{ sku: SKU, qty: "17", rate: "299.37" }]);
     assert.ok(r.ok, JSON.stringify(r));
-    const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = 17`);
+    const [o] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, r.orderNo!));
     const b = await book(o.orderNo);
     assert.equal(Number(b.totalAmount), 600500, "the order is worth its round bill");
     assert.equal((b.lineItems as { amount: number }[])[0].amount, 600536, "its line keeps the exact amount");
@@ -232,7 +232,6 @@ describe("one Tally invoice over several orders", () => {
   async function prep(party: string, qty: number) {
     const o = await take(party, qty);
     const ctx = await as(admin);
-    assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(qty) }, [], o.id)).ok);
     return o;
@@ -299,7 +298,6 @@ describe("a Pending customer goes to the Accounts queue", () => {
     const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
     assert.equal(after.partyStatus, "Approved By Admin");
     /* The next ERP write re-states the order; the approval is not undone by it. */
-    assert.ok((await mod("orders").actions!.verifyOrder(await as(admin), o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(await as(admin), o.id, {})).ok);
     assert.equal((await book(o.orderNo)).status, "confirmed");
   });
@@ -434,5 +432,101 @@ describe("the arithmetic", () => {
     assert.equal(bookStatusForStage("Dispatch from Bhiwandi"), "dispatched");
     assert.equal(bookStatusForStage("Reached Destination Area"), "in_transit");
     assert.equal(bookStatusForStage("Close - Received to Party"), "delivered");
+  });
+});
+
+describe("the Order Hub's gates after the order number", () => {
+  test("Accounts approve or hold it, the Production Head clears or holds it at the MRP check, and To Hold sends each hold back", async () => {
+    const { pendingOrders, holdOrderForAccounts, releaseOrderForAccounts } = await import("@/lib/services/order-approval-service");
+    const { erpNavCounts } = await import("./counts");
+    const { PRODUCTION_HOLD_REASONS, ACCOUNTS_HOLD_REASONS } = await import("./engines/order-hub");
+    const msg = (x: { ok: boolean; error?: string }) => (x.ok ? "" : (x.error ?? ""));
+    await live(true);
+    const ctx = await as(admin);
+    const r = await placeOrder(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: "17", rate: "300" }], { gates: false });
+    assert.ok(r.ok, JSON.stringify(r));
+    const [o] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, r.orderNo!));
+    const b = await book(o.orderNo);
+    assert.equal(b.status, "pending_approval");
+    assert.match(msg(await mod("orders").actions!.ready(ctx, o.id, {})), /accounts have not approved it yet/);
+    assert.ok((await pendingOrders()).some((p) => p.orderId === b.id), "it waits in the Accounts queue");
+
+    /* An Accounts hold takes it off the queue and puts it on To Hold. */
+    setTestUser(ledger);
+    assert.ok((await holdOrderForAccounts(b.id, ACCOUNTS_HOLD_REASONS[0].code, "Ring the owner")).ok);
+    assert.ok(!(await pendingOrders()).some((p) => p.orderId === b.id), "a held order is not in the queue");
+    assert.ok((await mod("toHold").load(await as(admin))).rows.some((x) => String(x.id).startsWith(`accounts:${o.orderNo}`)));
+    setTestUser(ledger);
+    assert.ok((await releaseOrderForAccounts(b.id, "Owner paid the old bill")).ok);
+    assert.ok((await pendingOrders()).some((p) => p.orderId === b.id), "released, it is back with Accounts");
+    setTestUser(ledger);
+    assert.ok((await approveOrder(b.id)).ok);
+
+    /* Approved: it waits at the MRP check, and the badge counts it. */
+    const adminCtx = await as(admin);
+    const mrp = await mod("mrpCheck").load(adminCtx);
+    const row = mrp.rows.find((x) => x.id === o.id);
+    assert.ok(row, "it is on the MRP check");
+    assert.ok(((await erpNavCounts(adminCtx)).mrpCheck ?? 0) >= 1);
+    assert.match(msg(await mod("orders").actions!.ready(adminCtx, o.id, {})), /MRP|Production Head/i);
+
+    /* A production hold, released from To Hold, comes back to the MRP check. */
+    assert.ok((await mod("mrpCheck").actions!.hold(adminCtx, row!.id, { reason: PRODUCTION_HOLD_REASONS[0].label, note: "Xylene short" })).ok);
+    const held = (await mod("toHold").load(adminCtx)).rows.find((x) => String(x.id).startsWith(`production:${o.orderNo}`));
+    assert.ok(held, "the production hold is on To Hold");
+    assert.ok((await mod("toHold").actions!.releaseDesk(adminCtx, held!.id, { resolution: "Xylene arrived" })).ok);
+    assert.ok((await mod("mrpCheck").load(adminCtx)).rows.some((x) => x.id === row!.id), "released, it is back at the MRP check");
+
+    /* Cleared with the capacity tick, the line may go Ready. */
+    assert.match(msg(await mod("mrpCheck").actions!.clear(adminCtx, row!.id, {})), /capacity|floor|required/i);
+    assert.ok((await mod("mrpCheck").actions!.clear(adminCtx, row!.id, { capacity: "Yes" })).ok);
+    const [cleared] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
+    assert.equal(cleared.accountsCheck, "Approved");
+    assert.equal(cleared.productionCheck, "Cleared");
+    assert.ok((await mod("orders").actions!.ready(adminCtx, o.id, {})).ok);
+    await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
+  });
+});
+
+describe("a TeleCRM TO, from the call to the order number", () => {
+  test("an edit in the Order Hub rewrites the call's order, and the journey reads TO then order number", async () => {
+    const { createIntake, editIntake, checkIntake } = await import("./order-hub");
+    const { customerOrderThreads, ordersTakenBy, journeysForOrders } = await import("@/lib/services/order-journey-service");
+    await live(true);
+    const orderId = id("ord");
+    await db.insert(orders).values({ id: orderId, customerId: "cus_shree", userId: admin.id, source: "crm", status: "pending_approval", orderedAt: new Date("2026-09-10T05:00:00Z"), totalAmount: 0, lineItems: [] });
+    const made = await createIntake(admin.id, {
+      origin: "crm",
+      originOrderId: orderId,
+      orderSource: "TeleCRM",
+      orderDate: "2026-09-10",
+      godownId: "erpg_bhiwandi",
+      billingId: "cus_shree",
+      takenById: admin.id,
+      lines: [{ skuId, qtyCans: 6, ratePaise: 30000, discountBp: null }],
+    });
+
+    let [row] = await customerOrderThreads("cus_shree");
+    assert.equal(row.journey.title, `TO-${made.toNo}`);
+    assert.equal(row.journey.status, "Order check");
+    assert.equal(row.journey.editable, true);
+    assert.ok((await ordersTakenBy(admin.id)).some((r) => r.id === orderId));
+
+    const edited = await editIntake(admin.id, made.id, {}, [{ skuId, qtyCans: 10, ratePaise: 30000, discountBp: null }]);
+    assert.ok(edited.ok);
+    const [o] = await db.select().from(orders).where(eq(orders.id, orderId));
+    assert.equal(o.lineItems?.[0]?.quantity, 10, "the call's order says what the TO now says");
+    assert.ok(Number(o.totalAmount) > 0);
+
+    const who = { userId: admin.id, backOffice: true, production: true, admin: true };
+    assert.ok((await checkIntake(who, made.id, null)).ok);
+    assert.ok((await checkIntake(who, made.id, null)).ok);
+    row = (await journeysForOrders([orderId])).get(orderId)!;
+    assert.match(row.journey.title, /^Order \d+$/);
+    assert.equal(row.journey.toNo, made.toNo);
+    assert.equal(row.journey.editable, false);
+    assert.equal(row.journey.status, "With accounts");
+    assert.ok(!(await editIntake(admin.id, made.id, {}, [{ skuId, qtyCans: 2, ratePaise: 30000, discountBp: null }])).ok, "an order with its order number is not changed");
+    await live(false);
   });
 });

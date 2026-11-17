@@ -134,7 +134,7 @@ export const CRM_TABLES: TableSpec[] = [
   {
     table: "orders",
     about:
-      "Orders: customer_id, user_id (who took it; null for sheet orders), order_no, ordered_at, total_amount (paise, GST in), net_amount_paise (excl. GST), status (pending_approval/confirmed/dispatched/in_transit/delivered/declined/cancelled), line_items (jsonb), decline_reason. A sale counts when status in ('confirmed','dispatched','in_transit','delivered').",
+      "Orders: customer_id, user_id (who took it; null for sheet orders), order_no, ordered_at, total_amount (paise, GST in), net_amount_paise (excl. GST), status (pending_approval/confirmed/dispatched/in_transit/delivered/declined/cancelled), line_items (jsonb), decline_reason. A sale counts when status in ('confirmed','dispatched','in_transit','delivered'). A TeleCRM or handset order stays pending_approval while it is still a TO (temporary order) in the ERP's Order Hub; it is not yet waiting on Accounts.",
     modules: ["crm.customers", "crm.history", "crm.dashboard", "crm.bills", "crm.targets"],
     scope: { kind: "customer", col: "customer_id", orUser: ["user_id"] },
   },
