@@ -4,7 +4,7 @@ import * as React from "react";
 import { signOut } from "@/lib/actions/auth";
 import { cx } from "@/components/ui/primitives";
 import { useWorkday, type OpResult } from "./workday-context";
-import { at, dayDate, greeting, hmOf, locate, msOf, VERDICT_WORDS } from "./format";
+import { at, dayDate, greeting, hmOf, msOf, VERDICT_WORDS } from "./format";
 import { DayTimeline } from "./day-parts";
 import { VerdictPill, withLocation } from "./workday-shared";
 
@@ -185,83 +185,8 @@ function Refusal({ r, onClose }: { r: OpResult; onClose: () => void }) {
 }
 
 
-type Where = { office: string | null; distanceM: number | null; radiusM: number; inside: boolean | null };
-
-/**
- * Where the gate says somebody is before they press the button. Asked only
- * when the browser already holds location permission — a permission prompt
- * on a page nobody has touched teaches people to press Block — and only a
- * preview: the punch-in measures again and decides.
- */
-function useWhere(): Where | "ask" | null {
-  const [where, setWhere] = React.useState<Where | "ask" | null>(null);
-  React.useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const p = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
-        if (!p || p.state !== "granted") {
-          if (live) setWhere("ask");
-          return;
-        }
-        const fix = await locate();
-        if (fix === "denied" || fix.lat == null) {
-          if (live) setWhere("ask");
-          return;
-        }
-        const res = await fetch("/api/workday", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "where", lat: fix.lat, lng: fix.lng }) });
-        const j = (await res.json()) as { where?: Where };
-        if (live) setWhere(j.where ?? "ask");
-      } catch {
-        if (live) setWhere("ask");
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, []);
-  return where;
-}
-
-function PinGlyph() {
-  return (
-    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 21s-7-6.2-7-11a7 7 0 1 1 14 0c0 4.8-7 11-7 11z" />
-      <circle cx="12" cy="10" r="2.5" />
-    </svg>
-  );
-}
-
-function kmOrM(m: number): string {
-  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
-}
-
-function WhereBanner({ where, office }: { where: Where | "ask" | null; office: string | null }) {
-  const name = (where && where !== "ask" ? where.office : null) ?? office ?? "your office";
-  const tone =
-    where && where !== "ask" && where.inside === true
-      ? { box: "bg-success-soft", icon: "text-success", title: "text-success", line1: `You are at ${name}`, line2: `${kmOrM(where.distanceM!)} from the office pin` }
-      : where && where !== "ask" && where.inside === false
-        ? { box: "bg-warn-soft", icon: "text-warn-ink", title: "text-warn-ink", line1: `You are ${kmOrM(where.distanceM!)} from ${name}`, line2: `Punch-in works within ${kmOrM(where.radiusM)} of the office pin` }
-        : where === null
-          ? { box: "bg-canvas", icon: "text-muted", title: "text-ink", line1: "Finding where you are…", line2: name }
-          : { box: "bg-canvas", icon: "text-muted", title: "text-ink", line1: name, line2: "Your location is read once, when you press Punch in" };
-  return (
-    <div className={cx("flex items-center gap-3 rounded-[12px] px-3.5 py-3", tone.box)}>
-      <span className={cx("flex size-[34px] flex-none items-center justify-center rounded-[10px] bg-surface", tone.icon)}>
-        <PinGlyph />
-      </span>
-      <div>
-        <div className={cx("text-[14px] font-semibold", tone.title)}>{tone.line1}</div>
-        <div className="text-[12.5px] text-body">{tone.line2}</div>
-      </div>
-    </div>
-  );
-}
-
 function PunchInCard() {
   const w = useWorkday()!;
-  const where = useWhere();
   const [res, setRes] = React.useState<OpResult | null>(null);
   const [ask, setAsk] = React.useState<null | "late" | "away">(null);
   const [text, setText] = React.useState("");
@@ -282,8 +207,6 @@ function PunchInCard() {
         <h1 className="text-[22px] font-bold">{greeting(w.now, w.state.name)}</h1>
         <p className="mt-1 text-[14px] text-muted">Punch in to open your apps.</p>
       </div>
-      {/* Only where it is something to act on: inside or outside the office. */}
-      {where && where !== "ask" ? <WhereBanner where={where} office={w.state.office} /> : null}
       {res && !res.ok && !ask ? <Refusal r={res} onClose={() => setRes(null)} /> : null}
       <Primary onClick={go} disabled={w.busy}>
         <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">

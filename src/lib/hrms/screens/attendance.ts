@@ -38,7 +38,7 @@ const COLS: ColSpec[] = [
   { k: "in", l: "Check-in", t: "t" },
   { k: "out", l: "Check-out", t: "t" },
   { k: "dur", l: "Duration", t: "t" },
-  { k: "late", l: "Late / early", t: "t" },
+  { k: "late", l: "Office start", t: "t" },
   { k: "workDay", l: "Day", t: "s" },
   { k: "current", l: "Status", t: "s" },
   { k: "pct", l: "Working %", t: "n", u: "%" },
@@ -48,8 +48,6 @@ const COLS: ColSpec[] = [
 
 function flagsOf(r: DayRow, t: string): string[] {
   const f: string[] = [];
-  if (r.fig.lateBeyondGrace) f.push("late");
-  else if (r.fig.lateMin != null && r.fig.lateMin <= 0) f.push("early");
   if (!r.checkOut && r.date !== t) f.push("noOut");
   if (!r.checkOut && r.date === t) f.push("working");
   if (r.fig.workDay === "Half Day") f.push("halfDay");
@@ -654,7 +652,6 @@ const attChart: HrmsScreenModule = {
           { k: "emp", l: "Employee", t: "b" },
           { k: "office", l: "Office", t: "t" },
           { k: "count", l: "Days present (30)", t: "n" },
-          { k: "late", l: "Late days", t: "n" },
         ],
         hidden: [],
         sortDefault: ["count", -1],
@@ -665,7 +662,7 @@ const attChart: HrmsScreenModule = {
       },
       rows: [...by.entries()].map(([emp, rs]) => ({
         id: emp,
-        v: { emp: pb.get(emp)?.name ?? "", office: pb.get(emp)?.office ?? "", count: rs.length, late: rs.filter((r) => r.fig.lateBeyondGrace).length },
+        v: { emp: pb.get(emp)?.name ?? "", office: pb.get(emp)?.office ?? "", count: rs.length },
         flags: [],
         title: pb.get(emp)?.name ?? "",
         actions: [{ id: "open", l: "Open their days", href: hrmsLink("attendance", { scope: "all", emp, from }) }],
