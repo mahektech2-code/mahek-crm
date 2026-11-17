@@ -118,8 +118,9 @@ function groupBy<T>(xs: T[], k: (x: T) => string): Map<string, T[]> {
 
 const isoDate = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 
-/** An "early" attendance row: the day's remark says early (on time or within the grace), as the source's remark test did. */
-const earlyDay = (d: DayRow) => d.fig.lateOrEarlyMin != null && !d.fig.lateBeyondGrace;
+/** Every attended day is punctual (Nov 2026): there is no start time to be
+ *  late for, so the punctuality part of the score never takes a mark off. */
+const earlyDay = (d: DayRow) => !!d.checkIn;
 
 /* ------------------------------------------------ the day's derived score */
 

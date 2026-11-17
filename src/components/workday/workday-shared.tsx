@@ -2,7 +2,6 @@
 
 import { cx } from "@/components/ui/primitives";
 import type { OpResult } from "./workday-context";
-import { locate } from "./format";
 
 /*
  * THE TWO PIECES OF THE WORKDAY SCREENS THAT THE HEADER CHIP AND THE LAUNCHER
@@ -15,11 +14,13 @@ import { locate } from "./format";
  * every app's first download.
  */
 
-/** Location, read once, then the act. It is recorded where the browser gives
- *  it and never required: a blocked location punches in all the same. */
+/** The act, with no location (Nov 2026). Punch-in and punch-out used to ask
+ *  the browser where it was first: a permission prompt nobody needed, and up
+ *  to 20 seconds of a dead-looking button on a desktop waiting for a GPS fix
+ *  it does not have — for a reading that was never a gate. Kept as a wrapper
+ *  so every caller stays as it is. */
 export async function withLocation(run: (fix: { lat: number | null; lng: number | null; accuracy: number | null }) => Promise<OpResult>): Promise<OpResult> {
-  const fix = await locate();
-  return run(fix === "denied" ? { lat: null, lng: null, accuracy: null } : fix);
+  return run({ lat: null, lng: null, accuracy: null });
 }
 
 export function VerdictPill({ v }: { v: { label: string; tone: string } }) {

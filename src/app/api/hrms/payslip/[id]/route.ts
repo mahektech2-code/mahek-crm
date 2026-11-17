@@ -111,7 +111,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         ["Official holidays", num(f.officialHolidays)],
         ["Compensation days", num(f.compDays)],
         ["Attendance count", num(f.attendanceCount)],
-        ["Late check-ins", `${num(f.lateCount)} (${num(f.lateHalfDays)} half-days)`],
       ],
     },
     {

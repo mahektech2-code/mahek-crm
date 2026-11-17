@@ -143,15 +143,10 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
     if (input.photoId) await bindHrmsFiles(tx, [input.photoId], "hrms_attendance", id, ctx.user.id);
   });
   await hrmsAudit(ctx, "hrms.attendance.checkIn", "hrms_attendance", id, null, { date: t, at: nowT, method: qr ? "qr" : "geo" });
-  const fig = dayFigures(
-    { date: t, checkIn: nowT, checkOut: null, stoppageMin: 0, officialIn: tm?.inTime ?? null, officialOut: tm?.outTime ?? null, targetMin: tm ? minutesBetween(tm.inTime, tm.outTime) : null, method: qr ? "qr" : "geo" },
-    cfg,
-    t,
-  );
   forgetLock(ctx.user.id);
   refresh();
   if (off.offDay) return ok({}, `Punched in at ${nowT} · today is a day off, so this is recorded as extra work`);
-  return ok({}, `Punched in at ${nowT} · ${fig.lateTxt}${fig.lateBeyondGrace ? "" : fig.lateMin != null && fig.lateMin > 0 ? `, within the ${cfg.graceMinutes}-minute grace` : ""}`);
+  return ok({}, `Punched in at ${nowT}`);
 }
 
 export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Promise<CheckResult> {

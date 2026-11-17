@@ -114,7 +114,6 @@ export async function MyAttendanceView({ ctx, sp }: { ctx: HrmsContext; sp: Reco
     { k: "Not counted", v: String(fig.notCounted.off + fig.notCounted.holiday + fig.notCounted.leave), s: nc || "None so far" },
     { k: "Average worked", v: hmm(fig.averageWorkedMin), s: `present at ${hmm(acfg.presentMin)}` },
     { k: "Extra work", v: hmm(fig.extraMin), s: fig.extraDates.length ? `${names(fig.extraDates)} · day off` : "None" },
-    { k: "Late arrivals", v: String(fig.late), s: `beyond ${acfg.graceMinutes} min grace` },
   ];
 
   return (
