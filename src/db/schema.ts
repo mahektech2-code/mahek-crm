@@ -894,6 +894,12 @@ export const users = pgTable(
      * and the `on delete set null`; Drizzle simply does not need to know.
      */
     employeeId: text("employee_id"),
+    /**
+     * An administrator said this account is NOT an employee — a shared desk
+     * login, an outside accountant. It leaves the "Not linked to HRMS" list
+     * and is never guessed onto a payroll row. See `person-directory.ts`.
+     */
+    notEmployee: boolean("not_employee").notNull().default(false),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -28,7 +28,9 @@
  * exactly one person on BOTH sides — the folded name. That last step is the
  * old behaviour, kept so an unlinked account is no worse off than it was;
  * linking it (Admin → Manage access, or `npm run employee:link`) is what
- * makes it rename-proof.
+ * makes it rename-proof. The nightly `autoLinkAccounts` stores the email and
+ * mobile matches for good; a name match is only ever SUGGESTED for a person to
+ * confirm. An account marked `notEmployee` is never matched at all.
  * ------------------------------------------------------------------------- */
 
 export type DirEmployee = {
@@ -50,6 +52,8 @@ export type DirAccount = {
   active: boolean;
   /** What the sheets call this account, where a person said so. */
   salesPersonName: string | null;
+  /** An administrator said this account is not an employee: never guessed onto one. */
+  notEmployee?: boolean;
 };
 
 export type DirAlias = { key: string; employeeId: string };
@@ -147,7 +151,7 @@ export function buildDirectory(input: DirectoryInput): Directory {
   const inferred = new Map<string, { employeeId: string; how: Exclude<HowLinked, "stored" | null> }>();
   const inferredClaims = new Map<string, Set<string>>();
   for (const a of input.accounts) {
-    if (stored.has(a.id)) continue;
+    if (stored.has(a.id) || a.notEmployee) continue;
     let hit: { employeeId: string; how: "email" | "mobile" | "name" } | null = null;
     const em = only(empByEmail.get(emailKey(a.email) ?? ""));
     if (em) hit = { employeeId: em, how: "email" };

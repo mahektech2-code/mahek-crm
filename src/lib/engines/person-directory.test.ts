@@ -150,3 +150,13 @@ test("a self-loop on the chart is no manager", () => {
   });
   assert.equal(d.managerOfAccount("u1"), null);
 });
+
+test("an account marked not-an-employee is never matched, even on its email", () => {
+  const d = buildDirectory({
+    employees: [emp("e1", "Desk", { email: "desk@mahek.in" })],
+    accounts: [acc("u1", "Desk", { email: "desk@mahek.in", notEmployee: true })],
+    links: [],
+  });
+  assert.equal(d.employeeOfAccount("u1"), null);
+  assert.equal(d.howLinked("u1"), null);
+});

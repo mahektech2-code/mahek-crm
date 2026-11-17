@@ -47,6 +47,7 @@ export async function loadPersonDirectory(exec: Exec = db): Promise<Directory> {
         employeeId: users.employeeId,
         active: users.active,
         salesPersonName: users.salesPersonName,
+        notEmployee: users.notEmployee,
       })
       .from(users),
     exec
@@ -267,4 +268,95 @@ export async function renameUnlinkedAccount(
     .where(and(eq(customers.salesManagerId, input.userId), isNotNull(customers.salesManagerPersonName)))
     .returning({ id: customers.id })).length;
   return seats;
+}
+
+/* ------------------------------------------------- the org chart from titles */
+
+/**
+ * Write the org-chart links the sheet's Report To titles prove — one active
+ * holder of the title, nobody already on the chart, no circle — and return
+ * the people HR has to place by hand. See `engines/org-from-titles.ts`.
+ * Idempotent: a second run finds nothing left to place.
+ */
+export async function placeByTitles(): Promise<{
+  placed: number;
+  ambiguous: Array<{ name: string; title: string }>;
+  unknown: Array<{ name: string; title: string }>;
+}> {
+  const { planChartFromTitles } = await import("@/lib/engines/org-from-titles");
+  const [people, links] = await Promise.all([
+    db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        position: employees.position,
+        reportsTo: employees.reportsTo,
+        status: employees.status,
+        sheetStatus: employees.sheetStatus,
+      })
+      .from(employees),
+    db.select({ employeeId: employeeReporting.employeeId, managerId: employeeReporting.managerId }).from(employeeReporting),
+  ]);
+  const plan = planChartFromTitles(
+    people.map((p) => ({ ...p, active: p.status === "active" && p.sheetStatus !== "withdrawn" })),
+    links,
+  );
+  if (plan.place.length) {
+    await db
+      .insert(employeeReporting)
+      .values(plan.place.map((l) => ({ id: `rep_${randomUUID().replace(/-/g, "").slice(0, 16)}`, ...l })))
+      // A link somebody made between the read and this write wins.
+      .onConflictDoNothing();
+  }
+  const nameOf = new Map(people.map((p) => [p.id, p.name]));
+  return {
+    placed: plan.place.length,
+    ambiguous: plan.ambiguous.map((a) => ({ name: nameOf.get(a.employeeId) ?? a.employeeId, title: a.title })),
+    unknown: plan.unknown.map((a) => ({ name: nameOf.get(a.employeeId) ?? a.employeeId, title: a.title })),
+  };
+}
+
+/* ------------------------------------------------- accounts ↔ HRMS records */
+
+/**
+ * Store the account ↔ employee links the data PROVES: a unique email or a
+ * unique mobile, unique on both sides, and the employee not already somebody
+ * else's. A name match is never stored here — it is only suggested on Admin →
+ * Manage access for a person to confirm. Accounts marked not-an-employee are
+ * left alone. Idempotent.
+ */
+export async function autoLinkAccounts(): Promise<number> {
+  const dir = await loadPersonDirectory();
+  const open = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(and(sql`${users.employeeId} is null`, eq(users.notEmployee, false)));
+  let n = 0;
+  for (const a of open) {
+    const how = dir.howLinked(a.id);
+    if (how !== "email" && how !== "mobile") continue;
+    const employeeId = dir.employeeOfAccount(a.id)!;
+    const done = await db
+      .update(users)
+      .set({ employeeId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(users.id, a.id),
+          sql`${users.employeeId} is null`,
+          sql`not exists (select 1 from users u2 where u2.employee_id = ${employeeId})`,
+        ),
+      )
+      .returning({ id: users.id });
+    if (!done.length) continue;
+    n++;
+    await db.insert(auditLog).values({
+      id: `aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      actorId: null,
+      action: "link-employee",
+      entityType: "user",
+      entityId: a.id,
+      afterState: { employeeId, how, automatic: true },
+    });
+  }
+  return n;
 }

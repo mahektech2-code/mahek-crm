@@ -354,6 +354,12 @@ function ManagerDialog({
   // Themselves excluded — the only loop the screen can rule out without asking
   // the server. Everything else is the action's to refuse, because only it can
   // see the whole chain.
+  /* The people holding the job title the sheet's Report To names come FIRST,
+     marked — the title is a hint for a person to act on, never an answer the
+     product works out by itself. */
+  const fold = (v: string | null | undefined) => (v ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+  const hinted = fold(person.sheetReportsTo);
+  const holdsTitle = (p: OrgPerson) => Boolean(hinted) && fold(p.position) === hinted;
   const options = everybody
     .filter((p) => p.id !== person.id)
     .filter((p) => {
@@ -365,6 +371,7 @@ function ManagerDialog({
         (p.department ?? "").toLowerCase().includes(q)
       );
     })
+    .sort((a, b) => Number(holdsTitle(b)) - Number(holdsTitle(a)))
     .slice(0, 60);
 
   return (
@@ -415,7 +422,10 @@ function ManagerDialog({
                   )}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-ink">{p.name}</span>
+                    <span className="block text-sm font-medium text-ink">
+                      {p.name}
+                      {holdsTitle(p) ? <span className="ml-1.5 text-[12px] font-normal text-brand">matches the sheet</span> : null}
+                    </span>
                     <span className="mt-px block truncate text-[13px] text-muted">
                       {[p.position, p.department].filter(Boolean).join(" · ") || "—"}
                     </span>

@@ -734,6 +734,35 @@ export async function setAccess(
     return fieldErr("grants", `${describe(retired)} is retired and cannot be granted.`);
   }
 
+  /* WHO IS THIS, BY ID, before they are given a book or a team. The Salesman
+     App and HRMS answer "whose shops", "whose leave" and "who is my manager"
+     through the account's HRMS record; an account with none falls back to a
+     guess. A record the data proves (a unique email or mobile) is linked here
+     on the spot; anything less is refused with the two ways forward. */
+  const needsRecord = granted.filter((a) => a === "field" || a === "hrms");
+  if (needsRecord.length) {
+    const [acct] = await db
+      .select({ name: users.name, employeeId: users.employeeId, notEmployee: users.notEmployee })
+      .from(users)
+      .where(eq(users.id, userId!))
+      .limit(1);
+    if (acct && !acct.employeeId && !acct.notEmployee) {
+      const { loadPersonDirectory } = await import("@/lib/services/person-identity-service");
+      const dir = await loadPersonDirectory();
+      const how = dir.howLinked(userId!);
+      const employeeId = dir.employeeOfAccount(userId!);
+      if ((how === "email" || how === "mobile") && employeeId) {
+        await db.update(users).set({ employeeId }).where(and(eq(users.id, userId!), isNull(users.employeeId)));
+        await audit(me.id, "link-employee", userId!, `${acct.name} · linked to their HRMS record by ${how} while granting ${describe(needsRecord)}`);
+      } else {
+        return fieldErr(
+          "grants",
+          `${acct.name} is not linked to an HRMS record. ${describe(needsRecord)} works out their team, manager and book from it — use “Link an HRMS record” first, or “Not an employee” if they genuinely have none.`,
+        );
+      }
+    }
+  }
+
   /* THE LEVEL ALONE CAN CHANGE. This used to be invisible to the diff: a save
      that only moved a telecaller from associate to manager answered "No
      change." and wrote nothing, and the dialog agreed by disabling Save. */
@@ -1240,6 +1269,35 @@ export async function renamePerson(input: { userId: string; name: string }): Pro
   });
   refresh();
   return ok(null, `Renamed to ${name}${seats ? ` — and on ${seats} customer seat${seats === 1 ? "" : "s"}` : ""}.`);
+}
+
+/**
+ * "This account is not an employee" — a shared desk login, an outside
+ * accountant. It leaves the "Not linked to HRMS" list, is never guessed onto
+ * a payroll row, and may then be given the Salesman App or HRMS without one.
+ * Setting it clears any stored link; clearing it changes nothing else.
+ */
+export async function setNotEmployee(input: { userId: string; notEmployee: boolean }): Promise<Result<null>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  const [person] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, input.userId)).limit(1);
+  if (!person) return fail("That account no longer exists.", "not_found");
+  await db
+    .update(users)
+    .set({ notEmployee: input.notEmployee, ...(input.notEmployee ? { employeeId: null } : {}), updatedAt: new Date() })
+    .where(eq(users.id, person.id));
+  await audit(me.id, input.notEmployee ? "access.not_employee" : "access.is_employee", person.id, person.name);
+  refresh();
+  return ok(
+    null,
+    input.notEmployee
+      ? `${person.name} is marked as not an employee — no HRMS record will be matched to them.`
+      : `${person.name} can be linked to an HRMS record again.`,
+  );
 }
 
 /**

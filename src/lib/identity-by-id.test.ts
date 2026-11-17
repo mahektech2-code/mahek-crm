@@ -28,6 +28,8 @@ const BANNED: Array<{ re: RegExp; why: string }> = [
   { re: /eq\(\s*users\.name\s*,/, why: "finding an account by its name; use personDirectory().accountByName" },
   { re: /lower\(trim\(\$\{users\.name\}\)\)\s*=/, why: "finding an account by its name in SQL" },
   { re: /\b(userByName|userIdByName|managerByName|ownerByName|usersByName|accountByName)\s*=\s*new Map/, why: "a Map from a person's name to their id" },
+  { re: /\$\{employees\.(reportsTo|position)\}\)?\)?\s*=/, why: "a manager or team worked out from a job title; titles become chart links once, in placeByTitles" },
+  { re: /lower\(trim\((reports_to|position)\)\)\s*=/, why: "a manager or team worked out from a job title in SQL" },
 ];
 
 /** path (relative to src) → why it may stay. */

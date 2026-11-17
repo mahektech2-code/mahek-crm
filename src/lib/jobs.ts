@@ -446,9 +446,20 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
    */
   results.push(
     await run("align-person-names", async () => {
-      const { alignAccountNames } = await import("./services/person-identity-service");
+      const { alignAccountNames, autoLinkAccounts, placeByTitles } = await import("./services/person-identity-service");
+      /* Proven account ↔ HRMS links first, then the chart links the sheet's
+         titles prove, then the names — so a newly linked account takes its
+         HRMS name the same night. */
+      const linked = await autoLinkAccounts();
+      const chart = await placeByTitles();
       const n = await alignAccountNames();
-      return { recordsAffected: n, detail: `${n} accounts renamed to match HRMS` };
+      const toPlace = chart.ambiguous.length + chart.unknown.length;
+      return {
+        recordsAffected: linked + chart.placed + n,
+        detail:
+          `${linked} accounts linked to HRMS, ${chart.placed} placed on the org chart from their title, ${n} accounts renamed to match HRMS` +
+          (toPlace ? `; ${toPlace} still to place on the org chart by hand` : ""),
+      };
     }, triggeredById).catch((e) => ({ job: "align-person-names" as const, recordsAffected: 0, detail: String(e) })),
   );
 

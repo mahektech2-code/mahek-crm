@@ -112,6 +112,16 @@ function headPositions(people: Person[]): string[] {
   return [...new Set(people.filter((p) => isActive(p) && /head\s*$/i.test((p.position ?? "").trim())).map((p) => p.position!.trim()))].sort();
 }
 
+/** Turn a Reports To title into an org-chart link where it names exactly one person. Never fails a save. */
+async function placeOnChart(): Promise<void> {
+  try {
+    const { placeByTitles } = await import("@/lib/services/person-identity-service");
+    await placeByTitles();
+  } catch (e) {
+    console.warn("[hrms] org chart not placed from titles", e);
+  }
+}
+
 /** A select where the list has values, else free text — an empty list must not make a field unfillable. */
 function pick(k: string, l: string, opts: string[], extra: Partial<FieldSpec> = {}): FieldSpec {
   return opts.length ? { k, l, t: "select", opts, ...extra } : { k, l, t: "text", hint: `The “${l}” list is empty — add values in Pick lists.`, ...extra };
@@ -742,6 +752,8 @@ const employeesScreen: HrmsScreenModule = {
         return okVoid(`${read.cols.name} signed up as ${code} · give them MahekOne access from Manage access`);
       });
       if (res.ok) await hrmsAudit(ctx, "hrms.employee.signUp", "employees", id, null, { code, name: read.cols.name });
+      /* On the org chart now, where their Reports To names exactly one person. */
+      if (res.ok) await placeOnChart();
       return res;
     },
     async edit(ctx, h, _lines, recordId) {
@@ -769,6 +781,7 @@ const employeesScreen: HrmsScreenModule = {
       delete logged.aadhaarNumber;
       delete logged.accountNumber;
       await hrmsAudit(ctx, "hrms.employee.edit", "employees", e.id, { name: e.name }, logged);
+      await placeOnChart();
       return okVoid(`${read.cols.name} updated`);
     },
     async editSelf(ctx, h, _lines, recordId) {

@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, sheetSyncRuns } from "@/db/schema";
-import { alignAccountNames, rememberSheetRenames } from "@/lib/services/person-identity-service";
+import { alignAccountNames, placeByTitles, rememberSheetRenames } from "@/lib/services/person-identity-service";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
 import {
   HR_FIRST_DATA_ROW,
@@ -194,6 +194,10 @@ async function pullFromSheet(
      new name now, not whenever somebody notices. Never fails the sync. */
   let renamed = 0;
   try {
+    /* A new joiner from the sheet goes on the org chart now, where their
+       Report To title names exactly one person — not left to a title match
+       every time somebody asks who approves their leave. */
+    await placeByTitles();
     renamed = await alignAccountNames();
   } catch (e) {
     console.warn("[employee-sync] account names not aligned", e);

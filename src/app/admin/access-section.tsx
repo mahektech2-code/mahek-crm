@@ -45,6 +45,7 @@ import {
   linkEmployee,
   renamePerson,
   setAccess,
+  setNotEmployee,
   type IssuedCredential,
 } from "@/lib/actions/access";
 import {
@@ -127,10 +128,17 @@ function levelOptionLabel(level: RoleId, app: AppId, appName: string): string {
 /** Every module of an app that its holders reach whatever is ticked. */
 const ALWAYS_OF = (app: AppId) => modulesForApp(app).filter((m) => isAlwaysOpen(m.key)).map((m) => m.key);
 
+/**
+ * An account nobody has said WHICH employee it is — and nobody has said it is
+ * not one. Who is on whose team, whose book, whose leave all read the HRMS
+ * record by id, so this list is meant to be worked down to empty.
+ */
+const needsHrmsLink = (r: AccessRow) => r.employeeMatch !== "linked" && !r.notEmployee;
+
 const TABS = [
   { key: "everybody", label: "Everybody" },
   { key: "admins", label: "Platform admins" },
-  { key: "not-hrms", label: "Not in HRMS" },
+  { key: "not-hrms", label: "Not linked to HRMS" },
   { key: "no-account", label: "In HRMS, no account" },
   { key: "disabled", label: "Disabled" },
 ] as const;
@@ -314,7 +322,7 @@ export function AccessSection({
   const tabCount: Record<Tab, number> = {
     everybody: rows.length,
     admins: rows.filter(isPlatformAdminRow).length,
-    "not-hrms": rows.filter((r) => !r.employeeCode).length,
+    "not-hrms": rows.filter(needsHrmsLink).length,
     "no-account": view_.noAccount.length,
     disabled: rows.filter((r) => !r.active).length,
   };
@@ -323,7 +331,7 @@ export function AccessSection({
     .filter((r) => {
       if (tab === "disabled") return !r.active;
       if (tab === "admins") return isPlatformAdminRow(r);
-      if (tab === "not-hrms") return !r.employeeCode;
+      if (tab === "not-hrms") return needsHrmsLink(r);
       return true;
     })
     .filter((r) => {
@@ -606,7 +614,7 @@ export function AccessSection({
                           className="m-0 h-4 w-4 align-middle accent-brand"
                         />
                       </AccTd>
-                      <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} position={ex?.position ?? null} />
+                      <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} position={ex?.position ?? null} say={say} />
                       <AccTd>
                         <AppChips row={r} />
                       </AccTd>
@@ -905,8 +913,52 @@ export function AccessSection({
   );
 }
 
-function PersonCells({ row, onOpen, position }: { row: AccessRow; onOpen: () => void; position: string | null }) {
+function PersonCells({
+  row,
+  onOpen,
+  position,
+  say,
+}: {
+  row: AccessRow;
+  onOpen: () => void;
+  position: string | null;
+  say: (r: { ok: boolean; message?: string; error?: string }) => void;
+}) {
   const admin = isPlatformAdminRow(row);
+  const [busy, setBusy] = React.useState(false);
+  const act = (p: Promise<{ ok: boolean; message?: string; error?: string }>) => {
+    setBusy(true);
+    void p.then((r) => {
+      setBusy(false);
+      say(r);
+    });
+  };
+  /* One click each way on "Not linked to HRMS": confirm the record the
+     directory suggests, or say this account is not an employee at all. */
+  const review = !row.notEmployee && row.employeeMatch !== "linked" ? (
+    <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px]">
+      {row.suggestion ? (
+        <button
+          type="button"
+          disabled={busy}
+          className="cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 py-0.5 font-medium text-ink hover:bg-canvas disabled:cursor-not-allowed"
+          title={`Suggested because the ${row.suggestion.on === "name" ? "name" : row.suggestion.on === "email" ? "email" : "mobile number"} matches`}
+          onClick={() => act(linkEmployee({ userId: row.userId, employeeId: row.suggestion!.employeeId }))}
+        >
+          Link {row.suggestion.employeeCode} {row.suggestion.name}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        disabled={busy}
+        className="cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 py-0.5 text-muted hover:bg-canvas disabled:cursor-not-allowed"
+        title="A shared login or an outside person — never matched to a payroll row"
+        onClick={() => act(setNotEmployee({ userId: row.userId, notEmployee: true }))}
+      >
+        Not an employee
+      </button>
+    </span>
+  ) : null;
   return (
     <>
       <AccTd>
@@ -937,9 +989,12 @@ function PersonCells({ row, onOpen, position }: { row: AccessRow; onOpen: () => 
               </Pill>
             ) : null}
           </span>
+        ) : row.notEmployee ? (
+          <span className="text-muted">Not an employee</span>
         ) : (
-          <span className="text-muted">Not in HRMS</span>
+          <span className="text-muted">Not linked to HRMS</span>
         )}
+        {review}
       </AccTd>
     </>
   );
@@ -1148,6 +1203,9 @@ function PersonMenu({
         },
         { label: "Open their record", onSelect: onOpen },
         { label: "Rename", onSelect: onRename },
+        ...(row.notEmployee
+          ? [{ label: "They are an employee after all", onSelect: () => void setNotEmployee({ userId: row.userId, notEmployee: false }).then(say) }]
+          : []),
         {
           /* Not hidden where a row was already guessed: a guess is exactly what
              somebody would come here to confirm or correct. */
