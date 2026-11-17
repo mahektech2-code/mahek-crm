@@ -51,17 +51,6 @@ export type CheckInState = {
 type Refused = { reason: CheckInRefusal | "error"; title: string; line: string };
 type Fix = { lat: number | null; lng: number | null; accuracy: number | null };
 
-function locate(): Promise<Fix | "denied"> {
-  return new Promise((resolve) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve({ lat: null, lng: null, accuracy: null });
-    navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
-      (e) => resolve(e.code === e.PERMISSION_DENIED ? "denied" : { lat: null, lng: null, accuracy: null }),
-      { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 },
-    );
-  });
-}
-
 async function upload(file: File): Promise<string | null> {
   const fd = new FormData();
   fd.append("file", file);
@@ -109,13 +98,9 @@ export function CheckInPanel({ state, canHelp, onDone }: { state: CheckInState; 
 
   async function act(kind: "in" | "out", qrCode?: string) {
     setRefused(null);
-    let fix: Fix = { lat: null, lng: null, accuracy: null };
-    if (!qrCode) {
-      setBusy("locating");
-      const f = await locate();
-      /* Location is recorded when given and never required. */
-      fix = f === "denied" ? { lat: null, lng: null, accuracy: null } : f;
-    }
+    const fix: Fix = { lat: null, lng: null, accuracy: null };
+    /* No location is asked (Nov 2026): it was never a gate, and the wait for a
+       fix made the button look dead on a desktop. */
     setBusy("saving");
     const photoId = photo ? await upload(photo) : null;
     if (photo && !photoId) toast.push("The photograph did not upload — saving without it.", "error");
