@@ -25,8 +25,6 @@ import { requireProspectVerifier } from "@/lib/services/prospect-verifier";
 import { prospectReviewStateOf } from "@/lib/prospect-review";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
 import { assertDesignatedQualificationApprover } from "@/lib/services/qualification-approver";
-import { combinedReviewApplies } from "@/lib/combined-review";
-import { runInCombinedReview } from "@/lib/services/combined-review-context";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
@@ -117,15 +115,7 @@ export async function saveQualificationReviewEdits(
     /* A save with no edits is only meaningful once Qualification is open: it is
        the approver saying "I have read this, nothing to correct", and it is what
        opens the optional verification call. Before that there is nothing to save. */
-    const requested = await requestOf(customerId);
-    const reviewCanBeSaved =
-      qualificationAccess(before.leadStage).writable ||
-      combinedReviewApplies({
-        stage: before.leadStage,
-        salesType: before.leadSalesType,
-        deskRequest: requested?.state === "awaiting" || requested?.state === "followup",
-      });
-    if (nothingChanged && !reviewCanBeSaved) {
+    if (nothingChanged && !qualificationAccess(before.leadStage).writable) {
       return err("There is nothing to save.", "validation");
     }
 
@@ -133,11 +123,6 @@ export async function saveQualificationReviewEdits(
        lead is with its designated VERIFIER (the Prospect review); once it is open
        it is the Qualification review, and the approver rules above apply. */
     const access = qualificationAccess(before.leadStage);
-    /* THE ONE-REVIEW FLOW: the Sales Manager verifying a Prospect answers the
-       Qualification-only questions in the same review. Decided below, once the
-       person has been identified, and carried to the two writers as a server-side
-       context — never as something a request can ask for. */
-    let combined = false;
     let ctx: Awaited<ReturnType<typeof requireLeadVerifier>>;
     if (access.writable) {
       /* The existing approver gate first (it audits the hat and refuses the owner
@@ -171,30 +156,23 @@ export async function saveQualificationReviewEdits(
       /* The one gate the verification call asks — the org chart's designated
          verifier — asked unchanged. */
       ctx = await requireProspectVerifier(customerId);
-      combined = combinedReviewApplies({
-        stage: before.leadStage,
-        salesType: before.leadSalesType,
-        deskRequest: req?.state === "awaiting" || req?.state === "followup",
-      });
-      /* Qualification has not opened: its answers are collected there, not here —
-         except in the one-review flow, where the verifier answers them now. */
-      if (!combined && [...fieldKeys, ...answerKeys].some(isCollectorEdit)) {
+      /* Qualification has not opened: its answers are collected there, not here. */
+      if ([...fieldKeys, ...answerKeys].some(isCollectorEdit)) {
         return err(`${access.reason} Nothing was saved.`, "rule_violation");
       }
     }
 
-    const inReview = <T,>(fn: () => Promise<T>): Promise<T> => (combined ? runInCombinedReview(customerId, fn) : fn());
     const wasSnapshot = snapshot(before);
 
     /* The fields first: their validation is the one that can plausibly refuse.
        If the fields are refused nothing has been written yet. */
     if (fieldKeys.length) {
-      const r = await inReview(() => saveProspectFields(customerId, split.fields as never));
+      const r = await saveProspectFields(customerId, split.fields as never);
       if (!r.ok) return r as Result<{ changed: number }>;
     }
     let answersNote: string | null = null;
     if (answerKeys.length) {
-      const r = await inReview(() => saveLeadQualification(customerId, split.answers as Record<string, string>));
+      const r = await saveLeadQualification(customerId, split.answers as Record<string, string>);
       if (!r.ok) answersNote = `The other answers were saved, but these were not: ${r.error}`;
     }
 
@@ -258,7 +236,7 @@ export async function saveQualificationReviewEdits(
        verification call available (`callRefusalFor`), and it is written only at
        Qualification, only by the designated approver (asked above), and only
        after every write above succeeded. */
-    if (qualificationAccess(before.leadStage).writable || combined) {
+    if (qualificationAccess(before.leadStage).writable) {
       await db.insert(auditLog).values({
         id: gen("aud"),
         actorId: ctx.user.id,
@@ -275,7 +253,7 @@ export async function saveQualificationReviewEdits(
       { changed: changes.length },
       changes.length
         ? `Saved ${changes.length} change${changes.length === 1 ? "" : "s"}.`
-        : qualificationAccess(before.leadStage).writable || combined
+        : qualificationAccess(before.leadStage).writable
           ? "Review saved — nothing needed changing."
           : "Nothing was different, so nothing changed.",
     );
