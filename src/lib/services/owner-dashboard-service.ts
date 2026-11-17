@@ -478,7 +478,7 @@ export async function bandedCustomers(
     select c.id, c.name, c.cycle_days, c.cycle_confidence,
            to_char(c.last_order_date, 'YYYY-MM-DD') as last_order_date,
            c.outstanding,
-           coalesce(c.sales_person_name, u.name) as owner_name,
+           coalesce(u.name, c.sales_person_name) as owner_name,
            to_char(k.started_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as last_call_on,
            k.outcome::text as last_call_outcome,
            to_char(k.next_step_date, 'YYYY-MM-DD') as next_call_on

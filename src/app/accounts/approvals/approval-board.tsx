@@ -35,6 +35,8 @@ export function ApprovalBoard({
   canDecide,
   staleHours,
   erpOrdersHref,
+  title = "Order approvals",
+  subtitle = "Orders that reached Accounts without a TO",
 }: {
   rows: ApprovalBoardRow[];
   queueRows: QueueRow[];
@@ -42,6 +44,8 @@ export function ApprovalBoard({
   staleHours: number;
   /** The ERP's Orders list, where a held order's dispatch details are edited — null where this person has no ERP. */
   erpOrdersHref: string | null;
+  title?: string;
+  subtitle?: string;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -70,9 +74,9 @@ export function ApprovalBoard({
     <div className="mx-auto w-full max-w-(--container-measure) px-6 pt-6 pb-10">
       <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <div role="heading" aria-level={1} className="text-2xl leading-8 font-semibold tracking-tight text-ink">
-          Order approvals
+          {title}
         </div>
-        <span className="text-sm text-body">Every order, once the back office and Production Head have verified it</span>
+        <span className="text-sm text-body">{subtitle}</span>
       </div>
 
       <CardGrid min={200} gap="gap-3" className="mb-6">
@@ -183,7 +187,7 @@ export function ApprovalBoard({
           </table>
         </div>
       ) : (
-        <div className="rounded-card border border-line bg-surface px-5 py-10 text-center text-sm text-muted">Nothing waiting. An order lands here once the back office and the Production Head have verified it.</div>
+        <div className="rounded-card border border-line bg-surface px-5 py-10 text-center text-sm text-muted">Nothing waiting.</div>
       )}
       <p className="mt-3 text-meta text-muted">Approve → MRP check, and the customer gets &ldquo;Order confirmed&rdquo;. Hold → To Hold. ⋯ has Edit order and Decline.</p>
 

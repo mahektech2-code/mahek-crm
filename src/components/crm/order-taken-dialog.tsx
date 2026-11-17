@@ -13,7 +13,7 @@ import type { TakenTo } from "@/lib/order-journey";
  * order is saved and the ERP is the order book. It replaces the next-step
  * dialog for that call and carries its sentence in the grey box, so nothing
  * the next-step dialog said is lost: the TO number, what is on it, that the
- * back office and the Production Head check it next, and when the customer
+ * Accounts check it next, and when the customer
  * comes back to the Call Log.
  * ------------------------------------------------------------------------- */
 
@@ -48,7 +48,7 @@ export function OrderTakenDialog({
               <span className="rounded bg-brand-soft px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand uppercase">New</span>
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-body">
-              This is a temporary order number. The back office and the Production Head check it, then it gets its order number.
+              This is a temporary order number. Accounts check it, and approving it makes the order number.
             </p>
           </div>
 
@@ -75,9 +75,7 @@ export function OrderTakenDialog({
 
           <div className="flex flex-col gap-1 text-[13px]">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[12px] font-medium text-brand">Order Hub · waiting for checks</span>
-              <span className="text-body">Back office ○</span>
-              <span className="text-body">Production Head ○</span>
+              <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[12px] font-medium text-brand">Waiting for Accounts</span>
             </div>
             <span className="text-muted">Source: TeleCRM · {taken.takenBy}</span>
           </div>
@@ -109,7 +107,7 @@ export function OrderTakenDialog({
               </Button>
             )}
           </div>
-          <p className="text-[12px] text-muted">You can edit or cancel this order until both checks are done.</p>
+          <p className="text-[12px] text-muted">You can edit or cancel this order until Accounts approve it.</p>
         </div>
       </Modal>
       {editing ? <EditToDialog intakeId={taken.intakeId} onClose={() => setEditing(false)} /> : null}

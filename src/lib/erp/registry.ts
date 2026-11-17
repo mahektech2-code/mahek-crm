@@ -180,12 +180,15 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Sales",
     icon: "receipt",
     screens: [
-      s("orderHub", "order-hub", "Order Hub", "Every new order as a TO number, until the back office and the Production Head have both checked it.", true, [
-        v("orderHub", "Need checks"),
+      s("orderHub", "order-hub", "Order Hub", "Every new order as a TO number, until Accounts approve it in Accounts › Order approvals.", true, [
+        v("orderHub", "Waiting for Accounts"),
         v("hubCorrection", "Sent back"),
-        v("hubDone", "Checked recently"),
+        v("hubDone", "Decided recently"),
       ]),
-      s("mrpCheck", "mrp-check", "MRP check", "Orders Accounts approved, checked against materials and capacity before production.", true),
+      s("mrpCheck", "mrp-check", "MRP check", "Orders Accounts approved, checked against materials and capacity before production.", true, [
+        v("mrpCheck", "Pending checks"),
+        v("mrpHold", "On hold"),
+      ]),
       s("toHold", "to-hold", "To Hold", "Every held TO and order, from every desk, and where releasing sends it.", true),
       s("orders", "orders", "Orders", "From the order to the bill leaving the godown, one step per tab.", true, [
         v("verifyOrders", "Older orders to verify"),

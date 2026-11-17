@@ -41,16 +41,57 @@ export const isClosed = (status: string) => status === "done" || status === "mis
  */
 export const MISSED_FROM = "2026-11-10";
 
+/**
+ * GRACE TIME. A routine's task is not missed the minute its due time passes:
+ * for this many minutes more it is still open and can be done, drawn as
+ * "Grace time", and only then is it missed (owner, 2026-11-17: "15 minutes
+ * flat"). `tasks.routineGraceMinutes` holds it; this is its default and the
+ * ceiling the setting allows.
+ */
+export const ROUTINE_GRACE_DEFAULT = 15;
+export const ROUTINE_GRACE_MAX = 15;
+
+const minutesOf = (hm: string) => {
+  const [h, m] = hm.split(":").map(Number);
+  return h * 60 + (m || 0);
+};
+/** Whole days from `from` to `to`, both "YYYY-MM-DD". */
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+/**
+ * Minutes from the task's due moment to now, on the business clock: negative
+ * before it is due. A task with no time is due at the end of its day.
+ */
+function minutesPastDue(task: { dueDate: string; dueTime: string | null }, nowDay: string, nowHM: string): number {
+  const due = task.dueTime ? minutesOf(task.dueTime) : 24 * 60;
+  return daysBetween(task.dueDate, nowDay) * 24 * 60 + minutesOf(nowHM) - due;
+}
+
 export function routineMissed(
   task: { routineId: string | null; status: string; dueDate: string; dueTime: string | null },
   nowDay: string,
   nowHM: string,
+  graceMinutes: number,
 ): boolean {
   if (!task.routineId || task.status === "done") return false;
   if (task.status === "missed") return true;
   if (task.dueDate < MISSED_FROM) return false;
-  if (nowDay > task.dueDate) return true;
-  return nowDay === task.dueDate && task.dueTime != null && nowHM >= task.dueTime;
+  return minutesPastDue(task, nowDay, nowHM) >= Math.max(0, graceMinutes);
+}
+
+/**
+ * Minutes left in a routine task's grace time, or null when it is not in it —
+ * not yet due, already missed, done, or not a routine's.
+ */
+export function routineGraceLeft(
+  task: { routineId: string | null; status: string; dueDate: string; dueTime: string | null },
+  nowDay: string,
+  nowHM: string,
+  graceMinutes: number,
+): number | null {
+  if (!task.routineId || isClosed(task.status) || task.dueDate < MISSED_FROM) return null;
+  const past = minutesPastDue(task, nowDay, nowHM);
+  return past >= 0 && past < graceMinutes ? graceMinutes - past : null;
 }
 
 /** "Not done by 6 PM on 13 Nov." — the remark a missed task closes with. */

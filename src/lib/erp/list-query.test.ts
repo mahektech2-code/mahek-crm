@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import type { ListRow, ListSpec, Tone } from "./ui";
-import { groupHeadValues, groupPrintHref, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, selectionTotalText, selectionTotals, type ListQuery } from "./list-query";
+import { groupHeadValues, groupPrintHref, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotalText, selectionTotals, type ListQuery } from "./list-query";
 
 const FLAGS: Record<string, [string, Tone]> = { late: ["Running late", "danger"] };
 const spec: ListSpec = {
@@ -313,5 +313,23 @@ describe("the Filters pop-up", () => {
     assert.deepEqual(panel.map((x) => x.k), ["qty"]);
     const many = Array.from({ length: 20 }, (_, i) => row(`r${i}`, String(i), i % 2 ? "Toluene" : "Xylene", i, "Open", "Vasai"));
     assert.deepEqual(pageOf(spec, many, Q(), FLAGS).panel!.map((x) => x.k), ["item", "qty"]);
+  });
+});
+
+describe("when a typed search goes to the server", () => {
+  test("one character never does — it matches nearly the whole book", () => {
+    assert.equal(searchWorthAsking("1"), false);
+    assert.equal(searchWorthAsking(" a "), false);
+  });
+  test("two characters or more do", () => {
+    assert.equal(searchWorthAsking("19"), true);
+    assert.equal(searchWorthAsking("1957"), true);
+  });
+  test("clearing the box always does, so the full list comes back", () => {
+    assert.equal(searchWorthAsking(""), true);
+    assert.equal(searchWorthAsking("   "), true);
+  });
+  test("the pause outlasts the gap between digits typed one at a time (350-630 ms measured)", () => {
+    assert.ok(SEARCH_PAUSE_MS >= 500);
   });
 });

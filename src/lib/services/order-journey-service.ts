@@ -19,6 +19,8 @@ export type OrderRow = {
   takenBy: string | null;
   status: string;
   orderedAt: string;
+  /** When it was really taken: the TO's own stamp where there is one (a CRM order's `orderedAt` is 09:00 filler). */
+  takenAt: string;
   approvedAt: string | null;
   declineReason: string | null;
   totalPaise: number;
@@ -77,6 +79,9 @@ async function assemble(base: Base[]): Promise<OrderRow[]> {
            i.correction_at as "correctionAt", i.correction_note as "correctionNote",
            i.held_at as "heldAt", i.hold_reason as "holdReason",
            i.cancelled_at as "cancelledAt", i.cancel_reason as "cancelReason",
+           i.declined_at as "declinedAt", i.decline_reason as "declineReason", dc.name as "declinedBy",
+           i.duplicate_state as "duplicateState", dup.to_no as "duplicateOfToNo", i.duplicate_reason as "duplicateReason",
+           i.origin,
            (select json_agg(json_build_object('product', p.name, 'cans', l.qty_cans,
                     'litres', l.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000) order by l.position)
               from erp_order_intake_lines l join products p on p.id = l.sku_id
@@ -85,6 +90,8 @@ async function assemble(base: Base[]): Promise<OrderRow[]> {
       left join users tk on tk.id = i.taken_by_id
       left join users bo on bo.id = i.back_office_by_id
       left join users pr on pr.id = i.production_by_id
+      left join users dc on dc.id = i.declined_by_id
+      left join erp_order_intakes dup on dup.id = i.duplicate_of_id
      where i.origin_order_id in (${list(ids)})
         ${bookNos.length ? sql`or i.order_no in (${list(bookNos)})` : sql``}`)) as unknown as Record<string, unknown>[];
   const intakeFor = new Map<string, Record<string, unknown>>();
@@ -155,6 +162,13 @@ async function assemble(base: Base[]): Promise<OrderRow[]> {
           holdReason: (raw.holdReason as string) ?? null,
           cancelledAt: iso(raw.cancelledAt),
           cancelReason: (raw.cancelReason as string) ?? null,
+          declinedAt: iso(raw.declinedAt),
+          declineReason: (raw.declineReason as string) ?? null,
+          declinedBy: (raw.declinedBy as string) ?? null,
+          duplicateState: (raw.duplicateState as string) ?? null,
+          duplicateOfToNo: raw.duplicateOfToNo == null ? null : Number(raw.duplicateOfToNo),
+          duplicateReason: (raw.duplicateReason as string) ?? null,
+          origin: (raw.origin as string) ?? null,
           orderNo: raw.orderNo == null ? null : Number(raw.orderNo),
         }
       : null;
@@ -174,6 +188,7 @@ async function assemble(base: Base[]): Promise<OrderRow[]> {
       takenBy: b.takenBy,
       status: b.status,
       orderedAt: iso(b.orderedAt)!,
+      takenAt: intake?.takenAt ?? iso(b.orderedAt)!,
       approvedAt: iso(b.approvedAt),
       declineReason: b.declineReason,
       totalPaise: Number(b.totalPaise),

@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -61,7 +62,8 @@ import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
-import { dropLineStickers } from "../dispatch-stickers";
+import { dropLineStickers, releaseSticker } from "../dispatch-stickers";
+import { unitEvent } from "../units";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
 import { notifyUsers } from "@/lib/notify";
 import {
@@ -85,8 +87,8 @@ import { freightBillNo } from "../engines/freight-bill";
 import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, invoiceFilesFor, openHolds, recordHold, sendWords, syncOrderTracking, tellHold, type OpenHold } from "../order-tracking";
 import { reasonByLabel } from "../engines/order-tracking";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
-import { duplicateOf, gateRefusal, lineCleared } from "../engines/order-hub";
-import { createIntake, editIntake, type Intake, type IntakeLine } from "../order-hub";
+import { gateRefusal, lineCleared } from "../engines/order-hub";
+import { createIntake, describeDuplicate, DuplicateFoundError, editIntake, type Intake, type IntakeLine } from "../order-hub";
 import { confirmImpact } from "@/lib/impact/registry";
 import { impactBatchKey } from "@/lib/impact/batch-key";
 import { readConfirmation } from "@/lib/impact/types";
@@ -690,7 +692,6 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
   const pricing = seeRate || seeAmounts ? await priceFills(active, skuList) : null;
   /* The open TOs this one could repeat: the review page warns before Save, as the server does after it. */
-  const against = fixed ? [] : await openToShapes();
   /* "Add to order" opens with its party chosen, so its price list is filled now rather than on a pick that never comes. */
   return withFills({
     screen: "orders",
@@ -698,7 +699,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
     title: fixed ? `Add to order ${fixed.orderNo}` : "New order",
     sub: fixed
       ? "One line per SKU."
-      : "Saves as a TO number. The back office and the Production Head check it; the second check makes the order number. The rate fills in from the price list the Accounts app applies to the billing party; type it where the list has none.",
+      : "Saves as a TO number. Accounts approve it, and that makes the order number. The rate fills in from the price list the Accounts app applies to the billing party; type it where the list has none.",
     submit: fixed ? "Save order" : "Save as TO",
     lineLabel: fixed ? "SKU" : "Line",
     ...(fixed
@@ -708,8 +709,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
             fields: ["source", "billing", "transporter"],
             lineCols: ["sku", "qty", ...(seeRate && pricing ? ["rate"] : [])],
             ...(seeRate && pricing ? { amount: { qty: "qty", rate: "rate", ...(seeAmounts ? { discount: "discount" } : {}) } } : {}),
-            notice: "This saves as a TO number. It gets its order number once the back office and the Production Head have both verified it. It stays editable here, from the Order Hub, until then.",
-            dup: { party: "billing", date: "date", item: "sku", qty: "qty", against },
+            notice: "This saves as a TO number. It gets its order number once Accounts approve it, and you can change it until then.",
           },
         }),
     init: fixed
@@ -740,17 +740,6 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       ...(pricing && seeAmounts
         ? ([{ k: "listTerms", l: "List discounts", t: "text", readOnly: true, untagged: true, wide: true, hint: "Each depends on how the party pays or how much it takes, so none is applied for you: type the discount on the line.", fillBy: { by: ["billing"], map: pricing.terms, otherwise: "" } }] as FieldSpec[])
         : []),
-      ...(fixed
-        ? []
-        : ([
-            {
-              k: "dupOk",
-              l: "Not a duplicate",
-              t: "select",
-              opts: [DUP_OK],
-              hint: "Only asked for when this party already has an order today with exactly these goods.",
-            },
-          ] as FieldSpec[])),
     ] as FieldSpec[]).map((f) => (fixed || f.sec ? f : { ...f, sec: "Party" })),
     line: [
       { k: "sku", l: "Description of goods", t: "select", req: true, opts: skuList.map((s) => s.name) },
@@ -765,7 +754,6 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
   });
 }
 
-const DUP_OK = "Yes — it is a separate order";
 
 /** "from TO-1042 · accounts approved by Deepa · MRP cleared by Ravi 18 Nov", per order — the group heading's last fact. */
 async function orderGateWords(orderNos: number[]): Promise<Map<number, string>> {
@@ -794,17 +782,6 @@ async function orderGateWords(orderNos: number[]): Promise<Map<number, string>> 
   );
 }
 
-/** Every open TO's party, date and goods, by name — what the New order review compares against. */
-async function openToShapes(): Promise<{ label: string; party: string; date: string; lines: [string, number][] }[]> {
-  const rows = (await db.execute(sql`
-    select i.to_no as "toNo", c.name as party, i.order_date::text as date,
-           coalesce((select json_agg(json_build_array(p.name, l.qty_cans)) from erp_order_intake_lines l join products p on p.id = l.sku_id where l.intake_id = i.id), '[]'::json) as lines
-      from erp_order_intakes i join customers c on c.id = i.billing_customer_id
-     where i.status in ('open', 'correction', 'hold') and i.order_date >= current_date - 7
-     limit 500`)) as unknown as { toNo: number; party: string; date: string; lines: [string, number][] }[];
-  return rows.map((r) => ({ label: `TO-${r.toNo}`, party: r.party, date: r.date, lines: r.lines.map(([n, q]) => [n, Number(q)] as [string, number]) }));
-}
-
 /**
  * EDIT A TO: the New order form, filled with the TO. Only while it is a TO —
  * once it has its order number nothing about it changes.
@@ -822,12 +799,11 @@ export async function intakeForm(ctx: ErpContext, intake: Intake, lines: IntakeL
     id: "editTo",
     recordId: intake.id,
     title: `Edit TO-${intake.toNo}`,
-    sub: "Saving clears both checks: the back office and the Production Head check it again. Once it has its order number it cannot be changed.",
+    sub: "Saving sends it back to Accounts for approval.",
     submit: "Save TO",
     review: base.review ? { ...base.review, dup: undefined, notice: "Saving clears both checks. It stays a TO until both are done again." } : undefined,
     /* A TO taken on a call or on the Salesman App keeps where it was taken. */
     header: base.header
-      .filter((f) => f.k !== "dupOk")
       .map((f) => (f.k === "source" && taken ? { ...f, opts: [intake.orderSource!], readOnly: true } : f)),
     init: {
       date: intake.orderDate,
@@ -1432,6 +1408,9 @@ function orderList(scope: Scope): ScreenModule {
                     ]
                   : []),
                 ...(approver && (l.o.partyStatus === "Pending" || l.o.accountsCheck === "Pending") ? [{ id: "approve", l: "Approved By Admin" } as ActionSpec] : []),
+                ...(editsOrders(ctx) && l.o.status !== "Cancel"
+                  ? [{ id: "editOrder", l: "Edit order", loadsForm: true, why: billed ? "Billed: undo billing to change it" : dispatched ? "It has left" : "" } as ActionSpec]
+                  : []),
                 { id: "edit", l: "Dispatch details", loadsForm: true, why: l.o.status === "Cancel" ? "This line is cancelled" : "" },
                 { id: "select", l: "Show the whole order", href: erpLink("orders", { f: order.map((x) => x.o.id).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: erpLink("customers", { open: l.billing.id }) },
@@ -2170,7 +2149,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       changeInvoice: (ctx, id, values) => doChangeInvoice(ctx, id, values),
       approveInvoice: (ctx, id) => doApproveInvoice(ctx, id),
       rejectInvoice: (ctx, id, values) => doRejectInvoice(ctx, id, values),
-      moveOut: async () => err("This order has its order number, so it can no longer be changed. Cancel it and take a new order instead.", "rule_violation"),
+      moveOut: async () => err("Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.", "rule_violation"),
       approve: (ctx, id) => doApprove(ctx, [id]),
       async delete(ctx, id, values) {
         const [l] = await lines([id]);
@@ -2196,13 +2175,14 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     },
     formLoaders: {
       edit: editForm,
+      editOrder: editOrderForm,
       allocate: allocateForm,
     },
     forms: {
       ...(scope === "orders" ? { new: (ctx, h, ls) => saveOrder(ctx, h, ls) } : {}),
-      more: async () => err("This order has its order number, so it can no longer be changed. Cancel it and take a new order instead.", "rule_violation"),
+      more: async () => err("Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.", "rule_violation"),
       edit: (ctx, h, _l, id) => saveEdit(ctx, h, id),
-      editOrder: async () => err("This order has its order number, so it can no longer be changed. Cancel it and take a new order instead.", "rule_violation"),
+      editOrder: (ctx, h, ls, id) => saveEditOrder(ctx, h, ls, id),
       allocate: (ctx, h, _l, id) => saveAllocation(ctx, h, id),
     },
   };
@@ -2332,23 +2312,6 @@ export async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: 
   /* One order number is fixed once made: nothing is added to it (the Order Hub). */
   if (int(h.orderFixed) != null) return err("This order has its order number, so it can no longer be changed. Take a new order for these goods.", "rule_violation");
   const date = text(h.date) ?? today();
-  if (text(h.dupOk) !== DUP_OK && !editTo) {
-    /* PRD step 1: the reliable duplicate — the same party, day and goods, on an order or a TO still waiting. */
-    const same = (await db.execute(sql`
-      select 'Order ' || order_no as key, sku_id as "skuId", qty_cans as "qtyCans" from erp_orders
-       where billing_customer_id = ${billing.id} and order_date = ${date} and status <> 'Cancel'
-      union all
-      select 'TO-' || i.to_no, l.sku_id, l.qty_cans from erp_order_intakes i join erp_order_intake_lines l on l.intake_id = i.id
-       where i.billing_customer_id = ${billing.id} and i.order_date = ${date} and i.status in ('open', 'correction', 'hold')
-    `)) as unknown as { key: string; skuId: string; qtyCans: number }[];
-    const shapes = new Map<string, { skuId: string; qtyCans: number }[]>();
-    for (const r of same) shapes.set(r.key, [...(shapes.get(r.key) ?? []), { skuId: r.skuId, qtyCans: Number(r.qtyCans) }]);
-    const dup = duplicateOf(
-      { key: "new", billingId: billing.id, date, lines: parsed.map((p) => ({ skuId: p.sku.id, qtyCans: p.qty })) },
-      [...shapes].map(([key, lines]) => ({ key, billingId: billing.id, date, lines })),
-    );
-    if (dup != null) return fieldErr("dupOk", `${dup} for ${billing.name} on this day has exactly these goods. If this is a separate order, pick "${DUP_OK}" and save again.`);
-  }
   const carrier = await listedTransporterName(db, text(carrierOf(h)), delivery.p?.transporter);
   if (!carrier.ok) return fieldErr("transporter", carrier.error);
   const intakeLines = parsed.map((p) => ({
@@ -2371,29 +2334,250 @@ export async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: 
     );
     if (!res.ok) return res;
     await erpAudit(ctx, "erp.intake.edit", "erp_order_intake", editTo.id, null, { toNo: editTo.toNo, lines: parsed.length });
-    return okVoid(`TO-${editTo.toNo} saved · both checks start again`);
+    return okVoid(`TO-${editTo.toNo} saved · back with Accounts`);
   }
   /* THE ORDER HUB: a new order is a TO number until the back office and the
      Production Head have both checked it; the second check makes the order
      number and writes the order lines (`order-hub.ts`). */
-  const made = await createIntake(ctx.user.id, {
-    origin: "erp",
-    orderSource: source,
-    orderDate: date,
-    godownId,
-    billingId: billing.id,
-    deliveryId: delivery.id,
-    transporter: carrier.name ?? delivery.p?.transporter ?? null,
-    dispatchOn: text(h.dispatchOn),
-    inboxId: text(h.inboxId),
-    takenById: ctx.user.id,
-    lines: intakeLines,
-  });
+  /* THE DUPLICATE CHECK: the same parties, the same items, the same day. An
+     unanswered match stops the save and the form asks "Same order" or
+     "Different order" (`order-hub.ts`); a "different" answer comes back with
+     the TO it looked like and the reason. */
+  const dupOf = text(h.dupOf);
+  const dupReason = text(h.dupReason);
+  let made: Awaited<ReturnType<typeof createIntake>>;
+  try {
+    made = await createIntake(
+      ctx.user.id,
+      {
+        origin: "erp",
+        orderSource: source,
+        orderDate: date,
+        godownId,
+        billingId: billing.id,
+        deliveryId: delivery.id,
+        transporter: carrier.name ?? delivery.p?.transporter ?? null,
+        dispatchOn: text(h.dispatchOn),
+        inboxId: text(h.inboxId),
+        takenById: ctx.user.id,
+        lines: intakeLines,
+      },
+      undefined,
+      { duplicate: dupOf ? { decision: "different", ofId: dupOf, reason: dupReason ?? "" } : null, onDuplicate: "ask" },
+    );
+  } catch (e) {
+    if (e instanceof DuplicateFoundError) {
+      if (dupOf && !dupReason) return fieldErr("dupReason", "Say why it is a different order");
+      const found = await describeDuplicate(e.match, e.newLines);
+      return { ok: false, error: e.message, code: "duplicate", detail: found };
+    }
+    throw e;
+  }
   await erpAudit(ctx, "erp.intake.create", "erp_order_intake", made.id, null, { toNo: made.toNo, lines: parsed.length, billing: billing.name, source });
   const noRate = parsed.filter((p) => p.rate == null).length;
   const applied = prices.listOf(billing.id, date);
   return okVoid(
-    `TO-${made.toNo} saved · ${plural(parsed.length)} · waiting for the back office and the Production Head to check it${noRate ? ` · ${noRate} without a rate: ${applied ? `none on ${applied.name}` : "no price list applies to the party"} — add it before the checks` : ""}`,
+    `TO-${made.toNo} saved · ${plural(parsed.length)} · waiting for Accounts to approve it${made.duplicateOf ? " · marked a different order" : ""}${noRate ? ` · ${noRate} without a rate: ${applied ? `none on ${applied.name}` : "no price list applies to the party"} - Accounts add it before approving` : ""}`,
+  );
+}
+
+/* ===================================================== edit until Bill it */
+
+/** Who edits a numbered order (Option A): the Production Head, or an ERP administrator. */
+function editsOrders(ctx: ErpContext): boolean {
+  return ctx.administrator || ctx.powers.has("productionCheck");
+}
+
+/**
+ * THE WHOLE ORDER IN ONE MODAL, for the Production Head, until it is billed.
+ * Goods, cans, rates, discounts, the parties, the transporter and the dispatch
+ * day can all change, a line can be added or taken off, and nothing is asked
+ * again. A line whose product changes, that is taken off, or whose cans drop
+ * gives its allocated lots and scanned boxes back to the shelf, and a Ready
+ * line the shelf can no longer cover goes back to Under Process.
+ */
+async function editOrderForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [one] = await lines([id]);
+  if (!one) return null;
+  const all = (await orderLines({ orderNos: [one.o.orderNo] })).filter((l) => l.o.status !== "Cancel");
+  if (!all.length) return null;
+  const first = all[0];
+  const base = await orderForm(ctx, {
+    orderNo: first.o.orderNo,
+    date: first.o.orderDate,
+    godown: first.godown,
+    billing: first.billing.name,
+    delivery: first.delivery.name,
+    transporter: first.o.transporter ?? "",
+    source: first.o.orderSource ?? "",
+  });
+  const seeRate = ctx.powers.has("viewSalesRate");
+  const seeAmounts = ctx.powers.has("viewSalesAmounts");
+  return withFills({
+    ...base,
+    id: "editOrder",
+    recordId: id,
+    title: `Edit order ${first.o.orderNo} · ${first.billing.name}`,
+    sub: "Editable until Bill it. Edited by the Production Head. Saved changes need no approval again.",
+    submit: "Save changes",
+    init: {
+      ...base.init,
+      dispatchOn: first.o.dispatchOn ?? "",
+      billing: first.billing.name,
+      delivery: first.delivery.id !== first.billing.id ? first.delivery.name : "",
+      transporter: isMahekVehicle(first.o.transporter) ? "" : (first.o.transporter ?? ""),
+      deliveredBy: isMahekVehicle(first.o.transporter) ? MAHEK_VEHICLE : "Transporter",
+    },
+    header: base.header.map((f) =>
+      f.k === "billing" || f.k === "delivery" || f.k === "dispatchOn" || f.k === "transporter" || f.k === "deliveredBy" ? { ...f, readOnly: false } : f,
+    ),
+    initLines: all.map((l) => ({
+      lineId: l.o.id,
+      sku: l.sku.name,
+      qty: String(l.o.qtyCans),
+      ...(seeRate ? { rate: rupeesField(l.o.ratePaise) } : {}),
+      ...(seeAmounts ? { discount: l.o.discountBp == null ? "" : String(l.o.discountBp / 100) } : {}),
+      remark: l.o.remark ?? "",
+    })),
+  });
+}
+
+/** Gives a line's allocated lots and scanned boxes back to the shelf, inside the edit's transaction. */
+async function releaseLine(tx: Tx0, l: OrderLine, userId: string, why: string): Promise<number> {
+  await tx.delete(erpBatchCodes).where(eq(erpBatchCodes.orderId, l.o.id));
+  const units = (await tx.execute(sql`select id, godown_id as "godownId" from erp_units where order_id = ${l.o.id} and status = 'scanned' for update`)) as unknown as { id: string; godownId: string | null }[];
+  for (const u of units) {
+    await tx.execute(sql`update erp_units set status = 'available', order_id = null, scanned_at = null, scanned_by_id = null, updated_at = now() where id = ${u.id}`);
+    await releaseSticker(tx, u.id);
+    await unitEvent(tx, { unitId: u.id, event: "unscanned", from: "scanned", to: "available", orderId: l.o.id, godownId: u.godownId, note: `${why} on order ${l.o.orderNo}`, byId: userId });
+  }
+  return units.length;
+}
+
+async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<string, string>[], id?: string): Promise<Result<unknown>> {
+  if (!editsOrders(ctx)) return err("Only the Production Head edits an order.", "not_permitted");
+  if (!id) return err("No order named.", "not_found");
+  const [one] = await lines([id]);
+  if (!one) return err("That order no longer exists.", "not_found");
+  const no = one.o.orderNo;
+  const all = (await orderLines({ orderNos: [no] })).filter((l) => l.o.status !== "Cancel");
+  if (!all.length) return err(`Order ${no} is cancelled.`, "rule_violation");
+  if (all.some((l) => l.inDetails || l.dispatched)) return err(`Order ${no} is billed, so it can no longer be changed. Undo billing first.`, "rule_violation");
+  if (!ls.length) return err("An order keeps at least one line. To drop the whole order, cancel it.", "rule_violation");
+  const head = all[0];
+  const billing = await partyByName(text(h.billing) ?? head.billing.name);
+  if (!billing) return fieldErr("billing", "Pick a billing party from the list");
+  if (billing.id !== head.billing.id && partyStatus(billing) === "Deactive") return fieldErr("billing", "This party is deactivated");
+  const named = await deliveryByName(text(h.delivery), billing);
+  if (!named.ok) return named;
+  const delivery = named.data;
+  const carrier = await listedTransporterName(db, text(carrierOf(h)), head.o.transporter);
+  if (!carrier.ok) return fieldErr("transporter", carrier.error);
+  const [skus, prices, authority] = await Promise.all([skuCatalogue(), priceBook([billing.id]), priceAuthorityOf(ctx)]);
+  const byName = new Map([...skus.values()].map((x) => [x.name, x]));
+  const byId = new Map(all.map((l) => [l.o.id, l]));
+  const seeRate = ctx.powers.has("viewSalesRate");
+  const seeAmounts = ctx.powers.has("viewSalesAmounts");
+
+  type Parsed = { i: number; was: OrderLine | null; sku: Sku; qty: number; rate: number | null; discount: number | null; remark: string | null; price: PriceDecision | null };
+  const parsed: Parsed[] = [];
+  for (let i = 0; i < ls.length; i++) {
+    const v = ls[i];
+    const was = v.lineId ? (byId.get(v.lineId) ?? null) : null;
+    if (v.lineId && !was) return err("A line on this order changed while it was open. Close it and open the order again.", "conflict");
+    const sku = byName.get(v.sku ?? "");
+    if (!sku) return fieldErr(`l${i}.sku`, "Pick an SKU");
+    const qty = int(v.qty);
+    if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Minus Quantity Not Allowed");
+    if (!boxQuantity(qty, sku.cpb, !isBoxed(sku)).valid) return fieldErr(`l${i}.qty`, "INVALID");
+    const same = !!was && was.sku.id === sku.id;
+    const listRate = prices.rateOf(billing.id, sku, head.o.orderDate, qty);
+    const rate = seeRate ? paise(v.rate) : same ? was!.o.ratePaise : listRate;
+    const typedDisc = seeAmounts ? num(v.discount) : null;
+    if (typedDisc != null && (typedDisc < 0 || typedDisc > 100)) return fieldErr(`l${i}.discount`, "Discount must be between 0 and 100");
+    const discount = seeAmounts ? (typedDisc == null ? null : Math.round(typedDisc * 100)) : same ? was!.o.discountBp : null;
+    const moved = !same || rate !== was!.o.ratePaise || (discount ?? null) !== (was!.o.discountBp ?? null);
+    let price: PriceDecision | null = null;
+    if (moved) {
+      const decided = decidePrice(ctx, authority, { listRatePaise: listRate, ratePaise: rate, discountBp: discount });
+      if (!decided.ok) return fieldErr(`l${i}.${decided.field}`, decided.reason);
+      price = decided.values;
+    }
+    parsed.push({ i, was: same ? was : null, sku, qty, rate, discount, remark: text(v.remark), price });
+  }
+  const keptIds = new Set(parsed.filter((p) => p.was).map((p) => p.was!.o.id));
+  const removed = all.filter((l) => !keptIds.has(l.o.id));
+  const shared = { billingCustomerId: billing.id, deliveryCustomerId: delivery.id, transporter: carrier.name ?? delivery.p?.transporter ?? null, dispatchOn: text(h.dispatchOn) };
+  let returned = 0;
+  await db.transaction(async (tx) => {
+    for (const l of removed) {
+      returned += await releaseLine(tx, l, ctx.user.id, "Line taken off");
+      await tx
+        .update(erpOrders)
+        .set({ status: "Cancel", remark: sql`trim(both ' ' from coalesce(${erpOrders.remark}, '') || ' · Taken off by the Production Head')`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpOrders.id, l.o.id));
+    }
+    for (const p of parsed) {
+      if (p.was) {
+        if (p.qty < p.was.o.qtyCans && (p.was.allocations > 0 || p.was.allocated > 0)) returned += await releaseLine(tx, p.was, ctx.user.id, "Cans lowered");
+        await tx
+          .update(erpOrders)
+          .set({
+            ...shared,
+            qtyCans: p.qty,
+            ratePaise: p.rate,
+            discountBp: p.discount,
+            ...(p.price ? { listRatePaise: p.price.listRatePaise, rateSetById: p.price.rateSetById, rateSetAt: p.price.rateSetAt, discountAuthorisedById: p.price.discountAuthorisedById } : {}),
+            remark: p.remark,
+            updatedAt: new Date(),
+            updatedById: ctx.user.id,
+          })
+          .where(eq(erpOrders.id, p.was.o.id));
+      } else {
+        await tx.insert(erpOrders).values({
+          id: `ODID-${randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`,
+          orderNo: no,
+          orderDate: head.o.orderDate,
+          godownId: head.o.godownId,
+          ...shared,
+          skuId: p.sku.id,
+          qtyCans: p.qty,
+          ratePaise: p.rate,
+          discountBp: p.discount,
+          listRatePaise: p.price?.listRatePaise ?? null,
+          rateSetById: p.price?.rateSetById ?? null,
+          rateSetAt: p.price?.rateSetAt ?? null,
+          discountAuthorisedById: p.price?.discountAuthorisedById ?? null,
+          remark: p.remark,
+          status: "Under Process",
+          partyStatus: head.o.partyStatus,
+          orderSource: head.o.orderSource,
+          orderCheck: head.o.orderCheck,
+          orderCheckedById: head.o.orderCheckedById,
+          orderCheckedAt: head.o.orderCheckedAt,
+          intakeId: head.o.intakeId,
+          accountsCheck: head.o.accountsCheck,
+          accountsCheckedById: head.o.accountsCheckedById,
+          accountsCheckedAt: head.o.accountsCheckedAt,
+          productionCheck: head.o.productionCheck,
+          productionCheckedById: head.o.productionCheckedById,
+          productionCheckedAt: head.o.productionCheckedAt,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
+      }
+    }
+    /* Every other line of the order follows the parties, transporter and dispatch day. */
+    await tx.update(erpOrders).set({ ...shared, updatedAt: new Date(), updatedById: ctx.user.id }).where(and(eq(erpOrders.orderNo, no), sql`${erpOrders.status} <> 'Cancel'`));
+  });
+  /* A Ready line the shelf can no longer cover goes back to Under Process. */
+  const after = (await orderLines({ orderNos: [no] })).filter((l) => l.o.status === "Ready" && !l.dispatched);
+  const short = await stockShortfalls(after.map((l) => ({ l, need: stillToAllocate(l) })));
+  if (short.size) await db.update(erpOrders).set({ status: "Under Process", updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpOrders.id, [...short.keys()]));
+  await erpAudit(ctx, "erp.order.editWhole", "erp_order", String(no), { lines: all.length }, { lines: parsed.length, removed: removed.length, returnedBoxes: returned, backToUnderProcess: short.size });
+  await syncBookOrders([no]);
+  return okVoid(
+    [`Order ${no} saved`, returned ? `${returned} scanned box${returned === 1 ? "" : "es"} back on the shelf` : "", short.size ? `${short.size} line${short.size === 1 ? "" : "s"} back to Under Process (not enough stock)` : ""].filter(Boolean).join(" · "),
   );
 }
 
@@ -2408,9 +2592,9 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
      approved; a form or a crafted post that sends others is refused. */
   const qty = l.o.qtyCans;
   const typedQty = int(h.qty);
-  if (typedQty != null && typedQty !== qty) return fieldErr("qty", "This order has its order number, so its goods, quantities, parties and prices can no longer be changed. Cancel it and take a new order instead.");
+  if (typedQty != null && typedQty !== qty) return fieldErr("qty", "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
   if ((ctx.powers.has("viewSalesRate") && h.rate != null && paise(h.rate) !== (l.o.ratePaise ?? null)) || (ctx.powers.has("viewSalesAmounts") && h.discount != null && (num(h.discount) == null ? null : Math.round(num(h.discount)! * 100)) !== (l.o.discountBp ?? null)))
-    return err("This order has its order number, so its goods, quantities, parties and prices can no longer be changed. Cancel it and take a new order instead.", "rule_violation");
+    return err("Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.", "rule_violation");
   /* Ready through the edit form is the same claim as the Ready button, checked the same way. */
   if (status === "Ready" && l.o.status !== "Ready") {
     if (l.o.orderCheck !== "Verified") return fieldErr("status", "The back office has not verified this order yet");

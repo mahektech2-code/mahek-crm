@@ -142,7 +142,7 @@ async function loadBook(today: string): Promise<Book> {
       select c.id, c.name, c.city, c.status::text as status, c.third_party,
              to_char(c.last_order_date, 'YYYY-MM-DD') as last_order_date,
              c.cycle_days, c.cycle_confidence,
-             coalesce(c.sales_person_name, u.name) as salesperson
+             coalesce(u.name, c.sales_person_name) as salesperson
         from customers c
         left join users u on u.id = c.sales_am_id
        where c.kind = 'customer'
@@ -443,7 +443,7 @@ async function customerRecord(ctx: Ctx, id: string): Promise<RecordView> {
              to_char(c.customer_since, 'YYYY-MM-DD') as customer_since,
              to_char((c.created_at at time zone ${TZ})::date, 'YYYY-MM-DD') as created_on,
              c.customer_type::text as customer_type, c.slow_payer, c.do_not_contact,
-             coalesce(c.sales_person_name, su.name) as salesperson,
+             coalesce(su.name, c.sales_person_name) as salesperson,
              coalesce(bu.name, c.back_office_name) as back_office,
              coalesce(mu.name, c.sales_manager_person_name) as sales_manager,
              ru.name as relationship_owner
@@ -573,7 +573,7 @@ export const provider: SectionProvider = {
       const rows = await db.execute<{ name: string; city: string | null; created_on: string; who: string | null }>(sql`
         select c.name, c.city,
                to_char((c.created_at at time zone ${TZ})::date, 'YYYY-MM-DD') as created_on,
-               coalesce(c.sales_person_name, u.name) as who
+               coalesce(u.name, c.sales_person_name) as who
           from customers c left join users u on u.id = c.sales_am_id
          where c.kind = 'customer' and c.status <> 'deactivated' and not c.third_party
            and c.last_order_date is null

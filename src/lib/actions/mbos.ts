@@ -1060,7 +1060,7 @@ export async function scopedCustomer(
         and(
           eq(customers.id, customerId),
           // The ONE definition of whose book a customer is in — and the SAME
-          // one the pull sends from, `namedByUsers` included. `scopedToUsers`
+          // one the pull sends from, `salesSeatOf` included. `scopedToUsers`
           // alone refused every shop the customer master names this salesman
           // on, which are shops his own phone shows him.
           principalBookClause(principal),
@@ -1994,6 +1994,50 @@ const STATUS_WORDS: Record<string, string> = {
  * and the credit limit is asked again: creating a small order and editing it
  * large would otherwise be a way round the limit the create path enforces.
  */
+/**
+ * HE CANCELS HIS OWN TO, while it is a TO waiting for Accounts or sent back by
+ * them - the same rule TeleCRM's My orders keeps. Once Accounts approve it
+ * (that makes its order number), or hold or decline it, it is the office's.
+ */
+/** A TO cancelled from the handset: `cancelTo` routes it here from `handleOrder`. */
+const toCancelSchema = z.object({ cancelTo: z.literal(true), cancelReason: z.string().trim().min(1, "Say why it is cancelled.").max(2000) });
+
+async function handleToCancel(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = toCancelSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const order = await authoredOrder(principal, item.entityId);
+  if (!order) return { kind: "retry", message: "That order has not reached the office yet. The cancel will be sent once it has." };
+  const found = await scopedCustomer(principal, order.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+  if (order.userId !== principal.user.id) {
+    return { kind: "rejected", value: reject("not_permitted", `Only the person who took ${order.orderNo ?? "this order"} for ${customer.name} can cancel it.`) };
+  }
+  if (order.status === "cancelled") return { kind: "accepted", value: { serverId: item.entityId } };
+  const { cancelIntake, intakeByOriginOrder } = await import("../erp/order-hub");
+  const asTo = await intakeByOriginOrder(order.id);
+  if (!asTo || (asTo.status !== "open" && asTo.status !== "correction")) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        !asTo
+          ? `${order.orderNo ?? "This order"} for ${customer.name} is with accounts. Ask the office to cancel it.`
+          : asTo.status === "verified"
+            ? `Accounts approved TO-${asTo.toNo} for ${customer.name} as order ${asTo.orderNo}, so it was not cancelled. Ask the office to change it.`
+            : asTo.status === "cancelled"
+              ? `TO-${asTo.toNo} for ${customer.name} is already cancelled.`
+              : asTo.status === "declined"
+                ? `Accounts declined TO-${asTo.toNo} for ${customer.name}, so there is nothing to cancel.`
+                : `TO-${asTo.toNo} for ${customer.name} is on hold with Accounts. It was not cancelled; ring them.`,
+      ),
+    };
+  }
+  const res = await cancelIntake(principal.user.id, asTo.id, parsed.data.cancelReason);
+  if (!res.ok) return { kind: "rejected", value: reject("validation", res.error) };
+  return { kind: "accepted", value: { serverId: item.entityId, serverNumber: order.orderNo ?? undefined } };
+}
+
 async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = orderEditSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -2026,8 +2070,9 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
       ),
     };
   }
-  /* THE ORDER HUB: an order is edited only while it is a TO. Once both checks
-     made its order number, it is not changed — whatever the handset thinks. */
+  /* THE ORDER HUB: an order is edited only while it is a TO waiting for
+     Accounts, or sent back by them. Once Accounts approve it (that makes its
+     order number) it is not changed — whatever the handset thinks. */
   const { intakeByOriginOrder } = await import("../erp/order-hub");
   const asTo = await intakeByOriginOrder(order.id);
   if (asTo && asTo.status !== "open" && asTo.status !== "correction") {
@@ -2036,10 +2081,12 @@ async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promis
       value: reject(
         "not_permitted",
         asTo.status === "verified"
-          ? `TO-${asTo.toNo} for ${customer.name} has its order number ${asTo.orderNo}, so it can no longer be changed. Ask the office to cancel it and take a new one.`
+          ? `Accounts approved TO-${asTo.toNo} for ${customer.name} as order ${asTo.orderNo}, so it can no longer be changed. Ask the office to change it.`
           : asTo.status === "hold"
-            ? `TO-${asTo.toNo} for ${customer.name} is on hold at the office. The edit was not made; ring them.`
-            : `TO-${asTo.toNo} for ${customer.name} is cancelled.`,
+            ? `TO-${asTo.toNo} for ${customer.name} is on hold with Accounts. The edit was not made; ring them.`
+            : asTo.status === "declined"
+              ? `Accounts declined TO-${asTo.toNo} for ${customer.name}, so it was not changed.`
+              : `TO-${asTo.toNo} for ${customer.name} is cancelled.`,
       ),
     };
   }
@@ -2547,6 +2594,17 @@ const orderSchema = z.object({
    */
   deliveryCustomerId: z.string().nullish(),
   /**
+   * What he answered the duplicate warning, when the phone could ask it
+   * (online, `/api/mbos/order-duplicate`): "Different order - create it", with
+   * the TO it looked like and his reason, which the TO carries for Accounts.
+   * Absent from an offline order and from every older build: then the office
+   * checks at sync and marks the TO a POSSIBLE duplicate - never refused, so
+   * an order taken with no signal is never lost to the check.
+   */
+  duplicate: z
+    .object({ decision: z.literal("different"), ofId: z.string().min(1), reason: z.string().trim().min(1).max(300) })
+    .nullish(),
+  /**
    * The handset could not put a value on this order — no rate for some line,
    * because `products.priceSource` is not one the phone can price from. Then
    * `totalAmountPaise` is 0 by construction and is NOT a figure: it must not
@@ -2560,8 +2618,9 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   /* An update carrying LINES is an edit; anything else is the order moving
      along — dispatched, delivered, confirmed by the shop. */
   if (item.op === "update") {
-    const lines = (item.payload as { lines?: unknown } | null)?.lines;
-    return Array.isArray(lines) ? handleOrderEdit(principal, item) : handleOrderProgress(principal, item);
+    const payload = item.payload as { lines?: unknown; cancelTo?: unknown } | null;
+    if (payload?.cancelTo === true) return handleToCancel(principal, item);
+    return Array.isArray(payload?.lines) ? handleOrderEdit(principal, item) : handleOrderProgress(principal, item);
   }
 
   const parsed = orderSchema.safeParse(item.payload);
@@ -2831,6 +2890,8 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
           lines: p.lines.map((l) => ({ skuId: l.productId, qtyCans: l.quantityCans, ratePaise: l.ratePaise ?? null, discountBp: null })),
         },
         tx as never,
+        /* Inside the sync's transaction a duplicate never refuses the order. */
+        { duplicate: p.duplicate ?? null, onDuplicate: "flag" },
       );
       toNumber = made.toNo;
       /* What he sees until the order number exists is the TO number. */

@@ -88,8 +88,8 @@ export async function handsetCustomerAccount(principal: MbosPrincipal, customerI
       ledgerForCustomer(customer),
       /* The account, not the book: `scopedCustomer` has already said this shop
          is his, and the statement beside it reads every bill on the account.
-         Narrowing this read by seat again would drop the bills of a shop he
-         holds by NAME only (`namedByUsers`) — a statement with bills on it and
+         Narrowing this read by the book's seats again would drop the bills of a
+         shop he reaches as its sales seat only (`salesSeatOf`) — a statement with bills on it and
          a Bills tab without them, for one account on one screen. */
       listBills({ customerId }, { ...principal, scope: { kind: "all", userIds: null } }),
       accountServing(customerId),

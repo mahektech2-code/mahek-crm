@@ -3,11 +3,15 @@ import { Pressable, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, T } from '../src/components/ui/primitives';
+import { Badge, Input, T } from '../src/components/ui/primitives';
+import { BottomSheet } from '../src/components/ui/overlays';
+import { SheetActions } from '../src/components/ui/v3';
+import { useStore } from '../src/state/store';
 import { Icon, type IconName } from '../src/components/ui/Icon';
 import { PillButton } from '../src/components/ui/v3';
 import { SkuChip } from '../src/components/ui/sku';
 import {
+  cancelTo,
   editableStatus,
   journeyStepsOf,
   latestChangeRequests,
@@ -63,8 +67,30 @@ function canEdit(o: PunchedOrder): boolean {
   return editableStatus(o.status);
 }
 
+/*
+ * THE SHORT WORD FOR WHERE IT IS, from the office's code (Option A): a TO
+ * waits for Accounts, may be a possible duplicate, is sent back, held or
+ * declined; approving makes the order number. An office one release behind
+ * sends no code and its sentence is drawn as it was.
+ */
+const STATE_PILL: Record<string, { label: string; tone: BadgeTone }> = {
+  open: { label: 'Waiting for Accounts', tone: 'amber' },
+  possible_duplicate: { label: 'Possible duplicate', tone: 'amber' },
+  correction: { label: 'Sent back', tone: 'info' },
+  hold: { label: 'On hold', tone: 'danger' },
+  declined: { label: 'Declined', tone: 'danger' },
+  cancelled: { label: 'Cancelled', tone: 'neutral' },
+  delivered: { label: 'Delivered', tone: 'success' },
+};
+
 function stateOf(o: PunchedOrder): { label: string; tone: BadgeTone } {
   if (notAccepted(o)) return { label: 'Not accepted', tone: 'danger' };
+  if (o.journeyState && STATE_PILL[o.journeyState]) return STATE_PILL[o.journeyState];
+  if (o.journeyState === 'approved' && o.journeyStatus) {
+    return o.journeyStatus.startsWith('Approved')
+      ? { label: 'Approved', tone: 'success' }
+      : { label: o.journeyStatus, tone: JOURNEY_TONE[o.journeyTone ?? ''] ?? 'neutral' };
+  }
   if (o.journeyStatus) return { label: o.journeyStatus, tone: JOURNEY_TONE[o.journeyTone ?? ''] ?? 'neutral' };
   switch (o.status) {
     case 'approved': return { label: 'Approved', tone: 'success' };
@@ -85,6 +111,25 @@ export default function OrdersScreen() {
   const [open, setOpen] = React.useState<string | null>(null);
   const [lines, setLines] = React.useState<Record<string, PunchedLine[]>>({});
   const [changes, setChanges] = React.useState<Map<string, ChangeRequest>>(new Map());
+  const [cancelling, setCancelling] = React.useState<PunchedOrder | null>(null);
+  const [cancelReason, setCancelReason] = React.useState('');
+  const [cancelBusy, setCancelBusy] = React.useState(false);
+  const notify = useStore((s) => s.notify);
+
+  const confirmCancel = async () => {
+    if (!cancelling) return;
+    if (!cancelReason.trim()) return notify('Say why it is cancelled.', 'error');
+    setCancelBusy(true);
+    try {
+      const r = await cancelTo(cancelling.id, cancelReason);
+      if (!r.ok) return notify(r.message, 'error');
+      notify((orderTitle(cancelling) ?? 'The order') + ' cancelled · syncs when you have signal');
+      setCancelling(null);
+      load();
+    } finally {
+      setCancelBusy(false);
+    }
+  };
 
   const load = React.useCallback(() => {
     let live = true;
@@ -131,13 +176,16 @@ export default function OrdersScreen() {
       heroTop={
         <View>
           <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
-            Your orders
+            My orders
           </Text>
-          <Text
-            numberOfLines={1}
-            style={[{ marginTop: 4, fontSize: 12, lineHeight: 16, color: waiting ? C.warnInk : C.muted }, weight(waiting ? 700 : 400)]}>
-            {waiting ? plural(waiting, 'order') + ' waiting for office' : 'No order waiting for office'}
+          <Text numberOfLines={2} style={{ marginTop: 4, fontSize: 12, lineHeight: 16, color: C.muted }}>
+            You can change an order until Accounts approve it.
           </Text>
+          {waiting ? (
+            <Text numberOfLines={1} style={[{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.warnInk }, weight(700)]}>
+              {plural(waiting, 'order') + ' waiting for Accounts'}
+            </Text>
+          ) : null}
         </View>
       }
       contentStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 }}>
@@ -257,9 +305,46 @@ export default function OrdersScreen() {
                     </T>
                   ) : null}
 
-                  {/* What the office said about it, where it is held up. */}
-                  {!refused && o.journeyBanner ? (
+                  {/* ACCOUNTS' OWN WORDS where they sent it back, held or
+                      declined it; the duplicate question in the office's
+                      sentence. Anything else held up says the office's banner. */}
+                  {refused ? null : (o.journeyState === 'correction' || o.journeyState === 'declined' || o.journeyState === 'hold') && o.journeyReason ? (
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 8 }}>{'"' + o.journeyReason + '"'}</T>
+                  ) : o.journeyState === 'possible_duplicate' ? (
+                    <T style={{ fontSize: 12.5, lineHeight: 18, color: C.muted, marginTop: 8 }}>
+                      {o.journeyBanner ?? 'Matches TO-' + (o.duplicateOfToNo ?? '') + '; Accounts will check it.'}
+                    </T>
+                  ) : o.journeyBanner && o.journeyState !== 'correction' && o.journeyState !== 'declined' ? (
                     <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginTop: 8 }}>{o.journeyBanner}</T>
+                  ) : null}
+
+                  {/* WHAT HE MAY DO, on the card: change or cancel a TO until
+                      Accounts approve it, correct and send one they sent
+                      back; after approval it is the office's to change. */}
+                  {!refused && o.journeyState && canEdit(o) ? (
+                    o.journeyState === 'correction' ? (
+                      <RowAction label="Correct and send" icon="note" onPress={() => router.push(`/order?edit=${o.id}&from=orders`)} />
+                    ) : (
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <View style={{ flex: 1 }}>
+                          <RowAction label="Edit" icon="note" onPress={() => router.push(`/order?edit=${o.id}&from=orders`)} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <RowAction
+                            label="Cancel TO"
+                            onPress={() => {
+                              setCancelReason('');
+                              setCancelling(o);
+                            }}
+                          />
+                        </View>
+                      </View>
+                    )
+                  ) : !refused && o.journeyState === 'approved' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                      <Icon name="lock" size={14} color={C.muted} strokeWidth={2} />
+                      <T style={{ flexShrink: 1, fontSize: 12.5, lineHeight: 17, color: C.muted }}>Approved. Ask the office to change it.</T>
+                    </View>
                   ) : null}
 
                   {/* A change he asked for after approval, followed to its
@@ -303,7 +388,7 @@ export default function OrdersScreen() {
                         danger
                         onPress={() => router.push('/rejections?from=orders')}
                       />
-                    ) : canEdit(o) ? (
+                    ) : o.journeyState ? null : canEdit(o) ? (
                       <RowAction
                         label="Edit this order"
                         icon="note"
@@ -336,6 +421,17 @@ export default function OrdersScreen() {
           })}
         </View>
       )}
+
+      <BottomSheet open={!!cancelling} onClose={() => (cancelBusy ? undefined : setCancelling(null))}>
+        <View style={{ gap: 10 }}>
+          <T style={[{ fontSize: 18, lineHeight: 24, color: C.ink }, weight(700)]}>
+            {'Cancel ' + (cancelling ? (orderTitle(cancelling) ?? 'this order') : '')}
+          </T>
+          <T style={[{ fontSize: 12.5, lineHeight: 17, color: C.muted }, weight(500)]}>Why is it cancelled?</T>
+          <Input value={cancelReason} onChangeText={setCancelReason} placeholder="Reason" accessibilityLabel="Why is it cancelled?" />
+          <SheetActions cancelLabel="Keep it" label="Cancel the TO" busy={cancelBusy} onCancel={() => setCancelling(null)} onPress={() => void confirmCancel()} />
+        </View>
+      </BottomSheet>
     </AppFrame>
   );
 }

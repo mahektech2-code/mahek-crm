@@ -37,16 +37,17 @@ export type SlaCalendar = {
   holidays: ReadonlySet<string>;
 };
 
-export type SlaKind = "order" | "payment" | "credit_note" | "order_change";
+export type SlaKind = "order" | "payment" | "credit_note" | "order_change" | "to";
 
 export const SLA_KIND_LABEL: Record<SlaKind, string> = {
   order: "Order approval",
   payment: "Payment to confirm",
   credit_note: "Credit note request",
   order_change: "Order change request",
+  to: "New order to approve",
 };
 
-export const SLA_KINDS: readonly SlaKind[] = ["order", "payment", "credit_note", "order_change"];
+export const SLA_KINDS: readonly SlaKind[] = ["order", "payment", "credit_note", "order_change", "to"];
 
 const IST_MS = 330 * 60_000;
 const HOUR = 3_600_000;

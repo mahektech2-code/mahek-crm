@@ -1,25 +1,24 @@
 "use client";
 
 import * as React from "react";
-import { Button, Textarea, Th, Td, Tr, cx } from "@/components/ui/primitives";
+import { Button, Th, Td, Tr, cx } from "@/components/ui/primitives";
 import { erpLoadForm } from "@/lib/actions/erp";
 import { inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
 import type { HubBoardRow } from "@/lib/erp/screens/order-hub";
 import { clock, stamp } from "@/lib/format";
-import { ActionMenu, BoardFoot, BoardHeader, BoardTable, BoardTabs, CheckMark, FigureCards, Pill, waitLate, waitWords } from "../_ui/board";
+import { ActionMenu, BoardFoot, BoardHeader, BoardTable, BoardTabs, FigureCards, Pill, waitLate, waitWords } from "../_ui/board";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog, TabBar } from "../_ui/dialog";
 import { useErpUi } from "../_ui/erp-ui";
-import { useKit } from "../_ui/kit";
 import { Eyebrow } from "../_ui/look";
 
 /* ---------------------------------------------------------------------------
- * THE ORDER HUB BOARD and its Verify dialog, as the mockups draw them. Every
- * write goes through the hub list's own actions on the server — Verify,
- * Send back for correction, Put on hold, Edit TO, Cancel TO — so the rules
- * (who checks which, the second check makes the order number) are unchanged.
+ * THE ORDER HUB BOARD and its TO dialog. Option A: Accounts approve a TO in
+ * Accounts > Order approvals, and that makes the order number, so the hub
+ * verifies nothing. Its writes are the hub list's own actions on the server:
+ * Edit TO and Cancel TO.
  * ------------------------------------------------------------------------- */
 
-export type HubTab = "mine" | "waiting" | "correction" | "verified";
+export type HubTab = "waiting" | "correction" | "verified";
 const SCREEN = "orderHub";
 
 function goodsLine(l: HubBoardRow["lines"][number]): string {
@@ -43,13 +42,12 @@ export function HubBoard({
 }) {
   const ui = useErpUi();
   const waiting = rows.filter((r) => r.status === "open");
-  const mine = waiting.filter((r) => r.myCheck);
   const correction = rows.filter((r) => r.status === "correction");
   const held = rows.filter((r) => r.status === "hold");
   const verifiedToday = rows.filter((r) => r.verifiedToday);
-  const [tab, setTab] = React.useState<HubTab>(initialTab ?? (mine.length ? "mine" : "waiting"));
+  const [tab, setTab] = React.useState<HubTab>(initialTab ?? "waiting");
   const [openId, setOpenId] = React.useState<string | null>(initialOpen);
-  const shown = tab === "mine" ? mine : tab === "waiting" ? waiting : tab === "correction" ? correction : verifiedToday;
+  const shown = tab === "waiting" ? waiting : tab === "correction" ? correction : verifiedToday;
   const open = rows.find((r) => r.id === openId) ?? null;
 
   const newOrder = () => ui.askForm("New order", () => erpLoadForm(SCREEN, NEW_FORM_ACTION, ""));
@@ -69,9 +67,8 @@ export function HubBoard({
       />
       <FigureCards
         figures={[
-          { label: "Waiting for checks", value: waiting.length, onClick: () => setTab("waiting"), on: tab === "waiting" },
-          { label: "Need your check", value: mine.length, onClick: () => setTab("mine"), on: tab === "mine" },
-          { label: "Sent back for correction", value: correction.length, onClick: () => setTab("correction"), on: tab === "correction" },
+          { label: "Waiting for Accounts", value: waiting.length, onClick: () => setTab("waiting"), on: tab === "waiting" },
+          { label: "Sent back by Accounts", value: correction.length, onClick: () => setTab("correction"), on: tab === "correction" },
           { label: "On hold here", value: held.length },
           { label: "Got order numbers today", value: verifiedToday.length, onClick: () => setTab("verified"), on: tab === "verified" },
         ]}
@@ -80,10 +77,9 @@ export function HubBoard({
         value={tab}
         onChange={setTab}
         tabs={[
-          { key: "mine", label: "Need my check", count: mine.length },
-          { key: "waiting", label: "All waiting", count: waiting.length },
-          { key: "correction", label: "Correction", count: correction.length },
-          { key: "verified", label: "Verified today", count: verifiedToday.length },
+          { key: "waiting", label: "Waiting for Accounts", count: waiting.length },
+          { key: "correction", label: "Sent back", count: correction.length },
+          { key: "verified", label: "Approved today", count: verifiedToday.length },
         ]}
       />
       {shown.length ? (
@@ -103,14 +99,13 @@ export function HubBoard({
               <Th>Party · taken by</Th>
               <Th>Goods</Th>
               {seeMoney ? <Th align="right">Value</Th> : null}
-              <Th>Checks</Th>
+              <Th>Accounts</Th>
               <Th>{tab === "verified" ? "Order" : "Waiting"}</Th>
               <Th />
             </tr>
           </thead>
           <tbody>
             {shown.map((r) => {
-              const verify = r.actions.find((a) => a.id === "verify");
               const late = r.status === "open" && waitLate(r.createdAt, now);
               return (
                 <Tr key={r.id} className={cx("cursor-pointer hover:bg-canvas/70", r.dup ? "bg-warn-soft/40" : undefined)} onClick={() => setOpenId(r.id)}>
@@ -151,18 +146,12 @@ export function HubBoard({
                     </Td>
                   ) : null}
                   <Td className="py-3">
-                    <CheckMark done={!!r.back} label={r.edited && !r.back ? "Back office (again)" : "Back office"} by={r.back?.by} />
-                    <CheckMark done={!!r.prod} label="Production Head" by={r.prod?.by} />
+                    {r.orderNo ? <Pill tone="success">Approved</Pill> : r.status === "correction" ? <Pill tone="warn">Sent back</Pill> : r.status === "hold" ? <Pill tone="warn">On hold</Pill> : <Pill tone="info">Waiting</Pill>}
                   </Td>
                   <Td className={cx("py-3", late ? "font-medium text-danger" : "text-ink")}>{r.orderNo ? `Order ${r.orderNo}` : waitWords(r.createdAt, now)}</Td>
                   <Td className="py-3" onClick={(e) => e.stopPropagation()}>
                     <span className="flex items-center justify-end gap-2">
-                      {verify && !readOnly ? (
-                        <Button size="sm" variant="success" disabled={!!verify.why} title={verify.why || undefined} onClick={() => setOpenId(r.id)}>
-                          Verify
-                        </Button>
-                      ) : null}
-                      {readOnly ? null : <ActionMenu screen={SCREEN} recordId={r.id} actions={r.actions} skip={["verify"]} extra={[{ label: `Open TO-${r.toNo}`, onSelect: () => setOpenId(r.id) }]} />}
+                      {readOnly ? null : <ActionMenu screen={SCREEN} recordId={r.id} actions={r.actions} extra={[{ label: `Open TO-${r.toNo}`, onSelect: () => setOpenId(r.id) }]} />}
                     </span>
                   </Td>
                 </Tr>
@@ -172,81 +161,34 @@ export function HubBoard({
         </BoardTable>
       ) : (
         <div className="rounded-card border border-line bg-surface px-5 py-10 text-center text-sm text-muted">
-          {tab === "mine" ? "Nothing needs your check." : tab === "correction" ? "Nothing sent back." : tab === "verified" ? "Nothing got its order number today." : "Nothing waiting. A new order lands here as a TO number."}
+          {tab === "correction" ? "Nothing sent back." : tab === "verified" ? "Nothing got its order number today." : "Nothing waiting. A new order lands here as a TO number."}
         </div>
       )}
-      <BoardFoot>⋯ has Edit TO, Send back for correction and Hold. The order number is made by whichever check comes second. An edit by the person who took the order clears both checks.</BoardFoot>
-      {open ? <VerifyDialog key={open.id} row={open} readOnly={readOnly} onClose={() => setOpenId(null)} /> : null}
+      <BoardFoot>Accounts approve each TO in Accounts › Order approvals, and that makes its order number. ⋯ has Edit TO and Cancel TO.</BoardFoot>
+      {open ? <ToDialog key={open.id} row={open} readOnly={readOnly} onClose={() => setOpenId(null)} /> : null}
     </div>
   );
 }
 
 type VTab = "checks" | "lines" | "party" | "history";
 
-function VerifyDialog({ row, readOnly, onClose }: { row: HubBoardRow; readOnly: boolean; onClose: () => void }) {
+function ToDialog({ row, readOnly, onClose }: { row: HubBoardRow; readOnly: boolean; onClose: () => void }) {
   const ui = useErpUi();
-  const kit = useKit();
   const [tab, setTab] = React.useState<VTab>("checks");
-  const [note, setNote] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-  const verify = row.actions.find((a) => a.id === "verify");
-  const correct = row.actions.find((a) => a.id === "correct");
-  const hold = row.actions.find((a) => a.id === "hold");
   const edit = row.actions.find((a) => a.id === "editTo");
-  const done = (row.back ? 1 : 0) + (row.prod ? 1 : 0);
+  const cancel = row.actions.find((a) => a.id === "cancel");
   const totalLitres = row.lines.reduce((n, l) => n + (l.litres ?? 0), 0);
-  const runAfterClose = (a: NonNullable<typeof verify>) => {
+  const runAfterClose = (a: NonNullable<typeof edit>) => {
     onClose();
     ui.act(SCREEN, a, row.id);
   };
 
-  async function doVerify() {
-    setBusy(true);
-    try {
-      const res = await kit.runAction(SCREEN, "verify", row.id, { note });
-      if (res.ok) {
-        ui.toast(res.message ?? "Verified");
-        onClose();
-      } else ui.toast(res.fieldErrors?.[0]?.message ?? res.error, "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const checkSection = (kind: "backOffice" | "production") => {
-    const done = kind === "backOffice" ? row.back : row.prod;
-    const label = kind === "backOffice" ? "Back office" : "Production Head";
-    const you = row.myCheck === kind;
-    return (
-      <div className="flex flex-col">
-        <Eyebrow className="mb-2">
-          {label}
-          {you ? " · you" : ""}
-        </Eyebrow>
-        {done ? (
-          <CheckLine tone="ok">
-            Verified by <b className="font-semibold text-ink">{done.by ?? "—"}</b> at {clock(new Date(done.at))}
-            {done.note ? <span className="block text-muted">&ldquo;{done.note}&rdquo;</span> : null}
-          </CheckLine>
-        ) : you ? (
-          row.checklist.map((c, i) => (
-            <CheckLine key={i} tone={c.tone}>
-              {c.text}
-            </CheckLine>
-          ))
-        ) : (
-          <CheckLine tone="wait">Not checked yet</CheckLine>
-        )}
-      </div>
-    );
-  };
-
   return (
     <ErpDialog onClose={onClose} label={`TO-${row.toNo}`} width={820} tall={false}>
-      <DialogHeader onClose={onClose} aside={row.second && verify && !verify.why ? <span className="text-meta text-body">Verifying now makes the order number</span> : undefined}>
+      <DialogHeader onClose={onClose}>
         <DialogTitle className="flex items-center gap-2">
           TO-{row.toNo}
-          {row.status === "open" ? <Pill tone="info">{done} of 2 checks done</Pill> : <Pill tone={row.status === "verified" ? "success" : row.status === "correction" || row.status === "hold" ? "warn" : "muted"}>{row.orderNo ? `Order ${row.orderNo}` : row.status === "correction" ? "Sent back" : row.status === "hold" ? "On hold" : row.status}</Pill>}
+          {row.status === "open" ? <Pill tone="info">Waiting for Accounts</Pill> : <Pill tone={row.status === "verified" ? "success" : row.status === "correction" || row.status === "hold" ? "warn" : "muted"}>{row.orderNo ? `Order ${row.orderNo}` : row.status === "correction" ? "Sent back" : row.status === "hold" ? "On hold" : row.status}</Pill>}
         </DialogTitle>
         <div className="mt-1 text-meta text-body">
           {row.party}
@@ -257,7 +199,7 @@ function VerifyDialog({ row, readOnly, onClose }: { row: HubBoardRow; readOnly: 
         active={tab}
         onChange={(k) => setTab(k as VTab)}
         tabs={[
-          { key: "checks", label: "Checks" },
+          { key: "checks", label: "Order" },
           { key: "lines", label: "Lines", count: row.lines.length },
           { key: "party", label: "Party" },
           { key: "history", label: "History" },
@@ -266,9 +208,13 @@ function VerifyDialog({ row, readOnly, onClose }: { row: HubBoardRow; readOnly: 
       <DialogBody>
         {tab === "checks" ? (
           <div className="grid gap-6 md:grid-cols-2">
-            <div className="flex flex-col gap-4">
-              {checkSection("backOffice")}
-              {checkSection("production")}
+            <div className="flex flex-col">
+              <Eyebrow className="mb-2">What Accounts will see</Eyebrow>
+              {row.checklist.map((c, i) => (
+                <CheckLine key={i} tone={c.tone}>
+                  {c.text}
+                </CheckLine>
+              ))}
             </div>
             <div className="flex flex-col gap-4">
               <div className="overflow-hidden rounded-card border border-line">
@@ -301,14 +247,6 @@ function VerifyDialog({ row, readOnly, onClose }: { row: HubBoardRow; readOnly: 
                   </tbody>
                 </table>
               </div>
-              {row.status === "open" && !readOnly ? (
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-sm font-medium text-ink">
-                    Note <span className="font-normal text-muted">(optional)</span>
-                  </span>
-                  <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
-                </label>
-              ) : null}
               {row.correction ? <p className="text-meta text-danger">Sent back{row.correction.by ? ` by ${row.correction.by}` : ""}: {row.correction.note}</p> : null}
               {row.remark ? <p className="text-meta text-body">Remark: {row.remark}</p> : null}
             </div>
@@ -372,29 +310,12 @@ function VerifyDialog({ row, readOnly, onClose }: { row: HubBoardRow; readOnly: 
           ) : undefined
         }
       >
-        {readOnly ? (
-          <Button onClick={onClose}>Close</Button>
-        ) : (
-          <>
-            {correct ? (
-              <Button onClick={() => runAfterClose(correct)} disabled={!!correct.why} title={correct.why || undefined}>
-                Send back for correction
-              </Button>
-            ) : null}
-            {hold ? (
-              <Button onClick={() => runAfterClose(hold)} disabled={!!hold.why} title={hold.why || undefined}>
-                Hold
-              </Button>
-            ) : null}
-            {verify ? (
-              <Button variant="success" onClick={doVerify} disabled={busy || !!verify.why} title={verify.why || undefined}>
-                {busy ? "Verifying…" : "Verify"}
-              </Button>
-            ) : (
-              <Button onClick={onClose}>Close</Button>
-            )}
-          </>
-        )}
+        {cancel && !readOnly ? (
+          <Button variant="dangerOutline" onClick={() => runAfterClose(cancel)} disabled={!!cancel.why} title={cancel.why || undefined}>
+            Cancel TO
+          </Button>
+        ) : null}
+        <Button onClick={onClose}>Close</Button>
       </DialogFooter>
     </ErpDialog>
   );
@@ -420,12 +341,10 @@ function CheckLine({ tone, children }: { tone: "ok" | "warn" | "wait"; children:
 function History({ row }: { row: HubBoardRow }) {
   const events: { at: string | null; text: string }[] = [
     { at: row.createdAt, text: `Taken${row.takenBy ? ` by ${row.takenBy}` : ""} · ${row.source}` },
-    ...(row.edited ? [{ at: row.edited.at, text: `Edited by ${row.edited.by ?? "the taker"}. Both checks start again.` }] : []),
-    ...(row.back ? [{ at: row.back.at, text: `Back office check · ${row.back.by ?? ""}${row.back.note ? ` — “${row.back.note}”` : ""}` }] : []),
-    ...(row.prod ? [{ at: row.prod.at, text: `Production Head check · ${row.prod.by ?? ""}${row.prod.note ? ` — “${row.prod.note}”` : ""}` }] : []),
-    ...(row.correction ? [{ at: row.correction.at, text: `Sent back for correction${row.correction.by ? ` by ${row.correction.by}` : ""}: ${row.correction.note}` }] : []),
+    ...(row.edited ? [{ at: row.edited.at, text: `Edited by ${row.edited.by ?? "the taker"}` }] : []),
+    ...(row.correction ? [{ at: row.correction.at, text: `Sent back by Accounts${row.correction.by ? ` (${row.correction.by})` : ""}: ${row.correction.note}` }] : []),
     ...(row.held ? [{ at: row.held.at, text: `On hold${row.held.by ? ` by ${row.held.by}` : ""}: ${row.held.reason}${row.held.note ? ` — ${row.held.note}` : ""}` }] : []),
-    ...(row.orderNo ? [{ at: row.prod?.at ?? row.back?.at ?? null, text: `Order ${row.orderNo} made · with Accounts` }] : []),
+    ...(row.orderNo ? [{ at: null, text: `Approved by Accounts · order ${row.orderNo} made` }] : []),
     ...(row.cancelReason ? [{ at: null, text: `Cancelled: ${row.cancelReason}` }] : []),
   ].sort((a, b) => (a.at ?? "9").localeCompare(b.at ?? "9"));
   return (

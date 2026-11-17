@@ -1,7 +1,7 @@
 import "server-only";
 import { taskContextSql } from "@/lib/services/task-link-service";
 import { notConverted } from "../lead-action-window";
-import { and, eq, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { db } from "@/db";
 import {
@@ -770,79 +770,27 @@ function scopeIn(ids: string[] | null) {
 }
 
 /**
- * `partyNameKey` in SQL: trim, collapse the whitespace, uppercase.
+ * THE SHOPS THIS SALESMAN IS ASSIGNED TO SELL TO — by his account, never by
+ * his name.
  *
- * Written once and applied to BOTH sides of the comparison, so the two halves
- * cannot fold differently from each other — which is the failure a second
- * spelling of a normalisation always produces, and the one nobody sees until
- * two names that are obviously the same stop matching.
+ * `scopedToUsers` answers "whose book" through `ASSIGNED_TO_SQL`, and for a
+ * LEAD that is the owner: a lead a telecaller owns and a field salesman works
+ * would never reach the salesman's handset through it. The sales seat
+ * (`sales_am_id`) is who sells to the shop, so the handset adds it here.
+ *
+ * This used to match `customers.sales_person_name` — text off the party sheet
+ * — against his login name, his HRMS name and every old spelling of it. Owner's
+ * rule, 2026-11-18: a person is their account, and a name decides nothing.
+ * The sheets are retired, every named salesman's seat was filled from his
+ * name (659 leads), and on prod the two answers were measured shop for shop
+ * before the swap: nobody lost one, and the 17 gained were shops already
+ * assigned to the person under a region label or no name at all.
+ *
+ * MBOS ONLY, deliberately, as the name match was: the CRM's lists keep
+ * `scopedToUsers` exactly as it is.
  */
-function nameFold(column: SQL | AnyColumn) {
-  /* `[[:space:]]` rather than `\s`: a backslash escape inside a template
-     literal is cooked away before Postgres ever sees it, and the regex would
-     silently become `s+` — matching the letter s. */
-  return sql`upper(regexp_replace(btrim(${column}), '[[:space:]]+', ' ', 'g'))`;
-}
-
-/**
- * THE SHOPS THAT NAME THIS SALESMAN, joined by the name rather than by a seat.
- *
- * `scopedToUsers` asks which customers carry this person in one of the two
- * manager seats, and for a field salesman the answer is none of them: those
- * seats hold account managers, and a field salesman is named — as text, off
- * the party sheet — in `customers.sales_person_name`. So his handset was
- * correctly empty, and no screen anywhere could say why.
- *
- * MBOS ONLY, deliberately. The CRM's lists are unchanged: `scopedToUsers`
- * stays exactly what it was, because widening it would hand thirty-one screens
- * a different answer to "whose book is this" overnight. The question MBOS asks
- * is a narrower one — which shops does this salesman work — and this is the
- * one place it is answered.
- *
- * It reads every user in scope, not just the principal, so a manager on the
- * handset sees his team's shops the same way each of them does. Anything else
- * would give the manager and his salesman two different books.
- */
-function namedByUsers(ids: string[]) {
-  const inIds = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
-  /* Three ways the sheet's text can mean this salesman, all through his id:
-       • the sheet name somebody linked to his account (`users.sales_person_name`);
-       • the CURRENT name of the HRMS employee his account is linked to;
-       • any spelling that employee has carried before (`person_name_aliases`),
-         so a rename in HRMS does not empty his handset while the party sheet
-         still spells him the old way.
-     The last two only count where NO other employee answers to that spelling
-     — two "Pritesh Doshi"s must never see each other's shops. */
-  return sql`${nameFold(customers.salesPersonName)} in (
-    select ${nameFold(sql`u.sales_person_name`)}
-      from users u
-     where u.id in ${inIds}
-       and u.sales_person_name is not null
-       and btrim(u.sales_person_name) <> ''
-    union
-    select ${nameFold(sql`e.name`)}
-      from users u
-      join employees e on e.id = u.employee_id
-     where u.id in ${inIds}
-       and btrim(e.name) <> ''
-       and not exists (
-         select 1 from employees e2
-          where e2.id <> e.id and ${nameFold(sql`e2.name`)} = ${nameFold(sql`e.name`)})
-       and not exists (
-         select 1 from person_name_aliases a2
-          where a2.employee_id <> e.id and a2.name_key = ${nameFold(sql`e.name`)})
-    union
-    select a.name_key
-      from users u
-      join person_name_aliases a on a.employee_id = u.employee_id
-     where u.id in ${inIds}
-       and not exists (
-         select 1 from person_name_aliases a2
-          where a2.employee_id <> a.employee_id and a2.name_key = a.name_key)
-       and not exists (
-         select 1 from employees e2
-          where e2.id <> a.employee_id and ${nameFold(sql`e2.name`)} = a.name_key)
-  )`;
+function salesSeatOf(ids: string[]) {
+  return inArray(customers.salesAmId, ids);
 }
 
 /**
@@ -850,8 +798,8 @@ function namedByUsers(ids: string[]) {
  * caller asking about one customer rather than listing them all.
  *
  * Exported for the sync handlers' `scopedCustomer`, which used to ask
- * `scopedToUsers` alone. The pull sends the shops `namedByUsers` adds — the
- * ones the customer master names this salesman on, as text — and the write
+ * `scopedToUsers` alone. The pull sends the shops `salesSeatOf` adds — the
+ * ones this salesman is the sales seat on — and the write
  * path refused every one of them, so a salesman could see a shop on his phone,
  * walk in, take an order, and have it come back "not in your territory". One
  * clause, so what a handset is sent and what it may write cannot disagree.
@@ -860,7 +808,7 @@ function namedByUsers(ids: string[]) {
  */
 export function principalBookClause(principal: MbosPrincipal): SQL | undefined {
   const ids = scopedUserIds(principal.scope);
-  return ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+  return ids === null ? undefined : or(scopeIn(ids), salesSeatOf(ids));
 }
 
 /** The customer ids this principal may see. Every other query filters on it. */
@@ -872,10 +820,10 @@ export async function customerIdsInScope(
    * and they are ANDed rather than folded together.
    *
    * The first is the security boundary and is main's: the three seats decide
-   * whose book a record is in, `namedByUsers` adds the salesman the customer
-   * master NAMES, and `null` short-circuits BEFORE the `or` because
+   * whose book a record is in, `salesSeatOf` adds the shops he is the sales
+   * seat on, and `null` short-circuits BEFORE the `or` because
    * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand, so
-   * `or(undefined, namedBy…)` would collapse to the name match alone and NARROW
+   * `or(undefined, salesSeatOf…)` would collapse to the seat match alone and NARROW
    * an admin to it, which is the opposite of what null means.
    *
    * The second is the territory, and it can only ever REMOVE rows from what the
@@ -1002,7 +950,7 @@ export async function bookIdsIgnoringTerritory(userId: string): Promise<string[]
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(and(isNull(customers.deletedAt), or(scopeIn([userId]), namedByUsers([userId]))));
+    .where(and(isNull(customers.deletedAt), or(scopeIn([userId]), salesSeatOf([userId]))));
   return rows.map((r) => r.id);
 }
 
@@ -1556,6 +1504,11 @@ async function myOrderStates(userId: string, sinceIso?: string) {
       journeyBanner: j.banner,
       journeyEditable: j.editable,
       journeySteps: j.steps,
+      /* Where it is as a CODE, Accounts' words, and the TO it may duplicate -
+         what the handset keys its pill and its buttons on (0350, Option A). */
+      journeyState: j.state,
+      journeyReason: j.reason,
+      duplicateOfToNo: j.duplicateOfToNo,
     };
   });
 }

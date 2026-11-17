@@ -206,7 +206,8 @@ describe("taking an order", () => {
     assert.match(blank.ok ? String(blank.message) : "", /^TO-\d+ saved .*1 without a rate: no price list applies to the party/);
     const toNo = Number(/TO-(\d+)/.exec(String(blank.message))![1]);
     const [to] = await db.select().from(erpOrderIntakes).where(eq(erpOrderIntakes.toNo, toNo));
-    assert.match(msg(await mod("orderHub").actions!.verify(ctx, to.id, {})), /no rate/, "once it has its order number it cannot be changed, so the rate is added first");
+    const { approveIntake } = await import("./order-hub");
+    assert.match(msg(await approveIntake(admin.id, to.id, null)), /rate/i, "Accounts add the rate before they approve");
     const typed = await placeOrder(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "9", rate: "350" }]);
     assert.ok(typed.ok, JSON.stringify(typed));
     const rows = await db.select().from(erpOrders).where(eq(erpOrders.billingCustomerId, "cus_nolist"));
@@ -360,7 +361,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     const boxed = await orderFor(boxedId);
     const a = mod("orders").actions!;
     assert.match(msg(await a.bill(ctx, loose.id, {})), /The Tally invoice number is required/);
-    assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "24" })), "This order has its order number, so it can no longer be changed. Cancel it and take a new order instead.");
+    assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "24" })), "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, boxed.id));
     assert.match(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), /Check what this affects/);
     const release = await confirmed("erp-batch-release", bc.id);
@@ -384,7 +385,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d.invoiceCheck, "Pending", "a new bill waits for the invoice check");
     assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice check");
-    assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), "This order has its order number, so it can no longer be changed. Cancel it and take a new order instead.");
+    assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
   });
 
   test("the invoice check comes before dispatch, and the checker is not the person who billed", async () => {
@@ -468,7 +469,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(msg(await a.rejectInvoice(ctx, line.id, {})), "Say why the invoice is rejected");
     assert.ok((await a.rejectInvoice(ctx, line.id, { reason: "Rate should be ₹410" })).ok);
     assert.match(msg(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /was rejected/);
-    assert.match(msg(await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "3", rate: "410", transport: "0" }, [], line.id)), /can no longer be changed/, "the rate is what was checked and approved");
+    assert.match(msg(await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "3", rate: "410", transport: "0" }, [], line.id)), /Edit order/, "the rate changes with Edit order");
     assert.ok((await a.changeInvoice(ctx, line.id, { invoiceNo: "MMI/26-27/910", invoiceDate: TODAY })).ok, "a rejected invoice is corrected in Tally and its new number entered");
     const det = async () => (await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id)))[0];
     assert.equal((await det()).invoiceCheck, "Pending", "the corrected invoice is back with the checker");
@@ -513,47 +514,40 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
   });
 });
 
-describe("the back office's check", () => {
-  test("the Order Hub: a duplicate is caught, a TO is sent back and edited, two people check it, and the order number fixes it", async () => {
+describe("Accounts' check of a TO (Option A)", () => {
+  test("the Order Hub: a duplicate is asked about, a TO is sent back and edited, Accounts approve it, and the Production Head edits it until billed", async () => {
+    const { approveIntake, sendBackIntake } = await import("./order-hub");
     const ctx = await as(admin);
     const head = { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders" };
     const first = await mod("orders").forms!.new(ctx, head, [{ sku: LOOSE, qty: "11", rate: "300" }]);
     assert.ok(first.ok, JSON.stringify(first));
-    assert.match(msg(await mod("orders").forms!.new(ctx, head, [{ sku: LOOSE, qty: "11", rate: "300" }])), /^TO-\d+ for No List Traders on this day has exactly these goods/);
+    const dup = await mod("orders").forms!.new(ctx, head, [{ sku: LOOSE, qty: "11", rate: "300" }]);
+    assert.ok(!dup.ok && dup.code === "duplicate", "the same order on the same day is asked about");
     assert.match(msg(await mod("orders").forms!.new(ctx, { ...head, source: "" }, [{ sku: LOOSE, qty: "12" }])), /how the order was received/);
     const toNo = Number(/TO-(\d+)/.exec(String(first.message))![1]);
     const [to] = await db.select().from(erpOrderIntakes).where(eq(erpOrderIntakes.toNo, toNo));
     const mine = and(eq(erpOrders.billingCustomerId, "cus_nolist"), inArray(erpOrders.qtyCans, [11, 12]));
     assert.equal((await db.select().from(erpOrders).where(mine)).length, 0, "nothing downstream sees a TO");
-    const hub = mod("orderHub").actions!;
-    assert.equal(msg(await hub.correct(await as(clerk), to.id, { note: "x" })), "Only the back office or the Production Head sends a TO back.");
-    assert.ok((await hub.correct(ctx, to.id, { note: "Customer asked for 12, not 11" })).ok);
+    assert.ok((await sendBackIntake(admin.id, to.id, "Customer asked for 12, not 11")).ok);
     assert.ok((await mod("hubCorrection").load(ctx)).rows.some((r) => r.id === to.id), "it waits on Sent back");
-    assert.match(msg(await hub.verify(ctx, to.id, {})), /waiting for a correction/);
-    const edited = await mod("orderHub").forms!.editTo(ctx, { ...head, dupOk: "" }, [{ sku: LOOSE, qty: "12", rate: "300" }], to.id);
+    assert.match(msg(await approveIntake(admin.id, to.id, null)), /not waiting for Accounts/);
+    const edited = await mod("orderHub").forms!.editTo(ctx, head, [{ sku: LOOSE, qty: "12", rate: "300" }], to.id);
     assert.ok(edited.ok, JSON.stringify(edited));
-    /* Two people: the back office and the Production Head. Neither alone makes the order number. */
-    await db.insert(erpUserPowers).values([{ userId: clerk.id, power: "verifyOrders" }]);
-    const head2 = await makeUser("Ravi Head", "associate");
-    await db.insert(erpUserPowers).values([{ userId: head2.id, power: "productionCheck" }]);
-    const clerkCtx = await as(clerk);
-    assert.match(say(await mod("orderHub").actions!.verify(clerkCtx, to.id, {})), /Back office check done · waiting for the other/);
-    assert.match(msg(await mod("orderHub").actions!.verify(clerkCtx, to.id, {})), /You made the other check|Only the back office or the Production Head/);
-    const made = await mod("orderHub").actions!.verify(await as(head2), to.id, {});
-    assert.match(say(made), /^TO-\d+ → order \d+ · with Accounts for approval/);
+    const made = await approveIntake(admin.id, to.id, null);
+    assert.ok(made.ok, JSON.stringify(made));
     const [o] = await db.select().from(erpOrders).where(mine);
     assert.equal(o.qtyCans, 12);
     assert.equal(o.orderCheck, "Verified");
-    assert.equal(o.accountsCheck, "Pending", "it waits for Accounts");
-    assert.equal(o.productionCheck, "Pending", "and then for the MRP check");
+    assert.equal(o.accountsCheck, "Approved", "Accounts' approval made the order number");
+    assert.equal(o.productionCheck, "Pending", "the MRP check is next");
     assert.equal(o.intakeId, to.id);
-    assert.match(msg(await mod("orderHub").forms!.editTo(ctx, head, [{ sku: LOOSE, qty: "13", rate: "300" }], to.id)), /has its order number/);
-    /* After the order number: no Undo verification and no content edits. */
+    assert.match(msg(await mod("orderHub").forms!.editTo(ctx, head, [{ sku: LOOSE, qty: "13", rate: "300" }], to.id)), /order number|not|cannot/i);
+    /* After the order number: the line edit is dispatch details; goods move with Edit order. */
     const a = mod("orders").actions!;
     assert.match(msg(await a.unverifyOrder(ctx, o.id, {})), /not undone/);
-    assert.match(msg(await mod("orders").forms!.edit(ctx, { status: "Under Process", qty: "13", transport: "0" }, [], o.id)), /can no longer be changed/);
+    assert.match(msg(await mod("orders").forms!.edit(ctx, { status: "Under Process", qty: "13", transport: "0" }, [], o.id)), /Edit order/);
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", transport: "0", remark: "Call first" }, [], o.id)).ok, "dispatch details still change");
-    assert.match(msg(await a.ready(ctx, o.id, {})), /accounts have not approved it yet/);
+    assert.match(msg(await a.ready(ctx, o.id, {})), /MRP|Production Head|not cleared/i);
     await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
   });
 });
@@ -575,26 +569,29 @@ describe("numbers and releases", () => {
   });
 });
 
-describe("no edits once an order has its order number", () => {
-  test("Edit order, Add another and Move to a new order are refused, and none is offered", async () => {
+describe("editing an order until Bill it (Option A)", () => {
+  test("Edit order is the Production Head's; Add another and Move to a new order stay refused", async () => {
     const ctx = await as(admin);
-    const placed = await placeOrder(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", dupOk: "Yes — it is a separate order" }, [{ sku: LOOSE, qty: "5" }]);
+    const placed = await placeOrder(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "5" }]);
     assert.ok(placed.ok);
     const [line] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, placed.orderNo!));
-    const fixed = "This order has its order number, so it can no longer be changed. Cancel it and take a new order instead.";
-    assert.equal(msg(await mod("orders").forms!.editOrder(ctx, {}, [{ sku: LOOSE, qty: "6" }], line.id)), fixed);
-    assert.equal(msg(await mod("orders").actions!.moveOut(ctx, line.id, { qty: "1" })), fixed);
-    assert.equal(mod("orders").formLoaders!.editOrder, undefined);
+    assert.equal(msg(await mod("orders").actions!.moveOut(ctx, line.id, { qty: "1" })), "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
+    assert.ok(mod("orders").formLoaders!.editOrder, "the whole-order form loads");
     const row = (await mod("orders").load(ctx)).rows.find((r) => r.id === line.id)!;
     const ids = (typeof row.actions === "function" ? (row.actions as () => { id: string }[])() : (row.actions ?? [])).map((x) => x.id);
-    for (const gone of ["editOrder", "more", "moveOut", "unverifyOrder"]) assert.ok(!ids.includes(gone), gone);
+    assert.ok(ids.includes("editOrder"), "an administrator holds the Production Head's edit");
+    for (const gone of ["more", "moveOut", "unverifyOrder"]) assert.ok(!ids.includes(gone), gone);
+    const saved = await mod("orders").forms!.editOrder(ctx, { billing: "Shree Paints", deliveredBy: "Transporter" }, [{ lineId: line.id, sku: LOOSE, qty: "6" }], line.id);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
+    assert.equal(after.qtyCans, 6);
   });
 });
 
 describe("the billing view", () => {
   test("a ticked line brings its whole order, leaves cancelled lines out, and answers for what the viewer may see", async () => {
     const ctx = await as(admin);
-    const made = await placeOrder(ctx, { source: "Phone", date: "2026-09-23", godown: "Bhiwandi", billing: "No List Traders", dupOk: "Yes — it is a separate order" }, [
+    const made = await placeOrder(ctx, { source: "Phone", date: "2026-09-23", godown: "Bhiwandi", billing: "No List Traders" }, [
       { sku: LOOSE, qty: "3", rate: "300" },
       { sku: LOOSE, qty: "5", rate: "300" },
       { sku: BOXED, qty: "4", rate: "300" },
@@ -623,7 +620,7 @@ describe("the billing view", () => {
 describe("deleting a line", () => {
   test("says what goes with it first, and a retired follow-up remark no longer pins the line in place", async () => {
     const ctx = await as(admin);
-    const made = await placeOrder(ctx, { source: "Phone", date: "2026-09-22", godown: "Bhiwandi", billing: "No List Traders", dupOk: "Yes — it is a separate order" }, [
+    const made = await placeOrder(ctx, { source: "Phone", date: "2026-09-22", godown: "Bhiwandi", billing: "No List Traders" }, [
       { sku: LOOSE, qty: "3", rate: "300" },
       { sku: BOXED, qty: "4", rate: "300" },
     ]);

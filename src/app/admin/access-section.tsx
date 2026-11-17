@@ -1341,6 +1341,8 @@ function AccessDialog({
           office: null,
           employeeStatus: person.employeeStatus,
           accountActive: person.active,
+          /* Somebody already on the Access table: their account is in use. */
+          setUp: true,
           apps: person.grants.map((g) => g.app),
           blocked: null,
         }
@@ -1412,7 +1414,9 @@ function AccessDialog({
   const [saving, setSaving] = React.useState(false);
   const [fieldError, setFieldError] = React.useState<Record<string, string>>({});
 
-  const needsAccount = !!chosen && !chosen.userId;
+  /* Nobody's account in use yet: the one HRMS gave them automatically is set
+     up here, with a way to sign in, exactly as a brand new one used to be. */
+  const needsAccount = !!chosen && (!chosen.userId || !chosen.setUp);
 
   const pick = (c: Candidate) => {
     const existing = c.userId ? (rows.find((r) => r.userId === c.userId) ?? null) : null;
@@ -1456,7 +1460,7 @@ function AccessDialog({
     setSaving(true);
     setFieldError({});
     return setAccess({
-      userId: chosen.userId,
+      userId: needsAccount ? null : chosen.userId,
       employeeId: chosen.employeeId,
       grants: Object.entries(draft).map(([app, modules]) => ({
         app,
@@ -1472,7 +1476,7 @@ function AccessDialog({
       /* No level on the account. It is DERIVED from the per-app levels by the
          action, and the select that used to sit here could make a platform
          administrator out of somebody given nothing but associate grants. */
-      account: chosen.userId ? undefined : { email: email.trim() || null, phone: phone.trim() || null },
+      account: needsAccount ? { email: email.trim() || null, phone: phone.trim() || null } : undefined,
       confirmation,
       reviewedNew: freshInDraft,
     }).then((r) => {
@@ -1954,9 +1958,9 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
                 </span>
               ) : (
                 <>
-                  {c.userId ? null : (
+                  {c.userId && c.setUp ? null : (
                     <span className="flex-none rounded-[3px] bg-brand-soft px-1.5 text-[11px] font-medium text-[#5223E0]">
-                      no account
+                      not set up
                     </span>
                   )}
                   <span className="w-[3.5rem] flex-none text-right text-[11px] whitespace-nowrap text-muted">

@@ -112,6 +112,37 @@ export async function applyAccountManagerChange(
     }
 
     /*
+     * A PERSON PICKED FROM THE STAFF LIST IS THEIR ACCOUNT (owner,
+     * 2026-11-18). Every employee has one, so the seat holds an id like any
+     * other and the name on the screens comes from it — this used to store the
+     * employee's NAME and no id, which is how a seat came to be decided by
+     * comparing text. Only a current employee: a leaver picked from an old
+     * tab is refused, as it always was.
+     */
+    for (const which of ["sales", "backOffice"] as const) {
+      const employeeId =
+        which === "sales"
+          ? input.salesEmployeeId
+          : input.backOffice?.kind === "employee"
+            ? input.backOffice.employeeId
+            : null;
+      if (!employeeId) continue;
+      const [current] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.id, employeeId), eq(employees.status, "active")))
+        .limit(1);
+      if (!current) return err("That employee is no longer on the current staff list.", "validation");
+      const { employeesAccount } = await import("@/lib/services/seat-resolve");
+      const account = await employeesAccount(employeeId);
+      if (!account) continue; // held by name below, as before, until it exists
+      input =
+        which === "sales"
+          ? { ...input, salesAmId: account.id, salesEmployeeId: undefined }
+          : { ...input, backOffice: { kind: "user", userId: account.id } as typeof input.backOffice };
+    }
+
+    /*
      * The sales target must be a real account. `sales_am_id` can only hold a
      * `users` row — a name the sheet carries with no login cannot be given a
      * book, which is the whole reason `salesPersonName` exists beside it.

@@ -26,6 +26,9 @@ import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
 import { ERP_KIT, KitContext, safeKit, useKit, type ScreenKit } from "./kit";
 import { formSub, promptSub } from "./quiet-copy";
+import { DuplicateDialog } from "@/components/orders/duplicate-dialog";
+import { reportSameOrderAction } from "@/lib/actions/order-duplicate";
+import type { DuplicateFound } from "@/lib/erp/order-hub";
 
 /* ---------------------------------------------------------------------------
  * The ERP's overlays, held once for the whole app: the form dialog, the prompt
@@ -572,6 +575,10 @@ function FormDialog({
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [topError, setTopError] = useState("");
+  /* The duplicate check's answer (the New order form): the same order already punched today. */
+  const [dup, setDup] = useState<DuplicateFound | null>(null);
+  const [dupReason, setDupReason] = useState("");
+  const [dupError, setDupError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [reached, setReached] = useState(0);
   /* The lines a `linesFrom` pick (or the opening recipe) laid out, so a later pick knows whether anybody has touched them. */
@@ -663,6 +670,11 @@ function FormDialog({
       const res = await kit.submitForm(spec.screen, spec.id, h, ls, spec.recordId);
       setBusy(false);
       if (res.ok) return onSaved(res.message ?? "Saved");
+      if (res.code === "duplicate" && res.detail) {
+        setDupReason("");
+        setDupError(null);
+        return setDup(res.detail as DuplicateFound);
+      }
       const fe: Record<string, string> = {};
       res.fieldErrors?.forEach((x) => {
         const key = /^l\d+\./.test(x.field) || x.field.startsWith("h.") ? x.field : `h.${x.field}`;
@@ -885,6 +897,37 @@ function FormDialog({
           </Button>
         )}
       </DialogFooter>
+      {dup ? (
+        <DuplicateDialog
+          found={dup}
+          newLabel="YOU ARE PUNCHING · now"
+          layout="side"
+          reason={dupReason}
+          onReason={setDupReason}
+          busy={busy}
+          error={dupError}
+          onClose={() => setDup(null)}
+          onSame={async () => {
+            setBusy(true);
+            const r = await reportSameOrderAction(dup.match.id);
+            setBusy(false);
+            if (!r.ok) return setDupError(r.error);
+            setDup(null);
+            onSaved(r.message ?? "Not created - it is the same order");
+          }}
+          onDifferent={async (reason) => {
+            setBusy(true);
+            const res = await kit.submitForm(spec.screen, spec.id, { ...h, dupOf: dup.match.id, dupReason: reason }, filledLines(), spec.recordId);
+            setBusy(false);
+            if (res.ok) {
+              setDup(null);
+              return onSaved(res.message ?? "Saved");
+            }
+            if (res.code === "duplicate" && res.detail) return setDup(res.detail as DuplicateFound);
+            setDupError(res.fieldErrors?.[0]?.message ?? res.error);
+          }}
+        />
+      ) : null}
     </ErpDialog>
   );
 }

@@ -18,7 +18,13 @@ import { screenModule } from "./screens";
 export type Placed = Result<unknown> & { orderNo?: number; toNo?: number };
 
 export async function placeOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<string, string>[], opts: { gates?: boolean } = {}): Promise<Placed> {
-  const r = await screenModule("orders")!.forms!.new!(ctx, h, ls);
+  let r = await screenModule("orders")!.forms!.new!(ctx, h, ls);
+  /* The same order twice on one day is asked about (the duplicate check); a
+     test placing it again means it as a separate order. */
+  if (!r.ok && r.code === "duplicate") {
+    const found = r.detail as { match: { id: string } };
+    r = await screenModule("orders")!.forms!.new!(ctx, { ...h, dupOf: found.match.id, dupReason: "A separate order in a test" }, ls);
+  }
   if (!r.ok) return r;
   const toNo = Number(/TO-(\d+)/.exec(r.message ?? "")?.[1]);
   if (!toNo) return err(`No TO in "${r.message}"`);

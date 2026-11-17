@@ -16,6 +16,9 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { NextStepDialog } from "@/components/crm/next-step-dialog";
+import { DuplicateDialog } from "@/components/orders/duplicate-dialog";
+import { checkCallOrderDuplicateAction } from "@/lib/actions/order-duplicate";
+import type { DuplicateFound } from "@/lib/erp/order-hub";
 import { OrderTakenDialog } from "@/components/crm/order-taken-dialog";
 import type { TakenTo } from "@/lib/order-journey";
 import { CallAssistant, type AssistantApply } from "@/components/crm/call-assistant";
@@ -623,6 +626,10 @@ function CallPanelForm({
   const [requestCn, setRequestCn] = React.useState(false);
   const [orderDate, setOrderDate] = React.useState(today());
   const [busy, setBusy] = React.useState(false);
+  /* The duplicate check's answer, while the telecaller decides. Nothing is
+     saved until they press one of its two buttons. */
+  const [dup, setDup] = React.useState<{ found: DuplicateFound; advance: boolean } | null>(null);
+  const [dupReason, setDupReason] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [saved, setSaved] = React.useState<string | null>(null);
   // Opens on Information: read who you are about to speak to before speaking.
@@ -1467,7 +1474,12 @@ function CallPanelForm({
     });
   }
 
-  async function save(advance: boolean) {
+  async function save(
+    advance: boolean,
+    /* What the telecaller answered the duplicate warning, when it was shown:
+       the TO this order already is, or "different" with the reason. */
+    dupAnswer?: { sameOrderAs?: string; duplicateDecision?: { decision: "different"; ofId: string; reason: string } },
+  ) {
     if (!target) return;
 
     /*
@@ -1507,6 +1519,28 @@ function CallPanelForm({
       for (const pid of Object.keys(productQuantities)) {
         const bp = discountBpOf(pid);
         if (bp > 0) discounts[pid] = bp;
+      }
+
+      /*
+       * THE DUPLICATE CHECK, before anything is written: a TO already punched
+       * for the same parties, the same day and the same items is shown, and
+       * the telecaller says whether this is that order. A check that cannot
+       * be asked never stops the call - the server marks the TO a possible
+       * duplicate for Accounts instead.
+       */
+      if (!dupAnswer && needsProducts && Object.keys(productQuantities).length) {
+        const check = await checkCallOrderDuplicateAction({
+          customerId: target.customerId,
+          interactionType: type!,
+          outcome: isOrderReceived ? null : outcome,
+          orderDate: isOrderReceived ? orderDate : undefined,
+          productQuantities,
+        });
+        if (check.ok && check.data) {
+          setDupReason("");
+          setDup({ found: check.data, advance });
+          return;
+        }
       }
 
       const result = await run(
@@ -1597,8 +1631,11 @@ function CallPanelForm({
           queuePosition: target.queuePosition,
           idempotencyKey: idempotencyKey.current,
           aiDraftId: aiDraftId.current ?? undefined,
+          sameOrderAs: dupAnswer?.sameOrderAs,
+          duplicateDecision: dupAnswer?.duplicateDecision,
         }),
       );
+      setDup(null);
 
       if (result.ok) {
         setErrors({});
@@ -3919,6 +3956,20 @@ function CallPanelForm({
             )}
           </div>
         </div>
+
+        {dup ? (
+          <DuplicateDialog
+            found={dup.found}
+            newLabel="THIS CALL"
+            reason={dupReason}
+            onReason={setDupReason}
+            busy={busy}
+            note={`"Same order" still saves this call as "Order received", without a new order. ${dup.found.match.takenBy ?? "Whoever punched it"} is told.`}
+            onClose={() => setDup(null)}
+            onSame={() => save(dup.advance, { sameOrderAs: dup.found.match.id })}
+            onDifferent={(reason) => save(dup.advance, { duplicateDecision: { decision: "different", ofId: dup.found.match.id, reason } })}
+          />
+        ) : null}
 
         {/* A typed zero on a line that had a count. Keyed on the product so
             reopening it for a different one starts fresh rather than showing the

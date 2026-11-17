@@ -16,6 +16,8 @@ import {
   missedRemark,
   newTaskProblems,
   routineMissed,
+  routineGraceLeft,
+  ROUTINE_GRACE_DEFAULT,
   parseQuickAdd,
   rejectProblems,
   teamBelow,
@@ -166,31 +168,60 @@ describe("a routine's task belongs to its own day", () => {
   });
 
   it("is open until its due time, missed from that minute", () => {
-    assert.equal(routineMissed(t(), "2026-11-14", "17:59"), false);
-    assert.equal(routineMissed(t(), "2026-11-14", "18:00"), true);
+    assert.equal(routineMissed(t(), "2026-11-14", "17:59", 0), false);
+    assert.equal(routineMissed(t(), "2026-11-14", "18:00", 0), true);
   });
 
   it("with no time, is open all its day and missed the next", () => {
-    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-14", "23:59"), false);
-    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-15", "00:00"), true);
+    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-14", "23:59", 0), false);
+    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-15", "00:00", 0), true);
   });
 
   it("cannot be done tomorrow for today", () => {
-    assert.equal(routineMissed(t({ status: "doing" }), "2026-11-15", "09:00"), true);
+    assert.equal(routineMissed(t({ status: "doing" }), "2026-11-15", "09:00", 0), true);
   });
 
   it("done stays done; missed stays missed", () => {
-    assert.equal(routineMissed(t({ status: "done" }), "2026-11-20", "09:00"), false);
-    assert.equal(routineMissed(t({ status: "missed" }), "2026-11-14", "09:00"), true);
+    assert.equal(routineMissed(t({ status: "done" }), "2026-11-20", "09:00", 0), false);
+    assert.equal(routineMissed(t({ status: "missed" }), "2026-11-14", "09:00", 0), true);
   });
 
   it("a task due before the rule began stays open and late", () => {
-    assert.equal(routineMissed(t({ dueDate: "2026-11-09" }), "2026-11-20", "09:00"), false);
-    assert.equal(routineMissed(t({ dueDate: "2026-11-10", dueTime: null }), "2026-11-11", "00:00"), true);
+    assert.equal(routineMissed(t({ dueDate: "2026-11-09" }), "2026-11-20", "09:00", 0), false);
+    assert.equal(routineMissed(t({ dueDate: "2026-11-10", dueTime: null }), "2026-11-11", "00:00", 0), true);
+  });
+
+  it("with grace time, is still open for 15 minutes past its due time, then missed", () => {
+    const g = ROUTINE_GRACE_DEFAULT;
+    assert.equal(g, 15);
+    assert.equal(routineMissed(t(), "2026-11-14", "18:00", g), false);
+    assert.equal(routineMissed(t(), "2026-11-14", "18:14", g), false);
+    assert.equal(routineMissed(t(), "2026-11-14", "18:15", g), true);
+    assert.equal(routineGraceLeft(t(), "2026-11-14", "17:59", g), null, "not due yet: no grace");
+    assert.equal(routineGraceLeft(t(), "2026-11-14", "18:00", g), 15);
+    assert.equal(routineGraceLeft(t(), "2026-11-14", "18:10", g), 5);
+    assert.equal(routineGraceLeft(t(), "2026-11-14", "18:15", g), null, "grace over: missed");
+  });
+
+  it("grace time runs past midnight: due 11:50 PM is missed at 12:05 AM", () => {
+    assert.equal(routineMissed(t({ dueTime: "23:50" }), "2026-11-15", "00:04", 15), false);
+    assert.equal(routineMissed(t({ dueTime: "23:50" }), "2026-11-15", "00:05", 15), true);
+    assert.equal(routineGraceLeft(t({ dueTime: "23:50" }), "2026-11-15", "00:00", 15), 5);
+  });
+
+  it("with no time, grace runs from the end of its day", () => {
+    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-15", "00:14", 15), false);
+    assert.equal(routineMissed(t({ dueTime: null }), "2026-11-15", "00:15", 15), true);
+  });
+
+  it("no grace for a task given by hand, a done one, or one before the rule", () => {
+    assert.equal(routineGraceLeft(t({ routineId: null }), "2026-11-14", "18:05", 15), null);
+    assert.equal(routineGraceLeft(t({ status: "done" }), "2026-11-14", "18:05", 15), null);
+    assert.equal(routineGraceLeft(t({ dueDate: "2026-11-09" }), "2026-11-09", "18:05", 15), null);
   });
 
   it("a task given by hand is never missed, only late", () => {
-    assert.equal(routineMissed(t({ routineId: null }), "2026-11-20", "09:00"), false);
+    assert.equal(routineMissed(t({ routineId: null }), "2026-11-20", "09:00", 0), false);
   });
 
   it("missed is closed, like done", () => {

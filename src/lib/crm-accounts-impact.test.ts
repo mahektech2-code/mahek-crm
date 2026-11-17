@@ -179,6 +179,13 @@ test("a reporting line names the accounts whose sales manager it supplies", asyn
     ])
     .returning();
   await db.insert(employeeReporting).values({ id: id("rep"), employeeId: ravi.id, managerId: meena.id });
+  /* By ACCOUNT: Ravi's own login holds Colour Camp's sales seat. The name on
+     the shop is beside the point (owner, 2026-11-18). */
+  const [raviAccount] = await db
+    .insert(users)
+    .values({ id: id("usr"), name: "Ravi Kumar", passwordHash: "x", role: "associate", initials: "RK", employeeId: ravi.id })
+    .returning();
+  await db.update(customers).set({ salesAmId: raviAccount.id }).where(eq(customers.name, "Colour Camp"));
   const r = await body(reportingLineImpact, ravi.id);
   const accounts = r.items.find((i) => i.app === "CRM");
   assert.equal(accounts?.count, 1, where(r.items));

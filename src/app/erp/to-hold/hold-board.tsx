@@ -21,8 +21,8 @@ type Tab = "all" | HoldDepartment | "released";
 const SCREEN = "toHold";
 
 const DEPT_TONE: Record<HoldDepartment, "info" | "warn" | "success" | "muted"> = { verification: "info", accounts: "warn", production: "success", office: "muted" };
-const DEPT_SHORT: Record<HoldDepartment, string> = { verification: "Order verification", accounts: "Accounts", production: "Production", office: "Office" };
-const RELEASE_LABEL: Record<HoldDepartment, string> = { verification: "Release to the Order Hub", accounts: "Release to Accounts", production: "Release to the MRP check", office: "Release" };
+const DEPT_SHORT: Record<HoldDepartment, string> = { verification: "TO with Accounts", accounts: "Accounts", production: "Production", office: "Office" };
+const RELEASE_LABEL: Record<HoldDepartment, string> = { verification: "Release to Accounts", accounts: "Release to Accounts", production: "Release (clears it)", office: "Release" };
 
 function lookAgain(r: HoldBoardRow, today: string): { text: string; late: boolean } {
   if (!r.nextUpdateOn) return { text: "—", late: false };
@@ -46,7 +46,7 @@ export function HoldBoard({ rows, releasedThisWeek, today, now, readOnly }: { ro
       <FigureCards
         figures={[
           { label: "On hold", value: rows.length, onClick: () => setTab("all"), on: tab === "all" },
-          { label: "Order verification", value: count("verification"), onClick: () => setTab("verification"), on: tab === "verification" },
+          { label: "TOs with Accounts", value: count("verification"), onClick: () => setTab("verification"), on: tab === "verification" },
           { label: "Accounts", value: count("accounts"), onClick: () => setTab("accounts"), on: tab === "accounts" },
           { label: "Production (MRP)", value: count("production"), onClick: () => setTab("production"), on: tab === "production" },
         ]}
@@ -56,7 +56,7 @@ export function HoldBoard({ rows, releasedThisWeek, today, now, readOnly }: { ro
         onChange={setTab}
         tabs={[
           { key: "all", label: "All", count: rows.length },
-          { key: "verification", label: "Order verification", count: count("verification") },
+          { key: "verification", label: "TOs with Accounts", count: count("verification") },
           { key: "accounts", label: "Accounts", count: count("accounts") },
           { key: "production", label: "Production", count: count("production") },
           ...(office ? [{ key: "office" as Tab, label: "Office", count: office }] : []),

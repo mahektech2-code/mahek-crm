@@ -118,14 +118,30 @@ export async function provisionBackOffice(options: {
   };
 
   const userIdByName = new Map<string, string>();
+  /* ONE PERSON, ONE ACCOUNT. Every employee already has one, so the person a
+     name means is found through the directory FIRST — their account, or the
+     one their HRMS record was given — and only somebody HRMS has never heard
+     of is made a new one, linked to nobody. The guessed email was the only
+     check before, and a real address that differed from it made a second. */
+  const { loadPersonDirectory } = await import("@/lib/services/person-identity-service");
+  const dir = await loadPersonDirectory();
+  const linkedTo = new Map(
+    (await db.select({ id: users.id, employeeId: users.employeeId }).from(users))
+      .filter((u) => u.employeeId)
+      .map((u) => [u.employeeId!, u.id]),
+  );
 
   for (const { name, parties } of names) {
     const email = emailFor(name);
-    const existing = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
+    const emp = dir.employeeByName(name);
+    const known = dir.accountByName(name) ?? (emp ? (linkedTo.get(emp) ?? null) : null);
+    const existing = known
+      ? [{ id: known }]
+      : await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
 
     if (existing.length) {
       userIdByName.set(key(name), existing[0].id);

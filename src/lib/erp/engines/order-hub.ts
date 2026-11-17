@@ -3,22 +3,24 @@
  * questions and the tests need no database.
  *
  * An order starts as a TEMPORARY ORDER (a TO number) wherever it was taken.
- * Two checks — the back office and the Production Head — and the SECOND one
- * makes the order number. After it, two gates before production: Accounts
- * approve the order, and the Production Head clears it against materials and
- * capacity (the MRP check). Nothing about the order may be edited once it has
- * its order number; cancelling, holding and the rest keep the rules they had.
+ * Accounts approve the TO in the Accounts app, and approving makes the order
+ * number (option A, Nov 2026 - the hub's "back office" check was Accounts, so
+ * an order used to be checked by Accounts twice). The Production Head's one
+ * check is then the MRP check: materials and capacity before production.
+ * Nothing about the order may be edited once it has its order number;
+ * cancelling, holding and the rest keep the rules they had.
  * ------------------------------------------------------------------------- */
 
-export const INTAKE_STATUSES = ["open", "correction", "hold", "verified", "cancelled"] as const;
+export const INTAKE_STATUSES = ["open", "correction", "hold", "verified", "cancelled", "declined"] as const;
 export type IntakeStatus = (typeof INTAKE_STATUSES)[number];
 
 export const INTAKE_STATUS_LABEL: Record<IntakeStatus, string> = {
-  open: "Waiting for checks",
-  correction: "Sent back for correction",
-  hold: "On hold",
-  verified: "Order number made",
+  open: "Waiting for Accounts",
+  correction: "Sent back by Accounts",
+  hold: "On hold with Accounts",
+  verified: "Approved",
   cancelled: "Cancelled",
+  declined: "Declined",
 };
 
 /** Where a TO came from, as the hub shows it. ERP orders keep the source typed on the form. */
@@ -117,17 +119,21 @@ export const HOLD_DEPARTMENTS = ["verification", "accounts", "production", "offi
 export type HoldDepartment = (typeof HOLD_DEPARTMENTS)[number];
 
 export const DEPARTMENT_LABEL: Record<HoldDepartment, string> = {
-  verification: "Order verification",
+  verification: "TO with Accounts",
   accounts: "Accounts",
   production: "Production (MRP)",
   office: "Office",
 };
 
-/** Where releasing a hold sends the order, in words — it is checked again there, never skipped ahead. */
+/**
+ * Where releasing a hold sends the order, in words. Accounts' holds go back to
+ * be checked again; a production hold is the MRP check's own answer, so
+ * releasing it clears the check and the order goes straight to Under Process.
+ */
 export const RELEASE_TO: Record<HoldDepartment, string> = {
-  verification: "back to the Order Hub; both checks are asked again",
+  verification: "back to Accounts › Order approvals, to be approved again",
   accounts: "back to Accounts › Order approvals",
-  production: "back to the MRP check",
+  production: "straight to Under Process; releasing clears the MRP check",
   office: "back to where its lines were before the hold",
 };
 
@@ -163,16 +169,63 @@ export const HOLD_CUSTOMER_TEXT: Record<string, string> = {
 
 /* ------------------------------------------------------------- duplicates */
 
-export type DupShape = { key: string; billingId: string; date: string; lines: { skuId: string; qtyCans: number }[] };
+/**
+ * A DUPLICATE is the same order punched twice, which happens because an order
+ * shared on a WhatsApp group is punched by more than one person. It is decided
+ * by rules alone: the same day, the same billing party AND the same delivery
+ * party, and exactly the same items (product and cans, in any order). A
+ * different delivery party is a different order even for one billing party —
+ * a distributor ordering for two shops.
+ */
+export type DupShape = { key: string; billingId: string; deliveryId?: string | null; date: string; lines: { skuId: string; qtyCans: number }[] };
 
-/** Another TO or order for the same party on the same day with exactly the same goods. */
+/** The items as one comparable string: product and cans, order ignored. */
+export function itemsSignature(lines: DupShape["lines"]): string {
+  return lines
+    .map((l) => `${l.skuId}:${l.qtyCans}`)
+    .sort()
+    .join("|");
+}
+
+/** True where two orders are the same order by the rule above. */
+export function sameOrder(a: DupShape, b: DupShape): boolean {
+  return (
+    a.key !== b.key &&
+    a.billingId === b.billingId &&
+    (a.deliveryId || a.billingId) === (b.deliveryId || b.billingId) &&
+    a.date === b.date &&
+    a.lines.length > 0 &&
+    itemsSignature(a.lines) === itemsSignature(b.lines)
+  );
+}
+
+/** Another TO or order for the same parties on the same day with exactly the same goods. */
 export function duplicateOf(me: DupShape, others: DupShape[]): string | null {
-  const sig = (ls: DupShape["lines"]) =>
-    ls
-      .map((l) => `${l.skuId}:${l.qtyCans}`)
-      .sort()
-      .join("|");
-  const mine = sig(me.lines);
-  const hit = others.find((o) => o.key !== me.key && o.billingId === me.billingId && o.date === me.date && sig(o.lines) === mine);
-  return hit?.key ?? null;
+  return others.find((o) => sameOrder(me, o))?.key ?? null;
+}
+
+/** "2 h 40 m apart" — the gap between the two punches, for the warning. */
+export function gapWords(aMs: number, bMs: number): string {
+  const min = Math.round(Math.abs(aMs - bMs) / 60_000);
+  if (min < 1) return "punched within the same minute";
+  if (min < 60) return `${min} m apart`;
+  const h = Math.floor(min / 60);
+  return `${h} h${min % 60 ? ` ${min % 60} m` : ""} apart`;
+}
+
+/** The comparison line the rules write, used where no model can. */
+export function duplicateLine(gapMs: number | null): string {
+  return `Same items, same parties${gapMs == null ? "" : `, ${gapWords(0, gapMs)}`}`;
+}
+
+/** What the person punching chose. `different` must carry a reason. */
+export type DuplicateDecision = { decision: "different"; ofId: string; reason: string };
+
+/** Why a decision cannot stand, or null. */
+export function decisionRefusal(d: DuplicateDecision | null | undefined, foundIds: string[]): string | null {
+  if (!d) return null;
+  if (!d.reason?.trim()) return "Say why it is a different order";
+  if (d.reason.trim().length > 300) return "Keep the reason under 300 characters";
+  if (!foundIds.includes(d.ofId)) return "The order it looked like has changed. Check again";
+  return null;
 }

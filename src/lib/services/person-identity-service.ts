@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { auditLog, customers, employeeReporting, employees, personNameAliases, users } from "@/db/schema";
 import { buildDirectory, personKey, staffAccountOf, type Directory, type StaffMatch } from "@/lib/engines/person-directory";
 import { initialsOf } from "@/lib/format";
+import { hashPassword } from "@/lib/password";
 
 /* ---------------------------------------------------------------------------
  * ONE PERSON, ONE NAME — and every question about them answered by id.
@@ -407,6 +408,112 @@ export async function autoLinkAccounts(): Promise<number> {
     });
   }
   return n;
+}
+
+/* ------------------------------------------- every employee has an account */
+
+export type EnsureAccountsResult = {
+  /** Accounts made, by the employee's name. */
+  created: string[];
+  /**
+   * Employees an UNLINKED account already looks like (by name only). Making
+   * them a second account is exactly the duplicate this exists to prevent, so
+   * they wait for somebody to link the one they have on Admin → Manage access.
+   */
+  waitingForLink: string[];
+};
+
+/**
+ * EVERY EMPLOYEE HAS EXACTLY ONE ACCOUNT, and it is the id everything they do
+ * hangs off. Owner's rule, 2026-11-18.
+ *
+ * The rule exists because of what happened without it. Poonam Pashte's login
+ * was never linked to her HRMS record, so when she became Pranavi a rename in
+ * HRMS had nothing to rename, and the only way to give "Pranavi" a login was
+ * Add user — which made a SECOND account, empty, while 596 customers, 896
+ * calls and 728 tasks sat on the first. And a salesman with no login could
+ * only ever be held as typed text on the customers he sold to, which is why
+ * the handset decided a book by comparing names.
+ *
+ * So an employee with no account is given one here: their HRMS name, linked by
+ * `employee_id`, no apps, no email and no number — it opens nothing and nobody
+ * can sign in to it until somebody sets it up on Manage access, which gives
+ * THIS account its apps and a way in rather than making another. A former
+ * employee gets one too, switched off, so the records naming them have
+ * somebody to point at.
+ *
+ * Proven links first (`autoLinkAccounts`), then the gaps. An employee an
+ * unlinked account resembles by NAME is left for a person to link: guessing
+ * would either merge two people or make the duplicate. A withdrawn row is
+ * gone from HRMS and gets nothing. Idempotent.
+ */
+export async function ensureEmployeeAccounts(opts: { dryRun?: boolean } = {}): Promise<EnsureAccountsResult> {
+  if (!opts.dryRun) await autoLinkAccounts();
+  const dir = await loadPersonDirectory();
+  const [staff, accounts] = await Promise.all([
+    db
+      .select({ id: employees.id, name: employees.name, status: employees.status, sheetStatus: employees.sheetStatus })
+      .from(employees),
+    db.select({ id: users.id, employeeId: users.employeeId, notEmployee: users.notEmployee }).from(users),
+  ]);
+  const linked = new Set(accounts.map((a) => a.employeeId).filter(Boolean));
+  /* Who an unlinked account would be, if the directory can tell at all. */
+  const resembled = new Set(
+    accounts
+      .filter((a) => !a.employeeId && !a.notEmployee)
+      .map((a) => dir.employeeOfAccount(a.id))
+      .filter((e): e is string => Boolean(e)),
+  );
+
+  const out: EnsureAccountsResult = { created: [], waitingForLink: [] };
+  for (const e of staff) {
+    if (linked.has(e.id) || e.sheetStatus === "withdrawn") continue;
+    const name = e.name.trim().replace(/\s+/g, " ");
+    if (!name || name === "(no name in the sheet)") continue;
+    if (resembled.has(e.id)) {
+      out.waitingForLink.push(name);
+      continue;
+    }
+    if (opts.dryRun) {
+      out.created.push(name);
+      continue;
+    }
+    const userId = `usr_${randomUUID().slice(0, 12)}`;
+    const made = await db
+      .insert(users)
+      .values({
+        id: userId,
+        name,
+        email: null,
+        phone: null,
+        role: "associate",
+        initials: initialsOf(name),
+        /* Nobody knows it and nothing asks for it: the account has no email
+           and no number, so no sign-in form can reach it until it is set up. */
+        passwordHash: await hashPassword(randomUUID() + randomUUID()),
+        active: e.status === "active",
+        employeeId: e.id,
+      })
+      /* Another pass linked or created one meanwhile — `users_employee_key`
+         keeps it to one, and theirs stands. */
+      .onConflictDoNothing()
+      .returning({ id: users.id });
+    if (!made.length) continue;
+    out.created.push(name);
+    await db.insert(auditLog).values({
+      id: `aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      actorId: null,
+      action: "create-user",
+      entityType: "user",
+      entityId: userId,
+      afterState: {
+        detail: `${name} · every employee has an account — made automatically, no apps, no sign-in until set up on Manage access`,
+        employeeId: e.id,
+        automatic: true,
+      },
+    });
+  }
+  return out;
 }
 
 /* ------------------------------------------------ the rest of their details */

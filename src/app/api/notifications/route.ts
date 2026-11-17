@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { APP_IDS } from "@/lib/apps";
 import { notificationFeed } from "@/lib/queries";
+import { alertGraceTasks } from "@/lib/tasks/grace-alerts";
 
 /**
  * The bell, asked again. `NotificationCenter` polls this every few seconds
@@ -23,6 +24,10 @@ export async function GET(request: Request) {
   }
   const asked = new URL(request.url).searchParams.get("app");
   const app = asked && (APP_IDS as readonly string[]).includes(asked) ? asked : null;
+  /* A routine task that just entered its grace time is told here, so it pops
+     up within seconds rather than at the next hourly job. Held to one cheap
+     read per person per half-minute; it never fails the bell. */
+  await alertGraceTasks(user.id).catch((e) => console.error("Grace-time alert failed:", e instanceof Error ? e.message : e));
   const feed = await notificationFeed(user.id, app);
   return NextResponse.json(feed, { headers: { "cache-control": "no-store" } });
 }
