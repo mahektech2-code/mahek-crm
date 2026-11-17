@@ -325,6 +325,10 @@ export async function underProcessLines(godownId: string | null): Promise<UnderP
       join products p on p.id = o.sku_id
       left join finished_goods fg on fg.id = p.finished_good_id
      where o.status = 'Under Process' and o.entry_status <> 'Done' and p.name <> 'Empty Drum'
+       -- the two gates isWorkingLine reads (lineCleared): without them the
+       -- day's plan carried orders still waiting for Accounts, held there, or
+       -- held or uncleared at the MRP check (found 2026-11-17).
+       and o.accounts_check = 'Approved' and o.production_check = 'Cleared'
        and ${godownId ? sql`o.godown_id = ${godownId}` : sql`true`}
   `)) as unknown as UnderProcessLine[];
 }

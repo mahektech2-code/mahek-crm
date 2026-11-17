@@ -464,6 +464,8 @@ describe("the Order Hub's gates after the order number", () => {
 
     /* Approved: it waits at the MRP check, and the badge counts it. */
     const adminCtx = await as(admin);
+    const { underProcessLines } = await import("./production-plan");
+    assert.ok(!(await underProcessLines(null)).some((l) => l.orderNo === o.orderNo), "not on the day's plan before the Production Head clears it");
     const mrp = await mod("mrpCheck").load(adminCtx);
     const row = mrp.rows.find((x) => x.id === o.id);
     assert.ok(row, "it is on the MRP check");
@@ -494,6 +496,7 @@ describe("the Order Hub's gates after the order number", () => {
     const [cleared] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
     assert.equal(cleared.accountsCheck, "Approved");
     assert.equal(cleared.productionCheck, "Cleared");
+    assert.ok((await underProcessLines(null)).some((l) => l.orderNo === o.orderNo), "cleared, it joins the day's plan");
     assert.ok((await mod("orders").actions!.ready(adminCtx, o.id, {})).ok);
     await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
   });
