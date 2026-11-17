@@ -134,7 +134,7 @@ export function EnquiryListScreen({
   ];
 
   return (
-    <div className="max-w-[1320px] px-6 pt-6 pb-10">
+    <div className="w-full min-w-0 px-6 pt-6 pb-10">
       <PageHeader
         title="Website Enquiries"
         subtitle="Every enquiry from the website and beyond, from first contact through to delivery."

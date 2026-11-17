@@ -116,7 +116,7 @@ export function BillsScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title="Bills"
           subtitle="Every bill raised, cut by financial or calendar year. The totals, the aging strip and the export describe the whole year — only the table is paged."

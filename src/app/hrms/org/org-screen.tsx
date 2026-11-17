@@ -78,7 +78,7 @@ export function OrgScreen({
   const unplaced = roots.filter((r) => r.reports.length === 0);
 
   return (
-    <div className="max-w-[1440px] px-6 pt-6 pb-10">
+    <div className="w-full min-w-0 px-6 pt-6 pb-10">
       <PageHeader
         title="Org chart"
         subtitle="Who reports to whom. Maintained here, not in the employee sheet — the sheet records a job title to report to, never a person."

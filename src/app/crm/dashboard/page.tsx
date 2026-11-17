@@ -125,7 +125,7 @@ export default async function DashboardPage({
    * longer waits for a team overview in order to reach it.
    */
   return (
-    <div className="max-w-[1440px] px-6 pt-6 pb-10">
+    <div className="w-full min-w-0 px-6 pt-6 pb-10">
       <PageHeader
         title={teamView ? "Team overview" : `${greeting}, ${user.name.split(" ")[0]}`}
         subtitle={`${scopeLabel(scope, user)} · ${

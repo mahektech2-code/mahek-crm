@@ -27,7 +27,7 @@ export default async function PostersPage({ searchParams }: { searchParams: Prom
   const panel = open ? await historyPanel(open, whose) : null;
   const filtered = activeFilterCount(filters) > 0 || filters.q !== "";
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title={whose === "team" ? "Team's posters" : "My posters"} subtitle="Every poster, newest first — and who it was forwarded to. Open a row for the details." />
       {result.canTeam ? (
         <Tabs

@@ -16,7 +16,7 @@ export default async function BatchPage({ params }: { params: Promise<{ id: stri
   if (!batch) notFound();
   const zip = `/api/studio/batches/${encodeURIComponent(id)}/zip`;
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <div className="mb-1 text-[13px] text-muted">
         <Link href="/studio/bulk">Bulk posters</Link> / {batch.templateName}
       </div>

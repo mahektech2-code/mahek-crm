@@ -33,7 +33,7 @@ export default async function StudioHome() {
   const next = festivals.find((f) => f.designs.any);
 
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader
         title="Studio"
         subtitle="Festival and promotional posters for your leads and customers, from approved designs."

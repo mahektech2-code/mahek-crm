@@ -66,9 +66,9 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
     // The wrapper every CRM screen brings. `<main>` in the app shell has no
     // padding of its own — deliberately, so a screen can run edge to edge if it
     // needs to — which means a screen that forgets this one sits flush against
-    // the sidebar. `max-w-[1440px]` matches Inactive Watch, the table-shaped
-    // sibling this queue was pulled out of.
-    <div className="max-w-[1440px] px-6 pt-6 pb-10">
+    // the sidebar. Full width, like every screen since 2026-11-17 (it was
+    // 1440px, matching Inactive Watch, until the team's 32-inch monitors).
+    <div className="w-full min-w-0 px-6 pt-6 pb-10">
       <PageHeader
         title="Customer status requests"
         subtitle="Asked for by whoever works the account, closed or reopened here. Nothing on this list has changed a customer's status yet."

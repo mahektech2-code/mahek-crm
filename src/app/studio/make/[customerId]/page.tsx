@@ -34,7 +34,7 @@ export default async function ChooseDesign({ params, searchParams }: { params: P
   const shown = occasion ? designs.filter((d) => d.occasion === occasion) : designs;
   const base = `/studio/make/${encodeURIComponent(r.id)}`;
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <div className="mb-1 text-[13px] text-muted">
         <Link href={`/studio/make?list=${r.list}`}>{LIST_LABEL[r.list]}</Link> / {r.company}
       </div>

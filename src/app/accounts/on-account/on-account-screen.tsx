@@ -42,7 +42,7 @@ export function OnAccountScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title="On account"
           subtitle="Money received against no bill. It is real, confirmed money — it is simply not pointed at anything yet."

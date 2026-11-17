@@ -41,7 +41,7 @@ export default async function SalesLeadPipelineLayout({ children }: { children: 
       {/* No AppFrame here, so the workday lock is mounted by hand. */}
       <WorkdayProvider>
         <div className="min-h-screen bg-canvas">
-          <div className="mx-auto w-full max-w-[1600px]">{children}</div>
+          <div className="w-full min-w-0">{children}</div>
         </div>
       </WorkdayProvider>
     </ToastProvider>

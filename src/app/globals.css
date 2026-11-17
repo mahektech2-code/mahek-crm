@@ -132,8 +132,15 @@
 
      A map is the exception and says so where it opts out: a map is one of the
      few things on a screen that is genuinely better for being bigger.
+
+     LIFTED 2026-11-17, by the owner's order: the team works on 32-inch
+     monitors, and a page that stopped at 1600px used the middle of the screen
+     with a band of nothing either side — read as the site "not adjusting".
+     Every screen now runs edge to edge, 24px in. The token stays (the layout
+     test and the frame read it) so a ceiling is one line to bring back; a
+     paragraph that should not run 2000px wide caps itself, as most do.
   */
-  --container-measure: 1600px;
+  --container-measure: none;
 }
 
 :root {

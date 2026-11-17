@@ -86,7 +86,7 @@ export function EodScreen({
   const blocked = isToday && dueReminders.length > 0;
 
   return (
-    <div className="max-w-[1440px] px-6 pt-6 pb-10">
+    <div className="w-full min-w-0 px-6 pt-6 pb-10">
       <PageHeader
         title="EOD report"
         subtitle={`${scopeLabel} · ${isToday ? "generated from today's activity" : "derived from the activity logged"} · ${rangeLabel(rangeFrom, rangeTo)}`}

@@ -34,7 +34,7 @@ export default async function DesignsPage({ searchParams }: { searchParams: Prom
   const filtered = Boolean(filter.q || filter.occasion || filter.language || filter.uploader);
   const immediate = Boolean(config["studio.publishImmediately"]);
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader
         title="Template library"
         subtitle={

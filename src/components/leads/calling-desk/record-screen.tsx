@@ -154,7 +154,7 @@ export function RecordScreen({
   ];
 
   return (
-    <div className="mx-auto max-w-[1600px] p-6">
+    <div className="w-full min-w-0 p-6">
       <div className="mb-2.5 text-[12.5px] text-muted">
         <Link href={base} className="hover:text-brand">
           All Leads

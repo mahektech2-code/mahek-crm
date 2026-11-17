@@ -13,7 +13,7 @@ export default async function ForwardHome() {
   const user = await requireUser();
   const forwards = await myForwards(user.id);
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-6">
+    <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="Upload & Bulk Forward" subtitle="Upload a finished poster and forward the same picture, unchanged, to many of your own leads and customers." subtitleShown />
       <Callout tone="info">MahekOne does not send WhatsApp messages itself. For each person it opens their chat with your message written; you attach the poster and press send, then mark it done here.</Callout>
       <div className="mt-4">

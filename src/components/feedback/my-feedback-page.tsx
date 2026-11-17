@@ -20,7 +20,7 @@ import { MyFeedbackScreen } from "./my-feedback-screen";
  */
 export async function MyFeedbackPage({
   searchParams,
-  className = "mx-auto w-full max-w-[1280px] px-6 pt-6 pb-10",
+  className = "w-full min-w-0 px-6 pt-6 pb-10",
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
   className?: string;

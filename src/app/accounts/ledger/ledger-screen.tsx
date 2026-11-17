@@ -77,7 +77,7 @@ export function LedgerScreen({
   if (!ledger) {
     return (
       <div className="px-6 pt-6 pb-12">
-        <div className="max-w-[1400px]">
+        <div className="w-full min-w-0">
           <ScreenHeader
             title="Customer account"
             subtitle="Every bill and every payment, and which bills each payment settled."
@@ -163,7 +163,7 @@ export function LedgerScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title={ledger.customerName}
           subtitle="Every bill and every payment on this account, and which bills each payment settled. Point at a line to light up what it is linked to."

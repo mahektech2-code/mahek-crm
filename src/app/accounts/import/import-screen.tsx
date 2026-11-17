@@ -54,7 +54,7 @@ export function ImportScreen({ state, retired }: { state: ImportState; retired: 
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title="Sheet import"
           subtitle="Bills are projected from the Google Sheet by a job. This is what it did, and how to run it without a terminal."

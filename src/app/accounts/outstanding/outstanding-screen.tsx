@@ -112,7 +112,7 @@ export function OutstandingScreen({
 
   return (
     <div className="px-6 pt-6 pb-12">
-      <div className="max-w-[1400px]">
+      <div className="w-full min-w-0">
         <ScreenHeader
           title="Outstanding"
           subtitle="What every customer still owes, with the bills behind it one click away. Open bills across every financial year — the oldest debt on an account is usually last year's."

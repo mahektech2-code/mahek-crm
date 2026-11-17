@@ -43,7 +43,7 @@ export function DeadlinesDesk({
   const clockWords = overview.clock === "office_hours" ? "office hours" : "hours of working days";
 
   return (
-    <div className="w-full max-w-[1280px]">
+    <div className="w-full min-w-0">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Command Centre · Operate</div>
