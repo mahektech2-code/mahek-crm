@@ -4,6 +4,7 @@ import { treeNamesFor } from "@/lib/place-tree";
 import { placeIndexFor } from "@/lib/services/place-tree-service";
 import "server-only";
 import { READINESS_OVERRIDE_REASONS } from "@/lib/verification-readiness";
+import { STAGE_SKIP_REASONS } from "@/lib/lead-stage-skip";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -798,7 +799,10 @@ export async function evaluateStageSelection(input: {
       missing: choice.missing,
     };
   }
-  const codes = config["leads.stageSkipReasons"].map((r) => r.code);
+  /* A stored list is a snapshot of the defaults, so the default codes are accepted
+     whatever list a deployment has stored — a code that is not in it would turn a
+     legitimate, audited move into a refusal for want of a word. */
+  const codes = [...config["leads.stageSkipReasons"].map((r) => r.code), ...STAGE_SKIP_REASONS.map((r) => r.code)];
   if (!input.reasonCode || !codes.includes(input.reasonCode)) {
     return {
       ok: false,

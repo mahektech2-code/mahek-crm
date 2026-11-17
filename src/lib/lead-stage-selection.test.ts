@@ -202,11 +202,11 @@ describe("the safeguards that stay mandatory", () => {
     assert.equal(await count("lead_stage_transitions"), 0);
   });
 
-  test("an unvalidated GST and an unanswered question each block it", async () => {
-    const gst = await qualified({ gstVerified: false });
+  test("unagreed credit days and an unanswered question each block it", async () => {
+    const gst = await qualified({ leadCreditDaysWanted: null });
     assert.equal((await selectLeadStage({ customerId: gst.id, to: "negotiation", reasonCode: "knows_product" })).ok, false);
     const answers: Record<string, string> = { ...QUALIFICATION_ANSWERS };
-    delete answers.trial_product;
+    delete answers.price_range;
     const open = await qualified({ leadQualification: answers });
     assert.equal((await selectLeadStage({ customerId: open.id, to: "negotiation", reasonCode: "knows_product" })).ok, false);
   });
