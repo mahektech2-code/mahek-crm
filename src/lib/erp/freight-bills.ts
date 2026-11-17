@@ -238,6 +238,12 @@ export type WaitingBill = {
   transporter: string | null;
   lines: number;
   litres: number;
+  /**
+   * The order lines this sales bill stands for. Entering a bill from a row
+   * ticks these and nothing else on the vehicle: the bill is split over the
+   * rows that were picked, not over everything the lorry carried that day.
+   */
+  orderIds: string[];
 };
 
 /**
@@ -250,7 +256,7 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
   const since = addDays(today(), -days);
   const rows = (await db.execute(sql`
     with l as (
-      select upper(regexp_replace(t.vehicle_no, '\s', '', 'g')) as vkey, t.vehicle_no, d.dispatch_date, t.id as tid,
+      select upper(regexp_replace(t.vehicle_no, '\s', '', 'g')) as vkey, t.vehicle_no, d.dispatch_date, t.id as tid, o.id as oid,
              nullif(trim(coalesce(t.bill_no, o.tally_bill_no)), '') as bill_no, t.bill_date, c.name as party,
              coalesce(t.transporter, o.transporter) as transporter,
              (o.qty_cans * coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000) as litres
@@ -266,7 +272,8 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
     )
     select bill_no as "billNo", max(bill_date)::text as "billDate", mode() within group (order by party) as party,
            min(vehicle_no) as "vehicleNo", dispatch_date::text as "dispatchOn", mode() within group (order by transporter) as transporter,
-           count(*)::int as lines, coalesce(sum(litres), 0)::float8 as litres
+           count(*)::int as lines, coalesce(sum(litres), 0)::float8 as litres,
+           array_agg(oid::text) as "orderIds"
       from l group by coalesce(bill_no, tid), bill_no, vkey, dispatch_date
      order by max(bill_date) desc nulls last, dispatch_date desc, bill_no desc
   `)) as unknown as Row[];
@@ -279,7 +286,15 @@ export async function waitingBills(days = FREIGHT_TRIP_DAYS): Promise<WaitingBil
     transporter: s(r.transporter),
     lines: Number(r.lines),
     litres: Math.round(Number(r.litres) * 1000) / 1000,
+    orderIds: pgTextArray(r.orderIds),
   }));
+}
+
+/** A text[] as the driver hands it back — an array, or "{a,b}" where it was not parsed. */
+function pgTextArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  const t = typeof v === "string" ? v.replace(/^\{|\}$/g, "") : "";
+  return t ? t.split(",").map((x) => x.replace(/^"|"$/g, "")) : [];
 }
 
 /* ================================================================ bills */

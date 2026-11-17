@@ -399,6 +399,7 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(bills[0].dispatchOn, waiting?.dispatchOn);
     assert.equal(bills[0].lines, 1);
     assert.equal(bills[0].litres, 10);
+    assert.deepEqual(bills[0].orderIds, [vl.orderId], "a row carries its own order lines — entering its bill ticks those alone");
     const input = { lrNo: "88213", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 25000, orderIds: [vl.orderId] };
     const saved = await F.saveFreightBill(ctx, input);
     assert.ok(saved.ok, msg(saved));
