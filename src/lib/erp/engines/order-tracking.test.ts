@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildJourney,
+  customerHolds,
   customerProductName,
   deriveSteps,
   holdRefusal,
@@ -133,6 +134,15 @@ describe("the journey the page draws", () => {
     const kinds = closed.entries.filter((e) => e.type !== "step").map((e) => e.type);
     assert.deepEqual(kinds, ["hold", "resolved"]);
     assert.equal(closed.lastUpdated, "2026-10-30T03:45:00.000Z");
+  });
+
+  test("an internal hold never reaches the customer's page", () => {
+    const hold = { kind: "hold" as const, reason: "capacity", customerText: "Taking longer.", raisedAt: "2026-10-29T05:10:00.000Z", nextUpdateOn: null, revisedDeliveryOn: null, resolvedAt: null, resolutionText: null, customerVisible: false };
+    const v = buildJourney([{ step: "confirmed", at: "2026-10-28T09:30:00.000Z" }], [hold]);
+    assert.equal(v.openHold, null);
+    assert.ok(v.entries.every((e) => e.type === "step"));
+    assert.equal(v.lastUpdated, "2026-10-28T09:30:00.000Z");
+    assert.equal(customerHolds([hold, { ...hold, customerVisible: true }, { ...hold, customerVisible: undefined }]).length, 2);
   });
 
   test("delivered: nothing pending, and unreported optional steps are said in a line", () => {

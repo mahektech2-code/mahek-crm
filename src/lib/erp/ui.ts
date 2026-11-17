@@ -661,6 +661,8 @@ export const ST_TONE: Record<string, Tone> = {
   "With accounts": "info", "Not raised": "neutral", Refused: "danger", Reversed: "muted", Disposed: "success",
   Completed: "success", "Reusable as is": "success", Rework: "info", "Chemical scrap": "warn", "Waste disposal": "danger",
   "To dispose": "warn", "In rework": "info",
+  "Waiting for Accounts": "warn", "Sent back by Accounts": "danger", "On hold with Accounts": "warn", "Waiting for MRP check": "warn",
+  "Raw material short": "warn", "Packing material short": "warn", "No capacity": "warn", "Quality check": "warn",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -714,7 +716,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   qcRejected: ["Failed SFG QC", "danger"],
   toScan: ["Boxes still to scan", "warn"],
   orderToVerify: ["Order not verified", "warn"],
-  hubWaiting: ["Waiting for checks", "warn"],
+  hubWaiting: ["Waiting for Accounts", "warn"],
   hubDuplicate: ["Possible duplicate", "warn"],
   hubNoRate: ["Line without a rate", "danger"],
   hubNoGodown: ["No godown", "danger"],
@@ -724,6 +726,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   mrpPending: ["Waiting for MRP check", "warn"],
   mrpHold: ["On hold with production", "danger"],
   mrpShort: ["Material short", "danger"],
+  mrpInternal: ["Internal - not shown to the customer", "neutral"],
   orderCorrection: ["Order sent back for correction", "danger"],
   invoiceToCheck: ["Invoice to check", "warn"],
   invoiceRejected: ["Invoice rejected", "danger"],

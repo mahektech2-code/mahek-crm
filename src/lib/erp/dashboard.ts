@@ -318,14 +318,15 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   /* ============================================================= sales */
   const sales: Tile[] = [];
   if (["orderHub", "mrpCheck", "toHold"].some(has)) {
-    /* The Order Hub: TOs waiting for a check, orders waiting at the MRP check, and every hold. */
+    /* The Order Hub: TOs waiting for Accounts, orders waiting at the MRP check, and every hold. */
     const { orderHubCounts } = await import("./screens/order-hub");
     const c = await orderHubCounts();
     if (has("orderHub")) {
-      sales.push({ l: "TOs to check", v: nf(c.orderHub), sub: "waiting for the back office or the Production Head", tone: c.orderHub ? "warn" : undefined, href: tileHref("orderHub", null, "") });
+      sales.push({ l: "TOs with Accounts", v: nf(c.orderHub), sub: "waiting for Accounts to approve", tone: c.orderHub ? "warn" : undefined, href: tileHref("orderHub", null, "") });
       if (c.hubCorrection) sales.push({ l: "TOs sent back", v: nf(c.hubCorrection), sub: "waiting for whoever took them", tone: "warn", href: tileHref("hubCorrection", null, "") });
     }
     if (has("mrpCheck")) sales.push({ l: "Orders at the MRP check", v: nf(c.mrpCheck), sub: "approved by Accounts, waiting for the Production Head", tone: c.mrpCheck ? "warn" : undefined, href: tileHref("mrpCheck", null, "") });
+    if (has("mrpCheck") && c.mrpHold) sales.push({ l: "Held at the MRP check", v: nf(c.mrpHold), sub: "release clears them to Under Process", tone: "warn", href: tileHref("mrpHold", null, "") });
     if (has("toHold")) sales.push({ l: "On hold", v: nf(c.toHold), sub: "TOs and orders held by any desk", tone: c.toHold ? "danger" : undefined, href: tileHref("toHold", null, "") });
   }
   if (["orders", "pendingOrders", "readyOrders", "labels"].some(has)) {
