@@ -6,7 +6,6 @@ import { getConfig } from "@/lib/config/store";
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import {
   buildReviewRows,
-  combinedConfirmBlockers,
   confirmBlockers,
   REVIEW_EDIT_ACTION,
   reviewTally,
@@ -19,8 +18,7 @@ import { PROSPECT_REVIEW_AUDIT, prospectReviewStateOf } from "@/lib/prospect-rev
 import { gateTo } from "@/lib/engines/lead-gates";
 import { requestOf } from "./lead-prospect-request-service";
 import { leadGateInput, leadRow } from "./lead-service";
-import { callRefusalFor, combinedReviewSaved } from "./qualification-call-gate";
-import { combinedReviewApplies } from "@/lib/combined-review";
+import { callRefusalFor } from "./qualification-call-gate";
 import { canVerifyLeadById, creatorFactsFor, qualificationCollectorRefusal } from "./lead-verifier";
 import { answersMissing, canDecideProspect } from "./prospect-verifier";
 import { assertDesignatedQualificationApprover, designatedQualificationApprover } from "./qualification-approver";
@@ -66,15 +64,6 @@ export type QualificationReviewModel = {
   state: ReviewState;
   /** Which decision this is: the Prospect review (before Qualification opens) or the Qualification review. */
   kind: "prospect" | "qualification" | "none";
-  /**
-   * The ONE review: the Sales Manager verifying a Prospect answers every question,
-   * Qualification's included, and a single Confirm completes Qualification and
-   * moves the lead to Sample / Trial. `kind` stays "prospect" — it is still the
-   * decision that opens Qualification, and is the one that closes it.
-   */
-  combined: boolean;
-  /** The GST number is in and has not been checked: the reviewer says it checks out as part of confirming. */
-  gstNeedsCheck: boolean;
   people: {
     creatorName: string | null;
     ownerName: string | null;
@@ -177,14 +166,6 @@ export async function loadQualificationReview(
       ? "prospect"
       : "none";
 
-  const combined =
-    kind === "prospect" &&
-    combinedReviewApplies({
-      stage: lead.leadStage,
-      salesType: lead.leadSalesType,
-      deskRequest: req?.state === "awaiting" || req?.state === "followup",
-    });
-
   /* Who may decide — the same function the decision itself asks. */
   let canDecide = false;
   let why: string | null = null;
@@ -205,9 +186,7 @@ export async function loadQualificationReview(
      Sales Manager is refused them — said in the CRM's own words, never worked round. */
   const collectorOnlyReason = canDecide
     ? kind === "prospect"
-      ? combined
-        ? null /* in the one review the verifier answers everything */
-        : access.reason
+      ? access.reason
       : await qualificationCollectorRefusal(viewer, {
         id: customerId,
         ownerId: lead.ownerId,
@@ -243,29 +222,20 @@ export async function loadQualificationReview(
       unmetProspect,
       unmetQualification,
     },
-    { editable: canDecide, collectorOnlyReason, kind: kind === "prospect" && !combined ? "prospect" : "qualification" },
+    { editable: canDecide, collectorOnlyReason, kind: kind === "prospect" ? "prospect" : "qualification" },
   );
 
   /* BEFORE QUALIFICATION OPENS the review is of the Suspect and Prospect answers
      ONLY. The Qualification questions are not asked yet, so they are neither
      shown nor counted as missing. */
-  const rows = kind === "prospect" && !combined ? allRows.filter((r) => r.section !== "qualification") : allRows;
+  const rows = kind === "prospect" ? allRows.filter((r) => r.section !== "qualification") : allRows;
 
   /* What holds Confirm: the Prospect gate's own words before Qualification opens,
      the Qualification gate's after. */
   const blockers = !gate
     ? []
     : kind === "prospect"
-      ? [
-          ...answersMissing(gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing).map((c) => c.says),
-          /* In the one review the Qualification's own conditions hold Confirm too —
-             except GST validation, which the reviewer does by ticking it. */
-          ...(combined
-            ? combinedConfirmBlockers({ ...gate, prospectReasonRecorded: true })
-                .filter((c) => !(c.id === "gst_verified" && Boolean(lead.gstin?.trim())))
-                .map((c) => c.says)
-            : []),
-        ]
+      ? answersMissing(gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing).map((c) => c.says)
       : confirmBlockers(gate);
 
   /* History: approver edits, verdicts and resubmissions, newest first. */
@@ -375,11 +345,8 @@ export async function loadQualificationReview(
   const approverId = approver?.id ?? null;
   const verifierNames = approverId && !names.has(approverId) ? await nameMap([approverId]) : names;
 
-  const callApplies = (kind === "qualification" || combined) && canDecide && lead.leadSalesType !== "distributor";
-  const call = callApplies
-    ? { saved: combined ? await combinedReviewSaved(customerId) : (await callRefusalFor(customerId)) === null }
-    : null;
-  const gstNeedsCheck = combined && Boolean(lead.gstin?.trim()) && !lead.gstVerified;
+  const callApplies = kind === "qualification" && canDecide && lead.leadSalesType !== "distributor";
+  const call = callApplies ? { saved: (await callRefusalFor(customerId)) === null } : null;
 
   return {
     customerId,
@@ -388,8 +355,6 @@ export async function loadQualificationReview(
     salesType: lead.leadSalesType,
     state,
     kind,
-    combined,
-    gstNeedsCheck,
     people: {
       creatorName: creator.actorUserId ? (names.get(creator.actorUserId) ?? null) : null,
       ownerName: lead.ownerId ? (names.get(lead.ownerId) ?? null) : null,
