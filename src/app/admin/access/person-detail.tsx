@@ -20,6 +20,10 @@ import type { SessionRow } from "@/lib/services/admin-platform-service";
 import type { AuditFeed } from "@/lib/services/audit-feed-service";
 import { AuditEntries } from "../audit/audit-feed";
 import { AdminPage } from "../_shell/admin-page";
+import { ReportsToEditor, type PickPerson } from "./reports-to-editor";
+import { SetElsewhere, appExtras, type ElsewhereLink, type PersonEmployee, type PersonPowers } from "./person-powers";
+
+export type { ElsewhereLink } from "./person-powers";
 
 /* ---------------------------------------------------------------------------
  * One account, in full.
@@ -43,6 +47,10 @@ const ACCOUNT_LEVEL_HINT =
 export function PersonDetail({
   person,
   grants,
+  powers,
+  employee,
+  people,
+  elsewhere,
   tab,
   sessions,
   audit,
@@ -56,6 +64,14 @@ export function PersonDetail({
    * which was the one fact about a grant nobody comes here to check.
    */
   grants: AppGrant[];
+  /** What they hold inside the apps beyond level and screens — null where the Access list has no row for them. */
+  powers: PersonPowers | null;
+  /** The HRMS employee row HRMS reads as this account, for the head-by-position powers. */
+  employee: PersonEmployee | null;
+  /** Every account, for the Reports to picker and the people they manage. */
+  people: PickPerson[];
+  /** The other places an input to their access is kept. */
+  elsewhere: ElsewhereLink[];
   tab: TabsOf<"person">;
   sessions: SessionRow[];
   audit: AuditFeed;
@@ -75,6 +91,11 @@ export function PersonDetail({
      and the handset still lands straight in the CRM. `webApps` is the same
      function the launcher and the redirect read. */
   const webCount = webApps(person.apps).length;
+  /* A platform administrator holds every ERP, HRMS and Tasks power without a
+     row. The account's own Admin level is given to nobody else (see
+     ACCOUNT_LEVEL_HINT), and the Admin Console grant at Admin is the thing
+     itself; either says it. */
+  const platformAdmin = person.role === "admin" || byApp.get("admin")?.role === "admin";
 
   async function run(work: Promise<{ ok: boolean; message?: string; error?: string }>) {
     setBusy(true);
@@ -281,6 +302,17 @@ export function PersonDetail({
           </div>
         </div>
       ) : null}
+      {tab === "profile" ? (
+        /* Keyed on the stored line, so a save remounts it from what was
+           written rather than resetting its state in an effect. */
+        <ReportsToEditor
+          key={person.reportsToId ?? "none"}
+          userId={person.id}
+          name={person.name}
+          current={person.reportsToId}
+          people={people}
+        />
+      ) : null}
 
       {tab === "apps" ? (
         <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
@@ -292,15 +324,17 @@ export function PersonDetail({
               the grant that needs taking away is visible rather than hidden. */}
           {APPS.filter((a) => !a.retiredInto || byApp.has(a.id)).map((a, i) => {
             const g = byApp.get(a.id);
+            const extras = appExtras({ app: a.id, grant: g ?? null, powers, employee, platformAdmin });
             return (
-              <div key={a.id} className={cx("flex items-center gap-3 px-5 py-3", i ? "border-t border-canvas" : "")}>
-                <span className="min-w-0 flex-1">
+              <div key={a.id} className={cx("flex items-start gap-3 px-5 py-3", i ? "border-t border-canvas" : "")}>
+                <div className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-ink">
                     {a.name}
                     {a.retiredInto ? <span className="ml-2 text-[12px] font-normal text-warn-ink">retired</span> : null}
                   </span>
                   <span className="block text-[13px] text-muted">{a.description}</span>
-                </span>
+                  {extras ? <div>{extras}</div> : null}
+                </div>
                 {g ? (
                   <span className="flex flex-none items-center gap-2">
                     <span className="text-[13px] text-body">
@@ -338,6 +372,7 @@ export function PersonDetail({
           </div>
         </Card>
       ) : null}
+      {tab === "apps" ? <SetElsewhere links={elsewhere} /> : null}
 
       {tab === "sessions" ? (
         <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">

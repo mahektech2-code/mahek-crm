@@ -60,6 +60,12 @@ export const ADMIN_TABS = {
     { slug: "requests", label: "Every request" },
     { slug: "people", label: "By person" },
   ],
+  /* Access seen from the power's side — who holds it, who could, what waits on it. */
+  powers: [
+    { slug: "powers", label: "Powers" },
+    { slug: "screens", label: "Screens" },
+    { slug: "templates", label: "Job templates" },
+  ],
   person: [
     { slug: "profile", label: "Overview" },
     { slug: "apps", label: "Apps" },
@@ -96,6 +102,8 @@ export const ADMIN = {
   /** Access, narrowed to the people who hold one app. */
   accessFor: (app: string) => `/admin/access?app=${app}`,
   person: (userId: string, tab?: TabsOf<"person">) => withTab(`/admin/access/${userId}`, tab),
+  /** Every power and screen, who holds it and what waits on it; job templates across every app. */
+  powers: (tab?: TabsOf<"powers">) => withTab("/admin/powers", tab),
   /** The ERP's designations — named, linked shapes of ERP access. */
   designations: "/admin/designations",
   /** Access, narrowed to the holders of one ERP designation. */
@@ -173,6 +181,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     items: [
       { href: ADMIN.access, label: "People & access", icon: "people", platform: true },
       { href: ADMIN.roles(), label: "Roles & permissions", icon: "grid", platform: true },
+      { href: ADMIN.powers(), label: "Powers & screens", icon: "lock", platform: true },
       { href: ADMIN.designations, label: "ERP designations", icon: "book", platform: true },
       {
         href: ADMIN.signIns(),

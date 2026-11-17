@@ -11726,6 +11726,23 @@ export const erpUserDesignations = pgTable("erp_user_designations", {
 });
 
 /**
+ * A JOB TEMPLATE — a named shape of access across every app (apps, the level
+ * each is held under, screens, powers). Unlike an ERP designation it is a
+ * STAMP, not a link: applying it only ever WIDENS somebody's access, and an
+ * edit to the template moves nobody. `shape` is `AccessTemplateShape` in
+ * `lib/access-templates.ts`. Unique by lower(name), in the migration.
+ */
+export const accessTemplates = pgTable("access_templates", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  shape: jsonb("shape").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+});
+
+/**
  * The editable value lists every ERP form picks from (spec §3): material
  * types, areas, transporters, complaint types and the rest. A list is keyed
  * by `list_key`; a retired value is deactivated, never deleted, because

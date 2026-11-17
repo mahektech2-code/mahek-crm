@@ -40,7 +40,8 @@ import { levelCarries } from "@/lib/capability-labels";
 import { dayLabel, namedList } from "@/lib/module-since";
 import { LEVEL_LABELS } from "@/lib/hat-labels";
 import { getApp, type AppId } from "@/lib/apps";
-import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
+import { ERP_POWERS, ERP_POWER_LABEL, type ErpPower } from "@/lib/erp/powers";
+import { ERP_POWER_SCREENS } from "@/lib/access-bulk";
 import { HRMS_POWERS, HRMS_POWER_LABEL } from "@/lib/hrms/powers";
 import { TASK_POWERS, TASK_POWER_LABEL } from "@/lib/tasks/permissions";
 import { HIRE_ROLES, LEVEL_FOR_ROLE, ROLE_LABEL as HIRE_ROLE_LABEL, ROLE_SENTENCE as HIRE_ROLE_SENTENCE, defaultRoleFor, type HireRole } from "@/lib/hire/roles";
@@ -1645,6 +1646,18 @@ function AccessStep({
   const current = designationId ? (designations.find((d) => d.id === designationId) ?? null) : null;
   const erpStanding = current && draft.erp ? standingOf(current, draft.erp, roleDraft.erp ?? "associate", powers) : null;
 
+  /* A POWER TICKS THE SCREEN IT IS USED ON. The Production Head check with no
+     Order Hub is a person told about TOs they cannot open — which is how the
+     Order Hub stalled on 2026-11-17. Unticking a power leaves its screens:
+     a screen has readers who never held the power. */
+  const onErpPowers = (next: string[]) => {
+    onPowers(next);
+    const added = next.filter((p) => !powers.includes(p));
+    if (!added.length || !draft.erp) return;
+    const needed = added.flatMap((p) => ERP_POWER_SCREENS[p as ErpPower] ?? []).filter((k) => !draft.erp.includes(k));
+    if (needed.length) onDraft({ ...draft, erp: [...draft.erp, ...needed] });
+  };
+
   const setApp = (app: AppId, modules: string[]) => {
     const next = { ...draft };
     if (modules.length) next[app] = modules;
@@ -1772,7 +1785,7 @@ function AccessStep({
             factory={app.id === "factory" ? { value: factoryPlace, onPick: pickPlace, level: roleDraft.factory ?? "associate", error: fieldError.factoryPlace } : undefined}
             powers={
               app.id === "erp"
-                ? { held: powers, onChange: onPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power." }
+                ? { held: powers, onChange: onErpPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power.", screensOf: (p: string) => (ERP_POWER_SCREENS[p as ErpPower] ?? []).map((k) => getModule(k)?.label ?? k) }
                 : app.id === "hrms"
                   ? { held: hrmsPowers, onChange: onHrmsPowers, error: fieldError.hrmsPowers, list: HRMS_POWERS, labels: HRMS_POWER_LABEL, adminLine: "An HRMS administrator holds every power." }
                   : app.id === "tasks"
@@ -1845,6 +1858,8 @@ function AppBlock({
     heading?: string;
     /** A line under the boxes saying what holding none of them means. */
     note?: string;
+    /** The screens a power is used on, named under it — ticking the power ticks them. */
+    screensOf?: (p: string) => string[];
   };
   /** Hire's role picker — their job inside Hire — drawn under Hire once it is ticked. */
   hireRole?: { value: string | null; onPick: (role: string | null) => void; level: string; error?: string };
@@ -2175,17 +2190,28 @@ function AppBlock({
             <span className="text-[13px] text-muted">{powers.adminLine}</span>
           ) : (
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="grid min-w-0 grid-cols-3 gap-x-3">
-                {powers.list.map((p) => (
-                  <Checkbox
-                    key={p}
-                    checked={powers.held.includes(p)}
-                    title={powers.labels[p]?.source}
-                    onChange={() => powers.onChange(powers.held.includes(p) ? powers.held.filter((x) => x !== p) : [...powers.held, p])}
-                    className="min-w-0 py-[1px]"
-                    label={<span className="truncate text-[13px] text-body">{powers.labels[p]?.label ?? p}</span>}
-                  />
-                ))}
+              {/* Two columns with the whole description under each label: a
+                  power is a decision about somebody's job, and a cut-off label
+                  with its meaning in a hover tooltip was a guess. */}
+              <span className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1.5 md:grid-cols-2">
+                {powers.list.map((p) => {
+                  const where = powers.screensOf?.(p) ?? [];
+                  return (
+                    <Checkbox
+                      key={p}
+                      checked={powers.held.includes(p)}
+                      onChange={() => powers.onChange(powers.held.includes(p) ? powers.held.filter((x) => x !== p) : [...powers.held, p])}
+                      className="min-w-0 items-start! py-[1px]"
+                      label={
+                        <span className="flex min-w-0 flex-col">
+                          <span className="text-[13px] text-ink">{powers.labels[p]?.label ?? p}</span>
+                          <span className="text-[11.5px] leading-[15px] text-muted">{powers.labels[p]?.source}</span>
+                          {where.length ? <span className="text-[11.5px] leading-[15px] text-muted">Used on {where.join(", ")} — ticked with it.</span> : null}
+                        </span>
+                      }
+                    />
+                  );
+                })}
               </span>
               {powers.note ? <span className="text-[12px] text-muted">{powers.note}</span> : null}
             </span>
