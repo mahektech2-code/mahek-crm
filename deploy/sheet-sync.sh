@@ -70,7 +70,14 @@ sync() {
   # BLOCKS until the server answers. That is the whole reason the steps can be
   # sequential: the next mode does not start until this one has finished.
   local code
+  #
+  # STRAIGHT TO CADDY ON THIS BOX, never out through Cloudflare. With the
+  # domain's record orange, Cloudflare cuts any request that has not answered
+  # in 100 seconds (a 524) — and the nightly runs close to a minute already.
+  # `--resolve` keeps the name, so the certificate still matches and Caddy
+  # still routes by host; only the hop through the internet goes.
   code=$(curl -sS -o /tmp/sync-out.json -w '%{http_code}' --max-time 310 \
+    --resolve "${DOMAIN}:443:127.0.0.1" \
     -H "Authorization: Bearer ${CRON_SECRET}" "${URL}?mode=${mode}" || echo 000)
 
   case "$code" in
