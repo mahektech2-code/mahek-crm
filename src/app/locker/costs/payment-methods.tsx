@@ -6,10 +6,10 @@ import { savePaymentMethod } from "@/lib/actions/locker-assets";
 import { Btn, Pill, fd, nf, useModal, useToast, type ModalField } from "../_ui/kit";
 import { ListBlock } from "../_ui/register-parts";
 
-type PM = { id: string; label: string; kind: string; last4: string; expiresOn: string | null; holder: string; bank: string; personal: boolean; active: boolean; uses: number };
+type PM = { id: string; label: string; kind: string; last4: string; expiresOn: string | null; holder: string; holderUserId: string | null; bank: string; personal: boolean; active: boolean; uses: number };
 
 /** Payment methods on file: the last four and the expiry, never a full number or a CVV. */
-export function PaymentMethods({ pms, canEdit, today }: { pms: PM[]; canEdit: boolean; today: string }) {
+export function PaymentMethods({ pms, people, canEdit, today }: { pms: PM[]; people: { v: string; l: string }[]; canEdit: boolean; today: string }) {
   const modal = useModal();
   const toast = useToast();
   const router = useRouter();
@@ -19,7 +19,8 @@ export function PaymentMethods({ pms, canEdit, today }: { pms: PM[]; canEdit: bo
       { k: "kind", l: "Type", type: "select", init: p?.kind ?? "Credit card", opts: ["Credit card", "Debit card", "Bank mandate", "UPI mandate", "Wallet", "Manual transfer", "Cheque"] },
       { k: "last4", l: "Last four digits", init: p?.last4 ?? "", hint: "Only the last four. The full number and the CVV are never stored." },
       { k: "exp", l: "Expires on", type: "date", init: p?.expiresOn ?? "" },
-      { k: "holder", l: "In whose name", init: p?.holder ?? "" },
+      { k: "holderUserId", l: "In whose name", type: "select", init: p?.holderUserId ?? "", opts: [{ v: "", l: "Somebody not on the staff, or the company (name below)" }, ...people] },
+      { k: "holder", l: "Their name, if not on the staff", init: p?.holderUserId ? "" : (p?.holder ?? "") },
       { k: "bank", l: "Issuing bank", init: p?.bank ?? "" },
       { k: "personal", l: "Whose money", type: "select", init: p?.personal ? "personal" : "company", opts: [{ v: "company", l: "The company's" }, { v: "personal", l: "A person's own card — a risk" }] },
       ...(p ? [{ k: "active", l: "In use", type: "select" as const, init: p.active ? "yes" : "no", opts: [{ v: "yes", l: "Yes" }, { v: "no", l: "No — retired" }] }] : []),
@@ -30,7 +31,7 @@ export function PaymentMethods({ pms, canEdit, today }: { pms: PM[]; canEdit: bo
       fields,
       okL: "Save",
       done: async (v) => {
-        const r = await savePaymentMethod({ id: p?.id, label: v.label, kind: v.kind, last4: v.last4, expiresOn: v.exp || null, holder: v.holder, bank: v.bank, personal: v.personal === "personal", active: v.active ? v.active === "yes" : true });
+        const r = await savePaymentMethod({ id: p?.id, label: v.label, kind: v.kind, last4: v.last4, expiresOn: v.exp || null, holder: v.holder, holderUserId: v.holderUserId || null, bank: v.bank, personal: v.personal === "personal", active: v.active ? v.active === "yes" : true });
         if (!r.ok) return r.error;
         toast(r.message ?? "Saved");
         router.refresh();

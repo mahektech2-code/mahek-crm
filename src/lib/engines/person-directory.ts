@@ -246,3 +246,39 @@ export function buildDirectory(input: DirectoryInput): Directory {
     accountName: (id) => accounts.get(id)?.name ?? null,
   };
 }
+
+/* ------------------------------------------------- a typed name → an account */
+
+/** What a piece of text says about WHO, answered by account id or not at all. */
+export type StaffMatch =
+  | { userId: string; why: null }
+  /** none: nobody answers to it · many: two or more people do · no-account: one person, but no single account of theirs. */
+  | { userId: null; why: "none" | "many" | "no-account" };
+
+/**
+ * Turn a staff name into ONE account, never a guess.
+ *
+ * The directory first — today's name, any spelling the person has carried,
+ * the name the sheets call them — and only where exactly one person answers.
+ * `accountByName` answers with LIVE accounts; somebody who has left still
+ * owns what they did, so a name that is one former employee resolves to the
+ * single (switched-off) account linked to them by `users.employee_id`. Two
+ * accounts on one employee is a question for a person, not for this.
+ */
+export function staffAccountOf(
+  dir: Directory,
+  accounts: ReadonlyArray<{ id: string; employeeId: string | null }>,
+): (text: string | null | undefined) => StaffMatch {
+  const byEmployee = new Map<string, string[]>();
+  for (const a of accounts) if (a.employeeId) byEmployee.set(a.employeeId, [...(byEmployee.get(a.employeeId) ?? []), a.id]);
+  return (text) => {
+    if (!personKey(text)) return { userId: null, why: "none" };
+    if (dir.nameStatus(text) === "many") return { userId: null, why: "many" };
+    const live = dir.accountByName(text);
+    if (live) return { userId: live, why: null };
+    const emp = dir.employeeByName(text);
+    if (!emp) return { userId: null, why: "none" };
+    const theirs = byEmployee.get(emp) ?? [];
+    return theirs.length === 1 ? { userId: theirs[0]!, why: null } : { userId: null, why: theirs.length ? "many" : "no-account" };
+  };
+}

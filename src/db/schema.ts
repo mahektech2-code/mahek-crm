@@ -3971,6 +3971,8 @@ export const complaints = pgTable(
      * whoever logged it raised it.
      */
     salesmanName: text("salesman_name"),
+    /** That salesman, by account: who the complaint was raised FOR. The name above is only the label typed on the day. */
+    salesmanId: text("salesman_id").references(() => users.id, { onDelete: "set null" }),
     /** The date printed on the credit note, where it differs from the day it was recorded. */
     cnDate: date("cn_date"),
 
@@ -14002,6 +14004,8 @@ export const erpRequests = pgTable(
     id: text("id").primaryKey(),
     raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
     salesmanName: text("salesman_name"),
+    /** The salesman by account, filled from the name by `person-ids-backfill`. */
+    salesmanId: text("salesman_id").references(() => users.id, { onDelete: "set null" }),
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id),
@@ -14056,6 +14060,8 @@ export const erpCredits = pgTable("erp_credits", {
     .notNull()
     .references(() => erpGodowns.id),
   employeeName: text("employee_name").notNull(),
+  /** Who was given it, by account: filled from the name by `person-ids-backfill`. */
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
   /** Bank Cash | Cash | Other. */
   mode: text("mode").notNull(),
   amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
@@ -14072,6 +14078,8 @@ export const erpExpenses = pgTable("erp_expenses", {
     .notNull()
     .references(() => erpGodowns.id),
   expenseBy: text("expense_by").notNull(),
+  /** Who spent it, by account: filled from the name by `person-ids-backfill`. */
+  expenseById: text("expense_by_id").references(() => users.id, { onDelete: "set null" }),
   category: text("category"),
   mode: text("mode").notNull(),
   particular: text("particular"),
@@ -14683,6 +14691,8 @@ export const erpAdvances = pgTable(
     advanceNo: integer("advance_no").notNull(),
     /** WHO holds it, by id — what "already holds an open advance" is asked of. Null on a name nobody could resolve. */
     employeeId: text("employee_id").references(() => employees.id, { onDelete: "set null" }),
+    /** WHO holds it, by account: what every decision asks. The picker sends it; older rows get it from `person-ids-backfill`. */
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
     /** The employee's name as it was typed on the day — a label, not the key. */
     employeeName: text("employee_name").notNull(),
     purpose: text("purpose"),
@@ -18168,7 +18178,10 @@ export const lockerPaymentMethods = pgTable("locker_payment_methods", {
   kind: text("kind").notNull().default("Credit card"),
   last4: text("last4").notNull().default(""),
   expiresOn: date("expires_on"),
+  /** In whose name: the label, and the only record of a holder who is not on the staff. */
   holder: text("holder").notNull().default(""),
+  /** The holder by account, where they are staff: what offboarding asks. */
+  holderUserId: text("holder_user_id").references(() => users.id, { onDelete: "set null" }),
   bank: text("bank").notNull().default(""),
   /** A card in somebody's own name paying a company bill — a risk, said as one. */
   personal: boolean("personal").notNull().default(false),
@@ -18285,7 +18298,10 @@ export const lockerIdentities = pgTable("locker_identities", {
   controlled: boolean("controlled").notNull().default(true),
   mfa: boolean("mfa").notNull().default(false),
   recovery: boolean("recovery").notNull().default(false),
+  /** Who controls a personal account: the label, and the only record of somebody not on the staff. */
   controlledByName: text("controlled_by_name"),
+  /** That person by account, where they are staff: what offboarding asks. */
+  controlledById: text("controlled_by_id").references(() => users.id, { onDelete: "set null" }),
   ownerId: text("owner_id").references(() => users.id),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

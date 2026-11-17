@@ -33,6 +33,8 @@ export type NewComplaint = {
   goodsDescription?: string | null;
   /** The salesman it was raised for, where somebody in the office raised it on his behalf. */
   salesmanName?: string | null;
+  /** That salesman by account — what the record means; the name is only its label. */
+  salesmanId?: string | null;
   /** Given by the caller where the row already has an identity (a carried-over ERP request). */
   id?: string;
 };
@@ -60,6 +62,7 @@ export async function createComplaint(input: NewComplaint, tx?: Tx): Promise<str
       billId: input.requestCn ? (input.billId ?? null) : null,
       goodsDescription: input.requestCn ? input.goodsDescription?.trim() || null : null,
       salesmanName: input.salesmanName?.trim() || null,
+      salesmanId: input.salesmanId ?? null,
       createdById: input.loggedById,
       updatedById: input.loggedById,
     });

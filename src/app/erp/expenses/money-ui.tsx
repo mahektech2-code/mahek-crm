@@ -27,7 +27,7 @@ export type MoneyKit = {
   billsDays: number;
   accounts: KitAccount[];
   categories: string[];
-  employees: { name: string; dept: string | null; open: boolean }[];
+  employees: { id: string; name: string; dept: string | null; open: boolean }[];
   customers: { id: string; label: string }[];
   customerCash: CashSource[];
   withdrawals: CashSource[];

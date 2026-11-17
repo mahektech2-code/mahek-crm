@@ -4,7 +4,7 @@ import { cache } from "react";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customers, employeeReporting, employees, personNameAliases, users } from "@/db/schema";
-import { buildDirectory, personKey, type Directory } from "@/lib/engines/person-directory";
+import { buildDirectory, personKey, staffAccountOf, type Directory, type StaffMatch } from "@/lib/engines/person-directory";
 import { initialsOf } from "@/lib/format";
 import { hashPassword } from "@/lib/password";
 
@@ -66,6 +66,40 @@ export async function loadPersonDirectory(exec: Exec = db): Promise<Directory> {
 
 /** Request-memoised. Outside a request (a job) it simply reads. */
 export const personDirectory = cache(() => loadPersonDirectory());
+
+/**
+ * A staff name → one account id, or a reason there is none (`staffAccountOf`).
+ * For the places a name still arrives as text — an old row, a sheet, a stale
+ * browser tab — so it is turned into the person once and stored by id.
+ */
+export async function loadStaffResolver(exec: Exec = db): Promise<(text: string | null | undefined) => StaffMatch> {
+  const [dir, accounts] = await Promise.all([
+    loadPersonDirectory(exec),
+    exec.select({ id: users.id, employeeId: users.employeeId }).from(users),
+  ]);
+  return staffAccountOf(dir, accounts);
+}
+
+export type StaffChoice = { id: string; name: string; employeeId: string | null; dept: string | null; position: string | null };
+
+/**
+ * The people a "who" picker offers: live accounts of somebody on HRMS, by
+ * account id, named as their account is named today. `include` adds the
+ * account a record already holds, even one switched off since, so editing
+ * that record never shows a blank or loses who it was.
+ */
+export async function staffChoices(include: ReadonlyArray<string | null | undefined> = []): Promise<StaffChoice[]> {
+  const keep = [...new Set(include.filter((x): x is string => !!x))];
+  const rows = (await db.execute(sql`
+    select u.id, u.name, u.employee_id as "employeeId", e.department as dept, e.position
+      from users u
+      left join employees e on e.id = u.employee_id
+     where (u.active and e.status = 'active')
+        ${keep.length ? sql`or u.id in (${sql.join(keep.map((k) => sql`${k}`), sql`, `)})` : sql``}
+     order by u.name
+  `)) as unknown as StaffChoice[];
+  return rows.map((r) => ({ id: r.id, name: r.name, employeeId: r.employeeId ?? null, dept: r.dept ?? null, position: r.position ?? null }));
+}
 
 const fold = (col: unknown) => sql`upper(regexp_replace(btrim(coalesce(${col}, '')), '[[:space:]]+', ' ', 'g'))`;
 

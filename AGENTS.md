@@ -69,6 +69,12 @@ npm run jobs -- revert-sheet-paid --dry-run
                            # what a default-settled run wrote over the Payment
                            # Status tab's word, and what undoing it gives back
 npm run jobs -- revert-sheet-paid          # undo it, then rebuild the caches
+npm run jobs -- person-ids-backfill --dry-run
+                           # the account ids 0353 added (advances, old petty
+                           # cash, complaint salesmen, Locker holders) filled
+                           # from the names beside them, through the person
+                           # directory. Never guesses; counts what it leaves
+npm run jobs -- person-ids-backfill        # write them — idempotent
 npm run jobs -- customer-master-sync        # the EMP 2.0 shop master -> staging
 npm run jobs -- customer-master-project --dry-run
                            # what the shop master would create, writing nothing

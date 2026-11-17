@@ -3,14 +3,16 @@ import { erpLink } from "../registry";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
-import { attachments, bills, complaints, complaintStatusHistory, customers, employees, users } from "@/db/schema";
+import { attachments, bills, complaints, complaintStatusHistory, customers, users } from "@/db/schema";
 import { canFor } from "@/lib/access-control";
 import { calendarDate } from "@/lib/business-date";
 import { categoryLabel, CN_STATUS_LABEL } from "@/lib/complaint-labels";
 import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import { createComplaint } from "@/lib/services/complaint-create";
+import { loadStaffResolver, staffChoices } from "@/lib/services/person-identity-service";
 import type { ErpContext } from "../access";
 import { erpAudit, paise, stampLine, text, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
@@ -71,9 +73,13 @@ type Row = {
   area: string | null;
   phone: string | null;
   by: string | null;
+  /** The salesman it was raised for, as named today — null where the row names nobody by account. */
+  salesman: string | null;
   billNo: string | null;
   billDate: string | null;
 };
+
+const salesmanUser = alias(users, "salesman");
 
 export async function complaintRows(where?: ReturnType<typeof eq>): Promise<Row[]> {
   const scoped = where ? and(ERP_ONLY, where)! : ERP_ONLY;
@@ -84,12 +90,14 @@ export async function complaintRows(where?: ReturnType<typeof eq>): Promise<Row[
       area: customers.area,
       phone: customers.phone,
       by: users.name,
+      salesman: salesmanUser.name,
       billNo: bills.billNo,
       billDate: bills.billDate,
     })
     .from(complaints)
     .innerJoin(customers, eq(customers.id, complaints.customerId))
     .leftJoin(users, eq(users.id, complaints.loggedByUserId))
+    .leftJoin(salesmanUser, eq(salesmanUser.id, complaints.salesmanId))
     .leftJoin(bills, eq(bills.id, complaints.billId));
   return q.where(scoped).orderBy(desc(complaints.createdAt));
 }
@@ -97,10 +105,6 @@ export async function complaintRows(where?: ReturnType<typeof eq>): Promise<Row[
 /** Requests still waiting for a decision, per customer — for My customers and the sidebar. */
 export async function openRequestIds(): Promise<string[]> {
   return (await db.select({ id: complaints.id }).from(complaints).where(and(eq(complaints.status, "open"), ERP_ONLY))).map((r) => r.id);
-}
-
-async function staff(): Promise<{ id: string; name: string; position: string | null }[]> {
-  return db.select({ id: employees.id, name: employees.name, position: employees.position }).from(employees).where(eq(employees.status, "active")).orderBy(employees.name);
 }
 
 /**
@@ -128,24 +132,33 @@ async function billChoices(): Promise<{ bills: Record<string, string[]>; goods: 
 }
 
 async function requestForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
-  const [parties, people, choices] = await Promise.all([loadCustomers(), staff(), billChoices()]);
+  /* The salesman is a PERSON: each option is an account id labelled with the
+     name it carries today, so the form sends who, never a name. A salesman
+     already on the record (Add another) stays offered even if he has left. */
+  const [parties, people, choices] = await Promise.all([loadCustomers(), staffChoices([init?.salesman]), billChoices()]);
   const mobile: Record<string, string> = {};
   parties.forEach((p) => (mobile[p.name] = p.phone ?? ""));
-  /* Who is raising it, by the account's HRMS link — not by comparing names. */
-  const { personDirectory } = await import("@/lib/services/person-identity-service");
-  const myEmployee = (await personDirectory()).employeeOfAccount(ctx.user.id);
-  const me = people.find((s) => s.id === myEmployee && /sales/i.test(s.position ?? ""));
-  const salesmen = people.filter((s) => /sales|office/i.test(s.position ?? "")).map((s) => s.name);
+  /* Who is raising it, by their own account — not by comparing names. */
+  const me = people.find((s) => s.id === ctx.user.id && /sales/i.test(s.position ?? ""));
+  const sellers = people.filter((s) => /sales|office/i.test(s.position ?? "") || s.id === init?.salesman);
+  const offered = sellers.length ? sellers : people;
   return {
     screen: "requests",
     id: "new",
     title: "Raise a product quality complaint",
     sub: "The ERP handles product quality complaints only. It also appears on the customer's CRM record.",
     submit: "Raise",
-    init: { salesman: me?.name ?? "", cn: "No", ...init },
+    init: { salesman: me?.id ?? "", cn: "No", ...init },
     data: { mobile, billDate: choices.billDate },
     header: [
-      { k: "salesman", l: "Name of salesman", t: "select", sec: "Complaint", opts: salesmen.length ? salesmen : people.map((s) => s.name) },
+      {
+        k: "salesman",
+        l: "Name of salesman",
+        t: "select",
+        sec: "Complaint",
+        opts: offered.map((s) => s.id),
+        optLabels: Object.fromEntries(offered.map((s) => [s.id, s.name])),
+      },
       { k: "customer", l: "Customer", t: "select", req: true, opts: parties.map((p) => p.name) },
       { k: "mobile", l: "Mobile number", t: "derived", calc: "request.mobile" },
       { k: "description", l: "Complaint description", t: "area", req: true, mic: true },
@@ -175,6 +188,20 @@ async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<
     if (!goods) return fieldErr("goods", "Name the goods the credit note is for");
     billId = b.id;
   }
+  /* The salesman by account. A tab opened before the picker sent ids sends
+     the name it showed; that is turned into ONE person or refused. */
+  const picked = text(h.salesman);
+  let salesman: { id: string; name: string } | null = null;
+  if (picked) {
+    const [byId] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, picked)).limit(1);
+    if (byId) salesman = byId;
+    else {
+      const m = (await loadStaffResolver())(picked);
+      const [found] = m.userId ? await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, m.userId)).limit(1) : [];
+      if (!found) return fieldErr("salesman", "Pick the salesman from the list.");
+      salesman = found;
+    }
+  }
   const id = await db.transaction(async (tx) => {
     const made = await createComplaint(
       {
@@ -187,7 +214,8 @@ async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<
         requestCn: cn,
         billId,
         goodsDescription: goods,
-        salesmanName: text(h.salesman),
+        salesmanId: salesman?.id ?? null,
+        salesmanName: salesman?.name ?? null,
       },
       tx,
     );
@@ -328,7 +356,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
     v: {
       raised: calendarDate(c.createdAt),
       status: word,
-      salesman: c.salesmanName ?? x.by,
+      salesman: x.salesman ?? c.salesmanName ?? x.by,
       party: x.party,
       mobile: c.mobileNumber ?? x.phone,
       cn: c.requestCn ? "Yes" : "No",
@@ -418,7 +446,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
       async more(ctx, id) {
         const [x] = await complaintRows(eq(complaints.id, id));
         if (!x) return null;
-        const f = await requestForm(ctx, { salesman: x.c.salesmanName ?? "", customer: x.party, description: x.c.description, cn: x.c.requestCn ? "Yes" : "No", bill: x.billNo ?? "" });
+        const f = await requestForm(ctx, { salesman: x.c.salesmanId ?? "", customer: x.party, description: x.c.description, cn: x.c.requestCn ? "Yes" : "No", bill: x.billNo ?? "" });
         return { ...f, title: "Raise another credit note for this bill" };
       },
     },

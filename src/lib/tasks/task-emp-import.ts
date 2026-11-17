@@ -8,18 +8,26 @@
  * nothing lands that the screen itself would have refused. The TO DO LIST tab
  * is one-off tasks: each row becomes a `tasks` row.
  *
- * People are matched by NAME to MahekOne accounts, because a task belongs to
- * somebody who can sign in. What the sheet got wrong is either corrected by a
+ * People are found through the PERSON DIRECTORY (`personLookup`), never by
+ * comparing name strings here: the sheet's name becomes ONE account — today's
+ * name, any spelling the person has carried, the name the sheets call them —
+ * or nobody, and a name two people answer to is held back rather than given
+ * to either. A task belongs to an account id. What the sheet got wrong is either corrected by a
  * NAMED fix below — keyed on the Sr. No and the exact values it replaces, so a
  * sheet edited since is refused rather than silently re-corrected — or held
  * back and said out loud.
  * ------------------------------------------------------------------------- */
 
+import { personKey, staffAccountOf, type Directory } from "../engines/person-directory";
 import { routineProblems, WEEKDAY_NAMES, WORKING_WEEK, type RoutineFrequency } from "./routines";
 
 export type SheetRow = { rowNumber: number; cells: Record<string, string> };
-/** A MahekOne account the sheet's names are matched against. */
+/** The MahekOne account a sheet name turned out to mean. */
 export type EmployeeRef = { id: string; code: string; name: string; active: boolean };
+
+/** Who a sheet name means: one account, nobody, or several people — never a guess. */
+export type PersonMatch = { kind: "one"; person: EmployeeRef } | { kind: "none" } | { kind: "many" };
+export type PersonLookup = (sheetName: string) => PersonMatch;
 
 export type RoutineDraft = {
   sr: number;
@@ -40,10 +48,36 @@ export type RoutineDraft = {
 
 export type Skipped = { sr: string; rowNumber: number; name: string; task: string; reason: string };
 
-/** Names the sheet spells differently from the account. Confirmed by the business, 2026-11-11. */
+/**
+ * Names the sheet spells differently from anything the directory knows.
+ * Confirmed by the business, 2026-11-11. Each is an extra SPELLING: the sheet's
+ * text is read as the name it stands for, and that goes through the directory
+ * like any other — it never names an account by itself.
+ */
 export const NAME_ALIASES: Record<string, string> = {
-  "vaishali shivaji chaudhari": "sarthika sandesh londhe",
+  "Vaishali Shivaji Chaudhari": "Sarthika Sandesh Londhe",
 };
+
+/**
+ * The sheet's names, through the person directory. `accounts` is every
+ * account (switched-off ones too: a leaver resolves to their own account, and
+ * the mapping then holds their rows back as "switched off" rather than saying
+ * nobody answers to them).
+ */
+export function personLookup(
+  dir: Directory,
+  accounts: ReadonlyArray<{ id: string; name: string; active: boolean; employeeId: string | null }>,
+): PersonLookup {
+  const resolve = staffAccountOf(dir, accounts);
+  const account = new Map(accounts.map((a) => [a.id, a]));
+  const spelling = new Map(Object.entries(NAME_ALIASES).map(([said, means]) => [personKey(said), means]));
+  return (sheetName) => {
+    const m = resolve(spelling.get(personKey(sheetName)) ?? sheetName);
+    const a = m.userId ? account.get(m.userId) : undefined;
+    if (a) return { kind: "one", person: { id: a.id, code: "", name: a.name, active: a.active } };
+    return m.why === "many" ? { kind: "many" } : { kind: "none" };
+  };
+}
 
 /**
  * Corrections to individual rows, each stating what it expects to find. An
@@ -83,10 +117,7 @@ export const routineKey = (t: Pick<RoutineDraft, "assigneeId" | "title" | "frequ
  * Saturday — the old app's own daily log holds one Sunday in 65,000 rows, so
  * "every day" there meant every working day.
  */
-export function mapTaskList(rows: SheetRow[], accounts: EmployeeRef[]): { drafts: RoutineDraft[]; skipped: Skipped[] } {
-  const byName = new Map<string, EmployeeRef[]>();
-  for (const e of accounts) byName.set(norm(e.name), [...(byName.get(norm(e.name)) ?? []), e]);
-
+export function mapTaskList(rows: SheetRow[], lookup: PersonLookup): { drafts: RoutineDraft[]; skipped: Skipped[] } {
   const drafts: RoutineDraft[] = [];
   const skipped: Skipped[] = [];
   const seen = new Map<string, number>();
@@ -100,10 +131,10 @@ export function mapTaskList(rows: SheetRow[], accounts: EmployeeRef[]): { drafts
 
     if (!/^\d+$/.test(sr)) { skip("Sr. No is not a number"); continue; }
     const srn = Number(sr);
-    const matches = byName.get(NAME_ALIASES[norm(name)] ?? norm(name)) ?? [];
-    if (matches.length === 0) { skip(`no MahekOne login for “${name}”`); continue; }
-    if (matches.length > 1) { skip(`${matches.length} logins are named “${name}”`); continue; }
-    const who = matches[0];
+    const match = lookup(name);
+    if (match.kind === "none") { skip(`no MahekOne login for “${name}”`); continue; }
+    if (match.kind === "many") { skip(`more than one person answers to “${name}”`); continue; }
+    const who = match.person;
     if (!who.active) { skip(`${who.name}'s login is switched off`); continue; }
     if (!task) { skip("no task text"); continue; }
 
@@ -258,11 +289,7 @@ export function monthKey(v: string): string | null | undefined {
 
 export type TodoSkipped = { sheetId: string; rowNumber: number; to: string; task: string; reason: string };
 
-export function mapToDoList(rows: SheetRow[], employees: EmployeeRef[]): { drafts: TodoDraft[]; skipped: TodoSkipped[]; merged: number } {
-  const byName = new Map<string, EmployeeRef[]>();
-  for (const e of employees) byName.set(norm(e.name), [...(byName.get(norm(e.name)) ?? []), e]);
-  const find = (name: string) => byName.get(NAME_ALIASES[norm(name)] ?? norm(name)) ?? [];
-
+export function mapToDoList(rows: SheetRow[], lookup: PersonLookup): { drafts: TodoDraft[]; skipped: TodoSkipped[]; merged: number } {
   const skipped: TodoSkipped[] = [];
   const all: TodoDraft[] = [];
   for (const { rowNumber, cells } of rows) {
@@ -274,9 +301,10 @@ export function mapToDoList(rows: SheetRow[], employees: EmployeeRef[]): { draft
 
     if (!sheetId) { skip("no To Do Task Id"); continue; }
     if (!task) { skip("no task text"); continue; }
-    const toMatch = find(to);
-    if (!toMatch.length) { skip(`no MahekOne login for “${to}”`); continue; }
-    if (toMatch.length > 1) { skip(`${toMatch.length} employees are named “${to}”`); continue; }
+    const toMatch = lookup(to);
+    if (toMatch.kind === "none") { skip(`no MahekOne login for “${to}”`); continue; }
+    if (toMatch.kind === "many") { skip(`more than one person answers to “${to}”`); continue; }
+    const assignee = toMatch.person;
 
     const given = sheetDate(g("Date"));
     const forDate = sheetDate(g("For Date"));
@@ -287,7 +315,9 @@ export function mapToDoList(rows: SheetRow[], employees: EmployeeRef[]): { draft
 
     const fromRaw = g("Assign From");
     const monthly = fromRaw === MONTHLY_FROM;
-    const fromMatch = monthly ? [] : find(fromRaw);
+    /* Who gave it: their account where exactly one person answers — a leaver too, it is history. */
+    const fromMatch = monthly ? null : lookup(fromRaw);
+    const giver = fromMatch?.kind === "one" ? fromMatch.person : null;
     const status = g("Status");
     if (status !== "" && status !== "Done") { skip(`status “${status}”`); continue; }
     const recheck = g("Recheck Status");
@@ -304,10 +334,10 @@ export function mapToDoList(rows: SheetRow[], employees: EmployeeRef[]): { draft
       rowNumber,
       forDate,
       tillDate: tillDate ?? null,
-      fromUserId: fromMatch.length === 1 ? fromMatch[0].id : null,
-      fromLabel: monthly ? MONTHLY_FROM : fromMatch.length === 1 ? fromMatch[0].name : fromRaw || "Unknown",
-      toUserId: toMatch[0].id,
-      toName: toMatch[0].name,
+      fromUserId: giver?.id ?? null,
+      fromLabel: monthly ? MONTHLY_FROM : (giver?.name ?? (fromRaw || "Unknown")),
+      toUserId: assignee.id,
+      toName: assignee.name,
       category,
       task,
       urgent: category === "Urgent and Important",

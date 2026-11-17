@@ -485,7 +485,8 @@ export async function recordExport(count: number, view: string): Promise<Result>
 
 /* --------------------------------------------------------- payment methods */
 
-export type PaymentMethodInput = { id?: string; label: string; kind: string; last4: string; expiresOn: string | null; holder: string; bank: string; personal: boolean; active?: boolean };
+/** `holderUserId` is the holder where they are staff; `holder` is typed only for somebody who is not. */
+export type PaymentMethodInput = { id?: string; label: string; kind: string; last4: string; expiresOn: string | null; holder: string; holderUserId?: string | null; bank: string; personal: boolean; active?: boolean };
 
 /** Last four and the expiry, never a full number or a CVV (spec §4). */
 export async function savePaymentMethod(input: PaymentMethodInput): Promise<Result<{ id: string }>> {
@@ -495,8 +496,23 @@ export async function savePaymentMethod(input: PaymentMethodInput): Promise<Resu
   const last4 = (input.last4 ?? "").replace(/\D/g, "");
   if (last4 && last4.length !== 4) return err("Only the last four digits — never the full number.", "validation", [{ field: "last4", message: "Four digits." }]);
   if (input.expiresOn && !ISO.test(input.expiresOn)) return err("The expiry is not a date.", "validation");
+  /* In whose name, by account where they are staff — what offboarding asks.
+     The text is stored as their name today (a label), or as typed for a
+     holder who is not on the staff. */
+  const holderUser = input.holderUserId ? (await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, input.holderUserId)).limit(1))[0] : null;
+  if (input.holderUserId && !holderUser) return err("Choose the holder from the list, or name somebody not on the staff.", "validation", [{ field: "holder", message: "Not found." }]);
   const id = input.id || newId("lkp");
-  const row = { label: input.label.trim(), kind: input.kind || "Credit card", last4, expiresOn: input.expiresOn || null, holder: input.holder?.trim() ?? "", bank: input.bank?.trim() ?? "", personal: !!input.personal, active: input.active ?? true };
+  const row = {
+    label: input.label.trim(),
+    kind: input.kind || "Credit card",
+    last4,
+    expiresOn: input.expiresOn || null,
+    holder: holderUser?.name ?? input.holder?.trim() ?? "",
+    holderUserId: holderUser?.id ?? null,
+    bank: input.bank?.trim() ?? "",
+    personal: !!input.personal,
+    active: input.active ?? true,
+  };
   await db.transaction(async (tx) => {
     if (input.id) await tx.update(lockerPaymentMethods).set(row).where(eq(lockerPaymentMethods.id, id));
     else await tx.insert(lockerPaymentMethods).values({ id, ...row });

@@ -34,6 +34,11 @@ const BANNED: Array<{ re: RegExp; why: string }> = [
   { re: /lower\((btrim\()?(\$\{)?(users\.name|employees\.name|employee_name)\}?\)?\)\s*=/, why: "a person found by comparing their name" },
   { re: /\.name\.toLowerCase\(\)\s*===\s*\w+\.user\.name/, why: "the signed-in person found among employees by name; use their HRMS link" },
   { re: /\b(byName|nameToId|idByName)\.(get|set)\(\s*(u|user|p|person|e|emp|employee|staff)\.name/, why: "a person indexed by their name" },
+  {
+    re: /\.(get|set)\(\s*(norm|normName|normalise|normalize|fold|foldName|nameKey|personKey|lower|clean)\(\s*(u|user|a|acc|account|person|e|emp|employee|staff|who)\.name\s*\)/,
+    why: "a person indexed by a folded name in a home-made Map; ask personDirectory() (task-emp-import's personLookup is the model)",
+  },
+  { re: /\b(lower|btrim)\(\$\{\w+\.(controlledByName|holder|salesmanName|employeeName|expenseBy)\}\)\s*=/, why: "a person found by comparing a stored name; store and ask the user id" },
   { re: /coalesce\(\s*(c|customers|r)\.(sales_person_name|salesPersonName)\b/, why: "the typed salesperson name read before the account; the seat's account comes first, the text only where nobody holds it" },
   { re: /nameFold\(customers\.salesPersonName\)/, why: "a shop given to somebody by matching their name" },
 ];
@@ -72,6 +77,17 @@ test("nothing resolves a person by their name", () => {
     });
   }
   assert.deepEqual(hits, [], `\n${hits.join("\n")}`);
+});
+
+test("the guard knows the shapes it was widened for", () => {
+  const caught = (line: string) => BANNED.some((b) => b.re.test(line));
+  // The task import's home-made name map, before it asked the directory.
+  assert.ok(caught("for (const e of accounts) byName.set(norm(e.name), [...(byName.get(norm(e.name)) ?? []), e]);"));
+  // The Locker's offboarding checklist, before it asked by account.
+  assert.ok(caught("sql`lower(${lockerPaymentMethods.holder}) = lower(${person.name})`"));
+  assert.ok(caught("sql`lower(${lockerIdentities.controlledByName}) = lower(${person.name})`"));
+  // A product list folded by name is not a person.
+  assert.ok(!caught("for (const p of products) map.set(fold(p.name), p);"));
 });
 
 test("HRMS renames carry to the account", () => {

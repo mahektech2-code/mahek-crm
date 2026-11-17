@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildDirectory, personKey, type DirAccount, type DirEmployee } from "./person-directory";
+import { buildDirectory, personKey, staffAccountOf, type DirAccount, type DirEmployee } from "./person-directory";
 
 const emp = (id: string, name: string, extra: Partial<DirEmployee> = {}): DirEmployee => ({
   id,
@@ -20,6 +20,29 @@ const acc = (id: string, name: string, extra: Partial<DirAccount> = {}): DirAcco
   active: true,
   salesPersonName: null,
   ...extra,
+});
+
+test("staffAccountOf: one person is their account — a leaver's too — and anything less certain is nobody", () => {
+  const accounts = [
+    acc("u-ravi", "Ravi Kumar", { employeeId: "e-ravi" }),
+    acc("u-old", "Old Timer", { employeeId: "e-old", active: false }),
+    acc("u-twin1", "Amit Patil", { employeeId: "e-twin1" }),
+    acc("u-twin2", "Amit Patil", { employeeId: "e-twin2" }),
+  ];
+  const dir = buildDirectory({
+    employees: [emp("e-ravi", "Ravi Kumar"), emp("e-old", "Old Timer", { active: false }), emp("e-twin1", "Amit Patil"), emp("e-twin2", "Amit Patil"), emp("e-new", "No Login Yet")],
+    accounts,
+    links: [],
+    aliases: [{ key: "RAVI K", employeeId: "e-ravi" }],
+  });
+  const who = staffAccountOf(dir, accounts);
+  assert.deepEqual(who("  ravi   kumar"), { userId: "u-ravi", why: null });
+  assert.deepEqual(who("Ravi K"), { userId: "u-ravi", why: null }, "a spelling he once carried");
+  assert.deepEqual(who("Old Timer"), { userId: "u-old", why: null }, "a leaver still owns what they did");
+  assert.deepEqual(who("Amit Patil"), { userId: null, why: "many" });
+  assert.deepEqual(who("No Login Yet"), { userId: null, why: "no-account" });
+  assert.deepEqual(who("Mahek Marketing India"), { userId: null, why: "none" });
+  assert.deepEqual(who("  "), { userId: null, why: "none" });
 });
 
 test("personKey folds case and whitespace", () => {

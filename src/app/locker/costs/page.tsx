@@ -7,7 +7,7 @@ import { lockerAccess } from "@/lib/locker/access";
 import { CATEGORY } from "@/lib/locker/catalogue";
 import { addMonthsIso, istDay } from "@/lib/locker/engine";
 import { cardRisks, monthlyPaise } from "@/lib/locker/register-service";
-import { lockerPaymentMethodsList, registerFor, today } from "@/lib/locker/service";
+import { lockerPaymentMethodsList, lockerPeople, registerFor, today } from "@/lib/locker/service";
 import { C, MONTHS, fd, inr, nf } from "@/lib/locker/style";
 import { Badge } from "@/components/ui/primitives";
 import { PageHead } from "../_ui/kit";
@@ -28,7 +28,9 @@ export default async function CostsPage() {
   const user = await requireUser();
   await requireModule(user.id, "locker.costs");
   const day = today();
-  const [access, rows, pms] = await Promise.all([lockerAccess(user.id), registerFor(user.id, day), lockerPaymentMethodsList()]);
+  const [access, rows, pms, people] = await Promise.all([lockerAccess(user.id), registerFor(user.id, day), lockerPaymentMethodsList(), lockerPeople()]);
+  /* Card holders who have left stay offered, so editing their card never loses who holds it. */
+  const holders = [...people.map((p) => ({ v: p.id, l: p.name })), ...pms.filter((p) => p.holderUserId && !people.some((x) => x.id === p.holderUserId)).map((p) => ({ v: p.holderUserId!, l: p.holder }))];
   const live = rows.filter((a) => a.live);
   const subs = live.filter((a) => a.model === "subscription" && a.amountPaise > 0);
   const monthly = subs.reduce((x, a) => x + monthlyPaise(a), 0);
@@ -124,7 +126,8 @@ export default async function CostsPage() {
           <PaymentMethods
             canEdit={access.has("locker.costs")}
             today={day}
-            pms={pms.map((p) => ({ id: p.id, label: p.label, kind: p.kind, last4: p.last4, expiresOn: p.expiresOn, holder: p.holder, bank: p.bank, personal: p.personal, active: p.active, uses: live.filter((a) => a.paymentMethodId === p.id).length }))}
+            people={holders}
+            pms={pms.map((p) => ({ id: p.id, label: p.label, kind: p.kind, last4: p.last4, expiresOn: p.expiresOn, holder: p.holder, holderUserId: p.holderUserId, bank: p.bank, personal: p.personal, active: p.active, uses: live.filter((a) => a.paymentMethodId === p.id).length }))}
           />
         </Grid>
       </div>
