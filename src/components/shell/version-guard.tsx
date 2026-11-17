@@ -14,11 +14,14 @@ import { ACTION_NOT_FOUND_HEADER, isStaleBuildError, nextPollMs, safeToReload } 
  * `/api/version` when the tab comes back into view and every few minutes, and
  * where the answer differs from the build the page was rendered by:
  *
- *   - an idle tab (no dialog open, nothing being typed) reloads on the spot,
- *     which is the ordinary case: somebody comes back from lunch to a page
- *     that is already current before they touch it;
- *   - a busy one gets a line at the top instead, and reloads itself the moment
- *     it is idle — a reload is never allowed to eat a half-typed form.
+ *   - the tab gets a line at the top, and NEVER reloads while somebody is
+ *     looking at it. It used to reload any visible tab with no dialog open and
+ *     no box focused — which is somebody reading a list — and with twenty-odd
+ *     deploys a day the whole app blinked and lost its scroll every half hour,
+ *     and on every return to the tab (2026-11-17);
+ *   - it reloads itself when it is put BEHIND another tab or window, and only
+ *     if nothing is open or half-typed, so the next time it is looked at it is
+ *     already current. Next's own guard covers the next sidebar click.
  *
  * And where a save WAS refused for being from the old build, it says so in
  * words, over whatever the screen did with the error: nothing was saved,
@@ -55,7 +58,7 @@ function writeShared(id: string | null) {
     /* private window: each tab asks for itself */
   }
 }
-/** One automatic reload per new build per tab — never a loop. */
+/** One automatic (background) reload per new build per tab — never a loop. */
 const RELOADED_KEY = "mahek.version.reloadedFor";
 
 type State = "current" | "newer" | "refused";
@@ -126,7 +129,8 @@ export function VersionGuard() {
       const server = serverRef.current;
       if (!server || stateRef.current !== "newer") return;
       if (alreadyReloadedFor(server)) return; // tried once; the banner stays
-      if (document.visibilityState === "visible" && safeToReload(document)) {
+      /* Only while nobody is looking: a reload in front of somebody is a blink. */
+      if (document.visibilityState === "hidden" && safeToReload(document)) {
         markReloadedFor(server);
         window.location.reload();
       }
@@ -163,9 +167,8 @@ export function VersionGuard() {
       }, stateRef.current === "newer" ? IDLE_RECHECK_MS : nextPollMs(POLL_MS, Math.random()));
     };
     const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (stateRef.current === "newer") reloadIfIdle();
-      else void check();
+      if (document.visibilityState === "hidden") reloadIfIdle();
+      else if (stateRef.current !== "newer") void check();
     };
 
     schedule();
