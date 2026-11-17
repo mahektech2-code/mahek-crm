@@ -32,7 +32,9 @@ export type CatalogueData = {
   exceptions: Unwrap<typeof listExceptions>;
   aliases: Unwrap<typeof listAliases>;
   /** What the filter bar is currently set to, so the URL and the screen agree. */
-  filters: { query?: string; formulationId?: string; status?: string; open?: string };
+  filters: { query?: string; formulationId?: string; brandId?: string; status?: string; open?: string };
+  /** Which SKUs on this page a console edit has set apart from the seed. */
+  edited?: string[];
   /** Where a line's price is meant to come from — "unset" blocks valuation. */
   priceSource: string;
   /** Where the source document contradicts its own counts. */

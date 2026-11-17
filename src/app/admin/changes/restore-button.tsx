@@ -2,18 +2,27 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { updateConfigSetting } from "@/lib/actions/crm";
+import { btnClass } from "../_shell/kit";
 
 /** Puts a setting's earlier value back, through the one settings writer. */
-export function RestoreButton({ settingKey, value, label }: { settingKey: string; value: unknown; label: string }) {
+export function RestoreButton({
+  settingKey,
+  value,
+  label,
+}: {
+  settingKey: string;
+  value: unknown;
+  label: string;
+}) {
   const router = useRouter();
   const notify = useToast().push;
   const [busy, setBusy] = React.useState(false);
   return (
-    <Button
-      size="sm"
+    <button
+      type="button"
+      className={btnClass("plain", "sm")}
       disabled={busy}
       title={`Set it back to ${label}`}
       onClick={async () => {
@@ -21,11 +30,14 @@ export function RestoreButton({ settingKey, value, label }: { settingKey: string
         setBusy(true);
         const r = await updateConfigSetting(settingKey, value);
         setBusy(false);
-        notify(r.ok ? `Restored to ${label}.` : r.error, r.ok ? "info" : "error");
+        notify(
+          r.ok ? `Restored to ${label}.` : r.error,
+          r.ok ? "info" : "error",
+        );
         if (r.ok) router.refresh();
       }}
     >
       Restore
-    </Button>
+    </button>
   );
 }

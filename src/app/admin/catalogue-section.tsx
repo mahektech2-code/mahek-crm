@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   CardHeader,
-  Callout,
   EmptyState,
   Field,
   Input,
@@ -44,7 +43,8 @@ import {
 } from "@/lib/actions/catalogue";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import type { CatalogueData } from "./catalogue-data";
-import { NewSkuDialog } from "./new-sku-dialog";
+import { ADMIN } from "@/lib/admin-routes";
+import { Pill, btnClass } from "./_shell/kit";
 
 /* ---------------------------------------------------------------------------
  * The Catalogue section.
@@ -62,10 +62,6 @@ import { NewSkuDialog } from "./new-sku-dialog";
 export const CATALOGUE_TABS = ADMIN_TABS.catalogue;
 
 /** Paise → "₹46.00", and an em dash where there is no number at all. */
-function money(paise: number | null | undefined): string {
-  if (paise == null) return "—";
-  return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 function kg(grams: number | null): string {
   if (grams == null) return "—";
@@ -124,28 +120,7 @@ export function CatalogueSection({
   const slug = CATALOGUE_TABS[Math.min(tab, CATALOGUE_TABS.length - 1)].slug;
 
   return (
-    <div className="mt-5">
-      <Summary data={data} />
-      {data.summary.unresolved > 0 && slug !== "duplicates" ? (
-        <Callout tone="warn">
-          <span className="text-sm text-ink">
-            {data.summary.unresolved} SKU names carry more than one legacy Product ID. Until one is
-            chosen per name they cannot be ordered — an order line references the name, so the wrong
-            choice silently reassigns history.
-          </span>
-        </Callout>
-      ) : null}
-      {data.priceSource === "unset" ? (
-        <Callout tone="brand">
-          <span className="text-sm text-ink">
-            Order value is not computed from the catalogue: no price source is confirmed yet. Orders
-            are worth what the telecaller typed. Set{" "}
-            <span className="font-medium">Where a line&rsquo;s price comes from</span> in CRM →
-            Products once that is decided.
-          </span>
-        </Callout>
-      ) : null}
-
+    <div className="flex min-w-0 flex-col gap-[18px]">
       {slug === "skus" ? <SkuTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
       {slug === "goods" ? <GoodsTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
       {slug === "brands" ? <BrandsTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
@@ -159,30 +134,11 @@ export function CatalogueSection({
   );
 }
 
-function Summary({ data }: { data: CatalogueData }) {
-  const s = data.summary;
-  const cells: Array<[string, string, string?]> = [
-    ["Formulations", String(s.formulations)],
-    ["Brand lines", String(s.brands)],
-    ["Finished goods", String(s.goods)],
-    ["SKUs", String(s.skus)],
-    ["Orderable", `${s.orderable}`, s.orderable < s.skus ? `${s.skus - s.orderable} not` : undefined],
-    ["Priced", `${s.priced}`, s.priced === 0 ? "no price source yet" : undefined],
-  ];
-  return (
-    <div className="mb-4 grid grid-cols-6 gap-px overflow-hidden rounded-[4px] border border-line bg-line">
-      {cells.map(([label, value, note]) => (
-        <div key={label} className="bg-surface px-3.5 py-2.5">
-          <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{label}</div>
-          <div className="mt-0.5 text-[19px] leading-6 font-semibold text-ink">{value}</div>
-          {note ? <div className="text-[11px] text-muted">{note}</div> : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------- all SKUs */
+
+/** The canvas's table head: 12px semibold, no tracking — set here because the
+    v4 sheet's own `th` rule (11px, spaced) outranks a utility class. */
+const HEAD: React.CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: 0 };
 
 function SkuTab({
   data,
@@ -193,201 +149,157 @@ function SkuTab({
   canWrite: boolean;
   refresh: () => void;
 }) {
-  const [query, setQuery] = React.useState(data.filters.query ?? "");
   const [openId, setOpenId] = React.useState<string | null>(data.filters.open ?? null);
-  const [adding, setAdding] = React.useState(false);
-
-  // Filtering is done on the server, so the page reloads with the address as
-  // the filter — a filtered list is a screen somebody can send to somebody else.
-  function apply(next: Partial<{ q: string; formulation: string; status: string }>) {
-    const params = new URLSearchParams(window.location.search);
-    for (const [k, v] of Object.entries(next)) {
-      if (v) params.set(k, v);
-      else params.delete(k);
-    }
-    params.delete("page");
-    window.location.search = params.toString();
-  }
+  const pageHref = (n: number) => {
+    const p = new URLSearchParams();
+    if (data.filters.query) p.set("q", data.filters.query);
+    if (data.filters.formulationId) p.set("formulation", data.filters.formulationId);
+    if (data.filters.brandId) p.set("brand", data.filters.brandId);
+    if (data.filters.status && data.filters.status !== "all") p.set("status", data.filters.status);
+    p.set("page", String(n));
+    return `?${p}`;
+  };
 
   const open = data.skus.find((s) => s.id === openId) ?? null;
-
+  const edited = new Set(data.edited ?? []);
+  /* A formulation with nothing filed under it is left off the tree. */
+  const forms = data.hierarchy.formulations.filter((f) => f.skus > 0);
+  const total = forms.reduce((n, f) => n + f.skus, 0);
+  const brands = data.filters.formulationId
+    ? data.hierarchy.brands.filter((b) => b.formulationId === data.filters.formulationId && b.skus > 0)
+    : [];
+  const treeHref = (next: { formulation?: string; brand?: string }) => {
+    const p = new URLSearchParams();
+    if (data.filters.query) p.set("q", data.filters.query);
+    if (data.filters.status && data.filters.status !== "all") p.set("status", data.filters.status);
+    if (next.formulation) p.set("formulation", next.formulation);
+    if (next.brand) p.set("brand", next.brand);
+    return `?${p}`;
+  };
+  const treeRow = (label: string, n: number, href: string, on: boolean, l2 = false) => (
+    <a
+      key={href}
+      href={href}
+      aria-current={on ? "true" : undefined}
+      className={cx(
+        "flex h-[34px] items-center gap-2 rounded-control pr-2.5 text-[13px] no-underline hover:no-underline",
+        l2 ? "pl-[26px]" : "pl-2.5",
+        on ? "bg-brand-soft font-semibold text-brand-deep" : "font-medium text-body hover:bg-canvas",
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="text-xs font-normal text-muted tabular-nums">{n}</span>
+    </a>
+  );
+  const numCell = "h-[46px] border-b border-divider px-3.5 text-right whitespace-nowrap tabular-nums";
+  const cell = "h-[46px] border-b border-divider px-3.5 whitespace-nowrap";
+  const head = "bg-ink px-3.5 py-2.5 text-left whitespace-nowrap text-white normal-case";
 
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-end gap-3">
-        <Field label="Search" className="w-72">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") apply({ q: query });
-            }}
-            placeholder="Name, raw name or legacy ID"
-          />
-        </Field>
-        <Field label="Formulation" className="w-56">
-          <Select
-            value={data.filters.formulationId ?? ""}
-            onChange={(e) => apply({ formulation: e.target.value })}
-          >
-            <option value="">All formulations</option>
-            {data.hierarchy.formulations.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Status" className="w-52">
-          <Select
-            value={data.filters.status ?? "all"}
-            onChange={(e) => apply({ status: e.target.value })}
-          >
-            <option value="all">Everything</option>
-            <option value="ok">Orderable</option>
-            <option value="needs_canonical_id">Needs a canonical ID</option>
-            <option value="inactive">Retired</option>
-          </Select>
-        </Field>
-        <Button variant="secondary" onClick={() => apply({ q: query })}>
-          Apply
-        </Button>
-        <span className="flex-1" />
-        <span className="pb-1.5 text-[13px] text-muted">
-          {data.total} matching · showing {data.skus.length}
-        </span>
-        <Button
-          variant="primary"
-          disabled={!canWrite}
-          title={canWrite ? undefined : "Configuration is changed by a manager."}
-          onClick={() => setAdding(true)}
-        >
-          Add SKU
-        </Button>
+      <div className="grid items-start gap-[18px]" style={{ gridTemplateColumns: "240px minmax(0,1fr)" }}>
+        <nav aria-label="Formulations" className="rounded-card border border-line bg-surface p-2.5">
+          {treeRow("All", total, treeHref({}), !data.filters.formulationId)}
+          {forms.map((f) => (
+            <React.Fragment key={f.id}>
+              {treeRow(f.name, f.skus, treeHref({ formulation: f.id }), data.filters.formulationId === f.id && !data.filters.brandId)}
+              {data.filters.formulationId === f.id
+                ? brands.map((b) => treeRow(b.name, b.skus, treeHref({ formulation: f.id, brand: b.id }), data.filters.brandId === b.id, true))
+                : null}
+            </React.Fragment>
+          ))}
+        </nav>
+
+        <section className="min-w-0 overflow-hidden rounded-card border border-line bg-surface">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
+              <thead>
+                <tr>
+                  <th className={head} style={HEAD}>SKU</th>
+                  <th className={head} style={HEAD}>Packing</th>
+                  <th className={cx(head, "text-right")} style={HEAD}>Litres</th>
+                  <th className={cx(head, "text-right")} style={HEAD}>Cans / box</th>
+                  <th className={cx(head, "text-right")} style={HEAD}>Box weight</th>
+                  <th className={head} style={HEAD}>Product ID</th>
+                  <th className={head} style={HEAD}>Status</th>
+                  <th className={head} style={HEAD} aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {data.skus.map((s) => {
+                  const ids = (s.externalIds ?? []).length ? (s.externalIds ?? []).map((x) => `#${x}`).join(" · ") : s.externalCode ?? "—";
+                  return (
+                    <tr key={s.id} className="last:[&>td]:border-b-0">
+                      <td className={cell}>
+                        <span className="block max-w-[340px] truncate font-semibold text-ink" title={s.name}>
+                          {s.name}
+                        </span>
+                      </td>
+                      <td className={cell}>{/box/i.test(s.packing ?? "") || s.cansPerBox > 1 ? "Box" : /drum/i.test(s.packing ?? "") ? "Drum" : "Loose"}</td>
+                      <td className={numCell}>{s.millilitresPerCan == null ? "—" : String(s.millilitresPerCan / 1000)}</td>
+                      <td className={numCell}>{s.cansPerBox > 1 ? s.cansPerBox : "—"}</td>
+                      <td className={numCell}>{kg(s.weightGrams)}</td>
+                      <td className={cx(cell, "font-mono text-[13px] text-muted")}>{ids}</td>
+                      <td className={cell}>
+                        <span className="inline-flex items-center gap-1">
+                          {s.status === "needs_canonical_id" ? (
+                            <Pill tone="warn">Pick an ID</Pill>
+                          ) : !s.active ? (
+                            <Pill tone="muted">Retired</Pill>
+                          ) : (
+                            <Pill tone="ok">Orderable</Pill>
+                          )}
+                          {edited.has(s.id) ? <Pill tone="brand">Edited</Pill> : null}
+                        </span>
+                      </td>
+                      <td className={cx(cell, "w-[1%] pr-3 text-right")}>
+                        {s.status === "needs_canonical_id" ? (
+                          <a href={ADMIN.catalogue("duplicates")} className={btnClass("plain", "sm")}>
+                            Decide
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-label={`Edit ${s.name}`}
+                            title="Edit"
+                            onClick={() => setOpenId(s.id === openId ? null : s.id)}
+                            className="inline-flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-ink hover:bg-canvas"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                              <path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" />
+                            </svg>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {data.skus.length === 0 ? (
+              <EmptyState title="No SKU matches that" body="Try the formulation name, part of the pack size, or a legacy Product ID." />
+            ) : null}
+          </div>
+        </section>
       </div>
 
-      <NewSkuDialog
-        open={adding}
-        hierarchy={data.hierarchy}
-        onClose={() => setAdding(false)}
-        onCreated={(sku) => {
-          /* Land on the new row with its detail open, through the address, so
-             the list is the server's and the SKU is found on whichever page. */
-          const params = new URLSearchParams({ q: sku.name, open: sku.productId });
-          window.location.search = params.toString();
-        }}
-      />
-
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto" style={{ ["--rowh" as string]: "44px" }}>
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <Th className={pinnedHead("left")}>SKU</Th>
-                <Th>Formulation</Th>
-                <Th>Brand</Th>
-                <Th>Packing</Th>
-                <Th>Can use</Th>
-                <Th align="right">Can</Th>
-                <Th align="right">Cans/box</Th>
-                <Th align="right">Packing cost</Th>
-                <Th align="right">Weight</Th>
-                <Th align="right">Price</Th>
-                <Th align="right">Ordered</Th>
-                <Th>Legacy</Th>
-                <Th className={pinnedHead("right")} align="right">
-                  {""}
-                </Th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.skus.map((s, i) => (
-                <Tr key={s.id}>
-                  <Td className={pinnedCell("left", i, openId === s.id)}>
-                    <span className="block max-w-[380px] truncate font-medium text-ink">{s.name}</span>
-                    {!s.active || s.status !== "ok" ? (
-                      <span className="text-[11px] text-warn-ink">
-                        {s.status === "needs_canonical_id" ? "needs a canonical ID" : "retired"}
-                      </span>
-                    ) : null}
-                  </Td>
-                  <Td>{s.formulation ?? "—"}</Td>
-                  <Td>{s.brand ?? "—"}</Td>
-                  <Td>{s.packing ?? "—"}</Td>
-                  <Td>
-                    {s.canUse ? (
-                      <span className="block max-w-[260px] truncate" title={s.canUse}>
-                        {s.canUse}
-                      </span>
-                    ) : (
-                      <span className="text-muted" title="No can or drum set for this SKU in the ERP">
-                        —
-                      </span>
-                    )}
-                  </Td>
-                  <Td align="right">{litres(s.millilitresPerCan)}</Td>
-                  <Td align="right">{s.cansPerBox > 1 ? s.cansPerBox : "loose"}</Td>
-                  <Td align="right">{money(s.packingCostPaise)}</Td>
-                  <Td align="right">
-                    {kg(s.weightGrams)}
-                    <span className="ml-1 text-[11px] text-muted">/{s.weightBasis}</span>
-                  </Td>
-                  <Td align="right">
-                    {s.sellingPricePaise == null ? (
-                      <span className="text-muted" title="No price source is confirmed yet">
-                        —
-                      </span>
-                    ) : (
-                      money(s.sellingPricePaise)
-                    )}
-                  </Td>
-                  <Td align="right">{s.timesOrdered || "—"}</Td>
-                  <Td>{s.externalCode ?? ((s.externalIds ?? []).join(", ") || "—")}</Td>
-                  <Td className={pinnedCell("right", i, openId === s.id)} align="right">
-                    <Button variant="ghost" onClick={() => setOpenId(s.id === openId ? null : s.id)}>
-                      {openId === s.id ? "Close" : "Edit"}
-                    </Button>
-                  </Td>
-                </Tr>
-              ))}
-            </tbody>
-          </table>
-          {data.skus.length === 0 ? (
-            <EmptyState
-              title="No SKU matches that"
-              body="Try the formulation name, part of the pack size, or a legacy Product ID."
-            />
-          ) : null}
-        </div>
-      </Card>
-
       {data.pages > 1 ? (
-        <div className="mt-3 flex items-center gap-2">
-          <Button
-            variant="secondary"
-            disabled={data.page <= 1}
-            onClick={() => {
-              const p = new URLSearchParams(window.location.search);
-              p.set("page", String(data.page - 1));
-              window.location.search = p.toString();
-            }}
+        <div className="flex items-center gap-2">
+          <a
+            className={cx(btnClass("plain", "sm"), data.page <= 1 && "pointer-events-none opacity-50")}
+            href={pageHref(data.page - 1)}
           >
             Previous
-          </Button>
+          </a>
           <span className="text-[13px] text-muted">
-            Page {data.page} of {data.pages}
+            Page {data.page} of {data.pages} · {data.total} SKUs
           </span>
-          <Button
-            variant="secondary"
-            disabled={data.page >= data.pages}
-            onClick={() => {
-              const p = new URLSearchParams(window.location.search);
-              p.set("page", String(data.page + 1));
-              window.location.search = p.toString();
-            }}
+          <a
+            className={cx(btnClass("plain", "sm"), data.page >= data.pages && "pointer-events-none opacity-50")}
+            href={pageHref(data.page + 1)}
           >
             Next
-          </Button>
+          </a>
         </div>
       ) : null}
 

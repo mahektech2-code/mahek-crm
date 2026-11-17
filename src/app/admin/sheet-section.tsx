@@ -11,7 +11,6 @@ import {
   Td,
   Th,
   Tr,
-  cx,
 } from "@/components/ui/primitives";
 import { money, shortDate, stamp } from "@/lib/format";
 import { useRouter } from "next/navigation";
@@ -54,7 +53,7 @@ const percent = (bp: number | null) =>
 export function SheetSection({ data, tab }: { data: SheetData; tab: number }) {
   const view = ["lines", "orders", "issues", "sync"][tab] ?? "lines";
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-[18px]">
       <SummaryStrip data={data} />
       {view === "lines" ? <LinesTable data={data} /> : null}
       {view === "orders" ? <OrdersTable data={data} /> : null}
@@ -64,45 +63,11 @@ export function SheetSection({ data, tab }: { data: SheetData; tab: number }) {
   );
 }
 
+/** The figures moved up to the source cards; what stays is the quarantine, said plainly. */
 function SummaryStrip({ data }: { data: SheetData }) {
   const s = data.summary;
-  const stats: { label: string; value: string; tone?: "danger" | "warn" }[] = [
-    { label: "Order lines", value: s.presentRows.toLocaleString("en-IN") },
-    { label: "Orders", value: s.distinctOrders.toLocaleString("en-IN") },
-    { label: "Billing parties", value: s.distinctParties.toLocaleString("en-IN") },
-    {
-      label: "Needs attention",
-      value: s.rowsWithIssues.toLocaleString("en-IN"),
-      tone: s.rowsWithIssues ? "danger" : undefined,
-    },
-    {
-      label: "Gone from sheet",
-      value: s.withdrawnRows.toLocaleString("en-IN"),
-      tone: s.withdrawnRows ? "warn" : undefined,
-    },
-  ];
-
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {stats.map((stat) => (
-          <Card key={stat.label} className="px-4 py-3">
-            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              {stat.label}
-            </div>
-            <div
-              className={cx(
-                "mt-1 text-xl font-semibold tabular-nums",
-                stat.tone === "danger" && "text-danger",
-                stat.tone === "warn" && "text-warn",
-              )}
-            >
-              {stat.value}
-            </div>
-          </Card>
-        ))}
-      </div>
-
+    <div>
       {/* The quarantine, said plainly. Somebody reading these figures needs to
           know they are not the ones the CRM is working from. */}
       {s.lastSync && !s.lastSync.feedsCrm ? (
