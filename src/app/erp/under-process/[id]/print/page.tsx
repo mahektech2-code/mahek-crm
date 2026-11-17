@@ -108,7 +108,8 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                 </tr>,
                 ...mine.map((r) => {
                   const U = ({ children }: { children: React.ReactNode }) => (r.mark ? <u>{children}</u> : <>{children}</>);
-                  const remark = [r.remarks, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ");
+                  /* Remarks carry only what was written on the order (or typed on the line) — blank otherwise. The old quantity of an edited line sits under its new one instead. */
+                  const remark = r.remarks;
                   return (
                     <tr key={r.id} className={r.mark ? "pp-chg" : undefined}>
                       <Td className="pp-n">{r.sr}</Td>
@@ -118,6 +119,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                       </Td>
                       <Td className="pp-qty">
                         <U>{nf(r.quantity)}</U>
+                        {r.was != null ? <div className="pp-was">was {nf(r.was)}</div> : null}
                       </Td>
                       <Td>
                         <U>{r.unit}</U>
@@ -212,6 +214,7 @@ html body .pp-sheet .pp-table .pp-n { text-align: center; color: ${faint}; font-
 html body .pp-sheet .pp-table .pp-r { text-align: right; }
 html body .pp-sheet .pp-table .pp-qty { text-align: right; font-weight: 600; font-size: 9.8pt; line-height: 1.1; font-variant-numeric: tabular-nums; }
 html body .pp-sheet .pp-table .pp-rem { font-size: 7.4pt; }
+html body .pp-sheet .pp-table .pp-was { font-size: 6.4pt; font-weight: 500; color: ${soft}; margin-top: 0.4mm; }
 html body .pp-sheet .pp-table tr.pp-cat td { background: ${band}; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4pt; padding: 1.3mm 1.5mm; border-bottom: 1.25pt solid ${rule}; color: ${blue}; }
 html body .pp-sheet .pp-table tr.pp-cat { break-after: avoid; }
 html body .pp-sheet .pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
