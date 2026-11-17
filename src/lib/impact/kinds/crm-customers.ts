@@ -566,7 +566,7 @@ export const reportingLineImpact: ImpactSource = {
         select c.name from customers c
          where c.sales_manager_decided_at is null
            and c.deleted_at is null
-           and lower(btrim(coalesce(c.sales_person_name, ''))) = lower(btrim(${line.person}))
+           and c.sales_am_id in (select u.id from users u where u.employee_id = ${employeeId})
          order by c.name`),
       db.execute<{ name: string }>(sql`
         select e.name from employee_reporting r join employees e on e.id = r.employee_id

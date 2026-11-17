@@ -126,7 +126,7 @@ export async function outstandingHandovers(
              - (c.lead_converted_at at time zone ${APP_TIMEZONE})::date as waiting_days,
            c.lead_manager_id, lm.name as lead_manager_name,
            c.relationship_owner_id, ro.name as relationship_owner_name,
-           coalesce(c.sales_person_name, seat.name) as sales_seat_name,
+           coalesce(seat.name, c.sales_person_name) as sales_seat_name,
            (count(*) over ())::int as total
       from customers c
       left join users lm on lm.id = c.lead_manager_id

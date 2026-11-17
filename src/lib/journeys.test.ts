@@ -75,7 +75,6 @@ import {
   recomputeAllOutstanding,
   recomputeBillStatuses,
   recomputeAllBillPaid,
-  recomputeSalesPeople,
   recomputeSalesManagers,
 } from "@/lib/recompute";
 import { addDays, addMonths } from "@/lib/business-date";
@@ -7150,7 +7149,7 @@ async function stagePartyRowWithPhone(
   });
 }
 
-/** One Sales Party row, so `recomputeSalesPeople()` has a sheet to read. */
+/** One Sales Party row, so the party projection has a sheet to read. */
 async function stagePartyRow(partyName: string, salesPersonName: string) {
   const [run] = await db
     .insert(sheetSyncRuns)
@@ -7787,32 +7786,6 @@ describe("updating an account manager", () => {
     assert.equal(after.amDecidedAt, null, "and it claimed a decision was made");
   });
 
-  test("the nightly recompute does not put the old name back", async () => {
-    // The quiet half of the guard. Holding sales_am_id while letting
-    // recomputeSalesPeople rewrite sales_person_name gives the worst outcome
-    // available: the account moves for scope and every screen still shows the
-    // old name. Nobody reports that as a bug — they report that reassignment
-    // does not work.
-    const customer = await makeCustomer(priya.id, { name: "Shree Paints" });
-    await stagePartyRow("Shree Paints", "Suresh");
-
-    await recomputeSalesPeople();
-    const [fromSheet] = await db.select().from(customers).where(eq(customers.id, customer.id));
-    assert.equal(fromSheet.salesPersonName, "Suresh", "the sheet is the author until somebody decides");
-
-    setTestUser(deepa);
-    await updateAccountManagers({
-      customerIds: [customer.id],
-      salesAmId: rakesh.id,
-      sales: { reasonCode: "Salesperson left" },
-    });
-    setTestUser(priya);
-
-    await recomputeSalesPeople();
-    const [after] = await db.select().from(customers).where(eq(customers.id, customer.id));
-    assert.equal(after.salesPersonName, "Rakesh", "the sheet overwrote a decision");
-    assert.equal(after.salesAmId, rakesh.id);
-  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -7953,7 +7926,7 @@ describe("choosing an account manager", () => {
     );
   });
 
-  test("an employee can hold the back office seat, by name", async () => {
+  test("an employee picked for the back office seat is held by their own account", async () => {
     const staff = await makeEmployee("Ramesh Jadhav", "active");
     const customer = await makeCustomer(priya.id);
 
@@ -7966,30 +7939,21 @@ describe("choosing an account manager", () => {
     assert.equal(res.ok, true, res.ok ? "" : res.error);
     setTestUser(priya);
 
-    const [after] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, customer.id));
+    const [account] = await db.select().from(users).where(eq(users.employeeId, staff.id));
+    assert.ok(account, "the employee has their one account");
+    const [after] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(after.backOfficeAmId, account.id);
     assert.equal(after.backOfficeName, "Ramesh Jadhav");
-    assert.equal(
-      after.backOfficeAmId,
-      null,
-      "an employee has no account, and none may be invented for them",
-    );
 
-    const [change] = await db
-      .select()
-      .from(customerAmChanges)
-      .where(eq(customerAmChanges.customerId, customer.id));
+    const [change] = await db.select().from(customerAmChanges).where(eq(customerAmChanges.customerId, customer.id));
     assert.equal(change.role, "back_office");
-    assert.equal(change.toName, "Ramesh Jadhav");
-    assert.equal(change.toUserId, null);
+    assert.equal(change.toUserId, account.id);
   });
 
-  test("the sales seat can hold an employee, by name, with no queue", async () => {
-    // Four of the busiest salespeople on this book are employees with no
-    // login. Refusing to record them meant the true answer could not be
-    // written down at all.
+  test("an employee picked for the sales seat is held by their own account", async () => {
+    // Owner's rule, 2026-11-18: every employee has an account and a seat is
+    // an id. This used to write the name and NO id ("none may be invented"),
+    // which is how a book came to be decided by comparing text.
     const staff = await makeEmployee("Prakash Vasudev Prasad", "active");
     const customer = await makeCustomer(priya.id);
 
@@ -8002,25 +7966,16 @@ describe("choosing an account manager", () => {
     assert.equal(res.ok, true, res.ok ? "" : res.error);
     setTestUser(priya);
 
-    const [after] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, customer.id));
+    const [account] = await db.select().from(users).where(eq(users.employeeId, staff.id));
+    assert.ok(account, "the employee has their one account");
+    const [after] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(after.salesAmId, account.id, "the seat is the account");
     assert.equal(after.salesPersonName, "Prakash Vasudev Prasad");
-    assert.equal(
-      after.salesAmId,
-      null,
-      "an employee has no account, and none may be invented for them",
-    );
 
-    // And the consequence the screen warns about is real: nobody holds it.
-    const [change] = await db
-      .select()
-      .from(customerAmChanges)
-      .where(eq(customerAmChanges.customerId, customer.id));
+    const [change] = await db.select().from(customerAmChanges).where(eq(customerAmChanges.customerId, customer.id));
     assert.equal(change.role, "sales");
+    assert.equal(change.toUserId, account.id);
     assert.equal(change.toName, "Prakash Vasudev Prasad");
-    assert.equal(change.toUserId, null);
   });
 
   test("a sales seat cannot be an account and an employee at once", async () => {
@@ -9778,7 +9733,7 @@ describe("the sales manager seat, kept in step with the org chart", () => {
     await db.insert(employeeReporting).values({ id: id("er"), employeeId, managerId });
   }
 
-  test("resolves by id where the manager has an account, by name where they do not", async () => {
+  test("resolves through the sales seat: by id where the manager has an account, by name where they do not", async () => {
     // "Priya" (linked-account salesperson) reports to "Manager", who has both
     // an employee row and a real account — the id-resolution path.
     const salespersonWithAccount = await makeEmployee("Priya", "active");
@@ -9795,13 +9750,23 @@ describe("the sales manager seat, kept in step with the org chart", () => {
       salesAmId: priya.id,
       salesPersonName: null,
     });
+    /* Bharat's seat is his ACCOUNT (every employee has one); his manager
+       has no account of his own, so the manager seat is held by name. */
+    const [bharat] = await db
+      .insert(users)
+      .values({ id: id("usr"), name: "Bharat Singh", passwordHash: "x", role: "associate", initials: "BS", employeeId: salespersonNameOnly.id })
+      .returning();
     const viaSheetName = await makeCustomer(priya.id, {
-      salesAmId: null,
+      salesAmId: bharat.id,
       salesPersonName: "Bharat Singh",
     });
+    /* And a typed name with no seat behind it decides nothing. */
+    const nameOnly = await makeCustomer(priya.id, { salesAmId: null, salesPersonName: "Bharat Singh" });
 
     const n = await recomputeSalesManagers();
-    assert.equal(n, 2);
+    assert.ok(n >= 2);
+    const [c] = await db.select().from(customers).where(eq(customers.id, nameOnly.id));
+    assert.notEqual(c.salesManagerPersonName, "Sales State Head", "a name alone does not give a shop a manager");
 
     const [a] = await db.select().from(customers).where(eq(customers.id, viaAccount.id));
     assert.equal(a.salesManagerId, manager.id, "the manager's own account was matched by name");
