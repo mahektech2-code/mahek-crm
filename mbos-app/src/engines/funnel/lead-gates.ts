@@ -18,7 +18,7 @@
  * a sample is standing in a shop with no signal.
  */
 
-import type { LeadSalesType, LeadStage } from "../lead-labels";
+import type { LeadSalesType, LeadStage } from "./lead-labels";
 import { isParked, isTerminal, ladderFor, nextStage } from "./lead-ladder";
 
 /* ------------------------------------------------------------- conditions */

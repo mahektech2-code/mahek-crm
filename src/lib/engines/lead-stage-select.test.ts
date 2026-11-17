@@ -83,11 +83,11 @@ describe("stage selection from Qualification", () => {
     }
   });
 
-  test("an unanswered question, an unvalidated GST and a missing distributor each block it", () => {
+  test("an unanswered question, unagreed credit days and a missing distributor each block it", () => {
     const answers = { ...ready().qualification } as Record<string, string>;
-    delete answers.trial_product;
+    delete answers.price_range;
     assert.ok(stageSelection(ready({ qualification: answers }), opts).entryMissing.length > 0);
-    assert.ok(stageSelection(ready({ gstVerified: false }), opts).entryMissing.length > 0);
+    assert.ok(stageSelection(ready({ creditDaysWanted: null }), opts).entryMissing.length > 0);
     const third = stageSelection(ready({ salesType: "third_party", distributorCount: 0 }), opts);
     assert.ok(third.entryMissing.some((c) => c.id === "distributor_named"));
     assert.ok(third.choices.every((c) => !c.available));
