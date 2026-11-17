@@ -47,7 +47,7 @@ export function CommunicationPanel({
 
   return (
     <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 16 }}>
-      <Text accessibilityRole="header" style={[{ fontSize: 15, color: C.ink }, weight(800)]}>
+      <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(800)]}>
         Contact them
       </Text>
 
@@ -183,7 +183,7 @@ function RecordSheet({
               No document here yet. The office adds these. Until then you cannot save it as sent.
             </Text>
           ) : option.documents.length === 1 ? (
-            <Text accessibilityLabel={'What you send: ' + option.documents[0].title} style={[{ fontSize: 15, color: C.ink }, weight(700)]}>
+            <Text accessibilityLabel={'What you send: ' + option.documents[0].title} style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>
               {option.documents[0].title}
             </Text>
           ) : (
@@ -215,7 +215,7 @@ function RecordSheet({
             backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
           })}>
           <Icon name="call" size={16} color={C.primaryDeep} strokeWidth={2} />
-          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>Call now</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>Call now</Text>
         </Pressable>
       ) : null}
 
@@ -233,8 +233,8 @@ function RecordSheet({
         <Pressable
           onPress={onClose}
           accessibilityRole="button"
-          style={({ pressed }) => ({ width: 110, height: 56, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
-          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Not now</Text>
+          style={({ pressed }) => ({ width: 110, minHeight: 56, paddingVertical: 8, borderRadius: 28, backgroundColor: pressed ? C.hairline : C.canvas, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Not now</Text>
         </Pressable>
         <PrimaryButton
           label="Save"

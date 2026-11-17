@@ -89,7 +89,7 @@ Nobody types a line's transport expense. It appears on Orders → Billing & disp
 </Rule>
 
 <Rule title="Pending until paid; a manager can undo">
-A new bill is **Pending**. **Mark as paid** asks the payment date and Bank, UPI or Cash (a reference and remarks are optional) and moves it to **Paid history**; the split stays on every order. A paid bill cannot be edited. A **manager** can move a paid bill back to Pending with a reason — the split stays and the undone payment is kept in the bill's history. A pending bill can be edited, or deleted with a reason, which takes its shares off every order; the bill itself is kept, marked deleted.
+A new bill is **To pay**. Bills are entered several at a time — one row per trip, each saved as its own bill, so one refused row never stops the others — and paid several at a time: one payment per transporter (the payment date and Bank, UPI or Cash; a reference and remarks are optional), written in one transaction, so a selection is paid whole or not at all. A paid bill moves to **Paid**; the split stays on every order. A paid bill cannot be edited. A **manager** can move a paid bill back to Pending with a reason — the split stays and the undone payment is kept in the bill's history. A pending bill can be edited, or deleted with a reason, which takes its shares off every order; the bill itself is kept, marked deleted.
 </Rule>
 
 <Rule title="A corrected dispatch makes the split stale">
@@ -101,6 +101,14 @@ This is our cost to the transporter. The freight charged to the customer on the 
 </Callout>
 
 Every write is a row in the bill's history and an audit row (`erp.freightBill.*`). Bills, reports and the history are read on **Transport expenses**; Trips & freight and Paid freight were retired into it, and the old addresses open it.
+
+## A call covers a transporter, and every call is kept
+
+<Rule title="One call, every LR that company carries">
+On the road can be read **By transporter**, one heading per company, because one call to a transporter answers for all its LRs. The list shows no phone numbers; **Call** opens the calling window with that company's people (from its godowns on the Transporters tab) or the driver of a Mahek Vehicle. A call ends one of four ways: **Gave an update** moves the LRs it names (through the same Update as a single LR, so the customer hears exactly what they always did) and books the next call; **Answered — nothing new** books the next call and tells nobody; **No answer / busy** leaves the calls due; **Asked to call back** moves them to the day given. News read off the transporter's WhatsApp or tracking page is an update or nothing new — only a phone call can go unanswered.
+</Rule>
+
+Every call is one row, kept whatever it achieved, and the window shows that transporter's last sixty days of them: how often our calls were answered, and how often an expected day moved over the last thirty. The next call after an update defaults to <Setting k="erp.logistics.callEveryDays" /> days on.
 
 ## Delivery is confirmed by somebody
 

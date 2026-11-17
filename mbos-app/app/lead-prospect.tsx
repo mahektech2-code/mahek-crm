@@ -438,7 +438,7 @@ export default function ProspectForm() {
             />
           ))}
           {productQuery.trim() && hits.length === 0 ? (
-            <Text style={[{ fontSize: 12, color: C.faint }, weight(400)]}>No product matches that.</Text>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.faint }, weight(400)]}>No product matches that.</Text>
           ) : null}
         </View>
       </>
@@ -513,8 +513,8 @@ export default function ProspectForm() {
                 accessible
                 accessibilityLabel={'Answer these to make it a Prospect: ' + outstanding.map((c) => c.says).join('. ')}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={[{ fontSize: 22, color: C.lime }, weight(800)]}>{String(outstanding.length)}</Text>
-                <Text style={[{ fontSize: 13, color: '#FFFFFF' }, weight(700)]}>to answer before Prospect</Text>
+                <Text style={[{ flexShrink: 1, fontSize: 22, lineHeight: 31, color: C.lime }, weight(800)]}>{String(outstanding.length)}</Text>
+                <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: '#FFFFFF' }, weight(700)]}>to answer before Prospect</Text>
               </View>
               <View style={{ marginTop: 6, gap: 2 }}>
                 {outstanding.map((c) => (
@@ -567,8 +567,8 @@ export default function ProspectForm() {
       <LeadCard style={{ borderRadius: 22 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <LeadGlyph name="drop" size={18} color={C.muted} strokeWidth={2} />
-          <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 13, color: C.ink }, weight(700)]}>Litres a month</Text>
-          <Text style={[{ fontSize: 11, color: C.faint }, weight(400)]}>total, not only ours</Text>
+          <Text accessibilityRole="header" style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>Litres a month</Text>
+          <Text style={[{ flexShrink: 1, fontSize: 11, color: C.faint }, weight(400)]}>total, not only ours</Text>
         </View>
         <View style={{ marginTop: 10 }}>
           {verifyOr(
@@ -711,8 +711,8 @@ export default function ProspectForm() {
           onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}
           accessibilityRole="button"
           accessibilityLabel="Back to the lead"
-          style={({ pressed }) => ({ width: 140, height: 60, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
-          <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Back to lead</Text>
+          style={({ pressed }) => ({ minWidth: 120, flexShrink: 0, minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 30, backgroundColor: pressed ? C.wash : C.surface, alignItems: 'center', justifyContent: 'center' })}>
+          <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Back to lead</Text>
         </Pressable>
         <PrimaryButton
           label="Save details"
@@ -720,7 +720,7 @@ export default function ProspectForm() {
           onPress={() => save()}
           disabled={Boolean(refusal)}
           whyDisabled={refusal ?? undefined}
-          style={{ flex: 1, height: 60, minHeight: 60, borderRadius: 30 }}
+          style={{ flex: 1, minHeight: 60, borderRadius: 30 }}
         />
       </View>
 
@@ -846,7 +846,7 @@ function SideTile({
       style={({ pressed }) => ({ flex: 1, minHeight: 76, borderRadius: 20, backgroundColor: pressed ? C.wash : C.surface, paddingHorizontal: 12, paddingVertical: 10 })}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         {glyph ? <LeadGlyph name={glyph} size={15} color={ink} /> : icon ? <Icon name={icon} size={15} color={ink} strokeWidth={2.2} /> : null}
-        <Text style={[{ fontSize: 12, color: ink }, weight(700)]}>{title}</Text>
+        <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: ink }, weight(700)]}>{title}</Text>
       </View>
       <Text numberOfLines={2} style={[{ fontSize: 13, lineHeight: 18, color: bodyInk, marginTop: 4 }, weight(400)]}>
         {body}

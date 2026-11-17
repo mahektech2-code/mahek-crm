@@ -1013,7 +1013,7 @@ async function saveFill(ctx: ErpContext, h: Record<string, string>): Promise<Res
   let lotCode = "";
   const res = await inTx(async (tx) => {
     await lockLot(tx, "sfg", sfgLot, godownId);
-    const lot = (await sfgLots(tx)).find((l) => l.lotCode === sfgLot && l.godownId === godownId);
+    const lot = (await sfgLots(tx, { rates: false })).find((l) => l.lotCode === sfgLot && l.godownId === godownId);
     if (!lot || lot.formulationId !== f.id) return refuse(fieldErr("sfgLot", "Pick a lot of this SFG with stock at this godown"));
     const qcWhy = qcRefusal(await sfgQcOf(sfgLot, tx), sfgLot);
     if (qcWhy) return refuse(fieldErr("sfgLot", qcWhy));
@@ -1288,7 +1288,7 @@ const packBatches: ScreenModule = {
         await lockLot(tx, "pack", before.batchNo, before.godownId);
         const [entry] = await tx.select().from(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "batch"), eq(erpPackEntries.sourceId, before.batchNo)));
         if (entry) {
-          const stock = (await packLots(tx)).find((l) => l.batchNo === before.batchNo && l.godownId === before.godownId)?.stock ?? 0;
+          const stock = (await packLots(tx, { rates: false })).find((l) => l.batchNo === before.batchNo && l.godownId === before.godownId)?.stock ?? 0;
           if (stock < entry.boxes - 1e-9) return refuse(err("Boxes of this batch have already moved on; the batch can no longer be taken apart.", "rule_violation"));
         }
         await tx.delete(erpPackLines).where(eq(erpPackLines.id, id));
@@ -1543,7 +1543,7 @@ const fgStock: ScreenModule = {
       let made: string[] = [];
       const res = await inTx(async (tx) => {
         await lockLot(tx, "fg", lotCode, godownId);
-        const lot = (await fgLots(tx)).find((l) => l.finishedGoodId === fg && l.lotCode === lotCode && l.godownId === godownId);
+        const lot = (await fgLots(tx, { rates: false })).find((l) => l.finishedGoodId === fg && l.lotCode === lotCode && l.godownId === godownId);
         if (!lot) return refuse(err("That lot has no stock here any more.", "not_found"));
         if (!lot.skuId) return refuse(err("This lot has no loose SKU to sell as.", "rule_violation"));
         const h = await looseHeadroom(tx, { lotCode, finishedGoodId: fg, godownId, ledgerStock: lot.stock });
@@ -1568,7 +1568,7 @@ async function labelOldBatchBoxes(ctx: ErpContext, id: string) {
   let made: string[] = [];
   const res = await inTx(async (tx) => {
     await lockLot(tx, "pack", batchNo, godownId);
-    const lot = (await packLots(tx, { lots: [batchNo] })).find((l) => l.godownId === godownId);
+    const lot = (await packLots(tx, { lots: [batchNo], rates: false })).find((l) => l.godownId === godownId);
     if (!lot) return refuse(err("That batch has no boxes here any more.", "not_found"));
     const h = await boxHeadroom(tx, { batchNo, godownId, ledgerStock: lot.stock });
     if (!h.room) return refuse(err(h.labelled ? "Every box of this batch here already carries an id." : "That batch has no boxes here any more.", "rule_violation"));

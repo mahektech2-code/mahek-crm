@@ -6,7 +6,7 @@ import { hrmsAttendance, hrmsWorkdayClaims, type HrmsAttendance, type WorkdaySes
 import { getConfig } from "@/lib/config/store";
 import { listUserApps } from "@/lib/access";
 import type { User } from "@/db/schema";
-import type { HrmsContext } from "../access";
+import type { HrmsSelf } from "../access";
 import { approvedLeave, attendanceCfg, fieldDayOn, holidays } from "./attendance";
 import { timingMap } from "./people";
 import { holidayApplies } from "../engines/leave";
@@ -108,8 +108,14 @@ export function mirrorPatch(sessions: WorkdaySession[], now: number, approved: S
  * day of approved leave. A half day of leave is not a day off: it lowers the
  * hours needed to be present instead, the MBOS rule.
  */
-export async function offDayFor(employeeId: string, office: string | null, date: string): Promise<{ offDay: "week_off" | "holiday" | "leave" | null; halfLeave: boolean; holidayName: string | null }> {
-  const [timings, hols, leave] = await Promise.all([timingMap(), holidays(date, date), approvedLeave([employeeId])]);
+type Timings = Awaited<ReturnType<typeof timingMap>>;
+
+/* `timings` may be handed in by a caller that already read it: it is every
+   employee's and every office's working hours, and the workday clock asks
+   for it once a minute from every tab — reading it three times per ask was
+   most of what an ask cost. */
+export async function offDayFor(employeeId: string, office: string | null, date: string, known?: Timings): Promise<{ offDay: "week_off" | "holiday" | "leave" | null; halfLeave: boolean; holidayName: string | null }> {
+  const [timings, hols, leave] = await Promise.all([known ?? timingMap(), holidays(date, date), approvedLeave([employeeId])]);
   const covering = leave.filter((l) => l.startDate <= date && l.endDate >= date);
   const holiday = hols.find((h) => holidayApplies(h, employeeId, office));
   if (holiday) return { offDay: "holiday", halfLeave: false, holidayName: holiday.name };
@@ -120,8 +126,8 @@ export async function offDayFor(employeeId: string, office: string | null, date:
 }
 
 /** Minutes to be Present and to be a Half day on a date, from the weekday's timing or the settings. */
-export async function thresholdsFor(employeeId: string, date: string, halfLeave: boolean): Promise<{ presentMin: number; halfMin: number }> {
-  const [timings, cfg] = await Promise.all([timingMap(), attendanceCfg()]);
+export async function thresholdsFor(employeeId: string, date: string, halfLeave: boolean, known?: Timings): Promise<{ presentMin: number; halfMin: number }> {
+  const [timings, cfg] = await Promise.all([known ?? timingMap(), attendanceCfg()]);
   const t = timings.get(`${employeeId}|${weekdayOf(date)}`);
   const present = t?.presentMin ?? cfg.presentMin ?? 480;
   const half = t?.halfMin ?? cfg.halfMin ?? 240;
@@ -146,7 +152,7 @@ export async function settledToday(employeeId: string, now = Date.now()): Promis
 }
 
 /** Who the clock applies to, and who it never locks. */
-export async function subjectOf(ctx: HrmsContext): Promise<{ subject: boolean; exempt: string | null }> {
+export async function subjectOf(ctx: HrmsSelf): Promise<{ subject: boolean; exempt: string | null }> {
   if (!ctx.level) return { subject: false, exempt: "no-hrms" };
   if (!ctx.employee) return { subject: false, exempt: "not-linked" };
   if (ctx.employee.status !== "active") return { subject: false, exempt: "inactive" };
@@ -196,7 +202,7 @@ export type WorkdayState = {
 };
 
 /** Everything a screen needs to draw the clock, settled as of now. */
-export async function workdayState(ctx: HrmsContext): Promise<WorkdayState> {
+export async function workdayState(ctx: HrmsSelf): Promise<WorkdayState> {
   const now = Date.now();
   const date = today();
   const [cfg, who, attCfg] = await Promise.all([workdayCfg(), subjectOf(ctx), attendanceCfg()]);
@@ -236,8 +242,8 @@ export async function workdayState(ctx: HrmsContext): Promise<WorkdayState> {
     firstIn: null,
   };
   if (!me || !who.subject) return base;
-  const [row, off, handset] = await Promise.all([settledToday(me.id, now), offDayFor(me.id, me.office, date), fieldDayOn(me.id, date)]);
-  const th = row?.presentMin != null && row?.halfMin != null ? { presentMin: row.presentMin, halfMin: row.halfMin } : await thresholdsFor(me.id, date, off.halfLeave);
+  const [row, off, handset] = await Promise.all([settledToday(me.id, now), offDayFor(me.id, me.office, date, timings), fieldDayOn(me.id, date)]);
+  const th = row?.presentMin != null && row?.halfMin != null ? { presentMin: row.presentMin, halfMin: row.halfMin } : await thresholdsFor(me.id, date, off.halfLeave, timings);
   const sessions = row ? sessionsOf(row) : [];
   const phase = phaseOf(sessions);
   const approved = row ? await approvedSpans(row.id) : [];
@@ -306,8 +312,8 @@ export async function serverLocked(user: User): Promise<boolean> {
   const hit = lockCache.get(user.id);
   if (hit && Date.now() - hit.at < LOCK_CACHE_MS) return hit.locked;
   return checking.run(true, async () => {
-    const { hrmsContext } = await import("../access");
-    const ctx = await hrmsContext();
+    const { hrmsSelf } = await import("../access");
+    const ctx = await hrmsSelf();
     const s = await workdayState(ctx);
     lockCache.set(user.id, { at: Date.now(), locked: s.locked });
     return s.locked;

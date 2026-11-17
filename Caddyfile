@@ -62,7 +62,21 @@
 	}
 
 	# The app publishes no port to the host; this is the only route to it.
-	reverse_proxy app:3000 {
+	#
+	# ONE OR TWO RENDERERS, named by APP_UPSTREAMS (docker-compose.yml): "app:3000"
+	# on a 1 vCPU box, "app:3000 app2:3000" once there is a second core to run
+	# the second on. The placeholder is replaced before the Caddyfile is read, so
+	# a space in it is two upstreams.
+	#
+	# LEAST BUSY, NOT TURN ABOUT. A Node process draws one page at a time, so the
+	# request to send a process is the one that will not queue behind somebody's
+	# 300 ms ERP list — whichever has fewer requests open. A process that refuses
+	# a connection (stopped for a deploy) is skipped for five seconds and the
+	# request goes to the other, which is what makes a deploy with both running
+	# drop nothing.
+	reverse_proxy {$APP_UPSTREAMS:app:3000} {
+		lb_policy least_conn
+		fail_duration 5s
 		# A DEPLOY IS A FEW SECONDS WITH NO APP, and a save made in them used
 		# to fail outright. `restart.sh` recreates the one app container: the
 		# old one stops, the new one boots, and for that gap every request got
@@ -123,7 +137,9 @@
 {$PUBLIC_LINK_HOST:track.mahekindia.com} {
 	encode zstd gzip
 
-	reverse_proxy app:3000 {
+	reverse_proxy {$APP_UPSTREAMS:app:3000} {
+		lb_policy least_conn
+		fail_duration 5s
 		lb_try_duration 30s
 		lb_try_interval 250ms
 	}

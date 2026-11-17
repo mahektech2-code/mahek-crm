@@ -28,17 +28,9 @@ const FIT_SCRIPT = `(function(){try{var mm=function(q){return matchMedia(q).matc
 export default function FactoryLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
-      {/* Devanagari for Hindi and Marathi, and the mono the lot codes are set in. */}
-      {/* App Router: React hoists this into the head of every factory page. */}
-      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-      <link
-        rel="stylesheet"
-        precedence="default"
-        href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap"
-      />
       <script dangerouslySetInnerHTML={{ __html: FIT_SCRIPT }} />
       <style>{`
-        .fx-root{font-family:'Google Sans Flex','Noto Sans Devanagari',system-ui,-apple-system,sans-serif;color:#1A1E28;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+        .fx-root{font-family:var(--font-google-sans),var(--font-noto-devanagari),system-ui,-apple-system,sans-serif;color:#1A1E28;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
         .fx-root *{box-sizing:border-box}
         .fx-root button,.fx-root input{font-family:inherit;color:inherit}
         .fx-root button:focus-visible{outline:3px solid #6835FB;outline-offset:2px}

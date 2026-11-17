@@ -391,7 +391,7 @@ export default function QualifyScreen() {
           <T style={[{ fontSize: 13, color: HERO.lavender.muted }, weight(600)]}>
             {(isDistributor ? 'Distributor qualification' : 'Qualification') + ' · ' + stageLabel(view.stage)}
           </T>
-          <T style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: HERO.lavender.ink }, weight(800)]}>
+          <T style={[{ marginTop: 4, fontSize: 24, lineHeight: 30, letterSpacing: -0.4, color: HERO.lavender.ink }, weight(800)]}>
             {lead.company?.trim() || lead.name}
           </T>
           {/* A count, never a bar. It pops when a save moves it — the count

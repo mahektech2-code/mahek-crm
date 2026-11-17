@@ -6,7 +6,7 @@ import { getConfig } from "@/lib/config/store";
 import type { HrmsContext } from "@/lib/hrms/access";
 import { allPeople, isActive, officeWeek, offices } from "@/lib/hrms/services/people";
 import { hrmsLink } from "@/lib/hrms/registry";
-import { AttendanceSettingsEditor, GraceEditor, OfficeWeekEditor } from "./attendance-client";
+import { AttendanceSettingsEditor, OfficeWeekEditor } from "./attendance-client";
 import { Note } from "./my-attendance";
 
 /* ---------------------------------------------------------------------------
@@ -128,7 +128,6 @@ export async function OfficeTimingsView({ ctx, sp }: { ctx: HrmsContext; sp: Rec
         </p>
       ) : null}
 
-      <GraceEditor initial={c["hrms.attendance.graceMinutes"]} canEdit={ctx.administrator} />
 
       <section aria-labelledby="pp-t" className="rounded-[14px] border border-line bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4 pb-3">

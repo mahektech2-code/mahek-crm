@@ -11,9 +11,9 @@ import { calendarDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "@/lib/erp/access";
 import { erpId } from "@/lib/erp/server";
-import { fgLots, packLots, rmLevelAvailable, rmLots, sfgLots } from "@/lib/erp/stock";
+import { fgLots, packLots, rmLevelAvailable, rmLots, sfgLots, type RmLot } from "@/lib/erp/stock";
 import { clock12, clockText, dayLine, hhmm } from "./time";
-import type { Area, BoxSku, Emp, FactoryData, FgSku, Lot, Order, Proc, ReviewItem, SfgProduct, Task, Team } from "./types";
+import type { Area, BoxSku, Emp, FactoryData, FgSku, Lorry, Lot, Order, Proc, ReviewItem, SfgProduct, Task, Team } from "./types";
 import { PROCS, REQ_DEPTS, type ReqDept } from "./types";
 import { cleanDepts, isProc, supervises } from "./departments";
 
@@ -291,18 +291,26 @@ export async function masters(): Promise<Masters> {
 
 /* ======================================================= the lots */
 
-export async function lotsFor(godown: { id: string; name: string }, m: Masters): Promise<Record<string, Lot>> {
+export async function lotsFor(
+  godown: { id: string; name: string },
+  m: Masters,
+  /** What the bootstrap has already read, so it is not read twice: the raw-material lots and this godown's open packing batches. */
+  read: { rms?: Promise<RmLot[]>; open?: Promise<OpenBatch[]> } = {},
+): Promise<Record<string, Lot>> {
   const lots: Record<string, Lot> = {};
   /* Lots that hold something (`LotPick`), and the QC and can size of THOSE lots —
      this runs on every phone's poll, so it must cost what is on the shelf, not
-     what has ever been made. */
+     what has ever been made. And their STOCK only (`rates: false`): a lot's
+     rate is the whole book's costing, worked out again after every stock
+     write, and nothing on the phone shows a rate. */
+  const rmsRead = read.rms ?? rmLots();
   const [rms, sfgs, fgs, packs, levelAvail, open] = await Promise.all([
-    rmLots(),
-    sfgLots(),
-    fgLots(),
-    packLots(),
-    rmLevelAvailable(),
-    openPackBatches(godown.id),
+    rmsRead,
+    sfgLots(db, { rates: false }),
+    fgLots(db, { rates: false }),
+    packLots(db, { rates: false }),
+    rmsRead.then((l) => rmLevelAvailable(l)),
+    read.open ?? openPackBatches(godown.id),
   ]);
   const sfgCodes = [...new Set(sfgs.map((l) => l.lotCode))];
   const fgCodes = [...new Set(fgs.map((l) => l.lotCode))];
@@ -374,13 +382,13 @@ export async function lotsFor(godown: { id: string; name: string }, m: Masters):
  * batches took). Null where the ERP does not count it: no box type on the SKU,
  * or a box type the raw-material master does not name.
  */
-export async function emptyBoxesAt(godownId: string): Promise<Record<string, number | null>> {
+export async function emptyBoxesAt(godownId: string, rmsRead?: Promise<RmLot[]>): Promise<Record<string, number | null>> {
   const [skus, known, rms] = await Promise.all([
     q<{ id: string; boxType: string | null }>(sql`
       select p.id, pk.box_type as "boxType" from products p join erp_product_packing pk on pk.product_id = p.id
        where p.active and pk.empty_boxes_required > 0`),
     q<{ name: string }>(sql`select lower(name) as name from erp_raw_materials`),
-    rmLots(),
+    rmsRead ?? rmLots(),
   ]);
   const names = new Set(known.map((r) => r.name));
   const stock = new Map<string, number>();
@@ -532,10 +540,10 @@ export async function teamDefaults(): Promise<Record<Proc, Team>> {
  * allocated the lots; the unique index on the order is what keeps a second
  * bootstrap from making two.
  */
-async function ensureDispatchTasks(fc: FactoryCtx, orders: Record<string, Order>, teams: Record<Proc, Team>) {
+async function ensureDispatchTasks(godownId: string, orders: Record<string, Order>, teams: Record<Proc, Team>) {
   const keys = Object.keys(orders);
   if (!keys.length) return;
-  const have = await q<{ no: string }>(sql`select order_no as no from factory_tasks where proc = 'dispatch' and status <> 'cancelled'`);
+  const have = await q<{ no: string }>(sql`select order_no as no from factory_tasks where proc = 'dispatch' and status <> 'cancelled' and order_no in ${inList(keys.map(orderNoOf))}`);
   const known = new Set(have.map((h) => h.no));
   const cfg = await getConfig();
   const due = String(cfg["erp.factory.dispatchDue"] ?? "17:00");
@@ -546,7 +554,7 @@ async function ensureDispatchTasks(fc: FactoryCtx, orders: Record<string, Order>
       const id = await nextTaskId(tx);
       const made = (await tx.execute(sql`
         insert into factory_tasks (id, proc, godown_id, work_date, due, status, order_no, created_by_id)
-        values (${id}, 'dispatch', ${fc.godown.id}, ${today()}::date, ${due}, 'ready', ${no}, null)
+        values (${id}, 'dispatch', ${godownId}, ${today()}::date, ${due}, 'ready', ${no}, null)
         on conflict do nothing returning id`)) as unknown as { id: string }[];
       if (made.length) await writeTeam(tx, id, teams.dispatch, null);
     });
@@ -606,20 +614,156 @@ export async function tasksFor(godownId: string, open: OpenBatch[]): Promise<Tas
 
 /* ======================================================= the bootstrap */
 
-export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
+/*
+ * ONE GODOWN'S FLOOR, READ ONCE FOR EVERY PHONE ASKING AT THE SAME TIME.
+ *
+ * Every phone on the floor asks for the whole floor every 45 seconds, on every
+ * return to the app, and in the background after a scan that changed stock —
+ * and almost all of what it gets is the same for everybody at that godown: the
+ * lots, the orders, the people, the lorries, the day's jobs. During the
+ * afternoon's loading every phone at the godown asks inside the same few
+ * seconds, and each used to add the whole book up for itself, side by side, on
+ * a server with one CPU: one bootstrap took seventeen seconds because twelve
+ * were running.
+ *
+ * So the floor is built ONCE per godown at a time and shared, and nothing is
+ * ever answered from a build that started before the question was asked: a
+ * phone asking while a build is running waits for the NEXT one, which starts
+ * the moment the running one ends and answers everybody who asked meanwhile.
+ * That is the only rule that keeps "send a job, see it done" true — the build
+ * that answers a phone always started after its write had committed — and it
+ * still means a hundred phones cost two builds, not a hundred. Nothing is kept
+ * after it is answered: this is a queue, not a cache, and it can never be
+ * stale.
+ *
+ * What differs per person — a department supervisor's narrower floor, the
+ * names of people only their jobs mention, their own phone number, whether
+ * they load lorries — is laid over the shared build afterwards
+ * (`bootstrap`), on copies: the shared build is never written to once built.
+ */
+
+type Floor = {
+  cfg: Awaited<ReturnType<typeof getConfig>>;
+  m: Masters;
+  lots: Record<string, Lot>;
+  emp: Record<string, Emp>;
+  hours: Record<string, number>;
+  teams: Record<Proc, Team>;
+  emptyBoxes: Record<string, number | null>;
+  orders: Record<string, Order>;
+  lorries: Record<string, Lorry>;
+  /** Every job at the godown, whatever department. */
+  tasks: Task[];
+  /** The review items, audit lines and stoppages of the whole godown — what everybody but a department supervisor sees. */
+  review: ReviewRow[];
+  audit: AuditRow[];
+  down: { reason: string; min: number }[];
+  dup: number;
+  corr: number;
+  now: Date;
+};
+type ReviewRow = { id: string; kind: ReviewItem["kind"]; taskId: string; title: string; body: string; meta: string };
+type AuditRow = { task: string; at: string; who: string; detail: string | null };
+
+const reviewRows = (godownId: string, scopes: string[] | null) =>
+  q<ReviewRow>(sql`
+      select r.id, r.kind, r.task_id as "taskId", r.title, r.body, r.meta from factory_reviews r
+        join factory_tasks t on t.id = r.task_id
+       where r.status = 'open' and t.godown_id = ${godownId}
+         and (${!scopes} or t.proc = any(${textArray(scopes ?? [])}))
+       order by r.created_at desc`);
+const auditRows = (taskIds: string[]) =>
+  q<AuditRow>(sql`
+      select a.entity_id as task, a.at as at, coalesce(u.name, 'System') as who, a.after_state->>'detail' as detail
+        from audit_log a left join users u on u.id = a.actor_id
+       where a.actor_app = 'factory' and a.entity_type = 'factory_task' and a.entity_id in ${inList(taskIds)}
+       order by a.at desc limit 400`);
+const downRows = (godownId: string, scopes: string[] | null) =>
+  q<{ reason: string; min: number }>(sql`
+      select reason, sum(minutes)::int as min from factory_downtime
+       where godown_id = ${godownId} and recorded_at > now() - interval '7 days'
+         and (${!scopes} or proc = any(${textArray(scopes ?? [])}))
+       group by reason`);
+
+async function buildFloor(godown: { id: string; name: string }): Promise<Floor> {
   const cfg = await getConfig();
   const m = await masters();
-  const [lots, { emp, hours }, teams, open, emptyBoxes] = await Promise.all([lotsFor(fc.godown, m), people(fc.godown.id), teamDefaults(), openPackBatches(fc.godown.id), emptyBoxesAt(fc.godown.id)]);
-  const orders = await ordersFor(fc.godown, m, lots);
-  await ensureDispatchTasks(fc, orders, teams);
-  const lorries = fc.dispatch ? await lorriesFor(fc.godown.id) : {};
-  /* A department supervisor's floor is their departments. */
-  const tasks = (await tasksFor(fc.godown.id, open)).filter((t) => !fc.head || !fc.scopes || fc.scopes.includes(t.proc));
+  /* The raw-material book and the open batches are each read once, for every part that needs them. */
+  const rmsRead = rmLots();
+  const openRead = openPackBatches(godown.id);
+  const [lots, { emp, hours }, teams, open, emptyBoxes] = await Promise.all([
+    lotsFor(godown, m, { rms: rmsRead, open: openRead }),
+    people(godown.id),
+    teamDefaults(),
+    openRead,
+    emptyBoxesAt(godown.id, rmsRead),
+  ]);
+  const orders = await ordersFor(godown, m, lots);
+  await ensureDispatchTasks(godown.id, orders, teams);
+  const [lorries, tasks] = await Promise.all([lorriesFor(godown.id), tasksFor(godown.id, open)]);
   for (const t of tasks) {
     if (t.proc === "dispatch" && t.status !== "done" && t.order && orders[t.order]?.blocked) t.status = "blocked";
   }
+  const [review, audit, down, dup, corr] = await Promise.all([
+    reviewRows(godown.id, null),
+    auditRows(tasks.map((t) => t.id)),
+    downRows(godown.id, null),
+    q<{ c: number }>(sql`select count(*)::int as c from audit_log where actor_app = 'factory' and action = 'factory.duplicate' and at > now() - interval '7 days'`),
+    q<{ c: number }>(sql`select count(*)::int as c from factory_reviews where kind = 'correction' and decision = 'approved' and decided_at > now() - interval '7 days'`),
+  ]);
+  return { cfg, m, lots, emp, hours, teams, emptyBoxes, orders, lorries, tasks, review, audit, down, dup: n(dup[0]?.c), corr: n(corr[0]?.c), now: new Date() };
+}
+
+type FloorSlot = { running: Promise<Floor> | null; next: Promise<Floor> | null };
+const floors = new Map<string, FloorSlot>();
+
+/** The godown's floor from a build that started no earlier than this call — shared with every call waiting on the same build. */
+function floorFor(godown: { id: string; name: string }): Promise<Floor> {
+  const key = godown.id + "\u0000" + godown.name;
+  let slot = floors.get(key);
+  if (!slot) floors.set(key, (slot = { running: null, next: null }));
+  const s = slot;
+  const launch = (): Promise<Floor> => {
+    const p = buildFloor(godown);
+    s.running = p;
+    const settle = () => {
+      if (s.running !== p) return;
+      if (s.next) return; /* the queued build takes over as soon as it launches */
+      s.running = null;
+      if (floors.get(key) === s) floors.delete(key);
+    };
+    p.then(settle, settle);
+    return p;
+  };
+  if (!s.running) return launch();
+  if (!s.next) {
+    const queued = s.running
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .then(() => {
+        s.next = null;
+        return launch();
+      });
+    s.next = queued;
+  }
+  return s.next;
+}
+
+export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
+  const f = await floorFor(fc.godown);
+  /* A department supervisor's floor is their departments. */
+  const narrowed = fc.head && fc.scopes ? fc.scopes : null;
+  const tasks = narrowed ? f.tasks.filter((t) => narrowed.includes(t.proc)) : f.tasks;
+  const [review, audit, down] = narrowed
+    ? await Promise.all([reviewRows(fc.godown.id, narrowed), auditRows(tasks.map((t) => t.id)), downRows(fc.godown.id, narrowed)])
+    : [f.review, f.audit, f.down];
+
   /* Tasks may name people who have no factory row (an admin who assigned
-     work, somebody since moved out): they still need a name on the screen. */
+     work, somebody since moved out): they still need a name on the screen.
+     A copy: the shared build is everybody's. */
+  const emp: Record<string, Emp> = { ...f.emp };
   const named = new Set(Object.keys(emp));
   const missing = new Set<string>();
   for (const t of tasks) for (const k of [t.team.owner, t.team.op, t.team.ver, ...t.team.helpers]) if (k && !named.has(k)) missing.add(k);
@@ -628,29 +772,8 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
     const extra = await q<{ id: string; name: string }>(sql`select id, name from users where id in ${inList([...missing])}`);
     for (const u of extra) emp[u.id] = { key: u.id, n: u.name, ph: "", role: u.id === fc.user.id && fc.head ? "Production Head" : "Not on the factory list", area: u.id === fc.user.id ? fc.area : "qc", ...(u.id === fc.user.id && fc.areas.length > 1 ? { areas: fc.areas } : null), id: "—" };
   }
-  if (fc.user.phone) emp[fc.user.id].ph = fc.user.phone.replace(/\D/g, "").slice(-10);
+  if (fc.user.phone) emp[fc.user.id] = { ...emp[fc.user.id], ph: fc.user.phone.replace(/\D/g, "").slice(-10) };
 
-  const taskIds = tasks.map((t) => t.id);
-  const [review, audit, down, dup, corr] = await Promise.all([
-    q<{ id: string; kind: ReviewItem["kind"]; taskId: string; title: string; body: string; meta: string }>(sql`
-      select r.id, r.kind, r.task_id as "taskId", r.title, r.body, r.meta from factory_reviews r
-        join factory_tasks t on t.id = r.task_id
-       where r.status = 'open' and t.godown_id = ${fc.godown.id}
-         and (${!fc.head || !fc.scopes} or t.proc = any(${textArray(fc.scopes ?? [])}))
-       order by r.created_at desc`),
-    q<{ task: string; at: string; who: string; detail: string | null }>(sql`
-      select a.entity_id as task, a.at as at, coalesce(u.name, 'System') as who, a.after_state->>'detail' as detail
-        from audit_log a left join users u on u.id = a.actor_id
-       where a.actor_app = 'factory' and a.entity_type = 'factory_task' and a.entity_id in ${inList(taskIds)}
-       order by a.at desc limit 400`),
-    q<{ reason: string; min: number }>(sql`
-      select reason, sum(minutes)::int as min from factory_downtime
-       where godown_id = ${fc.godown.id} and recorded_at > now() - interval '7 days'
-         and (${!fc.head || !fc.scopes} or proc = any(${textArray(fc.scopes ?? [])}))
-       group by reason`),
-    q<{ c: number }>(sql`select count(*)::int as c from audit_log where actor_app = 'factory' and action = 'factory.duplicate' and at > now() - interval '7 days'`),
-    q<{ c: number }>(sql`select count(*)::int as c from factory_reviews where kind = 'correction' and decision = 'approved' and decided_at > now() - interval '7 days'`),
-  ]);
   const ACTS: Record<string, string[]> = {
     tolerance: ["Accept with reason", "Send for re-check"],
     manual: ["Confirm lot", "Reject — scan again"],
@@ -659,30 +782,30 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
     issue: ["Fix and reassign", "Close"],
     unposted: ["Put it in the ERP", "Close — not needed"],
   };
-  const now = new Date();
+  const now = f.now;
   return {
     loc: fc.godown.name,
     locId: fc.godown.id,
-    shift: String(cfg["erp.factory.shift"] ?? "Shift A · 06:00–14:00"),
+    shift: String(f.cfg["erp.factory.shift"] ?? "Shift A · 06:00–14:00"),
     dateLine: dayLine(now),
     at: now.toISOString(),
     emp,
-    teams,
-    hours,
-    rm: m.rm,
-    sfg: m.sfg,
-    sku: m.sku,
-    pm: m.pm,
-    box: m.box,
-    orders,
-    lots,
-    lorries,
-    emptyBoxes,
+    teams: f.teams,
+    hours: f.hours,
+    rm: f.m.rm,
+    sfg: f.m.sfg,
+    sku: f.m.sku,
+    pm: f.m.pm,
+    box: f.m.box,
+    orders: f.orders,
+    lots: f.lots,
+    lorries: fc.dispatch ? f.lorries : {},
+    emptyBoxes: f.emptyBoxes,
     tasks,
     review: review.map((r) => ({ id: r.id, kind: r.kind, task: r.taskId, title: r.title, text: clockText(r.body), meta: clockText(r.meta), acts: ACTS[r.kind] ?? ACTS.issue })),
     audit: audit.map((a) => ({ task: a.task, at: clock12(hhmm(new Date(String(a.at)))), who: a.who, t: clockText(a.detail ?? "") })),
     down: Object.fromEntries(down.map((d) => [d.reason, n(d.min)])),
-    dup: n(dup[0]?.c),
-    corr: n(corr[0]?.c),
+    dup: f.dup,
+    corr: f.corr,
   };
 }

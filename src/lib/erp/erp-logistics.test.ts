@@ -24,6 +24,7 @@ import {
   customers,
   erpCustomerProfiles,
   erpFgEntries,
+  erpLrs,
   erpOrders,
   erpProductPacking,
   erpRefValues,
@@ -43,6 +44,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import * as L from "@/lib/erp/logistics";
+import * as Calls from "@/lib/erp/transporter-calls";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { erpAudit } from "@/lib/erp/server";
 import * as T from "@/lib/erp/trips";
@@ -287,6 +289,35 @@ describe("dispatch opens the transport record (§18)", () => {
     [c] = await L.consignments({ ids: [t.id] });
     assert.equal(c.destination, c.lrDestination, "an emptied destination goes back to the LR's own");
 
+    /* 0345 — one call to the transporter covers its LRs, and every call is kept, answered or not. */
+    const carrier = c.transporter!;
+    const dueBefore = c.nextCallOn;
+    assert.equal(msg(await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "no_answer", source: "whatsapp" })), "Say how the call went");
+    assert.equal(msg(await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "call_back", source: "call" })), "Say when they asked you to call back");
+    assert.match(msg(await Calls.logTransporterCall(ctx, { transporter: "Somebody Else", transportIds: [t.id], outcome: "no_answer", source: "call" })), /Nothing of Somebody Else's is on the road/);
+    const unanswered = await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "no_answer", source: "call", spokeTo: "nobody" });
+    assert.ok(unanswered.ok, msg(unanswered));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.nextCallOn, dueBefore, "nobody answered, so the call stays where it was");
+    const told = (await roadMessages()).length;
+    assert.equal(msg(await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "update", source: "call", lrs: [{ transportIds: [t.id], stage: c.stage }] })), "Nothing moved on any LR — pick “Answered — nothing new” instead");
+    const news = await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "update", source: "call", spokeTo: "Suresh", lrs: [{ transportIds: [t.id], stage: c.stage, city: "Vadakara", pickupPoint: c.pickupPoint }] });
+    assert.ok(news.ok, msg(news));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.currentCity, "Vadakara");
+    assert.equal((await roadMessages()).length, told + 1, "the city is news, so the party is told");
+    const quiet = await Calls.logTransporterCall(ctx, { transporter: carrier, transportIds: [t.id], outcome: "no_change", source: "call" });
+    assert.ok(quiet.ok, msg(quiet));
+    assert.equal((await roadMessages()).length, told + 1, "nothing new tells nobody");
+    const hist = await Calls.transporterCallHistory(`  ${carrier.toUpperCase()} `);
+    assert.deepEqual(
+      hist.rows.map((h) => h.outcome),
+      ["no_change", "update", "no_answer"],
+    );
+    assert.deepEqual(hist.rows[1].changes, [{ lrNo: c.lrNo, what: "Reached Vadakara" }]);
+    assert.equal(hist.rows[1].spokeTo, "Suresh");
+    assert.equal(hist.stats.answeredPct, 67);
+
     /* A problem, solved. */
     assert.equal(msg(await L.raiseIssue(ctx, [t.id], { issue: "Other" })), "Say what the problem is");
     assert.ok((await L.raiseIssue(ctx, [t.id], { issue: "Delayed", note: "lorry broke down", notify: false })).ok);
@@ -412,6 +443,41 @@ describe("dispatch opens the transport record (§18)", () => {
     const report = await F.freightReport("2000-01-01", "2100-01-01");
     assert.equal(report.pendingPaise, 30000);
     assert.equal(report.byCustomer[0].label, "Shree Paints");
+  });
+
+  test("several bills are entered together, each on its own, and several are paid in one go — all or none", async () => {
+    const ctx = await as(admin);
+    await db.execute(sql`update erp_freight_bill_lines set live = false`);
+    await db.execute(sql`update erp_freight_bills set status = 'deleted'`);
+    const [t] = await db.select().from(erpTransports);
+    await db.update(erpTransports).set({ vehicleNo: "MH04 KL 2231", paymentType: "Paid" }).where(eq(erpTransports.id, t.id));
+    const day = String(t.billDate);
+    const [vl] = await F.vehicleLines("MH04 KL 2231", day);
+    const row = { lrNo: "77001", billDate: day, transporter: "VRL", vehicleNo: "MH04 KL 2231", dispatchOn: day, amountPaise: 12000, orderIds: [vl.orderId] };
+    /* One row saves; the second names the same line and is refused on its own, with the reason — the first is not undone. */
+    const saved = await F.saveFreightBills(ctx, [row, { ...row, lrNo: "77002" }]);
+    assert.ok(saved.ok, msg(saved));
+    const answers = saved.ok ? saved.data : [];
+    assert.equal(answers[0].ok, true);
+    assert.equal(answers[1].ok, false);
+    assert.match(answers[1].ok ? "" : answers[1].error, /Already on TB-/);
+    const id = answers[0].ok ? answers[0].id : "";
+    /* Nothing to save is refused outright. */
+    assert.equal((await F.saveFreightBills(ctx, [])).ok, false);
+    /* A bill in two payments, or one whose split is stale, pays nothing. */
+    assert.match(msg(await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank" }, { billIds: [id], paidOn: day, mode: "upi" }])), /two payments/);
+    await db.update(erpTransports).set({ paymentType: "To Pay" }).where(eq(erpTransports.id, t.id));
+    assert.match(msg(await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank" }])), /TB-\d+ · LR 77001: .*Split it again/);
+    assert.equal((await F.freightBills({ status: "pending", ids: [id] }))[0].status, "pending");
+    await db.update(erpTransports).set({ paymentType: "Paid" }).where(eq(erpTransports.id, t.id));
+    /* One payment for the selection: the bill moves to Paid with the payment's date, mode and reference. */
+    const paid = await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank", reference: "UTR 4492" }]);
+    assert.ok(paid.ok, msg(paid));
+    const [bill] = await F.freightBills({ status: "paid", ids: [id] });
+    assert.equal(bill.status, "paid");
+    assert.equal(bill.paymentMode, "bank");
+    assert.equal(bill.paymentRef, "UTR 4492");
+    assert.match(msg(await F.markFreightBillsPaid(ctx, [{ billIds: [id], paidOn: day, mode: "bank" }])), /already paid/);
   });
 
   test("an extra expense entered on Orders → Billing & dispatch reaches the transport record too", async () => {
@@ -853,6 +919,11 @@ describe("vehicle trips and the transport payment shared by litres (Order-to-Del
     assert.ok(issue.ok, msg(issue));
     let [c] = await L.consignments({ ids: [t] });
     assert.notEqual(c.phase, "delivered");
+    /* A transporter's bill closes only under its LR. */
+    assert.match(msg(await L.markDelivered(ctx, [t], { date: "2026-09-15", receivedBy: "Ramesh", notify: false })), /Order 9401 has no LR yet/);
+    const lrId = id("elr");
+    await db.insert(erpLrs).values({ id: lrId, lrNo: "LR-9401", status: "assigned" });
+    await db.update(erpTransports).set({ lrId }).where(eq(erpTransports.id, t));
     const done = await L.markDelivered(ctx, [t], { date: "2026-09-15", receivedBy: "Ramesh", proof: "POD 7781", notify: false });
     assert.ok(done.ok, msg(done));
     [c] = await L.consignments({ ids: [t] });
@@ -1133,8 +1204,7 @@ describe("delivery proof: an LR for a transporter, a signed copy for a Mahek Veh
     const [l] = (await db.execute(sql`select status from erp_lrs where id = ${copy}`)) as unknown as { status: string }[];
     assert.equal(l.status, "assigned");
     assert.match(msg(await L.markDelivered(ctx, [other.id], { date: "2026-10-22", signedCopyId: copy, receivedBy: "Someone", notify: false })), /closes another delivery/);
-    const plain = await L.markDelivered(ctx, [other.id], { date: "2026-10-22", notify: false });
-    assert.ok(plain.ok, "a transporter's bill still closes without any copy, as before");
+    assert.match(msg(await L.markDelivered(ctx, [other.id], { date: "2026-10-22", notify: false })), /has no LR yet/, "without a signed copy, a transporter's bill needs its LR to close");
   });
 
   test("a plate typed as the transporter becomes the vehicle number when the bill moves to a Mahek Vehicle, and the old name stays on the timeline", async () => {

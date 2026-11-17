@@ -1,16 +1,16 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { lorryBoard, lorryScan } from "./lorry";
-import type { FactoryCtx } from "./server";
+import { judgeLorryScan, lorryBoard, type JudgedScan } from "./lorry";
+import { bootstrap, type FactoryCtx } from "./server";
 import { looksLikeUnitId } from "@/lib/erp/engines/trace";
-import type { FactoryData, LorryBatch, LorryBatchResult, LorryBoard, LorryHalf, LorryLocal, LorryScan, LorryScanIn } from "./types";
+import type { FactoryData, LorryBatch, LorryBatchResult, LorryBoard, LorryHalf, LorryLocal, LorryScanIn } from "./types";
 
 /* ---------------------------------------------------------------------------
  * A LOADER SCANS FASTER THAN A ROUND TRIP. One label a second over factory
  * Wi-Fi to a small server is a queue that only grows when every label waits
  * for its own answer, so the phone sends what has queued up as ONE call and
- * this judges each in turn — with the same `lorryScan`, so the same order is
+ * this judges each in turn — with the same `lorryScan` (`judgeLorryScan`), so the same order is
  * picked, the same desk verdict given and the same ERP scan row written.
  *
  * THE SCAN IS RECORDED BEFORE IT IS JUDGED. Each arrives with an id the phone
@@ -53,10 +53,11 @@ export const BATCH_MAX = 50;
 type Stored = { status: string; result: LorryBatchResult | null; user: string };
 
 /** A scan's answer without the board (sent once for the batch) or the factory data (likewise). */
-const slim = (id: string, r: LorryScan): LorryBatchResult => {
+const slim = (id: string, r: JudgedScan): LorryBatchResult => {
   const rest: Record<string, unknown> = { ...r, id };
   delete rest.board;
   delete rest.data;
+  delete rest.wantsData;
   return rest as LorryBatchResult;
 };
 
@@ -102,6 +103,9 @@ export async function lorryScanBatch(
   const results: LorryBatchResult[] = [];
   let board: LorryBoard | null = null;
   let data: FactoryData | null = null;
+  /* Whether `board` is still the lorry as it stands, and whether a scan changed the phone's factory data: both are read once, after the last scan. */
+  let boardCurrent = false;
+  let wantsData = false;
   let task = taskId && /^T-/.test(taskId) ? taskId : null;
   let half: LorryHalf | null = null;
   let heldCode = held ? String(held) : null;
@@ -135,10 +139,13 @@ export async function lorryScanBatch(
     } else {
       const t0 = performance.now();
       try {
-        const full = await lorryScan(fc, key, s.code, task, heldCode);
+        const full = await judgeLorryScan(fc, key, s.code, task, heldCode, true);
         r = slim(s.id, full);
-        if (full.board) board = full.board;
-        if (full.ok && full.data) data = full.data;
+        if (full.board) {
+          board = full.board;
+          boardCurrent = true;
+        } else if (full.ok) boardCurrent = false;
+        if (full.ok && full.wantsData) wantsData = true;
         const judgeMs = Math.round(performance.now() - t0);
         const said = l ? await shadowAgree(l, r, heldCode) : null;
         await db.execute(sql`
@@ -176,7 +183,8 @@ export async function lorryScanBatch(
       on conflict (id) do nothing`);
 
   /* Every answer came from a resend: the board is still wanted, once. */
-  if (!board && results.length) board = await lorryBoard(fc, key);
+  if (!boardCurrent && results.length) board = await lorryBoard(fc, key);
+  if (wantsData) data = await bootstrap(fc);
   return { results, notJudged: rest.map((s) => s.id), board, data, task, half };
 }
 

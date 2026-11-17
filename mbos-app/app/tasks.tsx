@@ -328,7 +328,7 @@ export default function TasksScreen() {
           accessible
           style={{ backgroundColor: C.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 28, alignItems: 'center' }}>
           <Icon name="task" size={32} color={C.faint} strokeWidth={1.8} />
-          <Text style={[{ fontSize: 17, color: C.ink, marginTop: 6, textAlign: 'center' }, weight(800)]}>Nothing pending</Text>
+          <Text style={[{ fontSize: 17, lineHeight: 24, color: C.ink, marginTop: 6, textAlign: 'center' }, weight(800)]}>Nothing pending</Text>
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center', marginTop: 4 }}>
             What you promise a customer on a visit shows here.
           </Text>
@@ -351,10 +351,10 @@ export default function TasksScreen() {
                 accessibilityRole="header"
                 accessibilityLabel={g + ', ' + items.length}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: before ? 4 : 0 }}>
-                <Text style={[{ fontSize: 13, color: headInk }, weight(800)]}>{g}</Text>
+                <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: headInk }, weight(800)]}>{g}</Text>
                 <View
                   style={{
-                    height: 22,
+                    minHeight: 22,
                     minWidth: 22,
                     paddingHorizontal: 6,
                     borderRadius: 11,
@@ -362,11 +362,11 @@ export default function TasksScreen() {
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}>
-                  <Text style={[{ fontSize: 12, color: C.danger }, weight(800)]}>{String(items.length)}</Text>
+                  <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(800)]}>{String(items.length)}</Text>
                 </View>
               </View>
             ) : (
-              <Text accessibilityRole="header" style={[{ fontSize: 13, color: headInk, marginTop: before ? 4 : 0 }, weight(800)]}>
+              <Text accessibilityRole="header" style={[{ fontSize: 13, lineHeight: 18, color: headInk, marginTop: before ? 4 : 0 }, weight(800)]}>
                 {g + ' · ' + items.length}
               </Text>
             )}
@@ -414,7 +414,8 @@ export default function TasksScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={doneLabel}
                     style={({ pressed }) => ({
-                      height: 48,
+                      minHeight: 48,
+                      paddingVertical: 6,
                       minWidth: 48,
                       paddingHorizontal: form.length ? 18 : 0,
                       borderRadius: 24,
@@ -424,7 +425,7 @@ export default function TasksScreen() {
                       opacity: pressed ? 0.88 : 1,
                     })}>
                     {form.length ? (
-                      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>Answer</Text>
+                      <Text style={[{ fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(700)]}>Answer</Text>
                     ) : (
                       <Icon name="tick" size={18} color="#FFFFFF" strokeWidth={2.4} />
                     )}
@@ -463,7 +464,8 @@ export default function TasksScreen() {
                             accessibilityRole="image"
                             accessibilityLabel="High priority"
                             style={{
-                              height: 24,
+                              minHeight: 24,
+                              paddingVertical: 3,
                               paddingHorizontal: 8,
                               borderRadius: 12,
                               backgroundColor: C.dangerBg,
@@ -483,13 +485,13 @@ export default function TasksScreen() {
                             {shop ? (
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                 {t.customerId ? <Icon name="shop" size={12} color={C.muted} strokeWidth={2} /> : null}
-                                <Text style={[{ fontSize: 12, color: t.customerId ? C.muted : C.faint }, weight(600)]}>{shop}</Text>
+                                <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: t.customerId ? C.muted : C.faint }, weight(600)]}>{shop}</Text>
                               </View>
                             ) : null}
                             {fromOffice ? (
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                 <OfficeGlyph />
-                                <Text style={[{ fontSize: 12, color: C.muted }, weight(600)]}>From the office</Text>
+                                <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }, weight(600)]}>From the office</Text>
                               </View>
                             ) : null}
                           </View>
@@ -526,7 +528,8 @@ export default function TasksScreen() {
                                 accessibilityRole="button"
                                 accessibilityLabel="Call now"
                                 style={({ pressed }) => ({
-                                  height: 48,
+                                  minHeight: 48,
+                                  paddingVertical: 6,
                                   paddingHorizontal: 14,
                                   borderRadius: 24,
                                   backgroundColor: C.navy,
@@ -536,7 +539,7 @@ export default function TasksScreen() {
                                   opacity: pressed ? 0.88 : 1,
                                 })}>
                                 <Icon name="call" size={16} color={C.lime} strokeWidth={2.2} />
-                                <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(700)]}>Call now</Text>
+                                <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(700)]}>Call now</Text>
                               </Pressable>
                             ) : null}
                             {action === 'shop' ? (
@@ -548,14 +551,15 @@ export default function TasksScreen() {
                                 accessibilityRole="button"
                                 accessibilityLabel="Open shop"
                                 style={({ pressed }) => ({
-                                  height: 48,
+                                  minHeight: 48,
+                                  paddingVertical: 6,
                                   paddingHorizontal: 14,
                                   borderRadius: 24,
                                   backgroundColor: pressed ? C.hairline : C.canvas,
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                 })}>
-                                <Text style={[{ fontSize: 14, color: C.ink }, weight(700)]}>Open shop</Text>
+                                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>Open shop</Text>
                               </Pressable>
                             ) : null}
                             <View
@@ -571,14 +575,14 @@ export default function TasksScreen() {
                               {g === 'Overdue' ? (
                                 <>
                                   <Icon name="clock" size={14} color={C.danger} strokeWidth={2.2} />
-                                  <Text style={[{ fontSize: 13, color: C.danger }, weight(700)]}>
+                                  <Text style={[{ flexShrink: 1, fontSize: 13, lineHeight: 18, color: C.danger }, weight(700)]}>
                                     {plural(daysSince(t.dueDate, today) ?? 0, 'day') + ' late'}
                                   </Text>
                                 </>
                               ) : g === 'This week' || g === 'Later' ? (
                                 <>
                                   <Icon name="cal" size={13} color={C.muted} strokeWidth={2} />
-                                  <Text style={[{ fontSize: 12, color: C.muted }, weight(700)]}>{due}</Text>
+                                  <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>{due}</Text>
                                 </>
                               ) : null}
                             </View>
@@ -589,7 +593,7 @@ export default function TasksScreen() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
                           <Text
                             accessibilityLabel={[...meta, due].join(', ')}
-                            style={[{ flex: 1, minWidth: 0, fontSize: 12, color: t.customerId || fromOffice ? C.muted : C.faint }, weight(600)]}>
+                            style={[{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 17, color: t.customerId || fromOffice ? C.muted : C.faint }, weight(600)]}>
                             {[...meta, g === 'Later' || g === 'This week' ? due : ''].filter(Boolean).join(' · ')}
                           </Text>
                           {buttons}
@@ -621,10 +625,10 @@ export default function TasksScreen() {
           style={[WASH, { minHeight: 52, borderRadius: 26, marginTop: 12 }, titleErr ? { borderWidth: 2, borderColor: C.danger } : null]}
         />
         {titleErr ? (
-          <Text style={[{ fontSize: 12, color: C.danger, marginTop: 6 }, weight(600)]}>Write what needs to be done.</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(600)]}>Write what needs to be done.</Text>
         ) : null}
 
-        <Text style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]} accessibilityLabel="Which customer">
+        <Text style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 14 }, weight(700)]} accessibilityLabel="Which customer">
           Customer
         </Text>
         <View style={{ flexDirection: 'row', marginTop: 6 }}>
@@ -663,12 +667,12 @@ export default function TasksScreen() {
             />
           ))}
           {custQuery.trim() && customers.length === 0 ? (
-            <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 6 }}>No customer found.</Text>
+            <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center', marginTop: 6 }}>No customer found.</Text>
           ) : null}
           {bookTotal > customers.length ? (
             <Text
               accessibilityLabel={'Showing ' + customers.length + ' of ' + bookTotal + '. Search to find more.'}
-              style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 4 }}>
+              style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center', marginTop: 4 }}>
               {customers.length + ' of ' + bookTotal + ' · search for more'}
             </Text>
           ) : null}
@@ -707,7 +711,7 @@ export default function TasksScreen() {
             <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
               {closingForm.length ? 'Answer and finish' : 'Mark as done'}
             </Text>
-            {closing ? <Text style={{ fontSize: 12, color: C.muted }}>{closing.title}</Text> : null}
+            {closing ? <Text style={{ marginTop: 4, fontSize: 12, lineHeight: 17, color: C.muted }}>{closing.title}</Text> : null}
           </View>
         </View>
         {closing?.description && closingForm.length ? (
@@ -726,7 +730,7 @@ export default function TasksScreen() {
         ) : null}
         <Text
           accessibilityLabel={closingForm.length ? 'Anything else (optional)' : noteRequired ? 'What you did · needed' : 'What you did'}
-          style={[{ fontSize: 13, color: C.ink, marginTop: 14 }, weight(700)]}>
+          style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 14 }, weight(700)]}>
           {closingForm.length ? 'Anything else' : 'What you did'}
           {closingForm.length ? (
             <Text style={[{ color: C.faint }, weight(500)]}>{' optional'}</Text>
@@ -752,7 +756,8 @@ export default function TasksScreen() {
             accessibilityLabel={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'}
             style={({ pressed }) => ({
               marginTop: 10,
-              height: 48,
+              minHeight: 48,
+              paddingVertical: 8,
               borderRadius: 24,
               borderWidth: 1.5,
               borderStyle: 'dashed',
@@ -764,7 +769,7 @@ export default function TasksScreen() {
               gap: 8,
             })}>
             <Icon name={donePhoto ? 'tick' : 'camera'} size={18} color={donePhoto ? C.success : C.primaryDeep} strokeWidth={2} />
-            <Text style={[{ fontSize: 14, color: donePhoto ? C.success : C.primaryDeep }, weight(700)]}>
+            <Text style={[{ flexShrink: 1, fontSize: 14, lineHeight: 20, color: donePhoto ? C.success : C.primaryDeep }, weight(700)]}>
               {donePhoto ? 'Photo added · take it again' : 'Photo · optional'}
             </Text>
           </Pressable>
@@ -775,7 +780,7 @@ export default function TasksScreen() {
             accessibilityLabel="Your answers are kept on the phone if you close this — finish later."
             style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
             <SaveGlyph />
-            <Text style={{ flex: 1, fontSize: 12, color: C.muted }}>Answers kept on the phone if you close · finish later</Text>
+            <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>Answers kept on the phone if you close · finish later</Text>
           </View>
         ) : null}
         {doneErr ? <ErrBox text={doneErr} /> : null}
@@ -797,7 +802,7 @@ export default function TasksScreen() {
             <Text accessibilityRole="header" style={[{ fontSize: 20, lineHeight: 25, color: C.ink }, weight(800)]}>
               Move to another day
             </Text>
-            {snoozing ? <Text style={{ fontSize: 12, color: C.muted }}>{snoozing.title}</Text> : null}
+            {snoozing ? <Text style={{ marginTop: 4, fontSize: 12, lineHeight: 17, color: C.muted }}>{snoozing.title}</Text> : null}
           </View>
         </View>
         {snoozing ? (
@@ -822,20 +827,21 @@ export default function TasksScreen() {
                   accessibilityLabel={o.a11y}
                   hitSlop={{ top: 4, bottom: 4 }}
                   style={{
-                    height: 40,
+                    minHeight: 40,
+                    paddingVertical: 6,
                     paddingHorizontal: 16,
                     borderRadius: 20,
                     backgroundColor: on ? C.navy : C.canvas,
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}>
-                  <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{o.label}</Text>
+                  <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : C.ink }, weight(700)]}>{o.label}</Text>
                 </Pressable>
               );
             })}
             <Text
               accessibilityLabel={snoozeTo ? 'Moves to ' + dmy(snoozeTo) : undefined}
-              style={[{ flex: 1, textAlign: 'right', fontSize: 14, color: C.ink }, weight(700)]}>
+              style={[{ flex: 1, textAlign: 'right', fontSize: 14, lineHeight: 20, color: C.ink }, weight(700)]}>
               {snoozeTo ? '→ ' + dmy(snoozeTo) : ''}
             </Text>
           </View>
@@ -854,7 +860,7 @@ export default function TasksScreen() {
             }
           />
         </View>
-        <Text accessibilityLabel="Why · needed" style={[{ fontSize: 13, color: C.ink, marginTop: 12 }, weight(700)]}>
+        <Text accessibilityLabel="Why · needed" style={[{ fontSize: 13, lineHeight: 18, color: C.ink, marginTop: 12 }, weight(700)]}>
           Why
           <Text style={{ color: C.danger }}>{' · needed'}</Text>
         </Text>
@@ -921,8 +927,8 @@ function PickRow({
         opacity: pressed ? 0.7 : 1,
       })}>
       <View style={{ flex: 1, minWidth: 0, paddingVertical: 8 }}>
-        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{label}</Text>
-        {sub ? <Text style={{ fontSize: 12, color: C.muted }}>{sub}</Text> : null}
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{label}</Text>
+        {sub ? <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.muted }}>{sub}</Text> : null}
       </View>
       <View
         style={{
@@ -960,7 +966,7 @@ function Seg<K extends string>({
     <View
       accessibilityRole="radiogroup"
       accessibilityLabel={label}
-      style={{ flex: 1, height: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
+      style={{ flex: 1, minHeight: 44, borderRadius: 22, backgroundColor: C.canvas, padding: 4, flexDirection: 'row', gap: 4 }}>
       {options.map((o) => {
         const on = o === value;
         return (
@@ -975,7 +981,7 @@ function Seg<K extends string>({
             accessibilityLabel={label + ': ' + o}
             hitSlop={{ top: 4, bottom: 4 }}
             style={{ flex: 1, borderRadius: 18, backgroundColor: on ? C.navy : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={[{ fontSize: 13, color: on ? '#FFFFFF' : o === danger ? C.danger : C.ink }, weight(700)]}>{o}</Text>
+            <Text style={[{ fontSize: 13, lineHeight: 18, color: on ? '#FFFFFF' : o === danger ? C.danger : C.ink }, weight(700)]}>{o}</Text>
           </Pressable>
         );
       })}

@@ -18,6 +18,35 @@
 
 set -euo pipefail
 
+# Wait until one service's container says healthy. Echoes nothing on success.
+healthy() {
+  local service="$1" id state
+  for _ in $(seq 1 60); do
+    id=$(docker compose ps -q "$service" || true)
+    state=$([ -n "$id" ] && docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id" 2>/dev/null || echo missing)
+    [ "$state" = "healthy" ] && return 0
+    sleep 2
+  done
+  echo "$service never reported healthy (last: $state)" >&2
+  return 1
+}
+
+# ONE AT A TIME, WHERE THERE ARE TWO. With `app2` already running
+# (COMPOSE_PROFILES=scale in .env), recreating both at once would leave Caddy
+# nothing to send to for the half minute the new image takes to boot. So the
+# first is replaced and waited for while the second serves, then the second
+# while the first does — and Caddy skips whichever is down (Caddyfile,
+# `fail_duration`). With one app there is nobody to hand over to, and the full
+# `up` below is the old behaviour unchanged. The first time `app2` is switched
+# on it is not running yet, so that deploy is the ordinary one too.
+if [ -n "$(docker compose ps -q --status running app2 2>/dev/null || true)" ]; then
+  echo "two app processes: replacing them one at a time…"
+  docker compose up -d --no-deps app
+  healthy app
+  docker compose up -d --no-deps app2
+  healthy app2
+fi
+
 # `up -d` with no service named reconciles EVERY service against the compose
 # file. It is a no-op for anything already correct, so an ordinary deploy where
 # only the app image changed costs nothing extra.

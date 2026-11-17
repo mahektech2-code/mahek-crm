@@ -192,7 +192,7 @@ export default function TrackingSetupScreen() {
             gap: 6,
           }}>
           {exemption === 'exempt' ? null : <Icon name="warn" size={14} color={C.danger} strokeWidth={2.2} />}
-          <Text style={[{ flexShrink: 1, fontSize: 12, color: exemption === 'exempt' ? C.success : C.danger }, weight(700)]}>
+          <Text style={[{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: exemption === 'exempt' ? C.success : C.danger }, weight(700)]}>
             {exemption === 'exempt'
               ? 'Battery saving is off for Mahek MBOS'
               : 'Battery saving still on — can stop your route at any time'}
@@ -273,7 +273,8 @@ export default function TrackingSetupScreen() {
             accessibilityState={{ disabled: restarting, busy: restarting }}
             style={({ pressed }) => ({
               marginTop: 12,
-              height: 56,
+              minHeight: 56,
+              paddingVertical: 8,
               borderRadius: 28,
               backgroundColor: C.primary,
               flexDirection: 'row',
@@ -283,7 +284,7 @@ export default function TrackingSetupScreen() {
               opacity: restarting ? 0.7 : pressed ? 0.88 : 1,
             })}>
             <Icon name="refresh" size={18} color="#FFFFFF" strokeWidth={2.2} />
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(700)]}>
+            <Text style={[{ flexShrink: 1, fontSize: 16, lineHeight: 22, color: '#FFFFFF' }, weight(700)]}>
               {restarting ? 'Restarting…' : 'Restart Mahek MBOS'}
             </Text>
           </Pressable>
@@ -294,7 +295,8 @@ export default function TrackingSetupScreen() {
             accessibilityRole="button"
             style={({ pressed }) => ({
               marginTop: 12,
-              height: 52,
+              minHeight: 52,
+              paddingVertical: 8,
               borderRadius: 26,
               borderWidth: 2,
               borderColor: C.navy,
@@ -303,7 +305,7 @@ export default function TrackingSetupScreen() {
               justifyContent: 'center',
               opacity: pressed ? 0.85 : 1,
             })}>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Check this phone again</Text>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Check this phone again</Text>
           </Pressable>
         ) : null}
 
@@ -312,7 +314,7 @@ export default function TrackingSetupScreen() {
       </View>
 
       <View style={{ marginTop: 10, backgroundColor: C.navy, borderRadius: 22, padding: 16 }}>
-        <Text accessibilityRole="header" style={[{ fontSize: 15, color: '#FFFFFF' }, weight(800)]}>
+        <Text accessibilityRole="header" style={[{ fontSize: 15, lineHeight: 21, color: '#FFFFFF' }, weight(800)]}>
           Why this matters
         </Text>
         <Text
@@ -329,7 +331,7 @@ export default function TrackingSetupScreen() {
       </View>
 
       {steps === null ? (
-        <Text style={{ fontSize: 13, color: C.muted, marginTop: 16, textAlign: 'center' }}>Checking your phone…</Text>
+        <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 16, textAlign: 'center' }}>Checking your phone…</Text>
       ) : (
         <SetupStepList
           steps={steps}

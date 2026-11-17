@@ -78,11 +78,11 @@
   /* WhatsApp's own green, for a button that opens a chat. */
   --color-whatsapp: #25d366;
 
-  --font-sans: "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: var(--font-google-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
   /* What a candidate SAID is set in a serif — testimony, set apart from the
      system's own voice (Hire design §4.2). Nothing else uses it. */
-  --font-evidence: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-evidence: var(--font-source-serif), Georgia, "Times New Roman", serif;
 
   --ease-swift: cubic-bezier(0.2, 0, 0.2, 1);
 

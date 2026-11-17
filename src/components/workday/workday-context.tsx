@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import type { WorkdayState } from "@/lib/hrms/services/workday";
-import { WorkdayOverlays } from "./workday-overlays";
+/* The lock screen and the idle warning, fetched the first time one of them is
+   needed rather than in every page's first download — see `needsOverlay`. */
+const WorkdayOverlays = React.lazy(() => import("./workday-overlays").then((m) => ({ default: m.WorkdayOverlays })));
 import { lockGuardsPage } from "@/lib/workday-lock-paths";
 
 /* ---------------------------------------------------------------------------
@@ -52,6 +54,13 @@ const CHANNEL = "mahek-workday";
 const ACT_KEY = "mahek.workday.lastActivity";
 const BEAT_KEY = "mahek.workday.lastBeat";
 const BEAT_EVERY = 60_000;
+/* When any tab last asked the server for the day. Every open tab used to ask
+   once a minute, and again each time it came into view; now one asks and
+   tells the others (CHANNEL), and a tab nobody is looking at asks nothing. */
+const POLL_KEY = "mahek.workday.lastPoll";
+const POLL_EVERY = 60_000;
+/* Coming back into view re-asks only an answer older than this. */
+const FRESH_ON_VIEW = 15_000;
 
 function readNum(key: string): number {
   try {
@@ -86,17 +95,24 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
   const channel = React.useRef<BroadcastChannel | null>(null);
   const lastAct = React.useRef(0);
 
-  const load = React.useCallback((s: WorkdayState) => {
-    setSkew(s.now - Date.now());
+  /* `at` is when, on this browser's clock, the answer was taken — a state
+     another tab fetched a moment ago still sets the skew right. */
+  const load = React.useCallback((s: WorkdayState, at = Date.now()) => {
+    setSkew(s.now - at);
     setState(s);
   }, []);
 
   const refresh = React.useCallback(async () => {
     try {
+      writeNum(POLL_KEY, Date.now());
       const res = await fetch("/api/workday", { cache: "no-store" });
       if (!res.ok) return;
       const j = (await res.json()) as { state?: WorkdayState };
-      if (j.state) load(j.state);
+      if (j.state) {
+        const at = Date.now();
+        load(j.state, at);
+        channel.current?.postMessage({ state: j.state, at });
+      }
     } catch {
       /* offline: keep what we have and try again on the next tick */
     }
@@ -146,7 +162,8 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     void refresh();
     try {
       channel.current = new BroadcastChannel(CHANNEL);
-      channel.current.onmessage = (e: MessageEvent<{ t?: number; refresh?: boolean }>) => {
+      channel.current.onmessage = (e: MessageEvent<{ t?: number; refresh?: boolean; state?: WorkdayState; at?: number }>) => {
+        if (e.data?.state) load(e.data.state, e.data.at ?? Date.now());
         if (e.data?.t && e.data.t > lastAct.current) {
           lastAct.current = e.data.t;
           setLastActivity(e.data.t);
@@ -162,7 +179,7 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     const vis = () => {
       if (document.visibilityState === "visible") {
         touch();
-        void refresh();
+        if (Date.now() - readNum(POLL_KEY) >= FRESH_ON_VIEW) void refresh();
       }
     };
     document.addEventListener("visibilitychange", vis);
@@ -171,11 +188,10 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", vis);
       channel.current?.close();
     };
-  }, [refresh, touch]);
+  }, [refresh, touch, load]);
 
   /* The tick: the timer, the busy markers, the heartbeat and the poll. */
   React.useEffect(() => {
-    let polls = 0;
     const id = window.setInterval(() => {
       setNow(Date.now());
       if (document.querySelector("[data-workday-busy]")) touch();
@@ -186,11 +202,12 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
       }
       if (!state?.subject) return;
       if (state.phase === "working" && lastAct.current > readNum(BEAT_KEY) && Date.now() - readNum(BEAT_KEY) >= BEAT_EVERY) void sendBeat();
-      polls++;
-      /* Every minute, and at once when the idle clock would have crossed a line. */
+      /* Only a tab somebody is looking at asks; the others hear its answer. */
+      if (document.visibilityState !== "visible") return;
+      /* Every minute across all tabs, and at once when the idle clock would have crossed a line. */
       const idle = Date.now() - lastAct.current;
       const crossing = state.phase === "working" && !(state.cfg.idleFrom != null && Date.now() < state.cfg.idleFrom) && idle >= state.cfg.breakMinutes * 60_000 && idle < state.cfg.breakMinutes * 60_000 + 1_000;
-      if (polls % 60 === 0 || crossing) void refresh();
+      if (Date.now() - readNum(POLL_KEY) >= POLL_EVERY || crossing) void refresh();
     }, 1_000);
     return () => window.clearInterval(id);
   }, [state, refresh, sendBeat, touch]);
@@ -224,34 +241,54 @@ export function WorkdayProvider({ children }: { children: React.ReactNode }) {
     void sendBeat();
   }, [touch, sendBeat]);
 
-  const value = React.useMemo<Ctx | null>(() => {
+  /* The moment and the last activity, as every reader of the context sees them. */
+  const clock = React.useMemo(() => {
     if (!state) return null;
     const t = now ? now + skew : state.now;
+    /* Before the idle cut-off nobody is idle, so nothing warns; from it the
+       idle clock counts from the cut-off at the earliest — the server's rule. */
+    const from = state.cfg.idleFrom ?? null;
+    const seen = Math.max(lastActivity, state.lastActivity ?? 0);
+    return { t, lastActivity: from != null && t < from ? t : Math.max(seen, from ?? 0) };
+  }, [state, now, skew, lastActivity]);
+
+  const value = React.useMemo<Ctx | null>(() => {
+    if (!state || !clock) return null;
+    const t = clock.t;
     const open = state.sessions[state.sessions.length - 1];
     const running = open && open.out == null ? Math.max(0, t - open.in) : 0;
     const closed = state.sessions.reduce((n, s) => n + (s.out != null ? Math.max(0, s.out - s.in) : 0), 0);
     /* The server's figure includes approved claims; the local one ticks. */
     const extraApproved = Math.max(0, state.workedMs - closed - (open && open.out == null ? Math.max(0, state.now - open.in) : 0));
-    /* Before the idle cut-off nobody is idle, so nothing warns; from it the
-       idle clock counts from the cut-off at the earliest — the server's rule. */
-    const from = state.cfg.idleFrom ?? null;
-    const seen = Math.max(lastActivity, state.lastActivity ?? 0);
     return {
       state,
       now: t,
-      lastActivity: from != null && t < from ? t : Math.max(seen, from ?? 0),
+      lastActivity: clock.lastActivity,
       workedMs: closed + running + extraApproved,
       act: actAndTell,
       refresh,
       touch: touchAndBeat,
       busy,
     };
-  }, [state, now, skew, lastActivity, actAndTell, refresh, touchAndBeat, busy]);
+  }, [state, clock, actAndTell, refresh, touchAndBeat, busy]);
 
   return (
     <WorkdayContext.Provider value={value}>
       {children}
-      {state?.subject ? <WorkdayOverlays /> : null}
+      {state?.subject && clock && needsOverlay(state, clock.t, clock.lastActivity) ? (
+        <React.Suspense fallback={null}>
+          <WorkdayOverlays />
+        </React.Suspense>
+      ) : null}
     </WorkdayContext.Provider>
   );
+}
+
+/**
+ * Whether `WorkdayOverlays` would draw anything — the same two conditions it
+ * asks itself, asked here so its code is not downloaded until one holds.
+ */
+function needsOverlay(state: WorkdayState, now: number, lastActivity: number): boolean {
+  if (state.locked) return true;
+  return state.phase === "working" && !state.offDay && now - lastActivity >= state.cfg.warnMinutes * 60_000;
 }

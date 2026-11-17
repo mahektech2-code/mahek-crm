@@ -60,21 +60,21 @@ export default function KnowledgeScreen() {
             backgroundColor: C.warnBg,
           }}>
           <Icon name="lock" size={16} color={C.warnInk} strokeWidth={2} />
-          <Text style={[{ fontSize: 13, color: C.warnInk }, weight(600)]}>List only · cannot open or finish it here yet</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.warnInk }, weight(600)]}>List only · cannot open or finish it here yet</Text>
         </View>
       }
       contentStyle={{ padding: 16, paddingBottom: 24 }}>
       {courses === null ? (
         <View style={{ backgroundColor: C.surface, borderRadius: 20, paddingVertical: 22, paddingHorizontal: 12 }}>
-          <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center' }}>Looking…</Text>
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }}>Looking…</Text>
         </View>
       ) : courses.length === 0 ? (
         <View
           accessible
           accessibilityLabel="Nothing published yet. Training will show here when the office adds it."
           style={{ backgroundColor: C.surface, borderRadius: 20, padding: 16 }}>
-          <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(800)]}>Nothing published yet</Text>
-          <Text style={{ fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 2 }}>
+          <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink, textAlign: 'center' }, weight(800)]}>Nothing published yet</Text>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted, textAlign: 'center', marginTop: 2 }}>
             Shows when the office adds it.
           </Text>
         </View>
@@ -155,13 +155,14 @@ export default function KnowledgeScreen() {
                   </View>
                   <View
                     style={{
-                      height: 28,
+                      minHeight: 28,
+                      paddingVertical: 4,
                       paddingHorizontal: 10,
                       borderRadius: 14,
                       justifyContent: 'center',
                       backgroundColor: done ? C.successBg : isDue ? C.navy : C.canvas,
                     }}>
-                    <Text style={[{ fontSize: 12, color: done ? C.success : isDue ? '#FFFFFF' : C.muted }, weight(700)]}>
+                    <Text style={[{ fontSize: 12, lineHeight: 17, color: done ? C.success : isDue ? '#FFFFFF' : C.muted }, weight(700)]}>
                       {badge}
                     </Text>
                   </View>

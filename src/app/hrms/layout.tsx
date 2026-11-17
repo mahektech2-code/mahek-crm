@@ -48,10 +48,6 @@ export default async function HrmsLayout({ children }: { children: React.ReactNo
 
   return (
     <>
-    {/* The v4 look is set in Geist, as the ERP's, the CRM's and the Sales
-        Dashboard's are. React hoists a precedence stylesheet into the head once. */}
-    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <HrmsShell
       nav={nav}
       user={{ name: ctx.user.name, email: ctx.user.email, phone: ctx.user.phone, initials: initialsOf(ctx.user.name), role: ctx.user.role }}

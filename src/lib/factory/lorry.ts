@@ -65,6 +65,13 @@ async function openJobs(godownId: string): Promise<OpenJob[]> {
      order by t.created_at`)) as unknown as OpenJob[];
 }
 
+/** The name as somebody typed it: the commonest spelling of the fold. */
+function lorryNameOf(ls: LoadingLine[]): string | null {
+  const spell = new Map<string, number>();
+  for (const l of ls) if (l.transporter?.trim()) spell.set(l.transporter.trim(), (spell.get(l.transporter.trim()) ?? 0) + 1);
+  return [...spell].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
 /** The lorries waiting at a godown, from the desk's lines. */
 export function lorriesOf(lines: LoadingLine[], jobs: OpenJob[], todayIso: string): Record<string, Lorry> {
   const out: Record<string, Lorry> = {};
@@ -86,10 +93,7 @@ export function lorriesOf(lines: LoadingLine[], jobs: OpenJob[], todayIso: strin
       it.byLot &&= !l.unitsExist && l.scanned === 0;
       items.set(l.skuId, it);
     }
-    /* The name as somebody typed it: the commonest spelling of the fold. */
-    const spell = new Map<string, number>();
-    for (const l of ls) if (l.transporter?.trim()) spell.set(l.transporter.trim(), (spell.get(l.transporter.trim()) ?? 0) + 1);
-    const name = [...spell].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    const name = lorryNameOf(ls);
     const list = [...items.values()].sort((a, b) => (a._due < b._due ? -1 : a._due > b._due ? 1 : a.label.localeCompare(b.label))).map(({ _due, ...i }) => (void _due, i));
     const job = jobs.find((j) => j.item === key && !j.done);
     const loaded = list.reduce((a, i) => a + Math.min(i.loaded, i.target), 0);
@@ -246,6 +250,23 @@ const pieceOf = (s: StickerInfo) => (s.pos != null && s.of != null ? `${s.pos} o
  * answer says which half the phone should hold next — none, once a pair is in.
  */
 export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId: string | null, held: string | null = null): Promise<LorryScan> {
+  return (await judgeLorryScan(fc, key, raw, taskId, held, false)) as LorryScan;
+}
+
+/**
+ * A scan judged inside a batch (`scan-batch.ts`): exactly `lorryScan`, except
+ * that a scan which goes on does not read the lorry's board after it, nor the
+ * factory data — the batch sends one board, read once after its last scan,
+ * and the data once if any scan asked for it (`wantsData`). Reading both after
+ * every box made a batch of fifty boxes fifty boards and up to fifty whole
+ * bootstraps, for the phone to see only the last of each. A refusal still
+ * reads its board: what it says can depend on it ("already on").
+ */
+export type JudgedScan =
+  | (Omit<Extract<LorryScan, { ok: true }>, "board"> & { board: LorryBoard | null; wantsData?: boolean })
+  | Extract<LorryScan, { ok: false }>;
+
+export async function judgeLorryScan(fc: FactoryCtx, key: string, raw: string, taskId: string | null, held: string | null, batch: boolean): Promise<JudgedScan> {
   key = String(key ?? "");
   const sticker = stickerCode(String(raw ?? ""));
   const code = sticker ?? normaliseCode(String(raw ?? ""));
@@ -263,7 +284,7 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
   const asked = taskId && /^T-/.test(taskId) ? taskId : null;
 
   /* The pair is in: the box is judged against the sticker's own line and the sticker claimed with it. */
-  const pair = async (box: string, s: StickerInfo): Promise<LorryScan> => {
+  const pair = async (box: string, s: StickerInfo): Promise<JudgedScan> => {
     const res = await scanOntoOrder(ctx, s.orderNo, box, { id: s.id, lineId: s.lineId });
     if (!res.ok || !res.data.verdict.ok) {
       const board = await boardOf(fc, key, lines);
@@ -278,8 +299,8 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
     }
     const v = res.data.verdict;
     const job = await jobFor(fc, key, asked);
-    const board = await boardOf(fc, key);
-    await factoryAudit(fc, "factory.dispatch.box", job.id, `${box} with sticker ${s.id} (order ${s.orderNo}, ${pieceOf(s)}) loaded on ${lorryName(board.lorry?.name)} · ${v.allocation}`, { lorry: key, order: s.orderNo, sticker: s.id });
+    const board = batch ? null : await boardOf(fc, key);
+    await factoryAudit(fc, "factory.dispatch.box", job.id, `${box} with sticker ${s.id} (order ${s.orderNo}, ${pieceOf(s)}) loaded on ${lorryName(board ? board.lorry?.name : lorryNameOf(lines))} · ${v.allocation}`, { lorry: key, order: s.orderNo, sticker: s.id });
     return {
       ok: true,
       code,
@@ -357,8 +378,8 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
     const v = res.data.verdict;
     const job = await jobFor(fc, key, asked);
     const task = job.id;
-    const board = await boardOf(fc, key);
-    await factoryAudit(fc, "factory.dispatch.box", task, `${code} loaded on ${lorryName(board.lorry?.name)} · ${v.allocation}`, { lorry: key, order: orderNo });
+    const board = batch ? null : await boardOf(fc, key);
+    await factoryAudit(fc, "factory.dispatch.box", task, `${code} loaded on ${lorryName(board ? board.lorry?.name : lorryNameOf(lines))} · ${v.allocation}`, { lorry: key, order: orderNo });
     /* The box's answer does not wait for the whole factory's data to be rebuilt: the phone fetches that in the background. */
     return { ok: true, code, tone: v.allocation === "swap" ? "warn" : "ok", title: v.allocation === "swap" ? "Lot swapped" : "On the lorry", message: lorryWords(v.message), board, task, data: null, stale: v.allocation !== "matched" || job.made, half: null };
   }
@@ -390,9 +411,11 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
   }
   const job = await jobFor(fc, key, asked);
   const task = job.id;
-  const board = await boardOf(fc, key);
-  await factoryAudit(fc, "factory.dispatch.lot", task, `Lot ${code} loaded on ${lorryName(board.lorry?.name)} · ${said.length} order${said.length > 1 ? "s" : ""}`, { lorry: key, lot: code });
-  return { ok: true, code, tone: "ok", title: "On the lorry", message: lorryWords(said.join(" ")), board, task, data: wrote || job.made ? await bootstrap(fc) : null };
+  const board = batch ? null : await boardOf(fc, key);
+  await factoryAudit(fc, "factory.dispatch.lot", task, `Lot ${code} loaded on ${lorryName(board ? board.lorry?.name : lorryNameOf(lines))} · ${said.length} order${said.length > 1 ? "s" : ""}`, { lorry: key, lot: code });
+  const changed = wrote || job.made;
+  if (batch) return { ok: true, code, tone: "ok", title: "On the lorry", message: lorryWords(said.join(" ")), board, task, data: null, wantsData: changed };
+  return { ok: true, code, tone: "ok", title: "On the lorry", message: lorryWords(said.join(" ")), board: board!, task, data: changed ? await bootstrap(fc) : null };
 }
 
 /** A box taken back off the lorry before it is sent. */

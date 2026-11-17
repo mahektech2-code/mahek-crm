@@ -52,7 +52,6 @@ export default async function HrmsHome() {
     const open = rows.filter((r) => !r.checkOut && r.date < t).length;
     figs = [
       { l: "Days present this month", v: String(rows.length) },
-      { l: "Late this month", v: String(rows.filter((r) => (r.fig.lateMin ?? 0) > 0).length), tone: "warn" },
       { l: "Not checked out", v: String(open), tone: open ? "danger" : undefined },
       { l: "Leave waiting", v: String(mine?.n ?? 0) },
     ];
@@ -67,7 +66,6 @@ export default async function HrmsHome() {
     const missing = group.filter((p) => !present.has(p.id) && !onLeave.has(p.id)).length;
     figs = [
       { l: "In today", v: `${present.size} of ${group.length}` },
-      { l: "Late", v: String(rows.filter((r) => (r.fig.lateMin ?? 0) > 0).length), tone: "warn" },
       { l: "On leave", v: String(onLeave.size) },
       { l: "Not checked in", v: String(missing), tone: missing ? "danger" : undefined },
     ];

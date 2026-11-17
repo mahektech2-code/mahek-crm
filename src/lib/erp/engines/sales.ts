@@ -19,15 +19,7 @@ export function orderType(boxType: string | null | undefined): OrderType {
   return "Can";
 }
 
-/**
- * Boxes on a line: a loose SKU is 0, otherwise cans ÷ cans per box — which
- * must come out whole ("INVALID" otherwise).
- */
-export function boxQuantity(qtyCans: number, cansPerBox: number, loose: boolean): { boxes: number; valid: boolean } {
-  if (loose || cansPerBox <= 1) return { boxes: 0, valid: true };
-  const boxes = qtyCans / cansPerBox;
-  return { boxes, valid: Number.isInteger(boxes) };
-}
+export { boxQuantity } from "./box-quantity";
 
 /** Labels to print: one a box on a boxed line, otherwise one a can. */
 export function labelCount(type: OrderType, boxes: number, qtyCans: number): number {

@@ -3,9 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
+import { ErpNotPermitted, erpContext, previewRefusal, requireErpForm, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
 import * as F from "@/lib/erp/freight-bills";
+import * as C from "@/lib/erp/transporter-calls";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -215,6 +216,11 @@ export async function erpFreightBillSave(input: F.FreightBillInput) {
   return run((ctx) => F.saveFreightBill(ctx, { ...input, orderIds: ids(input?.orderIds) }));
 }
 
+/** Several bills at once, each saved on its own; the answer is per row. */
+export async function erpFreightBillsSave(inputs: F.FreightBillInput[]) {
+  return run((ctx) => F.saveFreightBills(ctx, (Array.isArray(inputs) ? inputs : []).map((i) => ({ ...i, orderIds: ids(i?.orderIds) }))));
+}
+
 export async function erpFreightBillResplit(billId: string) {
   return run((ctx) => F.resplitFreightBill(ctx, String(billId ?? "")));
 }
@@ -224,6 +230,11 @@ export async function erpFreightBillPay(billId: string, payment: F.PaymentFields
 }
 
 /** A manager moves a paid bill back to pending, with a reason. */
+/** Several bills paid in one go — one payment per transporter. */
+export async function erpFreightBillsPay(payments: F.BatchPayment[]) {
+  return run((ctx) => F.markFreightBillsPaid(ctx, (Array.isArray(payments) ? payments : []).map((p) => ({ ...p, billIds: ids(p?.billIds) }))));
+}
+
 export async function erpFreightBillUnpay(billId: string, reason: string) {
   return run((ctx) => F.undoFreightBillPayment(ctx, String(billId ?? ""), String(reason ?? "")));
 }
@@ -234,4 +245,19 @@ export async function erpFreightBillDelete(billId: string, reason: string) {
 
 export async function erpLogisticsMergeTransporter(fromId: string, intoId: string, confirmation?: ImpactConfirmation) {
   return run((ctx) => L.mergeTransporter(ctx, String(fromId ?? ""), String(intoId ?? ""), confirmation));
+}
+
+/** One call to a transporter, covering every LR it carries for us — the calling window's save. */
+export async function erpLogisticsLogCall(input: C.CallInput) {
+  return run((ctx) => C.logTransporterCall(ctx, input && typeof input === "object" ? input : ({} as C.CallInput)));
+}
+
+/** The calling window's history. A read, so a preview may open it. */
+export async function erpLogisticsCallHistory(transporter: string): Promise<Result<C.CallHistory>> {
+  try {
+    await requireErpForm("transport");
+    return ok(await C.transporterCallHistory(typeof transporter === "string" ? transporter : ""));
+  } catch (e) {
+    return refused(e);
+  }
 }

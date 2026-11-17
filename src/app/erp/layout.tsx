@@ -6,7 +6,7 @@ import { isErpAdministrator, requireErpApp } from "@/lib/erp/access";
 import { erpPreviewTargets } from "@/lib/services/erp-designation-service";
 import { ERP_GROUPS, erpHref, erpKeysOf } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
-import { withReadMemo } from "@/lib/erp/read-memo";
+import { withRenderMemo } from "@/lib/erp/read-memo";
 import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
 import { listNotifications } from "@/lib/queries";
@@ -33,7 +33,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
      full load, and every refresh after a save, until the slowest badge had been
      counted. They travel as a promise and fill in when it lands, the way the
      CRM dashboard paints its header before its figures. */
-  const counts: Promise<Record<string, number>> = withReadMemo(() => erpNavCounts(ctx)).catch(() => ({}));
+  const counts: Promise<Record<string, number>> = withRenderMemo(() => erpNavCounts(ctx)).catch(() => ({}));
   const [apps, ownHat, config, askState, notifications, canPreview, units] = await Promise.all([
     listUserApps(ctx.actor.id),
     hatForHeader(ctx.actor, "erp"),
@@ -72,10 +72,6 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
 
   return (
     <>
-    {/* The v4 design is set in Geist. React hoists a precedence stylesheet into
-        the head, once, however many ERP pages ask for it. */}
-    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <UnitsProvider units={units} canAdd={!ctx.viewingAs}>
     <ErpShell
       nav={nav}

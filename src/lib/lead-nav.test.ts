@@ -10,7 +10,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { NAV, navForModules } from "@/components/shell/nav";
+import { NAV } from "@/components/shell/nav";
+import { navForModules } from "@/components/shell/nav-modules";
 import { SALES_NAV } from "@/app/sales/nav";
 import {
   LEAD_SECTIONS,

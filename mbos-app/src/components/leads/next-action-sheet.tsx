@@ -90,7 +90,7 @@ export function NextActionSheet({
           paddingHorizontal: 14,
         })}>
         <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={2} />
-        <Text style={[{ fontSize: 15, color: date ? C.ink : C.faint }, weight(date ? 700 : 400)]}>{date ? dmy(date) : 'Pick a day'}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: date ? C.ink : C.faint }, weight(date ? 700 : 400)]}>{date ? dmy(date) : 'Pick a day'}</Text>
       </Pressable>
 
       {/* Opened IN the sheet rather than in a second one on top of it. A

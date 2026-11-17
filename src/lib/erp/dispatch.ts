@@ -189,7 +189,7 @@ export async function unitsForLoading(ex: Ex, godownId: string, lineIds: string[
 export async function lotsFreeAt(ex: Ex, godownId: string, lots: { lotFrom: "pack" | "fg"; lotCode: string }[]): Promise<{ lotFrom: "pack" | "fg"; lotCode: string; skuId: string | null; free: number }[]> {
   const pack = [...new Set(lots.filter((l) => l.lotFrom === "pack").map((l) => l.lotCode))];
   const fg = [...new Set(lots.filter((l) => l.lotFrom === "fg").map((l) => l.lotCode))];
-  const [p, f] = await Promise.all([pack.length ? packLots(ex, { lots: pack }) : [], fg.length ? fgLots(ex, { lots: fg }) : []]);
+  const [p, f] = await Promise.all([pack.length ? packLots(ex, { lots: pack, rates: false }) : [], fg.length ? fgLots(ex, { lots: fg, rates: false }) : []]);
   const out: { lotFrom: "pack" | "fg"; lotCode: string; skuId: string | null; free: number }[] = [];
   for (const code of pack) out.push({ lotFrom: "pack", lotCode: code, skuId: null, free: p.find((x) => x.batchNo === code && x.godownId === godownId)?.stock ?? 0 });
   for (const code of fg) {
@@ -441,8 +441,8 @@ async function logScan(ctx: ErpContext, code: string, orderNo: number, result: s
 
 /** How many units of a lot at a godown the stock ledger still has free for allocation. */
 async function lotFree(tx: Tx, lotFrom: "pack" | "fg", lot: string, godownId: string, skuId: string): Promise<number> {
-  if (lotFrom === "pack") return (await packLots(tx, { lots: [lot] })).find((x) => x.batchNo === lot && x.godownId === godownId)?.stock ?? 0;
-  const fg = await fgLots(tx, { lots: [lot] });
+  if (lotFrom === "pack") return (await packLots(tx, { lots: [lot], rates: false })).find((x) => x.batchNo === lot && x.godownId === godownId)?.stock ?? 0;
+  const fg = await fgLots(tx, { lots: [lot], rates: false });
   return fg.find((x) => x.lotCode === lot && x.godownId === godownId && x.skuId === skuId)?.stock ?? fg.find((x) => x.lotCode === lot && x.godownId === godownId)?.stock ?? 0;
 }
 

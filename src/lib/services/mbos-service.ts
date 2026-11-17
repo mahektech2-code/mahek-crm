@@ -20,6 +20,8 @@ import {
 import type { Role } from "../role-levels";
 import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
+import { remoteFor } from "./mbos-remote-service";
+import type { RemotePayload } from "../engines/mbos-remote";
 import { dictationAvailability } from "../dictation-requests";
 import { visitAssistAvailability } from "../visit-assist-availability";
 import { leadVoiceAvailability } from "../lead-voice-availability";
@@ -1122,6 +1124,8 @@ export type BootstrapPayload = {
   myTours: unknown[];
   myApprovals: unknown[];
   config: Record<string, unknown>;
+  /** Switches, sentences and banners — `mbos-remote-service.ts`. Null when it could not be read. */
+  remote: RemotePayload | null;
 };
 
 /** How many timeline events per customer the snapshot carries. */
@@ -1300,6 +1304,7 @@ export async function buildBootstrap(
     myTours: own.myTours,
     myApprovals: own.myApprovals,
     config,
+    remote: await remoteFor(principal),
   };
 }
 
@@ -3593,6 +3598,7 @@ export async function buildPull(
       products: [],
       timeline: [],
       config: await mbosConfigPayload(),
+      remote: await remoteFor(principal),
       notifications: [],
       transcripts: [],
       journeyStops: [],
@@ -3942,6 +3948,7 @@ export async function buildPull(
     products: changedProducts as unknown[],
     timeline: [...newTimeline.rows, ...missingTimeline] as unknown[],
     config: await mbosConfigPayload(),
+    remote: await remoteFor(principal),
     notifications: notificationsForWire(freshNotifications) as unknown[],
     transcripts: newTranscripts as unknown[],
     journeyStops: journeyRows as unknown[],

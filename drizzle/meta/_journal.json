@@ -2367,6 +2367,27 @@
       "when": 1793801100000,
       "tag": "0343_leads_resync_and_tombstones",
       "breakpoints": true
+    },
+    {
+      "idx": 339,
+      "version": "7",
+      "when": 1793801200000,
+      "tag": "0344_erp_transports_signed_copy_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 340,
+      "version": "7",
+      "when": 1793801300000,
+      "tag": "0345_transporter_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 341,
+      "version": "7",
+      "when": 1794865423163,
+      "tag": "0346_mbos_remote",
+      "breakpoints": true
     }
   ]
 }

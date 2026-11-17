@@ -286,7 +286,7 @@ export default function CollectionsScreen() {
       <BackLink label={back.label} onPress={back.go} />
 
       {rows === null ? (
-        <T s="small" style={{ color: C.muted, paddingHorizontal: 6 }}>
+        <T s="small" style={{ flexShrink: 1, color: C.muted, paddingHorizontal: 6 }}>
           Loading…
         </T>
       ) : rows.length === 0 ? (
@@ -341,7 +341,7 @@ export default function CollectionsScreen() {
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
                   <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 4 }}>
-                    <T style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>
+                    <T style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
                       {[
                         p.mode,
                         dmy(isoDate(new Date(p.collectedAt))),
@@ -359,9 +359,9 @@ export default function CollectionsScreen() {
                     </T>
                     {p.syncState === 'queued' ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                        <T style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>·</T>
+                        <T style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>·</T>
                         <Icon name="upload" size={13} color={C.warnInk} strokeWidth={2.2} />
-                        <T style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>not sent yet</T>
+                        <T style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>not sent yet</T>
                       </View>
                     ) : null}
                   </View>
@@ -426,13 +426,14 @@ export default function CollectionsScreen() {
                           justifyContent: 'center',
                           gap: 8,
                           flex: 1,
-                          height: 44,
+                          minHeight: 44,
+                          paddingVertical: 6,
                           borderRadius: 22,
                           backgroundColor: C.primaryTint,
                           opacity: busy === p.id ? 0.6 : pressed ? 0.85 : 1,
                         })}>
                         <Icon name="camera" size={16} color={C.primaryDeep} strokeWidth={2} />
-                        <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                        <T style={[{ flexShrink: 1, fontSize: 14, color: C.primaryDeep }, weight(700)]}>
                           {p.mode === 'Cheque' ? 'I handed it in' : 'I banked it'}
                         </T>
                       </Pressable>
@@ -447,7 +448,8 @@ export default function CollectionsScreen() {
                           alignItems: 'center',
                           justifyContent: 'center',
                           flex: 1,
-                          height: 44,
+                          minHeight: 44,
+                          paddingVertical: 6,
                           borderRadius: 22,
                           backgroundColor: C.canvas,
                           opacity: busy === p.id ? 0.6 : pressed ? 0.85 : 1,
@@ -463,7 +465,7 @@ export default function CollectionsScreen() {
         </View>
       )}
 
-      <T style={{ fontSize: 11, lineHeight: 16, color: C.faint, marginTop: 12, paddingHorizontal: 6 }}>
+      <T style={{ flexShrink: 1, fontSize: 11, lineHeight: 16, color: C.faint, marginTop: 12, paddingHorizontal: 6 }}>
         {'Your collections, newest first, as on ' + dmy(today) + '.'}
       </T>
     </AppFrame>

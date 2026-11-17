@@ -33,6 +33,28 @@ import { ACTION_NOT_FOUND_HEADER, isStaleBuildError, nextPollMs, safeToReload } 
 
 const POLL_MS = 5 * 60_000;
 const IDLE_RECHECK_MS = 15_000;
+/* The answer is the same for every tab of a browser, and switching tabs
+   asked again each time — the bulk of the asks. A tab that comes into view
+   within a minute of ANY tab asking reads that answer instead. */
+const SHARED_KEY = "mahek.version.seen";
+const SHARED_FRESH_MS = 60_000;
+function readShared(): { id: string | null; at: number } | null {
+  try {
+    const raw = window.localStorage.getItem(SHARED_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { id?: unknown; at?: unknown };
+    return { id: typeof v.id === "string" ? v.id : null, at: Number(v.at) || 0 };
+  } catch {
+    return null;
+  }
+}
+function writeShared(id: string | null) {
+  try {
+    window.localStorage.setItem(SHARED_KEY, JSON.stringify({ id, at: Date.now() }));
+  } catch {
+    /* private window: each tab asks for itself */
+  }
+}
 /** One automatic reload per new build per tab — never a loop. */
 const RELOADED_KEY = "mahek.version.reloadedFor";
 
@@ -114,9 +136,15 @@ export function VersionGuard() {
       if (inflight || document.visibilityState !== "visible") return;
       inflight = true;
       try {
-        const res = await fetch("/api/version", { cache: "no-store" });
-        if (!res.ok) return;
-        const { id } = (await res.json()) as { id: string | null };
+        const shared = readShared();
+        let id: string | null;
+        if (shared && Date.now() - shared.at < SHARED_FRESH_MS) id = shared.id;
+        else {
+          const res = await fetch("/api/version", { cache: "no-store" });
+          if (!res.ok) return;
+          ({ id } = (await res.json()) as { id: string | null });
+          writeShared(id);
+        }
         if (id && id !== mine) {
           serverRef.current = id;
           flag("newer");

@@ -6431,6 +6431,24 @@ export const mbosPushReceipts = pgTable(
   ],
 );
 
+/**
+ * Switches, sentences and banners the office changes on salesmen's phones
+ * without a release — `lib/engines/mbos-remote.ts`. Keys are fenced to
+ * `feature.`/`menu.`/`text.`/`banner.` by a CHECK, so nothing here can shadow a
+ * configuration key, and none can name location or tracking (`0346_mbos_remote`).
+ */
+export const mbosRemoteItems = pgTable("mbos_remote_items", {
+  key: text("key").primaryKey(),
+  kind: text("kind").notNull(),
+  value: jsonb("value").notNull(),
+  audience: jsonb("audience").notNull().default({}),
+  enabled: boolean("enabled").notNull().default(true),
+  note: text("note").notNull().default(""),
+  version: integer("version").notNull().default(1),
+  updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const mbosDevices = pgTable(
   "mbos_devices",
   {
@@ -13168,6 +13186,8 @@ export const erpTransports = pgTable(
     index("erp_transports_order_idx").on(t.orderNo),
     uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
     index("erp_transports_lr_idx").on(t.lrId),
+    /* The LR lists count a bill under its LR OR its signed copy (drizzle/0344). */
+    index("erp_transports_signed_copy_idx").on(t.signedCopyId).where(sql`${t.signedCopyId} is not null`),
   ],
 );
 
@@ -13258,6 +13278,44 @@ export const erpTransportEvents = pgTable(
     byId: text("by_id").references(() => users.id),
   },
   (t) => [index("erp_transport_events_transport_idx").on(t.transportId, t.at)],
+);
+
+/**
+ * 0345 — EVERY CALL TO A TRANSPORTER, one row per call, however many LRs it
+ * covered. `erp_transport_events` says what happened to each LR; this says
+ * that somebody rang, whom, how it went and what came of it — the history the
+ * calling window draws and the answer rate is read from. A no-answer is a row
+ * too: it moves no LR, and it is the fact that the transporter is hard to get.
+ * Append-only; nothing edits a call after it is logged.
+ */
+export const erpTransporterCalls = pgTable(
+  "erp_transporter_calls",
+  {
+    id: text("id").primaryKey(),
+    /** The transporter as the bills name it — the On the road groups key on this. */
+    transporter: text("transporter").notNull(),
+    transporterId: text("transporter_id").references(() => erpTransporters.id, { onDelete: "set null" }),
+    /** update | no_change | no_answer | call_back. */
+    outcome: text("outcome").notNull(),
+    /** call | whatsapp | tracking — how the news came. Only a call can go unanswered. */
+    source: text("source").notNull().default("call"),
+    contactId: text("contact_id").references(() => erpTransporterContacts.id, { onDelete: "set null" }),
+    spokeTo: text("spoke_to"),
+    phone: text("phone"),
+    note: text("note"),
+    nextCallOn: date("next_call_on", { mode: "string" }),
+    transportIds: text("transport_ids").array().notNull().default(sql`'{}'::text[]`),
+    /** What moved, LR by LR: `{ lrNo, what }[]`, written as it was said back on save. */
+    changes: jsonb("changes").$type<{ lrNo: string | null; what: string }[]>().notNull().default(sql`'[]'::jsonb`),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_transporter_calls_transporter_idx").on(sql`lower(${t.transporter})`, t.at),
+    check("erp_transporter_calls_outcome", sql`${t.outcome} in ('update','no_change','no_answer','call_back')`),
+    check("erp_transporter_calls_source", sql`${t.source} in ('call','whatsapp','tracking')`),
+    check("erp_transporter_calls_unanswered_is_a_call", sql`${t.outcome} not in ('no_answer','call_back') or ${t.source} = 'call'`),
+  ],
 );
 
 /**

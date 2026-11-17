@@ -124,6 +124,14 @@ describe("The production env example matches what the code reads", () => {
       // deploy/backup.sh
       "BACKUP_GPG_RECIPIENT_FILE",
       "BACKUP_HEALTHCHECK_URL",
+      // Read by deploy/docker-compose.yml and the Caddyfile to run a second app
+      // process (DEPLOY.md, "Going to 2 vCPU with two Node processes").
+      "COMPOSE_PROFILES",
+      "APP_UPSTREAMS",
+      "APP_HEAP_MB",
+      "PG_MAX_CONNECTIONS",
+      "PG_SHARED_BUFFERS",
+      "PG_EFFECTIVE_CACHE",
     ]);
     const stale = [...documentedNames()].filter(
       (n) => !referenced.has(n) && !infrastructure.has(n),

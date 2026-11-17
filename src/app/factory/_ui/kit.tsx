@@ -86,5 +86,5 @@ export function MsgBox({ m }: { m: Msg }): ReactElement {
 }
 
 export const card: CSSProperties = { background: C.white, border: "1px solid " + C.line, borderRadius: "18px" };
-export const mono: CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" };
+export const mono: CSSProperties = { fontFamily: "var(--font-plex-mono),monospace" };
 export const artWell = (w: number, r: number): CSSProperties => ({ width: w + "px", height: w + "px", flex: "none", borderRadius: r + "px", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" });

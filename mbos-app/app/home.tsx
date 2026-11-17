@@ -9,6 +9,8 @@ import { Glyph, type GlyphShape } from '../src/components/me/kit';
 import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
+import { RemoteBanners } from '../src/components/remote/RemoteBanners';
+import { copy, useRemote } from '../src/data/remote';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
@@ -316,6 +318,9 @@ export default function Home() {
      Nothing on the screen is drawn from it — see the note on `day` above. */
   const dayOrEmpty = day ?? EMPTY;
   const now = useTicker(dayOrEmpty.running ? 1000 : 60_000);
+  /* The office's sentences and banners — `data/remote.ts`. Every one falls
+     back to what is written here. */
+  const remote = useRemote();
   const workedSoFarMs = workedMs(dayOrEmpty.sessions, now);
 
   /*
@@ -1116,16 +1121,16 @@ export default function Home() {
   const heroIdentity = (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={[{ fontSize: 14, color: C.onNavy }, weight(700)]}>
+        <Text style={[{ fontSize: 14, lineHeight: 20, color: C.onNavy }, weight(700)]}>
           {boot.session?.user.initials ?? '··'}
         </Text>
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text accessibilityRole="header" numberOfLines={1} style={[{ fontSize: 16, lineHeight: 21, color: C.onNavy }, weight(700)]}>
-          {greetingFor(today.getHours()) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
+          {copy(remote, 'text.home.greeting', greetingFor(today.getHours())) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-          <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(400)]}>{dateLine}</Text>
+          <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted }, weight(400)]}>{dateLine}</Text>
           {/*
             WHAT HE IS HERE AS — §12.1's role chip.
 
@@ -1143,7 +1148,8 @@ export default function Home() {
             <View
               style={{
                 flexShrink: 1,
-                height: 20,
+                minHeight: 20,
+                paddingVertical: 2,
                 justifyContent: 'center',
                 backgroundColor: 'rgba(255,255,255,0.10)',
                 borderRadius: 10,
@@ -1177,7 +1183,7 @@ export default function Home() {
       <Swap id={!day ? 'loading' : !checkedIn ? 'out' : day.running ? 'running' : 'closed'}>
       {!day ? (
         <View style={{ marginTop: 18, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', padding: 14 }}>
-          <Text style={[{ fontSize: 13, color: C.onNavyMuted }, weight(700)]}>Your day</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.onNavyMuted }, weight(700)]}>Your day</Text>
           <Text style={[{ fontSize: 14, lineHeight: 20, color: C.onNavyMuted, marginTop: 4 }, weight(400)]}>
             {readErr ?? 'Loading…'}
           </Text>
@@ -1212,7 +1218,7 @@ export default function Home() {
                   ] as const).map(([g, w]) => (
                     <View key={w} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <Glyph shapes={g} size={13} color={C.navy} strokeWidth={2.2} />
-                      <Text style={[{ fontSize: 12, color: C.navy }, weight(600)]}>{w}</Text>
+                      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.navy }, weight(600)]}>{w}</Text>
                     </View>
                   ))}
                 </View>
@@ -1267,7 +1273,7 @@ export default function Home() {
             <View style={{ flex: 1, minWidth: 0 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: day.running ? C.lime : C.onNavyMuted }} />
-                <Text style={[{ fontSize: 13, color: day.running ? C.lime : C.onNavyMuted }, weight(700)]}>
+                <Text style={[{ fontSize: 13, lineHeight: 18, color: day.running ? C.lime : C.onNavyMuted }, weight(700)]}>
                   {(day.running ? 'On the road' : 'Day closed') +
                     (day.running && day.checkedInAt ? ' · since ' + hhmm(day.checkedInAt) : '')}
                 </Text>
@@ -1282,7 +1288,7 @@ export default function Home() {
                 {workedLabel(workedSoFarMs, day.running)}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2, flexWrap: 'wrap' }}>
-                <Text style={[{ fontSize: 12, color: C.onNavyMuted }, weight(400)]}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted }, weight(400)]}>
                   {day.running
                     ? 'worked today'
                     : 'worked · ' + (day.stops > 0 ? day.stopsDone + ' of ' + plural(day.stops, 'shop') + ' done' : 'no shops planned today')}
@@ -1293,11 +1299,11 @@ export default function Home() {
           </View>
           {day.running ? (
             day.stops > 0 ? (
-              <Text style={[{ fontSize: 12, color: C.onNavyMuted, marginTop: 8 }, weight(400)]}>
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 8 }, weight(400)]}>
                 {day.stopsDone + ' of ' + plural(day.stops, 'shop') + ' done'}
               </Text>
             ) : (
-              <Text style={[{ fontSize: 12, color: C.onNavyMuted, marginTop: 8 }, weight(400)]}>No shops planned today.</Text>
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 8 }, weight(400)]}>No shops planned today.</Text>
             )
           ) : null}
 
@@ -1336,7 +1342,7 @@ export default function Home() {
             />
           </View>
           {punchOutLoud ? (
-            <Text style={[{ fontSize: 12, color: C.onNavyMuted, marginTop: 10, textAlign: 'center' }, weight(400)]}>
+            <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavyMuted, marginTop: 10, textAlign: 'center' }, weight(400)]}>
               Done for the day? Punch out so your hours count. Takes your photo.
             </Text>
           ) : null}
@@ -1473,8 +1479,8 @@ export default function Home() {
             <Icon name="pin" size={18} color={C.primaryDeep} strokeWidth={2} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Keep tracking on</Text>
-            <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>
+            <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Keep tracking on</Text>
+            <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>
               2 phone settings save your route · 1 min
             </Text>
           </View>
@@ -1509,6 +1515,12 @@ export default function Home() {
           </View>
         </Card>
       ) : null}
+
+      {/* ---- what the office has put on this screen ----
+          Banners from Admin Console → MBOS control. Below everything about
+          starting the day, so an announcement never stands between him and
+          punching in; self-contained, so it cannot break what is around it. */}
+      <RemoteBanners screen="home" nowMs={now} />
 
       {/* ---- the six numbers ---- */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
@@ -1611,7 +1623,7 @@ export default function Home() {
           Leads
         </Text>
         <Pressable onPress={() => router.push('/lead-actions?from=home')} accessibilityRole="button" hitSlop={12}>
-          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>Pending actions ›</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(600)]}>Pending actions ›</Text>
         </Pressable>
       </View>
 
@@ -1671,7 +1683,7 @@ export default function Home() {
                   />
                 )}
               </View>
-              <Text style={[{ fontSize: 12, color: hot ? C.danger : C.muted }, weight(400)]}>{stat.l}</Text>
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: hot ? C.danger : C.muted }, weight(400)]}>{stat.l}</Text>
             </PressableScale>
           );
         })}
@@ -1716,7 +1728,7 @@ export default function Home() {
               accessibilityRole="button"
               accessibilityLabel={'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + '. Tap to see all.'}
               style={({ pressed }) => ({ minHeight: 44, borderRadius: 22, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
-              <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(700)]}>
+              <Text style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>
                 {leads.dueToday.length + ' of ' + leads.counts.today + ' shown · See all ›'}
               </Text>
             </Pressable>
@@ -1760,7 +1772,7 @@ export default function Home() {
           <Card style={{ borderRadius: 22 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Glyph shapes={TARGET} size={18} color={C.primaryDeep} />
-              <Text style={[{ flex: 1, fontSize: 13, color: C.muted }, weight(700)]}>Your target</Text>
+              <Text style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.muted }, weight(700)]}>Your target</Text>
               {month.rating ? <Badge tone="teal">{month.rating}</Badge> : null}
             </View>
             {/* Revenue and volume together, never revenue alone. A price
@@ -1782,7 +1794,7 @@ export default function Home() {
                   style={[{ fontSize: 34, lineHeight: 40, letterSpacing: -0.7, color: C.ink }, weight(800), tabular]}
                 />
               )}
-              <Text accessibilityLabel="out of 100" style={[{ fontSize: 14, color: C.muted }, weight(400)]}>/ 100</Text>
+              <Text accessibilityLabel="out of 100" style={[{ fontSize: 14, lineHeight: 20, color: C.muted }, weight(400)]}>/ 100</Text>
             </View>
             {month.totalScoreBp != null ? (
               <View style={{ height: 8, borderRadius: 4, backgroundColor: C.hairline, marginTop: 8, overflow: 'hidden' }}>
@@ -1818,7 +1830,7 @@ export default function Home() {
               <Text numberOfLines={1} style={[{ flex: 1, fontSize: 12, color: C.muted }, weight(400)]}>
                 {monthLabel(month.period) + (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '')}
               </Text>
-              <Text style={[{ fontSize: 12, color: C.muted }, weight(400)]}>More ›</Text>
+              <Text style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(400)]}>More ›</Text>
             </View>
           </Card>
         )}
@@ -1884,7 +1896,7 @@ export default function Home() {
               answerMode.current = null;
             }}
             style={({ pressed }) => [pill56, { marginTop: 14, backgroundColor: C.canvas, opacity: pressed ? 0.85 : 1 }]}>
-            <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Not punching in yet</T>
+            <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Not punching in yet</T>
           </Pressable>
         </View>
       </BottomSheet>
@@ -1923,14 +1935,14 @@ export default function Home() {
             }}
             style={({ pressed }) => [pill56, { marginTop: 18, minHeight: 60, borderRadius: 30, backgroundColor: C.navy, flexDirection: 'row', gap: 8, opacity: pressed ? 0.9 : 1 }]}>
             <Glyph shapes={PLUS} size={18} color={C.lime} strokeWidth={2.4} />
-            <T style={[{ fontSize: 17, color: C.onNavy }, weight(700)]}>Add expenses</T>
+            <T style={[{ fontSize: 17, lineHeight: 24, color: C.onNavy }, weight(700)]}>Add expenses</T>
           </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Later"
             onPress={() => setClaimPrompt(null)}
             style={({ pressed }) => [pill56, { marginTop: 10, minHeight: 52, borderRadius: 26, backgroundColor: C.canvas, opacity: pressed ? 0.85 : 1 }]}>
-            <T style={[{ fontSize: 15, color: C.ink }, weight(700)]}>Later</T>
+            <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>Later</T>
           </Pressable>
         </View>
       </BottomSheet>
@@ -2027,7 +2039,7 @@ function ShopsRing({ done, of }: { done: number; of: number }) {
         />
       </Svg>
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={[{ fontSize: 22, color: C.onNavy }, weight(800), tabular]}>{`${done}/${of}`}</Text>
+        <Text style={[{ fontSize: 22, lineHeight: 29, color: C.onNavy }, weight(800), tabular]}>{`${done}/${of}`}</Text>
       </View>
     </View>
   );
@@ -2035,8 +2047,8 @@ function ShopsRing({ done, of }: { done: number; of: number }) {
 
 function PunchIns({ n }: { n: number }) {
   return (
-    <View style={{ height: 22, paddingHorizontal: 8, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
-      <Text style={[{ fontSize: 12, color: C.onNavy }, weight(700)]}>{plural(n, 'punch-in')}</Text>
+    <View style={{ minHeight: 22, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.10)', justifyContent: 'center' }}>
+      <Text style={[{ fontSize: 12, lineHeight: 17, color: C.onNavy }, weight(700)]}>{plural(n, 'punch-in')}</Text>
     </View>
   );
 }
@@ -2062,8 +2074,8 @@ function TargetQuiet({ title, sub, long }: { title: string; sub: string; long?: 
         <Glyph shapes={TARGET} size={18} color={C.faint} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[{ fontSize: 15, color: C.ink }, weight(700)]}>{title}</Text>
-        <Text style={[{ fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>{sub}</Text>
+        <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>{title}</Text>
+        <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.muted }, weight(400)]}>{sub}</Text>
       </View>
     </View>
   );

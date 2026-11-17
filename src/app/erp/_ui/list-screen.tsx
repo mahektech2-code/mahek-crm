@@ -300,6 +300,7 @@ export function ListScreen({
   bare = false,
   onOpen,
   onRowAct,
+  onBulk,
 }: {
   spec: ListSpec;
   /** Every row, or — with `server` — the one page the server cut. */
@@ -343,6 +344,12 @@ export function ListScreen({
   onOpen?: (id: string) => void;
   /** …and runs its rows' ⋯ menu actions itself, by the action's id. */
   onRowAct?: (actionId: string, rowId: string) => void;
+  /**
+   * …and its bulk actions too: the selection bar's button hands the ticked
+   * rows that can take the action to the screen, which opens its own dialog
+   * (Transport expenses' Enter bills and Pay). `clear` empties the ticks.
+   */
+  onBulk?: (bulkId: string, rowIds: string[], clear: () => void) => void;
 }) {
   const ui = useErpUi();
   const { flags: FLAG, place, exportList, listIds, listCount, listTotals, loadForm, tones, look } = useKit();
@@ -1157,6 +1164,7 @@ export function ListScreen({
                 if (b.client === "printInvoices") return setPrinting(chosen);
                 if (b.client === "billingView") return setBillingView(chosen);
                 if (b.client === "combinedView") return setCombinedView(chosen);
+                if (onBulk) return onBulk(b.id, chosen, () => setSel({}));
                 /* The selection is one record (one PR): its own action, run once. */
                 if (row) {
                   const a = row.actions?.find((x) => x.id === (b.fits || b.id));

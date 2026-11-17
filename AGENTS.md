@@ -3505,6 +3505,14 @@ poll). Now the default is non-zero stock, and a caller that needs a used-up lot
 allocated — names it (`LotPick`). The rate helpers take the lots they are asked
 about and sum in SQL.
 
+**A stock CHECK asks for no rate (`LotPick.rates: false`).** A lot's rate is
+the whole book's costing (`ledgerDerived`), worked out again after every stock
+write — so a check that only reads `stock` and asked for the rate anyway paid a
+walk of the whole book for a figure it threw away. On the lorry that was once
+per box scanned (`lotFree`), each scan's own write forcing the next scan's
+walk. Every consuming check under a lot lock, the factory phone's lots and the
+loading pack pass `rates: false`; pass it wherever a read uses `stock` alone.
+
 **`erp-scale.test.ts` holds the line.** It seeds a book the size of the real one
 and loads EVERY built module as the page would, failing if any builds more than
 `ROW_CAP` rows: a new screen that reads a whole table fails in CI, not in
@@ -9700,10 +9708,17 @@ litres with `allocateByLitres`, written to `erp_freight_bill_lines` on save —
 one live share per order line (a partial unique index) — and `detailRows`
 reads it (`freightSharesFor`), so it reaches the line's costing, margin and
 the Founder's Margins desk with nobody typing it; a sheet-costed line shows it
-and does not add it again. Pending until **Mark as paid** (date, Bank/UPI/
-Cash, reference); only an ERP manager undoes a payment, with a reason, and the
-split stays. A corrected dispatch makes a pending split stale (`staleShares`)
-and it cannot be paid until split again. Nothing here posts to Petty Cash/Bank.
+and does not add it again. The screen is three stages — Bill to enter, To pay,
+Paid — each grouped by transporter, and work is done on a SELECTION: ticked
+trips are entered together (`saveFreightBills`, each row its own save, so one
+refused row never stops the others) and ticked bills are paid together, one
+payment per transporter (`markFreightBillsPaid`, one transaction — a selection
+is paid whole or not at all). Entering never pays: Mahek asked for the two to
+stay apart, so there is no "save and pay". `ListScreen`'s `onBulk` hands the
+selection to the screen's own dialogs. Only an ERP manager undoes a payment,
+with a reason, and the split stays. A corrected dispatch makes a pending split
+stale (`staleShares`); the row cannot be ticked to pay, and the bill shows the
+old and the new split side by side until the new one is saved. Nothing here posts to Petty Cash/Bank.
 Rules: `engines/freight-bill.ts`; reads and writes: `lib/erp/freight-bills.ts`;
 screen: `app/erp/transport/parts/freight.tsx`. `erp_trips` still groups bills
 by vehicle at dispatch; its payment tables are read by no screen.
@@ -10208,6 +10223,19 @@ whoever pressed Send), why a machine stopped (`factory_downtime`), and what the
 Production Head still has to look at (`factory_reviews`). Team output is
 counted once, on the task, never once per person.
 
+**THE FLOOR IS BUILT ONCE PER GODOWN FOR EVERY PHONE ASKING AT ONCE.** Every
+phone asks for the whole floor every 45 seconds and after any scan that moved
+stock, and nearly all of it is the same for everybody at a godown. `bootstrap`
+reads it through `floorFor` (`server.ts`): one build per godown at a time, and
+a phone asking while one runs waits for the NEXT, which starts when the running
+one ends and answers everybody who asked meanwhile. A build that started before
+a question never answers it, so a phone always sees its own write; nothing is
+kept once answered — a queue, not a cache. What differs per person (a
+department supervisor's narrower floor and review list, names only their jobs
+mention, their own number, lorries for loaders) is laid over it on COPIES:
+never write to the shared build. A batch of lorry scans reads the board and the
+floor once, after its last scan (`judgeLorryScan`), not after every box.
+
 **ONE KEY, ONE POSTING.** The phone mints `MOB-<task>-<random>` when a job is
 started and every attempt carries it; `factory_submissions` is the ledger. The
 first attempt claims the row, later ones are answered from it, and `progress`
@@ -10649,6 +10677,21 @@ pruning moves the stamp, which costs one re-read.
 and `stampLine` are called several times a row, and on ten thousand rows the
 formatters alone were half a second. They hold one `Intl` formatter each now;
 a new number or date helper on a list path should do the same.
+
+**THE OPEN ORDER BOOK IS READ ONCE PER RENDER (Nov 2026).** It was the ERP's
+biggest statement on prod — read by the layout's badges, again by the tab strip
+and list, and a third time by order number to see each order whole — and every
+save drew the page twice. Now: the layout and a read-only page share one memo
+(`withRenderMemo`, React `cache`; Logistics writes as it loads and keeps its
+own); a working tab asks only for the CLOSED lines of its orders
+(`closedWork`, `openWork`'s complement); "does this order have a billed line"
+is one indexed query over the read's order numbers, not an EXISTS over the
+whole book; and an Orders row's fields, actions and invoice panel are built
+only when read (`later`/`withLater` in `lazy-row.ts`). A kit that revalidates
+(`ScreenKit.revalidates`, the ERP's) does not `router.refresh()` after a save:
+the action's answer already carries the redrawn page. The LR lists count bills
+through `erp_transports_signed_copy_idx` (`0344`), and `consignments` reads each
+bill's order and newest event by index instead of grouping the whole book.
 
 ## The Website CMS and its review workflow
 
