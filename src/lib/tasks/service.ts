@@ -174,6 +174,10 @@ export const routineDeadlineSql = sql`((t.due_date + coalesce(t.due_time, '24:00
 /** The same grace time in SQL, read off the stored setting, for a column every task read carries. */
 const GRACE_SQL = sql`least(${ROUTINE_GRACE_MAX}, greatest(0, coalesce((select (s.value #>> '{}')::int from app_settings s where s.key = 'tasks.routineGraceMinutes'), ${ROUTINE_GRACE_DEFAULT})))`;
 
+/** A routine's task in its grace time NOW: past its due moment, not yet missed. The card, the Grace time tab and its ordering all ask this. */
+export const inGraceSql = sql`(t.routine_id is not null and t.status <> 'done' and t.status <> 'missed' and t.due_date >= ${MISSED_FROM}::date
+       and ${routineDeadlineSql} <= now() and ${routineDeadlineSql} + make_interval(mins => ${GRACE_SQL}) > now())`;
+
 /* ---------------------------------------------------------------- reads */
 
 /** The columns of a `TaskRow`. Paired with TASK_FROM so a count can share the joins a page reads through. */
@@ -182,9 +186,7 @@ export const TASK_COLUMNS = sql`
          t.assignee_id, a.name as assignee_name, t.created_by_id, cb.name as created_by_name,
          t.batch_id, t.status, t.priority, t.due_date::text as due_date, t.due_time,
          t.proof_required, t.remark_required, t.checklist, t.closed_at, (t.closed_at at time zone ${APP_TIMEZONE})::date::text as closed_on, cl.name as closed_by_name, t.close_remark, t.created_at, t.routine_id, t.auto_rule,
-         case when t.routine_id is not null and t.status not in ('done','missed') and t.due_date >= ${MISSED_FROM}::date
-                   and ${routineDeadlineSql} <= now() and ${routineDeadlineSql} + make_interval(mins => ${GRACE_SQL}) > now()
-              then ${routineDeadlineSql} + make_interval(mins => ${GRACE_SQL}) end as grace_until,
+         case when ${inGraceSql} then ${routineDeadlineSql} + make_interval(mins => ${GRACE_SQL}) end as grace_until,
          tr.id as tr_id, tr.from_id as tr_from, fu.name as tr_from_name, tr.to_id as tr_to, tu.name as tr_to_name,
          tr.requested_by_id as tr_by, tr.reason as tr_reason, tr.created_at as tr_at`;
 

@@ -211,6 +211,7 @@ export type ListProps = { page: TaskListPage; query: TaskListQuery };
 const ALL_TABS = [
   { key: "open", label: "Open" },
   { key: "late", label: "Late", tone: "danger" },
+  { key: "grace", label: "Grace time", tone: "danger" },
   { key: "today", label: "Today" },
   { key: "upcoming", label: "Upcoming" },
   { key: "doing", label: "In progress" },
@@ -617,6 +618,7 @@ export function TeamScreen({
             tabs={[
               { key: "open", label: "Open" },
               { key: "late", label: "Late", tone: "danger" },
+              { key: "grace", label: "Grace time", tone: "danger" },
               { key: "done", label: "Done" },
 
               { key: "missed", label: "Missed", tone: "danger" },
@@ -831,6 +833,7 @@ export function AppTasksScreen({
         tabs={[
           { key: "now", label: "Needs action" },
           { key: "late", label: "Late", tone: "danger" },
+          { key: "grace", label: "Grace time", tone: "danger" },
           { key: "upcoming", label: "Upcoming" },
           { key: "done", label: "Done" },
 
