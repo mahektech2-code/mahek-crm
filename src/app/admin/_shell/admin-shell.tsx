@@ -5,7 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
-import type { NavRowGroup, NavRowItem } from "@/components/shell/collapsible-nav";
+import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/shell/collapsible-nav";
+import { FeedbackButton } from "@/components/shell/feedback-button";
+import { Icon as ShellIcon } from "@/components/shell/icons";
 import { AskPanel } from "@/components/shell/ask-panel";
 import { ADMIN_ASK } from "@/components/shell/ask-setups";
 import { HeaderLead } from "@/components/shell/header-lead";
@@ -24,7 +26,28 @@ import { NAV_ICON } from "./nav-icons";
  * Tell us, and a sidebar of coloured dots — so the console was the one app in
  * the suite that looked and behaved like a different product. Nothing here is
  * the console's own except the list of places and the search over them.
+ *
+ * AND IT IS THE ERP'S FRAME, part for part (2026-11-17). The console had drawn
+ * its own sidebar — a fixed 232px column with the browser's raw scrollbar, a
+ * divider under the wordmark that met nothing in the header, no way to fold
+ * it — inside the 1100px desktop floor, so on a laptop or a zoomed screen it
+ * was cut off and scrolled sideways. Now: the shared `CollapsibleNav`, the
+ * ERP's collapse button, no floor, and the rail by itself below 1280px wide.
  * ------------------------------------------------------------------------- */
+
+/** Below this the sidebar starts as the icon rail, as a laptop needs. */
+const RAIL_BELOW = "(max-width: 1279px)";
+
+/** The console's glyphs where it has one, the suite's (chevron, …) otherwise. */
+function renderIcon(name: string, size: number) {
+  const d = NAV_ICON[name];
+  if (!d) return <ShellIcon name={name} size={size} className="flex-none" />;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
+      <path d={d} />
+    </svg>
+  );
+}
 
 /** A place somebody can search for: a screen, or one setting on one. */
 export type SearchEntry = { label: string; hint: string; href: string; key?: string };
@@ -58,52 +81,89 @@ export function AdminShell({
   const here = activeItem(pathname, pinned, groups);
   const crumb = here ? (here.group && here.group !== here.item.label ? `${here.group} › ${here.item.label}` : here.item.label) : "Admin Console";
 
+  /* The rail follows the window: narrow starts railed, widening opens it.
+     The button overrides it until the window crosses the line again. */
+  const [collapsed, setCollapsed] = React.useState(false);
+  React.useEffect(() => {
+    const mq = window.matchMedia(RAIL_BELOW);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the window's width is only known after mount
+    setCollapsed(mq.matches);
+    const on = (e: MediaQueryListEvent) => setCollapsed(e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+
   return (
     <ToastProvider>
       {/* The v4 look — the ERP's, the CRM's and the Sales Dashboard's. The
           marker is what styles/v4-theme.css reads; see its header. */}
       <div data-v4 data-v4-app="admin" className="contents">
         <AppFrame
+          /* No 1100px floor: a laptop, a zoomed screen and a half-width window
+             reflow rather than scroll sideways — the ERP's choice. */
+          floor={false}
           sidebarFirst
           header={
-            <header
-              data-v4-header
-              className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-4"
-            >
-              <HeaderLead
-                apps={apps}
-                current="admin"
-                collapsed={false}
-                onToggleSidebar={() => {}}
-                href="/admin"
-                label="MAHEK ADMIN"
-                wordmark={false}
-                switcherLabel="Admin Console"
-                toggle={false}
-              />
-              <span className="min-w-0 flex-initial truncate text-[13px] font-medium text-[#5a4e8c]">{crumb}</span>
-              <span className="flex-1" />
+            <header data-v4-header className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
+              <div className="flex flex-none items-center">
+                <HeaderLead
+                  apps={apps}
+                  current="admin"
+                  collapsed={collapsed}
+                  onToggleSidebar={() => setCollapsed((c) => !c)}
+                  href="/admin"
+                  label="MAHEK ADMIN"
+                  wordmark={false}
+                  switcherLabel="Admin Console"
+                  toggleIcon={
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M4 5h16v14H4zM9 5v14" />
+                    </svg>
+                  }
+                />
+              </div>
+              <span className="hidden min-w-0 flex-initial truncate text-[13px] font-medium text-[#5a4e8c] lg:inline">{crumb}</span>
               <ConsoleSearch entries={search} />
-              <AskPanel setup={ADMIN_ASK} boxed />
-              <NotificationBell notifications={notifications} boxed />
-              <AccountMenu user={user} hat={hat} variant="header" pill nameFromXl />
+              <span className="flex-1" />
+              <div className="flex flex-none items-center gap-2">
+                <AskPanel setup={ADMIN_ASK} />
+                {/* Below 1280px the header has a laptop's width: Feedback and the account are icons. */}
+                <FeedbackButton compact className="xl:hidden" />
+                <FeedbackButton className="hidden xl:flex" />
+                <NotificationBell notifications={notifications} />
+                <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
+              </div>
             </header>
           }
           sidebar={
-            <aside className="flex w-[232px] flex-none flex-col border-r border-line bg-surface">
-              <Link
-                href="/admin"
-                title="MahekOne Admin"
-                className="flex h-14 flex-none items-center gap-2.5 border-b border-divider px-4 no-underline hover:no-underline"
-              >
+            <aside
+              className={cx(
+                "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
+                collapsed ? "w-16" : "w-[232px]",
+              )}
+            >
+              <Link href="/admin" title="MahekOne Admin" className="flex h-14 flex-none items-center gap-2.5 px-4 no-underline hover:no-underline">
                 {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
-                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-[30px] w-[30px] flex-none rounded-full bg-surface object-contain" />
-                <span className="text-[15px] font-bold tracking-[-0.01em] whitespace-nowrap text-ink">
-                  MahekOne <span className="font-medium text-muted">Admin</span>
-                </span>
+                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
+                {collapsed ? null : (
+                  <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
+                    MahekOne <span className="font-medium text-faint">Admin</span>
+                  </span>
+                )}
               </Link>
-              <ConsoleNav pinned={pinned} groups={groups} counts={counts} active={here?.item.href ?? null} />
-              <SystemStatus status={status} />
+              <CollapsibleNav
+                storageKey="admin.nav.open"
+                ariaLabel="Admin Console sections"
+                pinned={pinned}
+                groups={groups}
+                countFor={(item) => counts[item.href]?.n ?? 0}
+                railed={collapsed}
+                renderIcon={renderIcon}
+                badgeToneFor={(item, n) => (counts[item.href]?.urgent || n > 5 ? "danger" : "warn")}
+                showSizes={false}
+                flyout
+              />
+              {collapsed ? null : <SystemStatus status={status} />}
             </aside>
           }
         >
@@ -133,100 +193,6 @@ function activeItem(pathname: string, pinned: NavRowItem[], groups: NavRowGroup[
   pinned.forEach((i) => consider(i, null));
   groups.forEach((g) => g.items.forEach((i) => consider(i, g.label)));
   return best;
-}
-
-const FOLD_KEY = "admin.nav.folded";
-
-/** The canvas's sidebar: uppercase groups that fold, 34px rows, counts only where something waits. */
-function ConsoleNav({
-  pinned,
-  groups,
-  counts,
-  active,
-}: {
-  pinned: NavRowItem[];
-  groups: NavRowGroup[];
-  counts: Record<string, { n: number; urgent?: boolean }>;
-  active: string | null;
-}) {
-  const [folded, setFolded] = React.useState<string[]>([]);
-  React.useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(FOLD_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from the browser after mount
-      if (raw) setFolded(JSON.parse(raw) as string[]);
-    } catch {
-      /* private window: every group open */
-    }
-  }, []);
-  const toggle = (label: string) =>
-    setFolded((f) => {
-      const next = f.includes(label) ? f.filter((x) => x !== label) : [...f, label];
-      try {
-        window.localStorage.setItem(FOLD_KEY, JSON.stringify(next));
-      } catch {
-        /* not remembered, still folds */
-      }
-      return next;
-    });
-
-  const row = (item: NavRowItem) => {
-    const on = item.href === active;
-    const c = counts[item.href];
-    return (
-      <Link
-        key={item.href}
-        href={item.href}
-        aria-current={on ? "page" : undefined}
-        className={cx(
-          "flex h-[34px] items-center gap-2.5 rounded-control px-2.5 text-[13px] no-underline hover:no-underline",
-          on ? "bg-brand-soft font-semibold text-brand-deep" : "font-medium text-body hover:bg-canvas",
-        )}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={cx("flex-none", on ? "text-brand-deep" : "text-muted")} aria-hidden>
-          <path d={NAV_ICON[item.icon] ?? ""} />
-        </svg>
-        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-        {c && c.n > 0 ? (
-          <span
-            className={cx(
-              "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[11px] font-bold",
-              c.urgent || c.n > 5 ? "bg-danger text-white" : "bg-warn-soft text-warn-ink",
-            )}
-          >
-            {c.n > 99 ? "99+" : c.n}
-          </span>
-        ) : null}
-      </Link>
-    );
-  };
-
-  return (
-    <nav aria-label="Admin Console sections" className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2.5 pt-2.5 pb-3">
-      {pinned.map(row)}
-      {groups.map((g) => {
-        const shut = folded.includes(g.label);
-        return (
-          <div key={g.label} className="flex flex-col gap-px">
-            <button
-              type="button"
-              onClick={() => toggle(g.label)}
-              aria-expanded={!shut}
-              data-nav-group
-              style={{ fontSize: 11, letterSpacing: "0.05em", lineHeight: "16px" }}
-              className="flex cursor-pointer items-center justify-between px-2.5 pt-3.5 pb-[5px] text-[11px] font-semibold tracking-[0.05em] text-muted uppercase"
-            >
-              {g.label}
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cx("transition-transform duration-100", shut && "-rotate-90")} aria-hidden>
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {shut ? null : g.items.map(row)}
-          </div>
-        );
-      })}
-    </nav>
-  );
 }
 
 /** The console's "Live now": how the platform stands, always at the foot. */
@@ -300,7 +266,7 @@ function ConsoleSearch({ entries }: { entries: SearchEntry[] }) {
   }
 
   return (
-    <div ref={wrapRef} className="relative w-[340px] max-w-[40%] min-w-0 flex-initial">
+    <div ref={wrapRef} className="relative w-[340px] max-w-[40%] min-w-[140px] flex-initial">
       <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4" />
@@ -327,7 +293,7 @@ function ConsoleSearch({ entries }: { entries: SearchEntry[] }) {
         className="h-[34px] w-full rounded-control border border-brand-softer bg-surface pr-12 pl-[30px] text-[13px] text-ink placeholder:text-muted focus:border-brand focus:bg-surface focus:outline-none"
       />
       {needle ? (
-        <div className="absolute top-10 left-0 z-50 w-[460px] overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <div className="absolute top-10 left-0 z-50 w-[460px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
           {hits.length === 0 ? (
             <div className="px-4 py-3 text-sm text-muted">Nothing in the console is called that.</div>
           ) : (
