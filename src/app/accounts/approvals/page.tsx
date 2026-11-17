@@ -1,10 +1,11 @@
 import { checkCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { money, phoneDisplay, stampDate } from "@/lib/format";
-import { heldOrders, pendingOrders } from "@/lib/services/order-approval-service";
-import { QueueScreen } from "../queue-screen";
-import { reasonLabel } from "@/lib/erp/engines/order-tracking";
-import { HeldOrders } from "./held-orders";
+import { approvalBoard, pendingOrders } from "@/lib/services/order-approval-service";
+import { ApprovalBoard } from "./approval-board";
+import { erpLink } from "@/lib/erp/registry";
+import { requireUser } from "@/lib/auth";
+import { listUserApps } from "@/lib/access";
 import type { QueueRow } from "../queue-types";
 
 export const metadata = { title: "Order approvals — Accounts — MahekOne" };
@@ -12,11 +13,13 @@ export const metadata = { title: "Order approvals — Accounts — MahekOne" };
 export default async function Page() {
   // App access is gated by the layout. This decides only whether the buttons
   // are live: seeing the queue and deciding on it are different things.
-  const [{ allowed }, orders, config, held] = await Promise.all([
+  const user = await requireUser();
+  const [{ allowed }, orders, config, board, apps] = await Promise.all([
     checkCapability("order.approve"),
     pendingOrders(),
     getConfig(),
-    heldOrders(),
+    approvalBoard(),
+    listUserApps(user.id),
   ]);
 
   const rows: QueueRow[] = orders.map((o) => ({
@@ -56,18 +59,12 @@ export default async function Page() {
   }));
 
   return (
-    <>
-      <QueueScreen
-        kind="orders"
-        rows={rows}
-        canDecide={allowed}
-        staleHours={config["payments.confirmationAgeWarningHours"]}
-        quietDays={config["payments.reportedQuietDays"]}
-      />
-      <HeldOrders
-        canDecide={allowed}
-        rows={held.map((h) => ({ ...h, reason: reasonLabel(h.reason), heldAt: h.heldAt.toISOString() }))}
-      />
-    </>
+    <ApprovalBoard
+      rows={board}
+      queueRows={rows}
+      canDecide={allowed}
+      staleHours={config["payments.confirmationAgeWarningHours"]}
+      erpOrdersHref={apps.includes("erp") ? erpLink("orders") : null}
+    />
   );
 }

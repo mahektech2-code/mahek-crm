@@ -62,7 +62,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         {print.current.printNo < plan.prints.length ? " — an earlier sheet, exactly as it was handed out." : "."}
       </p>
 
-      <article className="pp-paper">
+      <article className="pp-paper pp-sheet">
         <header className="pp-hd">
           {/* eslint-disable-next-line @next/next/no-img-element -- a print page: the plain image prints where next/image may lazy-load */}
           <img src="/brand/mahek-logo.png" alt="Mahek" className="pp-logo" />
@@ -81,9 +81,8 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         <table className="pp-table">
           <colgroup>
             <col style={{ width: "6%" }} />
-            <col style={{ width: "42%" }} />
+            <col style={{ width: "50%" }} />
             <col style={{ width: "10%" }} />
-            <col style={{ width: "9%" }} />
             <col style={{ width: "11%" }} />
             <col />
           </colgroup>
@@ -91,7 +90,6 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
             <tr>
               <Th className="pp-n">#</Th>
               <Th>Product</Th>
-              <Th>Size</Th>
               <Th className="pp-r">Qty</Th>
               <Th>Unit</Th>
               <Th>Remarks</Th>
@@ -103,14 +101,15 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
               if (!mine.length) return null;
               return [
                 <tr key={`h-${c.key}`} className="pp-cat">
-                  <Td colSpan={6}>
+                  <Td colSpan={5}>
                     {c.label}
                     <span>{categoryTotals(mine)}</span>
                   </Td>
                 </tr>,
                 ...mine.map((r) => {
                   const U = ({ children }: { children: React.ReactNode }) => (r.mark ? <u>{children}</u> : <>{children}</>);
-                  const remark = [r.remarks, r.was != null ? `was ${nf(r.was)}` : null].filter(Boolean).join(" · ");
+                  /* Remarks carry only what was written on the order (or typed on the line) — blank otherwise. The old quantity of an edited line sits under its new one instead. */
+                  const remark = r.remarks;
                   return (
                     <tr key={r.id} className={r.mark ? "pp-chg" : undefined}>
                       <Td className="pp-n">{r.sr}</Td>
@@ -118,9 +117,9 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                         {r.mark ? "★ " : ""}
                         <U>{r.productName}</U>
                       </Td>
-                      <Td>{r.size ?? "—"}</Td>
                       <Td className="pp-qty">
                         <U>{nf(r.quantity)}</U>
+                        {r.was != null ? <div className="pp-was">was {nf(r.was)}</div> : null}
                       </Td>
                       <Td>
                         <U>{r.unit}</U>
@@ -136,7 +135,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
 
         {removed.length ? (
           <div className="pp-removed">
-            <b>Removed since Print {print.previous?.printNo}:</b> {removed.map((r) => `${r.productName}${r.size ? " " + r.size : ""} · ${nf(r.quantity)} ${r.unit}`).join("; ")}. Do not make these.
+            <b>Removed since Print {print.previous?.printNo}:</b> {removed.map((r) => `${r.productName} · ${nf(r.quantity)} ${r.unit}`).join("; ")}. Do not make these.
           </div>
         ) : null}
 
@@ -180,8 +179,10 @@ function cssText(s: string): string {
  */
 function sheetCss({ runningHead, footLines }: { runningHead: string; footLines: string[] }): string {
   const ink = "rgb(20 20 20)";
-  const soft = "rgb(95 95 95)";
-  const faint = "rgb(138 138 138)";
+  /* Everything printed is pure black, and every line at least 1pt: grey text and hairline rules print faint on the floor's printers. Size and weight carry the hierarchy. */
+  const rule = "rgb(0 0 0)";
+  const soft = "rgb(0 0 0)";
+  const faint = "rgb(0 0 0)";
   const hair = "rgb(218 218 218)";
   const band = "rgb(238 240 247)";
   const blue = "rgb(31 47 179)";
@@ -197,7 +198,7 @@ function sheetCss({ runningHead, footLines }: { runningHead: string; footLines: 
   .pp-paper { position: absolute; inset: 0 auto auto 0; width: 100%; box-shadow: none !important; padding: 0 !important; min-height: 0 !important; }
 }
 .pp-paper { background: white; color: ${ink}; box-shadow: 0 1px 2px rgb(0 0 0 / .2), 0 10px 28px rgb(0 0 0 / .14); padding: 10mm 10mm 9mm; min-height: 210mm; font-size: 8.4pt; line-height: 1.3; display: flex; flex-direction: column; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.pp-hd { display: grid; grid-template-columns: auto 1fr auto; gap: 3mm; align-items: center; padding-bottom: 2.5mm; margin-bottom: 3mm; border-bottom: 2px solid ${ink}; }
+.pp-hd { display: grid; grid-template-columns: auto 1fr auto; gap: 3mm; align-items: center; padding-bottom: 2.5mm; margin-bottom: 3mm; border-bottom: 2pt solid ${rule}; }
 .pp-logo { width: 15mm; height: 15mm; display: block; }
 .pp-ttl { font-weight: 700; font-size: 14pt; line-height: 1.1; text-transform: uppercase; }
 .pp-co { color: ${soft}; font-size: 8pt; margin-top: 0.6mm; }
@@ -205,19 +206,20 @@ function sheetCss({ runningHead, footLines }: { runningHead: string; footLines: 
 .pp-date { font-weight: 700; font-size: 12.5pt; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pp-day { color: ${soft}; font-size: 7.8pt; }
 .pp-late { font-size: 7pt; font-weight: 700; margin: -1mm 0 2mm; }
-.pp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.pp-table th { position: static; white-space: normal; text-align: left; font-size: 6.3pt; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: ${soft}; padding: 0 1mm 1.2mm; border-bottom: 1px solid ${ink}; background: white; }
-.pp-table td { white-space: normal; padding: 1.6mm 1mm; border-bottom: 1px solid ${hair}; vertical-align: top; overflow-wrap: anywhere; }
-.pp-table tr { break-inside: avoid; }
-.pp-table .pp-n { text-align: center; color: ${faint}; font-variant-numeric: tabular-nums; font-size: 7.2pt; }
-.pp-table .pp-r { text-align: right; }
-.pp-table .pp-qty { text-align: right; font-weight: 600; font-size: 9.8pt; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.pp-table .pp-rem { font-size: 7.4pt; }
-.pp-table tr.pp-cat td { background: ${band}; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4pt; padding: 1.3mm 1.5mm; border-bottom: 1px solid ${ink}; color: ${blue}; }
-.pp-table tr.pp-cat { break-after: avoid; }
-.pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
-.pp-table tr.pp-chg u { text-decoration-thickness: 1.5px; }
-.pp-removed { margin-top: 3mm; border: 1px dashed ${ink}; padding: 1.6mm 2mm; font-size: 7.4pt; break-inside: avoid; }
+html body .pp-sheet .pp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+html body .pp-sheet .pp-table th { position: static; border-radius: 0 !important; height: auto; line-height: 1.3; white-space: normal; text-align: left; font-size: 6.3pt; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: ${soft}; padding: 0 1mm 1.2mm; border-bottom: 1.25pt solid ${rule}; background: white; }
+html body .pp-sheet .pp-table td { height: auto; color: ${ink}; font-size: 8.4pt; line-height: 1.3; white-space: normal; padding: 1.6mm 1mm; border-bottom: 1pt solid ${rule}; vertical-align: top; overflow-wrap: anywhere; }
+html body .pp-sheet .pp-table tr { break-inside: avoid; }
+html body .pp-sheet .pp-table .pp-n { text-align: center; color: ${faint}; font-variant-numeric: tabular-nums; font-size: 7.2pt; }
+html body .pp-sheet .pp-table .pp-r { text-align: right; }
+html body .pp-sheet .pp-table .pp-qty { text-align: right; font-weight: 600; font-size: 9.8pt; line-height: 1.1; font-variant-numeric: tabular-nums; }
+html body .pp-sheet .pp-table .pp-rem { font-size: 7.4pt; }
+html body .pp-sheet .pp-table .pp-was { font-size: 6.4pt; font-weight: 500; color: ${soft}; margin-top: 0.4mm; }
+html body .pp-sheet .pp-table tr.pp-cat td { background: ${band}; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4pt; padding: 1.3mm 1.5mm; border-bottom: 1.25pt solid ${rule}; color: ${blue}; }
+html body .pp-sheet .pp-table tr.pp-cat { break-after: avoid; }
+html body .pp-sheet .pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
+html body .pp-sheet .pp-table tr.pp-chg u { text-decoration-thickness: 1.5px; }
+.pp-removed { margin-top: 3mm; border: 1pt dashed ${rule}; padding: 1.6mm 2mm; font-size: 7.4pt; break-inside: avoid; }
 .pp-ft { margin-top: auto; padding-top: 3mm; font-size: 6.6pt; color: ${soft}; }
 .pp-ft2 { font-size: 6pt; color: ${faint}; margin-top: 0.6mm; border-top: 1px solid ${hair}; padding-top: 1.5mm; }
 `;

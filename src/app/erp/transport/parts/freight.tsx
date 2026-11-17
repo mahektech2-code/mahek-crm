@@ -79,8 +79,14 @@ type Props = {
   initialAdd: boolean;
 };
 
-/** A vehicle that left on one day — what one transporter's bill is for. */
-type TripPick = { vehicleNo: string; dispatchOn: string; transporter: string | null; salesBills: string[] };
+/**
+ * A vehicle that left on one day — what one transporter's bill is for.
+ * `orderIds` are the order lines of the sales bills that were picked to get
+ * here: only they start ticked, so a bill entered from one row is split over
+ * that row alone, and from three rows over those three. Null where the trip
+ * was added whole from the vehicle picker — then every Paid line starts ticked.
+ */
+type TripPick = { vehicleNo: string; dispatchOn: string; transporter: string | null; salesBills: string[]; orderIds: Set<string> | null };
 
 type Dialog =
   | { kind: "enter"; trips: TripPick[]; clear?: () => void }
@@ -286,13 +292,14 @@ export function FreightDesk(p: Props) {
   );
 }
 
-/** Sales bills folded into the trips they went on — one transporter's bill per vehicle per day. */
+/** Sales bills folded into the trips they went on — one transporter's bill per vehicle per day, carrying the picked rows' order lines. */
 function tripsOf(ws: WaitingBill[]): TripPick[] {
   const m = new Map<string, TripPick>();
   for (const w of ws) {
     const k = tripKey({ vehicleNo: vkey(w.vehicleNo), dispatchOn: w.dispatchOn });
-    const t = m.get(k) ?? { vehicleNo: w.vehicleNo, dispatchOn: w.dispatchOn, transporter: w.transporter?.trim() || null, salesBills: [] };
+    const t = m.get(k) ?? { vehicleNo: w.vehicleNo, dispatchOn: w.dispatchOn, transporter: w.transporter?.trim() || null, salesBills: [], orderIds: new Set<string>() };
     if (w.billNo) t.salesBills.push(w.billNo);
+    for (const id of w.orderIds) t.orderIds?.add(id);
     if (!t.transporter && w.transporter?.trim()) t.transporter = w.transporter.trim();
     m.set(k, t);
   }
@@ -861,21 +868,28 @@ function BatchEnterDialog({
   const [problem, setProblem] = useState<string | null>(null);
   const patch = (key: string, v: Partial<EnterRow> | ((r: EnterRow) => Partial<EnterRow>)) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...(typeof v === "function" ? v(r) : v) } : r)));
 
-  /* Each trip's dispatches, read once; the Paid-freight ones start ticked. */
-  const loaded = (key: string, r: Awaited<ReturnType<typeof erpFreightVehicleLines>> | null, e?: unknown) =>
-    patch(key, !r ? { loadError: actionFailure(e) } : !r.ok ? { loadError: r.error } : { lines: r.data, ticked: new Set(r.data.filter((l) => lineEligibility(l).ok).map((l) => l.orderId)) });
+  /*
+   * Each trip's dispatches, read once. The whole vehicle is listed, but only
+   * the picked rows' Paid-freight lines start ticked — the rest of the lorry
+   * is there to tick by hand, never split over unasked.
+   */
+  const loaded = (key: string, trip: TripPick, r: Awaited<ReturnType<typeof erpFreightVehicleLines>> | null, e?: unknown) =>
+    patch(
+      key,
+      !r ? { loadError: actionFailure(e) } : !r.ok ? { loadError: r.error } : { lines: r.data, ticked: new Set(r.data.filter((l) => lineEligibility(l).ok && (!trip.orderIds || trip.orderIds.has(l.orderId))).map((l) => l.orderId)) },
+    );
   const load = (key: string, trip: TripPick) =>
     erpFreightVehicleLines(trip.vehicleNo, trip.dispatchOn, null).then(
-      (r) => loaded(key, r),
-      (e) => loaded(key, null, e),
+      (r) => loaded(key, trip, r),
+      (e) => loaded(key, trip, null, e),
     );
   useEffect(() => {
     let gone = false;
     for (const t of trips) {
       const key = tripKey({ vehicleNo: vkey(t.vehicleNo), dispatchOn: t.dispatchOn });
       erpFreightVehicleLines(t.vehicleNo, t.dispatchOn, null).then(
-        (r) => !gone && loaded(key, r),
-        (e) => !gone && loaded(key, null, e),
+        (r) => !gone && loaded(key, t, r),
+        (e) => !gone && loaded(key, t, null, e),
       );
     }
     return () => {
@@ -887,7 +901,7 @@ function BatchEnterDialog({
   const addTrip = (k: string) => {
     const v = vehicles.find((x) => tripKey({ vehicleNo: vkey(x.vehicleNo), dispatchOn: x.dispatchOn }) === k);
     if (!v || rows.some((r) => r.key === k)) return;
-    const t: TripPick = { vehicleNo: v.vehicleNo, dispatchOn: v.dispatchOn, transporter: v.transporter, salesBills: [] };
+    const t: TripPick = { vehicleNo: v.vehicleNo, dispatchOn: v.dispatchOn, transporter: v.transporter, salesBills: [], orderIds: null };
     setRows((rs) => [...rs, { ...rowOf(t, today), billDate: allDate }]);
     void load(k, t);
   };
@@ -1175,6 +1189,9 @@ function waitingSpec(days: number, canWrite: boolean): ListSpec {
       { k: "trip", l: "Trip", t: "b" },
       { k: "billNo", l: "Sales bill", t: "mono" },
       { k: "party", l: "Billing party", t: "t" },
+      { k: "goods", l: "Description of goods", t: "t" },
+      { k: "qty", l: "Order qty (cans)", t: "n" },
+      { k: "boxes", l: "Boxes", t: "n" },
       { k: "lines", l: "Order lines", t: "n" },
       { k: "litres", l: "Paid-freight litres", t: "n" },
       { k: "days", l: "Waiting (days)", t: "n" },
@@ -1189,6 +1206,7 @@ function waitingSpec(days: number, canWrite: boolean): ListSpec {
     sortDefault: ["days", -1],
     selectSum: [
       { k: "litres", l: "L" },
+      { k: "boxes", l: "boxes" },
       { k: "trip", l: "trips", one: "trip", kind: "distinct" },
     ],
     bulk: canWrite ? [{ id: "add", l: "Enter bills" }] : [],
@@ -1206,6 +1224,9 @@ function waitingRow(w: WaitingBill, today: string, canWrite: boolean): ListRow {
       trip: `${w.vehicleNo} · left ${shortDay(w.dispatchOn)}`,
       billNo: w.billNo,
       party: w.party,
+      goods: w.goods,
+      qty: w.qty,
+      boxes: w.boxes,
       lines: w.lines,
       litres: w.litres,
       days: daysSince(today, w.dispatchOn),

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Pressable, Text, TextInput, type TextProps } from 'react-native';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Input } from '../src/components/ui/primitives';
 import { Pill } from '../src/components/ui/v3';
@@ -536,7 +536,9 @@ export default function OrderScreen() {
             ? 'Order saved · sending to the office now'
             : 'Order saved · will send when you have signal',
       );
-      back.go();
+      /* Inside a visit the visit carries on; anywhere else the receipt says what the order is now. */
+      if (forVisit) back.go();
+      else router.replace(`/order-sent?id=${orderId}`);
     } catch {
       /* Said, rather than the button going quiet: a save that threw has
          written nothing, and he is standing in front of the customer. */

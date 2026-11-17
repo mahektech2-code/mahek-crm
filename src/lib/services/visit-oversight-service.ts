@@ -5,7 +5,7 @@ import { appAccess, customers, mbosVisits, users } from "@/db/schema";
 import { canOpen } from "@/lib/access";
 import { calendarDate } from "@/lib/business-date";
 import { visitOutcomeLabel } from "@/lib/lead-activity";
-import { managerNameByEmployeeName } from "@/lib/services/org-service";
+import { personDirectory } from "@/lib/services/person-identity-service";
 
 /* ---------------------------------------------------------------------------
  * CHECK VISITS — a superior reading the visits their own salesmen made.
@@ -15,8 +15,8 @@ import { managerNameByEmployeeName } from "@/lib/services/org-service";
  *
  *   • `users.reports_to_id` — the line the scope resolver uses for a
  *     manager's team (`access-control.ts`), and
- *   • the Org Chart (`employee_reporting`), through `managerNameByEmployeeName`
- *     — the same map the nightly Sales Manager pass reads.
+ *   • the Org Chart (`employee_reporting`), by employee id through
+ *     `personDirectory` — never by matching names, so a rename moves nobody.
  *
  * Both are DIRECT reports. That is the authoritative rule today: the scope
  * resolver does not walk a chain, and a manager's manager is not given their
@@ -53,11 +53,9 @@ export async function reportingSalesmen(user: Superior): Promise<{ id: string; n
   const direct = await db.select({ id: users.id }).from(users).where(eq(users.reportsToId, user.id));
   for (const r of direct) ids.add(r.id);
 
-  const me = user.name.trim().toLowerCase();
-  const chart = await managerNameByEmployeeName();
+  const dir = await personDirectory();
   for (const f of field) {
-    const boss = chart.get(f.name.trim().toLowerCase());
-    if (boss && boss.trim().toLowerCase() === me) ids.add(f.id);
+    if (dir.managerOfAccount(f.id)?.userId === user.id) ids.add(f.id);
   }
   return field.filter((f) => ids.has(f.id) && f.id !== user.id);
 }

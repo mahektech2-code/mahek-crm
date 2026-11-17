@@ -714,7 +714,7 @@ export async function assertCustomerInScope(
      lets the person act on, whatever level their CRM hat happens to be. */
   if (await inCrmSalesManagerWorkspace()) {
     const { user } = await resolveScope();
-    if (leadInSalesManagersBook(customer, user, await teamOwnerIdsFor(user.id, user.name))) return;
+    if (leadInSalesManagersBook(customer, user, await teamOwnerIdsFor(user.id))) return;
     throw new NotPermittedError("customer.read");
   }
 
