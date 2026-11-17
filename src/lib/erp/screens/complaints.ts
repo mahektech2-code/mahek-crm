@@ -99,8 +99,8 @@ export async function openRequestIds(): Promise<string[]> {
   return (await db.select({ id: complaints.id }).from(complaints).where(and(eq(complaints.status, "open"), ERP_ONLY))).map((r) => r.id);
 }
 
-async function staff(): Promise<{ name: string; position: string | null }[]> {
-  return db.select({ name: employees.name, position: employees.position }).from(employees).where(eq(employees.status, "active")).orderBy(employees.name);
+async function staff(): Promise<{ id: string; name: string; position: string | null }[]> {
+  return db.select({ id: employees.id, name: employees.name, position: employees.position }).from(employees).where(eq(employees.status, "active")).orderBy(employees.name);
 }
 
 /**
@@ -131,7 +131,10 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
   const [parties, people, choices] = await Promise.all([loadCustomers(), staff(), billChoices()]);
   const mobile: Record<string, string> = {};
   parties.forEach((p) => (mobile[p.name] = p.phone ?? ""));
-  const me = people.find((s) => s.name.toLowerCase() === ctx.user.name.toLowerCase() && /sales/i.test(s.position ?? ""));
+  /* Who is raising it, by the account's HRMS link — not by comparing names. */
+  const { personDirectory } = await import("@/lib/services/person-identity-service");
+  const myEmployee = (await personDirectory()).employeeOfAccount(ctx.user.id);
+  const me = people.find((s) => s.id === myEmployee && /sales/i.test(s.position ?? ""));
   const salesmen = people.filter((s) => /sales|office/i.test(s.position ?? "")).map((s) => s.name);
   return {
     screen: "requests",

@@ -289,7 +289,7 @@ const crmManagerScope = cache(async function crmManagerScope(): Promise<ManagerS
   const user = await requireUser();
   const scope = crmSalesManagerScopeFor(user);
   if (!scope.salesManagerId) return scope;
-  return { ...scope, teamOwnerIds: await teamOwnerIdsFor(user.id, user.name) };
+  return { ...scope, teamOwnerIds: await teamOwnerIdsFor(user.id) };
 });
 
 /**

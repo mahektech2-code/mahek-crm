@@ -4,7 +4,7 @@ import { eq, sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { managerNameByEmployeeName } from "./org-service";
+import { personDirectory } from "./person-identity-service";
 
 import { CRM_SALES_MANAGER_WORKSPACE, WORKSPACE_HEADER } from "@/proxy";
 import type { ManagerScope } from "./sales-service";
@@ -127,33 +127,24 @@ export function crmSalesManagerScopeFor(user: { id: string; role: string }): Man
  * could not see, filter or work their leads. A lead owned by anybody on this
  * list is therefore in the manager's book as well as one carrying their seat.
  *
- * "Under" is read the way the rest of the product reads it: the account's
- * `reports_to_id`, the org chart, or the employee sheet's own "reports to"
- * column. It can only ADD leads, and only ones owned by their own people.
+ * "Under" is read the way the rest of the product reads it, and by id only:
+ * the account's `reports_to_id` or the org chart. It can only ADD leads, and only ones owned by their own people.
  */
-export const teamOwnerIdsFor = cache(async function teamOwnerIdsFor(
-  userId: string,
-  userName: string,
-): Promise<string[]> {
-  const mine = userName.trim().toLowerCase();
-  const [managerNameOf, accounts, sheet] = await Promise.all([
-    managerNameByEmployeeName(),
+export const teamOwnerIdsFor = cache(async function teamOwnerIdsFor(userId: string): Promise<string[]> {
+  /* By id only: the account's reporting line or the org chart. The sheet's
+     Report To text used to be compared with this manager's NAME as well. */
+  const [dir, accounts] = await Promise.all([
+    personDirectory(),
     db
-      .select({ id: users.id, name: users.name, reportsToId: users.reportsToId })
+      .select({ id: users.id, reportsToId: users.reportsToId })
       .from(users)
       .where(eq(users.active, true)),
-    db.execute<{ name: string }>(sql`
-      select name from employees where status = 'active' and lower(trim(reports_to)) = ${mine}
-    `) as unknown as Promise<{ name: string }[]>,
   ]);
-  const sheetNames = new Set(sheet.map((r) => r.name.trim().toLowerCase()));
   const ids = new Set<string>([userId]);
   for (const a of accounts) {
-    const n = a.name.trim().toLowerCase();
     if (
       a.reportsToId === userId ||
-      managerNameOf.get(n)?.trim().toLowerCase() === mine ||
-      sheetNames.has(n)
+      dir.managerOfAccount(a.id)?.userId === userId
     ) {
       ids.add(a.id);
     }
@@ -178,7 +169,7 @@ export async function associateTeamBook(user: {
   if (isAdminUser(user)) return null;
   const { canOpenModule } = await import("../access");
   if (!(await canOpenModule(user.id, "crm.sales-manager"))) return null;
-  return { seatId: user.id, ownerIds: await teamOwnerIdsFor(user.id, user.name) };
+  return { seatId: user.id, ownerIds: await teamOwnerIdsFor(user.id) };
 }
 
 /**

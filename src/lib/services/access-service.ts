@@ -96,6 +96,14 @@ export type AccessRow = {
    * for itself would be a second opinion about somebody's pay.
    */
   employeeMatch: "linked" | "guessed" | "none";
+  /** An administrator said this account is not an employee. */
+  notEmployee: boolean;
+  /**
+   * For an account with no stored link: the HRMS record the person directory
+   * would pair it with, and on what — offered on "Not linked to HRMS" for a
+   * person to confirm. A name match is only ever offered, never stored.
+   */
+  suggestion: { employeeId: string; employeeCode: string; name: string; on: "email" | "mobile" | "name" } | null;
   department: string | null;
   /** Active in the employee sheet. Null where HRMS has never heard of them. */
   employeeStatus: "active" | "inactive" | "unknown" | null;
@@ -248,7 +256,8 @@ function buildGrants(
 
 /** Every account, with what it opens and how far into each app it reaches. */
 export async function listAccess(): Promise<AccessRow[]> {
-  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, taskPowerRows, hireRoleRows, standings, factoryRows] = await Promise.all([
+  const { loadPersonDirectory } = await import("./person-identity-service");
+  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, taskPowerRows, hireRoleRows, standings, factoryRows, dir] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -259,6 +268,7 @@ export async function listAccess(): Promise<AccessRow[]> {
         initials: users.initials,
         active: users.active,
         employeeId: users.employeeId,
+        notEmployee: users.notEmployee,
       })
       .from(users)
       .orderBy(asc(users.name)),
@@ -286,6 +296,7 @@ export async function listAccess(): Promise<AccessRow[]> {
       select s.user_id as "userId", s.area, s.areas, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
              (select coalesce(json_object_agg(d.proc, d.role), '{}'::json) from factory_team_defaults d where d.user_id = s.user_id) as crews
         from factory_staff s`) as unknown as Promise<{ userId: string; area: FactoryDept; areas: FactoryDept[] | null; badge: string | null; hrConfirmed: boolean; crews: Record<string, CrewRole> }[]>,
+    loadPersonDirectory(),
   ]);
   const placeByUser = new Map(factoryRows.map((r) => [r.userId, placeFromRow(r)]));
   const hireRoleByUser = new Map(hireRoleRows.map((r) => [r.userId, r.role]));
@@ -370,6 +381,13 @@ export async function listAccess(): Promise<AccessRow[]> {
       /* Chosen, or merely matched. An admin looking for the accounts whose pay
          will not show up needs to be able to tell the two apart at a glance. */
       employeeMatch: linked ? "linked" : match ? "guessed" : "none",
+      notEmployee: u.notEmployee,
+      suggestion: (() => {
+        if (linked || u.notEmployee) return null;
+        const how = dir.howLinked(u.id);
+        const e = how && how !== "stored" ? byId.get(dir.employeeOfAccount(u.id) ?? "") : undefined;
+        return e && how && how !== "stored" ? { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, on: how } : null;
+      })(),
       department: match?.department ?? null,
       employeeStatus: match ? match.status : null,
       grants: buildGrants(

@@ -1,0 +1,86 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+/* ---------------------------------------------------------------------------
+ * A PERSON IS AN ID. A NAME IS A LABEL.
+ *
+ * The owner's standing rule (2026-11-17): allocation, reporting lines and
+ * books must never hang off somebody's name, because names change — HR
+ * renames a person and every question answered by comparing name strings
+ * silently changes its answer. Who-is-whose goes through ids
+ * (`users.employee_id`, `employee_reporting`, the seat ids on customers), and
+ * a piece of text is turned into a person only through `personDirectory()`
+ * (lib/services/person-identity-service.ts), which remembers every spelling
+ * and refuses a name two people share.
+ *
+ * This fails the build when the old shapes come back. If you are here
+ * because it failed: ask `personDirectory()` instead. The allow-list is for
+ * one-off provisioning scripts that ran once against a sheet, and grows only
+ * with a reason.
+ * ------------------------------------------------------------------------- */
+
+const ROOT = join(process.cwd(), "src");
+const SCRIPTS = join(process.cwd(), "scripts");
+
+const BANNED: Array<{ re: RegExp; why: string }> = [
+  { re: /managerNameByEmployeeName/, why: "the name-keyed org map was retired; use personDirectory().managerOfAccount" },
+  { re: /eq\(\s*users\.name\s*,/, why: "finding an account by its name; use personDirectory().accountByName" },
+  { re: /lower\(trim\(\$\{users\.name\}\)\)\s*=/, why: "finding an account by its name in SQL" },
+  { re: /\b(userByName|userIdByName|managerByName|ownerByName|usersByName|accountByName)\s*=\s*new Map/, why: "a Map from a person's name to their id" },
+  { re: /\$\{employees\.(reportsTo|position)\}\)?\)?\s*=/, why: "a manager or team worked out from a job title; titles become chart links once, in placeByTitles" },
+  { re: /lower\(trim\((reports_to|position)\)\)\s*=/, why: "a manager or team worked out from a job title in SQL" },
+  { re: /lower\((btrim\()?(\$\{)?(users\.name|employees\.name|employee_name)\}?\)?\)\s*=/, why: "a person found by comparing their name" },
+  { re: /\.name\.toLowerCase\(\)\s*===\s*\w+\.user\.name/, why: "the signed-in person found among employees by name; use their HRMS link" },
+  { re: /\b(byName|nameToId|idByName)\.(get|set)\(\s*(u|user|p|person|e|emp|employee|staff)\.name/, why: "a person indexed by their name" },
+];
+
+/**
+ * path (relative to the repo) → why it may stay. A single line can also say
+ * `identity-ok: <why>` — for a comparison that is not a lookup (refusing a
+ * duplicate name, an old row with no id to ask by).
+ */
+const ALLOWED: Record<string, string> = {
+  "src/lib/services/team-service.ts":
+    "provisionBackOffice: a one-off that CREATED the back-office accounts from the sheet's names; it has to key on the name it is creating",
+};
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name.startsWith(".")) continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
+  }
+  return out;
+}
+
+test("nothing resolves a person by their name", () => {
+  const hits: string[] = [];
+  for (const file of [...walk(ROOT), ...walk(SCRIPTS)]) {
+    const rel = file.slice(process.cwd().length + 1);
+    if (ALLOWED[rel]) continue;
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (line.includes("identity-ok")) return;
+      const code = line.replace(/\/\/.*$/, "");
+      if (/^\s*(\*|\/\*)/.test(code)) return;
+      for (const b of BANNED) if (b.re.test(code)) hits.push(`${rel}:${i + 1} — ${b.why}`);
+    });
+  }
+  assert.deepEqual(hits, [], `\n${hits.join("\n")}`);
+});
+
+test("HRMS renames carry to the account", () => {
+  const people = readFileSync(join(ROOT, "lib/hrms/screens/people.ts"), "utf8");
+  assert.match(people, /renameEmployee\(/, "the HRMS edit form must call renameEmployee");
+  const sync = readFileSync(join(ROOT, "lib/services/employee-sync-service.ts"), "utf8");
+  assert.match(sync, /alignAccountNames\(/, "the employee sheet sync must align account names");
+  assert.match(sync, /rememberSheetRenames\(/, "the employee sheet sync must remember the old spelling");
+});
+
+test("the MBOS book reads remembered spellings through the account's employee link", () => {
+  const mbos = readFileSync(join(ROOT, "lib/services/mbos-service.ts"), "utf8");
+  assert.match(mbos, /person_name_aliases a on a\.employee_id = u\.employee_id/);
+});
