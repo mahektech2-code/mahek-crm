@@ -53,3 +53,19 @@ export const ERP_ASK: AskSetup = {
   source: "From the ERP screens you can open",
   button: "Ask AI",
 };
+
+export const ADMIN_ASK: AskSetup = {
+  endpoint: "/api/admin/ask",
+  title: "Ask about MahekOne",
+  intro: "Ask how anything in MahekOne works — where a setting lives, what a job does, who can open what — answered from the platform's documentation, with the pages it read.",
+  chips: [
+    "Where do I change how long a quiet window lasts after an order?",
+    "What does the nightly job rebuild?",
+    "How do I narrow somebody's CRM access to a few screens?",
+    "Why would a handset's trail stop during the day?",
+    "How does the Ola key pool fail over?",
+  ],
+  placeholder: "Ask how anything in MahekOne works",
+  source: "From the platform documentation",
+  button: "Ask AI",
+};

@@ -152,8 +152,8 @@ export async function listHierarchy() {
         offerForMix: productFormulations.offerForMix,
         isResidual: productFormulations.isResidual,
         notes: productFormulations.notes,
-        brands: sql<number>`(select count(*)::int from product_brands b where b.formulation_id = ${productFormulations.id})`,
-        skus: sql<number>`(select count(*)::int from products p where p.formulation_id = ${productFormulations.id})`,
+        brands: sql<number>`(select count(*)::int from product_brands b where b.formulation_id = product_formulations.id)`,
+        skus: sql<number>`(select count(*)::int from products p where p.formulation_id = product_formulations.id)`,
       })
       .from(productFormulations)
       .orderBy(asc(productFormulations.displayOrder), asc(productFormulations.name)),
@@ -164,8 +164,8 @@ export async function listHierarchy() {
         active: productBrands.active,
         formulationId: productBrands.formulationId,
         formulation: productFormulations.name,
-        goods: sql<number>`(select count(*)::int from finished_goods g where g.brand_id = ${productBrands.id})`,
-        skus: sql<number>`(select count(*)::int from products p where p.brand_id = ${productBrands.id})`,
+        goods: sql<number>`(select count(*)::int from finished_goods g where g.brand_id = product_brands.id)`,
+        skus: sql<number>`(select count(*)::int from products p where p.brand_id = product_brands.id)`,
       })
       .from(productBrands)
       .leftJoin(productFormulations, eq(productFormulations.id, productBrands.formulationId))
@@ -179,7 +179,7 @@ export async function listHierarchy() {
         brandId: finishedGoods.brandId,
         brand: productBrands.name,
         formulation: productFormulations.name,
-        skus: sql<number>`(select count(*)::int from products p where p.finished_good_id = ${finishedGoods.id})`,
+        skus: sql<number>`(select count(*)::int from products p where p.finished_good_id = finished_goods.id)`,
       })
       .from(finishedGoods)
       .leftJoin(productBrands, eq(productBrands.id, finishedGoods.brandId))

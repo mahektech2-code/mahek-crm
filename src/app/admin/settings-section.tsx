@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   Badge,
   Button,
-  Card,
   Input,
   Textarea,
   cx,
@@ -25,6 +24,7 @@ import { HintTip } from "@/components/ui/hint-tip";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
 import { cleanDecimal, cleanWhole } from "@/lib/format";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * One renderer per declared control type, and nothing else.
@@ -43,6 +43,7 @@ export function SettingsSection({
   isPlatformAdmin,
   collections,
   changedOnly = false,
+  find = "",
 }: {
   tab: SchemaTab;
   values: Values;
@@ -53,19 +54,21 @@ export function SettingsSection({
   collections: Record<string, Collection>;
   /** Only the settings that differ from their default, or carry a draft. */
   changedOnly?: boolean;
+  /** Only the settings whose name or key holds this. */
+  find?: string;
 }) {
+  const needle = find.trim().toLowerCase();
   const shown = (f: SchemaField) =>
-    !changedOnly || (f.control !== "entity" && (isDirty(values, drafts, f) || !isAtDefault(values, drafts, f)));
+    (!changedOnly || (f.control !== "entity" && (isDirty(values, drafts, f) || !isAtDefault(values, drafts, f)))) &&
+    (!needle || f.label.toLowerCase().includes(needle) || f.key.toLowerCase().includes(needle));
   const groups = tab.groups
     .map((g) => ({ ...g, fields: g.fields.filter(shown) }))
     .filter((g) => g.fields.length > 0);
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       {errors.length ? (
-        <div className="mt-5 rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-3">
-          <div className="text-sm font-medium text-danger">
-            This section cannot be saved yet
-          </div>
+        <div className="rounded-card border border-danger/25 bg-danger-soft px-4 py-3">
+          <div className="text-sm font-semibold text-danger">This section cannot be saved yet</div>
           <div className="mt-1.5 flex flex-col gap-1">
             {errors.map((e) => (
               <div key={e.key} className="text-sm leading-[21px] text-ink">
@@ -76,39 +79,55 @@ export function SettingsSection({
         </div>
       ) : null}
 
-      {changedOnly && groups.length === 0 ? (
-        <Card className="mt-5 px-5 py-6 text-sm text-muted">Every setting on this tab is at its default.</Card>
-      ) : null}
-      {groups.map((group) => (
-        <Card key={group.label} className="mt-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          <div className="border-b border-divider px-5 py-4">
-            <div className="flex items-center gap-2 text-md leading-6 font-bold text-ink">
-              {group.label}
-              {group.note ? <HintTip text={group.note} /> : null}
+      {groups.length === 0 ? (
+        <section className="rounded-card border border-line bg-surface px-[18px] py-6 text-sm text-muted">
+          {needle ? "No setting on this tab is called that." : "Every setting on this tab is at its default."}
+        </section>
+      ) : (
+        <section className="overflow-hidden rounded-card border border-line bg-surface text-sm leading-[1.5]">
+          {groups.map((group) => (
+            <div key={group.label}>
+              <div
+                style={{ textTransform: "uppercase", letterSpacing: ".05em" }}
+                className="flex items-center gap-2 border-b border-divider bg-[#f7f9fc] px-[18px] py-3 text-xs font-semibold text-muted"
+              >
+                {group.label}
+                {group.note ? <InfoDot text={group.note} /> : null}
+              </div>
+              {group.fields.map((field) => (
+                <FieldRow
+                  key={field.key}
+                  field={field}
+                  values={values}
+                  drafts={drafts}
+                  error={errors.find((e) => e.key === field.key) ?? null}
+                  onDraft={onDraft}
+                  locked={!!field.adminOnly && !isPlatformAdmin}
+                  collection={collections[field.key]}
+                />
+              ))}
             </div>
-          </div>
-          {group.fields.map((field, i) => (
-            <FieldRow
-              key={field.key}
-              field={field}
-              first={i === 0}
-              values={values}
-              drafts={drafts}
-              error={errors.find((e) => e.key === field.key) ?? null}
-              onDraft={onDraft}
-              locked={!!field.adminOnly && !isPlatformAdmin}
-              collection={collections[field.key]}
-            />
           ))}
-        </Card>
-      ))}
+        </section>
+      )}
     </div>
   );
 }
 
+/** The canvas's round "i": the field's help on hover, focus or a tap. */
+function InfoDot({ text }: { text: string }) {
+  return (
+    <span className="normal-case" style={{ letterSpacing: 0 }}>
+      <HintTip text={text} />
+    </span>
+  );
+}
+
+/** Controls that need the row's width rather than the 190px column. */
+const WIDE = new Set(["longtext", "richtext", "multi", "dayset", "threshold", "keyvalue", "ordered", "entity"]);
+
 function FieldRow({
   field,
-  first,
   values,
   drafts,
   error,
@@ -117,7 +136,6 @@ function FieldRow({
   collection,
 }: {
   field: SchemaField;
-  first: boolean;
   values: Values;
   drafts: Values;
   error: CrossError | null;
@@ -128,66 +146,78 @@ function FieldRow({
   const value = currentValue(values, drafts, field);
   const dirty = isDirty(values, drafts, field);
   const atDefault = isAtDefault(values, drafts, field);
+  const changed = field.control !== "entity" && (dirty || !atDefault);
+  const wide = WIDE.has(field.control);
   const set = (v: unknown) => {
     if (!locked) onDraft(field.key, v);
   };
+
+  const control = (
+    <div className="min-w-0">
+      <Control field={field} value={value} error={error} locked={locked} set={set} collection={collection} />
+      {error && field.control !== "threshold" ? <div className="mt-1.5 text-[13px] text-danger">{error.text}</div> : null}
+    </div>
+  );
 
   return (
     <div
       /* The search in the header lands on a setting by its key. */
       id={field.key}
       className={cx(
-        "flex scroll-mt-6 items-center gap-5 px-5 py-3.5 target:ring-2 target:ring-brand target:ring-inset",
-        first ? "" : "border-t border-canvas",
-        error ? "bg-danger-soft" : "bg-surface",
+        "grid scroll-mt-6 items-center gap-4 border-b border-divider px-[18px] py-3.5 last:border-b-0 target:ring-2 target:ring-brand target:ring-inset",
+        wide ? "grid-cols-[minmax(0,1fr)_120px]" : "grid-cols-[minmax(0,1fr)_190px_120px]",
+        error ? "bg-danger-soft" : changed ? "bg-[#fbfaff] shadow-[inset_3px_0_0_var(--color-brand)]" : "bg-surface",
       )}
     >
-      <div className="w-[320px] min-w-0 flex-none">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-ink">{field.label}</span>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 font-semibold text-ink">
+          {changed ? <span title={dirty ? "Unsaved" : "Changed from the default"} className="block h-[7px] w-[7px] flex-none rounded-full bg-brand" /> : null}
+          <span className="min-w-0">{field.label}</span>
           {locked ? (
-            <Badge
-              tone="neutral"
-              className="gap-1"
-              // Visible but not editable — a manager should know the setting
-              // exists and who to ask, not find a control that silently does
-              // nothing.
-            >
-              🔒 Platform admin
+            <Badge tone="neutral" className="gap-1">
+              Platform admin
             </Badge>
           ) : null}
           {field.help ? <HintTip text={field.help} /> : null}
-          {dirty ? <span title="Unsaved" className="block h-1.5 w-1.5 flex-none rounded-full bg-brand" /> : null}
         </div>
-        {field.control === "entity" ? null : (
-          <div className="mt-1 font-mono text-[11px] text-muted">{field.key}</div>
-        )}
-        {dirty ? (
-          <div className="mt-1 text-xs text-brand">Unsaved · was {readable(savedValue(values, field))}</div>
-        ) : null}
+        {field.control === "entity" ? null : <div className="mt-0.5 font-mono text-xs text-muted">{field.key}</div>}
+        {dirty ? <div className="mt-0.5 text-xs text-brand">Unsaved · was {readable(savedValue(values, field))}</div> : null}
       </div>
 
-      <div className="min-w-0 flex-1">
-        <Control field={field} value={value} error={error} locked={locked} set={set} collection={collection} />
-        {error && field.control !== "threshold" ? (
-          <div className="mt-1.5 text-[13px] text-danger">{error.text}</div>
-        ) : null}
-      </div>
+      {wide ? null : control}
 
-      <div className="w-[120px] flex-none text-right">
+      <div className="flex items-center justify-end gap-1.5">
         {field.control === "entity" ? null : dirty ? (
-          <Button size="sm" variant="ghost" onClick={() => onDraft(field.key, savedValue(values, field))}>
+          <button
+            type="button"
+            onClick={() => onDraft(field.key, savedValue(values, field))}
+            className="h-[30px] cursor-pointer rounded-control border border-line bg-surface px-2.5 text-xs font-semibold text-ink hover:bg-[#f7f9fc]"
+          >
             Reset
-          </Button>
+          </button>
         ) : atDefault ? null : (
           <span
-            title="Changed from the default"
-            className="inline-flex h-6 max-w-[120px] items-center truncate rounded-full bg-brand-soft px-2.5 text-xs font-semibold text-brand-deep"
+            title="The default"
+            className="inline-flex h-[22px] max-w-[80px] items-center truncate rounded-full bg-[#eef1f6] px-2 text-xs font-semibold text-[#4a5670]"
           >
-            Default {readable(field.def)}
+            {readable(field.def)}
           </span>
         )}
+        {field.control === "entity" ? null : (
+          <Link
+            href={`${ADMIN.changes}?q=${encodeURIComponent(field.key)}`}
+            aria-label={`History of ${field.label}`}
+            title="History"
+            className="inline-flex h-[30px] w-[30px] flex-none items-center justify-center rounded-control border border-line bg-surface text-ink hover:bg-[#f7f9fc]"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2" />
+            </svg>
+          </Link>
+        )}
       </div>
+
+      {wide ? <div className="col-span-2">{control}</div> : null}
     </div>
   );
 }
@@ -213,22 +243,24 @@ function Control({
     case "int":
     case "decimal":
       return (
-        <span className="flex items-center gap-2">
-          {/* The width lives on a wrapper: Input is w-full, and a competing
-              width utility on the control itself does not reliably win. */}
-          <span className="block w-[110px] flex-none">
-            <Input
-              value={String(value ?? "")}
-              invalid={!!error}
-              disabled={locked}
-              onChange={(e) => set(e.target.value.replace(/[^0-9.\-]/g, ""))}
-              className="text-right"
-            />
-          </span>
-          {field.unit ? <span className="text-sm whitespace-nowrap text-muted">{field.unit}</span> : null}
-          {field.min !== undefined ? (
-            <span className="text-[13px] whitespace-nowrap text-muted">
-              {field.min}–{field.max}
+        <span
+          title={field.min !== undefined ? `${field.min}–${field.max}` : undefined}
+          className={cx(
+            "flex h-[38px] items-center overflow-hidden rounded-control border bg-surface",
+            error ? "border-danger" : "border-line-strong",
+          )}
+        >
+          <input
+            value={String(value ?? "")}
+            disabled={locked}
+            aria-label={field.label}
+            inputMode="decimal"
+            onChange={(e) => set(e.target.value.replace(/[^0-9.\-]/g, ""))}
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-2.5 text-right text-sm font-semibold text-ink outline-none"
+          />
+          {field.unit ? (
+            <span className="flex h-full flex-none items-center border-l border-divider bg-[#f7f9fc] px-2.5 text-[13px] whitespace-nowrap text-muted">
+              {field.unit}
             </span>
           ) : null}
         </span>
@@ -236,14 +268,15 @@ function Control({
 
     case "currency":
       return (
-        <span className="flex h-8.5 w-40 items-center rounded-[4px] border border-line bg-surface px-2.5">
-          <span className="mr-1 text-muted">₹</span>
+        <span className="flex h-[38px] items-center overflow-hidden rounded-control border border-line-strong bg-surface">
+          <span className="flex h-full flex-none items-center border-r border-divider bg-[#f7f9fc] px-2.5 text-[13px] text-muted">₹</span>
           <input
             value={String(value ?? "")}
             disabled={locked}
+            aria-label={field.label}
             inputMode="decimal"
             onChange={(e) => set(cleanDecimal(e.target.value))}
-            className="min-w-0 flex-1 border-none bg-transparent text-sm outline-none"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-2.5 text-right text-sm font-semibold text-ink outline-none"
           />
         </span>
       );
@@ -253,12 +286,15 @@ function Control({
 
     case "text":
       return (
-        <Input
+        <input
           value={String(value ?? "")}
-          invalid={!!error}
           disabled={locked}
+          aria-label={field.label}
           onChange={(e) => set(e.target.value)}
-          className="max-w-[360px]"
+          className={cx(
+            "h-[38px] w-full rounded-control border bg-surface px-3 text-sm text-ink outline-none focus:border-brand",
+            error ? "border-danger" : "border-line-strong",
+          )}
         />
       );
 
@@ -279,13 +315,19 @@ function Control({
 
     case "choice":
       return (
-        <span className="flex flex-wrap gap-2">
+        <select
+          value={String(value ?? "")}
+          disabled={locked}
+          aria-label={field.label}
+          onChange={(e) => set(e.target.value)}
+          className="h-[38px] w-full rounded-control border border-line-strong bg-surface px-3 text-sm text-ink outline-none focus:border-brand"
+        >
           {(field.options ?? []).map((opt) => (
-            <Pill key={opt} on={value === opt} onClick={() => set(opt)}>
+            <option key={opt} value={opt}>
               {opt}
-            </Pill>
+            </option>
           ))}
-        </span>
+        </select>
       );
 
     case "multi": {
@@ -313,8 +355,8 @@ function Control({
           disabled={locked}
           onChange={(e) => set(e.target.value)}
           className={cx(
-            "h-8.5 w-[130px] rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
-            error ? "border-danger" : "border-line",
+            "h-[38px] w-full rounded-control border bg-surface px-3 text-sm text-ink outline-none focus:border-brand",
+            error ? "border-danger" : "border-line-strong",
           )}
         />
       );

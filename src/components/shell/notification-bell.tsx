@@ -47,9 +47,12 @@ type View = "app" | "all";
 
 export function NotificationBell({
   notifications = [],
+  boxed = false,
 }: {
   /** The layout's first paint; the live store replaces it within a poll. */
   notifications?: Notification[];
+  /** The v4 console's 34px boxed bell, lavender-edged like the rest of its header. */
+  boxed?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -89,7 +92,7 @@ export function NotificationBell({
     <>
       {/* The tasks tray rides with the bell, so every app's header has it from this one place. */}
       <WorkdayChip />
-      <TasksTray />
+      {boxed ? null : <TasksTray />}
       <div ref={notifRef} className="relative">
       <button
         onClick={() => {
@@ -98,11 +101,11 @@ export function NotificationBell({
         }}
         aria-label={label}
         title={label}
-        className="relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-muted hover:bg-canvas hover:text-body"
+        className={boxed ? "relative flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-control border border-brand-softer bg-surface text-ink hover:bg-canvas" : "relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-muted hover:bg-canvas hover:text-body"}
       >
         <Icon name="bell" size={16} />
         {unread ? (
-          <span className="absolute -top-1.5 -right-1.5 h-4 min-w-4 rounded-lg bg-danger px-1 text-[11px] leading-4 font-medium text-white">
+          <span className={boxed ? "absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-danger px-1 text-[10px] leading-4 font-bold text-white" : "absolute -top-1.5 -right-1.5 h-4 min-w-4 rounded-lg bg-danger px-1 text-[11px] leading-4 font-medium text-white"}>
             {unread > 99 ? "99+" : unread}
           </span>
         ) : elsewhereCount ? (

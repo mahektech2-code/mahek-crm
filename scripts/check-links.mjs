@@ -49,6 +49,10 @@ function normalise(href, from) {
   if (u.origin !== new URL(BASE).origin) return null;
   if (/\.(png|jpe?g|svg|ico|css|js|woff2?)$/i.test(u.pathname)) return null;
   if (u.pathname.startsWith("/_next") || u.pathname.startsWith("/api")) return null;
+  // /downloads/* is the APKs, served by Caddy straight off the droplet's disk
+  // (see Caddyfile) and never by the app — so a crawl of the app alone can only
+  // ever answer 404 for them.
+  if (u.pathname.startsWith("/downloads/")) return null;
   const path = u.pathname + u.search;
 
   /*

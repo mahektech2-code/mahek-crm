@@ -137,7 +137,7 @@ function CompareModal({
 
 /* ------------------------------------------------------- export and import */
 
-function TransferModal({
+export function TransferModal({
   open,
   onClose,
   tab,

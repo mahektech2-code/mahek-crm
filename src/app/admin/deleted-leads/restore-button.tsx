@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { btnClass } from "../_shell/kit";
 import { restoreAnnouncementAction, restoreDocument, restoreFile } from "@/lib/actions/admin-console";
 
 const RUN = { file: restoreFile, document: restoreDocument, announcement: restoreAnnouncementAction } as const;
@@ -14,8 +14,9 @@ export function BinRestoreButton({ kind, id, name }: { kind: keyof typeof RUN; i
   const notify = useToast().push;
   const [busy, setBusy] = React.useState(false);
   return (
-    <Button
-      size="sm"
+    <button
+      type="button"
+      className={`${btnClass("plain", "sm")} h-8`}
       disabled={busy}
       aria-label={`Restore ${name}`}
       onClick={async () => {
@@ -27,6 +28,6 @@ export function BinRestoreButton({ kind, id, name }: { kind: keyof typeof RUN; i
       }}
     >
       {busy ? "Restoring…" : "Restore"}
-    </Button>
+    </button>
   );
 }

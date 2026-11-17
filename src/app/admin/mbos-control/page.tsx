@@ -1,7 +1,8 @@
 import { inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { AdminPage } from "../_shell/admin-page";
+import { fleetCounts } from "@/lib/services/admin-devices-view-service";
+import { FleetFrame } from "../handsets/fleet-frame";
 import { requirePlatformAdmin } from "../_shell/context";
 import { allRemoteItems } from "@/lib/services/mbos-remote-service";
 import { MbosControlSection, type ControlRow } from "./mbos-control-section";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 /** Switches, sentences and banners on salesmen's phones, changed without a release. */
 export default async function MbosControlPage() {
   await requirePlatformAdmin();
-  const items = await allRemoteItems();
+  const [items, counts] = await Promise.all([allRemoteItems(), fleetCounts()]);
   const ids = [...new Set(items.flatMap((i) => [...(i.audience.userIds ?? []), ...(i.updatedById ? [i.updatedById] : [])]))];
   const people = ids.length
     ? await db.select({ id: users.id, name: users.name, email: users.email, phone: users.phone }).from(users).where(inArray(users.id, ids))
@@ -37,11 +38,8 @@ export default async function MbosControlPage() {
   }));
 
   return (
-    <AdminPage
-      title="MBOS control"
-      subtitle="Switch features, change sentences and put banners on salesmen's phones without a new app. Phones pick a change up on their next sync, usually within minutes. Location tracking cannot be changed from here."
-    >
+    <FleetFrame title="MBOS control" tab="control" counts={counts}>
       <MbosControlSection rows={rows} />
-    </AdminPage>
+    </FleetFrame>
   );
 }

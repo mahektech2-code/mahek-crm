@@ -1,12 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Badge, Button, Callout, Card, Checkbox, EmptyState, Input, Select, Td, Th } from "@/components/ui/primitives";
+import { createPortal } from "react-dom";
+import { Input, Select } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { useToast } from "@/components/ui/toast";
 import { restoreLeads } from "@/lib/actions/lead-trash";
-import { phoneDisplay, stamp, stampDate } from "@/lib/format";
+import { APP_TIMEZONE, addDays, type BusinessDate } from "@/lib/business-date";
+import { phoneDisplay, shortDate, stamp, stampDate } from "@/lib/format";
+import { Card, Pill, btnClass } from "./_shell/kit";
 import type { TrashRow, TrashSort } from "@/lib/services/lead-trash-service";
 
 /* ---------------------------------------------------------------------------
@@ -80,7 +83,7 @@ function toAddress(f: Filters): string {
   return p.toString();
 }
 
-export function TrashSection({ initial }: { initial: TrashFilters }) {
+export function TrashSection({ initial, today }: { initial: TrashFilters; today: string }) {
   const { push } = useToast();
   const [filters, setFilters] = React.useState<Filters>(() => cleanFilters(initial));
   const [typed, setTyped] = React.useState(filters.q);
@@ -150,124 +153,135 @@ export function TrashSection({ initial }: { initial: TrashFilters }) {
       .catch(() => setHistory((all) => ({ ...all, [id]: [] })));
   };
 
-  return (
-    <div className="mt-5 flex flex-col gap-4">
-      <Callout tone="brand">
-        <div>
-          Leads deleted in Lead Management land here. While they are in the trash they are on no
-          screen — not the lists, the calling queue, search, reports or the salesmen&rsquo;s phones.
-          Restoring brings a lead back exactly as it was: same owner, same stage, every call and note.
-        </div>
-      </Callout>
+  /* The title row's slot, found once the page is in the document. */
+  const slot = React.useSyncExternalStore(
+    noSubscribe,
+    () => document.getElementById(BIN_ACTIONS_SLOT),
+    () => null,
+  );
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const filterCount = [filters.by, filters.from, filters.to, filters.sort !== "deleted_desc" ? "s" : ""].filter(Boolean).length;
 
-      <Card className="overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <div className="flex flex-wrap items-end gap-2.5 border-b border-line px-4 py-3">
-          <div className="w-[260px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Search</div>
-            <Input
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              placeholder="Name, contact, city, phone or reason"
-              className="h-8"
-            />
-          </div>
-          <div className="w-[200px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Deleted by</div>
-            <Select value={filters.by} onChange={(e) => patch({ by: e.target.value })} className="h-8">
-              <option value="">Anybody</option>
-              {(data?.deleters ?? []).map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} · {d.count}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="w-[150px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Deleted from</div>
-            <Input type="date" value={filters.from} onChange={(e) => patch({ from: e.target.value })} className="h-8" />
-          </div>
-          <div className="w-[150px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Deleted to</div>
-            <Input type="date" value={filters.to} onChange={(e) => patch({ to: e.target.value })} className="h-8" />
-          </div>
-          <div className="w-[210px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Sort</div>
-            <Select value={filters.sort} onChange={(e) => patch({ sort: e.target.value as TrashSort })} className="h-8">
-              {(Object.keys(SORT_LABEL) as TrashSort[]).map((k) => (
-                <option key={k} value={k}>
-                  {SORT_LABEL[k]}
-                </option>
-              ))}
-            </Select>
-          </div>
-          {narrowed ? (
-            <button
-              onClick={() => {
-                setTyped("");
-                patch({ q: "", by: "", from: "", to: "" });
-              }}
-              className="h-8 cursor-pointer px-2 text-[13px] text-brand"
-            >
-              Clear filters
-            </button>
-          ) : null}
-          <span className="flex-1" />
-          <span className="pb-1.5 text-[13px] text-muted">
-            {data ? `${data.total.toLocaleString("en-IN")} ${data.total === 1 ? "lead" : "leads"} in the trash${narrowed ? " match" : ""}` : ""}
-          </span>
-        </div>
-
-        {picked.size ? (
-          <div className="flex flex-wrap items-center gap-3 border-b border-line bg-brand-soft px-4 py-2.5">
-            <span className="text-[13px] font-medium text-ink">
-              {picked.size} selected
-            </span>
-            <button onClick={() => setPicked(new Set())} className="cursor-pointer text-[13px] text-muted underline">
-              Clear
-            </button>
-            <span className="flex-1" />
-            <Button size="sm" variant="primary" onClick={() => setConfirm([...picked])}>
-              Restore {picked.size === 1 ? "it" : `all ${picked.size}`}
-            </Button>
+  const header = (
+    <>
+      <input
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        aria-label="Find"
+        placeholder="Name, number, who deleted"
+        className="h-[38px] w-[260px] rounded-control border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+      />
+      <div className="relative">
+        <button type="button" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen} className={`${btnClass("plain")} h-[38px]`}>
+          Filters
+          {filterCount ? <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-white">{filterCount}</span> : null}
+        </button>
+        {filtersOpen ? (
+          <div className="absolute top-[44px] right-0 z-30 flex w-[280px] flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-pop">
+            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+              Deleted by
+              <Select value={filters.by} onChange={(e) => patch({ by: e.target.value })} className="h-9">
+                <option value="">Anybody</option>
+                {(data?.deleters ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} · {d.count}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+                From
+                <Input type="date" value={filters.from} onChange={(e) => patch({ from: e.target.value })} className="h-9" />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+                To
+                <Input type="date" value={filters.to} onChange={(e) => patch({ to: e.target.value })} className="h-9" />
+              </label>
+            </div>
+            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+              Sort
+              <Select value={filters.sort} onChange={(e) => patch({ sort: e.target.value as TrashSort })} className="h-9">
+                {(Object.keys(SORT_LABEL) as TrashSort[]).map((k) => (
+                  <option key={k} value={k}>
+                    {SORT_LABEL[k]}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <div className="flex items-center gap-2">
+              {narrowed || filters.sort !== "deleted_desc" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTyped("");
+                    patch({ q: "", by: "", from: "", to: "", sort: "deleted_desc" });
+                  }}
+                  className="cursor-pointer text-[13px] font-semibold text-brand"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+              <span className="flex-1" />
+              <button type="button" onClick={() => setFiltersOpen(false)} className={btnClass("plain", "sm")}>
+                Done
+              </button>
+            </div>
           </div>
         ) : null}
+      </div>
+    </>
+  );
 
+  const HEAD: React.CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: 0 };
+  const head = "bg-ink px-3.5 py-2.5 text-left whitespace-nowrap text-white normal-case";
+  const cell = "h-12 border-b border-divider px-3.5 py-0 align-middle text-sm";
+
+  return (
+    <>
+      {slot ? createPortal(header, slot) : null}
+
+      {picked.size ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-card border border-brand bg-brand-soft px-4 py-2.5">
+          <span className="text-[13px] font-semibold text-ink">{picked.size} selected</span>
+          <button type="button" onClick={() => setPicked(new Set())} className="cursor-pointer text-[13px] text-muted underline">
+            Clear
+          </button>
+          <span className="flex-1" />
+          <button type="button" className={`${btnClass("primary", "sm")} h-8`} onClick={() => setConfirm([...picked])}>
+            Restore {picked.size === 1 ? "it" : `all ${picked.size}`}
+          </button>
+        </div>
+      ) : null}
+
+      <Card>
         {failed ? (
           <div className="px-5 py-8 text-center text-[13px] text-danger">{failed}</div>
         ) : loading && !data ? (
-          <div className="px-5 py-10 text-center text-[13px] text-muted">Opening the trash…</div>
+          <div className="px-5 py-10 text-center text-[13px] text-muted">Opening the bin…</div>
         ) : rows.length === 0 ? (
-          <EmptyState
-            title={narrowed ? "Nothing in the trash matches" : "The trash is empty"}
-            body={
-              narrowed
-                ? "Try a wider date range or a shorter search."
-                : "Leads deleted from Lead Management will be listed here, ready to restore."
-            }
-          />
+          <p className="m-0 px-[18px] py-6 text-muted">
+            {narrowed ? "Nothing in the bin matches. Try a wider date range or a shorter search." : "No deleted leads. A lead deleted in Lead Management is held here, ready to restore."}
+          </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  <Th className="w-9">
-                    <Checkbox
-                      label=""
+                  <th className={head} style={{ ...HEAD, width: 28 }}>
+                    <input
+                      type="checkbox"
                       aria-label="Select every lead on this page"
                       checked={allOnPage}
-                      onChange={(e) =>
-                        setPicked(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
-                      }
+                      onChange={(e) => setPicked(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())}
+                      className="m-0 h-4 w-4 accent-brand"
                     />
-                  </Th>
-                  <Th>Lead</Th>
-                  <Th>City</Th>
-                  <Th>Owner</Th>
-                  <Th>Stage</Th>
-                  <Th>Deleted</Th>
-                  <Th>Why</Th>
-                  <Th align="right">Comes back with</Th>
-                  <Th align="right"> </Th>
+                  </th>
+                  {["Lead", "Mobile", "Owner", "Deleted by", "When", "Reason", ""].map((h, i) => (
+                    <th key={i} className={head} style={HEAD}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -275,10 +289,10 @@ export function TrashSection({ initial }: { initial: TrashFilters }) {
                   const h = history[r.id];
                   return (
                     <React.Fragment key={r.id}>
-                      <tr className="hover:bg-canvas">
-                        <Td>
-                          <Checkbox
-                            label=""
+                      <tr className="last:[&>td]:border-b-0">
+                        <td className={cell}>
+                          <input
+                            type="checkbox"
                             aria-label={`Select ${r.name}`}
                             checked={picked.has(r.id)}
                             onChange={(e) =>
@@ -289,64 +303,58 @@ export function TrashSection({ initial }: { initial: TrashFilters }) {
                                 return next;
                               })
                             }
+                            className="m-0 h-4 w-4 accent-brand"
                           />
-                        </Td>
-                        <Td>
-                          <div className="text-sm font-medium text-ink">{r.name}</div>
-                          <div className="text-[12px] text-muted">
-                            {[r.contactPerson, r.phone ? phoneDisplay(r.phone) : null].filter(Boolean).join(" · ") || "—"}
-                          </div>
-                        </Td>
-                        <Td className="text-[13px] text-body">{r.city ?? "—"}</Td>
-                        <Td className="text-[13px] text-body">{r.ownerName ?? "Unassigned"}</Td>
-                        <Td className="text-[13px] text-body">
-                          {r.leadStage ? r.leadStage.replace(/_/g, " ") : "—"}
-                          {r.leadSalesType ? (
-                            <div className="text-[11px] text-muted">{r.leadSalesType.replace(/_/g, " ")}</div>
-                          ) : null}
-                        </Td>
-                        <Td>
-                          <div className="text-[13px] text-ink">{stamp(r.deletedAt)}</div>
-                          <div className="text-[12px] text-muted">by {r.deletedByName ?? "—"}</div>
-                        </Td>
-                        <Td className="max-w-[280px] text-[13px] whitespace-normal text-body">{r.reason ?? "—"}</Td>
-                        <Td align="right" className="text-[12px] text-muted">
-                          <div>{r.calls} {r.calls === 1 ? "call" : "calls"} · created {stampDate(r.createdAt)}</div>
-                          {r.previousTrashings ? (
-                            <Badge tone="warn">Deleted {r.previousTrashings + 1}×</Badge>
-                          ) : null}
-                        </Td>
-                        <Td align="right">
-                          <div className="flex justify-end gap-1.5">
-                            <Button size="sm" variant="secondary" onClick={() => toggleHistory(r.id)}>
-                              {h ? "Hide history" : "History"}
-                            </Button>
-                            <Button size="sm" variant="primary" onClick={() => setConfirm([r.id])}>
-                              Restore
-                            </Button>
-                          </div>
-                        </Td>
+                        </td>
+                        <td className={cell}>
+                          <span className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => toggleHistory(r.id)}
+                              title={`${h ? "Hide" : "Show"} its history — ${r.calls} ${r.calls === 1 ? "call" : "calls"} come back with it`}
+                              className="cursor-pointer text-left font-semibold text-ink hover:text-brand"
+                            >
+                              {r.name}
+                            </button>
+                            {r.previousTrashings ? <Pill tone="warn">Deleted {r.previousTrashings + 1}×</Pill> : null}
+                          </span>
+                        </td>
+                        <td className={cell}>{r.phone ? phoneDisplay(r.phone) : <span className="text-muted">—</span>}</td>
+                        <td className={cell}>{r.ownerName ? r.ownerName.split(/\s+/)[0] : <span className="text-muted">Unassigned</span>}</td>
+                        <td className={cell}>{r.deletedByName ? r.deletedByName.split(/\s+/)[0] : "—"}</td>
+                        <td className={cell} title={stamp(r.deletedAt)}>
+                          {dayWord(r.deletedAt, today)}
+                        </td>
+                        <td className={cell}>{r.reason ?? <span className="text-muted">—</span>}</td>
+                        <td className={cell} align="right">
+                          <button type="button" className={`${btnClass("plain", "sm")} h-8`} onClick={() => setConfirm([r.id])}>
+                            Restore
+                          </button>
+                        </td>
                       </tr>
                       {h ? (
                         <tr className="bg-canvas">
-                          <td colSpan={9} className="border-b border-divider px-12 py-2.5">
+                          <td colSpan={8} className="border-b border-divider px-12 py-2.5">
                             {h === "loading" ? (
                               <span className="text-[13px] text-muted">Reading…</span>
                             ) : h.length === 0 ? (
                               <span className="text-[13px] text-muted">No recorded moves.</span>
                             ) : (
-                              <ol className="space-y-1">
+                              <ol className="m-0 space-y-1 p-0">
                                 {h.map((e) => (
-                                  <li key={e.id} className="text-[13px] text-body">
-                                    <span className="font-medium text-ink">
-                                      {e.action === "trashed" ? "Deleted" : "Restored"}
-                                    </span>{" "}
-                                    {stamp(e.at)} by {e.actorName ?? "—"}
+                                  <li key={e.id} className="list-none text-[13px] text-body">
+                                    <span className="font-medium text-ink">{e.action === "trashed" ? "Deleted" : "Restored"}</span> {stamp(e.at)} by{" "}
+                                    {e.actorName ?? "—"}
                                     {e.reason ? <span className="text-muted"> — “{e.reason}”</span> : null}
                                   </li>
                                 ))}
                               </ol>
                             )}
+                            <div className="mt-1 text-[12px] text-muted">
+                              {r.calls} {r.calls === 1 ? "call" : "calls"} · created {stampDate(r.createdAt)}
+                              {r.city ? ` · ${r.city}` : ""}
+                              {r.leadStage ? ` · ${r.leadStage.replace(/_/g, " ")}` : ""}
+                            </div>
                           </td>
                         </tr>
                       ) : null}
@@ -358,7 +366,7 @@ export function TrashSection({ initial }: { initial: TrashFilters }) {
           </div>
         )}
 
-        {data && data.total > 0 ? (
+        {data && data.total > data.perPage ? (
           <Pager
             total={data.total}
             page={data.page}
@@ -388,8 +396,21 @@ export function TrashSection({ initial }: { initial: TrashFilters }) {
           if (r.ok) setReload((n) => n + 1);
         }}
       />
-    </div>
+    </>
   );
+}
+
+const noSubscribe = () => () => {};
+
+/** The slot in the page's title row the search and Filters are drawn into. */
+export const BIN_ACTIONS_SLOT = "bin-actions";
+
+/** Today, Yesterday, or the day — read in IST against the server's business date. */
+function dayWord(iso: string, today: string): string {
+  const day = new Date(iso).toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
+  if (day === today) return "Today";
+  if (day === addDays(today as BusinessDate, -1)) return "Yesterday";
+  return shortDate(iso);
 }
 
 type HistoryRow = { id: string; action: "trashed" | "restored"; reason: string | null; actorName: string | null; at: string };

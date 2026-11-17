@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Badge, Callout, Card, EmptyState, Input, Select, Td, Th } from "@/components/ui/primitives";
+import Link from "next/link";
+import { ADMIN } from "@/lib/admin-routes";
+import { Card } from "./_shell/kit";
+import { FleetFrame } from "./handsets/fleet-frame";
 import { phoneDisplay, stamp } from "@/lib/format";
 import {
   ago,
@@ -10,7 +13,6 @@ import {
   versionStatus,
   type HandsetRow,
   type HandsetsPayload,
-  type Presence,
   type VersionStatus,
 } from "@/lib/handset-versions";
 import { releaseHandsetFromConsole } from "@/lib/actions/handsets";
@@ -45,10 +47,9 @@ const FILTER_LABEL: Record<Filter, string> = {
   none: "No handset",
 };
 
-export function HandsetsSection() {
+export function HandsetsSection({ tabCounts }: { tabCounts: { field: number; factory: number } }) {
   const [data, setData] = React.useState<HandsetsPayload | null>(null);
   const [failed, setFailed] = React.useState<string | null>(null);
-  const [fetchedAt, setFetchedAt] = React.useState<number | null>(null);
   const [now, setNow] = React.useState<number | null>(null);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [sort, setSort] = React.useState<Sort>("status");
@@ -96,7 +97,6 @@ export function HandsetsSection() {
         seen.current = next;
         setData(body);
         setFailed(null);
-        setFetchedAt(Date.now());
       } catch (e) {
         if ((e as Error).name !== "AbortError" && live) setFailed((e as Error).message);
       } finally {
@@ -149,139 +149,83 @@ export function HandsetsSection() {
     });
   }, [rows, filter, q, sort]);
 
-  const withHandset = rows.length - counts.none;
-  const updatedAgo = fetchedAt && now ? Math.max(0, Math.round((now - fetchedAt) / 1000)) : null;
+  const low = data?.lowBatteryPercent ?? 20;
+  const facts = React.useMemo(
+    () => ({
+      field: rows.filter((r) => r.row.deviceId).length,
+      stopped: rows.filter((r) => r.row.deviceId && r.row.trackerStalledAt).length,
+      restricted: rows.filter((r) => r.row.deviceId && locationTone(r.row) !== "g" && locationTone(r.row) !== null).length,
+      lowBattery: rows.filter((r) => r.row.deviceId && r.row.batteryPercent != null && r.row.batteryPercent < low).length,
+      noArea: rows.filter((r) => r.row.hasArea === false).length,
+    }),
+    [rows, low],
+  );
 
   return (
-    <div className="mt-5 flex flex-col gap-4">
-      {/* The live strip: the build everybody should be on, and how fresh this is. */}
-      <div className="flex flex-wrap items-center gap-3">
-        <LivePill failed={!!failed} updatedAgo={updatedAgo} />
-        {data ? (
-          <span className="text-[13px] text-muted">
-            Latest build{" "}
-            {reference ? (
-              <span className="font-mono text-[13px] font-medium text-ink">{reference}</span>
-            ) : (
-              <span className="text-ink">not known yet</span>
-            )}
-            {data.referenceSource === "setting"
-              ? " · set in Settings"
-              : data.referenceSource === "newest"
-                ? " · the newest any phone reports"
-                : null}
-          </span>
-        ) : null}
-      </div>
-
-      {data && data.referenceSource !== "setting" ? (
-        <Callout tone="brand">
-          <div>
-            Nobody has named the current build, so &ldquo;latest&rdquo; means the newest any phone is running.
-            Set <span className="font-mono text-[12px]">mbos.sync.currentAppVersion</span> in Settings to the
-            version you have released, and every phone short of it is marked behind — here and on the Live map.
-          </div>
-        </Callout>
-      ) : null}
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile
-          label="On the latest build"
-          value={data ? `${counts.latest}` : "—"}
-          sub={data ? `of ${withHandset} ${withHandset === 1 ? "handset" : "handsets"}` : ""}
-          tone="success"
-          meter={withHandset ? counts.latest / withHandset : 0}
-          active={filter === "latest"}
-          onClick={() => setFilter(filter === "latest" ? "all" : "latest")}
-        />
-        <Tile
-          label="Behind"
-          value={data ? `${counts.behind}` : "—"}
-          sub={counts.behind ? "need the new build" : "nobody is behind"}
-          tone={counts.behind ? "warn" : "neutral"}
-          active={filter === "behind"}
-          onClick={() => setFilter(filter === "behind" ? "all" : "behind")}
-        />
-        <Tile
-          label="Version unknown"
-          value={data ? `${counts.unknown}` : "—"}
-          sub="never said which build"
-          tone="neutral"
-          active={filter === "unknown"}
-          onClick={() => setFilter(filter === "unknown" ? "all" : "unknown")}
-        />
-        <Tile
-          label="No handset"
-          value={data ? `${counts.none}` : "—"}
-          sub="granted MBOS, never signed in"
-          tone={counts.none ? "danger" : "neutral"}
-          active={filter === "none"}
-          onClick={() => setFilter(filter === "none" ? "all" : "none")}
-        />
-      </div>
-
-      <Card className="overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <div className="flex flex-wrap items-end gap-2.5 border-b border-line px-4 py-3">
-          <div className="w-[260px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Search</div>
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Name, number, phone model or version"
-              className="h-8"
-            />
-          </div>
-          <div className="w-[180px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Show</div>
-            <Select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="h-8">
-              {(Object.keys(FILTER_LABEL) as Filter[]).map((k) => (
-                <option key={k} value={k}>
-                  {FILTER_LABEL[k]}
-                  {k === "all" ? ` · ${rows.length}` : ` · ${counts[k as VersionStatus]}`}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="w-[190px]">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Sort</div>
-            <Select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="h-8">
-              <option value="status">Behind first</option>
-              <option value="heard">Last heard — newest</option>
-              <option value="name">Name — A to Z</option>
-            </Select>
-          </div>
-          <span className="flex-1" />
-          <span className="pb-1.5 text-[13px] text-muted">
-            {data ? `${shown.length} of ${rows.length} ${rows.length === 1 ? "person" : "people"} with MBOS` : ""}
-          </span>
-        </div>
-
+    <FleetFrame
+      tab="field"
+      counts={tabCounts}
+      search={{ value: q, onChange: setQ, placeholder: "Person or build" }}
+      filters={{
+        on: (filter !== "all" ? 1 : 0) + (sort !== "status" ? 1 : 0),
+        groups: [
+          {
+            label: "Show",
+            value: filter,
+            onChange: (v) => setFilter(v as Filter),
+            options: (Object.keys(FILTER_LABEL) as Filter[]).map((k) => ({
+              value: k,
+              label: FILTER_LABEL[k],
+              count: k === "all" ? rows.length : counts[k as VersionStatus],
+            })),
+          },
+          {
+            label: "Sort",
+            value: sort,
+            onChange: (v) => setSort(v as Sort),
+            options: [
+              { value: "status", label: "Behind first" },
+              { value: "heard", label: "Last heard — newest" },
+              { value: "name", label: "Name — A to Z" },
+            ],
+          },
+        ],
+      }}
+      figures={[
+        { label: "In the field", value: data ? facts.field : "—", sub: failed ? "Not updating — retrying" : undefined },
+        {
+          label: "On latest build",
+          value: data ? counts.latest : "—",
+          sub: reference ? `Latest ${reference}` : undefined,
+        },
+        { label: "Trail stopped", value: data ? facts.stopped : "—", tone: facts.stopped ? "danger" : undefined },
+        { label: "Location restricted", value: data ? facts.restricted : "—", tone: facts.restricted ? "warn" : undefined },
+        { label: "Low battery", value: data ? facts.lowBattery : "—", tone: facts.lowBattery ? "warn" : undefined },
+        { label: "No area set", value: data ? facts.noArea : "—" },
+      ]}
+    >
+      <Card>
         {failed && !data ? (
           <div className="px-5 py-8 text-center text-[13px] text-danger">{failed}</div>
         ) : !data ? (
           <div className="px-5 py-10 text-center text-[13px] text-muted">Reading every handset…</div>
         ) : shown.length === 0 ? (
-          <EmptyState
-            title={rows.length ? "Nobody matches" : "Nobody has MBOS yet"}
-            body={
-              rows.length
-                ? "Try another filter or a shorter search."
-                : "Grant the Salesman App to somebody in People, and their handset will be listed here."
-            }
-          />
+          <div className="px-5 py-10 text-center text-[13px] text-muted">
+            {rows.length ? "Nobody matches." : "Nobody has the Salesman App yet."}
+          </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <Th>Salesperson</Th>
-                  <Th>Handset</Th>
-                  <Th>App version</Th>
-                  <Th>Status</Th>
-                  <Th>Notifications</Th>
-                  <Th>On this build</Th>
-                  <Th align="right">Last heard</Th>
-                  <Th align="right"> </Th>
+                  <FTH>Person</FTH>
+                  <FTH>Build</FTH>
+                  <FTH>Last heard</FTH>
+                  <FTH>Battery</FTH>
+                  <FTH>Location · GPS · Sync</FTH>
+                  <FTH>Queued fixes</FTH>
+                  <FTH>Status</FTH>
+                  <FTH> </FTH>
                 </tr>
               </thead>
               <tbody>
@@ -291,6 +235,7 @@ export function HandsetsSection() {
                     row={row}
                     status={status}
                     now={now}
+                    low={low}
                     lit={!!(now && flash[row.userId] && now - flash[row.userId] < FLASH_MS)}
                     onReleased={() => setReloadKey((k) => k + 1)}
                   />
@@ -299,243 +244,186 @@ export function HandsetsSection() {
             </table>
           </div>
         )}
-        <div className="border-t border-line px-4 py-2.5 text-[12px] text-muted">
-          A phone reports its build on every sync and syncs the moment it opens, so an upgrade shows here within
-          seconds of the app being reopened. Builds older than this feature report only when they sign in.
-        </div>
       </Card>
-    </div>
+    </FleetFrame>
   );
 }
 
 /* ------------------------------------------------------------------ pieces */
 
-function LivePill({ failed, updatedAgo }: { failed: boolean; updatedAgo: number | null }) {
-  if (failed) {
-    return (
-      <span className="inline-flex h-7 items-center gap-2 rounded-full border border-danger/30 bg-danger-soft px-3 text-[12px] font-medium text-danger">
-        <span className="h-2 w-2 rounded-full bg-danger" />
-        Not updating — retrying
-      </span>
-    );
-  }
+function FTH({ children }: { children: React.ReactNode }) {
+  return <th className="bg-ink px-3.5 py-2.5 text-left text-xs font-semibold whitespace-nowrap text-white normal-case">{children}</th>;
+}
+
+function FTD({ children, className }: { children?: React.ReactNode; className?: string }) {
+  return <td className={`h-[52px] border-b border-divider px-3.5 whitespace-nowrap ${className ?? ""}`}>{children}</td>;
+}
+
+type IcTone = "g" | "a" | "x";
+const IC_BG: Record<IcTone, string> = { g: "bg-success-soft", a: "bg-warn-soft", x: "bg-danger-soft" };
+const IC_FG: Record<IcTone, string> = { g: "#1d7a45", a: "#8a5c05", x: "#b3261e" };
+
+/** The location permission as a tile tone: always is green, while-using amber, off or refused red. */
+function locationTone(r: HandsetRow): IcTone | null {
+  if (r.locationServicesEnabled === false) return "x";
+  const p = r.locationPermission;
+  if (!p) return null;
+  if (p === "always") return "g";
+  if (p === "while_using" || p === "whenInUse" || p === "foreground" || p === "restricted") return "a";
+  return "x";
+}
+
+function locationWords(r: HandsetRow): string {
+  if (r.locationServicesEnabled === false) return "Location switched off";
+  const p = r.locationPermission;
+  if (p === "always") return "Location always";
+  if (!p) return "Location not reported";
+  if (p === "while_using" || p === "whenInUse" || p === "foreground") return 'Location "while using"';
+  if (p === "restricted") return "Location restricted";
+  return "Location refused";
+}
+
+function Ic({ tone, title, d }: { tone: IcTone; title: string; d: string }) {
   return (
-    <span className="inline-flex h-7 items-center gap-2 rounded-full border border-success/25 bg-success-soft px-3 text-[12px] font-medium text-success">
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-      </span>
-      Live
-      {updatedAgo !== null ? (
-        <span className="font-normal text-success/80">· updated {updatedAgo < 2 ? "just now" : `${updatedAgo}s ago`}</span>
-      ) : null}
+    <span title={title} aria-label={title} className={`inline-flex h-[26px] w-[26px] items-center justify-center rounded-[6px] ${IC_BG[tone]}`}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={IC_FG[tone]} strokeWidth="2" aria-hidden>
+        <path d={d} />
+      </svg>
     </span>
   );
 }
 
-const TILE_TONES = {
-  success: { value: "text-success", bar: "bg-success" },
-  warn: { value: "text-warn-ink", bar: "bg-warn" },
-  danger: { value: "text-danger", bar: "bg-danger" },
-  neutral: { value: "text-ink", bar: "bg-line-strong" },
-} as const;
+const PIN = "M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12zM12 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4";
+const TRAIL = "M3 12h4l3-8 4 16 3-8h4";
+const SYNC = "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5";
 
-function Tile({
-  label,
-  value,
-  sub,
-  tone,
-  meter,
-  active,
-  onClick,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  tone: keyof typeof TILE_TONES;
-  meter?: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const t = TILE_TONES[tone];
+function Battery({ pct, charging, low }: { pct: number; charging: boolean | null | undefined; low: number }) {
+  const colour = pct < low / 2 ? "#b3261e" : pct < low ? "#d9930d" : "#1d7a45";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`cursor-pointer rounded-[6px] border bg-surface px-4 py-3 text-left shadow-[0_1px_2px_rgba(22,22,22,0.06)] transition-colors hover:border-line-strong ${
-        active ? "border-brand ring-2 ring-brand-soft" : "border-line"
-      }`}
-    >
-      <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{label}</div>
-      <div className={`mt-1 text-[26px] leading-8 font-semibold tabular-nums ${t.value}`}>{value}</div>
-      <div className="text-[12px] text-muted">{sub}</div>
-      {/* Every tile keeps the bar's room, so the four numbers sit on one line. */}
-      <div className={`mt-2 h-1 overflow-hidden rounded-full ${meter !== undefined ? "bg-divider" : ""}`}>
-        {meter !== undefined ? (
-          <div className={`h-full rounded-full ${t.bar} transition-[width] duration-500`} style={{ width: `${Math.round(meter * 100)}%` }} />
-        ) : null}
-      </div>
-    </button>
+    <span className="inline-flex items-center gap-1.5" title={charging ? "Charging" : undefined}>
+      <i className="relative inline-block h-3 w-[26px] rounded-[3px] border-[1.5px] border-muted">
+        <b className="absolute top-px bottom-px left-px rounded-[1px]" style={{ width: `${Math.max(4, Math.min(100, pct)) * 0.82}%`, background: colour }} />
+      </i>
+      {pct}%
+    </span>
   );
 }
 
-const PRESENCE: Record<Presence, { dot: string; word: string }> = {
-  online: { dot: "bg-success", word: "Syncing now" },
-  recent: { dot: "bg-warn", word: "Recently" },
-  quiet: { dot: "bg-line-strong", word: "Quiet" },
-  never: { dot: "bg-line-strong", word: "Never" },
+type Verdict = { tone: "ok" | "warn" | "danger" | "muted"; text: string };
+
+/** The one thing to say about a phone, worst first. A healthy phone says OK. */
+function verdict(row: HandsetRow, status: VersionStatus, now: number | null, low: number): Verdict {
+  if (!row.deviceId) return { tone: "muted", text: "No handset" };
+  if (row.trackerStalledAt) return { tone: "danger", text: `Trail stopped ${clockAt(row.trackerStalledAt)}` };
+  const loc = locationTone(row);
+  if (loc === "x" || loc === "a") return { tone: "danger", text: locationWords(row) };
+  if (status === "behind") return { tone: "warn", text: "Behind" };
+  if (row.batteryPercent != null && row.batteryPercent < low) return { tone: "warn", text: `Battery ${row.batteryPercent}%` };
+  if (row.hasArea === false) return { tone: "warn", text: "No area set" };
+  if (now && presence(row.lastHeardAt, now) === "quiet") return { tone: "muted", text: "Quiet" };
+  return { tone: "ok", text: "OK" };
+}
+
+const PILL_CLS: Record<Verdict["tone"], string> = {
+  ok: "bg-success-soft text-success",
+  warn: "bg-warn-soft text-warn-ink",
+  danger: "bg-danger-soft text-danger",
+  muted: "bg-[#eef1f6] text-[#4a5670]",
 };
+
+function clockAt(iso: string): string {
+  return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }).format(new Date(iso));
+}
 
 function HandsetLine({
   row,
   status,
   now,
+  low,
   lit,
   onReleased,
 }: {
   row: HandsetRow;
   status: VersionStatus;
   now: number | null;
+  low: number;
   lit: boolean;
   onReleased: () => void;
 }) {
   const label = parseBuildLabel(row.appVersion);
   const p = now ? presence(row.lastHeardAt, now) : "never";
-  const bundle = label?.bundle;
-  const live = Boolean(row.appVersionReportedAt);
+  const v = verdict(row, status, now, low);
+  const loc = locationTone(row);
+  const bg = lit ? "bg-success-soft" : v.tone === "danger" ? "bg-[#fff7f6]" : "hover:bg-canvas";
 
   return (
-    <tr className={`transition-colors duration-700 ${lit ? "bg-success-soft" : "hover:bg-canvas"}`}>
-      <Td className="py-3">
-        <div className="text-sm font-medium text-ink">{row.name}</div>
-        <div className="text-[12px] text-muted">{row.phone ? phoneDisplay(row.phone) : (row.email ?? "—")}</div>
-      </Td>
-      <Td className="py-3">
-        {row.deviceId ? (
-          <>
-            <div className="text-[13px] text-ink">{row.model ?? "Model not reported"}</div>
-            <div className="text-[12px] text-muted capitalize">{row.platform ?? "—"}</div>
-          </>
-        ) : (
-          <span className="text-[13px] text-muted">No handset bound</span>
-        )}
-      </Td>
-      <Td className="py-3">
+    <tr className={`transition-colors duration-700 ${bg}`}>
+      <FTD>
+        <b className="font-semibold text-ink">{row.name}</b>
+        <div className="text-muted">{row.deviceId ? (row.model ?? "Model not reported") : (row.phone ? phoneDisplay(row.phone) : (row.email ?? "No handset bound"))}</div>
+      </FTD>
+      <FTD className="font-mono text-[13px]">
         {label ? (
-          <>
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[13px] font-semibold text-ink">{label.version}</span>
-              {label.build ? <span className="text-[12px] text-muted">build {label.build}</span> : null}
-            </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
-              {bundle ? (
-                <span
-                  className="rounded-[3px] bg-divider px-1 font-mono"
-                  title={
-                    bundle === "embedded"
-                      ? "Running the bundle that came inside the APK"
-                      : bundle === "updates off"
-                        ? "This build cannot take over-the-air updates"
-                        : "Running an over-the-air update"
-                  }
-                >
-                  {bundle === "embedded" ? "APK bundle" : bundle === "updates off" ? "no OTA" : `OTA ${bundle}`}
-                </span>
-              ) : null}
-              {!live ? (
-                <span title="This build reports its version only when it signs in, so this is what it said then.">
-                  as of sign-in
-                </span>
-              ) : null}
-            </div>
-          </>
-        ) : row.deviceId ? (
-          <span className="text-[13px] text-muted">Not reported</span>
-        ) : (
-          <span className="text-[13px] text-muted">—</span>
-        )}
-      </Td>
-      <Td className="py-3">
-        <StatusBadge status={status} />
-        {lit ? (
-          <Badge tone="success" className="ml-1.5">
-            Just upgraded
-          </Badge>
-        ) : null}
-      </Td>
-      <Td className="py-3">
-        <NotificationsCell row={row} />
-      </Td>
-      <Td className="py-3">
-        {row.appVersionChangedAt ? (
-          <div className="text-[13px] text-ink" title={stamp(row.appVersionChangedAt)}>
-            Upgraded {now ? ago(row.appVersionChangedAt, now) : ""}
-          </div>
-        ) : row.boundAt ? (
-          <div className="text-[13px] text-body" title={stamp(row.boundAt)}>
-            Since sign-in · {now ? ago(row.boundAt, now) : ""}
-          </div>
-        ) : (
-          <span className="text-[13px] text-muted">—</span>
-        )}
-      </Td>
-      <Td align="right" className="py-3">
-        <div className="flex items-center justify-end gap-2" title={row.lastHeardAt ? stamp(row.lastHeardAt) : undefined}>
-          <span className="relative flex h-2 w-2">
-            {p === "online" ? (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-            ) : null}
-            <span className={`relative inline-flex h-2 w-2 rounded-full ${PRESENCE[p].dot}`} />
+          <span title={[label.build ? `build ${label.build}` : null, label.bundle, row.appVersionReportedAt ? null : "as of sign-in"].filter(Boolean).join(" · ") || undefined}>
+            {label.version}
           </span>
-          <span className="text-[13px] text-ink">{now ? ago(row.lastHeardAt, now) : "—"}</span>
-        </div>
-        <div className="text-[11px] text-muted">{PRESENCE[p].word}</div>
-      </Td>
-      {/* The sign-in refusal tells a salesman on a new phone to ask an admin
-          to release the old one — this is where that admin is standing. Only
-          a bound row has anything to release; the list carries active
-          bindings only, so a released phone leaves the row on the next read. */}
-      <Td align="right" className="py-3">
+        ) : (
+          <span className="text-muted">—</span>
+        )}
+      </FTD>
+      <FTD>
+        <span title={row.lastHeardAt ? stamp(row.lastHeardAt) : undefined}>{now ? (p === "online" ? "Now" : cap(ago(row.lastHeardAt, now))) : "—"}</span>
+      </FTD>
+      <FTD>{row.batteryPercent != null ? <Battery pct={row.batteryPercent} charging={row.batteryCharging} low={low} /> : <span className="text-muted">—</span>}</FTD>
+      <FTD>
         {row.deviceId ? (
-          <ReleaseButton
-            deviceId={row.deviceId}
-            salesmanName={row.name}
-            handset={row.model ?? row.platform ?? "the handset he is signed in on"}
-            release={releaseHandsetFromConsole}
-            onReleased={onReleased}
-          />
-        ) : null}
-      </Td>
+          <span className="inline-flex gap-1.5">
+            {loc ? <Ic tone={loc} title={locationWords(row)} d={PIN} /> : null}
+            <Ic tone={row.trackerStalledAt ? "x" : "g"} title={row.trackerStalledAt ? `Trail stopped ${clockAt(row.trackerStalledAt)}` : "Trail running"} d={TRAIL} />
+            <Ic tone={p === "online" || p === "recent" ? "g" : "a"} title={p === "online" ? "Syncing" : p === "recent" ? "Synced recently" : "Sync quiet"} d={SYNC} />
+          </span>
+        ) : (
+          <span className="text-muted">—</span>
+        )}
+      </FTD>
+      <FTD>
+        {row.queuedPositions != null ? (
+          row.queuedPositions > 100 ? (
+            <b className="font-semibold text-ink">{row.queuedPositions.toLocaleString("en-IN")}</b>
+          ) : (
+            row.queuedPositions
+          )
+        ) : (
+          <span className="text-muted">—</span>
+        )}
+      </FTD>
+      <FTD>
+        <span className={`inline-flex h-[22px] items-center rounded-full px-2 text-xs font-semibold ${PILL_CLS[v.tone]}`}>{v.text}</span>
+        {lit ? <span className="ml-1.5 inline-flex h-[22px] items-center rounded-full bg-success-soft px-2 text-xs font-semibold text-success">Just upgraded</span> : null}
+      </FTD>
+      <FTD>
+        <span className="flex items-center justify-end gap-2">
+          {row.deviceId ? (
+            <ReleaseButton
+              deviceId={row.deviceId}
+              salesmanName={row.name}
+              handset={row.model ?? row.platform ?? "the handset he is signed in on"}
+              release={releaseHandsetFromConsole}
+              onReleased={onReleased}
+            />
+          ) : null}
+          <Link
+            href={ADMIN.person(row.userId)}
+            className="inline-flex h-8 items-center rounded-control border border-line-strong bg-surface px-2.5 text-xs font-semibold text-ink no-underline hover:bg-[#f7f9fc] hover:no-underline"
+          >
+            Open
+          </Link>
+        </span>
+      </FTD>
     </tr>
   );
 }
 
-function StatusBadge({ status }: { status: VersionStatus }) {
-  switch (status) {
-    case "latest":
-      return <Badge tone="success">Latest</Badge>;
-    case "behind":
-      return <Badge tone="warn">Behind</Badge>;
-    case "unknown":
-      return <Badge tone="neutral">Unknown</Badge>;
-    default:
-      return <Badge tone="muted">No handset</Badge>;
-  }
-}
-
-/** Allowed and reachable are two facts: a phone can say yes and still hold no push token. */
-function NotificationsCell({ row }: { row: HandsetRow }) {
-  if (!row.deviceId) return <span className="text-[13px] text-muted">—</span>;
-  if (row.hasPushToken) return <Badge tone="success">On</Badge>;
-  if (row.notificationPermission === "granted") {
-    return (
-      <span title="The phone allows notifications but has no push token, so nothing can reach it yet. It needs an app build with Firebase.">
-        <Badge tone="warn">Allowed, no token</Badge>
-      </span>
-    );
-  }
-  if (row.notificationPermission === "denied") return <Badge tone="danger">Turned off</Badge>;
-  if (row.notificationPermission === "undetermined") return <Badge tone="warn">Not answered</Badge>;
-  return <span className="text-[13px] text-muted">Not reported</span>;
+function cap(w: string): string {
+  return w.charAt(0).toUpperCase() + w.slice(1);
 }

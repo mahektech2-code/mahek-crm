@@ -49,9 +49,12 @@ const GLYPH: Record<AppId, string> = {
 export function AppSwitcher({
   apps,
   current,
+  label,
 }: {
   apps: AppDefinition[];
   current: AppId;
+  /** Draw the trigger as a labelled button — "⊞ Admin Console ⌄" — rather than the bare grid. */
+  label?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
@@ -127,13 +130,28 @@ export function AppSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         className={cx(
-          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border transition-colors duration-100",
-          open
-            ? "border-brand bg-brand-soft text-brand"
-            : "border-line bg-surface text-muted hover:bg-canvas hover:text-body",
+          label
+            ? "flex h-[34px] cursor-pointer items-center gap-2 rounded-control border border-brand-softer bg-surface px-2.5 text-[13px] font-semibold text-ink transition-colors duration-100 hover:bg-canvas"
+            : "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border transition-colors duration-100",
+          !label &&
+            (open
+              ? "border-brand bg-brand-soft text-brand"
+              : "border-line bg-surface text-muted hover:bg-canvas hover:text-body"),
         )}
       >
-        <Icon name="grid" size={16} />
+        {label ? (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-brand-deep" aria-hidden>
+              <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
+            </svg>
+            {label}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted" aria-hidden>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </>
+        ) : (
+          <Icon name="grid" size={16} />
+        )}
       </button>
 
       {open ? (

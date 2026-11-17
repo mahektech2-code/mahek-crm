@@ -111,7 +111,7 @@ const postgresStorage: FileStorage = {
  * vectors rather than pulled in as an SDK — see the note there.
  * ------------------------------------------------------------------------- */
 
-function s3Config() {
+export function s3Config() {
   /*
    * The credentials this deployment ALREADY has.
    *

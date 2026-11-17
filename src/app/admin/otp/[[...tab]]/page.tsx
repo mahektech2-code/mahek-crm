@@ -1,6 +1,14 @@
 import Link from "next/link";
-import { Badge, Button, Card, CardHeader, EmptyState, Input, MetricStrip, Select } from "@/components/ui/primitives";
-import { ADMIN, ADMIN_TABS, SECURITY_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  EmptyState,
+  Input,
+  Select,
+} from "@/components/ui/primitives";
+import { ADMIN, ADMIN_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";
 import { stamp } from "@/lib/format";
 import {
   OTP_ATTEMPT_LABELS,
@@ -15,8 +23,14 @@ import {
   labelOf,
   numberForReading,
 } from "@/lib/otp-history";
-import { otpByPerson, otpHistory, type OtpHistoryFilters, type OtpHistoryRow } from "@/lib/services/otp-history-service";
-import { AdminPage, routeTabs } from "../../_shell/admin-page";
+import {
+  otpByPerson,
+  otpHistory,
+  type OtpHistoryFilters,
+  type OtpHistoryRow,
+} from "@/lib/services/otp-history-service";
+import { Figures } from "../../_shell/kit";
+import { SecurityFrame } from "../../sign-ins/security-frame";
 import { requirePlatformAdmin } from "../../_shell/context";
 
 /**
@@ -64,7 +78,10 @@ export default async function OtpHistoryPage({
   const s = history.summary;
 
   /** The same address with one parameter changed — every link keeps the filters. */
-  const hrefWith = (changes: Record<string, string | number | undefined>, toTab: TabsOf<"otp"> = slug) => {
+  const hrefWith = (
+    changes: Record<string, string | number | undefined>,
+    toTab: TabsOf<"otp"> = slug,
+  ) => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries(query)) {
       const val = Array.isArray(v) ? v[0] : v;
@@ -77,54 +94,140 @@ export default async function OtpHistoryPage({
     const qs = p.toString();
     return `${ADMIN.otp(toTab)}${qs ? `?${qs}` : ""}`;
   };
-  const filtered = ["q", "purpose", "status", "provider", "surface", "user", "from", "to"].some((k) => one(k));
+  const filtered = [
+    "q",
+    "purpose",
+    "status",
+    "provider",
+    "surface",
+    "user",
+    "from",
+    "to",
+  ].some((k) => one(k));
 
   return (
-    <AdminPage
-      title="Security & sign-ins"
-      subtitle="Every one-time code sent through MiniMoth or Wati, and every request turned down."
-      tabs={routeTabs(SECURITY_TABS, slug === "people" ? "codes-people" : "codes")}
-    >
-      <div className="mt-5">
-        <MetricStrip
-          metrics={[
-            { label: "Requests", value: s.total.toLocaleString("en-IN"), sub: `${s.people} people · ${s.numbers} numbers` },
-            { label: "Sent", value: s.sent.toLocaleString("en-IN"), sub: s.requested ? `${Math.round((s.sent / s.requested) * 100)}% of those not refused` : "—" },
-            { label: "Used", value: s.verified.toLocaleString("en-IN"), sub: s.sent ? `${Math.round((s.verified / s.sent) * 100)}% of those sent` : "—" },
-            { label: "Not delivered", value: s.sendFailed.toLocaleString("en-IN"), tone: s.sendFailed ? "danger" : undefined },
-            { label: "Refused", value: s.refused.toLocaleString("en-IN"), sub: "cooldown, limit, no HRMS mobile" },
-            { label: "Wrong tries", value: s.wrongTries.toLocaleString("en-IN"), sub: `${s.locked} locked · ${s.expired} expired unused` },
+    <SecurityFrame active="codes">
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            { slug: "requests", label: `Every request · ${s.total}` },
+            { slug: "people", label: `By person · ${s.people}` },
+          ] as const
+        ).map((t) => (
+          <Link
+            key={t.slug}
+            href={hrefWith({ page: undefined }, t.slug)}
+            className={
+              "inline-flex h-[34px] items-center rounded-full border px-3 text-[13px] font-semibold whitespace-nowrap no-underline hover:no-underline " +
+              (slug === t.slug ? "border-ink bg-ink text-white" : "border-line bg-surface text-ink hover:border-line-strong")
+            }
+          >
+            {t.label}
+          </Link>
+        ))}
+      </div>
+      <div>
+        <Figures
+          items={[
+            {
+              label: "Requests",
+              value: s.total.toLocaleString("en-IN"),
+              sub: `${s.people} people · ${s.numbers} numbers`,
+            },
+            {
+              label: "Sent",
+              value: s.sent.toLocaleString("en-IN"),
+              sub: s.requested
+                ? `${Math.round((s.sent / s.requested) * 100)}% of those not refused`
+                : "—",
+            },
+            {
+              label: "Used",
+              value: s.verified.toLocaleString("en-IN"),
+              sub: s.sent
+                ? `${Math.round((s.verified / s.sent) * 100)}% of those sent`
+                : "—",
+            },
+            {
+              label: "Not delivered",
+              value: s.sendFailed.toLocaleString("en-IN"),
+              tone: s.sendFailed ? "danger" : undefined,
+            },
+            {
+              label: "Refused",
+              value: s.refused.toLocaleString("en-IN"),
+              sub: "cooldown, limit, no HRMS mobile",
+            },
+            {
+              label: "Wrong tries",
+              value: s.wrongTries.toLocaleString("en-IN"),
+              sub: `${s.locked} locked · ${s.expired} expired unused`,
+            },
           ]}
         />
       </div>
 
-      <Card className="mt-4">
+      <Card>
         <form method="get" className="flex flex-wrap items-end gap-3 px-5 py-4">
           <label className="block min-w-[240px] flex-1">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Search</span>
-            <Input name="q" defaultValue={one("q") ?? ""} placeholder="Name, email, employee code, number, MiniMoth id, IP" />
+            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              Search
+            </span>
+            <Input
+              name="q"
+              defaultValue={one("q") ?? ""}
+              placeholder="Name, email, employee code, number, MiniMoth id, IP"
+            />
           </label>
-          <FilterSelect name="purpose" label="For" value={one("purpose")} options={OTP_PURPOSE_LABELS} />
+          <FilterSelect
+            name="purpose"
+            label="For"
+            value={one("purpose")}
+            options={OTP_PURPOSE_LABELS}
+          />
           <FilterSelect
             name="status"
             label="What happened"
             value={one("status")}
-            options={Object.fromEntries(OTP_STATUSES.map((k) => [k, OTP_STATUS_LABELS[k].label]))}
+            options={Object.fromEntries(
+              OTP_STATUSES.map((k) => [k, OTP_STATUS_LABELS[k].label]),
+            )}
           />
-          <FilterSelect name="provider" label="Sent by" value={one("provider")} options={OTP_PROVIDER_LABELS} />
-          <FilterSelect name="surface" label="Asked from" value={one("surface")} options={OTP_SURFACE_LABELS} />
+          <FilterSelect
+            name="provider"
+            label="Sent by"
+            value={one("provider")}
+            options={OTP_PROVIDER_LABELS}
+          />
+          <FilterSelect
+            name="surface"
+            label="Asked from"
+            value={one("surface")}
+            options={OTP_SURFACE_LABELS}
+          />
           <label className="block">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">From</span>
+            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              From
+            </span>
             <Input type="date" name="from" defaultValue={one("from") ?? ""} />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">To</span>
+            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              To
+            </span>
             <Input type="date" name="to" defaultValue={one("to") ?? ""} />
           </label>
-          {one("user") ? <input type="hidden" name="user" value={one("user")} /> : null}
-          <Button variant="primary" type="submit">Apply</Button>
+          {one("user") ? (
+            <input type="hidden" name="user" value={one("user")} />
+          ) : null}
+          <Button variant="primary" type="submit">
+            Apply
+          </Button>
           {filtered ? (
-            <Link href={ADMIN.otp(slug)} className="self-center text-[13px] text-muted hover:text-body">
+            <Link
+              href={ADMIN.otp(slug)}
+              className="self-center text-[13px] text-muted hover:text-body"
+            >
               Clear all
             </Link>
           ) : null}
@@ -132,7 +235,10 @@ export default async function OtpHistoryPage({
         {one("user") ? (
           <div className="border-t border-divider px-5 py-2 text-[13px] text-body">
             Showing one person only.{" "}
-            <Link href={hrefWith({ user: undefined, page: undefined })} className="text-brand">
+            <Link
+              href={hrefWith({ user: undefined, page: undefined })}
+              className="text-brand"
+            >
               Show everybody
             </Link>
           </div>
@@ -140,9 +246,14 @@ export default async function OtpHistoryPage({
       </Card>
 
       {slug === "people" ? (
-        <PeopleTable rows={people} hrefFor={(userId) => hrefWith({ user: userId, page: undefined }, "requests")} />
+        <PeopleTable
+          rows={people}
+          hrefFor={(userId) =>
+            hrefWith({ user: userId, page: undefined }, "requests")
+          }
+        />
       ) : (
-        <Card className="mt-4 overflow-hidden">
+        <Card className="overflow-hidden">
           <CardHeader
             title="Requests"
             hint="Newest first. Open a row for the provider's answer, the device and every timestamp."
@@ -164,15 +275,28 @@ export default async function OtpHistoryPage({
                 </thead>
                 <tbody>
                   {history.rows.map((r) => (
-                    <RequestRow key={r.id} row={r} maxAttempts={history.maxAttempts} personHref={hrefWith({ user: r.userId, page: undefined })} />
+                    <RequestRow
+                      key={r.id}
+                      row={r}
+                      maxAttempts={history.maxAttempts}
+                      personHref={hrefWith({ user: r.userId, page: undefined })}
+                    />
                   ))}
                 </tbody>
               </table>
             </div>
           ) : (
             <EmptyState
-              title={filtered ? "No OTP requests match these filters" : "No OTPs have been asked for yet"}
-              body={filtered ? "Widen the dates or clear a filter." : "Every code sent from the sign-in page, the handset or account settings will be listed here."}
+              title={
+                filtered
+                  ? "No OTP requests match these filters"
+                  : "No OTPs have been asked for yet"
+              }
+              body={
+                filtered
+                  ? "Widen the dates or clear a filter."
+                  : "Every code sent from the sign-in page, the handset or account settings will be listed here."
+              }
             />
           )}
           <LinkPager
@@ -185,7 +309,7 @@ export default async function OtpHistoryPage({
           />
         </Card>
       )}
-    </AdminPage>
+    </SecurityFrame>
   );
 }
 
@@ -202,7 +326,9 @@ function FilterSelect({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">{label}</span>
+      <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+        {label}
+      </span>
       <Select name={name} defaultValue={value ?? ""}>
         <option value="">All</option>
         {Object.entries(options).map(([k, v]) => (
@@ -215,7 +341,15 @@ function FilterSelect({
   );
 }
 
-function RequestRow({ row: r, maxAttempts, personHref }: { row: OtpHistoryRow; maxAttempts: number; personHref: string }) {
+function RequestRow({
+  row: r,
+  maxAttempts,
+  personHref,
+}: {
+  row: OtpHistoryRow;
+  maxAttempts: number;
+  personHref: string;
+}) {
   const status = OTP_STATUS_LABELS[r.status];
   const channel = deliveryChannel(r.providerResponse);
   const why =
@@ -230,106 +364,150 @@ function RequestRow({ row: r, maxAttempts, personHref }: { row: OtpHistoryRow; m
             : null;
   return (
     <>
-    <tr className="border-t border-divider align-top">
-      <td className="px-4 py-3 whitespace-nowrap text-body">{stamp(r.createdAt)}</td>
-      <td className="px-4 py-3">
-        <Link href={personHref} className="font-medium text-ink hover:text-brand" title="Only this person's requests">
-          {r.userName ?? "Account deleted"}
-        </Link>
-        <div className="text-[12px] text-muted">
-          {[r.employeeName && r.employeeName !== r.userName ? r.employeeName : null, r.employeeCode, r.userEmail]
-            .filter(Boolean)
-            .join(" · ") || "No HRMS link"}
-        </div>
-        <Link href={ADMIN.person(r.userId)} className="text-[12px] text-brand">
-          Open account
-        </Link>
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-ink">{labelOf(OTP_PURPOSE_LABELS, r.purpose)}</div>
-        <div className="text-[12px] text-muted">{labelOf(OTP_SURFACE_LABELS, r.surface)}</div>
-        {r.requestedWith ? (
-          <div className="text-[12px] text-muted" title="Exactly what was typed at the screen">
-            typed “{r.requestedWith}”
-          </div>
-        ) : null}
-      </td>
-      <td className="px-4 py-3 whitespace-nowrap tabular-nums text-ink">
-        {numberForReading(r.destination)}
-        {channel ? <div className="text-[12px] text-muted">via {channel}</div> : null}
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-ink">{labelOf(OTP_PROVIDER_LABELS, r.provider)}</div>
-        {r.providerRef ? (
-          <div className="max-w-[180px] truncate font-mono text-[11px] text-muted" title={r.providerRef}>
-            {r.providerRef}
-          </div>
-        ) : null}
-      </td>
-      <td className="px-4 py-3">
-        <Badge tone={status.tone} title={status.meaning}>
-          {status.label}
-        </Badge>
-        {why ? <div className="mt-1 max-w-[220px] text-[12px] text-muted">{why}</div> : null}
-      </td>
-      <td className="px-4 py-3 whitespace-nowrap">
-        <span className="tabular-nums text-ink">
-          {r.attempts} wrong / {maxAttempts}
-        </span>
-        {r.lastAttemptAt ? (
+      <tr className="border-t border-divider align-top">
+        <td className="px-4 py-3 whitespace-nowrap text-body">
+          {stamp(r.createdAt)}
+        </td>
+        <td className="px-4 py-3">
+          <Link
+            href={personHref}
+            className="font-medium text-ink hover:text-brand"
+            title="Only this person's requests"
+          >
+            {r.userName ?? "Account deleted"}
+          </Link>
           <div className="text-[12px] text-muted">
-            last: {labelOf(OTP_ATTEMPT_LABELS, r.lastAttemptResult)}, {stamp(r.lastAttemptAt)}
+            {[
+              r.employeeName && r.employeeName !== r.userName
+                ? r.employeeName
+                : null,
+              r.employeeCode,
+              r.userEmail,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "No HRMS link"}
           </div>
-        ) : r.sentAt ? (
-          <div className="text-[12px] text-muted">never entered</div>
-        ) : null}
-      </td>
-      <td className="px-4 py-3">
-        <div className="font-mono text-[12px] text-body">{r.requestIp ?? "—"}</div>
-        <div className="text-[12px] text-muted">{deviceOf(r.userAgent)}</div>
-      </td>
-    </tr>
-    <tr>
-      <td colSpan={8} className="px-4 pb-3">
-        <details>
-          <summary className="cursor-pointer text-[12px] text-brand">Every detail</summary>
-          <dl className="mt-2 grid grid-cols-[auto_1fr_auto_1fr] gap-x-4 gap-y-1 text-[12px]">
-            <dt className="text-muted">Request id</dt>
-            <dd className="font-mono break-all">{r.id}</dd>
-            <dt className="text-muted">Asked at</dt>
-            <dd>{stamp(r.createdAt)}</dd>
-            <dt className="text-muted">Sent at</dt>
-            <dd>{r.sentAt ? stamp(r.sentAt) : "Not sent"}</dd>
-            <dt className="text-muted">Expires</dt>
-            <dd>{r.status === "refused" ? "—" : stamp(r.expiresAt)}</dd>
-            <dt className="text-muted">Used at</dt>
-            <dd>{r.consumedAt ? stamp(r.consumedAt) : "Not used"}</dd>
-            <dt className="text-muted">Account phone</dt>
-            <dd>{numberForReading(r.userPhone)}</dd>
-            <dt className="text-muted">Account</dt>
-            <dd>{r.userActive === false ? "Closed" : r.userActive ? "Open" : "—"}</dd>
-            <dt className="text-muted">Device</dt>
-            <dd className="break-all">{r.userAgent ?? "Not recorded"}</dd>
-            {r.failureReason ? (
-              <>
-                <dt className="text-muted">Failure</dt>
-                <dd className="break-all">{r.failureReason}</dd>
-              </>
-            ) : null}
-            <dt className="text-muted">Provider answer</dt>
-            <dd className="col-span-3">
-              {r.providerResponse ? (
-                <pre className="max-h-40 overflow-auto rounded-[4px] bg-canvas p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
-                  {JSON.stringify(r.providerResponse, null, 2)}
-                </pre>
-              ) : (
-                "Not recorded"
-              )}
-            </dd>
-          </dl>
-        </details>
-      </td>
-    </tr>
+          <Link
+            href={ADMIN.person(r.userId)}
+            className="text-[12px] text-brand"
+          >
+            Open account
+          </Link>
+        </td>
+        <td className="px-4 py-3">
+          <div className="text-ink">
+            {labelOf(OTP_PURPOSE_LABELS, r.purpose)}
+          </div>
+          <div className="text-[12px] text-muted">
+            {labelOf(OTP_SURFACE_LABELS, r.surface)}
+          </div>
+          {r.requestedWith ? (
+            <div
+              className="text-[12px] text-muted"
+              title="Exactly what was typed at the screen"
+            >
+              typed “{r.requestedWith}”
+            </div>
+          ) : null}
+        </td>
+        <td className="px-4 py-3 whitespace-nowrap tabular-nums text-ink">
+          {numberForReading(r.destination)}
+          {channel ? (
+            <div className="text-[12px] text-muted">via {channel}</div>
+          ) : null}
+        </td>
+        <td className="px-4 py-3">
+          <div className="text-ink">
+            {labelOf(OTP_PROVIDER_LABELS, r.provider)}
+          </div>
+          {r.providerRef ? (
+            <div
+              className="max-w-[180px] truncate font-mono text-[11px] text-muted"
+              title={r.providerRef}
+            >
+              {r.providerRef}
+            </div>
+          ) : null}
+        </td>
+        <td className="px-4 py-3">
+          <Badge tone={status.tone} title={status.meaning}>
+            {status.label}
+          </Badge>
+          {why ? (
+            <div className="mt-1 max-w-[220px] text-[12px] text-muted">
+              {why}
+            </div>
+          ) : null}
+        </td>
+        <td className="px-4 py-3 whitespace-nowrap">
+          <span className="tabular-nums text-ink">
+            {r.attempts} wrong / {maxAttempts}
+          </span>
+          {r.lastAttemptAt ? (
+            <div className="text-[12px] text-muted">
+              last: {labelOf(OTP_ATTEMPT_LABELS, r.lastAttemptResult)},{" "}
+              {stamp(r.lastAttemptAt)}
+            </div>
+          ) : r.sentAt ? (
+            <div className="text-[12px] text-muted">never entered</div>
+          ) : null}
+        </td>
+        <td className="px-4 py-3">
+          <div className="font-mono text-[12px] text-body">
+            {r.requestIp ?? "—"}
+          </div>
+          <div className="text-[12px] text-muted">{deviceOf(r.userAgent)}</div>
+        </td>
+      </tr>
+      <tr>
+        <td colSpan={8} className="px-4 pb-3">
+          <details>
+            <summary className="cursor-pointer text-[12px] text-brand">
+              Every detail
+            </summary>
+            <dl className="mt-2 grid grid-cols-[auto_1fr_auto_1fr] gap-x-4 gap-y-1 text-[12px]">
+              <dt className="text-muted">Request id</dt>
+              <dd className="font-mono break-all">{r.id}</dd>
+              <dt className="text-muted">Asked at</dt>
+              <dd>{stamp(r.createdAt)}</dd>
+              <dt className="text-muted">Sent at</dt>
+              <dd>{r.sentAt ? stamp(r.sentAt) : "Not sent"}</dd>
+              <dt className="text-muted">Expires</dt>
+              <dd>{r.status === "refused" ? "—" : stamp(r.expiresAt)}</dd>
+              <dt className="text-muted">Used at</dt>
+              <dd>{r.consumedAt ? stamp(r.consumedAt) : "Not used"}</dd>
+              <dt className="text-muted">Account phone</dt>
+              <dd>{numberForReading(r.userPhone)}</dd>
+              <dt className="text-muted">Account</dt>
+              <dd>
+                {r.userActive === false
+                  ? "Closed"
+                  : r.userActive
+                    ? "Open"
+                    : "—"}
+              </dd>
+              <dt className="text-muted">Device</dt>
+              <dd className="break-all">{r.userAgent ?? "Not recorded"}</dd>
+              {r.failureReason ? (
+                <>
+                  <dt className="text-muted">Failure</dt>
+                  <dd className="break-all">{r.failureReason}</dd>
+                </>
+              ) : null}
+              <dt className="text-muted">Provider answer</dt>
+              <dd className="col-span-3">
+                {r.providerResponse ? (
+                  <pre className="max-h-40 overflow-auto rounded-[4px] bg-canvas p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
+                    {JSON.stringify(r.providerResponse, null, 2)}
+                  </pre>
+                ) : (
+                  "Not recorded"
+                )}
+              </dd>
+            </dl>
+          </details>
+        </td>
+      </tr>
     </>
   );
 }
@@ -342,8 +520,11 @@ function PeopleTable({
   hrefFor: (userId: string) => string;
 }) {
   return (
-    <Card className="mt-4 overflow-hidden">
-      <CardHeader title="By person" hint="Busiest first, over the same filters. Open a name for every request they made." />
+    <Card className="overflow-hidden">
+      <CardHeader
+        title="By person"
+        hint="Busiest first, over the same filters. Open a name for every request they made."
+      />
       {rows.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1000px] text-left text-[13px]">
@@ -363,25 +544,56 @@ function PeopleTable({
             </thead>
             <tbody>
               {rows.map((p) => (
-                <tr key={p.userId} className="border-t border-divider align-top">
+                <tr
+                  key={p.userId}
+                  className="border-t border-divider align-top"
+                >
                   <td className="px-4 py-3">
-                    <Link href={hrefFor(p.userId)} className="font-medium text-ink hover:text-brand">
+                    <Link
+                      href={hrefFor(p.userId)}
+                      className="font-medium text-ink hover:text-brand"
+                    >
                       {p.name ?? "Account deleted"}
                     </Link>
                     <div className="text-[12px] text-muted">
-                      {[p.employeeCode, p.email].filter(Boolean).join(" · ") || "No HRMS link"}
+                      {[p.employeeCode, p.email].filter(Boolean).join(" · ") ||
+                        "No HRMS link"}
                     </div>
                   </td>
                   <td className="px-4 py-3 tabular-nums">
-                    {p.numbers.length ? p.numbers.map((n) => <div key={n}>{numberForReading(n)}</div>) : <span className="text-muted">—</span>}
+                    {p.numbers.length ? (
+                      p.numbers.map((n) => (
+                        <div key={n}>{numberForReading(n)}</div>
+                      ))
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums font-medium text-ink">{p.requests}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{p.last24h}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{p.sent}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{p.verified}</td>
-                  <td className={`px-4 py-3 text-right tabular-nums ${p.sendFailed ? "text-danger" : ""}`}>{p.sendFailed}</td>
-                  <td className={`px-4 py-3 text-right tabular-nums ${p.refused ? "text-warn-ink" : ""}`}>{p.refused}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{p.wrongTries}</td>
+                  <td className="px-4 py-3 text-right tabular-nums font-medium text-ink">
+                    {p.requests}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {p.last24h}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {p.sent}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {p.verified}
+                  </td>
+                  <td
+                    className={`px-4 py-3 text-right tabular-nums ${p.sendFailed ? "text-danger" : ""}`}
+                  >
+                    {p.sendFailed}
+                  </td>
+                  <td
+                    className={`px-4 py-3 text-right tabular-nums ${p.refused ? "text-warn-ink" : ""}`}
+                  >
+                    {p.refused}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {p.wrongTries}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap text-[12px] text-muted">
                     {stamp(p.firstAt)}
                     <br />
@@ -393,7 +605,10 @@ function PeopleTable({
           </table>
         </div>
       ) : (
-        <EmptyState title="Nobody has asked for an OTP in this range" body="Widen the dates or clear a filter." />
+        <EmptyState
+          title="Nobody has asked for an OTP in this range"
+          body="Widen the dates or clear a filter."
+        />
       )}
     </Card>
   );
@@ -418,22 +633,42 @@ function LinkPager({
   return (
     <div className="flex flex-wrap items-center gap-3 border-t border-divider bg-canvas px-5 py-2.5 text-[13px]">
       <span className="text-muted">
-        {total ? `Showing ${from + 1}–${Math.min(total, from + perPage)} of ${total.toLocaleString("en-IN")}` : "No rows"}
+        {total
+          ? `Showing ${from + 1}–${Math.min(total, from + perPage)} of ${total.toLocaleString("en-IN")}`
+          : "No rows"}
       </span>
       <span className="ml-auto flex items-center gap-2 text-muted">
         Per page
         {[25, 50, 100].map((n) =>
           n === perPage ? (
-            <span key={n} className="font-medium text-ink">{n}</span>
+            <span key={n} className="font-medium text-ink">
+              {n}
+            </span>
           ) : (
-            <Link key={n} href={perHref(n)} className="text-brand">{n}</Link>
+            <Link key={n} href={perHref(n)} className="text-brand">
+              {n}
+            </Link>
           ),
         )}
       </span>
       <span className="flex items-center gap-2">
-        {page > 1 ? <Link href={hrefFor(page - 1)} className="text-brand">← Newer</Link> : <span className="text-line-strong">← Newer</span>}
-        <span className="text-muted">Page {page} of {pageCount}</span>
-        {page < pageCount ? <Link href={hrefFor(page + 1)} className="text-brand">Older →</Link> : <span className="text-line-strong">Older →</span>}
+        {page > 1 ? (
+          <Link href={hrefFor(page - 1)} className="text-brand">
+            ← Newer
+          </Link>
+        ) : (
+          <span className="text-line-strong">← Newer</span>
+        )}
+        <span className="text-muted">
+          Page {page} of {pageCount}
+        </span>
+        {page < pageCount ? (
+          <Link href={hrefFor(page + 1)} className="text-brand">
+            Older →
+          </Link>
+        ) : (
+          <span className="text-line-strong">Older →</span>
+        )}
       </span>
     </div>
   );

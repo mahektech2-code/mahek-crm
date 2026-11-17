@@ -170,6 +170,7 @@ export const AUDIT_GROUPS = [
       "whatsapp.rule_",
       "whatsapp.template_link",
       "job.",
+      "sync.conflict.",
     ],
   },
   {
@@ -915,6 +916,8 @@ const DESCRIBE: Record<string, Describer> = {
   "reactivate-user": (c) => ({ says: ["switched the sign-in of", c.user(c.e.entityId), "back on"], changes: false }),
   "update-user": (c) => ({ says: ["edited the account of", c.user(c.e.entityId)], changes: false }),
   "send-password-reset": (c) => ({ says: ["sent", c.user(c.e.entityId), "a password reset link"], changes: false }),
+  "sign-in.pause.lift": (c) => ({ says: ["lifted the wrong-password pause on", c.user(c.e.entityId)], changes: false }),
+  "sync.conflict.resolve": () => ({ says: ["marked a sheet conflict seen, keeping MahekOne's value"], changes: false }),
   "end-sessions": (c) => ({ says: ["signed", c.user(c.e.entityId), "out everywhere"], changes: false }),
   "impersonate.start": (c) => ({ says: ["made a link to sign in as", c.user(c.e.entityId)], note: null, changes: false }),
   "impersonate.enter": (c) => ({ says: ["signed in as", c.user(c.e.entityId)], note: null, changes: false }),

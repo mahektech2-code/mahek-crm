@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, cx } from "@/components/ui/primitives";
+import { Button, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import type { Config } from "@/lib/config/registry";
@@ -19,7 +19,7 @@ import {
   type Values,
 } from "./settings-model";
 import { SettingsSection } from "./settings-section";
-import { SettingsToolbar } from "./settings-tools";
+import { SettingsToolbar, TransferModal } from "./settings-tools";
 
 /* ---------------------------------------------------------------------------
  * One tab of one app's settings, with everything that makes editing them safe:
@@ -43,6 +43,7 @@ export function SettingsEditor({
   canWrite,
   isPlatformAdmin,
   collections,
+  layout,
 }: {
   /** The page's name, printed in the review and the export file's name. */
   owner: string;
@@ -56,6 +57,13 @@ export function SettingsEditor({
   canWrite: boolean;
   isPlatformAdmin: boolean;
   collections: Record<string, Collection>;
+  /**
+   * Where the screen puts the editor's parts. The Settings screen draws the
+   * canvas's frame — find, Changed only and Export beside the title, the
+   * fields under the tabs — and hands the editor this to place them. Without
+   * it the editor draws them in one column, as the Security policy tab does.
+   */
+  layout?: (parts: { controls: React.ReactNode; body: React.ReactNode }) => React.ReactNode;
 }) {
   const router = useRouter();
   const notify = useToast().push;
@@ -75,6 +83,8 @@ export function SettingsEditor({
   }>(null);
   const [leaving, setLeaving] = React.useState<string | null>(null);
   const [changedOnly, setChangedOnly] = React.useState(false);
+  const [find, setFind] = React.useState("");
+  const [exporting, setExporting] = React.useState(0);
 
   const dirty = dirtyFields(tab, values, drafts);
   const errors = introducedProblems(tab, values, drafts, config);
@@ -153,95 +163,134 @@ export function SettingsEditor({
     router.refresh();
   }
 
-  return (
+  const changedOnlyBox = (
+    <label className={cx("inline-flex cursor-pointer items-center gap-2 text-sm text-muted", layout ? "" : "mt-4 font-medium text-body")}>
+      <input
+        type="checkbox"
+        checked={changedOnly}
+        onChange={(e) => setChangedOnly(e.target.checked)}
+        className="h-4 w-4 accent-brand"
+      />
+      Changed only
+    </label>
+  );
+
+  const controls = (
     <>
-      <SettingsToolbar
+      <input
+        value={find}
+        onChange={(e) => setFind(e.target.value)}
+        aria-label="Find a setting"
+        placeholder="Find any setting"
+        className="h-[38px] w-[280px] rounded-control border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+      />
+      {changedOnlyBox}
+      <button
+        type="button"
+        onClick={() => setExporting((n) => n + 1)}
+        className="inline-flex h-[38px] cursor-pointer items-center rounded-control border border-line-strong bg-surface px-3.5 text-[13px] font-semibold text-ink hover:bg-[#f7f9fc]"
+      >
+        Export
+      </button>
+      <TransferModal
+        key={exporting}
+        open={exporting > 0}
+        onClose={() => setExporting(0)}
         tab={tab}
-        owner={owner}
         values={values}
+        owner={owner}
         onImport={(incoming) => setDrafts((d) => ({ ...d, ...incoming }))}
       />
+    </>
+  );
 
+  const body = (
+    <>
       {warnings.length ? (
-        <div className="mt-4 rounded-[4px] border border-warn-line border-l-[3px] border-l-warn bg-warn-soft px-4 py-3">
-          <div className="text-sm font-medium text-warn-ink">The stored configuration is already inconsistent</div>
-          <div className="mt-1.5 flex flex-col gap-1">
-            {warnings.map((w) => (
-              <div key={w} className="text-sm leading-[21px] text-ink">
-                {w}
-              </div>
-            ))}
+          <div className="mb-4 rounded-card border border-warn-line bg-warn-soft px-4 py-3">
+            <div className="text-sm font-medium text-warn-ink">The stored configuration is already inconsistent</div>
+            <div className="mt-1.5 flex flex-col gap-1">
+              {warnings.map((w) => (
+                <div key={w} className="text-sm leading-[21px] text-ink">
+                  {w}
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-[13px] text-muted">
+              Saving is not blocked by this — you cannot fix one half of it otherwise.
+            </div>
           </div>
-          <div className="mt-2 text-[13px] text-muted">
-            Saving is not blocked by this — you cannot fix one half of it otherwise.
-          </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      <label className="mt-4 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-body">
-        <input
-          type="checkbox"
-          checked={changedOnly}
-          onChange={(e) => setChangedOnly(e.target.checked)}
-          className="h-4 w-4 accent-brand"
+        {layout ? null : changedOnlyBox}
+
+        <SettingsSection
+          changedOnly={changedOnly}
+          find={find}
+          tab={tab}
+          values={values}
+          drafts={drafts}
+          errors={errors}
+          onDraft={(key, value) => setDrafts((d) => ({ ...d, [key]: value }))}
+          isPlatformAdmin={isPlatformAdmin}
+          collections={collections}
         />
-        Changed only
-      </label>
 
-      <SettingsSection
-        changedOnly={changedOnly}
-        tab={tab}
-        values={values}
-        drafts={drafts}
-        errors={errors}
-        onDraft={(key, value) => setDrafts((d) => ({ ...d, [key]: value }))}
-        isPlatformAdmin={isPlatformAdmin}
-        collections={collections}
-      />
-
-      <div className="sticky bottom-0 mt-5 bg-canvas pt-4">
         {dirty.length && !readOnly ? (
-          /* Unsaved work is the one state that must not be missed: the bar
-             turns navy and says what will change. */
-          <div className="flex items-center gap-3 rounded-card bg-ink px-5 py-3 text-white shadow-pop">
-            <b className="flex-none">
-              {errors.length
-                ? `${errors.length} to fix`
-                : `${dirty.length} unsaved`}
-            </b>
-            <span className="min-w-0 flex-1 truncate text-sm text-[#c9d1e3]">
-              {dirty.map((f) => `${f.label}: ${readable(savedValue(values, f))} → ${readable(drafts[f.key])}`).join(" · ")}
-            </span>
-            <button
-              type="button"
-              onClick={() => setDrafts({})}
-              className="h-9 flex-none rounded-control border border-[#3a4766] px-3.5 text-sm font-semibold text-white"
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              disabled={saving || !!errors.length}
-              onClick={save}
-              className="h-9 flex-none rounded-control bg-brand-lime px-4 text-sm font-semibold text-ink disabled:opacity-50"
-            >
-              Save
-            </button>
+          <div className="sticky bottom-0 z-10 mt-4">
+            {/* Unsaved work is the one state that must not be missed: the bar
+                is navy and says what will change. */}
+            <div className="flex items-center gap-3 rounded-card bg-ink px-4 py-3 text-sm text-white">
+              <b className="flex-none">{errors.length ? `${errors.length} to fix` : `${dirty.length} unsaved`}</b>
+              <span className="min-w-0 flex-1 truncate text-[#c9d1e3]">
+                {dirty.map((f) => `${f.label} ${readable(savedValue(values, f))} → ${readable(drafts[f.key])}`).join(" · ")}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDrafts({})}
+                className="h-[38px] flex-none cursor-pointer rounded-control border border-[#3a4766] bg-transparent px-3.5 text-[13px] font-semibold text-white"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                disabled={saving || !!errors.length}
+                onClick={save}
+                className="h-[38px] flex-none cursor-pointer rounded-control border border-brand-lime bg-brand-lime px-3.5 text-[13px] font-semibold text-ink disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
           </div>
-        ) : (
-          <Card className="flex items-center gap-3 px-5 py-3">
-            <span className="text-sm text-muted">
-              {readOnly ? "Read-only. Configuration is changed by a manager." : "Nothing unsaved."}
-            </span>
+        ) : readOnly ? (
+          <div className="mt-4 text-sm text-muted">Read-only. Configuration is changed by a manager.</div>
+        ) : lastSet ? (
+          <div className="mt-4 flex items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 text-sm">
+            <span className="text-muted">Saved.</span>
             <span className="flex-1" />
-            {lastSet ? (
-              <Button variant="ghost" onClick={rollback}>
-                Undo the last change set
-              </Button>
-            ) : null}
-          </Card>
-        )}
-      </div>
+            <Button variant="ghost" onClick={rollback}>
+              Undo the last change set
+            </Button>
+          </div>
+        ) : null}
+    </>
+  );
+
+  return (
+    <>
+      {layout ? (
+        layout({ controls, body })
+      ) : (
+        <>
+          <SettingsToolbar
+            tab={tab}
+            owner={owner}
+            values={values}
+            onImport={(incoming) => setDrafts((d) => ({ ...d, ...incoming }))}
+          />
+          {body}
+        </>
+      )}
 
       <Modal
         open={reviewOpen}

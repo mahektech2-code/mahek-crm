@@ -6,9 +6,9 @@ import { schemaFields, toConsole } from "@/lib/config/schema-contract";
 import { schemaForPage } from "@/lib/config/settings-schemas";
 import { settingsPage } from "@/lib/config/settings-pages";
 import { configWarnings, getConfig } from "@/lib/config/store";
-import { AdminPage } from "../../../_shell/admin-page";
+import { configDrift } from "@/lib/services/admin-platform-service";
 import { adminContext, firstPageFor } from "../../../_shell/context";
-import { SettingsEditor } from "../../../settings-editor";
+import { SettingsScreen } from "../../_ui/settings-screen";
 
 /**
  * One app's settings, one tab at a time.
@@ -47,23 +47,29 @@ export default async function SettingsPageRoute({
   const labels = schemaFields(schema).map((f) => f.label.toLowerCase());
   const mine = warnings.filter((w) => labels.some((l) => w.toLowerCase().includes(l)));
 
+  // How many settings on each page differ from their defaults — the count
+  // beside each app in the list.
+  const { rows: drift } = await configDrift();
+  const drifted = new Set(drift.map((r) => r.key));
+  const apps = ctx.settingsPages.map((p) => {
+    const keys = schemaFields(schemaForPage(p.id)!).filter((f) => f.control !== "entity").map((f) => f.key);
+    return { id: p.id, label: p.label, href: ADMIN.settingsFor(p.id), changed: keys.filter((k) => drifted.has(k)).length };
+  });
+
   return (
-    <AdminPage
-      title={page.label}
-      subtitle={page.blurb}
-      tabs={{ items: tabs, active: current.key, href: (s) => ADMIN.settingsFor(id, s) }}
-    >
-      <SettingsEditor
-        key={`${id}/${current.key}`}
-        owner={page.label}
-        tab={current}
-        values={values}
-        config={config}
-        warnings={mine}
-        canWrite={ctx.canWriteConfig}
-        isPlatformAdmin={ctx.isPlatformAdmin}
-        collections={collections}
-      />
-    </AdminPage>
+    <SettingsScreen
+      apps={apps}
+      active={id}
+      tabs={tabs.map((t) => ({ ...t, href: ADMIN.settingsFor(id, t.slug) }))}
+      activeTab={current.key}
+      owner={page.label}
+      tab={current}
+      values={values}
+      config={config}
+      warnings={mine}
+      canWrite={ctx.canWriteConfig}
+      isPlatformAdmin={ctx.isPlatformAdmin}
+      collections={collections}
+    />
   );
 }

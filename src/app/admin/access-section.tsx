@@ -2,23 +2,16 @@
 
 import * as React from "react";
 import { downloadCsv, toCsv } from "@/lib/csv";
-import { HintTip } from "@/components/ui/hint-tip";
 import { useRouter } from "next/navigation";
 import {
   Badge,
   Button,
-  Card,
-  CardHeader,
   Checkbox,
-  EmptyState,
   Field,
   Input,
-  Td,
-  Th,
-  Tr,
   cx,
 } from "@/components/ui/primitives";
-import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
+import { Modal, RowMenu } from "@/components/ui/overlays";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { ACCESS_REVOKE_KIND, accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import type { ImpactConfirmation } from "@/lib/impact/types";
@@ -64,8 +57,11 @@ import type {
   Candidate,
   LinkableEmployee,
 } from "@/lib/services/access-service";
-import Link from "next/link";
 import { ADMIN } from "@/lib/admin-routes";
+import { AdminPage } from "./_shell/admin-page";
+import { Avatar, Pill, btnClass } from "./_shell/kit";
+import type { AccessView, PersonExtras } from "@/lib/services/admin-access-view-service";
+import { giveAppTo } from "./access/bulk-apps";
 
 /* ---------------------------------------------------------------------------
  * The Access screen.
@@ -130,14 +126,27 @@ function levelOptionLabel(level: RoleId, app: AppId, appName: string): string {
 /** Every module of an app that its holders reach whatever is ticked. */
 const ALWAYS_OF = (app: AppId) => modulesForApp(app).filter((m) => isAlwaysOpen(m.key)).map((m) => m.key);
 
-const VIEWS = [
-  "Everyone with access",
-  "Narrowed access",
-  "New screens to decide",
-  "No app at all",
-  "Disabled",
+const TABS = [
+  { key: "everybody", label: "Everybody" },
+  { key: "admins", label: "Platform admins" },
+  { key: "not-hrms", label: "Not in HRMS" },
+  { key: "no-account", label: "In HRMS, no account" },
+  { key: "disabled", label: "Disabled" },
 ] as const;
-type View = (typeof VIEWS)[number];
+type Tab = (typeof TABS)[number]["key"];
+
+/** What the Filters panel narrows a tab to — the views this screen always had. */
+const FILTERS = [
+  { key: "narrowed", label: "Narrowed access" },
+  { key: "new-screens", label: "New screens to decide" },
+  { key: "no-app", label: "No app at all" },
+  { key: "clash", label: "Hats that clash" },
+] as const;
+type Filter = (typeof FILTERS)[number]["key"] | "";
+
+const PAGE = 25;
+
+const isPlatformAdminRow = (r: AccessRow) => r.grants.some((g) => g.app === "admin" && g.role === "admin");
 
 /** Per app: the screens shipped after a narrowed grant was last saved. */
 type Fresh = Record<string, { keys: string[]; labels: string[]; setOn: string }>;
@@ -178,7 +187,11 @@ export function AccessSection({
   isPlatformAdmin,
   enabling,
   onEnablingDone,
+  onEnable,
   onlyApp,
+  view: view_,
+  now,
+  manage = null,
 }: {
   rows: AccessRow[];
   /** The ERP's designations, offered on the ERP's block of the dialog. */
@@ -198,6 +211,14 @@ export function AccessSection({
   onEnablingDone: () => void;
   /** Narrowed to the people holding one app — the Home page's apps table links here. */
   onlyApp: AppId | null;
+  /** "Give somebody access": the picker opens. */
+  onEnable: () => void;
+  /** Last sign-in, live sessions, HRMS jobs and the HRMS people with no account. */
+  view: AccessView;
+  /** The clock, read on the server — "Today 09:04" is relative to it. */
+  now: number;
+  /** Arrived from a person's page: their dialog opens first. */
+  manage?: string | null;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -206,8 +227,15 @@ export function AccessSection({
      screen as often as "who holds the ERP" — and the answer has to include
      the customised ones, which a designation's own page counts separately. */
   const [byDesignation, setByDesignation] = React.useState<string>(onlyDesignation ?? "");
+  const [byApp, setByApp] = React.useState<AppId | "">(onlyApp ?? "");
+  const [byLevel, setByLevel] = React.useState<RoleId | "">("");
+  const [filter, setFilter] = React.useState<Filter>("");
+  const [tab, setTab] = React.useState<Tab>("everybody");
+  const [q, setQ] = React.useState("");
+  const [page, setPage] = React.useState(0);
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const [giving, setGiving] = React.useState(false);
   const rows = allRows
-    .filter((r) => !onlyApp || r.grants.some((g) => g.app === onlyApp))
     .filter((r) =>
       !byDesignation
         ? true
@@ -215,9 +243,8 @@ export function AccessSection({
           ? r.grants.some((g) => g.app === "erp") && !r.erpDesignation
           : r.erpDesignation?.id === byDesignation,
     );
-  const [view, setView] = React.useState<View>("Everyone with access");
   /** Managing somebody already on the list skips the picker. */
-  const [managing, setManaging] = React.useState<AccessRow | null>(null);
+  const [managing, setManaging] = React.useState<AccessRow | null>(() => (manage ? (allRows.find((r) => r.userId === manage) ?? null) : null));
   /** Turning the sign-in itself off, or back on. */
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
   /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
@@ -271,7 +298,7 @@ export function AccessSection({
           r.grants.map((g) => `${g.appName} (${g.role}, ${g.grantedCount}/${g.totalCount})`).join("; "),
         ]),
       ),
-      [view, onlyApp],
+      [tab, filter, byApp],
     );
   }
 
@@ -280,272 +307,400 @@ export function AccessSection({
     if (r.ok) router.refresh();
   };
 
-  const inView = rows.filter((r) => {
-    if (view === "Disabled") return !r.active;
-    if (!r.active) return false;
-    if (view === "No app at all") return r.grants.length === 0;
-    if (view === "Narrowed access") return r.grants.some((g) => !g.whole);
-    if (view === "New screens to decide") return r.grants.some((g) => g.newScreens.length > 0);
-    return r.grants.length > 0;
-  });
 
-  const withAccess = rows.filter((r) => r.active && r.grants.length > 0).length;
-  const narrowed = rows.filter((r) => r.grants.some((g) => !g.whole)).length;
-  const disabled = rows.filter((r) => !r.active).length;
-  const undecided = rows.filter((r) => r.active && r.grants.some((g) => g.newScreens.length > 0)).length;
+  const tabCount: Record<Tab, number> = {
+    everybody: rows.length,
+    admins: rows.filter(isPlatformAdminRow).length,
+    "not-hrms": rows.filter((r) => !r.employeeCode).length,
+    "no-account": view_.noAccount.length,
+    disabled: rows.filter((r) => !r.active).length,
+  };
+  const needle = q.trim().toLowerCase();
+  const inView = rows
+    .filter((r) => {
+      if (tab === "disabled") return !r.active;
+      if (tab === "admins") return isPlatformAdminRow(r);
+      if (tab === "not-hrms") return !r.employeeCode;
+      return true;
+    })
+    .filter((r) => {
+      if (filter === "narrowed") return r.grants.some((g) => !g.whole);
+      if (filter === "new-screens") return r.active && r.grants.some((g) => g.newScreens.length > 0);
+      if (filter === "no-app") return r.grants.length === 0;
+      if (filter === "clash") return r.conflicts.length > 0;
+      return true;
+    })
+    .filter((r) => !byApp || r.grants.some((g) => g.app === byApp))
+    .filter((r) => !byLevel || r.grants.some((g) => g.role === byLevel))
+    .filter(
+      (r) =>
+        !needle ||
+        [r.name, r.email, r.phone, r.employeeCode].some((v) => v?.toLowerCase().includes(needle)),
+    );
+  const pages = Math.max(1, Math.ceil(inView.length / PAGE));
+  const at = Math.min(page, pages - 1);
+  const shown = inView.slice(at * PAGE, at * PAGE + PAGE);
+  const noAccountShown = view_.noAccount.filter(
+    (e) => !needle || [e.name, e.code, e.phone, e.email].some((v) => v?.toLowerCase().includes(needle)),
+  );
+
+  const chips: { label: string; clear: () => void }[] = [
+    ...(filter ? [{ label: FILTERS.find((f) => f.key === filter)!.label, clear: () => setFilter("") }] : []),
+    ...(byApp ? [{ label: `App: ${getApp(byApp)?.name ?? byApp}`, clear: () => setByApp("") }] : []),
+    ...(byLevel ? [{ label: `Level: ${byLevel}`, clear: () => setByLevel("") }] : []),
+    ...(byDesignation
+      ? [{ label: `Designation: ${byDesignation === "none" ? "ERP, none" : (designations.find((d) => d.id === byDesignation)?.name ?? "—")}`, clear: () => setByDesignation("") }]
+      : []),
+  ];
 
   return (
-    <div>
-      {onlyApp ? (
-        <div className="mt-5 flex items-center gap-2 text-[13px] text-body">
-          <span>
-            Showing the people who hold <span className="font-medium text-ink">{getApp(onlyApp)?.name ?? onlyApp}</span>.
-          </span>
-          <Link href={ADMIN.access}>Show everyone</Link>
-        </div>
-      ) : null}
-      <div className="mt-5 flex flex-wrap items-center gap-2">
-        <FilterPills
-          options={VIEWS.map((v) => ({ key: v, label: v }))}
-          value={view}
-          onChange={setView}
-        />
-        {designations.length ? (
-          <select
-            value={byDesignation}
-            aria-label="Filter by ERP designation"
-            onChange={(e) => setByDesignation(e.target.value)}
-            className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-2 text-[13px] text-body"
+    <AdminPage
+      title="People & access"
+      subtitle="Who can open which app, and how far into it."
+      figures={[
+        { label: "People", value: String(rows.length), sub: `${view_.inHrms} in HRMS` },
+        { label: "Signed in today", value: String(view_.signedInToday), sub: `${view_.liveNow} now` },
+        { label: "Disabled", value: String(tabCount.disabled) },
+        { label: "Never signed in", value: String(rows.filter((r) => r.active && !view_.extras[r.userId]?.lastSignedIn).length) },
+        {
+          label: "Hats that clash",
+          value: String(rows.filter((r) => r.conflicts.length > 0).length),
+          tone: rows.some((r) => r.conflicts.length > 0) ? "warn" : undefined,
+        },
+        {
+          label: "Missed new screens",
+          value: String(rows.filter((r) => r.active && r.grants.some((g) => g.newScreens.length > 0)).length),
+          tone: rows.some((r) => r.active && r.grants.some((g) => g.newScreens.length > 0)) ? "warn" : undefined,
+        },
+      ]}
+      actions={
+        <>
+          <button type="button" className={btnClass()} onClick={() => exportCsv(picked.size ? rows.filter((r) => picked.has(r.userId)) : inView)}>
+            Export CSV
+          </button>
+          {isPlatformAdmin ? (
+            <button type="button" className={btnClass("primary")} onClick={onEnable}>
+              Give somebody access
+            </button>
+          ) : null}
+        </>
+      }
+    >
+      <nav aria-label="Tabs" className="-mt-0.5 flex flex-wrap gap-x-[22px] border-b border-line">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            aria-current={tab === t.key ? "page" : undefined}
+            onClick={() => {
+              setTab(t.key);
+              setPage(0);
+            }}
+            className={cx(
+              "-mb-px flex cursor-pointer items-center gap-1.5 border-b-2 py-2.5 text-[13px] font-semibold whitespace-nowrap",
+              tab === t.key ? "border-brand text-ink" : "border-transparent text-muted hover:text-body",
+            )}
           >
-            <option value="">Any ERP designation</option>
-            {designations.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-            <option value="none">ERP, no designation</option>
-          </select>
+            {t.label}
+            <span className="rounded-full bg-[#eef1f6] px-[7px] py-px text-[11px] font-semibold text-[#4a5670]">{tabCount[t.key]}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="flex flex-wrap items-center gap-2.5">
+        <input
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setPage(0);
+          }}
+          aria-label="Find a person"
+          placeholder="Name, number, email, employee code"
+          className="h-9 w-[300px] rounded-control border border-line-strong bg-surface px-3 text-[13px] text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+        />
+        {tab !== "no-account" ? (
+          <div className="relative">
+            <button type="button" className={btnClass()} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((o) => !o)}>
+              Filters{chips.length ? ` · ${chips.length}` : ""}
+            </button>
+            {filtersOpen ? (
+              <div className="absolute top-10 left-0 z-40 flex w-[300px] flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-[0_12px_32px_rgba(15,27,51,0.16)]">
+                <FilterSelect label="Show" value={filter} onChange={(v) => { setFilter(v as Filter); setPage(0); }} options={[{ value: "", label: "Everybody in this tab" }, ...FILTERS.map((f) => ({ value: f.key, label: f.label }))]} />
+                <FilterSelect label="App" value={byApp} onChange={(v) => { setByApp(v as AppId | ""); setPage(0); }} options={[{ value: "", label: "Any app" }, ...APPS.map((a) => ({ value: a.id, label: a.name }))]} />
+                <FilterSelect label="Level" value={byLevel} onChange={(v) => { setByLevel(v as RoleId | ""); setPage(0); }} options={[{ value: "", label: "Any level" }, ...ROLES.map((r) => ({ value: r.id, label: r.label }))]} />
+                {designations.length ? (
+                  <FilterSelect
+                    label="ERP designation"
+                    value={byDesignation}
+                    onChange={(v) => { setByDesignation(v); setPage(0); }}
+                    options={[{ value: "", label: "Any" }, ...designations.map((d) => ({ value: d.id, label: d.name })), { value: "none", label: "ERP, no designation" }]}
+                  />
+                ) : null}
+                <div className="flex justify-end">
+                  <button type="button" className={btnClass("plain", "sm")} onClick={() => setFiltersOpen(false)}>
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         ) : null}
+        {tab !== "no-account"
+          ? chips.map((c) => (
+              <button
+                key={c.label}
+                type="button"
+                onClick={c.clear}
+                aria-label={`Remove filter ${c.label}`}
+                className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full bg-brand-soft px-2.5 text-xs font-semibold text-brand-deep"
+              >
+                {c.label} ✕
+              </button>
+            ))
+          : null}
         <span className="flex-1" />
-        <Button size="sm" variant="secondary" onClick={() => exportCsv(picked.size ? rows.filter((r) => picked.has(r.userId)) : inView)}>
-          Export CSV
-        </Button>
-        <span className="text-[13px] whitespace-nowrap text-muted">
-          {withAccess} with access · {narrowed} narrowed
-          {undecided ? ` · ${undecided} with new screens to decide` : ""}
-          {disabled ? ` · ${disabled} disabled` : ""}
-        </span>
+        {tab === "no-account" ? (
+          <span className="text-muted">{noAccountShown.length} without an account</span>
+        ) : (
+          <span className="flex items-center gap-2 text-muted">
+            {inView.length ? `Showing ${at * PAGE + 1}–${Math.min(inView.length, at * PAGE + PAGE)} of ${inView.length}` : "Nobody matches"}
+            {pages > 1 ? (
+              <>
+                <button type="button" className={btnClass("plain", "sm")} disabled={at === 0} onClick={() => setPage(at - 1)} aria-label="Previous page">
+                  ‹
+                </button>
+                <button type="button" className={btnClass("plain", "sm")} disabled={at >= pages - 1} onClick={() => setPage(at + 1)} aria-label="Next page">
+                  ›
+                </button>
+              </>
+            ) : null}
+          </span>
+        )}
       </div>
 
-      {picked.size && isPlatformAdmin ? (
-        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-card bg-ink px-4 py-2.5 text-white">
-          <b className="mr-2">{picked.size} selected</b>
+      {picked.size && isPlatformAdmin && tab !== "no-account" ? (
+        <div className="flex flex-wrap items-center gap-2.5 rounded-card bg-ink px-3.5 py-2.5 text-white">
+          <b>{picked.size} selected</b>
           <span className="flex-1" />
-          {[
-            { label: "Send reset links", fn: sendPasswordResetFor, done: "Reset link sent" },
-            { label: "End sessions", fn: endSessionsFor, done: "Sessions ended" },
-          ].map((b) => (
-            <button
-              key={b.label}
-              type="button"
-              disabled={bulkBusy}
-              onClick={() => void runBulk(b.done, b.fn)}
-              className="h-8 rounded-control border border-[#3a4766] px-3 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {b.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => exportCsv(rows.filter((r) => picked.has(r.userId)))}
-            className="h-8 rounded-control border border-[#3a4766] px-3 text-sm font-semibold text-white"
-          >
-            Export
-          </button>
-          <button
-            type="button"
-            onClick={() => setPicked(new Set())}
-            className="h-8 rounded-control px-3 text-sm font-semibold text-[#c9d1e3]"
-          >
+          <BarButton disabled={bulkBusy} onClick={() => setGiving(true)}>
+            Give an app
+          </BarButton>
+          <BarButton disabled={bulkBusy} onClick={() => void runBulk("Reset link sent", sendPasswordResetFor)}>
+            Send reset links
+          </BarButton>
+          <BarButton disabled={bulkBusy} onClick={() => void runBulk("Sessions ended", endSessionsFor)}>
+            End sessions
+          </BarButton>
+          <BarButton onClick={() => exportCsv(rows.filter((r) => picked.has(r.userId)))}>Export</BarButton>
+          <BarButton quiet onClick={() => setPicked(new Set())}>
             Clear
-          </button>
+          </BarButton>
         </div>
       ) : null}
 
-      <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <CardHeader
-          title="Who opens what"
-          action={
-            <HintTip text="Every app a person holds, and how far into each one it reaches. Manage access opens all of it on one page — an app is granted by ticking it and taken away by unticking it, reviewed before anything is written." />
-          }
-        />
+      {tab === "no-account" ? (
+        <section className="overflow-hidden rounded-card border border-line bg-surface">
+          {noAccountShown.length === 0 ? (
+            <div className="px-4 py-10 text-center text-muted">Everybody active in HRMS has an account.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[13px]">
+                <thead>
+                  <tr>
+                    <AccTh>Person</AccTh>
+                    <AccTh>HRMS</AccTh>
+                    <AccTh>Mobile</AccTh>
+                    <AccTh>Email</AccTh>
+                    <AccTh />
+                  </tr>
+                </thead>
+                <tbody>
+                  {noAccountShown.map((e) => (
+                    <tr key={e.id}>
+                      <AccTd>
+                        <span className="flex items-center gap-2.5">
+                          <Avatar name={e.name} />
+                          <b className="font-semibold text-ink">{e.name}</b>
+                        </span>
+                      </AccTd>
+                      <AccTd>
+                        {e.code}
+                        {e.position ? ` · ${e.position}` : ""}
+                      </AccTd>
+                      <AccTd>{e.phone ?? "—"}</AccTd>
+                      <AccTd>{e.email ?? "—"}</AccTd>
+                      <AccTd className="text-right">
+                        {isPlatformAdmin ? (
+                          <button type="button" className={btnClass("plain", "sm")} onClick={onEnable}>
+                            Give access
+                          </button>
+                        ) : null}
+                      </AccTd>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : (
+      <section className="overflow-hidden rounded-card border border-line bg-surface">
         {inView.length === 0 ? (
-          <EmptyState
-            title={
-              view === "Narrowed access"
-                ? "Nobody has been narrowed yet"
-                : view === "New screens to decide"
-                  ? "Nothing new to decide"
-                : view === "No app at all"
-                  ? "Everybody has at least one app"
-                  : view === "Disabled"
-                    ? "Every account can sign in"
-                    : "Nobody here"
-            }
-            body={
-              view === "Narrowed access"
-                ? "Every grant is the whole app. Manage somebody's access to withhold a screen."
-                : view === "New screens to decide"
-                  ? "Every narrowed grant was set after the screens it leaves out existed, so each of those was a decision. Whole-app grants receive new screens by themselves."
-                : view === "Disabled"
-                  ? "Disabling a sign-in keeps the apps it holds, so it is the way to stop somebody signing in without deciding anything about their access."
-                  : "Nothing matches this view."
-            }
-          />
+          <div className="px-4 py-10 text-center text-muted">
+            {filter === "narrowed"
+              ? "Nobody has been narrowed yet."
+              : filter === "new-screens"
+                ? "Nothing new to decide."
+                : filter === "no-app"
+                  ? "Everybody has at least one app."
+                  : tab === "disabled"
+                    ? "Every account can sign in."
+                    : "Nobody matches."}
+          </div>
         ) : (
-          <div className="overflow-auto">
-            <table className="[&_td]:whitespace-nowrap">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr>
-                  <Th className="w-8">
+                  <AccTh className="w-7">
                     <input
                       type="checkbox"
-                      aria-label="Select everyone in this view"
-                      checked={inView.length > 0 && inView.every((r) => picked.has(r.userId))}
+                      aria-label="Select everyone on this page"
+                      checked={shown.length > 0 && shown.every((r) => picked.has(r.userId))}
                       onChange={(e) =>
-                        setPicked(e.target.checked ? new Set([...picked, ...inView.map((r) => r.userId)]) : new Set())
+                        setPicked((p) => {
+                          const n = new Set(p);
+                          for (const r of shown) {
+                            if (e.target.checked) n.add(r.userId);
+                            else n.delete(r.userId);
+                          }
+                          return n;
+                        })
                       }
-                      className="h-4 w-4 accent-brand"
+                      className="m-0 h-4 w-4 align-middle accent-brand"
                     />
-                  </Th>
-                  <Th>Person</Th>
-                  <Th>Sign-in</Th>
-                  <Th>
-                    <span title="Derived from the levels below — Admin only for a platform administrator, Manager for anybody who manages or administers any app, otherwise Associate. It is never set on its own.">
-                      Account level
-                    </span>
-                  </Th>
-                  <Th>Employee</Th>
-                  <Th>Apps</Th>
-                  <Th />
+                  </AccTh>
+                  <AccTh>Person</AccTh>
+                  <AccTh>HRMS</AccTh>
+                  <AccTh>Apps (level)</AccTh>
+                  <AccTh>Sign-in</AccTh>
+                  <AccTh>Last signed in</AccTh>
+                  <AccTh />
                 </tr>
               </thead>
               <tbody>
-                {inView.map((r, i) => (
-                  <Tr key={r.userId} className={picked.has(r.userId) ? "bg-brand-soft" : i % 2 ? "bg-canvas" : ""}>
-                    <Td className="w-8 align-top">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${r.name}`}
-                        checked={picked.has(r.userId)}
-                        onChange={() => toggle(r.userId)}
-                        className="h-4 w-4 accent-brand"
-                      />
-                    </Td>
-                    <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} />
-                    <Td>
-                      {r.grants.length === 0 ? (
-                        <span className="text-muted">
-                          {r.active
-                            ? "No app — they can sign in and the launcher says so."
-                            : "No app."}
-                        </span>
-                      ) : (
-                        <span className="flex flex-col gap-0.5">
-                          {r.grants.map((g) => (
-                            <span key={g.app} className="inline-flex items-center gap-2">
-                              <span className="min-w-[9rem] font-medium text-ink">
-                                {g.appName}
-                              </span>
-                              <span className="text-muted">
-                                {g.grantedCount >= g.totalCount
-                                  ? g.totalCount === 1
-                                    ? "its one screen"
-                                    : `all ${g.totalCount} screens`
-                                  : `${g.grantedCount} of ${g.totalCount} screens`}
-                              </span>
-                              {g.app === "erp" && r.erpDesignation ? (
-                                <Badge
-                                  tone={r.erpDesignation.matches ? "brand" : "warn"}
-                                  title={
-                                    r.erpDesignation.matches
-                                      ? `Holds exactly what ${r.erpDesignation.name} holds — an edit to it moves them too.`
-                                      : `Customised from ${r.erpDesignation.name}: ${diffLines(r.erpDesignation.diff).join("; ")}. An edit to the designation leaves them alone.`
-                                  }
-                                >
-                                  {r.erpDesignation.name}
-                                  {r.erpDesignation.matches ? "" : " · customised"}
-                                </Badge>
-                              ) : g.grantedCount < g.totalCount ? (
-                                <Badge tone="warn">Narrowed</Badge>
-                              ) : null}
-                              {g.readOnly.map((label) => (
-                                <Badge key={label} tone="warn">
-                                  {label} read only
-                                </Badge>
-                              ))}
-                              {/* SHIPPED SINCE THIS WAS LAST SET. A narrowed
-                                  grant does not receive new screens, which is
-                                  right for the ones somebody left out and
-                                  wrong for the ones that did not exist yet —
-                                  so those are named until somebody decides. */}
-                              {g.newScreens.length && g.setOn ? (
-                                <Badge
-                                  tone="brand"
-                                  title={`Shipped after this was last set on ${dayLabel(g.setOn)}: ${namedList(g.newScreens.map((m) => m.label), 99)}. Manage access to decide — saving, ticked or left out, clears this.`}
-                                >
-                                  {g.newScreens.length} new screen{g.newScreens.length === 1 ? "" : "s"}
-                                </Badge>
-                              ) : null}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </Td>
-                    <Td>
-                      {isPlatformAdmin ? (
-                      <span className="flex justify-end gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={!r.active}
-                          // A disabled control always says why.
-                          title={
-                            r.active
-                              ? undefined
-                              : "This account cannot sign in. Enable it before changing what it opens."
-                          }
-                          onClick={() => setManaging(r)}
-                        >
-                          Manage access
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => setSwitching(r)}
-                        >
-                          {r.active ? "Disable" : "Enable"}
-                        </Button>
-                        <PersonMenu
-                          row={r}
-                          say={say}
-                          onManage={() => setManaging(r)}
-                          onSwitch={() => setSwitching(r)}
-                          onOpen={() => onOpenUser(r.userId)}
-                          onLinkEmployee={() => setLinking(r)}
-                          onCredential={() => setCrediting(r)}
-                          onGotLink={setLinkFor}
+                {shown.map((r) => {
+                  const ex = view_.extras[r.userId];
+                  const never = r.active && !ex?.lastSignedIn;
+                  return (
+                    <tr key={r.userId} className={cx("[&:last-child>td]:border-b-0", picked.has(r.userId) && "[&>td]:bg-[#f7f5ff]")}>
+                      <AccTd>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${r.name}`}
+                          checked={picked.has(r.userId)}
+                          onChange={() => toggle(r.userId)}
+                          className="m-0 h-4 w-4 align-middle accent-brand"
                         />
-                      </span>
-                      ) : null}
-                    </Td>
-                  </Tr>
-                ))}
+                      </AccTd>
+                      <PersonCells row={r} onOpen={() => onOpenUser(r.userId)} position={ex?.position ?? null} />
+                      <AccTd>
+                        <AppChips row={r} />
+                      </AccTd>
+                      <AccTd>
+                        {!r.active ? (
+                          <Pill tone="muted">Disabled</Pill>
+                        ) : never ? (
+                          <Pill tone="warn">Never signed in</Pill>
+                        ) : (
+                          <Pill tone="ok">Enabled</Pill>
+                        )}
+                      </AccTd>
+                      <AccTd>{lastSeen(ex, now)}</AccTd>
+                      <AccTd className="text-right">
+                        {isPlatformAdmin ? (
+                          <span className="inline-flex items-center justify-end gap-1">
+                            {never && r.active ? (
+                              <button
+                                type="button"
+                                className={btnClass("plain", "sm")}
+                                onClick={() => void sendPasswordResetFor(r.userId).then(say)}
+                                title="Mail them a single-use link to set a password"
+                              >
+                                Send link
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={btnClass("plain", "sm")}
+                              disabled={!r.active}
+                              title={r.active ? undefined : "This account cannot sign in. Enable it before changing what it opens."}
+                              onClick={() => setManaging(r)}
+                            >
+                              Manage
+                            </button>
+                            <PersonMenu
+                              row={r}
+                              say={say}
+                              onManage={() => setManaging(r)}
+                              onSwitch={() => setSwitching(r)}
+                              onOpen={() => onOpenUser(r.userId)}
+                              onLinkEmployee={() => setLinking(r)}
+                              onCredential={() => setCrediting(r)}
+                              onGotLink={setLinkFor}
+                            />
+                          </span>
+                        ) : null}
+                      </AccTd>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
-      </Card>
+      </section>
+      )}
+
+      {tab !== "no-account" ? (
+        <div className="flex flex-wrap items-center gap-3.5 text-muted">
+          <span>
+            <b className="text-ink">A</b> Associate
+          </span>
+          <span>
+            <b className="text-brand-deep">M</b> Manager
+          </span>
+          <span>
+            <b className="text-ink">Ad</b> Admin
+          </span>
+          <span>Dashed = narrowed</span>
+        </div>
+      ) : null}
+
+      {giving ? (
+        <GiveAppDialog
+          count={picked.size}
+          onClose={() => setGiving(false)}
+          onGive={async (app, role) => {
+            setBulkBusy(true);
+            const res = await giveAppTo({ app, role, userIds: [...picked] });
+            setBulkBusy(false);
+            setGiving(false);
+            if (!res.ok) {
+              push(res.error, "error");
+              return;
+            }
+            const { moved, skipped } = res.data;
+            push(
+              skipped.length
+                ? `Given to ${moved.length}. Skipped ${skipped.length}: ${skipped.slice(0, 3).map((s) => `${s.name} ${s.why}`).join("; ")}${skipped.length > 3 ? "…" : ""}`
+                : `Given to ${moved.length} ${moved.length === 1 ? "person" : "people"}.`,
+            );
+            setPicked(new Set());
+            router.refresh();
+          }}
+        />
+      ) : null}
 
       {/* Enabling access for somebody new: the picker comes first. */}
       {enabling && isPlatformAdmin ? (
@@ -730,61 +885,214 @@ export function AccessSection({
           />
         </Modal>
       ) : null}
-    </div>
+    </AdminPage>
   );
 }
 
-function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
+function PersonCells({ row, onOpen, position }: { row: AccessRow; onOpen: () => void; position: string | null }) {
+  const admin = isPlatformAdminRow(row);
   return (
     <>
-      <Td className="align-top font-medium text-ink">
-        <button
-          onClick={onOpen}
-          className="cursor-pointer border-0 bg-transparent p-0 text-sm font-medium text-ink hover:text-brand"
-        >
-          {row.name}
-        </button>
-        <span className="block text-[13px] font-normal text-muted">{row.email}</span>
-      </Td>
-      <Td className="align-top">
-        {row.active ? (
-          <span className="inline-flex items-center gap-1.5 text-[13px] text-body">
-            <span className="h-1.5 w-1.5 rounded-full bg-success" />
-            Enabled
+      <AccTd>
+        <span className="flex items-center gap-2.5">
+          <Avatar name={row.name} tone={admin ? "navy" : "brand"} />
+          <span className="min-w-0">
+            <button
+              type="button"
+              onClick={onOpen}
+              className="block cursor-pointer border-0 bg-transparent p-0 text-left text-[13px] font-semibold text-ink hover:text-brand"
+            >
+              {row.name}
+            </button>
+            <span className="block text-muted">{[row.phone, row.email].filter(Boolean).join(" · ") || "No number or email"}</span>
           </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-danger">
-            <span className="h-1.5 w-1.5 rounded-full bg-danger" />
-            Disabled
-          </span>
-        )}
-      </Td>
-      <Td className="align-top">{LEVEL_LABELS[row.role] ?? row.role}</Td>
-      <Td className="align-top">
+        </span>
+      </AccTd>
+      <AccTd>
         {row.employeeCode ? (
-          <span className="inline-flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5">
             {row.employeeCode}
-            {row.employeeStatus === "active" ? null : (
-              <Badge tone="warn">
-                {row.employeeStatus === "inactive" ? "Left" : "Status unknown"}
-              </Badge>
-            )}
-            {/* Chosen, or merely matched. A guess and an answer look identical
-                on a row, and one of them is deciding whose salary shows up. */}
+            {position ? ` · ${position}` : ""}
+            {row.employeeStatus === "active" ? null : <Pill tone="warn">{row.employeeStatus === "inactive" ? "Left" : "Status unknown"}</Pill>}
+            {/* Chosen, or merely matched — a guess decides whose salary shows. */}
             {row.employeeMatch === "guessed" ? (
-              <Badge tone="warn" title="Matched on email or work number, not chosen. Link them to be sure.">
+              <Pill tone="warn" title="Matched on email or work number, not chosen. Link them to be sure.">
                 Guessed
-              </Badge>
+              </Pill>
             ) : null}
           </span>
         ) : (
-          // Said rather than left blank: the HRMS check could not be made for
-          // this person, and whoever reads the row should know that.
           <span className="text-muted">Not in HRMS</span>
         )}
-      </Td>
+      </AccTd>
     </>
   );
+}
+
+/** The short name an app chip carries — "CRM 9/15", not "Telecaller CRM, 9 of 15 screens". */
+const SHORT: Partial<Record<AppId, string>> = {
+  crm: "CRM",
+  sales: "Sales",
+  admin: "Admin",
+  founder: "Founder",
+  enquiries: "Enquiries",
+  docs: "Docs",
+};
+const LEVEL_MARK: Record<RoleId, { mark: string; cls: string }> = {
+  associate: { mark: "A", cls: "bg-[#eef1f6] text-[#4a5670]" },
+  manager: { mark: "M", cls: "bg-brand-soft text-brand-deep" },
+  admin: { mark: "Ad", cls: "bg-ink text-brand-lime" },
+};
+
+/** Every app somebody holds, as the canvas's chips: name, screens where narrowed, level. */
+function AppChips({ row }: { row: AccessRow }) {
+  if (!row.grants.length) return <span className="text-muted">No app</span>;
+  const max = 3;
+  /* The widest hats first, the Admin Console before the rest, so a platform administrator reads as one. */
+  const rank = { admin: 0, manager: 1, associate: 2 } as Record<string, number>;
+  const ordered = [...row.grants].sort((a, b) => (rank[a.role] ?? 3) - (rank[b.role] ?? 3) || (a.app === "admin" ? -1 : b.app === "admin" ? 1 : 0));
+  const shown = ordered.slice(0, max);
+  const rest = ordered.slice(max);
+  const fresh = row.grants.reduce((n, g) => n + (g.setOn ? g.newScreens.length : 0), 0);
+  return (
+    <span className="inline-flex items-center gap-1">
+      {shown.map((g) => {
+        const lv = LEVEL_MARK[g.role as RoleId] ?? LEVEL_MARK.associate;
+        const narrowed = g.grantedCount < g.totalCount;
+        const words = [
+          `${g.appName}, ${LEVEL_LABELS[g.role] ?? g.role}`,
+          narrowed ? `${g.grantedCount} of ${g.totalCount} screens` : g.totalCount === 1 ? "its one screen" : `all ${g.totalCount} screens`,
+          ...g.readOnly.map((l) => `${l} read only`),
+          ...(g.app === "erp" && row.erpDesignation ? [`${row.erpDesignation.name}${row.erpDesignation.matches ? "" : " (customised)"}`] : []),
+        ].join(" · ");
+        return (
+          <span
+            key={g.app}
+            title={words}
+            className={cx(
+              "inline-flex h-[22px] items-stretch overflow-hidden rounded-[5px] border border-line text-[11px] font-semibold whitespace-nowrap text-ink",
+              narrowed && "border-dashed",
+            )}
+          >
+            <span className="flex items-center px-1.5">
+              {SHORT[g.app] ?? g.appName}
+              {narrowed ? ` ${g.grantedCount}/${g.totalCount}` : ""}
+            </span>
+            <span className={cx("flex items-center px-[5px]", lv.cls)}>{lv.mark}</span>
+          </span>
+        );
+      })}
+      {rest.length ? (
+        <span title={rest.map((g) => g.appName).join(", ")} className="inline-flex h-[22px] items-center rounded-[5px] border border-line px-1.5 text-[11px] font-semibold text-ink">
+          +{rest.length}
+        </span>
+      ) : null}
+      {fresh ? <Pill tone="warn">{fresh} new screen{fresh === 1 ? "" : "s"}</Pill> : null}
+      {row.conflicts.length ? (
+        <Pill tone="warn" title={row.conflicts.map((c) => c.sentence ?? "").filter(Boolean).join(" ")}>
+          Hats clash
+        </Pill>
+      ) : null}
+    </span>
+  );
+}
+
+function AccTh({ children, className }: { children?: React.ReactNode; className?: string }) {
+  return <th className={cx("bg-ink px-3 py-[9px] text-left text-xs font-semibold whitespace-nowrap text-white normal-case tracking-normal", className)}>{children}</th>;
+}
+
+function AccTd({ children, className }: { children?: React.ReactNode; className?: string }) {
+  return <td className={cx("border-b border-divider px-3 py-2 align-middle whitespace-nowrap", className)}>{children}</td>;
+}
+
+function BarButton({ children, onClick, disabled, quiet }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; quiet?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cx(
+        "inline-flex h-[30px] cursor-pointer items-center rounded-control border px-2.5 text-xs font-semibold disabled:opacity-50",
+        quiet ? "border-transparent text-[#c9d1e3]" : "border-[#3a4766] bg-transparent text-white hover:bg-[#1c2a47]",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-semibold text-body">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 cursor-pointer rounded-control border border-line-strong bg-surface px-2 text-[13px] font-normal text-ink"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Pick the app and the level to give everybody selected. It only ever widens. */
+function GiveAppDialog({ count, onClose, onGive }: { count: number; onClose: () => void; onGive: (app: AppId, role: RoleId) => Promise<void> }) {
+  const [app, setApp] = React.useState<AppId | "">("");
+  const [role, setRole] = React.useState<RoleId>("associate");
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Give an app to ${count} ${count === 1 ? "person" : "people"}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!app || busy}
+            onClick={async () => {
+              if (!app) return;
+              setBusy(true);
+              await onGive(app, role);
+            }}
+          >
+            Give it
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3 text-sm text-body">
+        <FilterSelect label="App" value={app} onChange={(v) => setApp(v as AppId)} options={[{ value: "", label: "Choose an app" }, ...APPS.map((a) => ({ value: a.id, label: a.name }))]} />
+        <FilterSelect label="Level" value={role} onChange={(v) => setRole(v as RoleId)} options={ROLES.map((r) => ({ value: r.id, label: app ? levelOptionLabel(r.id, app, getApp(app)?.name ?? app) : r.label }))} />
+        <p className="m-0 text-[13px] text-muted">
+          The whole app, every screen. Somebody who holds it already keeps what they have, at the wider of the two levels. Nothing is taken away.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+const DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" });
+const CLOCK = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+const SHORT_DATE = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" });
+
+/** "Now", "Today 09:04", "Yesterday 18:40", "3 Nov", or a dash for never. */
+function lastSeen(ex: PersonExtras | undefined, now: number): string {
+  if (!ex?.lastSignedIn) return "—";
+  const at = new Date(ex.lastSignedIn);
+  if (Number.isNaN(at.getTime())) return "—";
+  const day = DAY.format(at);
+  if (day === DAY.format(new Date(now))) return ex.liveNow && now - at.getTime() < 15 * 60_000 ? "Now" : `Today ${CLOCK.format(at)}`;
+  if (day === DAY.format(new Date(now - 86_400_000))) return `Yesterday ${CLOCK.format(at)}`;
+  return SHORT_DATE.format(at);
 }
 
 function PersonMenu({
@@ -1139,6 +1447,14 @@ function AccessDialog({
   const hireRoleChanged = hireRoleAfter !== hireRoleBefore;
   const placeAfter = draft.factory ? factoryPlace : null;
   const placeChanged = JSON.stringify(placeAfter) !== JSON.stringify(placeBefore);
+  /* The footer's count: one per app moved, plus one for each power list, role or place changed. */
+  const changeCount =
+    moduleChanges.granted.length +
+    moduleChanges.revoked.length +
+    moduleChanges.narrowed.length +
+    moduleChanges.widened.length +
+    moduleChanges.releveled.length +
+    [powersChanged, hrmsPowersChanged, taskPowersChanged, designationChanged, hireRoleChanged, placeChanged].filter(Boolean).length;
   const changes = { ...moduleChanges, any: moduleChanges.any || freshInDraft.length > 0 || powersChanged || hrmsPowersChanged || taskPowersChanged || designationChanged || hireRoleChanged || placeChanged };
 
   return (
@@ -1148,13 +1464,49 @@ function AccessDialog({
         onClose={onClose}
         width={1000}
         title={
-          step === "who"
-            ? "Enable access — who"
-            : step === "access"
-              ? `What ${chosen?.name} can open`
-              : step === "review"
-                ? `Review — ${chosen?.name}`
-                : `${chosen?.name} can now sign in`
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-lg font-bold text-ink">
+                {step === "who"
+                  ? "Give somebody access"
+                  : step === "done"
+                    ? `${chosen?.name} can now sign in`
+                    : `Manage access · ${chosen?.name}`}
+              </span>
+              {step !== "who" && chosen?.employeeCode ? <Pill tone="brand">{chosen.employeeCode}</Pill> : null}
+            </div>
+            {step !== "done" ? (
+              <div className="flex flex-wrap items-center gap-[22px] text-[13px] font-semibold">
+                {(
+                  [
+                    ["who", "Person"],
+                    ["access", "Apps & screens"],
+                    ["review", "Review"],
+                  ] as const
+                ).map(([s_, label], i, list) => {
+                  const at = list.findIndex(([k]) => k === step);
+                  const done = i < at;
+                  const on = i === at;
+                  return (
+                    <React.Fragment key={s_}>
+                      {i ? <span aria-hidden className="h-px w-10 bg-line" /> : null}
+                      <span className={cx("flex items-center gap-2", on ? "text-ink" : "text-muted")}>
+                        <i
+                          className={cx(
+                            "inline-flex h-[22px] w-[22px] items-center justify-center rounded-full border-[1.5px] text-[11px] not-italic",
+                            done ? "border-success bg-success text-white" : on ? "border-brand bg-brand text-white" : "border-line-strong",
+                          )}
+                        >
+                          {done ? "✓" : i + 1}
+                        </i>
+                        {label}
+                      </span>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         }
         footer={
           step === "done" ? (
@@ -1165,6 +1517,13 @@ function AccessDialog({
             </Button>
           ) : (
             <>
+              {step !== "who" && changeCount ? (
+                <span className="mr-auto self-center">
+                  <Pill tone="brand">
+                    {changeCount} change{changeCount === 1 ? "" : "s"}
+                  </Pill>
+                </span>
+              ) : null}
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -1177,7 +1536,7 @@ function AccessDialog({
               </Button>
               {step === "access" ? (
                 <Button variant="primary" onClick={() => setStep("review")}>
-                  Review
+                  Review changes
                 </Button>
               ) : step === "review" ? (
                 <Button
@@ -1667,6 +2026,32 @@ function AccessStep({
 
   const apps = Object.keys(draft).length;
   const screens = Object.values(draft).reduce((n, m) => n + m.length, 0);
+  /* A retired app is drawn only while somebody HELD it when the dialog
+     opened, so the grant can be taken away — and it stays drawn after it is
+     unticked, so the untick can be taken back. */
+  const offered = APPS.filter((a) => !a.retiredInto || held[a.id]);
+  /* ONE APP'S SCREENS AT A TIME, the canvas's way: the apps down the left,
+     the one picked on the right — so seventeen apps are one column to read
+     rather than a scroll of every screen in the building. */
+  /* COMING DOWN FROM ADMIN TAKES THE ADMINISTRATOR'S SCREENS WITH IT. An
+     administrator holds every off-by-default screen whatever was ticked, so
+     their draft arrives with those boxes ticked; left as they were, a demotion
+     would write them down as real rows and the manager would keep the calling
+     desk the administrator only had by being one. They are unticked here,
+     where the review shows it as a narrowing, and ticking one back is a
+     deliberate act. */
+  const levelChange = (app: AppId, next: RoleId) => {
+    onRoleDraft({ ...roleDraft, [app]: next });
+    const was = roleDraft[app] ?? "associate";
+    const ticked = draft[app];
+    if (was === "admin" && next !== "admin" && ticked) {
+      const offByDefault = new Set(modulesForApp(app).filter((m) => m.offByDefault).map((m) => m.key));
+      const kept = ticked.filter((k) => !offByDefault.has(k));
+      if (kept.length !== ticked.length && kept.length) setApp(app, kept);
+    }
+  };
+  const [focus, setFocus] = React.useState<AppId>(() => offered.find((a) => draft[a.id])?.id ?? offered[0].id);
+  const focused = offered.find((a) => a.id === focus) ?? offered[0];
 
   return (
     <div className="-mx-1">
@@ -1719,60 +2104,87 @@ function AccessStep({
         </div>
       ) : null}
 
-      {/* Said once, above all of them, rather than seven times inside them. */}
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1 pb-2">
-        <span className="text-[13px] text-body">
-          Tick an app to grant it; untick a screen to withhold it. A withheld screen is not
-          drawn in their navigation. The level beside an app says what they may do in it.
-        </span>
-        <span className="flex-1" />
-        <span className="text-[13px] whitespace-nowrap text-muted">
-          {apps} app{apps === 1 ? "" : "s"} · {screens} screen{screens === 1 ? "" : "s"}
-        </span>
-      </div>
+      {fieldError.grants ? <p className="px-1 pb-2 text-[13px] text-danger">{fieldError.grants}</p> : null}
 
-      {fieldError.grants ? (
-        <p className="px-1 pb-2 text-[13px] text-danger">{fieldError.grants}</p>
-      ) : null}
-
-      <div className="overflow-hidden rounded-[4px] border border-line">
-        {/* A retired app is drawn only while somebody HELD it when the dialog
-            opened, so the grant can be taken away — and it stays drawn after
-            it is unticked, so the untick can be taken back. It is never
-            offered to anybody who did not already hold it. */}
-        {APPS.filter((a) => !a.retiredInto || held[a.id]).map((app, i) => (
+      <div className={cx("-mx-4 grid grid-cols-[330px_minmax(0,1fr)]", needsAccount ? "mt-1 -mb-4 h-[48vh] border-t border-divider" : "-my-4 h-[62vh]")}>
+        <div className="flex flex-col gap-0.5 overflow-y-auto border-r border-divider px-3 py-3.5">
+          <div className="flex items-center gap-2 px-3 pb-1.5">
+            <span className="text-[11px] font-semibold tracking-[0.05em] text-muted uppercase">Apps</span>
+            <span className="flex-1" />
+            <span
+              className="text-[11px] whitespace-nowrap text-muted"
+              title="Tick an app to grant it; untick a screen to withhold it. A withheld screen is not drawn in their navigation. The level beside an app says what they may do in it."
+            >
+              {apps} app{apps === 1 ? "" : "s"} · {screens} screen{screens === 1 ? "" : "s"}
+            </span>
+          </div>
+          {offered.map((a) => {
+            const on = (draft[a.id] ?? []).length > 0;
+            return (
+              <div
+                key={a.id}
+                onClick={() => setFocus(a.id)}
+                className={cx(
+                  "flex cursor-pointer items-center gap-2.5 rounded-control px-3 py-[9px]",
+                  a.id === focused.id ? "bg-brand-soft" : "hover:bg-canvas",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  aria-label={a.name}
+                  title={a.description}
+                  className="h-4 w-4 flex-none cursor-pointer accent-brand"
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => {
+                    setApp(a.id, on ? [] : DEFAULT_OF(a.id));
+                    setFocus(a.id);
+                  }}
+                />
+                <span className={cx("min-w-0 flex-1 truncate", on ? "font-semibold text-ink" : "text-body")} title={a.description}>
+                  {a.name}
+                </span>
+                {a.retiredInto ? <Pill tone="warn">Retired</Pill> : null}
+                {a.mobileOnly ? <Pill tone="muted">Handset</Pill> : null}
+                {a.id === "admin" ? <Pill tone="warn">Platform</Pill> : null}
+                {on ? (
+                  <select
+                    value={roleDraft[a.id] ?? "associate"}
+                    aria-label={`Level on ${a.name}`}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      setFocus(a.id);
+                      levelChange(a.id, e.target.value as RoleId);
+                    }}
+                    className="h-[30px] w-[112px] flex-none cursor-pointer rounded-control border border-line-strong bg-surface px-2 text-xs text-ink"
+                  >
+                    {ROLES.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {levelOptionLabel(r.id, a.id, a.name)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <div className="min-w-0 overflow-y-auto">
           <AppBlock
-            key={app.id}
-            app={app.id}
-            name={app.name}
-            description={app.description}
-            built={app.built}
-            retired={!!app.retiredInto}
-            ticked={draft[app.id] ?? []}
-            fresh={fresh[app.id]}
-            first={i === 0}
-            role={roleDraft[app.id] ?? "associate"}
-            onRole={(next) => {
-              onRoleDraft({ ...roleDraft, [app.id]: next });
-              /* COMING DOWN FROM ADMIN TAKES THE ADMINISTRATOR'S SCREENS WITH
-                 IT. An administrator holds every off-by-default screen
-                 whatever was ticked, so their draft arrives with those boxes
-                 ticked; left as they were, a demotion would write them down as
-                 real rows and the manager would keep the calling desk the
-                 administrator only had by being one. They are unticked here,
-                 where the review shows it as a narrowing, and ticking one back
-                 is a deliberate act. */
-              const was = roleDraft[app.id] ?? "associate";
-              const ticked = draft[app.id];
-              if (was === "admin" && next !== "admin" && ticked) {
-                const offByDefault = new Set(modulesForApp(app.id).filter((m) => m.offByDefault).map((m) => m.key));
-                const kept = ticked.filter((k) => !offByDefault.has(k));
-                if (kept.length !== ticked.length && kept.length) setApp(app.id, kept);
-              }
-            }}
-            onChange={(modules) => setApp(app.id, modules)}
+            key={focused.id}
+            app={focused.id}
+            name={focused.name}
+            description={focused.description}
+            built={focused.built}
+            retired={!!focused.retiredInto}
+            ticked={draft[focused.id] ?? []}
+            fresh={fresh[focused.id]}
+            first
+            role={roleDraft[focused.id] ?? "associate"}
+            onRole={(next) => levelChange(focused.id, next)}
+            onChange={(modules) => setApp(focused.id, modules)}
             designation={
-              app.id === "erp"
+              focused.id === "erp"
                 ? {
                     list: designations,
                     value: designationId,
@@ -1781,14 +2193,14 @@ function AccessStep({
                   }
                 : undefined
             }
-            hireRole={app.id === "hire" ? { value: hireRole, onPick: pickHireRole, level: roleDraft.hire ?? "associate", error: fieldError.hireRole } : undefined}
-            factory={app.id === "factory" ? { value: factoryPlace, onPick: pickPlace, level: roleDraft.factory ?? "associate", error: fieldError.factoryPlace } : undefined}
+            hireRole={focused.id === "hire" ? { value: hireRole, onPick: pickHireRole, level: roleDraft.hire ?? "associate", error: fieldError.hireRole } : undefined}
+            factory={focused.id === "factory" ? { value: factoryPlace, onPick: pickPlace, level: roleDraft.factory ?? "associate", error: fieldError.factoryPlace } : undefined}
             powers={
-              app.id === "erp"
+              focused.id === "erp"
                 ? { held: powers, onChange: onErpPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power.", screensOf: (p: string) => (ERP_POWER_SCREENS[p as ErpPower] ?? []).map((k) => getModule(k)?.label ?? k) }
-                : app.id === "hrms"
+                : focused.id === "hrms"
                   ? { held: hrmsPowers, onChange: onHrmsPowers, error: fieldError.hrmsPowers, list: HRMS_POWERS, labels: HRMS_POWER_LABEL, adminLine: "An HRMS administrator holds every power." }
-                  : app.id === "tasks"
+                  : focused.id === "tasks"
                     ? {
                         held: taskPowers,
                         onChange: onTaskPowers,
@@ -1802,7 +2214,7 @@ function AccessStep({
                     : undefined
             }
           />
-        ))}
+        </div>
       </div>
     </div>
   );

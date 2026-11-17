@@ -5,6 +5,7 @@ import { liveSessions } from "@/lib/services/admin-platform-service";
 import { auditFeed } from "@/lib/services/audit-feed-service";
 import { listAccess } from "@/lib/services/access-service";
 import { personAccessExtras } from "@/lib/services/person-access-extras-service";
+import { personCard } from "@/lib/services/admin-access-view-service";
 import { getConfig } from "@/lib/config/store";
 import { definition } from "@/lib/config/registry";
 import { settingAddress } from "@/lib/config/settings-schemas";
@@ -34,6 +35,8 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
   ]);
   const person = people.find((p) => p.id === id);
   if (!person) notFound();
+  const windowMinutes = Number(config["auth.password.failureWindowMinutes"]) || 15;
+  const card = await personCard(id, windowMinutes);
   const row = access.find((r) => r.userId === id);
 
   /* Where a setting is edited is asked of the settings schema rather than
@@ -113,6 +116,9 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
       sessions={sessions}
       audit={audit}
       today={day}
+      card={card}
+      clashes={(row?.conflicts ?? []).map((c) => c.sentence)}
+      windowMinutes={windowMinutes}
     />
   );
 }
