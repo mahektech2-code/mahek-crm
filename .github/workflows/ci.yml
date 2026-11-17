@@ -186,6 +186,21 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      # THE RUNNER IS WHAT DIES, NOT THE BUILD. `next build` compiles, then starts
+      # three workers to collect page data, and each loads the whole app; on a
+      # hosted runner that peak has been enough to starve it of memory, and the log
+      # ends mid-build with "The runner lost communication" or "The operation was
+      # canceled" and no error from the code. It is intermittent, which is why the
+      # same commit builds green one run and not the next. Swap turns that spike
+      # into a slower build instead of a dead runner. It changes nothing about what
+      # is built; a runner without it carries on exactly as before.
+      - name: Add swap for the build
+        run: |
+          (sudo fallocate -l 8G /mnt/swapfile &&
+            sudo chmod 600 /mnt/swapfile &&
+            sudo mkswap /mnt/swapfile &&
+            sudo swapon /mnt/swapfile) || echo "swap unavailable, building without it"
+          free -h
       - run: npm run build
         env:
           NEXT_BUILD_SKIP_TYPECHECK: "1"
@@ -485,6 +500,21 @@ jobs:
       # `next build` it ran straight after the compile and the runner was shut
       # down part-way through it — the same memory ceiling the `build` job
       # already steps round. This job checks links, not types.
+      # THE RUNNER IS WHAT DIES, NOT THE BUILD. `next build` compiles, then starts
+      # three workers to collect page data, and each loads the whole app; on a
+      # hosted runner that peak has been enough to starve it of memory, and the log
+      # ends mid-build with "The runner lost communication" or "The operation was
+      # canceled" and no error from the code. It is intermittent, which is why the
+      # same commit builds green one run and not the next. Swap turns that spike
+      # into a slower build instead of a dead runner. It changes nothing about what
+      # is built; a runner without it carries on exactly as before.
+      - name: Add swap for the build
+        run: |
+          (sudo fallocate -l 8G /mnt/swapfile &&
+            sudo chmod 600 /mnt/swapfile &&
+            sudo mkswap /mnt/swapfile &&
+            sudo swapon /mnt/swapfile) || echo "swap unavailable, building without it"
+          free -h
       - run: npm run build
         env:
           NEXT_BUILD_SKIP_TYPECHECK: "1"
