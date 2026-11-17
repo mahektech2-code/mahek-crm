@@ -155,7 +155,7 @@ export const FEATURES: Record<string, Feature> = {
   checkInQr: { what: "QR-code check-in against the office's code, behind its setting", file: "src/lib/actions/hrms-checkin.ts", marker: "hrms.attendance.qrEnabled" },
   checkOut: { what: "Check-out, geo-fenced unless the day was a QR check-in", file: "src/lib/actions/hrms-checkin.ts", marker: "export async function hrmsCheckOut" },
   lateHelp: { what: "A refused late check-in can raise “I am late today” on the spot", file: "src/lib/actions/hrms-checkin.ts", marker: "export async function hrmsRaiseLateHelp" },
-  checkInRules: { what: "The check-in refusal order: already, late (location is recorded, never a gate)", file: "src/lib/hrms/engines/attendance.ts", marker: "export function decideCheckIn" },
+  checkInRules: { what: "The check-in refusal: only already (location and lateness are recorded, never a gate)", file: "src/lib/hrms/engines/attendance.ts", marker: "export function decideCheckIn" },
   dayFigures: { what: "Worked time, late, percentage of target, full or half day", file: "src/lib/hrms/engines/attendance.ts", marker: "export function dayFigures" },
   homeCard: { what: "The check-in panel: timing, office, worked-so-far bar, late and day result — on the launcher now", file: "src/components/checkin/check-in-panel.tsx", marker: "export function CheckInPanel" },
   launcherCheckIn: { what: "Checking in moved to the MahekOne launcher: a strip, and a dialog that opens once a day", file: "src/components/checkin/launcher-check-in.tsx", marker: "export function LauncherCheckIn" },

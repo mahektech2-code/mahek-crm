@@ -44,13 +44,14 @@ test("the remark says how far inside or past the grace the check-in was", () => 
 
 const base = { alreadyToday: false, distanceM: 50, officeHasPin: true, officeName: "Thane", radiusM: 200, privileged: false, privilegedRangeM: 9000, officialIn: "09:30", now: "09:45", graceMinutes: 30, name: "Priya" };
 
-test("check-in: only already and late refuse; location is never a gate", () => {
+test("check-in: only already refuses; location and lateness are never a gate", () => {
   assert.deepEqual(decideCheckIn(base), { ok: true });
   assert.equal((decideCheckIn({ ...base, alreadyToday: true }) as { reason: string }).reason, "already");
   assert.deepEqual(decideCheckIn({ ...base, distanceM: null }), { ok: true });
   assert.deepEqual(decideCheckIn({ ...base, officeHasPin: false }), { ok: true });
   assert.deepEqual(decideCheckIn({ ...base, distanceM: 3000 }), { ok: true });
-  assert.equal((decideCheckIn({ ...base, now: "10:01" }) as { reason: string }).reason, "late");
+  assert.deepEqual(decideCheckIn({ ...base, now: "10:01" }), { ok: true });
+  assert.deepEqual(decideCheckIn({ ...base, now: "17:45" }), { ok: true });
 });
 
 test("check-in: HR is never late", () => {

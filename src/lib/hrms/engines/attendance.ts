@@ -3,7 +3,7 @@
  * decision. Configuration and the clock come in as arguments.
  * ------------------------------------------------------------------------- */
 
-import { hhmm, tmin } from "../time";
+import { tmin } from "../time";
 
 export type AttendanceCfg = {
   graceMinutes: number;
@@ -157,22 +157,16 @@ export type CheckInDecision = { ok: true } | { ok: false; reason: CheckInRefusal
  * person is shown to be at the office.
  */
 /**
- * Whether a punch-in stands. LOCATION IS NOT A GATE (Nov 2026): a desktop has
- * no GPS and the browser guesses from the network, kilometres out, so a
- * geofence refused people sitting in the office. The distance is still read
- * and stored on the day when there is one; only "already in" and "late" refuse.
+ * Whether a punch-in stands. NOTHING BUT "ALREADY IN" REFUSES (Nov 2026).
+ * Location is not a gate: a desktop has no GPS and the browser guesses from
+ * the network, kilometres out, so a geofence refused people sitting in the
+ * office. Lateness is not a gate either: with the workday lock on, refusing a
+ * late punch-in locked that person out of every app for the day, and the
+ * owner's rule is that people may punch in at any time. How late they were is
+ * still worked out and shown on the day (`dayFigures`), never refused.
  */
 export function decideCheckIn(x: CheckInInput): CheckInDecision {
   if (x.alreadyToday) return { ok: false, reason: "already", message: "You have already checked in today", detail: "Check out at the end of the day." };
-  const offIn = tmin(x.officialIn);
-  const nowM = tmin(x.now);
-  if (!x.privileged && offIn != null && nowM != null && nowM > offIn + x.graceMinutes)
-    return {
-      ok: false,
-      reason: "late",
-      message: "Too late to check in: today counts as unpaid leave",
-      detail: `It is more than ${x.graceMinutes} minutes past your ${hhmm(offIn)} start. Send an “I am late today” request, and the person who resolves help requests will decide.`,
-    };
   return { ok: true };
 }
 
