@@ -57,9 +57,24 @@ export function usePrinter() {
   return { print, busy, error };
 }
 
-export function PrintButton({ onClick, busy, disabled, label = "Print" }: { onClick: () => void; busy: boolean; disabled?: boolean; label?: string }) {
+/* A disabled button says why (AGENTS.md): Print sat greyed out with no reason
+   on an order whose invoice PDF had not been added (found 2026-11-17). */
+export function PrintButton({
+  onClick,
+  busy,
+  disabled,
+  label = "Print",
+  why = "Nothing to print yet: the invoice PDF is still loading, or none has been added on Orders → Invoice check.",
+}: {
+  onClick: () => void;
+  busy: boolean;
+  disabled?: boolean;
+  label?: string;
+  /** Said on hover while the button is disabled. */
+  why?: string;
+}) {
   return (
-    <Button onClick={onClick} disabled={disabled || busy}>
+    <Button onClick={onClick} disabled={disabled || busy} title={busy ? "Getting the pages ready" : disabled ? why : undefined}>
       <span className="inline-flex items-center gap-2">
         <Icon n="print" s={16} />
         {busy ? "Getting pages ready…" : label}
@@ -266,7 +281,7 @@ export function PrintInvoicesModal({ lineIds, onClose }: { lineIds: string[]; on
       ) : null}
       <DialogFooter left={n ? `${copies} cop${copies === 1 ? "y" : "ies"} of each` : ""}>
         <Copies value={copies} onChange={setCopies} />
-        <PrintButton busy={busy || gathering} disabled={!n} onClick={() => void printAll()} label={n === 1 ? "Print 1 invoice" : `Print ${n} invoices`} />
+        <PrintButton busy={busy || gathering} disabled={!n} why="None of these orders has an invoice PDF to print yet." onClick={() => void printAll()} label={n === 1 ? "Print 1 invoice" : `Print ${n} invoices`} />
       </DialogFooter>
     </ErpDialog>
   );
