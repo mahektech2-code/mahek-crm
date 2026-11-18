@@ -160,10 +160,16 @@ export async function enterImpersonatedSession(
     return fail("That account can no longer be signed in to.");
   }
 
-  await db
+  // Consumed only if nobody consumed it first: two submits of the same link
+  // both passed findLiveImpersonation above and both opened a session.
+  const consumed = await db
     .update(impersonationTokens)
     .set({ usedAt: new Date() })
-    .where(eq(impersonationTokens.id, row.id));
+    .where(and(eq(impersonationTokens.id, row.id), isNull(impersonationTokens.usedAt)))
+    .returning({ id: impersonationTokens.id });
+  if (!consumed.length) {
+    return fail("That link has expired or has already been used.");
+  }
 
   await createSession(user.id);
   await audit(
